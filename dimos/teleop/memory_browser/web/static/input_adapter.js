@@ -15,6 +15,10 @@ const SWIPE_AXIS_RATIO = 1.5;                  // |vx| must dominate |vy|+|vz| b
 const SWIPE_DEBOUNCE_MS = 500;
 const VELOCITY_BUFFER_SIZE = 5;                // rolling window for velocity smoothing
 const GRIP_THRESHOLD = 0.5;                    // analog grip press cutoff
+// Hand-tracking: pinch = thumb-tip ↔ index-tip distance below this threshold.
+// 25 mm matches the WebXR spec's recommended pinch threshold.
+const PINCH_DISTANCE_M = 0.025;
+const PINCH_RELEASE_M = 0.040;                 // hysteresis so flicker at 25mm doesn't toggle
 
 export class InputAdapter {
     constructor(onGesture) {
@@ -35,14 +39,31 @@ export class InputAdapter {
             lastRoll: 0,           // radians, integrated since engage
             posBuffer: [],         // [{t, p:[x,y,z]}] for velocity
             lastSwipeMs: 0,
+            // Tracks whether the right hand was last seen pinching, used for
+            // hysteresis so micro-jitter at the threshold doesn't toggle
+            // engage/disengage every frame.
+            wasPinching: false,
         };
     }
 
     onFrame(frame, xrRefSpace, nowMs) {
         let seenLeft = false, seenRight = false;
+        let usedHands = false;
         for (const inputSource of frame.session.inputSources) {
             const handedness = inputSource.handedness;
             if (handedness !== 'left' && handedness !== 'right') continue;
+
+            // Prefer hand tracking when joints are exposed for this source.
+            if (inputSource.hand && inputSource.hand.size > 0) {
+                if (this._processHandTracked(handedness, frame, xrRefSpace, inputSource.hand, nowMs)) {
+                    if (handedness === 'left') seenLeft = true;
+                    if (handedness === 'right') seenRight = true;
+                    usedHands = true;
+                    continue;
+                }
+            }
+
+            // Fall back to controller (gripSpace + gamepad button[1] = grip).
             const grip = inputSource.gripSpace || inputSource.targetRaySpace;
             if (!grip) continue;
             const pose = frame.getPose(grip, xrRefSpace);
@@ -53,16 +74,55 @@ export class InputAdapter {
 
             const gp = inputSource.gamepad;
             const gripVal = gp ? (gp.buttons[1]?.value ?? 0) : 0;
-
             this._processHand(handedness, pose, gripVal, nowMs);
         }
-        // Once-only diagnostic so we know the controllers actually got tracked.
+
         if (!this._seenAnyController && (seenLeft || seenRight)) {
             this._seenAnyController = true;
             if (typeof window !== 'undefined' && window.app && window.app.diag) {
-                window.app.diag('first_controller', { left: seenLeft, right: seenRight });
+                window.app.diag('first_input', { left: seenLeft, right: seenRight, hands: usedHands });
             }
         }
+        if (usedHands && !this._seenHandTracking) {
+            this._seenHandTracking = true;
+            if (typeof window !== 'undefined' && window.app && window.app.diag) {
+                window.app.diag('hand_tracking_active');
+            }
+        }
+    }
+
+    _processHandTracked(hand, frame, xrRefSpace, joints, nowMs) {
+        const wrist = joints.get('wrist');
+        const thumb = joints.get('thumb-tip');
+        const index = joints.get('index-finger-tip');
+        if (!wrist || !thumb || !index) return false;
+
+        const wristPose = frame.getJointPose(wrist, xrRefSpace);
+        const thumbPose = frame.getJointPose(thumb, xrRefSpace);
+        const indexPose = frame.getJointPose(index, xrRefSpace);
+        if (!wristPose || !thumbPose || !indexPose) return false;
+
+        const tx = thumbPose.transform.position;
+        const ix = indexPose.transform.position;
+        const dx = tx.x - ix.x, dy = tx.y - ix.y, dz = tx.z - ix.z;
+        const dist = Math.hypot(dx, dy, dz);
+
+        // Hysteresis: only flip from "pinching=true" back to false once the
+        // fingers are clearly apart. Cuts engage/disengage chatter at the
+        // threshold.
+        const st = this._state[hand];
+        let pinching;
+        if (st.wasPinching) {
+            pinching = dist < PINCH_RELEASE_M;
+        } else {
+            pinching = dist < PINCH_DISTANCE_M;
+        }
+        st.wasPinching = pinching;
+
+        // Reuse the controller path: wrist transform stands in for grip pose,
+        // pinch stands in for grip-pressed.
+        this._processHand(hand, wristPose, pinching ? 1.0 : 0.0, nowMs);
+        return true;
     }
 
     _processHand(hand, pose, gripVal, nowMs) {
