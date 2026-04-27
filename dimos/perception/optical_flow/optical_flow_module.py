@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 from typing import Any
 
@@ -17,8 +31,10 @@ logger = setup_logger(level=logging.INFO)
 
 
 class OpticalFlowConfig(ModuleConfig):
-    tau_threshold: float = 3.0   # Time-to-Contact limit (in frames); alarm fires when τ drops below this
-    omega_max:     float = 0.3   # rad/s; danger gated above this yaw rate
+    tau_threshold: float = (
+        2.0  # Time-to-Contact limit (in frames); alarm fires when τ drops below this
+    )
+    omega_max: float = 0.3  # rad/s; danger gated above this yaw rate
 
 
 class OpticalFlowModule(Module):
@@ -37,10 +53,10 @@ class OpticalFlowModule(Module):
     config: OpticalFlowConfig
 
     color_image: In[Image]
-    angular_velocity: In[Any]   # optional: yaw rate in rad/s from IMU
+    angular_velocity: In[Any]  # optional: yaw rate in rad/s from IMU
 
     danger_signal: Out[Bool]
-    flow_data: Out[Any]         # (N, 5) float32: columns (x, y, tau, u, v)
+    flow_data: Out[Any]  # (N, 5) float32: columns (x, y, tau, u, v)
     flow_visualization: Out[Image]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -51,7 +67,7 @@ class OpticalFlowModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        unsub_img   = self.color_image.subscribe(self._on_color_image)
+        unsub_img = self.color_image.subscribe(self._on_color_image)
         unsub_omega = self.angular_velocity.subscribe(self._on_angular_velocity)
         self.register_disposable(Disposable(unsub_img))
         self.register_disposable(Disposable(unsub_omega))
@@ -90,16 +106,18 @@ class OpticalFlowModule(Module):
         self.flow_visualization.publish(Image.from_numpy(viz, format=ImageFormat.BGR))
 
     def _draw_visualization(
-        self, frame_bgr: np.ndarray, result: dict, 
+        self,
+        frame_bgr: np.ndarray,
+        result: dict,
         is_turning: bool = False,
     ) -> np.ndarray:
         """Per-point flow arrows colored by tau band + status banner."""
         viz = frame_bgr.copy()
         thr = self.config.tau_threshold
 
-        red    = (0,   0, 255)
+        red = (0, 0, 255)
         yellow = (0, 220, 220)
-        green  = (0, 200,   0)
+        green = (0, 200, 0)
 
         for x, y, tau, u, v in result["flow_data"]:
             if tau < thr:
@@ -109,7 +127,7 @@ class OpticalFlowModule(Module):
             else:
                 # Includes NaN (non-expanding points): not a threat.
                 color = green
-            p0 = (int(x),     int(y))
+            p0 = (int(x), int(y))
             p1 = (int(x + u), int(y + v))
             cv2.arrowedLine(viz, p0, p1, color, 1, tipLength=0.4)
 
