@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import time
 from typing import TYPE_CHECKING
@@ -35,7 +49,7 @@ if TYPE_CHECKING:
 @pytest.mark.slow
 @pytest.mark.skipif_in_ci
 def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
-    if model_class is MoondreamHostedVlModel and 'MOONDREAM_API_KEY' not in os.environ:
+    if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
         pytest.skip("Need MOONDREAM_API_KEY to run")
 
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
@@ -110,7 +124,7 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
 def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> None:
     """Test VLM point detection capabilities."""
 
-    if model_class is MoondreamHostedVlModel and 'MOONDREAM_API_KEY' not in os.environ:
+    if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
         pytest.skip("Need MOONDREAM_API_KEY to run")
 
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()

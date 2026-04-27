@@ -16,7 +16,13 @@ from __future__ import annotations
 
 from functools import reduce
 from operator import add
-from typing import TYPE_CHECKING, Generic, Self, TypeVar
+import sys
+from typing import TYPE_CHECKING, Generic, TypeVar
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from dimos_lcm.vision_msgs import Detection2DArray
 
