@@ -60,6 +60,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool as DimosBool
 from dimos.robot.unitree.g1.blueprints.basic._groot_wbc_common import (
     ARM_DEFAULT_POSE,
@@ -166,6 +167,10 @@ _g1_engine = MujocoSimModule.blueprint(
         # base-pose channel); MujocoSimModule publishes the floating
         # base pose directly so the viser viewer + nav stack see it.
         ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
+        # Bridge pointcloud → /lidar topic so downstream consumers
+        # (VoxelGridMapper, G1Memory) with ``lidar`` In ports can
+        # subscribe by topic regardless of port-name mismatch.
+        ("pointcloud", PointCloud2): LCMTransport("/lidar", PointCloud2),
     }
 )
 
