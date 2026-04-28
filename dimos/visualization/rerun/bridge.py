@@ -33,7 +33,9 @@ from typing import (
 from urllib.parse import urlparse
 
 from reactivex.disposable import Disposable
+import rerun as rr
 from rerun._baseclasses import Archetype
+import rerun.blueprint as rrb
 from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
 
@@ -131,7 +133,6 @@ def _hex_to_rgba(hex_color: str) -> int:
 
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
     """Add a Graph tab alongside the existing viewer layout without changing it."""
-
     root = bp.root_container
     return rrb.Blueprint(
         rrb.Tabs(
@@ -146,9 +147,6 @@ def _with_graph_tab(bp: Blueprint) -> Blueprint:
 
 def _default_blueprint() -> Blueprint:
     """Default blueprint with black background and raised grid."""
-    import rerun as rr
-    import rerun.blueprint as rrb
-
     return rrb.Blueprint(
         rrb.Spatial3DView(
             origin="world",
@@ -246,8 +244,11 @@ class RerunBridgeModule(Module):
                 return msg.to_rerun()
             return None
 
-        # compose all converters
-        return lambda msg: pipe(msg, *matches, final_convert)
+        def composed(msg: Any) -> RerunData | None:
+            return cast("RerunData | None", pipe(msg, *matches, final_convert))
+
+        self._override_cache[entity_path] = composed
+        return composed
 
     def _get_entity_path(self, topic: Any) -> str:
         if self.config.topic_to_entity:
@@ -258,8 +259,6 @@ class RerunBridgeModule(Module):
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:
-        """Handle incoming message - log to rerun."""
-
         entity_path: str = self._get_entity_path(topic)
 
         # Throttle entities with a max_hz limit
@@ -283,8 +282,6 @@ class RerunBridgeModule(Module):
 
     @rpc
     def start(self) -> None:
-        import rerun as rr
-
         super().start()
 
         logger.info("Rerun bridge starting")
@@ -377,7 +374,7 @@ class RerunBridgeModule(Module):
 
         for pubsub in self.config.pubsubs:
             if hasattr(pubsub, "stop"):
-                self.register_disposable(Disposable(pubsub.stop))
+                self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
 
@@ -405,8 +402,6 @@ class RerunBridgeModule(Module):
         logger.info("\n".join(lines))
 
     def _log_static(self) -> None:
-        import rerun as rr
-
         for entity_path, factory in self.config.static.items():
             data = factory(rr)
             if isinstance(data, list):
@@ -426,7 +421,6 @@ class RerunBridgeModule(Module):
             dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
             module_names: List of module class names (to distinguish modules from channels).
         """
-
         try:
             result = subprocess.run(
                 ["dot", "-Tplain"], input=dot_code, text=True, capture_output=True, timeout=30
