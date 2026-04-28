@@ -18,8 +18,6 @@ from dimos.memory.embedding import EmbeddingMemory, SpatialEntry
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.testing.replay import TimedSensorReplay
 
-pytestmark = pytest.mark.slow
-
 
 @pytest.mark.skip
 def test_embed_frame() -> None:

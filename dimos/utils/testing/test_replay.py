@@ -23,9 +23,8 @@ from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
 
-pytestmark = pytest.mark.slow
 
-
+@pytest.mark.slow
 def test_timed_sensor_replay() -> None:
     get_data("unitree_office_walk")
     odom_store = LegacyPickleStore("unitree_office_walk/odom")

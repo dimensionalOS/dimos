@@ -26,8 +26,6 @@ from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment
 
-pytestmark = pytest.mark.slow
-
 
 @pytest.fixture
 def grid() -> Generator[VoxelGrid, None, None]:
@@ -109,6 +107,7 @@ def test_carving(grid: VoxelGrid, moment1: Go2MapperMoment, moment2: Go2MapperMo
     )
 
 
+@pytest.mark.slow
 def test_ingest_a_few(grid: VoxelGrid) -> None:
     data_dir = get_data("unitree_go2_office_walk2")
     lidar_store = LegacyPickleStore(f"{data_dir}/lidar")
@@ -154,6 +153,7 @@ def test_roundtrip(moment1: Go2MapperMoment, voxel_size: float, expected_points:
     grid.dispose()
 
 
+@pytest.mark.slow
 def test_roundtrip_range_preserved(grid: VoxelGrid) -> None:
     """Test that input coordinate ranges are preserved in output."""
     data_dir = get_data("unitree_go2_office_walk2")

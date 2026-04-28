@@ -239,7 +239,6 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
     ],
 )
 @pytest.mark.tool
-@pytest.mark.slow
 def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_batch optimization - multiple images, same query."""
     from dimos.memory.timeseries.legacy import LegacyPickleStore

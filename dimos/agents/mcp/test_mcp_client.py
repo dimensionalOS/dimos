@@ -15,7 +15,6 @@
 from typing import Any
 
 from langchain_core.messages import HumanMessage
-import pytest
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
@@ -30,7 +29,6 @@ class Adder(Module):
         return str(x + y)
 
 
-@pytest.mark.slow
 def test_can_call_tool(agent_setup):
     history = agent_setup(
         blueprints=[Adder.blueprint()],
@@ -63,7 +61,6 @@ class UserRegistration(Module):
         return "User name registered successfully."
 
 
-@pytest.mark.slow
 def test_can_call_again_on_error(agent_setup):
     history = agent_setup(
         blueprints=[UserRegistration.blueprint()],
@@ -113,7 +110,6 @@ class NavigationSkill(Module):
         return f"Going to the {description}."
 
 
-@pytest.mark.slow
 def test_multiple_tool_calls_with_multiple_messages(agent_setup):
     history = agent_setup(
         blueprints=[MultipleTools.blueprint(), NavigationSkill.blueprint()],
@@ -167,7 +163,6 @@ def test_multiple_tool_calls_with_multiple_messages(agent_setup):
     assert len(go_to_location_calls) == 2
 
 
-@pytest.mark.slow
 def test_prompt(agent_setup):
     history = agent_setup(
         blueprints=[],
@@ -185,7 +180,6 @@ class Visualizer(Module):
         return Image.from_file(get_data("cafe-smol.jpg")).to_rgb()
 
 
-@pytest.mark.slow
 def test_image(agent_setup):
     history = agent_setup(
         blueprints=[Visualizer.blueprint()],
