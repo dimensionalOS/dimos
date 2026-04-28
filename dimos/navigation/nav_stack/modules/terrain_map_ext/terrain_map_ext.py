@@ -29,6 +29,7 @@ import time
 from typing import Any
 
 import numpy as np
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -64,35 +65,23 @@ class TerrainMapExt(Module):
     odometry: In[Odometry]
     terrain_map_ext: Out[PointCloud2]
 
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
+        self._robot_x = 0.0
+        self._robot_y = 0.0
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self._lock = threading.Lock()
         # Voxel storage: key=(ix,iy,iz) -> (x, y, z, intensity, timestamp)
         self._voxels: dict[tuple[int, int, int], tuple[float, float, float, float, float]] = {}
         # Reverse index: (ix,iy) -> set of iz values present in _voxels
         self._column_index: dict[tuple[int, int], set[int]] = {}
-        self._robot_x = 0.0
-        self._robot_y = 0.0
-
-    def __getstate__(self) -> dict[str, Any]:
-        s: dict[str, Any] = super().__getstate__()  # type: ignore[no-untyped-call]
-        for k in ("_lock", "_thread", "_voxels", "_column_index"):
-            s.pop(k, None)
-        return s
-
-    def __setstate__(self, s: dict[str, Any]) -> None:
-        super().__setstate__(s)
-        self._lock = threading.Lock()
-        self._thread = None
-        self._voxels = {}
-        self._column_index = {}
-
-    @rpc
-    def start(self) -> None:
-        self.terrain_map.subscribe(self._on_terrain)
-        self.odometry.subscribe(self._on_odom)
+        self.register_disposable(Disposable(self.terrain_map.subscribe(self._on_terrain)))
+        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odom)))
         self._running = True
         self._thread = threading.Thread(target=self._publish_loop, daemon=True)
         self._thread.start()

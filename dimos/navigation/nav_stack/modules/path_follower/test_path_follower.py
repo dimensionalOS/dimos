@@ -15,9 +15,11 @@
 """Tests for PathFollower NativeModule wrapper."""
 
 from pathlib import Path
+from typing import get_origin, get_type_hints
 
 import pytest
 
+from dimos.core.stream import In, Out
 from dimos.navigation.nav_stack.modules.path_follower.path_follower import (
     PathFollower,
     PathFollowerConfig,
@@ -49,10 +51,6 @@ class TestPathFollowerModule:
     """Test PathFollower module declaration."""
 
     def test_ports_declared(self):
-        from typing import get_origin, get_type_hints
-
-        from dimos.core.stream import In, Out
-
         hints = get_type_hints(PathFollower)
         in_ports = {k for k, v in hints.items() if get_origin(v) is In}
         out_ports = {k for k, v in hints.items() if get_origin(v) is Out}

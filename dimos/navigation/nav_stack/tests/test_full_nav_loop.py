@@ -86,19 +86,10 @@ class MockSensor(Module):
     registered_scan: Out[PointCloud2]
     odometry: Out[Odometry]
 
-    def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._running = False
         self._thread: threading.Thread | None = None
-
-    def __getstate__(self) -> dict[str, Any]:
-        state = super().__getstate__()
-        state.pop("_thread", None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        super().__setstate__(state)
-        self._thread = None
 
     @rpc
     def start(self) -> None:

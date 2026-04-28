@@ -31,6 +31,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -84,8 +85,8 @@ class Vehicle(Module):
     registered_scan: Out[PointCloud2]
     odometry: Out[Odometry]
 
-    def __init__(self, **kw):  # type: ignore[no-untyped-def]
-        super().__init__(**kw)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.x = 0.0
         self.y = 0.0
         self.z = 0.75
@@ -93,25 +94,14 @@ class Vehicle(Module):
         self._fwd = 0.0
         self._left = 0.0
         self._yr = 0.0
-        self._lock = threading.Lock()
         self._running = False
         self._threads: list[threading.Thread] = []
-
-    def __getstate__(self) -> dict[str, Any]:
-        s = super().__getstate__()
-        for k in ("_lock", "_threads"):
-            s.pop(k, None)
-        return s
-
-    def __setstate__(self, s: dict) -> None:
-        super().__setstate__(s)
-        self._lock = threading.Lock()
-        self._threads = []
 
     @rpc
     def start(self) -> None:
         super().start()
-        self.cmd_vel._transport.subscribe(self._on_cmd)
+        self._lock = threading.Lock()
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd)))
         self._running = True
         for fn in (self._sim_loop, self._sensor_loop):
             t = threading.Thread(target=fn, daemon=True)

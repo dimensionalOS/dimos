@@ -28,12 +28,14 @@ from typing import Any
 
 import gtsam  # type: ignore[import-untyped]
 import numpy as np
+from reactivex.disposable import Disposable
 from scipy.spatial import KDTree
 from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -378,43 +380,30 @@ class PGO(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._lock = threading.Lock()
-        # Protects _pgo mutations (add_key_pose, search_for_loops,
-        # smooth_and_update, build_global_map) against concurrent access
-        # from _on_scan and _publish_loop threads.
-        self._pgo_lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
         self._pgo: _SimplePGO | None = None
-        # Latest odom
         self._latest_r = np.eye(3)
         self._latest_t = np.zeros(3)
         self._latest_time = 0.0
         self._has_odom = False
         self._last_global_map_time = 0.0
 
-    def __getstate__(self) -> dict[str, Any]:
-        state: dict[str, Any] = super().__getstate__()  # type: ignore[no-untyped-call]
-        for k in ("_lock", "_pgo_lock", "_thread", "_pgo"):
-            state.pop(k, None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        super().__setstate__(state)
-        self._lock = threading.Lock()
-        self._pgo_lock = threading.Lock()
-        self._thread = None
-        self._pgo = None
-
     @rpc
     def start(self) -> None:
+        super().start()
+        self._lock = threading.Lock()
+        # Protects _pgo mutations (add_key_pose, search_for_loops,
+        # smooth_and_update, build_global_map) against concurrent access
+        # from _on_scan and _publish_loop threads.
+        self._pgo_lock = threading.Lock()
         self._pgo = _SimplePGO(self.config)
         # Seed the TF tree with an identity map→odom so that consumers
         # querying map→body get a result immediately (before any loop
         # closure correction has been computed).
         self._publish_map_odom_tf(np.eye(3), np.zeros(3), time.time())
-        self.odometry.subscribe(self._on_odom)
-        self.registered_scan.subscribe(self._on_scan)
+        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odom)))
+        self.register_disposable(Disposable(self.registered_scan.subscribe(self._on_scan)))
         self._running = True
         self._thread = threading.Thread(target=self._publish_loop, daemon=True)
         self._thread.start()
@@ -483,8 +472,6 @@ class PGO(Module):
         self._publish_map_odom_tf(r_offset, t_offset, ts)
 
     def _publish_corrected_odom(self, r: np.ndarray, t: np.ndarray, ts: float) -> None:
-        from dimos.msgs.geometry_msgs.Pose import Pose
-
         q = Rotation.from_matrix(r).as_quat()  # [x,y,z,w]
 
         odom = Odometry(

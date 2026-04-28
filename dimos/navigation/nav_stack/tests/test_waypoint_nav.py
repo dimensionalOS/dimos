@@ -34,10 +34,14 @@ from typing import Any
 
 import numpy as np
 import pytest
+from reactivex.disposable import Disposable
 
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -45,6 +49,9 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
+from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
+from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
 
 _NATIVE_DIR = Path(__file__).resolve().parent.parent
 _HAS_BINARIES = all(
@@ -92,7 +99,7 @@ class SimVehicle(Module):
     registered_scan: Out[PointCloud2]
     odometry: Out[Odometry]
 
-    def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.x = 0.0
         self.y = 0.0
@@ -101,25 +108,14 @@ class SimVehicle(Module):
         self._fwd = 0.0
         self._left = 0.0
         self._yr = 0.0
-        self._lock = threading.Lock()
         self._running = False
         self._threads: list[threading.Thread] = []
-
-    def __getstate__(self) -> dict[str, Any]:
-        s = super().__getstate__()
-        for k in ("_lock", "_threads"):
-            s.pop(k, None)
-        return s
-
-    def __setstate__(self, s: dict) -> None:
-        super().__setstate__(s)
-        self._lock = threading.Lock()
-        self._threads = []
 
     @rpc
     def start(self) -> None:
         super().start()
-        self.cmd_vel._transport.subscribe(self._on_cmd)
+        self._lock = threading.Lock()
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd)))
         self._running = True
         for fn in (self._sim_loop, self._sensor_loop):
             t = threading.Thread(target=fn, daemon=True)
@@ -186,13 +182,6 @@ class SimVehicle(Module):
 
 def test_waypoint_nav_produces_path_and_movement():
     """Send waypoint at (10,0), verify terrain_map + path + non-zero cmd_vel."""
-    from dimos.core.coordination.blueprints import autoconnect
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-    from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
-    from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
-    from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
-
     terrain_msgs: list = []
     path_msgs: list = []
     cmd_msgs: list[tuple] = []

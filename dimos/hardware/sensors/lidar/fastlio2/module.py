@@ -34,10 +34,12 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 import socket
+import subprocess
 import time
 from typing import TYPE_CHECKING, Annotated
 
 from pydantic.experimental.pipeline import validate_as
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -80,8 +82,6 @@ def _get_local_ips() -> list[str]:
         pass
     # Also grab addresses via DGRAM trick for interfaces without DNS
     try:
-        import subprocess
-
         out = subprocess.check_output(
             ["ip", "-4", "-o", "addr", "show"],
             timeout=5,
@@ -220,7 +220,9 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
         super().start()
         # Subscribe to our own odometry output so we can mirror each
         # pose update into the TF tree as an odom→body transform.
-        self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry)
+        self.register_disposable(
+            Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
+        )
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
         """Publish the SLAM pose as an ``odom → body`` TF transform."""

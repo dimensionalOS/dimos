@@ -34,6 +34,7 @@ import time
 from typing import Any
 
 import numpy as np
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -307,14 +308,8 @@ class SimplePlanner(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
-        self._costmap = Costmap(
-            cell_size=self.config.cell_size,
-            obstacle_height=self.config.obstacle_height_threshold,
-            inflation_radius=self.config.inflation_radius,
-        )
         self._robot_x = 0.0
         self._robot_y = 0.0
         self._robot_z = 0.0
@@ -344,27 +339,20 @@ class SimplePlanner(Module):
         self._current_wp: tuple[float, float] | None = None
         self._current_wp_is_goal = False
 
-    def __getstate__(self) -> dict[str, Any]:
-        state: dict[str, Any] = super().__getstate__()  # type: ignore[no-untyped-call]
-        for k in ("_lock", "_thread", "_costmap"):
-            state.pop(k, None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        super().__setstate__(state)
+    @rpc
+    def start(self) -> None:
+        super().start()
         self._lock = threading.Lock()
-        self._thread = None
         self._costmap = Costmap(
             cell_size=self.config.cell_size,
             obstacle_height=self.config.obstacle_height_threshold,
             inflation_radius=self.config.inflation_radius,
         )
-
-    @rpc
-    def start(self) -> None:
-        self.goal.subscribe(self._on_goal)
-        self.terrain_map_ext.subscribe(self._on_terrain_map_ext)
-        self.terrain_map.subscribe(self._on_terrain_map)
+        self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
+        self.register_disposable(
+            Disposable(self.terrain_map_ext.subscribe(self._on_terrain_map_ext))
+        )
+        self.register_disposable(Disposable(self.terrain_map.subscribe(self._on_terrain_map)))
         self._running = True
         self._thread = threading.Thread(target=self._planning_loop, daemon=True)
         self._thread.start()
