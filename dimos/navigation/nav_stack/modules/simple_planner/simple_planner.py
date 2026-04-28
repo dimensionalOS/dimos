@@ -12,18 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SimplePlanner: grid-based A* alternative to FarPlanner.
-
-Consumes a classified terrain pointcloud, voxelises it into an occupancy
-grid (2D costmap in the XY plane), and runs A* from the robot's current
-pose to the goal. Publishes the full path on ``goal_path`` and a
-look-ahead waypoint on ``way_point`` for the local planner to track.
-
-This is intentionally small and readable — no visibility graph, no
-smoothing, no dynamic obstacle handling — to serve as a baseline against
-FarPlanner.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -55,14 +43,6 @@ logger = setup_logger()
 
 
 class Costmap:
-    """2D occupancy grid keyed by (ix, iy) integer cell coords.
-
-    Memory-efficient for sparse obstacle distributions — only populated
-    cells are stored in the dict. Each cell records the highest obstacle
-    height ever observed there, so re-observing the same grid cell with
-    a taller point promotes it to an obstacle if it wasn't already.
-    """
-
     def __init__(self, cell_size: float, obstacle_height: float, inflation_radius: float) -> None:
         if cell_size <= 0.0:
             raise ValueError(f"cell_size must be positive, got {cell_size}")
@@ -140,8 +120,6 @@ _NEIGHBOURS: tuple[tuple[int, int, float], ...] = tuple(
 
 @dataclass
 class StuckState:
-    """Snapshot of progress/escalation state for one planning tick."""
-
     ref_goal_dist: float
     last_progress_time: float
     effective_inflation: float
@@ -156,11 +134,6 @@ def progress_tick(
     stuck_shrink_factor: float,
     stuck_min_inflation: float,
 ) -> tuple[StuckState, bool]:
-    """Advance the stuck-detection / inflation-escalation state by one tick.
-
-    Returns ``(new_state, escalated)``. ``escalated`` is True when this
-    tick shrank the effective inflation; the caller can use it to log.
-    """
     if goal_dist < state.ref_goal_dist - progress_epsilon:
         return (
             StuckState(
@@ -189,10 +162,6 @@ def progress_tick(
 
 
 def resolve_tf_chain(tf_buffer: Any, queries: list[tuple[str, str]]) -> Any:
-    """Walk ``queries`` in priority order, returning the first transform
-    from ``tf_buffer.get(parent, child)`` that's not None. Returns None if
-    none of the chains are available.
-    """
     for parent, child in queries:
         tf = tf_buffer.get(parent, child)
         if tf is not None:
@@ -209,13 +178,6 @@ def plan_on_costmap(
     max_expansions: int,
     inflation_override: float | None = None,
 ) -> list[tuple[float, float]] | None:
-    """Run A* on ``costmap`` in world coordinates. Returns [(x, y), ...] or None.
-
-    If ``inflation_override`` is given and differs from the costmap's
-    current inflation, the blocked-cell set is rebuilt with the
-    override radius before searching (without mutating the live
-    costmap that other callers may be reading).
-    """
     cm = costmap
     if inflation_override is not None and inflation_override != cm.inflation_radius:
         blocked = _blocked_at_inflation(cm, inflation_override)
@@ -239,12 +201,6 @@ def plan_on_costmap(
 
 
 def _blocked_at_inflation(cm: Costmap, inflation_radius: float) -> set[tuple[int, int]]:
-    """Recompute the inflated blocked set for ``cm`` at a different inflation.
-
-    Used by the planner when escalating stuck-detection: we want to
-    retry A* with a smaller safety margin without mutating the live
-    costmap (other threads/readers still see the configured inflation).
-    """
     if inflation_radius < 0.0:
         raise ValueError(f"inflation_radius must be non-negative, got {inflation_radius}")
     cell = cm.cell_size
@@ -271,7 +227,6 @@ def astar(
     is_blocked: Callable[[int, int], bool],
     max_expansions: int = 200_000,
 ) -> list[tuple[int, int]] | None:
-    """Grid A* with octile heuristic, 8-connected. Returns cell path or None."""
     if start == goal:
         return [start]
 
@@ -319,11 +274,6 @@ def astar(
                 heapq.heappush(open_heap, (f, counter, nb))
 
     return None
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# Config + Module
-# ──────────────────────────────────────────────────────────────────────────
 
 
 class SimplePlannerConfig(ModuleConfig):
@@ -374,27 +324,7 @@ class SimplePlannerConfig(ModuleConfig):
 
 
 class SimplePlanner(Module):
-    """Grid-A* global route planner (alternative to FarPlanner).
-
-    Ports:
-        terrain_map_ext (In[PointCloud2]): Long-range accumulated terrain
-            cloud (world frame, has decay on the producer side).
-            Rebuilds the costmap from scratch every time it arrives.
-        terrain_map (In[PointCloud2]): Fresh local terrain cloud from
-            TerrainAnalysis. Layered on top of the ext map between
-            rebuilds so dynamic obstacles show up within ~1 scan tick.
-        goal (In[PointStamped]): User-specified goal (world frame).
-        way_point (Out[PointStamped]): Next look-ahead waypoint for local
-            planner.
-        goal_path (Out[Path]): Full A* path for visualisation.
-        costmap_cloud (Out[PointCloud2]): Blocked-cell centers — what
-            A* treats as obstacles, including inflation. Published at
-            the same cadence as the planning loop for debugging.
-
-    Robot pose is obtained via the TF tree (``map → body``) rather than
-    an Odometry stream.  This gives the loop-closure-corrected pose
-    automatically when PGO is active.
-    """
+    """Grid-A* global route planner"""
 
     config: SimplePlannerConfig
 

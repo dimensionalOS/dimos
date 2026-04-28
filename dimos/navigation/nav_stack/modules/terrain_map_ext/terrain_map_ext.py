@@ -12,16 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TerrainMapExt: extended persistent terrain map with time decay.
-
-Accumulates terrain_map messages from TerrainAnalysis into a larger
-rolling voxel grid (~40m radius, 2m voxels, 4s decay). Publishes
-the accumulated map as terrain_map_ext for visualization and planning.
-
-Port of terrain_analysis_ext from the original ROS2 codebase, simplified
-to Python using numpy voxel hashing.
-"""
-
 from __future__ import annotations
 
 import threading
@@ -46,7 +36,7 @@ class TerrainMapExtConfig(ModuleConfig):
 
 
 class TerrainMapExt(Module):
-    """Extended terrain map with time-decayed voxel accumulation.
+    """Extended terrain map with voxel eviction.
 
     Subscribes to terrain_map (local) and accumulates into a persistent
     map that covers a larger area with slower decay.

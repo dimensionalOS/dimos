@@ -79,10 +79,7 @@ def make_structured_cloud(center: np.ndarray, n_points: int = 500, seed: int = 4
 
 
 class TestKeyframeDetection:
-    """Test keyframe selection logic."""
-
     def test_first_pose_is_always_keyframe(self):
-        """The very first pose should always be accepted as a keyframe."""
         pgo = _SimplePGO(PGOConfig())
         cloud = make_random_cloud(np.zeros(3), seed=0)
         result = pgo.add_key_pose(np.eye(3), np.zeros(3), 0.0, cloud)
@@ -90,7 +87,6 @@ class TestKeyframeDetection:
         assert len(pgo._key_poses) == 1
 
     def test_small_movement_not_keyframe(self):
-        """A pose very close to the last keyframe should be rejected."""
         pgo = _SimplePGO(PGOConfig(key_pose_delta_trans=0.5, key_pose_delta_deg=10.0))
         cloud = make_random_cloud(np.zeros(3), seed=0)
 
@@ -104,7 +100,6 @@ class TestKeyframeDetection:
         assert len(pgo._key_poses) == 1
 
     def test_translation_threshold_triggers_keyframe(self):
-        """A pose exceeding the translation threshold should be a keyframe."""
         pgo = _SimplePGO(PGOConfig(key_pose_delta_trans=0.5, key_pose_delta_deg=10.0))
         cloud = make_random_cloud(np.zeros(3), seed=0)
 
@@ -117,7 +112,6 @@ class TestKeyframeDetection:
         assert len(pgo._key_poses) == 2
 
     def test_rotation_threshold_triggers_keyframe(self):
-        """A pose exceeding the rotation threshold should be a keyframe."""
         pgo = _SimplePGO(PGOConfig(key_pose_delta_trans=0.5, key_pose_delta_deg=10.0))
         cloud = make_random_cloud(np.zeros(3), seed=0)
 
@@ -132,8 +126,6 @@ class TestKeyframeDetection:
 
 
 class TestLoopClosure:
-    """Test loop closure detection and correction."""
-
     def _build_square_trajectory(
         self,
         pgo: _SimplePGO,
@@ -324,10 +316,7 @@ class TestLoopClosure:
 
 
 class TestGlobalMap:
-    """Test global map accumulation and publishing."""
-
     def test_global_map_accumulates_keyframes(self):
-        """Global map should contain points from all keyframes."""
         pgo = _SimplePGO(
             PGOConfig(
                 key_pose_delta_trans=0.3,
@@ -350,7 +339,6 @@ class TestGlobalMap:
         assert len(global_map) == n_keyframes * pts_per_frame
 
     def test_global_map_updates_after_loop_closure(self):
-        """After loop closure correction, global map positions should shift."""
         config = PGOConfig(
             key_pose_delta_trans=0.3,
             loop_search_radius=15.0,
@@ -428,7 +416,6 @@ class TestICP:
         assert score < 0.1
 
     def test_icp_matches_translated_cloud(self):
-        """ICP should find the correct translation between shifted clouds."""
         cloud = make_structured_cloud(np.zeros(3), n_points=500, seed=42)
         shifted = cloud + np.array([1.0, 0.0, 0.0])
 
@@ -465,7 +452,6 @@ class TestEdgeCases:
         assert len(global_map) == 0
 
     def test_single_keyframe_no_crash(self):
-        """System should work with just a single keyframe, no crash."""
         pgo = _SimplePGO(PGOConfig())
         cloud = make_random_cloud(np.zeros(3), n_points=100, seed=0)
         pgo.add_key_pose(np.eye(3), np.zeros(3), 0.0, cloud)

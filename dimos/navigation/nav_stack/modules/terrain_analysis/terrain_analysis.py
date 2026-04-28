@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TerrainAnalysis NativeModule: C++ terrain processing for obstacle detection.
-
-Ported from terrainAnalysis.cpp. Processes registered point clouds to produce
-a terrain cost map with obstacle classification.
-"""
-
 from __future__ import annotations
 
 from dimos.core.core import rpc
@@ -28,12 +22,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class TerrainAnalysisConfig(NativeModuleConfig):
-    """Config for the terrain analysis native module.
-
-    Fields with ``None`` default are omitted from the CLI, letting the
-    C++ binary use its own built-in default.
-    """
-
     cwd: str | None = "."
     executable: str = "result/bin/terrain_analysis"
     build_command: str | None = (
@@ -142,17 +130,6 @@ class TerrainAnalysisConfig(NativeModuleConfig):
 
 
 class TerrainAnalysis(NativeModule):
-    """Terrain analysis native module for obstacle cost map generation.
-
-    Processes registered point clouds from SLAM to classify terrain as
-    ground/obstacle, outputting a cost-annotated point cloud.
-
-    Ports:
-        registered_scan (In[PointCloud2]): World-frame registered point cloud.
-        odometry (In[Odometry]): Vehicle state for local frame reference.
-        terrain_map (Out[PointCloud2]): Terrain cost map (intensity=obstacle cost).
-    """
-
     config: TerrainAnalysisConfig
 
     @rpc

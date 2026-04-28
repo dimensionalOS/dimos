@@ -12,13 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FarPlanner NativeModule: C++ visibility-graph route planner.
-
-Ported from far_planner + boundary_handler + graph_decoder. Builds a
-visibility graph from the classified terrain map, finds routes to goals,
-and outputs intermediate waypoints for the local planner.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -94,22 +87,7 @@ class FarPlannerConfig(NativeModuleConfig):
 
 
 class FarPlanner(NativeModule):
-    """FAR planner: visibility-graph global route planner.
-
-    Builds and maintains a visibility graph from classified terrain maps,
-    then finds shortest paths through the graph to navigation goals.
-    Outputs intermediate waypoints for the local planner.
-
-    Ports:
-        terrain_map_ext (In[PointCloud2]): Extended terrain map (classified obstacles).
-        terrain_map (In[PointCloud2]): Scan-based terrain map (alternative input).
-        registered_scan (In[PointCloud2]): Raw lidar scan (for dynamic obs detection).
-        odometry (In[Odometry]): Vehicle state (corrected by PGO).
-        goal (In[PointStamped]): User-specified navigation goal.
-        stop_movement (In[Bool]): Cancel active goal and go idle.
-        way_point (Out[PointStamped]): Intermediate waypoint for local planner.
-        goal_path (Out[NavPath]): Full planned path to goal.
-    """
+    """Note: 2D planner, supposed to be really good at large maps"""
 
     config: FarPlannerConfig
 

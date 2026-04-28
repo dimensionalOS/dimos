@@ -12,13 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PGO Module: Python pose graph optimization with loop closure.
-
-Ported from FASTLIO2_ROS2/pgo. Detects keyframes, performs loop closure
-via ICP + KD-tree search, and optimizes the pose graph with GTSAM iSAM2.
-Publishes corrected odometry and accumulated global map.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -45,6 +38,15 @@ from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# Below this many ICP point-to-point correspondences, the alignment is
+# under-constrained — bail out with infinite cost rather than reporting a
+# spurious match.
+_MIN_ICP_INLIERS = 10
+
+# Loop-closure detection needs enough keyframes to have a meaningful
+# distance-vs-time history. Below this, skip the search entirely.
+_MIN_KEYFRAMES_FOR_LOOP_SEARCH = 10
 
 
 class PGOConfig(ModuleConfig):
@@ -100,7 +102,7 @@ def _icp(
         dists, idxs = tree.query(src)
         mask = np.asarray(dists < max_dist)
         idxs = np.asarray(idxs)
-        if int(mask.sum()) < 10:
+        if int(mask.sum()) < _MIN_ICP_INLIERS:
             return T, float("inf")
 
         p = src[mask]
@@ -228,7 +230,7 @@ class _SimplePGO:
         return _voxel_downsample(cloud, self._cfg.submap_resolution)
 
     def search_for_loops(self) -> None:
-        if len(self._key_poses) < 10:
+        if len(self._key_poses) < _MIN_KEYFRAMES_FOR_LOOP_SEARCH:
             return
 
         # Rate limit
@@ -392,7 +394,6 @@ def process_scan(
 
 
 def build_corrected_odometry(r: np.ndarray, t: np.ndarray, ts: float) -> Odometry:
-    """Build a ``map → body`` corrected Odometry message from rotation/translation."""
     q = Rotation.from_matrix(r).as_quat()  # [x,y,z,w]
     return Odometry(
         ts=ts,
@@ -406,7 +407,6 @@ def build_corrected_odometry(r: np.ndarray, t: np.ndarray, ts: float) -> Odometr
 
 
 def build_map_odom_tf(r_offset: np.ndarray, t_offset: np.ndarray, ts: float) -> Transform:
-    """Build the ``map → odom`` correction Transform from rotation/translation."""
     q = Rotation.from_matrix(r_offset).as_quat()  # [x,y,z,w]
     return Transform(
         frame_id=FRAME_MAP,
@@ -418,17 +418,10 @@ def build_map_odom_tf(r_offset: np.ndarray, t_offset: np.ndarray, ts: float) -> 
 
 
 class PGO(Module):
-    """Pose graph optimization with loop closure detection.
+    """Pose graph optimization with loop closure.
 
-    Pure-Python implementation using GTSAM iSAM2 and scipy KDTree.
-    Detects keyframes from odometry, searches for loop closures,
-    optimizes with iSAM2, and publishes corrected poses + global map.
-
-    Ports:
-        registered_scan (In[PointCloud2]): World-frame registered point cloud.
-        odometry (In[Odometry]): Current pose estimate from SLAM.
-        corrected_odometry (Out[Odometry]): Loop-closure-corrected pose.
-        global_map (Out[PointCloud2]): Accumulated keyframe map.
+    Detects keyframes, performs loop closure via ICP + KD-tree search, and optimizes the pose graph with GTSAM iSAM2.
+    Publishes corrected odometry and accumulated global map.
     """
 
     config: PGOConfig
