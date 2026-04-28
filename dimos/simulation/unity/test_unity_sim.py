@@ -41,7 +41,14 @@ from dimos.simulation.unity.module import (
     UnityBridgeModule,
     _validate_platform,
 )
-from dimos.utils.ros1 import ROS1Writer, deserialize_pointcloud2
+from dimos.utils.ros1 import (
+    ROS1Reader,
+    ROS1Writer,
+    deserialize_compressed_image,
+    deserialize_pointcloud2,
+    read_header,
+    serialize_pose_stamped,
+)
 
 _is_linux_x86 = platform.system() == "Linux" and platform.machine() in ("x86_64", "AMD64")
 _has_display = bool(os.environ.get("DISPLAY"))
@@ -185,13 +192,9 @@ class TestROS1Deserialization:
         assert deserialize_pointcloud2(b"\xff\x00\x01\x02") is None
 
     def test_compressed_image_truncated(self):
-        from dimos.utils.ros1 import deserialize_compressed_image
-
         assert deserialize_compressed_image(b"\x03\x00") is None
 
     def test_serialize_pose_stamped_round_trip(self):
-        from dimos.utils.ros1 import ROS1Reader, read_header, serialize_pose_stamped
-
         data = serialize_pose_stamped(1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0, frame_id="odom")
         r = ROS1Reader(data)
         header = read_header(r)
