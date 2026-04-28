@@ -85,8 +85,6 @@ pytestmark = [pytest.mark.slow]
 
 
 class TestCrossWallPlanning:
-    """E2E integration test: cross-wall routing through Unity sim."""
-
     def test_cross_wall_sequence(self, display_env):
         paths_dir = (
             Path(__file__).resolve().parents[3]
