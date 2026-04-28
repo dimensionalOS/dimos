@@ -15,6 +15,7 @@
 from typing import Any
 
 from langchain_core.messages import HumanMessage
+import pytest
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
@@ -180,6 +181,7 @@ class Visualizer(Module):
         return Image.from_file(get_data("cafe-smol.jpg")).to_rgb()
 
 
+@pytest.mark.slow
 def test_image(agent_setup):
     history = agent_setup(
         blueprints=[Visualizer.blueprint()],
