@@ -14,17 +14,13 @@
 
 """MuJoCo simulation ``WholeBodyAdapter`` for the Unitree G1.
 
-Delegates to the existing ``MujocoConnection`` subprocess (the same
-infrastructure ``unitree-go2 --simulation`` uses), running in
-"low-level passthrough" mode: the subprocess owns the MuJoCo world +
-viewer; this adapter reads per-joint state and writes per-joint
-commands through shared memory.
+Pairs with ``MujocoSimModule`` (in-process MuJoCo engine + SHM publisher).
+The blueprint composes both modules; they share the same ``MujocoEngine``
+indirectly via SHM keyed on the MJCF path.
 
-That choice — reusing the battle-tested subprocess pattern — is what
-lets ``dimos --simulation run unitree-g1-groot-wbc`` open the viewer
-on macOS without the user prefixing ``mjpython``.  The subprocess is
-auto-spawned under ``mjpython`` on macOS by ``MujocoConnection``
-(``mujoco_connection.py:124``).
+The adapter conforms to the same ``WholeBodyAdapter`` Protocol the real-hw
+DDS adapter implements, so ControlCoordinator (and the GR00T WBC task on
+top of it) can't tell sim from real.
 """
 
 from __future__ import annotations
@@ -33,137 +29,139 @@ import math
 import time
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
-from dimos.core.global_config import global_config as _global_config
 from dimos.hardware.whole_body.spec import (
     POS_STOP,
     IMUState,
     MotorCommand,
     MotorState,
 )
-from dimos.robot.unitree.mujoco_connection import MujocoConnection
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.simulation.engines.mujoco_shm import (
+    ManipShmReader,
+    shm_key_from_path,
+)
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.global_config import GlobalConfig
     from dimos.hardware.whole_body.registry import WholeBodyAdapterRegistry
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 
 _NUM_MOTORS = 29
 
+_READY_WAIT_TIMEOUT_S = 60.0
+_READY_WAIT_POLL_S = 0.1
+_ATTACH_RETRY_TIMEOUT_S = 30.0
+_ATTACH_RETRY_POLL_S = 0.2
+
 
 class SimMujocoG1WholeBodyAdapter:
-    """Whole-body adapter backed by a ``MujocoConnection`` in low-level mode.
+    """G1 ``WholeBodyAdapter`` that proxies to a ``MujocoSimModule`` via SHM.
 
-    The connection spawns the standard ``mujoco_process.py`` subprocess
-    (``dimos/simulation/mujoco/mujoco_process.py``), auto-selecting
-    ``mjpython`` on macOS, and passes ``control_mode="low_level"`` so
-    the subprocess skips its baked locomotion ONNX and instead reads
-    per-joint commands from shared memory.
+    The sim module owns the engine and publishes joint state + IMU into
+    SHM each step; this adapter reads them and forwards per-joint
+    (q, kp, kd, tau) commands back into SHM for the engine's pre-step
+    PD-with-feedforward hook to apply.
 
-    ``GlobalConfig.robot_model`` must be ``"unitree_g1"`` (the blueprint
-    sets this) so the subprocess loads the G1 MJCF.  ``mujoco_room``
-    controls which scene wraps the robot (default ``"office1"``; the
-    blueprint overrides to ``"empty"`` for a flat floor).
-
-    Args:
-        network_interface: Unused; kept for adapter-registry kwarg
-            symmetry with the DDS adapter.
-        domain_id: Unused; same reason.
-        cfg: Global config to pass to the subprocess.  Defaults to the
-            process-wide ``global_config`` (what the CLI populates).
+    ``address`` (the MJCF XML path) is the discovery key — both sides
+    derive the same SHM names from it via ``shm_key_from_path``.
     """
 
     def __init__(
         self,
         network_interface: int | str = 0,
         domain_id: int = 0,
-        cfg: GlobalConfig | None = None,
+        address: str | None = None,
         **_: Any,
     ) -> None:
-        # Force the two MuJoCo-subprocess-relevant knobs on our own copy
-        # of the config, regardless of what the worker's ``global_config``
-        # singleton says.  The worker process starts fresh (forkserver
-        # spawn), so blueprint-level ``.global_config(robot_model=...)``
-        # overrides applied in the main process do NOT propagate into
-        # the worker's singleton.  We hard-pin G1 + empty scene here so
-        # the subprocess always loads the right model.
-        base = cfg if cfg is not None else _global_config
-        self._cfg = base.model_copy(update={"robot_model": "unitree_g1", "mujoco_room": "empty"})
-        self._connection: MujocoConnection | None = None
+        if address is None:
+            raise ValueError(
+                "SimMujocoG1WholeBodyAdapter: address (MJCF XML path) is required — "
+                "set HardwareComponent.address to the same MJCF path the "
+                "MujocoSimModule loads."
+            )
+        self._address = address
+        self._shm_key = shm_key_from_path(address)
+        self._shm: ManipShmReader | None = None
         self._connected = False
-        # Warn once if downstream consumers try to use the adapter
-        # before the first state packet lands in shm.
-        self._warned_no_state = False
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def connect(self) -> bool:
-        try:
-            self._connection = MujocoConnection(self._cfg, control_mode="low_level")
-            self._connection.start()
-            # Block briefly until the child has actually produced a state
-            # packet, so the first read_motor_states() returns valid data
-            # (otherwise the coordinator's first tick sees zeros and the
-            # WBC task builds a junk obs).
-            deadline = time.time() + 5.0
-            while time.time() < deadline:
-                if self._connection.read_motor_states(_NUM_MOTORS) is not None:
-                    break
-                time.sleep(0.05)
-            self._connected = True
-            logger.info("SimMujocoG1WholeBodyAdapter connected (subprocess ready)")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to start MuJoCo G1 sim subprocess: {e}")
-            self._connected = False
-            return False
+        # Attach with retry — MujocoSimModule may still be starting up.
+        deadline = time.monotonic() + _ATTACH_RETRY_TIMEOUT_S
+        while True:
+            try:
+                self._shm = ManipShmReader(self._shm_key)
+                break
+            except FileNotFoundError:
+                if time.monotonic() > deadline:
+                    logger.error(
+                        "SimMujocoG1WholeBodyAdapter: SHM buffers not found",
+                        address=self._address,
+                        shm_key=self._shm_key,
+                        timeout_s=_ATTACH_RETRY_TIMEOUT_S,
+                    )
+                    return False
+                time.sleep(_ATTACH_RETRY_POLL_S)
+
+        # Wait for the sim to signal ready (engine connected, first
+        # joint-state packet written).  Without this the first
+        # read_motor_states() returns zeros and the WBC obs is junk.
+        deadline = time.monotonic() + _READY_WAIT_TIMEOUT_S
+        while not self._shm.is_ready():
+            if time.monotonic() > deadline:
+                logger.error(
+                    "SimMujocoG1WholeBodyAdapter: sim module not ready",
+                    timeout_s=_READY_WAIT_TIMEOUT_S,
+                )
+                self._shm.cleanup()
+                self._shm = None
+                return False
+            time.sleep(_READY_WAIT_POLL_S)
+
+        self._connected = True
+        logger.info(
+            "SimMujocoG1WholeBodyAdapter connected",
+            num_motors=_NUM_MOTORS,
+            shm_key=self._shm_key,
+        )
+        return True
 
     def disconnect(self) -> None:
-        if self._connection is not None:
+        if self._shm is not None:
             try:
-                self._connection.stop()
+                self._shm.cleanup()
             except Exception as e:  # best-effort cleanup
-                logger.warning(f"MuJoCo sim subprocess stop raised: {e}")
-        self._connection = None
+                logger.warning(f"SHM cleanup raised: {e}")
+        self._shm = None
         self._connected = False
 
     def is_connected(self) -> bool:
-        return self._connected and self._connection is not None
+        return self._connected and self._shm is not None
 
     # ------------------------------------------------------------------
     # IO (WholeBodyAdapter protocol)
     # ------------------------------------------------------------------
 
     def read_motor_states(self) -> list[MotorState]:
-        if not self._connected or self._connection is None:
+        if not self._connected or self._shm is None:
             return [MotorState()] * _NUM_MOTORS
-        arr = self._connection.read_motor_states(_NUM_MOTORS)
-        if arr is None:
-            if not self._warned_no_state:
-                logger.warning("MuJoCo subprocess has not produced any state yet")
-                self._warned_no_state = True
-            return [MotorState()] * _NUM_MOTORS
+        positions = self._shm.read_positions(_NUM_MOTORS)
+        velocities = self._shm.read_velocities(_NUM_MOTORS)
+        efforts = self._shm.read_efforts(_NUM_MOTORS)
         return [
-            MotorState(q=float(arr[i, 0]), dq=float(arr[i, 1]), tau=float(arr[i, 2]))
-            for i in range(_NUM_MOTORS)
+            MotorState(q=positions[i], dq=velocities[i], tau=efforts[i]) for i in range(_NUM_MOTORS)
         ]
 
     def read_imu(self) -> IMUState:
-        if not self._connected or self._connection is None:
+        if not self._connected or self._shm is None:
             return IMUState()
-        arr = self._connection.read_imu_sensor()
-        if arr is None or len(arr) < 10:
-            return IMUState()
-        w, x, y, z = (float(arr[0]), float(arr[1]), float(arr[2]), float(arr[3]))
-        gyro = (float(arr[4]), float(arr[5]), float(arr[6]))
-        accel = (float(arr[7]), float(arr[8]), float(arr[9]))
+        quat, gyro, accel = self._shm.read_imu()
         # Derive ZYX Euler from the quaternion — matches the real G1 adapter.
+        w, x, y, z = quat
         sinr = 2.0 * (w * x + y * z)
         cosr = 1.0 - 2.0 * (x * x + y * y)
         roll = math.atan2(sinr, cosr)
@@ -173,39 +171,38 @@ class SimMujocoG1WholeBodyAdapter:
         cosy = 1.0 - 2.0 * (y * y + z * z)
         yaw = math.atan2(siny, cosy)
         return IMUState(
-            quaternion=(w, x, y, z),
+            quaternion=quat,
             gyroscope=gyro,
             accelerometer=accel,
             rpy=(roll, pitch, yaw),
         )
 
     def read_odom(self) -> PoseStamped | None:
-        # MujocoConnection.get_odom_message() reads the latest base pose
-        # the subprocess wrote to shm and converts it into a PoseStamped
-        # (also handling the wxyz -> xyzw quaternion swap).  Returns None
-        # until the subprocess writes its first sample.
-        if not self._connected or self._connection is None:
-            return None
-        return self._connection.get_odom_message()
+        # MujocoSimModule publishes the floating-base pose on its own
+        # ``odom`` Out port (TBD); the adapter doesn't currently route
+        # odom through SHM.  Returning None matches the real-hw G1
+        # adapter behaviour (no onboard estimator → no odom).
+        return None
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
-        if not self._connected or self._connection is None:
+        if not self._connected or self._shm is None:
             return False
         if len(commands) != _NUM_MOTORS:
             logger.error(
                 f"SimMujocoG1WholeBodyAdapter: expected {_NUM_MOTORS} commands, got {len(commands)}"
             )
             return False
-        q = np.empty(_NUM_MOTORS, dtype=np.float32)
-        kp = np.empty(_NUM_MOTORS, dtype=np.float32)
-        kd = np.empty(_NUM_MOTORS, dtype=np.float32)
-        for i, cmd in enumerate(commands):
-            # POS_STOP ("no command") — write current state back as the
-            # target so the subprocess doesn't see a stale target drift.
-            q[i] = cmd.q if cmd.q != POS_STOP else 0.0
-            kp[i] = cmd.kp
-            kd[i] = cmd.kd
-        self._connection.write_motor_commands(q, kp, kd)
+        # Flatten the per-motor command into per-joint arrays.  POS_STOP
+        # ("no command") is replaced with 0.0 — the engine's PD only
+        # acts when kp > 0 anyway, so a zeroed q is harmless.
+        q = [cmd.q if cmd.q != POS_STOP else 0.0 for cmd in commands]
+        kp = [cmd.kp for cmd in commands]
+        kd = [cmd.kd for cmd in commands]
+        tau = [cmd.tau for cmd in commands]
+        self._shm.write_position_command(q)
+        self._shm.write_kp_command(kp)
+        self._shm.write_kd_command(kd)
+        self._shm.write_tau_command(tau)
         return True
 
 

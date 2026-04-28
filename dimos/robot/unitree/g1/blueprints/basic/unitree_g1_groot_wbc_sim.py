@@ -93,7 +93,7 @@ _g1_coordinator = (
                 joints=g1_joints,
                 # In-process engine via MujocoSimModule — adapter and
                 # engine share state through SHM keyed on the MJCF path.
-                adapter_type="sim_mujoco_engine_g1",
+                adapter_type="sim_mujoco_g1",
                 address=_MJCF_PATH,
                 domain_id=0,
                 auto_enable=True,
@@ -157,6 +157,9 @@ _g1_engine = MujocoSimModule.blueprint(
     enable_pointcloud=True,
     pointcloud_fps=2.0,
     camera_name="lidar_front_camera",
+    # G1 GR00T MJCF references meshes by bare filename (menagerie convention);
+    # without the legacy asset injection MjModel.from_xml_path can't find them.
+    inject_legacy_assets=True,
 )
 
 # WASD teleop dashboard at http://localhost:7779/.

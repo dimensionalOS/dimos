@@ -105,6 +105,11 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    # Inject menagerie/dimos-bundled mesh bytes (via
+    # dimos.simulation.mujoco.model.get_assets) into MjModel.from_xml_string.
+    # MJCFs that reference meshes by bare filename (G1 GR00T, Go2) need this;
+    # self-contained MJCFs with on-disk meshes (xarm scene.xml) don't.
+    inject_legacy_assets: bool = False
 
 
 class MujocoSimModule(
@@ -201,6 +206,11 @@ class MujocoSimModule(
         self._shm = ManipShmWriter(shm_key)
 
         # Build engine with SHM hooks installed.
+        engine_assets: dict[str, bytes] | None = None
+        if self.config.inject_legacy_assets:
+            from dimos.simulation.mujoco.model import get_assets
+
+            engine_assets = get_assets()
         self._engine = MujocoEngine(
             config_path=Path(self.config.address),
             headless=self.config.headless,
@@ -214,6 +224,7 @@ class MujocoSimModule(
             ],
             on_before_step=self._apply_shm_commands,
             on_after_step=self._publish_shm_state,
+            assets=engine_assets,
         )
 
         # Detect gripper (extra joint beyond dof).

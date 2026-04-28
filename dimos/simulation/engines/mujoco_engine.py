@@ -86,13 +86,22 @@ class MujocoEngine(SimulationEngine):
         cameras: list[CameraConfig] | None = None,
         on_before_step: StepHook | None = None,
         on_after_step: StepHook | None = None,
+        assets: dict[str, bytes] | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
         self._on_after_step: StepHook | None = on_after_step
 
         xml_path = self._resolve_xml_path(config_path)
-        self._model = mujoco.MjModel.from_xml_path(str(xml_path))
+        if assets is not None:
+            # MJCFs that reference meshes by bare filename (e.g. menagerie
+            # G1) need the mesh bytes injected by name; from_xml_path can't
+            # find them on disk.
+            with open(xml_path) as f:
+                xml_str = f.read()
+            self._model = mujoco.MjModel.from_xml_string(xml_str, assets=assets)
+        else:
+            self._model = mujoco.MjModel.from_xml_path(str(xml_path))
         self._xml_path = xml_path
 
         self._data = mujoco.MjData(self._model)
