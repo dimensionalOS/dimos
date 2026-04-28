@@ -37,10 +37,10 @@ class TestAllNativeModulePaths:
     def native_module(self, request):
         """Parametrized fixture that yields each native module class."""
         name = request.param
-        mod = importlib.import_module(f"dimos.navigation.nav_stack.modules.{name}.{name}")
+        module = importlib.import_module(f"dimos.navigation.nav_stack.modules.{name}.{name}")
         # The class name varies; find the NativeModule subclass
-        for attr_name in dir(mod):
-            attr = getattr(mod, attr_name)
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
             if (
                 isinstance(attr, type)
                 and issubclass(attr, NativeModule)
@@ -71,7 +71,7 @@ class TestDataFiles:
     def test_path_data_exists(self):
         from dimos.utils.data import get_data
 
-        data = get_data("smart_nav_paths")
+        data = get_data("unitree_g1_local_planner_precomputed_paths")
         for f in ["startPaths.ply", "pathList.ply", "paths.ply"]:
             assert (data / f).exists(), f"Missing data file: {data / f}"
 

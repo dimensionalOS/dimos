@@ -15,13 +15,16 @@
 """Tests for LocalPlanner NativeModule wrapper."""
 
 from pathlib import Path
+from typing import get_origin, get_type_hints
 
 import pytest
 
+from dimos.core.stream import In, Out
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import (
     LocalPlanner,
     LocalPlannerConfig,
 )
+from dimos.utils.data import get_data
 
 
 class TestLocalPlannerConfig:
@@ -51,10 +54,6 @@ class TestLocalPlannerModule:
     """Test LocalPlanner module declaration."""
 
     def test_ports_declared(self):
-        from typing import get_origin, get_type_hints
-
-        from dimos.core.stream import In, Out
-
         hints = get_type_hints(LocalPlanner)
         in_ports = {k for k, v in hints.items() if get_origin(v) is In}
         out_ports = {k for k, v in hints.items() if get_origin(v) is Out}
@@ -93,9 +92,7 @@ class TestPathResolution:
 
     def test_data_files_exist(self):
         """Local planner needs path data files (pulled from LFS)."""
-        from dimos.utils.data import get_data
-
-        paths_dir = get_data("smart_nav_paths")
+        paths_dir = get_data("unitree_g1_local_planner_precomputed_paths")
         assert paths_dir.exists(), f"paths_dir not found: {paths_dir}"
         assert (paths_dir / "startPaths.ply").exists()
         assert (paths_dir / "pathList.ply").exists()

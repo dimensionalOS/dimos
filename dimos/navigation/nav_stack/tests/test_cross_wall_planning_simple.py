@@ -31,6 +31,13 @@ import time
 import lcm as lcmlib
 import pytest
 
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.navigation.nav_stack.main import create_nav_stack
+from dimos.simulation.unity.module import UnityBridgeModule
+
 os.environ.setdefault("DISPLAY", ":1")
 
 ODOM_TOPIC = "/odometry#nav_msgs.Odometry"
@@ -60,14 +67,11 @@ class TestCrossWallPlanningSimple:
     """E2E: cross-wall routing with SimplePlanner (A* on 2D costmap)."""
 
     def test_cross_wall_sequence_simple(self) -> None:
-        from dimos.core.coordination.blueprints import autoconnect
-        from dimos.core.coordination.module_coordinator import ModuleCoordinator
-        from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-        from dimos.msgs.nav_msgs.Odometry import Odometry
-        from dimos.navigation.nav_stack.main import create_nav_stack
-        from dimos.simulation.unity.module import UnityBridgeModule
-
-        paths_dir = Path(__file__).resolve().parents[3] / "data" / "smart_nav_paths"
+        paths_dir = (
+            Path(__file__).resolve().parents[3]
+            / "data"
+            / "unitree_g1_local_planner_precomputed_paths"
+        )
         if paths_dir.exists():
             for f in paths_dir.iterdir():
                 f.unlink(missing_ok=True)

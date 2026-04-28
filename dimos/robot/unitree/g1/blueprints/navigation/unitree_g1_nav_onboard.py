@@ -46,7 +46,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
-from dimos.robot.unitree.g1.config import G1
+from dimos.robot.unitree.g1.config import G1, G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 from dimos.robot.unitree.g1.g1_rerun import (
     g1_odometry_tf_override,
@@ -70,6 +70,9 @@ unitree_g1_nav_onboard = (
             terrain_analysis={
                 "obstacle_height_threshold": 0.01,
                 "ground_height_threshold": 0.01,
+            },
+            local_planner={
+                "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
             },
             simple_planner={
                 "cell_size": 0.3,

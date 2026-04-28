@@ -21,7 +21,6 @@ evaluation to select collision-free paths toward goals.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from dimos_lcm.geometry_msgs import PolygonStamped
 from dimos_lcm.std_msgs import Float32
@@ -37,12 +36,6 @@ from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int8 import Int8
-from dimos.utils.data import get_data
-
-
-def _default_paths_dir() -> str:
-    """Resolve path data from LFS."""
-    return str(get_data("smart_nav_paths"))
 
 
 class LocalPlannerConfig(NativeModuleConfig):
@@ -55,7 +48,7 @@ class LocalPlannerConfig(NativeModuleConfig):
     executable: str = "result/bin/local_planner"
     # build_command: str | None = "nix build --no-write-lock-file"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-local-planner/v0.3.1 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-local-planner/v0.4.0 --no-write-lock-file"
     )
 
     # C++ binary uses camelCase CLI args.
@@ -108,13 +101,9 @@ class LocalPlannerConfig(NativeModuleConfig):
         "omni_dir_goal_thre": "omniDirGoalThre",
     }
 
-    # Path data directory (auto-resolved from LFS)
+    # Path data directory. When empty, the C++ binary falls back to its
+    # bundled `share/local_planner/paths` library (shipped in v0.4.0+).
     paths_dir: str = ""
-
-    def model_post_init(self, __context: Any) -> None:
-        super().model_post_init(__context)
-        if not self.paths_dir:
-            self.paths_dir = _default_paths_dir()
 
     # Vehicle length for collision checking (m).
     vehicle_length: float | None = None
