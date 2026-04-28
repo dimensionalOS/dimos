@@ -142,6 +142,7 @@ all_modules = {
     "module-a": "dimos.robot.unitree.demo_error_on_name_conflicts.ModuleA",
     "module-b": "dimos.robot.unitree.demo_error_on_name_conflicts.ModuleB",
     "mujoco-sim-module": "dimos.simulation.engines.mujoco_sim_module.MujocoSimModule",
+    "multi-echo": "dimos.hardware.arduino.examples.arduino_multi_echo.module.MultiEcho",
     "navigation-module": "dimos.robot.unitree.rosnav.NavigationModule",
     "navigation-skill-container": "dimos.agents.skills.navigation.NavigationSkillContainer",
     "object-db-module": "dimos.perception.detection.moduleDB.ObjectDBModule",

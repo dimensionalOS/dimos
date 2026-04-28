@@ -52,6 +52,8 @@ IGNORED_DIRS = {
     ".tox",
     # third-party vendored code
     "gtsam",
+    # auto-generated enhancement artifacts
+    ".ignore.enhance",
 }
 
 # Lines that match section patterns but are actually programmatic / intentional.

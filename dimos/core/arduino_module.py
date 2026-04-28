@@ -34,7 +34,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import errno
-import fcntl
 import functools
 import glob
 import inspect
@@ -207,7 +206,7 @@ class ArduinoModuleConfig(NativeModuleConfig):
     auto_flash: bool = True
     flash_timeout: float = 60.0
 
-    # --- Compile-time tuning (passed as -D flags to arduino-cli) ---
+    # Compile-time tuning (passed as -D flags to arduino-cli)
     # These override the defaults in dimos_lcm_pubsub.h / dsp_protocol.h.
     # Set to None (the default) to keep the header's built-in default.
     max_subs: int | None = None  # DIMOS_LCM_MAX_SUBS (AVR default: 4)
@@ -301,6 +300,8 @@ class ArduinoModule(NativeModule):
 
     def _build_bridge(self) -> None:
         """Build the C++ bridge via nix. File-locked to handle concurrent modules."""
+        import fcntl  # POSIX-only; deferred here so the module can be imported on Windows
+
         bridge_bin = _ARDUINO_HW_DIR / "result" / "bin" / "arduino_bridge"
 
         # Ensure the lock file exists (nix flake dir is always present).
@@ -798,7 +799,9 @@ class ArduinoModule(NativeModule):
             text=True,
             timeout=30,
         )
-        if list_result.returncode == 0 and core_id in list_result.stdout:
+        if list_result.returncode == 0 and any(
+            line.split()[0] == core_id for line in list_result.stdout.splitlines() if line.strip()
+        ):
             return
 
         logger.info("Installing arduino core", core=core_id)

@@ -13,8 +13,7 @@
  *   - CRC-8/MAXIM table + computation
  *   - dimos_init(baud)
  *   - dimos_send(topic, data, len)
- *   - dimos_poll()
- *   - dimos_on_receive(topic, handler)
+ *   - dimos_check_message() / dimos_message_topic() / dimos_message_data() / dimos_message_len()
  *   - DimosSerial class (Serial.print shim → debug frames)
  *
  * Copyright 2025-2026 Dimensional Inc.  Apache-2.0.

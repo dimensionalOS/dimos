@@ -34,9 +34,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# ---------------------------------------------------------------------------
 # Arduino module
-# ---------------------------------------------------------------------------
 
 
 class LedEchoConfig(ArduinoModuleConfig):
@@ -52,9 +50,7 @@ class LedEcho(ArduinoModule):
     led_state: Out[Bool]
 
 
-# ---------------------------------------------------------------------------
 # Host-side blinker
-# ---------------------------------------------------------------------------
 
 
 class Blinker(Module):
@@ -82,9 +78,7 @@ class Blinker(Module):
             time.sleep(0.5)
 
 
-# ---------------------------------------------------------------------------
 # Blueprint & run
-# ---------------------------------------------------------------------------
 
 blueprint = autoconnect(
     Blinker.blueprint(),
