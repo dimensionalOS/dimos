@@ -1,0 +1,6 @@
+codecov:
+  branch: dev
+
+comment:
+  require_head: false
+  require_base: false
