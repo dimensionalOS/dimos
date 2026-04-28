@@ -16,6 +16,17 @@ from datetime import datetime
 from typing import Any
 
 from langchain_core.messages.base import BaseMessage
+import json
+
+def estimate_tokens(msgs: list[BaseMessage]) -> int:
+    """Safely estimates token counts for agent history compaction."""
+    count = 0
+    for m in msgs:
+        content_str = json.dumps(m.content) if not isinstance(m.content, str) else m.content
+        count += len(content_str) // 4 + 10
+        if getattr(m, "tool_calls", None):
+            count += 50 * len(m.tool_calls) # type: ignore
+    return count
 
 from dimos.utils.logging_config import setup_logger
 

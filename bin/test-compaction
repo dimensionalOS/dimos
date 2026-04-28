@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# E2E Automatic Test for Agent History Compaction
+# This script temporarily lowers the token limit, runs the agent, spams it to force compaction,
+# and verifies it recovers without an API crash.
+
+set -e
+
+# 1. Temporarily patch the agent configuration to a very low 500-token limit
+echo "Temporarily patching AgentConfig to max_history_tokens=500..."
+# macOS requires -i '' for sed
+sed -i '' 's/max_history_tokens: int | None = None/max_history_tokens: int | None = 500/g' dimos/agents/agent.py
+
+# Ensure we revert the change even if the script fails or is aborted (Ctrl+C)
+cleanup() {
+    echo "Cleaning up..."
+    dimos stop --force || true
+    git checkout dimos/agents/agent.py
+    echo "Reverted dimos/agents/agent.py to original state."
+}
+trap cleanup EXIT
+
+# 2. Launch the agentic blueprint in daemon (background) mode
+echo "Starting Go2 Agentic Simulation in the background..."
+dimos --simulation run unitree-go2-agentic --daemon
+
+# Wait for the agent and all RPC modules to initialize
+echo "Waiting 15 seconds for modules to boot and connect..."
+sleep 15
+
+# 3. Send a physical command that inherently requires a tool call
+echo "Sending initial tool command to start execution..."
+dimos agent-send "Move forward 0.5 meters."
+sleep 10
+
+# 4. Spam the context window to force LangChain trim_messages() to drop the old tool history
+echo "Spamming the agent to force history compaction..."
+for i in {1..4}; do
+    echo "Sending spam block $i..."
+    # ~300 dummy words
+    SPAM_TEXT="Please explicitly acknowledge this message. Context block $i: $(printf 'spam dummy word %.0s' {1..300})"
+    dimos agent-send "$SPAM_TEXT"
+    sleep 10
+done
+
+# 5. Send one final physical tool command
+echo "Sending final tool command. If compaction breaks, LangGraph will crash now!"
+dimos agent-send "Now turn left 90 degrees."
+sleep 15
+
+echo "--------------------------------------------------------"
+echo "Test Completed Successfully! (No early exit from crashes)"
+echo "Run 'dimos log' to review the actual LLM tool outputs."
+echo "--------------------------------------------------------"

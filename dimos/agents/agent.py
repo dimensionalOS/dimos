@@ -43,6 +43,7 @@ class AgentConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-4o"
     model_fixture: str | None = None
+    max_history_tokens: int | None = None
 
 
 class Agent(Module[AgentConfig]):
@@ -132,10 +133,30 @@ class Agent(Module[AgentConfig]):
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
     ) -> None:
+        from langchain_core.messages import trim_messages
+        from dimos.agents.utils import estimate_tokens
+
         self.agent_idle.publish(False)
         self._history.append(message)
         pretty_print_langchain_message(message)
         self.agent.publish(message)
+
+        if self.config.max_history_tokens is not None:
+            trimmed_history = trim_messages(
+                self._history,
+                max_tokens=self.config.max_history_tokens,
+                strategy="last",
+                token_counter=estimate_tokens,
+                include_system=True,
+                allow_partial=False,
+            )
+            # Ensure it's a list since trim_messages can return other types sometimes
+            trimmed_history = list(trimmed_history)
+        else:
+            trimmed_history = self._history
+
+        # We replace the internal history with the pruned one so it doesn't grow indefinitely in RAM
+        self._history = trimmed_history.copy()
 
         for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
             for node_output in update.values():
