@@ -70,6 +70,26 @@ _CONFIG_DIR = Path(__file__).parent / "config"
 _logger = setup_logger()
 
 
+def _odom_to_body_tf(msg: Odometry) -> Transform:
+    """Build the ``odom → body`` Transform that mirrors a SLAM odometry pose."""
+    return Transform(
+        frame_id=FRAME_ODOM,
+        child_frame_id=FRAME_BODY,
+        translation=Vector3(
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z,
+        ),
+        rotation=Quaternion(
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z,
+            msg.pose.orientation.w,
+        ),
+        ts=msg.ts or time.time(),
+    )
+
+
 def _get_local_ips() -> list[str]:
     """Return all IPv4 addresses assigned to local interfaces."""
     ips: list[str] = []
@@ -211,12 +231,9 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     odometry: Out[Odometry]
     global_map: Out[PointCloud2]
 
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._validate_network()
-
     @rpc
     def start(self) -> None:
+        self._validate_network()
         super().start()
         # Subscribe to our own odometry output so we can mirror each
         # pose update into the TF tree as an odom→body transform.
@@ -226,24 +243,7 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
         """Publish the SLAM pose as an ``odom → body`` TF transform."""
-        self.tf.publish(
-            Transform(
-                frame_id=FRAME_ODOM,
-                child_frame_id=FRAME_BODY,
-                translation=Vector3(
-                    msg.pose.position.x,
-                    msg.pose.position.y,
-                    msg.pose.position.z,
-                ),
-                rotation=Quaternion(
-                    msg.pose.orientation.x,
-                    msg.pose.orientation.y,
-                    msg.pose.orientation.z,
-                    msg.pose.orientation.w,
-                ),
-                ts=msg.ts or time.time(),
-            )
-        )
+        self.tf.publish(_odom_to_body_tf(msg))
 
     def stop(self) -> None:
         super().stop()

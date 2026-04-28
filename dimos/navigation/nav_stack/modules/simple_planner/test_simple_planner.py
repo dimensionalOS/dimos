@@ -17,23 +17,24 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import math
-import threading
 
 import pytest
 
 from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import (
     Costmap,
     SimplePlanner,
+    StuckState,
     _blocked_at_inflation,
     astar,
+    plan_on_costmap,
+    progress_tick,
 )
 
-# ─── Costmap ─────────────────────────────────────────────────────────────
+_DEFAULT_MAX_EXPANSIONS = 200_000
 
 
 class TestCostmap:
-    def test_world_cell_roundtrip(self) -> None:
+    def test_world_cell_roundtrip(self):
         cm = Costmap(cell_size=0.5, obstacle_height=0.1, inflation_radius=0.0)
         for x, y in [(0.0, 0.0), (1.25, -2.75), (10.1, 4.4)]:
             ix, iy = cm.world_to_cell(x, y)
@@ -42,26 +43,26 @@ class TestCostmap:
             assert abs(cx - x) <= 0.5
             assert abs(cy - y) <= 0.5
 
-    def test_height_max_tracks_tallest(self) -> None:
+    def test_height_max_tracks_tallest(self):
         cm = Costmap(cell_size=1.0, obstacle_height=0.5, inflation_radius=0.0)
         cm.update(0.1, 0.1, 0.2)
         cm.update(0.2, 0.3, 0.8)
         cm.update(0.4, 0.4, 0.4)  # same cell, smaller than 0.8
         assert cm.is_blocked(0, 0)  # 0.8 > 0.5
 
-    def test_height_below_threshold_not_blocked(self) -> None:
+    def test_height_below_threshold_not_blocked(self):
         cm = Costmap(cell_size=1.0, obstacle_height=0.5, inflation_radius=0.0)
         cm.update(0.5, 0.5, 0.3)  # below threshold
         assert not cm.is_blocked(0, 0)
 
-    def test_clear_wipes_obstacles(self) -> None:
+    def test_clear_wipes_obstacles(self):
         cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
         cm.update(0.0, 0.0, 1.0)
         assert cm.is_blocked(0, 0)
         cm.clear()
         assert not cm.is_blocked(0, 0)
 
-    def test_inflation_blocks_neighbours(self) -> None:
+    def test_inflation_blocks_neighbours(self):
         cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=1.5)
         cm.update(0.0, 0.0, 1.0)
         # Center is blocked
@@ -75,24 +76,21 @@ class TestCostmap:
         assert not cm.is_blocked(2, 0)
         assert not cm.is_blocked(0, 2)
 
-    def test_zero_inflation(self) -> None:
+    def test_zero_inflation(self):
         cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
         cm.update(0.0, 0.0, 1.0)
         assert cm.is_blocked(0, 0)
         assert not cm.is_blocked(1, 0)
 
-    def test_invalid_cell_size(self) -> None:
+    def test_invalid_cell_size(self):
         with pytest.raises(ValueError):
             Costmap(cell_size=0.0, obstacle_height=0.1, inflation_radius=0.0)
         with pytest.raises(ValueError):
             Costmap(cell_size=-1.0, obstacle_height=0.1, inflation_radius=0.0)
 
-    def test_invalid_inflation(self) -> None:
+    def test_invalid_inflation(self):
         with pytest.raises(ValueError):
             Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=-0.1)
-
-
-# ─── A* ──────────────────────────────────────────────────────────────────
 
 
 def _never_blocked(ix: int, iy: int) -> bool:
@@ -107,10 +105,10 @@ def _blocked_set(cells: set[tuple[int, int]]) -> Callable[[int, int], bool]:
 
 
 class TestAstar:
-    def test_trivial_same_cell(self) -> None:
+    def test_trivial_same_cell(self):
         assert astar((3, 4), (3, 4), _never_blocked) == [(3, 4)]
 
-    def test_straight_line_no_obstacles(self) -> None:
+    def test_straight_line_no_obstacles(self):
         path = astar((0, 0), (5, 0), _never_blocked)
         assert path is not None
         assert path[0] == (0, 0)
@@ -118,7 +116,7 @@ class TestAstar:
         # 5 straight steps → 6 cells
         assert len(path) == 6
 
-    def test_diagonal_no_obstacles(self) -> None:
+    def test_diagonal_no_obstacles(self):
         path = astar((0, 0), (3, 3), _never_blocked)
         assert path is not None
         assert path[0] == (0, 0)
@@ -126,7 +124,7 @@ class TestAstar:
         # Prefer diagonal: 3 moves + 1 cell = 4 cells
         assert len(path) == 4
 
-    def test_wall_detours(self) -> None:
+    def test_wall_detours(self):
         # vertical wall at x=2 for y in [-1..1], need to go around
         wall = {(2, -1), (2, 0), (2, 1)}
         path = astar((0, 0), (4, 0), _blocked_set(wall))
@@ -137,7 +135,7 @@ class TestAstar:
         for cell in path:
             assert cell not in wall
 
-    def test_unreachable_goal(self) -> None:
+    def test_unreachable_goal(self):
         # Enclosed goal
         wall = {(2, -1), (2, 0), (2, 1), (1, -1), (3, -1), (1, 1), (3, 1), (2, 2)}
         # Add missing walls to fully enclose (2, 0)
@@ -159,12 +157,12 @@ class TestAstar:
         path = astar((0, 0), (5, 0), _blocked_set(wall))
         assert path is None
 
-    def test_max_expansions_cap(self) -> None:
+    def test_max_expansions_cap(self):
         # Should give up instead of hanging
         path = astar((0, 0), (10000, 10000), _never_blocked, max_expansions=100)
         assert path is None
 
-    def test_octile_prefers_diagonal(self) -> None:
+    def test_octile_prefers_diagonal(self):
         # 4 straight moves vs 2 diagonal + 2 straight = same displacement
         # but A* should find the optimal octile path.
         path = astar((0, 0), (2, 2), _never_blocked)
@@ -173,119 +171,81 @@ class TestAstar:
         assert len(path) == 3
 
 
-# ─── SimplePlanner.plan() + lookahead (no threading, no LCM) ─────────────
-
-
 class TestSimplePlannerPlan:
-    def _make_planner(self, cell_size: float = 0.5) -> SimplePlanner:
-        # Constructing Module directly needs the blueprint machinery; use
-        # object.__new__ and fill in the fields we actually need so we
-        # can unit-test the plan() + _lookahead() logic standalone.
-        p = SimplePlanner.__new__(SimplePlanner)
-        p._costmap = Costmap(cell_size=cell_size, obstacle_height=0.1, inflation_radius=0.0)
+    def _make_costmap(self, cell_size=0.5):
+        return Costmap(cell_size=cell_size, obstacle_height=0.1, inflation_radius=0.0)
 
-        # Fake config holder for the plan() max_expansions access
-        class _C:
-            max_expansions = 200_000
-
-        p.config = _C()  # type: ignore[assignment]
-        return p
-
-    def test_plan_straight_open_path(self) -> None:
-        p = self._make_planner(cell_size=0.5)
-        path = p.plan(0.0, 0.0, 2.0, 0.0)
+    def test_plan_straight_open_path(self):
+        cm = self._make_costmap(cell_size=0.5)
+        path = plan_on_costmap(cm, 0.0, 0.0, 2.0, 0.0, _DEFAULT_MAX_EXPANSIONS)
         assert path is not None
-        # First cell is near start, last cell is near goal
-        assert abs(path[0][0] - 0.25) < 1e-6
-        assert abs(path[0][1] - 0.25) < 1e-6
-        assert abs(path[-1][0] - 2.25) < 1e-6
-        assert abs(path[-1][1] - 0.25) < 1e-6
+        assert path[0][0] == pytest.approx(0.25)
+        assert path[0][1] == pytest.approx(0.25)
+        assert path[-1][0] == pytest.approx(2.25)
+        assert path[-1][1] == pytest.approx(0.25)
 
-    def test_plan_routes_around_obstacle(self) -> None:
-        p = self._make_planner(cell_size=0.5)
-        # Build a wall at x≈1.0 between y=-0.5 and y=1.0
+    def test_plan_routes_around_obstacle(self):
+        cm = self._make_costmap(cell_size=0.5)
         for y in (-0.5, 0.0, 0.5, 1.0):
-            p._costmap.update(1.0, y, 1.0)
-        path = p.plan(0.0, 0.0, 2.0, 0.0)
+            cm.update(1.0, y, 1.0)
+        path = plan_on_costmap(cm, 0.0, 0.0, 2.0, 0.0, _DEFAULT_MAX_EXPANSIONS)
         assert path is not None
-        blocked = p._costmap.blocked_cells()
-        # Path cells (converted back to cell indices) must not contain blocked cells
+        blocked = cm.blocked_cells()
         for wx, wy in path:
-            ix, iy = p._costmap.world_to_cell(wx, wy)
+            ix, iy = cm.world_to_cell(wx, wy)
             assert (
                 (ix, iy) not in blocked
-                or (ix, iy) == p._costmap.world_to_cell(0.0, 0.0)
-                or (ix, iy) == p._costmap.world_to_cell(2.0, 0.0)
+                or (ix, iy) == cm.world_to_cell(0.0, 0.0)
+                or (ix, iy) == cm.world_to_cell(2.0, 0.0)
             )
 
-    def test_plan_returns_none_when_blocked(self) -> None:
-        p = self._make_planner(cell_size=0.5)
-        # Box in the start
-        for x in (-0.5, 0.0, 0.5):
-            for y in (-0.5, 0.0, 0.5):
-                if (x, y) == (0.0, 0.0):
-                    continue
-                p._costmap.update(x, y, 1.0)
-        # Also block further out — but actually with finite box, still reachable. Skip.
-        # Instead test a tiny costmap where goal is surrounded on all 8 sides.
-        p2 = self._make_planner(cell_size=1.0)
+    def test_plan_returns_none_when_blocked(self):
+        cm = self._make_costmap(cell_size=1.0)
         gx, gy = 5.0, 0.0
-        # Ring around goal cell (5, 0)
         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)):
-            p2._costmap.update(gx + dx * 1.0, gy + dy * 1.0, 1.0)
-        path = p2.plan(0.0, 0.0, gx, gy)
+            cm.update(gx + dx * 1.0, gy + dy * 1.0, 1.0)
+        path = plan_on_costmap(cm, 0.0, 0.0, gx, gy, _DEFAULT_MAX_EXPANSIONS)
         assert path is None
 
-    def test_lookahead_picks_far_enough(self) -> None:
+    def test_lookahead_picks_far_enough(self):
         path = [(0.0, 0.0), (0.5, 0.0), (1.0, 0.0), (1.5, 0.0), (2.0, 0.0)]
         wx, wy = SimplePlanner._lookahead(path, 0.0, 0.0, 1.0)
-        assert math.isclose(wx, 1.0)
-        assert math.isclose(wy, 0.0)
+        assert wx == pytest.approx(1.0)
+        assert wy == pytest.approx(0.0)
 
-    def test_lookahead_falls_back_to_end(self) -> None:
+    def test_lookahead_falls_back_to_end(self):
         path = [(0.0, 0.0), (0.1, 0.0)]
         wx, wy = SimplePlanner._lookahead(path, 0.0, 0.0, 5.0)
-        assert math.isclose(wx, 0.1)
-        assert math.isclose(wy, 0.0)
+        assert wx == pytest.approx(0.1)
+        assert wy == pytest.approx(0.0)
 
-    def test_lookahead_empty_path(self) -> None:
+    def test_lookahead_empty_path(self):
         wx, wy = SimplePlanner._lookahead([], 3.0, 4.0, 1.0)
         assert wx == 3.0 and wy == 4.0
 
-    def test_plan_with_inflation_override_opens_doorway(self) -> None:
-        # Enclosed box with a single-cell doorway at (0, 3). Robot at
-        # (0, 0), goal at (0, 6). Inflation 1.0 seals the doorway;
-        # override to 0.0 should open it.
-        p = self._make_planner(cell_size=1.0)
-        p._costmap = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=1.0)
-        # Box: ix in [-3, 3], iy in [-1, 3] and [-1, 7] walls
+    def test_plan_with_inflation_override_opens_doorway(self):
+        cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=1.0)
         for ix in range(-3, 4):
-            p._costmap.update(float(ix), -1.0, 1.0)  # bottom (inner box)
-            p._costmap.update(float(ix), 7.0, 1.0)  # top (outer box)
+            cm.update(float(ix), -1.0, 1.0)
+            cm.update(float(ix), 7.0, 1.0)
         for iy in range(-1, 8):
-            p._costmap.update(-3.0, float(iy), 1.0)  # left
-            p._costmap.update(3.0, float(iy), 1.0)  # right
-        # Divider wall at iy=3 with doorway at ix=0
+            cm.update(-3.0, float(iy), 1.0)
+            cm.update(3.0, float(iy), 1.0)
         for ix in range(-2, 3):
             if ix == 0:
                 continue
-            p._costmap.update(float(ix), 3.0, 1.0)
-        assert p.plan(0.0, 0.0, 0.0, 6.0) is None
-        path = p.plan(0.0, 0.0, 0.0, 6.0, inflation_override=0.0)
+            cm.update(float(ix), 3.0, 1.0)
+        assert plan_on_costmap(cm, 0.0, 0.0, 0.0, 6.0, _DEFAULT_MAX_EXPANSIONS) is None
+        path = plan_on_costmap(
+            cm, 0.0, 0.0, 0.0, 6.0, _DEFAULT_MAX_EXPANSIONS, inflation_override=0.0
+        )
         assert path is not None
-        assert any(p._costmap.world_to_cell(wx, wy) == (0, 3) for wx, wy in path)
+        assert any(cm.world_to_cell(wx, wy) == (0, 3) for wx, wy in path)
 
-    def test_lookahead_moving_robot(self) -> None:
-        # Robot is already halfway down the path; look-ahead should pick a
-        # point ahead of the robot, not at the start.
+    def test_lookahead_moving_robot(self):
         path = [(x, 0.0) for x in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0)]
         wx, wy = SimplePlanner._lookahead(path, 2.0, 0.0, 1.5)
-        # From (2, 0), first point ≥ 1.5 m away is (4, 0) (dist 2.0),
-        # not (3, 0) which is only 1.0 m away.
-        assert math.isclose(wx, 4.0)
-
-
-# ─── _blocked_at_inflation helper ─────────────────────────────────────────
+        assert wx == pytest.approx(4.0)
 
 
 class TestBlockedAtInflation:
@@ -294,12 +254,12 @@ class TestBlockedAtInflation:
         cm.update(0.0, 0.0, 1.0)
         return cm
 
-    def test_zero_inflation_single_cell(self) -> None:
+    def test_zero_inflation_single_cell(self):
         cm = self._cm_with_single_obstacle()
         blocked = _blocked_at_inflation(cm, 0.0)
         assert blocked == {(0, 0)}
 
-    def test_larger_inflation_includes_neighbours(self) -> None:
+    def test_larger_inflation_includes_neighbours(self):
         cm = self._cm_with_single_obstacle()
         blocked_0 = _blocked_at_inflation(cm, 0.0)
         blocked_2 = _blocked_at_inflation(cm, 2.0)
@@ -308,14 +268,14 @@ class TestBlockedAtInflation:
         assert (0, 1) in blocked_2
         assert (2, 2) not in blocked_2  # sqrt(8) ≈ 2.83 > 2
 
-    def test_below_height_threshold_ignored(self) -> None:
+    def test_below_height_threshold_ignored(self):
         cm = Costmap(cell_size=1.0, obstacle_height=0.5, inflation_radius=0.0)
         cm.update(0.0, 0.0, 0.3)  # below threshold
         cm.update(5.0, 0.0, 1.0)  # above threshold
         blocked = _blocked_at_inflation(cm, 0.0)
         assert blocked == {(5, 0)}
 
-    def test_does_not_mutate_costmap(self) -> None:
+    def test_does_not_mutate_costmap(self):
         cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
         cm.update(0.0, 0.0, 1.0)
         assert cm.inflation_radius == 0.0
@@ -324,136 +284,94 @@ class TestBlockedAtInflation:
         # Live costmap's own blocked_cells still reflects its own inflation
         assert cm.blocked_cells() == {(0, 0)}
 
-    def test_rejects_negative_inflation(self) -> None:
+    def test_rejects_negative_inflation(self):
         cm = self._cm_with_single_obstacle()
         with pytest.raises(ValueError):
             _blocked_at_inflation(cm, -0.5)
 
 
-# ─── Stuck detection + escalation state machine ──────────────────────────
-
-
 class TestStuckEscalation:
-    def _planner(
+    def _initial_state(self, inflation_radius=0.4):
+        return StuckState(
+            ref_goal_dist=float("inf"),
+            last_progress_time=0.0,
+            effective_inflation=inflation_radius,
+        )
+
+    def _step(
         self,
+        state,
+        dist,
+        now,
         *,
-        inflation_radius: float = 0.4,
-        stuck_seconds: float = 5.0,
-        progress_epsilon: float = 0.25,
-        stuck_shrink_factor: float = 0.5,
-        stuck_min_inflation: float = 0.0,
-    ) -> SimplePlanner:
-        """Build a SimplePlanner with just enough state to exercise the
-        progress/stuck logic, without the real Module machinery."""
-        p = SimplePlanner.__new__(SimplePlanner)
-        p._costmap = Costmap(
-            cell_size=1.0,
-            obstacle_height=0.1,
-            inflation_radius=inflation_radius,
+        progress_epsilon=0.25,
+        stuck_seconds=5.0,
+        stuck_shrink_factor=0.5,
+        stuck_min_inflation=0.0,
+    ):
+        new_state, _ = progress_tick(
+            state,
+            dist,
+            now,
+            progress_epsilon=progress_epsilon,
+            stuck_seconds=stuck_seconds,
+            stuck_shrink_factor=stuck_shrink_factor,
+            stuck_min_inflation=stuck_min_inflation,
         )
+        return new_state
 
-        class _Cfg:
-            pass
+    def test_progress_refreshes_last_time(self):
+        s = self._initial_state()
+        s = self._step(s, 10.0, 0.0)
+        assert s.ref_goal_dist == 10.0
+        s = self._step(s, 9.0, 1.0)
+        assert s.last_progress_time == 1.0
+        assert s.ref_goal_dist == 9.0
+        assert s.effective_inflation == 0.4
 
-        p.config = _Cfg()  # type: ignore[assignment]
-        p.config.inflation_radius = inflation_radius
-        p.config.stuck_seconds = stuck_seconds
-        p.config.progress_epsilon = progress_epsilon
-        p.config.stuck_shrink_factor = stuck_shrink_factor
-        p.config.stuck_min_inflation = stuck_min_inflation
-        p._ref_goal_dist = float("inf")
-        p._last_progress_time = 0.0
-        p._effective_inflation = inflation_radius
-        p._lock = threading.Lock()
-        return p
+    def test_tiny_progress_does_not_count(self):
+        s = self._initial_state()
+        s = self._step(s, 10.0, 0.0, progress_epsilon=0.25)
+        s = self._step(s, 9.9, 1.0, progress_epsilon=0.25)
+        assert s.ref_goal_dist == 10.0
+        assert s.last_progress_time == 0.0
 
-    @staticmethod
-    def _tick(p: SimplePlanner, dist: float, now: float) -> None:
-        """Run the progress/escalation block once with a synthetic clock."""
-        cfg = p.config
-        with p._lock:
-            if dist < p._ref_goal_dist - cfg.progress_epsilon:
-                p._ref_goal_dist = dist
-                p._last_progress_time = now
-                # Inflation intentionally not restored — stays wherever
-                # the most recent escalation left it.
-            elif (
-                now - p._last_progress_time >= cfg.stuck_seconds
-                and p._effective_inflation > cfg.stuck_min_inflation
-            ):
-                prev = p._effective_inflation
-                new = max(cfg.stuck_min_inflation, prev * cfg.stuck_shrink_factor)
-                if new < prev:
-                    p._effective_inflation = new
-                    p._last_progress_time = now
-                    p._ref_goal_dist = dist
+    def test_escalation_shrinks_inflation(self):
+        s = self._initial_state(inflation_radius=0.4)
+        kw = dict(stuck_seconds=5.0, stuck_shrink_factor=0.5)
+        s = self._step(s, 10.0, 0.0, **kw)
+        s = self._step(s, 10.0, 4.9, **kw)
+        assert s.effective_inflation == 0.4
+        s = self._step(s, 10.0, 5.0, **kw)
+        assert s.effective_inflation == 0.2
+        s = self._step(s, 10.0, 10.0, **kw)
+        assert s.effective_inflation == 0.1
 
-    def test_progress_refreshes_last_time(self) -> None:
-        p = self._planner()
-        self._tick(p, dist=10.0, now=0.0)
-        assert p._ref_goal_dist == 10.0
-        self._tick(p, dist=9.0, now=1.0)
-        assert p._last_progress_time == 1.0
-        assert p._ref_goal_dist == 9.0
-        assert p._effective_inflation == 0.4
+    def test_escalation_respects_floor(self):
+        s = self._initial_state(inflation_radius=0.4)
+        kw = dict(stuck_seconds=1.0, stuck_shrink_factor=0.5, stuck_min_inflation=0.2)
+        s = self._step(s, 10.0, 0.0, **kw)
+        s = self._step(s, 10.0, 1.0, **kw)
+        assert s.effective_inflation == 0.2
+        s = self._step(s, 10.0, 2.0, **kw)
+        assert s.effective_inflation == 0.2
+        s = self._step(s, 10.0, 3.0, **kw)
+        assert s.effective_inflation == 0.2
 
-    def test_tiny_progress_does_not_count(self) -> None:
-        p = self._planner(progress_epsilon=0.25)
-        self._tick(p, dist=10.0, now=0.0)
-        self._tick(p, dist=9.9, now=1.0)  # only 0.1 closer; below epsilon
-        assert p._ref_goal_dist == 10.0  # unchanged
-        assert p._last_progress_time == 0.0
-
-    def test_escalation_shrinks_inflation(self) -> None:
-        p = self._planner(inflation_radius=0.4, stuck_seconds=5.0, stuck_shrink_factor=0.5)
-        self._tick(p, dist=10.0, now=0.0)
-        # Not stuck yet
-        self._tick(p, dist=10.0, now=4.9)
-        assert p._effective_inflation == 0.4
-        # Stuck → first escalation
-        self._tick(p, dist=10.0, now=5.0)
-        assert p._effective_inflation == 0.2
-        # Stuck again → second escalation (t = 5.0 + 5.0 = 10.0)
-        self._tick(p, dist=10.0, now=10.0)
-        assert p._effective_inflation == 0.1
-
-    def test_escalation_respects_floor(self) -> None:
-        p = self._planner(
-            inflation_radius=0.4,
-            stuck_seconds=1.0,
-            stuck_shrink_factor=0.5,
-            stuck_min_inflation=0.2,
-        )
-        self._tick(p, dist=10.0, now=0.0)
-        self._tick(p, dist=10.0, now=1.0)
-        assert p._effective_inflation == 0.2
-        # Can't shrink below min
-        self._tick(p, dist=10.0, now=2.0)
-        assert p._effective_inflation == 0.2
-        self._tick(p, dist=10.0, now=3.0)
-        assert p._effective_inflation == 0.2
-
-    def test_cached_path_lookahead_tracks_robot_position(self) -> None:
-        # During a cooldown window, _publish_from_cached picks a
-        # waypoint from the cached path using the ROBOT's current pose
-        # (not where it was when the path was planned).
+    def test_cached_path_lookahead_tracks_robot_position(self):
         cached = [(x, 0.0) for x in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0)]
-        # Robot started at (0,0), has now driven to (2,0)
         wx, wy = SimplePlanner._lookahead(cached, 2.0, 0.0, 1.5)
-        # Closest index to robot is 2 (the (2,0) point). First point
-        # ≥ 1.5 m away from (2, 0) is (4, 0) (distance 2.0).
-        assert math.isclose(wx, 4.0)
-        assert math.isclose(wy, 0.0)
+        assert wx == pytest.approx(4.0)
+        assert wy == pytest.approx(0.0)
 
-    def test_progress_after_escalation_keeps_shrunk_inflation(self) -> None:
+    def test_progress_after_escalation_keeps_shrunk_inflation(self):
         # Once we shrink inflation to clear a tight spot, we DON'T bump
-        # it back up on subsequent progress — the escalated value stays
-        # in force until the next goal arrives. Prevents 4-s cycles of
-        # re-blocking → re-escalating through the same doorway.
-        p = self._planner(inflation_radius=0.4, stuck_seconds=1.0)
-        self._tick(p, dist=10.0, now=0.0)
-        self._tick(p, dist=10.0, now=1.0)  # escalate → 0.2
-        assert p._effective_inflation == 0.2
-        self._tick(p, dist=9.0, now=1.5)  # progress of 1.0 > epsilon
-        assert p._effective_inflation == 0.2  # stays shrunk
-        assert p._ref_goal_dist == 9.0
+        # it back up on subsequent progress — escalated value stays in
+        # force until the next goal arrives.
+        s = self._initial_state(inflation_radius=0.4)
+        s = self._step(s, 10.0, 0.0, stuck_seconds=1.0)
+        s = self._step(s, 10.0, 1.0, stuck_seconds=1.0)
+        assert s.effective_inflation == 0.2
+        s = self._step(s, 9.0, 1.5, stuck_seconds=1.0)
+        assert s.effective_inflation == 0.2
+        assert s.ref_goal_dist == 9.0

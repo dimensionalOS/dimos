@@ -357,6 +357,32 @@ class _SimplePGO:
         return len(self._key_poses)
 
 
+def build_corrected_odometry(r: np.ndarray, t: np.ndarray, ts: float) -> Odometry:
+    """Build a ``map → body`` corrected Odometry message from rotation/translation."""
+    q = Rotation.from_matrix(r).as_quat()  # [x,y,z,w]
+    return Odometry(
+        ts=ts,
+        frame_id=FRAME_MAP,
+        child_frame_id=FRAME_BODY,
+        pose=Pose(
+            position=[float(t[0]), float(t[1]), float(t[2])],
+            orientation=[float(q[0]), float(q[1]), float(q[2]), float(q[3])],
+        ),
+    )
+
+
+def build_map_odom_tf(r_offset: np.ndarray, t_offset: np.ndarray, ts: float) -> Transform:
+    """Build the ``map → odom`` correction Transform from rotation/translation."""
+    q = Rotation.from_matrix(r_offset).as_quat()  # [x,y,z,w]
+    return Transform(
+        frame_id=FRAME_MAP,
+        child_frame_id=FRAME_ODOM,
+        translation=Vector3(float(t_offset[0]), float(t_offset[1]), float(t_offset[2])),
+        rotation=Quaternion(float(q[0]), float(q[1]), float(q[2]), float(q[3])),
+        ts=ts,
+    )
+
+
 class PGO(Module):
     """Pose graph optimization with loop closure detection.
 
@@ -472,18 +498,7 @@ class PGO(Module):
         self._publish_map_odom_tf(r_offset, t_offset, ts)
 
     def _publish_corrected_odom(self, r: np.ndarray, t: np.ndarray, ts: float) -> None:
-        q = Rotation.from_matrix(r).as_quat()  # [x,y,z,w]
-
-        odom = Odometry(
-            ts=ts,
-            frame_id=FRAME_MAP,
-            child_frame_id=FRAME_BODY,
-            pose=Pose(
-                position=[float(t[0]), float(t[1]), float(t[2])],
-                orientation=[float(q[0]), float(q[1]), float(q[2]), float(q[3])],
-            ),
-        )
-        self.corrected_odometry.publish(odom)
+        self.corrected_odometry.publish(build_corrected_odometry(r, t, ts))
 
     def _publish_map_odom_tf(self, r_offset: np.ndarray, t_offset: np.ndarray, ts: float) -> None:
         """Publish the ``map → odom`` correction transform to the TF tree.
@@ -491,16 +506,7 @@ class PGO(Module):
         Composed with FastLio2's ``odom → body``, this gives any
         consumer ``map → body`` via BFS chain lookup.
         """
-        q = Rotation.from_matrix(r_offset).as_quat()  # [x,y,z,w]
-        self.tf.publish(
-            Transform(
-                frame_id=FRAME_MAP,
-                child_frame_id=FRAME_ODOM,
-                translation=Vector3(float(t_offset[0]), float(t_offset[1]), float(t_offset[2])),
-                rotation=Quaternion(float(q[0]), float(q[1]), float(q[2]), float(q[3])),
-                ts=ts,
-            )
-        )
+        self.tf.publish(build_map_odom_tf(r_offset, t_offset, ts))
 
     def _publish_loop(self) -> None:
         """Periodically publish global map."""

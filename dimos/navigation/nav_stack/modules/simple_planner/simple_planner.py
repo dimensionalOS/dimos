@@ -27,6 +27,7 @@ FarPlanner.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import heapq
 import math
 import threading
@@ -135,6 +136,94 @@ class Costmap:
 _NEIGHBOURS: tuple[tuple[int, int, float], ...] = tuple(
     (dx, dy, math.hypot(dx, dy)) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0)
 )
+
+
+@dataclass
+class StuckState:
+    """Snapshot of progress/escalation state for one planning tick."""
+
+    ref_goal_dist: float
+    last_progress_time: float
+    effective_inflation: float
+
+
+def progress_tick(
+    state: StuckState,
+    goal_dist: float,
+    mono_now: float,
+    progress_epsilon: float,
+    stuck_seconds: float,
+    stuck_shrink_factor: float,
+    stuck_min_inflation: float,
+) -> tuple[StuckState, bool]:
+    """Advance the stuck-detection / inflation-escalation state by one tick.
+
+    Returns ``(new_state, escalated)``. ``escalated`` is True when this
+    tick shrank the effective inflation; the caller can use it to log.
+    """
+    if goal_dist < state.ref_goal_dist - progress_epsilon:
+        return (
+            StuckState(
+                ref_goal_dist=goal_dist,
+                last_progress_time=mono_now,
+                effective_inflation=state.effective_inflation,
+            ),
+            False,
+        )
+    if (
+        mono_now - state.last_progress_time >= stuck_seconds
+        and state.effective_inflation > stuck_min_inflation
+    ):
+        prev = state.effective_inflation
+        new_inflation = max(stuck_min_inflation, prev * stuck_shrink_factor)
+        if new_inflation < prev:
+            return (
+                StuckState(
+                    ref_goal_dist=goal_dist,
+                    last_progress_time=mono_now,
+                    effective_inflation=new_inflation,
+                ),
+                True,
+            )
+    return (state, False)
+
+
+def plan_on_costmap(
+    costmap: Costmap,
+    rx: float,
+    ry: float,
+    gx: float,
+    gy: float,
+    max_expansions: int,
+    inflation_override: float | None = None,
+) -> list[tuple[float, float]] | None:
+    """Run A* on ``costmap`` in world coordinates. Returns [(x, y), ...] or None.
+
+    If ``inflation_override`` is given and differs from the costmap's
+    current inflation, the blocked-cell set is rebuilt with the
+    override radius before searching (without mutating the live
+    costmap that other callers may be reading).
+    """
+    cm = costmap
+    if inflation_override is not None and inflation_override != cm.inflation_radius:
+        blocked = _blocked_at_inflation(cm, inflation_override)
+    else:
+        blocked = cm.blocked_cells()
+
+    start = cm.world_to_cell(rx, ry)
+    goal = cm.world_to_cell(gx, gy)
+
+    # Ignore start/goal cell obstructions so we can plan even if the
+    # robot or the goal clip an inflated cell.
+    def is_blocked(ix: int, iy: int) -> bool:
+        if (ix, iy) == start or (ix, iy) == goal:
+            return False
+        return (ix, iy) in blocked
+
+    path_cells = astar(start, goal, is_blocked, max_expansions=max_expansions)
+    if path_cells is None:
+        return None
+    return [cm.cell_to_world(ix, iy) for (ix, iy) in path_cells]
 
 
 def _blocked_at_inflation(cm: Costmap, inflation_radius: float) -> set[tuple[int, int]]:
@@ -641,39 +730,38 @@ class SimplePlanner(Module):
             self._publish_from_cached(rx, ry, gz, now)
             return
 
-        # ── Update progress tracker + escalate if stuck ────────────────
+        # Don't bump inflation back up on progress: if we shrank it to clear
+        # a tight spot, keep it shrunk until the next goal. Oscillating
+        # between wide/narrow inflation was wasting time per cycle on the
+        # way through a single doorway.
         with self._lock:
-            if goal_dist < self._ref_goal_dist - self.config.progress_epsilon:
-                self._ref_goal_dist = goal_dist
-                self._last_progress_time = mono_now
-                # Don't bump inflation back up: if we shrank it to clear
-                # a tight spot, keep it shrunk until the next goal.
-                # Oscillating between wide/narrow inflation was wasting
-                # time per cycle on the way through a single doorway.
-            elif (
-                mono_now - self._last_progress_time >= self.config.stuck_seconds
-                and self._effective_inflation > self.config.stuck_min_inflation
-            ):
-                prev = self._effective_inflation
-                new_inflation = max(
-                    self.config.stuck_min_inflation,
-                    prev * self.config.stuck_shrink_factor,
-                )
-                if new_inflation < prev:
-                    self._effective_inflation = new_inflation
-                    self._last_progress_time = mono_now  # arm next tier
-                    logger.warning(
-                        "Stuck — shrinking inflation",
-                        stuck_seconds=self.config.stuck_seconds,
-                        goal_dist=round(goal_dist, 2),
-                        ref_dist=round(self._ref_goal_dist, 2),
-                        inflation_from=round(prev, 2),
-                        inflation_to=round(new_inflation, 2),
-                    )
-                    # Re-arm the progress window at this new tier so a
-                    # brief dist-drop doesn't snap us back to default.
-                    self._ref_goal_dist = goal_dist
-            effective_inflation = self._effective_inflation
+            prev_state = StuckState(
+                ref_goal_dist=self._ref_goal_dist,
+                last_progress_time=self._last_progress_time,
+                effective_inflation=self._effective_inflation,
+            )
+            new_state, escalated = progress_tick(
+                prev_state,
+                goal_dist,
+                mono_now,
+                progress_epsilon=self.config.progress_epsilon,
+                stuck_seconds=self.config.stuck_seconds,
+                stuck_shrink_factor=self.config.stuck_shrink_factor,
+                stuck_min_inflation=self.config.stuck_min_inflation,
+            )
+            self._ref_goal_dist = new_state.ref_goal_dist
+            self._last_progress_time = new_state.last_progress_time
+            self._effective_inflation = new_state.effective_inflation
+            effective_inflation = new_state.effective_inflation
+        if escalated:
+            logger.warning(
+                "Stuck — shrinking inflation",
+                stuck_seconds=self.config.stuck_seconds,
+                goal_dist=round(goal_dist, 2),
+                ref_dist=round(new_state.ref_goal_dist, 2),
+                inflation_from=round(prev_state.effective_inflation, 2),
+                inflation_to=round(new_state.effective_inflation, 2),
+            )
 
         path_world = self.plan(rx, ry, gx, gy, inflation_override=effective_inflation)
         with self._lock:
@@ -762,35 +850,16 @@ class SimplePlanner(Module):
         gy: float,
         inflation_override: float | None = None,
     ) -> list[tuple[float, float]] | None:
-        """Run A* in world coordinates. Returns [(x, y), ...] or None.
-
-        If ``inflation_override`` is given and differs from the costmap's
-        current inflation, the blocked-cell set is rebuilt with the
-        override radius before searching (without mutating the live
-        costmap that other callers may be reading).
-        """
-        cm = self._costmap
-        if inflation_override is not None and inflation_override != cm.inflation_radius:
-            # Build a view of blocked cells with a different inflation.
-            # Cheap: we only change the inflation field and rebuild.
-            blocked = _blocked_at_inflation(cm, inflation_override)
-        else:
-            blocked = cm.blocked_cells()
-
-        start = cm.world_to_cell(rx, ry)
-        goal = cm.world_to_cell(gx, gy)
-
-        # Ignore start/goal cell obstructions so we can plan even if the
-        # robot or the goal clip an inflated cell.
-        def is_blocked(ix: int, iy: int) -> bool:
-            if (ix, iy) == start or (ix, iy) == goal:
-                return False
-            return (ix, iy) in blocked
-
-        path_cells = astar(start, goal, is_blocked, max_expansions=self.config.max_expansions)
-        if path_cells is None:
-            return None
-        return [cm.cell_to_world(ix, iy) for (ix, iy) in path_cells]
+        """Run A* in world coordinates. Returns [(x, y), ...] or None."""
+        return plan_on_costmap(
+            self._costmap,
+            rx,
+            ry,
+            gx,
+            gy,
+            self.config.max_expansions,
+            inflation_override=inflation_override,
+        )
 
     @staticmethod
     def _lookahead(
