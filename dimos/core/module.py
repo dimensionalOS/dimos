@@ -94,7 +94,7 @@ class ModuleBase(Configurable, CompositeResource):
     deployment: ClassVar[Deployment] = "python"
 
     _rpc: RPCSpec | None = None
-    _tf: TFSpec[Any] | None = None
+    _tf: TFSpec | None = None
     _async_thread: AsyncModuleThread
     _disposables: CompositeDisposable
     _bound_rpc_calls: dict[str, RpcCall] = {}
