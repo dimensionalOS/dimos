@@ -38,6 +38,9 @@ Examples:
 - Walk backward: `move(x=-0.3, duration=2.0)`
 - Turn right 90°: `move(x=0.0, yaw=-1.57, duration=1.0)`
 - Turn left 90°: `move(x=0.0, yaw=1.57, duration=1.0)`
+- For 3D offsets use `navigate_3d(x, y, z, speed=...)` so elevation changes are handled explicitly.
+- For stair traversal use `climb_stairs(steps, step_height=0.17, speed=0.2)`.
+- Keep stair requests realistic (typical `step_height` around 0.15-0.20m, avoid very large step counts).
 
 ## Arm Gestures
 Use `execute_arm_command` with one of these command names:
@@ -50,6 +53,7 @@ Use `execute_mode_command` with: "WalkMode", "WalkControlWaist", or "RunMode"
 
 ## Navigation
 - Use `navigate_with_text` for most navigation. It searches tagged locations first, then visible objects, then the semantic map.
+- Use `climb_stairs_3d(goal_x, goal_y, total_height, steps)` for stair climbing in multi-floor simulation scenes.
 - Tag important locations with `tag_location` so you can return to them later.
 - During `start_exploration`, avoid calling other skills except `stop_movement`.
 

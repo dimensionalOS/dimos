@@ -26,6 +26,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.base import NavigationState
+from dimos.navigation.stair_navigation import generate_stair_waypoints
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
@@ -289,6 +290,88 @@ class NavigationSkillContainer(Module):
         self._cancel_goal_and_stop()
 
         return "Stopped"
+
+    @skill
+    def climb_stairs_3d(
+        self,
+        goal_x: float,
+        goal_y: float,
+        total_height: float,
+        steps: int = 10,
+        timeout_per_step: float = 8.0,
+    ) -> str:
+        """Navigate through a 3D stair-climbing waypoint sequence in simulation.
+
+        This skill creates a sequence of intermediate 3D waypoints from the robot's
+        current pose to the requested goal while increasing the z-value over time.
+        It is designed for multi-floor simulation scenarios where stairs are modeled
+        in the map.
+
+        Args:
+            goal_x: Goal x coordinate in map frame (meters).
+            goal_y: Goal y coordinate in map frame (meters).
+            total_height: Positive total z increase (meters) while climbing.
+            steps: Number of stair waypoints to generate.
+            timeout_per_step: Maximum time to wait per waypoint in seconds.
+        """
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+
+        if self._latest_odom is None:
+            return "No odometry data received yet, cannot start 3D stair navigation."
+        if timeout_per_step <= 0:
+            return "timeout_per_step must be greater than 0."
+
+        try:
+            set_goal_rpc, get_state_rpc, is_goal_reached_rpc = self.get_rpc_calls(
+                "NavigationInterface.set_goal",
+                "NavigationInterface.get_state",
+                "NavigationInterface.is_goal_reached",
+            )
+        except Exception:
+            return "Error: Navigation module is not connected, cannot run stair navigation."
+
+        try:
+            waypoints = generate_stair_waypoints(
+                start_x=self._latest_odom.position.x,
+                start_y=self._latest_odom.position.y,
+                start_z=self._latest_odom.position.z,
+                goal_x=goal_x,
+                goal_y=goal_y,
+                total_height=total_height,
+                steps=steps,
+            )
+        except ValueError as e:
+            return f"Invalid stair navigation parameters: {e}"
+
+        for idx, waypoint in enumerate(waypoints, start=1):
+            logger.info(
+                "Sending stair waypoint",
+                idx=idx,
+                x=waypoint.position.x,
+                y=waypoint.position.y,
+                z=waypoint.position.z,
+            )
+            set_goal_rpc(waypoint)
+
+            start_time = time.time()
+            while time.time() - start_time < timeout_per_step:
+                if get_state_rpc() == NavigationState.IDLE:
+                    if is_goal_reached_rpc():
+                        break
+                    return f"3D stair navigation failed at waypoint {idx}/{len(waypoints)}."
+                time.sleep(0.2)
+            else:
+                self._cancel_goal_and_stop()
+                return (
+                    f"3D stair navigation timed out at waypoint {idx}/{len(waypoints)} "
+                    f"after {timeout_per_step:.1f}s."
+                )
+
+        return (
+            f"Completed stair climbing plan to ({goal_x:.2f}, {goal_y:.2f}) "
+            f"with total height {total_height:.2f}m using {steps} waypoints."
+        )
 
     def _cancel_goal_and_stop(self) -> None:
         try:

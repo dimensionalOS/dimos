@@ -28,6 +28,7 @@ Users hear you through speakers but cannot see text. Use `speak` to communicate 
 
 ## Navigation Flow
 - Use `navigate_with_text` for most navigation. It searches tagged locations first, then visible objects, then the semantic map.
+- Use `climb_stairs_3d(goal_x, goal_y, total_height, steps)` for multi-floor simulation tasks with stairs.
 - Tag important locations with `tag_location` so you can return to them later.
 - During `start_exploration`, avoid calling other skills except `stop_movement`.
 - Always run `execute_sport_command("RecoveryStand")` after dynamic movements (flips, jumps, sit) before navigating.
