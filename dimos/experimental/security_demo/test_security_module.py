@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
