@@ -33,6 +33,7 @@ import time
 
 import numpy as np
 import pytest
+import rerun as rr
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -76,7 +77,7 @@ class _MockTransport:
 
 
 def _wire(module) -> dict[str, _MockTransport]:
-    ts = {}
+    subscribers = {}
     for name in (
         "odometry",
         "registered_scan",
@@ -86,10 +87,10 @@ def _wire(module) -> dict[str, _MockTransport]:
         "semantic_image",
         "camera_info",
     ):
-        t = _MockTransport()
-        getattr(module, name)._transport = t
-        ts[name] = t
-    return ts
+        transport = _MockTransport()
+        getattr(module, name)._transport = transport
+        subscribers[name] = transport
+    return subscribers
 
 
 def _find_free_port() -> int:
@@ -213,12 +214,12 @@ class TestTCPBridge:
     def test_handshake_and_data_flow(self):
         """Mock Unity connects, sends a PointCloud2, verifies bridge publishes it."""
         port = _find_free_port()
-        m = UnityBridgeModule(unity_binary="", unity_port=port)
-        ts = _wire(m)
+        module = UnityBridgeModule(unity_binary="", unity_port=port)
+        subscribers = _wire(module)
 
-        m._running.set()
-        m._unity_thread = threading.Thread(target=m._unity_loop, daemon=True)
-        m._unity_thread.start()
+        module._running.set()
+        module._unity_thread = threading.Thread(target=module._unity_loop, daemon=True)
+        module._unity_thread.start()
         time.sleep(0.3)
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -232,41 +233,41 @@ class TestTCPBridge:
             _send_tcp(sock, "/registered_scan", _build_ros1_pointcloud2(points))
             time.sleep(0.3)
         finally:
-            m._running.clear()
+            module._running.clear()
             sock.close()
-            m._unity_thread.join(timeout=3)
-            m.stop()
+            module._unity_thread.join(timeout=3)
+            module.stop()
 
-        assert len(ts["registered_scan"]._messages) >= 1
-        received_points, _ = ts["registered_scan"]._messages[0].as_numpy()
+        assert len(subscribers["registered_scan"]._messages) >= 1
+        received_points, _ = subscribers["registered_scan"]._messages[0].as_numpy()
         np.testing.assert_allclose(received_points, points, atol=0.01)
 
 
 class TestKinematicSim:
     def test_odometry_published(self):
-        m = UnityBridgeModule(unity_binary="", sim_rate=100.0)
-        ts = _wire(m)
-        dt = 1.0 / m.config.sim_rate
+        module = UnityBridgeModule(unity_binary="", sim_rate=100.0)
+        subscribers = _wire(module)
+        dt_sec = 1.0 / module.config.sim_rate
 
         for _ in range(10):
-            m._sim_step(dt)
-        m.stop()
+            module._sim_step(dt_sec)
+        module.stop()
 
-        assert len(ts["odometry"]._messages) == 10
-        assert ts["odometry"]._messages[0].frame_id == "map"
+        assert len(subscribers["odometry"]._messages) == 10
+        assert subscribers["odometry"]._messages[0].frame_id == "map"
 
     def test_cmd_vel_moves_robot(self):
-        m = UnityBridgeModule(unity_binary="", sim_rate=200.0)
-        ts = _wire(m)
-        dt = 1.0 / m.config.sim_rate
+        module = UnityBridgeModule(unity_binary="", sim_rate=200.0)
+        subscribers = _wire(module)
+        dt_sec = 1.0 / module.config.sim_rate
 
-        m._on_cmd_vel(Twist(linear=[1.0, 0.0, 0.0], angular=[0.0, 0.0, 0.0]))
-        # 200 steps at dt=0.005s with fwd=1.0 m/s → 200 * 0.005 * 1.0 = 1.0m
+        module._on_cmd_vel(Twist(linear=[1.0, 0.0, 0.0], angular=[0.0, 0.0, 0.0]))
+        # 200 steps at dt_sec=0.005s with fwd=1.0 module/s → 200 * 0.005 * 1.0 = 1.0m
         for _ in range(200):
-            m._sim_step(dt)
-        m.stop()
+            module._sim_step(dt_sec)
+        module.stop()
 
-        last_odom = ts["odometry"]._messages[-1]
+        last_odom = subscribers["odometry"]._messages[-1]
         assert last_odom.x == pytest.approx(1.0, abs=0.01)
 
 
@@ -276,111 +277,111 @@ class TestKinematicSim:
 class TestTerrainFit:
     """Tests for RANSAC-style terrain plane fit."""
 
-    def _feed_terrain(self, m, points):
+    def _feed_terrain(self, module, points):
         cloud = PointCloud2.from_numpy(points.astype(np.float32), frame_id="map", timestamp=0.0)
-        m._on_terrain(cloud)
+        module._on_terrain(cloud)
 
     def test_flat_terrain_returns_zero_tilt(self):
-        m = UnityBridgeModule(
+        module = UnityBridgeModule(
             unity_binary="", terrain_inclination_enabled=True, terrain_fit_min_inliers=100
         )
-        _wire(m)
+        _wire(module)
         # 30x30 grid of ground points (900) around origin at z=0
         g = np.linspace(-1.0, 1.0, 30)
         xx, yy = np.meshgrid(g, g)
         points = np.column_stack([xx.ravel(), yy.ravel(), np.zeros(xx.size)])
-        self._feed_terrain(m, points)
-        m.stop()
-        assert abs(m._terrain_roll) < 0.01
-        assert abs(m._terrain_pitch) < 0.01
+        self._feed_terrain(module, points)
+        module.stop()
+        assert abs(module._terrain_roll) < 0.01
+        assert abs(module._terrain_pitch) < 0.01
 
     def test_sloped_terrain_returns_positive_pitch(self):
         # Plane tilted along +x (forward slope down): z = -slope * x
         slope = 0.1  # ~5.7 degrees
-        m = UnityBridgeModule(
+        module = UnityBridgeModule(
             unity_binary="",
             terrain_inclination_enabled=True,
             terrain_fit_min_inliers=100,
             terrain_ground_band=5.0,  # wide band so sloped points qualify
             inclination_smooth_rate=1.0,  # single-step update for predictable test
         )
-        _wire(m)
+        _wire(module)
         g = np.linspace(-1.0, 1.0, 30)
         xx, yy = np.meshgrid(g, g)
         zz = -slope * xx
         points = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
         # Pre-set terrain_z to match mean
-        m._terrain_z = 0.0
-        self._feed_terrain(m, points)
-        m.stop()
+        module._terrain_z = 0.0
+        self._feed_terrain(module, points)
+        module.stop()
         # Fit solves: pitch*(-x) + roll*y = z - z_mean = -slope*x
         # so pitch = slope (positive), roll ≈ 0.
-        assert m._terrain_pitch == pytest.approx(slope, abs=0.01)
-        assert abs(m._terrain_roll) < 0.01
+        assert module._terrain_pitch == pytest.approx(slope, abs=0.01)
+        assert abs(module._terrain_roll) < 0.01
 
     def test_insufficient_inliers_no_update(self):
-        m = UnityBridgeModule(
+        module = UnityBridgeModule(
             unity_binary="",
             terrain_inclination_enabled=True,
             terrain_fit_min_inliers=500,
         )
-        _wire(m)
+        _wire(module)
         # Only 4 ground points — below min_inliers=500
         points = np.array([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.1, 0.1, 0.0]])
-        m._terrain_roll = 0.05
-        m._terrain_pitch = 0.05
-        self._feed_terrain(m, points)
-        m.stop()
+        module._terrain_roll = 0.05
+        module._terrain_pitch = 0.05
+        self._feed_terrain(module, points)
+        module.stop()
         # Values unchanged
-        assert m._terrain_roll == 0.05
-        assert m._terrain_pitch == 0.05
+        assert module._terrain_roll == 0.05
+        assert module._terrain_pitch == 0.05
 
     def test_disabled_by_default(self):
-        m = UnityBridgeModule(unity_binary="")
-        _wire(m)
-        assert m.config.terrain_inclination_enabled is False
+        module = UnityBridgeModule(unity_binary="")
+        _wire(module)
+        assert module.config.terrain_inclination_enabled is False
         # Feed a sloped terrain — tilt should stay at 0
         g = np.linspace(-1.0, 1.0, 30)
         xx, yy = np.meshgrid(g, g)
         points = np.column_stack([xx.ravel(), yy.ravel(), (-0.1 * xx).ravel()])
-        self._feed_terrain(m, points)
-        m.stop()
-        assert m._terrain_roll == 0.0
-        assert m._terrain_pitch == 0.0
+        self._feed_terrain(module, points)
+        module.stop()
+        assert module._terrain_roll == 0.0
+        assert module._terrain_pitch == 0.0
 
 
 class TestSensorOffset:
     """Tests for sensor_offset_x/y in kinematics."""
 
     def test_zero_offset_matches_old_behavior(self):
-        m = UnityBridgeModule(
+        module = UnityBridgeModule(
             unity_binary="", sim_rate=200.0, sensor_offset_x=0.0, sensor_offset_y=0.0
         )
-        _wire(m)
-        dt = 1.0 / m.config.sim_rate
-        m._on_cmd_vel(Twist(linear=[1.0, 0.0, 0.0], angular=[0.0, 0.0, 0.0]))
+        _wire(module)
+        dt_sec = 1.0 / module.config.sim_rate
+        module._on_cmd_vel(Twist(linear=[1.0, 0.0, 0.0], angular=[0.0, 0.0, 0.0]))
         for _ in range(200):
-            m._sim_step(dt)
-        m.stop()
-        assert m._x == pytest.approx(1.0, abs=0.01)
-        assert m._y == pytest.approx(0.0, abs=0.01)
+            module._sim_step(dt_sec)
+        module.stop()
+        assert module._x == pytest.approx(1.0, abs=0.01)
+        assert module._y == pytest.approx(0.0, abs=0.01)
 
     def test_pure_yaw_with_offset_displaces_position(self):
         # With sensor_offset_x=0.5 and pure yaw rotation, the sensor origin
         # traces a circle of radius 0.5 around the vehicle center.
-        m = UnityBridgeModule(
+        module = UnityBridgeModule(
             unity_binary="", sim_rate=200.0, sensor_offset_x=0.5, sensor_offset_y=0.0
         )
-        _wire(m)
-        dt = 1.0 / m.config.sim_rate
-        m._on_cmd_vel(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, 1.0]))  # 1 rad/s yaw
-        # Quarter turn: π/2 radians → π/2 seconds → 0.5π/dt steps
-        steps = int((math.pi / 2.0) / dt)
+        _wire(module)
+        dt_sec = 1.0 / module.config.sim_rate
+        module._on_cmd_vel(Twist(linear=[0.0, 0.0, 0.0], angular=[0.0, 0.0, 1.0]))  # 1 rad/s yaw
+        # Quarter turn: π/2 radians → π/2 seconds → 0.5π/dt_sec steps
+        steps = int((math.pi / 2.0) / dt_sec)
         for _ in range(steps):
-            m._sim_step(dt)
-        m.stop()
+            module._sim_step(dt_sec)
+        module.stop()
         # Yaw should be ~π/2
-        assert m._yaw == pytest.approx(math.pi / 2.0, abs=0.02)
+        assert module._yaw == pytest.approx(math.pi / 2.0, abs=0.02)
         # Sensor origin started at (0.5, 0) and travels on circle r=0.5
         # → after quarter turn ends at about (0, 0.5).
         # Vehicle center is therefore at sensor - rotated_offset = (0 - 0, 0.5 - 0.5) = (0, 0)?
@@ -388,18 +389,20 @@ class TestSensorOffset:
         # Started at x=0,y=0 (sensor). After rotating π/2, sensor should still be at
         # the same radius from where the center was.
         # Simpler assertion: x and y should be nonzero (displacement happened).
-        assert abs(m._x - 0.0) > 0.01 or abs(m._y - 0.0) > 0.01
+        assert abs(module._x - 0.0) > 0.01 or abs(module._y - 0.0) > 0.01
 
     def test_yaw_rate_roll_published(self):
         # After enabling terrain fit with zero tilt, angular roll/pitch rates
         # in published twist should be ~0.
-        m = UnityBridgeModule(unity_binary="", sim_rate=100.0, terrain_inclination_enabled=False)
-        ts = _wire(m)
-        dt = 1.0 / m.config.sim_rate
+        module = UnityBridgeModule(
+            unity_binary="", sim_rate=100.0, terrain_inclination_enabled=False
+        )
+        subscribers = _wire(module)
+        dt_sec = 1.0 / module.config.sim_rate
         for _ in range(5):
-            m._sim_step(dt)
-        m.stop()
-        last = ts["odometry"]._messages[-1]
+            module._sim_step(dt_sec)
+        module.stop()
+        last = subscribers["odometry"]._messages[-1]
         # Angular rates (from Odometry.twist) should include roll/pitch deltas; at zero tilt they're 0.
         assert last.twist.angular.x == pytest.approx(0.0, abs=1e-6)
         assert last.twist.angular.y == pytest.approx(0.0, abs=1e-6)
@@ -410,8 +413,6 @@ class TestSensorOffset:
 
 class TestRerunConfig:
     def test_static_pinhole_returns_list(self):
-        import rerun as rr
-
         result = UnityBridgeModule.rerun_static_pinhole(rr)
         assert isinstance(result, list)
         assert len(result) == 2
@@ -428,15 +429,15 @@ class TestLiveUnity:
 
     def test_unity_connects_and_streams(self):
         """Launch Unity, verify it connects and sends lidar + images."""
-        m = UnityBridgeModule()  # uses auto-download
-        ts = _wire(m)
+        module = UnityBridgeModule()  # uses auto-download
+        subscribers = _wire(module)
 
-        m.start()
+        module.start()
         time.sleep(25)
 
-        assert m._unity_connected, "Unity did not connect"
-        assert len(ts["registered_scan"]._messages) > 5, "No lidar from Unity"
-        assert len(ts["color_image"]._messages) > 5, "No camera images from Unity"
-        assert len(ts["odometry"]._messages) > 100, "No odometry"
+        assert module._unity_connected, "Unity did not connect"
+        assert len(subscribers["registered_scan"]._messages) > 5, "No lidar from Unity"
+        assert len(subscribers["color_image"]._messages) > 5, "No camera images from Unity"
+        assert len(subscribers["odometry"]._messages) > 100, "No odometry"
 
-        m.stop()
+        module.stop()
