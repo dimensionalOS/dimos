@@ -15,23 +15,20 @@ permissions:
 
 jobs:
   tests:
-    timeout-minutes: 30
+    timeout-minutes: 15
     runs-on: ubuntu-latest
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
 
     steps:
-      - uses: actions/checkout@v5
-
+      - name: Checkout
+        uses: actions/checkout@v6
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-
-      - name: Set up Python
-        run: uv python install 3.12
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.12
 
       - name: Install system dependencies
         run: |

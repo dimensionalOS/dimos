@@ -22,9 +22,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
-pytestmark = pytest.mark.slow
 
-
+@pytest.mark.slow
 def test_find_best_person_detects_person(security_module, yolo_detector, person_image):
     security_module._detector = yolo_detector
 
@@ -35,6 +34,7 @@ def test_find_best_person_detects_person(security_module, yolo_detector, person_
     assert result.bbox_2d_volume() > 0
 
 
+@pytest.mark.slow
 def test_find_best_person_returns_none_for_empty_scene(security_module, yolo_detector, empty_image):
     security_module._detector = yolo_detector
 
@@ -43,6 +43,7 @@ def test_find_best_person_returns_none_for_empty_scene(security_module, yolo_det
     assert result is None
 
 
+@pytest.mark.slow
 def test_patrol_step_transitions_to_following_on_detection(
     security_module, person_image, make_detection, mocker
 ):
@@ -90,6 +91,7 @@ def test_patrol_step_requests_goal_when_no_active_goal(security_module):
     assert module._has_active_goal is True
 
 
+@pytest.mark.slow
 def test_follow_step_publishes_twist_when_tracking(
     security_module, person_image, make_detection, mocker
 ):
@@ -115,6 +117,7 @@ def test_follow_step_publishes_twist_when_tracking(
     assert module._state == "FOLLOWING"
 
 
+@pytest.mark.slow
 def test_follow_step_transitions_to_patrolling_on_person_lost(security_module, person_image):
     module = security_module
     module._state = "FOLLOWING"

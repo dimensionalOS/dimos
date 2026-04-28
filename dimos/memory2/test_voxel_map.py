@@ -29,8 +29,6 @@ from dimos.utils.data import get_data
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-pytestmark = pytest.mark.slow
-
 
 @pytest.fixture(scope="module")
 def store() -> Iterator[SqliteStore]:

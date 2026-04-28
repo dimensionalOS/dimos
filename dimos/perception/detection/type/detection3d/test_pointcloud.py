@@ -15,6 +15,8 @@
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.mark.skipif_macos_bug
 def test_detection3dpc(detection3dpc) -> None:
