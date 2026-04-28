@@ -139,17 +139,17 @@ def _recv_tcp(sock) -> tuple[str, bytes]:
 
 class TestConfig:
     def test_defaults(self):
-        cfg = UnityBridgeConfig()
-        assert cfg.unity_port == 10000
-        assert cfg.sim_rate == 200.0
+        config = UnityBridgeConfig()
+        assert config.unity_port == 10000
+        assert config.sim_rate == 200.0
 
     def test_custom_binary_path(self):
-        cfg = UnityBridgeConfig(unity_binary="/custom/path/Model.x86_64")
-        assert cfg.unity_binary == "/custom/path/Model.x86_64"
+        config = UnityBridgeConfig(unity_binary="/custom/path/Model.x86_64")
+        assert config.unity_binary == "/custom/path/Model.x86_64"
 
     def test_headless_mode(self):
-        cfg = UnityBridgeConfig(headless=True)
-        assert cfg.headless is True
+        config = UnityBridgeConfig(headless=True)
+        assert config.headless is True
 
 
 class TestPlatformValidation:
@@ -167,25 +167,25 @@ class TestPlatformValidation:
 
 class TestROS1Deserialization:
     def test_pointcloud2_round_trip(self):
-        pts = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
-        data = _build_ros1_pointcloud2(pts)
+        points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+        data = _build_ros1_pointcloud2(points)
         result = deserialize_pointcloud2(data)
         assert result is not None
-        decoded_pts, frame_id, _ts = result
-        np.testing.assert_allclose(decoded_pts, pts, atol=1e-5)
+        decoded_points, frame_id, _ts = result
+        np.testing.assert_allclose(decoded_points, points, atol=1e-5)
         assert frame_id == "map"
 
     def test_pointcloud2_empty(self):
-        pts = np.zeros((0, 3), dtype=np.float32)
-        data = _build_ros1_pointcloud2(pts)
+        points = np.zeros((0, 3), dtype=np.float32)
+        data = _build_ros1_pointcloud2(points)
         result = deserialize_pointcloud2(data)
         assert result is not None
-        decoded_pts, _, _ = result
-        assert len(decoded_pts) == 0
+        decoded_points, _, _ = result
+        assert len(decoded_points) == 0
 
     def test_pointcloud2_truncated(self):
-        pts = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
-        data = _build_ros1_pointcloud2(pts)
+        points = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
+        data = _build_ros1_pointcloud2(points)
         assert deserialize_pointcloud2(data[:10]) is None
 
     def test_pointcloud2_garbage(self):
@@ -228,8 +228,8 @@ class TestTCPBridge:
             dest, data = _recv_tcp(sock)
             assert dest == "__handshake"
 
-            pts = np.array([[10.0, 20.0, 30.0]], dtype=np.float32)
-            _send_tcp(sock, "/registered_scan", _build_ros1_pointcloud2(pts))
+            points = np.array([[10.0, 20.0, 30.0]], dtype=np.float32)
+            _send_tcp(sock, "/registered_scan", _build_ros1_pointcloud2(points))
             time.sleep(0.3)
         finally:
             m._running.clear()
@@ -238,8 +238,8 @@ class TestTCPBridge:
             m.stop()
 
         assert len(ts["registered_scan"]._messages) >= 1
-        received_pts, _ = ts["registered_scan"]._messages[0].as_numpy()
-        np.testing.assert_allclose(received_pts, pts, atol=0.01)
+        received_points, _ = ts["registered_scan"]._messages[0].as_numpy()
+        np.testing.assert_allclose(received_points, points, atol=0.01)
 
 
 class TestKinematicSim:
@@ -288,8 +288,8 @@ class TestTerrainFit:
         # 30x30 grid of ground points (900) around origin at z=0
         g = np.linspace(-1.0, 1.0, 30)
         xx, yy = np.meshgrid(g, g)
-        pts = np.column_stack([xx.ravel(), yy.ravel(), np.zeros(xx.size)])
-        self._feed_terrain(m, pts)
+        points = np.column_stack([xx.ravel(), yy.ravel(), np.zeros(xx.size)])
+        self._feed_terrain(m, points)
         m.stop()
         assert abs(m._terrain_roll) < 0.01
         assert abs(m._terrain_pitch) < 0.01
@@ -308,10 +308,10 @@ class TestTerrainFit:
         g = np.linspace(-1.0, 1.0, 30)
         xx, yy = np.meshgrid(g, g)
         zz = -slope * xx
-        pts = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
+        points = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
         # Pre-set terrain_z to match mean
         m._terrain_z = 0.0
-        self._feed_terrain(m, pts)
+        self._feed_terrain(m, points)
         m.stop()
         # Fit solves: pitch*(-x) + roll*y = z - z_mean = -slope*x
         # so pitch = slope (positive), roll ≈ 0.
@@ -326,10 +326,10 @@ class TestTerrainFit:
         )
         _wire(m)
         # Only 4 ground points — below min_inliers=500
-        pts = np.array([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.1, 0.1, 0.0]])
+        points = np.array([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.1, 0.1, 0.0]])
         m._terrain_roll = 0.05
         m._terrain_pitch = 0.05
-        self._feed_terrain(m, pts)
+        self._feed_terrain(m, points)
         m.stop()
         # Values unchanged
         assert m._terrain_roll == 0.05
@@ -342,8 +342,8 @@ class TestTerrainFit:
         # Feed a sloped terrain — tilt should stay at 0
         g = np.linspace(-1.0, 1.0, 30)
         xx, yy = np.meshgrid(g, g)
-        pts = np.column_stack([xx.ravel(), yy.ravel(), (-0.1 * xx).ravel()])
-        self._feed_terrain(m, pts)
+        points = np.column_stack([xx.ravel(), yy.ravel(), (-0.1 * xx).ravel()])
+        self._feed_terrain(m, points)
         m.stop()
         assert m._terrain_roll == 0.0
         assert m._terrain_pitch == 0.0
