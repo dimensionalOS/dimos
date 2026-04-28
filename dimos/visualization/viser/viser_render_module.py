@@ -39,6 +39,7 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Path import Path as PathMsg
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.viser.camera import CameraSpec, g1_d435_default, world_pose
@@ -63,6 +64,7 @@ class ViserRenderModule(Module):
 
     joint_state: In[JointState]
     odom: In[PoseStamped]
+    path: In[PathMsg]
     clicked_point: Out[PointStamped]
 
     def __init__(
@@ -98,6 +100,7 @@ class ViserRenderModule(Module):
         self._robot: RobotMeshes | None = None
         self._render_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._path_handle: Any = None
 
     @rpc
     def start(self) -> None:
@@ -213,6 +216,12 @@ class ViserRenderModule(Module):
                 nav_goal_button.label = "Set nav goal"
 
         try:
+            unsub = self.path.subscribe(self._on_path)
+            self.register_disposable(Disposable(unsub))
+        except Exception as e:
+            logger.warning(f"Viser: path subscribe failed: {e}")
+
+        try:
             unsub = self.joint_state.subscribe(self._on_joint_state)
             self.register_disposable(Disposable(unsub))
         except Exception as e:
@@ -274,6 +283,37 @@ class ViserRenderModule(Module):
         point = PointStamped(x=float(x), y=float(y), z=0.0, ts=time.time(), frame_id="map")
         self.clicked_point.publish(point)
         logger.info(f"Viser nav-goal: published clicked_point=({x:.3f}, {y:.3f})")
+
+    def _on_path(self, msg: PathMsg) -> None:
+        """Draw the planner's path as a polyline floating above the floor."""
+        poses = msg.poses
+        if len(poses) < 2:
+            handle = self._path_handle
+            if handle is not None:
+                try:
+                    handle.remove()
+                except Exception:
+                    pass
+                self._path_handle = None
+            return
+
+        path_height = 0.10  # lift above floor so it doesn't z-fight with the splat
+        pts = np.array(
+            [[p.position.x, p.position.y, path_height] for p in poses],
+            dtype=np.float32,
+        )
+        # add_line_segments wants (N, 2, 3): start/end of each segment.
+        segments = np.stack([pts[:-1], pts[1:]], axis=1)
+
+        try:
+            self._path_handle = self._server.scene.add_line_segments(
+                "/nav_path",
+                points=segments,
+                colors=(255, 30, 30),
+                line_width=4.0,
+            )
+        except Exception as e:
+            logger.debug(f"Viser nav-path render failed: {e}")
 
     def _on_joint_state(self, msg: JointState) -> None:
         names = list(msg.name)
