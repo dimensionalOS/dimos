@@ -19,7 +19,10 @@ export default class Connection {
 
   constructor(dispatch: React.Dispatch<AppAction>) {
     this.dispatch = dispatch;
-    this.socket = io("ws://localhost:7779");
+    // Connect back to the same origin that served the page so the bundle
+    // works whether opened directly at :7779 or proxied through a reverse
+    // proxy / different host.
+    this.socket = io({ path: "/socket.io" });
 
     this.socket.on("costmap", (data: EncodedCostmap) => {
       const costmap = Costmap.decode(data);

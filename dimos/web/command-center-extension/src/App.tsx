@@ -6,7 +6,6 @@ import ExplorePanel from "./ExplorePanel";
 import GpsButton from "./GpsButton";
 import Button from "./Button";
 import KeyboardControlPanel from "./KeyboardControlPanel";
-import VisualizerWrapper from "./components/VisualizerWrapper";
 import LeafletMap from "./components/LeafletMap";
 import { AppAction, AppState, LatLon } from "./types";
 
@@ -37,13 +36,34 @@ const initialState: AppState = {
   path: null,
 };
 
+interface ServerConfig {
+  viser_url: string;
+  camera_stream_url: string;
+}
+
+function defaultConfig(): ServerConfig {
+  // Fallback if /config is unreachable — typical local-dev case.
+  return {
+    viser_url: `http://${window.location.hostname}:8082`,
+    camera_stream_url: "/camera_stream",
+  };
+}
+
 export default function App(): React.ReactElement {
   const [state, dispatch] = React.useReducer(appReducer, initialState);
   const [isGpsMode, setIsGpsMode] = React.useState(false);
+  const [config, setConfig] = React.useState<ServerConfig>(defaultConfig);
   const connectionRef = React.useRef<Connection | null>(null);
 
   React.useEffect(() => {
     connectionRef.current = new Connection(dispatch);
+
+    fetch("/config")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`config ${r.status}`))))
+      .then((c: ServerConfig) => setConfig(c))
+      .catch(() => {
+        // Stick with default — already viable for local dev.
+      });
 
     return () => {
       if (connectionRef.current) {
@@ -52,8 +72,8 @@ export default function App(): React.ReactElement {
     };
   }, []);
 
-  const handleWorldClick = React.useCallback((worldX: number, worldY: number) => {
-    connectionRef.current?.worldClick(worldX, worldY);
+  const handleGpsGoal = React.useCallback((goal: LatLon) => {
+    connectionRef.current?.sendGpsGoal(goal);
   }, []);
 
   const handleStartExplore = React.useCallback(() => {
@@ -62,10 +82,6 @@ export default function App(): React.ReactElement {
 
   const handleStopExplore = React.useCallback(() => {
     connectionRef.current?.stopExplore();
-  }, []);
-
-  const handleGpsGoal = React.useCallback((goal: LatLon) => {
-    connectionRef.current?.sendGpsGoal(goal);
   }, []);
 
   const handleSendMoveCommand = React.useCallback(
@@ -102,44 +118,99 @@ export default function App(): React.ReactElement {
   }, [state.robotPose]);
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      {isGpsMode ? (
-        <LeafletMap
-          gpsLocation={state.gpsLocation}
-          gpsTravelGoalPoints={state.gpsTravelGoalPoints}
-          onGpsGoal={handleGpsGoal}
-        />
-      ) : (
-        <VisualizerWrapper data={state} onWorldClick={handleWorldClick} />
-      )}
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 360px",
+        width: "100%",
+        height: "100%",
+        background: "#111",
+        color: "#eee",
+      }}
+    >
+      <div style={{ position: "relative", overflow: "hidden" }}>
+        {isGpsMode ? (
+          <LeafletMap
+            gpsLocation={state.gpsLocation}
+            gpsTravelGoalPoints={state.gpsTravelGoalPoints}
+            onGpsGoal={handleGpsGoal}
+          />
+        ) : (
+          <iframe
+            src={config.viser_url}
+            title="viser"
+            style={{
+              width: "100%",
+              height: "100%",
+              border: "none",
+              display: "block",
+            }}
+          />
+        )}
+      </div>
+
       <div
         style={{
-          position: "absolute",
-          bottom: 0,
-          left: 0,
-          display: "flex",
-          width: "100%",
-          padding: 5,
-          gap: 5,
-          alignItems: "flex-end",
+          display: "grid",
+          gridTemplateRows: "auto 1fr",
+          padding: 8,
+          gap: 8,
+          background: "#1a1a1a",
+          borderLeft: "1px solid #333",
+          minHeight: 0,
         }}
       >
-        <GpsButton
-          onUseGps={() => setIsGpsMode(true)}
-          onUseCostmap={() => setIsGpsMode(false)}
-        ></GpsButton>
-        <ExplorePanel onStartExplore={handleStartExplore} onStopExplore={handleStopExplore} />
-        <Button onClick={handleReturnHome} isActive={false}>Go Home</Button>
-        <Button onClick={handleStop} isActive={false}>Stop</Button>
-        <KeyboardControlPanel
-          onSendMoveCommand={handleSendMoveCommand}
-          onStopMoveCommand={handleStopMoveCommand}
-        />
-        <ActivationPanel
-          onArm={handleArm}
-          onDisarm={handleDisarm}
-          onSetDryRun={handleSetDryRun}
-        />
+        <div
+          style={{
+            background: "#000",
+            border: "1px solid #333",
+            borderRadius: 4,
+            overflow: "hidden",
+            aspectRatio: "16 / 9",
+          }}
+        >
+          <img
+            src={config.camera_stream_url}
+            alt="robot camera"
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "contain",
+              display: "block",
+            }}
+          />
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            overflowY: "auto",
+            paddingRight: 4,
+          }}
+        >
+          <KeyboardControlPanel
+            onSendMoveCommand={handleSendMoveCommand}
+            onStopMoveCommand={handleStopMoveCommand}
+          />
+          <ActivationPanel
+            onArm={handleArm}
+            onDisarm={handleDisarm}
+            onSetDryRun={handleSetDryRun}
+          />
+          <ExplorePanel onStartExplore={handleStartExplore} onStopExplore={handleStopExplore} />
+          <GpsButton
+            onUseGps={() => setIsGpsMode(true)}
+            onUseCostmap={() => setIsGpsMode(false)}
+          />
+          <Button onClick={handleReturnHome} isActive={false}>
+            Go Home
+          </Button>
+          <Button onClick={handleStop} isActive={false}>
+            Stop
+          </Button>
+        </div>
       </div>
     </div>
   );

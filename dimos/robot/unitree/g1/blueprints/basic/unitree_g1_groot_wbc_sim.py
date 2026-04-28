@@ -218,12 +218,15 @@ _g1_engine = MujocoSimModule.blueprint(
     }
 )
 
-# WASD teleop dashboard at http://localhost:7779/.
+# Embedded shell at http://localhost:7779/ — WASD teleop, viser iframe,
+# camera MJPEG.  TODO(perf): move /splat/color_image to JpegShmTransport
+# across the splat → ws-vis → memory chain to drop LCM JSON overhead.
 _g1_ws_vis = WebsocketVisModule.blueprint().transports(
     {
         ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
         ("activate", DimosBool): LCMTransport("/g1/activate", DimosBool),
         ("dry_run", DimosBool): LCMTransport("/g1/dry_run", DimosBool),
+        ("color_image", Image): LCMTransport("/splat/color_image", Image),
     },
 )
 

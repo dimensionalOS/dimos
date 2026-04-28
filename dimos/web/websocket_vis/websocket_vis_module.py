@@ -28,11 +28,19 @@ import time
 from typing import Any
 import webbrowser
 
+import cv2
 from dimos_lcm.std_msgs import Bool
+import numpy as np
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
-from starlette.responses import FileResponse, RedirectResponse, Response
+from starlette.responses import (
+    FileResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from starlette.routing import Route
 import uvicorn
 
@@ -59,6 +67,7 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.Bool import Bool as DimosBool
 from dimos.utils.logging_config import setup_logger
 
@@ -72,6 +81,11 @@ _browser_opened = False
 
 class WebsocketConfig(ModuleConfig):
     port: int = 7779
+    # MJPEG stream tuning. JPEG quality is the encoder param (0-100);
+    # frame_rate caps the camera_stream emit rate so a high-fps source
+    # can't saturate the websocket / browser decoder.
+    camera_jpeg_quality: int = 70
+    camera_max_fps: float = 15.0
 
 
 class WebsocketVisModule(Module):
@@ -100,6 +114,7 @@ class WebsocketVisModule(Module):
     gps_location: In[LatLon]
     path: In[Path]
     global_costmap: In[OccupancyGrid]
+    color_image: In[Image]
 
     # LCM outputs
     goal_request: Out[PoseStamped]
@@ -137,6 +152,15 @@ class WebsocketVisModule(Module):
 
         # Track GPS goal points for visualization
         self.gps_goal_points: list[dict[str, float]] = []
+
+        # Latest camera frame as JPEG bytes (or None if no frame yet).
+        # Single mutable holder + lock; the MJPEG endpoint pulls the most
+        # recent encoded frame on each iteration.
+        self._latest_jpeg: bytes | None = None
+        self._latest_jpeg_lock = threading.Lock()
+        self._frame_available = threading.Event()
+        self._last_encode_time: float = 0.0
+
         logger.info(
             f"WebSocket visualization module initialized on port {self.config.port}, GPS goal tracking enabled"
         )
@@ -205,6 +229,12 @@ class WebsocketVisModule(Module):
         except Exception:
             ...
 
+        try:
+            unsub = self.color_image.subscribe(self._on_color_image)
+            self.register_disposable(Disposable(unsub))
+        except Exception as e:
+            logger.warning(f"WebSocket vis: color_image subscribe failed: {e}")
+
     @rpc
     def stop(self) -> None:
         if getattr(self, "_ws_stopped", False):
@@ -263,9 +293,32 @@ class WebsocketVisModule(Module):
                     media_type="text/plain",
                 )
 
+        async def serve_config(request):  # type: ignore[no-untyped-def]
+            """Per-deployment URLs the React shell reads at boot.
+
+            Centralizing here avoids hardcoded ports/URLs in the
+            frontend; the React app fetches /config on mount.
+            """
+            host = request.url.hostname or "localhost"
+            return JSONResponse(
+                {
+                    "viser_url": f"http://{host}:{self.config.g.viser_port}",
+                    "camera_stream_url": "/camera_stream",
+                }
+            )
+
+        async def serve_camera_stream(request):  # type: ignore[no-untyped-def]
+            """MJPEG (multipart/x-mixed-replace) of the latest color frame."""
+            return StreamingResponse(
+                self._camera_mjpeg_generator(),
+                media_type="multipart/x-mixed-replace; boundary=frame",
+            )
+
         routes = [
             Route("/", serve_index),
             Route("/command-center", serve_command_center),
+            Route("/config", serve_config),
+            Route("/camera_stream", serve_camera_stream),
         ]
 
         starlette_app = Starlette(routes=routes)
@@ -444,3 +497,51 @@ class WebsocketVisModule(Module):
     def _emit(self, event: str, data: Any) -> None:
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             asyncio.run_coroutine_threadsafe(self.sio.emit(event, data), self._broadcast_loop)
+
+    def _on_color_image(self, image: Image) -> None:
+        """Encode the latest frame to JPEG, capped to camera_max_fps."""
+        now = time.monotonic()
+        min_interval = 1.0 / max(self.config.camera_max_fps, 1.0)
+        if now - self._last_encode_time < min_interval:
+            return
+
+        try:
+            bgr: np.ndarray = image.to_bgr().to_opencv()
+            ok, buffer = cv2.imencode(
+                ".jpg",
+                bgr,
+                [int(cv2.IMWRITE_JPEG_QUALITY), int(self.config.camera_jpeg_quality)],
+            )
+            if not ok:
+                return
+            jpeg_bytes = buffer.tobytes()
+        except Exception as e:
+            logger.debug(f"WebSocket vis: JPEG encode failed: {e}")
+            return
+
+        with self._latest_jpeg_lock:
+            self._latest_jpeg = jpeg_bytes
+            self._last_encode_time = now
+        self._frame_available.set()
+
+    async def _camera_mjpeg_generator(self):  # type: ignore[no-untyped-def]
+        """Yield multipart/x-mixed-replace JPEG chunks until the client drops."""
+        boundary = b"--frame\r\n"
+        last_yielded: bytes | None = None
+        # Cap pull rate to encoder rate; sleeping any tighter just busy-spins.
+        poll_interval = 1.0 / max(self.config.camera_max_fps * 2.0, 1.0)
+
+        while True:
+            with self._latest_jpeg_lock:
+                jpeg = self._latest_jpeg
+            if jpeg is not None and jpeg is not last_yielded:
+                last_yielded = jpeg
+                yield (
+                    boundary
+                    + b"Content-Type: image/jpeg\r\nContent-Length: "
+                    + str(len(jpeg)).encode("ascii")
+                    + b"\r\n\r\n"
+                    + jpeg
+                    + b"\r\n"
+                )
+            await asyncio.sleep(poll_interval)
