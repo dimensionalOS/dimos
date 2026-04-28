@@ -313,17 +313,22 @@ class ControlCoordinator(Module):
         """Create a whole-body adapter from component config."""
         from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 
-        # Pass address as-is — adapters accept int or str for network_interface
+        # ``address`` is overloaded: real-hw adapters use it as the DDS
+        # network interface (string like "enp60s0" or int).  Sim adapters
+        # use it as the MJCF path (string).  Pass it raw under both names
+        # so each adapter can pick whichever is meaningful.
         addr = component.address
+        net_iface: int | str = 0
         if addr is not None:
             try:
-                addr = int(addr)
+                net_iface = int(addr)
             except ValueError:
-                pass  # keep as string (e.g. "enp60s0")
+                net_iface = addr
         return whole_body_adapter_registry.create(
             component.adapter_type,
-            network_interface=addr if addr is not None else 0,
+            network_interface=net_iface,
             domain_id=component.domain_id,
+            address=addr,
         )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
