@@ -29,6 +29,7 @@ module's config via per-module kwarg dicts (e.g.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -493,8 +494,6 @@ def _waypoint_override(msg: Any) -> Any:
     Orange + slightly smaller than the goal sphere so the final goal
     stays the larger, dominant marker.
     """
-    import math
-
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -509,8 +508,6 @@ def _waypoint_override(msg: Any) -> Any:
 
 def _goal_override(msg: Any) -> Any:
     """Render the current navigation goal as a purple sphere."""
-    import math
-
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -557,8 +554,6 @@ def _static_floor(rr: Any) -> list[Any]:
 
 def _waypoint_override_debug(msg: Any) -> Any:
     """Agentic debug: waypoint elevated above the scene."""
-    import math
-
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -573,8 +568,6 @@ def _waypoint_override_debug(msg: Any) -> Any:
 
 def _goal_override_debug(msg: Any) -> Any:
     """Agentic debug: goal elevated above the scene."""
-    import math
-
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
