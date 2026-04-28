@@ -23,6 +23,12 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.config import RobotConfig
+from dimos.utils.data import LfsPath
+
+# this is robot-specific, but only needed for the local_planner module
+# generated via CMU' `pathGenerator` (autonomous_exploration_development_environment/local_planner)
+# probably only needs to be regenerated on robots that are notably different than the g1 (the go2 in rage mode probably needs different local planning paths)
+G1_LOCAL_PLANNER_PRECOMPUTED_PATHS = LfsPath("unitree_g1_local_planner_precomputed_paths")
 
 G1 = RobotConfig(
     name="unitree_g1",
