@@ -38,8 +38,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class FarPlannerConfig(NativeModuleConfig):
-    """Config for the FAR planner native module."""
-
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/far_planner_native"
     build_command: str | None = (
