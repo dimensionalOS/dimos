@@ -263,6 +263,12 @@ class Recorder(MemoryModule):
     def start(self) -> None:
         super().start()
 
+        if self.config.g.replay:
+            logger.info(
+                "Replay mode active — Recorder disabled, leaving %s untouched", self.config.db_path
+            )
+            return
+
         # TODO: store reset API/logic is not implemented yet. This module
         # shouldn't need to know about files (SqliteStore specific), and
         # .live() subs need to know how to re-sub in case of a restart of

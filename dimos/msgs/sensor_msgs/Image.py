@@ -520,7 +520,7 @@ class Image(Timestamped):
         Returns:
             LCM-encoded bytes with JPEG-compressed image data
         """
-        from turbojpeg import TurboJPEG
+        from turbojpeg import TJPF_RGB, TurboJPEG
 
         jpeg = TurboJPEG()
         msg = LCMImage()
@@ -539,11 +539,9 @@ class Image(Timestamped):
             msg.header.stamp.sec = int(now)
             msg.header.stamp.nsec = int((now - int(now)) * 1e9)
 
-        # Get image in BGR format for JPEG encoding
-        bgr_image = self.to_bgr().to_opencv()
-
-        # Encode as JPEG
-        jpeg_data = jpeg.encode(bgr_image, quality=quality)
+        # Canonicalize to RGB so JPEG bytes are deterministic regardless of input format.
+        rgb_array = self.to_rgb().data
+        jpeg_data = jpeg.encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)
 
         # Store JPEG data and metadata
         msg.height = self.height
@@ -567,7 +565,7 @@ class Image(Timestamped):
         Returns:
             Image instance
         """
-        from turbojpeg import TurboJPEG
+        from turbojpeg import TJPF_RGB, TurboJPEG
 
         jpeg = TurboJPEG()
         msg = LCMImage.lcm_decode(data)
@@ -575,12 +573,11 @@ class Image(Timestamped):
         if msg.encoding != "jpeg":
             raise ValueError(f"Expected JPEG encoding, got {msg.encoding}")
 
-        # Decode JPEG data
-        bgr_array = jpeg.decode(msg.data)
+        rgb_array = jpeg.decode(msg.data, pixel_format=TJPF_RGB)
 
         return cls(
-            data=bgr_array,
-            format=ImageFormat.BGR,
+            data=rgb_array,
+            format=ImageFormat.RGB,
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
             ts=(
                 msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
