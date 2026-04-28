@@ -141,7 +141,14 @@ class RerunWebSocketServer(Module):
             and not self._async_thread.loop.is_closed()
             and self._stop_event is not None
         ):
-            self._async_thread.loop.call_soon_threadsafe(self._stop_event.set)
+            done = threading.Event()
+
+            def _signal_and_notify() -> None:
+                self._stop_event.set()
+                done.set()
+
+            self._async_thread.loop.call_soon_threadsafe(_signal_and_notify)
+            done.wait(timeout=2.0)
         super().stop()
 
     def _log_connect_hints(self) -> None:
