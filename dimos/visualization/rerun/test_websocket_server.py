@@ -419,6 +419,28 @@ class TestNonClickMessages:
         mod.stop()
         assert len(explore_cmds) >= 2
 
+    def test_zero_twist_does_not_publish_stop_movement(self) -> None:
+        """A zero twist is not a teleop-start signal."""
+        mod = _make_module()
+        mod.start()
+        _wait_for_server(_TEST_PORT)
+
+        explore_cmds: list[Any] = []
+        twists: list[Any] = []
+        twist_done = threading.Event()
+        mod.stop_movement.subscribe(explore_cmds.append)
+        mod.tele_cmd_vel.subscribe(_collect(twists, twist_done))
+
+        with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as pub:
+            pub.send_twist(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            pub.flush()
+
+        twist_done.wait(timeout=2.0)
+        mod.stop()
+
+        assert twists and twists[0].is_zero()
+        assert explore_cmds == []
+
     def test_invalid_json_does_not_crash(self) -> None:
         """Malformed JSON is silently dropped; server stays alive."""
         import websockets.asyncio.client as ws_client

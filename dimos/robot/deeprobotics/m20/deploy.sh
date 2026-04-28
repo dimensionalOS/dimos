@@ -66,6 +66,37 @@ DEPLOY_DIR="/var/opt/robot/data/dimos"
 VENV="/home/user/dimos-venv"
 SMARTNAV_MODULE="dimos.robot.deeprobotics.m20.blueprints.nav.m20_smartnav_native"
 SMARTNAV_LOG="/tmp/smartnav_native.log"
+M20_SLAM_BACKEND="${M20_SLAM_BACKEND:-fastlio2}"
+M20_FASTLIO2_IMU="${M20_FASTLIO2_IMU:-airy}"
+M20_NAV_ENABLED="${M20_NAV_ENABLED:-1}"
+M20_DIRECT_CLICK_WAYPOINT="${M20_DIRECT_CLICK_WAYPOINT:-0}"
+M20_NAV_MAX_SPEED="${M20_NAV_MAX_SPEED:-0.20}"
+M20_NAV_AUTONOMY_SPEED="${M20_NAV_AUTONOMY_SPEED:-${M20_NAV_MAX_SPEED}}"
+M20_NAV_MAX_ACCEL="${M20_NAV_MAX_ACCEL:-0.30}"
+M20_NAV_MAX_YAW_RATE="${M20_NAV_MAX_YAW_RATE:-40.0}"
+M20_NAV_MAX_COMMAND_DURATION="${M20_NAV_MAX_COMMAND_DURATION:-30.0}"
+M20_NAV_OMNI_DIR_GOAL_THRESHOLD="${M20_NAV_OMNI_DIR_GOAL_THRESHOLD:-2.0}"
+M20_NAV_OMNI_DIR_DIFF_THRESHOLD="${M20_NAV_OMNI_DIR_DIFF_THRESHOLD:-3.2}"
+M20_NAV_GOAL_REACHED_THRESHOLD="${M20_NAV_GOAL_REACHED_THRESHOLD:-0.30}"
+M20_NAV_GOAL_BEHIND_RANGE="${M20_NAV_GOAL_BEHIND_RANGE:-0.30}"
+M20_NAV_FREEZE_ANG="${M20_NAV_FREEZE_ANG:-180.0}"
+M20_RERUN_REGISTERED_SCAN_HZ="${M20_RERUN_REGISTERED_SCAN_HZ:-0.2}"
+M20_RERUN_REGISTERED_SCAN_MAX_POINTS="${M20_RERUN_REGISTERED_SCAN_MAX_POINTS:-2000}"
+M20_RERUN_DEBUG_CLOUD_HZ="${M20_RERUN_DEBUG_CLOUD_HZ:-1.0}"
+if [ -z "${M20_SLAM_CORES+x}" ]; then
+    M20_SLAM_CORES="4,5,6,7"
+fi
+if [ -z "${M20_FASTLIO_CORES+x}" ]; then
+    M20_FASTLIO_CORES="${M20_SLAM_CORES}"
+fi
+if [ -z "${M20_DRDDS_LIDAR_CORES+x}" ]; then
+    M20_DRDDS_LIDAR_CORES="${M20_SLAM_CORES}"
+fi
+if [ -z "${M20_AIRY_IMU_CORES+x}" ]; then
+    M20_AIRY_IMU_CORES="${M20_SLAM_CORES}"
+fi
+M20_RERUN_CORES="${M20_RERUN_CORES:-}"
+VIEWER="${VIEWER:-rerun}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIMOS_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
@@ -98,6 +129,7 @@ RSYNC_EXCLUDES=(
     --exclude '.venv'
     --exclude '.pytest_cache'
     --exclude '.mypy_cache'
+    --exclude '.ruff_cache'
     --exclude '*.egg-info'
     --exclude '.beads'
     --exclude '.runtime'
@@ -105,6 +137,7 @@ RSYNC_EXCLUDES=(
     --exclude 'data'
     --exclude 'logs'
     --exclude '.claude'
+    --exclude 'docker/navigation/ros-navigation-autonomy-stack'
     # CMake build artifacts live on NOS only — mustn't be wiped by --delete.
     # Exclude without trailing / so symlinks named `result` (nix output links)
     # are also preserved — trailing / would only match directories.
@@ -210,6 +243,22 @@ if systemctl list-unit-files drdds-bridge.service >/dev/null 2>&1 \
 else
     echo "  not present"
 fi
+
+echo "[provision] Disabling vendor NOS navigation stack..."
+# These factory services consume lidar/imu resources and can publish
+# navigation outputs that conflict with dimos. OTA resets service enablement,
+# so keep this in provisioning rather than relying on one-off manual stops.
+# Keep the required robot services alone: rsdriver, yesense, handler,
+# charge_manager, reflective_column, and hsLidar are not disabled here.
+for svc in localization.service planner.service global_planner.service passable_area.service; do
+    if systemctl list-unit-files "$svc" >/dev/null 2>&1 \
+       && systemctl list-unit-files "$svc" | grep -q "$svc"; then
+        systemctl disable --now "$svc" 2>/dev/null || true
+        printf "  %-24s stopped + disabled\n" "$svc"
+    else
+        printf "  %-24s not present\n" "$svc"
+    fi
+done
 
 echo "[provision] Installing drdds-recv.service..."
 cat > /etc/systemd/system/drdds-recv.service <<'UNIT'
@@ -550,6 +599,15 @@ PROVISION_EOF
         else
             echo "  services (4 active):       OK ($svc)"
         fi
+        conflicts=$(remote_ssh 'for s in localization.service planner.service global_planner.service passable_area.service; do printf "%s:%s:%s\n" "$s" "$(systemctl is-active "$s" 2>/dev/null || true)" "$(systemctl is-enabled "$s" 2>/dev/null || true)"; done')
+        bad_conflicts=$(printf "%s\n" "$conflicts" | grep -E ':(active|activating):|:.*:enabled' || true)
+        if [ -n "$bad_conflicts" ]; then
+            echo "  vendor nav conflicts:      FAIL" >&2
+            printf '%s\n' "$bad_conflicts" | sed 's/^/    /' >&2
+            rc=1
+        else
+            echo "  vendor nav conflicts:      OK (inactive/disabled)"
+        fi
         # 3. drdds_recv process alive
         if ! remote_ssh 'pgrep -f /opt/drdds_bridge/lib/drdds_bridge/drdds_recv >/dev/null'; then
             echo "  drdds_recv process:        FAIL (not running)" >&2
@@ -624,12 +682,39 @@ PROVISION_EOF
         ;;
 
     start)
-        echo "=== Starting smartnav ==="
-        remote_ssh "
+        echo "=== Starting smartnav (backend=${M20_SLAM_BACKEND}, imu=${M20_FASTLIO2_IMU}, nav=${M20_NAV_ENABLED}, viewer=${VIEWER}, speed=${M20_NAV_MAX_SPEED}, yaw=${M20_NAV_MAX_YAW_RATE}, omni_threshold=${M20_NAV_OMNI_DIR_GOAL_THRESHOLD}, omni_diff=${M20_NAV_OMNI_DIR_DIFF_THRESHOLD}, goal_reached=${M20_NAV_GOAL_REACHED_THRESHOLD}, goal_behind=${M20_NAV_GOAL_BEHIND_RANGE}, freeze_ang=${M20_NAV_FREEZE_ANG}, direct_click=${M20_DIRECT_CLICK_WAYPOINT}, rerun_registered_scan_hz=${M20_RERUN_REGISTERED_SCAN_HZ}, rerun_debug_cloud_hz=${M20_RERUN_DEBUG_CLOUD_HZ}, slam_cores=${M20_SLAM_CORES}, fastlio_cores=${M20_FASTLIO_CORES}, drdds_lidar_cores=${M20_DRDDS_LIDAR_CORES}, airy_imu_cores=${M20_AIRY_IMU_CORES}, rerun_cores=${M20_RERUN_CORES:-none}) ==="
+        ssh -n ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "bash -lc '
             # Clear old log first so the readiness poll only sees this boot.
             : > ${SMARTNAV_LOG}
-            cd ${DEPLOY_DIR} && ${VENV}/bin/python -m ${SMARTNAV_MODULE} > ${SMARTNAV_LOG} 2>&1 &
-        "
+            cd ${DEPLOY_DIR}
+            setsid -f env \
+                M20_SLAM_BACKEND=${M20_SLAM_BACKEND} \
+                M20_FASTLIO2_IMU=${M20_FASTLIO2_IMU} \
+                M20_SLAM_CORES=${M20_SLAM_CORES} \
+                M20_FASTLIO_CORES=${M20_FASTLIO_CORES} \
+                M20_DRDDS_LIDAR_CORES=${M20_DRDDS_LIDAR_CORES} \
+                M20_AIRY_IMU_CORES=${M20_AIRY_IMU_CORES} \
+                M20_NAV_ENABLED=${M20_NAV_ENABLED} \
+                M20_DIRECT_CLICK_WAYPOINT=${M20_DIRECT_CLICK_WAYPOINT} \
+                M20_NAV_MAX_SPEED=${M20_NAV_MAX_SPEED} \
+                M20_NAV_AUTONOMY_SPEED=${M20_NAV_AUTONOMY_SPEED} \
+                M20_NAV_MAX_ACCEL=${M20_NAV_MAX_ACCEL} \
+                M20_NAV_MAX_YAW_RATE=${M20_NAV_MAX_YAW_RATE} \
+                M20_NAV_MAX_COMMAND_DURATION=${M20_NAV_MAX_COMMAND_DURATION} \
+                M20_NAV_OMNI_DIR_GOAL_THRESHOLD=${M20_NAV_OMNI_DIR_GOAL_THRESHOLD} \
+                M20_NAV_OMNI_DIR_DIFF_THRESHOLD=${M20_NAV_OMNI_DIR_DIFF_THRESHOLD} \
+                M20_NAV_GOAL_REACHED_THRESHOLD=${M20_NAV_GOAL_REACHED_THRESHOLD} \
+                M20_NAV_GOAL_BEHIND_RANGE=${M20_NAV_GOAL_BEHIND_RANGE} \
+                M20_NAV_FREEZE_ANG=${M20_NAV_FREEZE_ANG} \
+                M20_RERUN_REGISTERED_SCAN_HZ=${M20_RERUN_REGISTERED_SCAN_HZ} \
+                M20_RERUN_REGISTERED_SCAN_MAX_POINTS=${M20_RERUN_REGISTERED_SCAN_MAX_POINTS} \
+                M20_RERUN_DEBUG_CLOUD_HZ=${M20_RERUN_DEBUG_CLOUD_HZ} \
+                VIEWER=${VIEWER} \
+                ${VENV}/bin/python -m ${SMARTNAV_MODULE} \
+                </dev/null > ${SMARTNAV_LOG} 2>&1
+            sleep 0.2
+            pgrep -n -f \"${VENV}/bin/python -m ${SMARTNAV_MODULE}\" > /tmp/smartnav.pid || true
+        '"
         # Poll for readiness signals instead of a blind 30s sleep.
         # We require: (a) nav_cmd_pub matched=1 (FastDDS path to AOS alive)
         #             (b) first lidar frame flowing through drdds_bridge
@@ -637,8 +722,8 @@ PROVISION_EOF
         for i in $(seq 1 40); do
             echo -n "."
             sleep 0.5
-            ready=$(remote_ssh "grep -ac 'matched=1' ${SMARTNAV_LOG} 2>/dev/null" || echo 0)
-            lidar=$(remote_ssh "grep -ac 'drdds_bridge.*lidar #' ${SMARTNAV_LOG} 2>/dev/null" || echo 0)
+            ready=$(remote_ssh "grep -ac 'matched=1' ${SMARTNAV_LOG} 2>/dev/null || true")
+            lidar=$(remote_ssh "grep -ac 'drdds_bridge.*lidar #' ${SMARTNAV_LOG} 2>/dev/null || true")
             if [ "${ready}" -ge 1 ] && [ "${lidar}" -ge 1 ]; then
                 echo " ready (${i}x 0.5s)"
                 break
@@ -646,21 +731,49 @@ PROVISION_EOF
         done
         echo "  Status:"
         remote_ssh "grep -a -E 'matched|keyframe|Running' ${SMARTNAV_LOG} | grep -v sec_nsec | grep -v wireframe | head -5" || true
+        if [ -n "${M20_RERUN_CORES}" ]; then
+            echo "  Pinning Rerun listener threads to CPU(s): ${M20_RERUN_CORES}"
+            remote_ssh "
+                cores='${M20_RERUN_CORES}'
+                pids=''
+                for _ in \$(seq 1 20); do
+                    pids=\$(ss -tlnp 2>/dev/null \
+                        | grep -E ':(9877|3030|7779) ' \
+                        | sed -n 's/.*pid=\\([0-9][0-9]*\\).*/\\1/p' \
+                        | sort -u)
+                    [ -n \"\$pids\" ] && break
+                    sleep 0.5
+                done
+                if [ -z \"\$pids\" ]; then
+                    echo '    no Rerun listener PIDs found'
+                else
+                    for pid in \$pids; do
+                        for task in /proc/\$pid/task/*; do
+                            [ -e \"\$task\" ] || continue
+                            tid=\${task##*/}
+                            taskset -pc \"\$cores\" \"\$tid\" >/dev/null 2>&1 || true
+                        done
+                        printf '    pid=%s ' \"\$pid\"
+                        taskset -pc \"\$pid\" 2>/dev/null || true
+                    done
+                fi
+            " || true
+        fi
         echo "=== Started ==="
         ;;
 
     stop)
         echo "=== Stopping smartnav ==="
         # Graceful shutdown first (sends sit-down command to robot).
-        remote_ssh "pkill -f m20_smartnav 2>/dev/null" || true
+        remote_ssh "pkill -f '[m]20_smartnav' 2>/dev/null" || true
         # Poll for process exit (100ms), cap 5s.
         for i in $(seq 1 50); do
             sleep 0.1
-            alive=$(remote_ssh "pgrep -f m20_smartnav 2>/dev/null | wc -l" || echo 0)
+            alive=$(remote_ssh "pgrep -f '[m]20_smartnav' 2>/dev/null | wc -l" || echo 0)
             [ "${alive}" = "0" ] && break
         done
         # Force-kill if still alive, then release ports.
-        remote_ssh "pkill -9 -f m20_smartnav 2>/dev/null; pkill -9 -f dimos-venv 2>/dev/null; fuser -k 9877/tcp 9877/tcp 3030/tcp 7779/tcp 2>/dev/null" || true
+        remote_ssh "pkill -9 -f '[m]20_smartnav' 2>/dev/null; pkill -9 -f dimos-venv 2>/dev/null; fuser -k 9877/tcp 9877/tcp 3030/tcp 7779/tcp 2>/dev/null" || true
         echo "=== Stopped ==="
         ;;
 
@@ -675,43 +788,44 @@ PROVISION_EOF
         ;;
 
     viewer)
-        # READONLY=1 drops --ws-url so the viewer is gRPC-only. The dimos
-        # client side seems to publish a stale (-0.50, 0, 0) Twist on first
-        # connect (root cause not yet traced), which RerunWebSocketServer
-        # then forwards as both /tele_cmd_vel AND /stop_movement. The latter
-        # makes ClickToGoal freeze a phantom goal at the robot's current
-        # pose. With --ws-url dropped, the viewer cannot publish anything
-        # back, so the chain never starts. Use READONLY=1 when running
-        # NAV_ENABLED=1 and you don't need to teleop or click via the viewer.
+        # READONLY=1 skips the command-center/WebSocket tunnel and the local
+        # click bridge, leaving the viewer display-only.
         echo "=== Starting dimos-viewer${READONLY:+ (READONLY)} ==="
+        pkill -f "dimos-viewer" 2>/dev/null || true
+        pkill -f "viewer_lcm_ws_bridge.py" 2>/dev/null || true
         pkill -f "rerun" 2>/dev/null || true
         pkill -f "ssh.*-L.*9877.*${JUMP_HOST}" 2>/dev/null || true
+        pkill -f "ssh.*9877:${NOS_HOST}:9877" 2>/dev/null || true
         sleep 1
         # Set up SSH tunnels. In READONLY mode we skip the 3030 (WebSocket)
         # tunnel too — defense in depth: even if rerun decides to ws-connect,
         # there's no path from Mac→NOS for it to publish.
         if [ -n "${READONLY}" ]; then
-            ssh -f -N -o ConnectTimeout=10 ${SSH_OPTS} \
+            ssh -f -N -o ExitOnForwardFailure=yes -o ConnectTimeout=10 ${SSH_OPTS} \
                 -L 9877:${NOS_HOST}:9877 \
                 -L 7779:${NOS_HOST}:7779 \
-                "${NOS_USER}@${NOS_HOST}" 2>/dev/null
+                "${NOS_USER}@${NOS_HOST}" \
+                >/tmp/m20_viewer_ssh_tunnel.log 2>&1
         else
-            ssh -f -N -o ConnectTimeout=10 ${SSH_OPTS} \
+            ssh -f -N -o ExitOnForwardFailure=yes -o ConnectTimeout=10 ${SSH_OPTS} \
                 -L 9877:${NOS_HOST}:9877 \
                 -L 7779:${NOS_HOST}:7779 \
                 -L 3030:${NOS_HOST}:3030 \
-                "${NOS_USER}@${NOS_HOST}" 2>/dev/null
+                "${NOS_USER}@${NOS_HOST}" \
+                >/tmp/m20_viewer_ssh_tunnel.log 2>&1
         fi
         sleep 1
-        # Launch viewer
-        if [ -n "${READONLY}" ]; then
-            DIMOS_DEBUG=1 "${DIMOS_ROOT}/.venv/bin/rerun" \
-                --connect "rerun+http://127.0.0.1:9877/proxy" &
-        else
-            DIMOS_DEBUG=1 "${DIMOS_ROOT}/.venv/bin/rerun" \
-                --connect "rerun+http://127.0.0.1:9877/proxy" \
-                --ws-url "ws://127.0.0.1:3030/ws" &
+        if [ -z "${READONLY}" ]; then
+            nohup "${DIMOS_ROOT}/.venv/bin/python" \
+                "${SCRIPT_DIR}/scripts/viewer_lcm_ws_bridge.py" \
+                --ws-url "ws://127.0.0.1:3030/ws" \
+                >/tmp/m20_viewer_lcm_ws_bridge.log 2>&1 &
+            echo "  click bridge PID: $!"
         fi
+        # Launch viewer
+        nohup env DIMOS_DEBUG=1 "${DIMOS_ROOT}/.venv/bin/dimos-viewer" \
+            --connect "rerun+http://127.0.0.1:9877/proxy" \
+            >/tmp/m20_dimos_viewer.log 2>&1 &
         echo "  dimos-viewer PID: $!"
         echo "=== Viewer started ==="
         ;;
@@ -749,14 +863,20 @@ PROVISION_EOF
         echo "=== systemd services ==="
         remote_ssh "for s in drdds-recv rsdriver m20-nav-net; do printf '  %-20s %s\n' \$s \$(systemctl is-active \$s); done"
         echo ""
+        echo "=== required vendor services (kept running) ==="
+        remote_ssh "for s in yesense.service handler.service charge_manager.service reflective_column.service hsLidar.service; do printf '  %-28s active=%-10s enabled=%s\n' \$s \$(systemctl is-active \$s 2>/dev/null || true) \$(systemctl is-enabled \$s 2>/dev/null || true); done"
+        echo ""
+        echo "=== vendor nav conflicts (should be inactive/disabled) ==="
+        remote_ssh "for s in localization.service planner.service global_planner.service passable_area.service; do printf '  %-24s active=%-10s enabled=%s\n' \$s \$(systemctl is-active \$s 2>/dev/null || true) \$(systemctl is-enabled \$s 2>/dev/null || true); done"
+        echo ""
         echo "=== /nix bind mount ==="
         remote_ssh "mountpoint -q /nix && echo '  /nix mounted OK' || echo '  /nix NOT mounted'"
         echo ""
         echo "=== dimos processes ==="
-        remote_ssh "pgrep -a -f m20_smartnav 2>/dev/null" || echo "  smartnav not running"
+        remote_ssh "pgrep -a -x python 2>/dev/null | grep m20_smartnav_native" || echo "  smartnav not running"
         remote_ssh "pgrep -a nav_cmd_pub 2>/dev/null" || echo "  nav_cmd_pub not running"
         remote_ssh "pgrep -a drdds_lidar 2>/dev/null" || echo "  lidar bridge not running"
-        remote_ssh "pgrep -a arise_slam 2>/dev/null" || echo "  arise_slam not running"
+        remote_ssh "pgrep -a -x fastlio2_native 2>/dev/null || pgrep -a -x arise_slam 2>/dev/null" || echo "  SLAM backend not running"
         echo ""
         echo "=== Ports ==="
         remote_ssh "ss -tlnp 2>/dev/null | grep -E '9877|7779|3030'" || echo "  no ports listening"

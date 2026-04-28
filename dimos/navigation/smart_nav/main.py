@@ -58,6 +58,7 @@ def smart_nav(
     use_global_map_updater: bool = False,
     use_terrain_map_ext: bool = True,
     use_simple_planner: bool = False,
+    direct_click_waypoint: bool = False,
     vehicle_height: float | None = None,
     terrain_analysis: dict[str, Any] | None = None,
     terrain_map_ext: dict[str, Any] | None = None,
@@ -100,6 +101,10 @@ def smart_nav(
             (GlobalMapUpdater) on top of registered_scan.
         use_terrain_map_ext: Add TerrainMapExt — the persistent extended terrain
             accumulator used for visualization and wider-range planning.
+        direct_click_waypoint: Route ClickToGoal directly to LocalPlanner's
+            way_point input and disconnect the global planner click inputs.
+            This is useful for controlled local click-to-goal bring-up when
+            global A* planning is not yet reliable on a robot.
         vehicle_height: Ignore terrain points above this height (m). Threaded
             into TerrainAnalysis's `vehicle_height` config. Defaults to 1.2m.
         terrain_analysis, terrain_map_ext, local_planner, path_follower,
@@ -233,10 +238,31 @@ def smart_nav(
         ),
         (ClickToGoal, "odometry", "corrected_odometry"),
         (TerrainAnalysis, "odometry", "corrected_odometry"),
-        # FAR (or TARE) owns way_point — disconnect ClickToGoal's output.
-        (ClickToGoal, "way_point", "_click_way_point_unused"),
         (PGO, "global_map", "global_map_pgo"),
     ]
+    if direct_click_waypoint:
+        remappings.extend(
+            [
+                # Bypass global-planner waypoint ownership for local M20
+                # click-to-goal bring-up. Leave ClickToGoal.way_point on
+                # "way_point" so LocalPlanner consumes the clicked point.
+                (ClickToGoal, "way_point", "way_point"),
+                (
+                    SimplePlanner if use_simple_planner else FarPlanner,
+                    "goal",
+                    "_global_planner_goal_unused",
+                ),
+                *(
+                    [(SimplePlanner, "clicked_point", "_simple_clicked_point_unused")]
+                    if use_simple_planner
+                    else []
+                ),
+            ]
+        )
+    else:
+        # FAR/SimplePlanner (or TARE) owns way_point — disconnect
+        # ClickToGoal's direct output.
+        remappings.append((ClickToGoal, "way_point", "_click_way_point_unused"))
 
     return autoconnect(*modules).remappings(remappings)
 

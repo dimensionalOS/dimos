@@ -23,6 +23,7 @@ with no teleop input, nav commands resume.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 from dimos_lcm.std_msgs import Bool
@@ -36,9 +37,21 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+def _is_zero_twist(msg: Twist) -> bool:
+    return (
+        msg.linear.x == 0.0
+        and msg.linear.y == 0.0
+        and msg.linear.z == 0.0
+        and msg.angular.x == 0.0
+        and msg.angular.y == 0.0
+        and msg.angular.z == 0.0
+    )
+
+
 class CmdVelMuxConfig(ModuleConfig):
     teleop_cooldown_sec: float = 1.0
     teleop_linear_scale: float = 1.0
+    max_nav_command_duration_sec: float | None = None
 
 
 class CmdVelMux(Module[CmdVelMuxConfig]):
@@ -64,6 +77,8 @@ class CmdVelMux(Module[CmdVelMuxConfig]):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._teleop_active = False
+        self._nav_active_since: float | None = None
+        self._nav_watchdog_tripped = False
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
 
@@ -77,6 +92,10 @@ class CmdVelMux(Module[CmdVelMuxConfig]):
         super().__setstate__(state)
         self._lock = threading.Lock()
         self._timer = None
+        if not hasattr(self, "_nav_active_since"):
+            self._nav_active_since = None
+        if not hasattr(self, "_nav_watchdog_tripped"):
+            self._nav_watchdog_tripped = False
 
     @rpc
     def start(self) -> None:
@@ -92,14 +111,39 @@ class CmdVelMux(Module[CmdVelMuxConfig]):
         super().stop()
 
     def _on_nav(self, msg: Twist) -> None:
+        publish_stop = False
+        publish_zero = False
+        is_zero = _is_zero_twist(msg)
         with self._lock:
             if self._teleop_active:
                 return
+            max_duration = self.config.max_nav_command_duration_sec
+            if is_zero:
+                self._nav_active_since = None
+                self._nav_watchdog_tripped = False
+            elif max_duration is not None and max_duration > 0.0:
+                now = time.monotonic()
+                if self._nav_active_since is None:
+                    self._nav_active_since = now
+                    self._nav_watchdog_tripped = False
+                elif now - self._nav_active_since > max_duration:
+                    publish_stop = not self._nav_watchdog_tripped
+                    self._nav_watchdog_tripped = True
+                publish_zero = self._nav_watchdog_tripped
+        if publish_stop:
+            self.stop_movement.publish(Bool(data=True))
+            logger.warning("Nav command watchdog tripped; publishing zero cmd_vel")
+        if publish_zero:
+            self.cmd_vel.publish(Twist.zero())
+            return
         self.cmd_vel.publish(msg)
 
     def _on_teleop(self, msg: Twist) -> None:
+        is_zero = _is_zero_twist(msg)
         was_active: bool
         with self._lock:
+            if is_zero and not self._teleop_active:
+                return
             was_active = self._teleop_active
             self._teleop_active = True
             if self._timer is not None:
@@ -111,7 +155,7 @@ class CmdVelMux(Module[CmdVelMuxConfig]):
             self._timer.daemon = True
             self._timer.start()
 
-        if not was_active:
+        if not was_active and not is_zero:
             self.stop_movement.publish(Bool(data=True))
             logger.info("Teleop active — published stop_movement")
 

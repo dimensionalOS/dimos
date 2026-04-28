@@ -27,6 +27,7 @@ from dimos_lcm.sensor_msgs.Imu import Imu
 
 STOP_TOPIC = "/tele_cmd_vel#geometry_msgs.Twist"
 _stop_armed = [True]
+_stop_topic = [STOP_TOPIC]
 
 
 def _flood_zeros(reason: str) -> None:
@@ -42,7 +43,7 @@ def _flood_zeros(reason: str) -> None:
         t0 = time.monotonic()
         n = 0
         while time.monotonic() - t0 < 2.0:
-            lc.publish(STOP_TOPIC, z.lcm_encode())
+            lc.publish(_stop_topic[0], z.lcm_encode())
             n += 1
             time.sleep(0.02)  # 50 Hz
         print(f"[safety] sent {n} zero Twists. ROBOT SHOULD BE STOPPED.",
@@ -74,6 +75,7 @@ def main() -> int:
     ap.add_argument("--pub_hz", type=float, default=20.0)
     ap.add_argument("--out", default="/tmp/gyro_auto.csv")
     args = ap.parse_args()
+    _stop_topic[0] = args.topic_cmd
 
     lc = lcm.LCM()
 

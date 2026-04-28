@@ -3190,3 +3190,1118 @@ re-prioritized around robustness, generalization, and correctness.
 - Would Jeff accept a PR upstreaming the Velodyne input restoration to `leshy/FAST-LIO-NON-ROS`?
 - Should the PGO duplicate-key crash (`RuntimeError: key "33", already exists` in `isam2.update`) be a separate bead? Saw it crash smartnav once during this session — likely upstream fastlio2 outputting multiple poses per scan when frames have near-identical timebases.
 - Are RSAIRY lidar points actually emitted in time-order, or interleaved across rings? Needs a quick empirical probe to decide how to fix the per-point time relativization.
+
+---
+
+## Finding #40: Click Plumbing Works; Localization/Map Pinning Is Now the Blocker (2026-04-27)
+
+Resumed click-to-goal validation after Findings #38/#39. The goal for
+this session was deliberately narrow: prove whether a viewer click can
+reach the native M20 navigation stack and produce bounded physical motion.
+It can. The next blocker is no longer click transport; it is localization
+quality during the resulting rotation/translation.
+
+### Fixes applied before the successful click test
+
+**1. Phantom-goal chain neutralized.**
+
+Patched both stop publishers so zero teleop twists do not create
+`stop_movement=True` on viewer connect:
+
+- `CmdVelMux._on_teleop`: ignore zero twist when teleop is inactive; only
+  publish `stop_movement=True` on a nonzero rising edge.
+- `RerunWebSocketServer`: do not publish `stop_movement=True` or mark a
+  teleop client active for zero twist.
+
+Changed `ClickToGoal._on_stop_movement` so it no longer synthesizes a new
+goal at the robot's current pose. This removes the dangerous "freeze home
+pose while teleop keeps moving" mechanism from Finding #38.
+
+**2. Planner-side cancellation added.**
+
+`SimplePlanner` now subscribes to `stop_movement` directly and clears its
+active goal/cache on `Bool(data=True)`. This preserves legitimate cancel
+semantics without creating a replacement goal.
+
+**3. Click-to-goal no longer depends on ClickToGoal's republish hop.**
+
+To work around Finding #39, `SimplePlanner` subscribes directly to
+`/clicked_point#geometry_msgs.PointStamped` and treats it as a goal. The
+old `ClickToGoal` outputs remain for compatibility, but the M20 bringup
+path no longer depends on `ClickToGoal.goal.publish(msg)` reaching another
+module.
+
+**4. M20 height threaded into simple planner.**
+
+The M20 standing height/clearance is `0.57m` in
+`m20_smartnav_native.py`. `SimplePlanner` previously inherited the G1-ish
+`1.3m` ground offset, which caused floor/low returns to be classified
+with the wrong height reference. Added `ground_offset_below_robot` config
+and set it to `M20_HEIGHT_CLEARANCE`.
+
+**5. Conservative live motion caps are now env-configurable.**
+
+`m20_smartnav_native.py` and `deploy.sh` now pass:
+
+- `M20_NAV_MAX_SPEED`
+- `M20_NAV_AUTONOMY_SPEED`
+- `M20_NAV_MAX_ACCEL`
+- `M20_NAV_MAX_YAW_RATE`
+- `M20_NAV_MAX_COMMAND_DURATION`
+- `M20_NAV_OMNI_DIR_GOAL_THRESHOLD`
+
+The live test used `M20_NAV_MAX_SPEED=0.08`,
+`M20_NAV_AUTONOMY_SPEED=0.08`, `M20_NAV_MAX_YAW_RATE=20.0`,
+`M20_NAV_MAX_COMMAND_DURATION=12.0`, and
+`M20_NAV_OMNI_DIR_GOAL_THRESHOLD=2.0`.
+
+**6. Local viewer click bridge added.**
+
+`dimos-viewer 0.30.0a6` supports `--connect` but not `--ws-url`. It emits
+clicks locally on LCM, so a Mac-side bridge was added:
+
+`dimos/robot/deeprobotics/m20/scripts/viewer_lcm_ws_bridge.py`
+
+It subscribes to local
+`/clicked_point#geometry_msgs.PointStamped` and forwards JSON clicks to
+NOS `ws://127.0.0.1:3030/ws` through the SSH tunnel.
+
+Manual viewer stack that worked:
+
+1. SSH tunnels for `9877`, `7779`, `3030`.
+2. Local `viewer_lcm_ws_bridge.py --ws-url ws://127.0.0.1:3030/ws`.
+3. `.venv/bin/dimos-viewer --connect rerun+http://127.0.0.1:9877/proxy`.
+
+`deploy.sh viewer` has been edited toward this path, but still needs a
+separate verification pass because an earlier attempt printed PIDs and
+then the tunnel/viewer/bridge exited immediately.
+
+### Live click test evidence
+
+The viewer click finally reached NOS:
+
+```
+[viewer_lcm_ws_bridge] forwarded click x=+1.426 y=+0.971 z=+0.008 frame='/world/floor'
+[simple_planner] clicked_point received
+[simple_planner] Goal received: (1.43, 0.97, 0.01)
+```
+
+The monitor saw the complete planning chain:
+
+- `/clicked_point`: `(+1.426,+0.971,+0.008)` in `/world/floor`
+- `/goal`: `(+1.426,+0.971,+0.008)`
+- `/goal_path`: first point roughly `(-0.150,-0.150)`, last
+  `(+1.350,+1.050)`
+- `/way_point`: `(+1.426,+0.971,+0.008)` in `map`
+- `/nav_cmd_vel`: nonzero, capped at about `|vxy|=0.078 m/s` and
+  `|yaw|=0.349 rad/s`
+- `/cmd_vel`: nonzero initially, then muxed to zero after watchdog trip
+- `nav_cmd_pub`: `matched=1`, so `/cmd_vel` reached AOS basic_server
+
+Operator observation: the dog moved for a few seconds. This confirms:
+
+1. Viewer click -> local LCM works.
+2. Local LCM -> NOS websocket bridge works.
+3. NOS websocket -> `/clicked_point` works.
+4. `SimplePlanner` direct click consumption works.
+5. `PathFollower` produces motion commands.
+6. `CmdVelMux` forwards bounded commands to `/cmd_vel`.
+7. `NavCmdPub` sends those commands to AOS and the robot physically moves.
+
+### Watchdog interpretation correction
+
+The probe still showed `/nav_cmd_vel` nonzero at 20s, but the log shows
+the watchdog did trip:
+
+```
+[simple_planner] stop_movement received: cleared active goal
+01:08:56.799 [war][.../cmd_vel_mux.py] Nav command watchdog tripped; publishing zero cmd_vel
+01:08:58.868 [nav_cmd_pub] #501 x=0.000 y=0.000 yaw=0.000 matched=1
+```
+
+Important distinction:
+
+- `/nav_cmd_vel` is upstream path-follower output. It can keep publishing
+  briefly even after the safety cap.
+- `/cmd_vel` is the muxed command sent to `NavCmdPub` and AOS. The
+  watchdog forced this to zero and published `stop_movement=True`.
+
+So the watchdog behavior is acceptable for the test: it did not stop the
+path follower from computing, but it did stop the command stream that
+drives the robot.
+
+### New blocker: room/map is not pinned during motion
+
+After the physical move, the operator reported:
+
+> "point cloud looks messy though. the room is not pinned. i see rotated
+> copies of the ceiling shape of the room as she rotated. i think slam is
+> not working."
+
+The smartnav log supports this as a localization/map-registration failure:
+
+```
+[PGO] Keyframe 2 added (0.1, 0.0, -0.0)
+[PGO] Keyframe 3 added (0.2, 0.0, -0.0)
+[PGO] Keyframe 4 added (0.3, 0.1, -0.0)
+[PGO] Keyframe 5 added (0.4, 0.2, -0.0)
+[PGO] Keyframe 6 added (0.5, 0.3, 0.0)
+[PGO] Keyframe 7 added (0.5, 0.4, -0.0)
+...
+[PGO] Keyframe 14 added (1.0, 0.6, -0.1)
+```
+
+During the same window, `airy_imu_bridge` reported yaw-rate activity
+during the turn, but PGO keyframe yaw stayed effectively near zero in the
+printed diagnostics. That matches the visual symptom: the cloud/ceiling
+features are being accumulated as rotated copies instead of being pinned
+in one room frame.
+
+This does not yet prove whether the failing layer is FAST-LIO2 odometry,
+PGO unregistration/accumulation, Rerun transform display, or a frame-name
+mixup between those layers. It only proves the current click-to-goal run
+does not have a trustworthy pinned map under motion.
+
+### Current safety state
+
+After the test, smartnav was stopped:
+
+```
+smartnav not running
+nav_cmd_pub not running
+lidar bridge not running
+SLAM backend not running
+```
+
+No further click-to-goal driving should run until the localization failure
+is isolated with a stationary/controlled-motion diagnostic.
+
+### Tests run on Mac before live deploy
+
+```
+CI=1 uv run pytest \
+  dimos/navigation/test_cmd_vel_mux.py \
+  dimos/navigation/smart_nav/test_main.py \
+  dimos/navigation/smart_nav/modules/click_to_goal/test_click_to_goal.py \
+  dimos/navigation/smart_nav/modules/simple_planner/test_simple_planner.py \
+  dimos/robot/deeprobotics/m20/blueprints/nav/test_m20_smartnav_native.py -q
+# 50 passed
+
+CI=1 uv run pytest dimos/visualization/rerun/test_websocket_server.py -q
+# 15 passed
+
+CI=1 uv run pytest \
+  dimos/robot/deeprobotics/m20/blueprints/nav/test_m20_smartnav_native.py \
+  dimos/robot/deeprobotics/m20/scripts/test_viewer_lcm_ws_bridge.py -q
+# 5 passed
+
+bash -n dimos/robot/deeprobotics/m20/deploy.sh
+# pass
+```
+
+### Recommended next diagnostic
+
+Before any more autonomous movement:
+
+1. Restart with nav disabled or with the robot held stationary:
+   `M20_NAV_ENABLED=0` if possible.
+2. Record/inspect `/odometry`, `/registered_scan`, `/global_map_pgo`,
+   `/corrected_odometry`, and Rerun transforms during a controlled yaw-only
+   motion or a very short manual nudge.
+3. Compare FAST-LIO2 raw odometry yaw against the visual room rotation.
+4. If FAST-LIO2 yaw is correct but PGO/global map is wrong, debug PGO
+   unregistration and Rerun frame wiring.
+5. If FAST-LIO2 yaw is wrong, go back to the FAST-LIO2 Airy IMU / scan
+   timing path and re-run the Finding #35 drift instrumentation on this
+   exact deployed build.
+
+## Finding #41: OTA Re-enabled Vendor NOS Nav Stack (2026-04-28)
+
+During the rotation/localization debug after Finding #40, NOS SSH began
+failing with `Connection timed out during banner exchange`. AOS was
+healthy, NOS TCP ports still accepted connections, and no zombie
+processes were found. The real issue was CPU/thread pressure on NOS: OTA
+had re-enabled the factory navigation/localization services that we had
+previously disabled for `/NAV_CMD` ownership and resource isolation.
+
+### Live process evidence
+
+Unexpected active root-owned vendor nav processes:
+
+- `localization.service`: `map_server` + `localization_ddsnode`
+- `planner.service`: `localPlanner` + `pcl_pass_grid`
+- `global_planner.service`: `astar_node`
+- `passable_area.service`: `accumulate_cloud` + `passable_area`
+
+These are separate from the sensor/robot services that should remain
+running:
+
+- `yesense.service` for IMU
+- `rsdriver.service` for lidar and charging/dock support
+- `handler.service` for robot state/motion management
+- `charge_manager.service` and `reflective_column.service` for charging
+  and docking
+- `hsLidar.service`, the Hesai-style lidar driver configured by
+  `/opt/robot/share/node_driver/config/hsLidar.yaml`
+
+After stopping the four nav-conflict services, NOS reported:
+
+```
+localization.service     active=inactive   enabled=disabled
+planner.service          active=inactive   enabled=disabled
+global_planner.service   active=inactive   enabled=disabled
+passable_area.service    active=inactive   enabled=disabled
+```
+
+The kept-running services remained active:
+
+```
+yesense.service              active=active
+handler.service              active=active
+charge_manager.service       active=active
+reflective_column.service    active=active
+hsLidar.service              active=active
+rsdriver.service             active=active
+drdds-recv.service           active=active
+```
+
+AOS was already in the intended state:
+
+```
+height_map_nav.service   active=inactive   enabled=disabled
+lio_perception.service   active=inactive   enabled=disabled
+rsdriver.service         active=active
+basic_server.service     active=active
+rl_deploy.service        active=active
+```
+
+### Fix
+
+`dimos/robot/deeprobotics/m20/deploy.sh` provisioning now disables only
+the NOS vendor nav conflict set:
+
+```
+localization.service
+planner.service
+global_planner.service
+passable_area.service
+```
+
+`deploy.sh status` now prints two separate sections:
+
+1. Required vendor services kept running (`yesense`, `handler`,
+   `charge_manager`, `reflective_column`, `hsLidar`).
+2. Vendor nav conflicts that should be inactive/disabled.
+
+`deploy.sh validate` now fails if any of the four nav-conflict services
+are active/activating or enabled, which catches the documented Deep
+Robotics OTA behavior where service autostart settings reset to factory
+defaults.
+
+### Current interpretation
+
+This explains the NOS overload and SSH banner failures, but it does not
+invalidate the prior FAST-LIO/Rerun finding: the controlled yaw probe
+already showed raw FAST-LIO `/odometry` yaw changes while the viewer pose
+did not. The next localization test should run with the vendor nav stack
+confirmed inactive so any remaining cloud smearing is attributable to our
+FAST-LIO/PGO/Rerun path, not a competing factory nav stack.
+
+## Finding #42: Rotation Command Path Rechecked After Vendor-Stack Cleanup (2026-04-28)
+
+After Finding #41, reran the scripted rotation path to make sure we were
+still exercising the same motor-command path as the earlier 60s drift
+tests.
+
+Important correction: the first passive probe in this session used
+`dimos.msgs.*` decoders for LCM topics. The historical M20 scripts use
+`dimos_lcm.*`. That made the first probe's `/cmd_vel` nonzero counts
+invalid, so do not use those counts as evidence. The probe scripts under
+`.runtime/` were corrected to use `dimos_lcm` decoders.
+
+The valid physical recheck used the same path as the old rotation tests:
+
+```
+/tele_cmd_vel#geometry_msgs.Twist
+  -> CmdVelMux
+  -> /cmd_vel#geometry_msgs.Twist
+  -> nav_cmd_pub
+  -> rt/NAV_CMD
+  -> AOS basic_server / motors
+```
+
+Command:
+
+```
+rotate_and_log.py \
+  --yaw -0.4 \
+  --warmup 2 \
+  --rotate_duration 3 \
+  --cooldown 3 \
+  --pub_hz 20 \
+  --topic_cmd /tele_cmd_vel#geometry_msgs.Twist
+```
+
+Safety stop ran:
+
+```
+[safety] sent 94 zero Twists. ROBOT SHOULD BE STOPPED.
+```
+
+Airy IMU phase stats showed a real yaw event:
+
+```
+WARMUP   gz mean=-0.0087 rad/s
+ROTATE   gz mean=-0.2860 rad/s
+COOLDOWN gz mean=-0.0266 rad/s
+```
+
+Operator visually confirmed: "she rotated a bit just now."
+
+This confirms the scripted yaw path is still valid after disabling the
+vendor nav services. Remaining viewer/localization debugging should now
+focus on what Rerun displays for FAST-LIO `/odometry` and the PGO/global
+map during this same controlled yaw path, not on whether the robot
+actually receives yaw commands.
+
+## Finding #43: Viewer-Free Rotation Probe Shows FAST-LIO Odometry Does Rotate (2026-04-28)
+
+After the Rerun viewer/tunnel started starving NOS SSH again, restarted the
+stack in SLAM-only mode with Rerun disabled:
+
+```
+VIEWER=none
+M20_NAV_ENABLED=0
+M20_SLAM_BACKEND=fastlio2
+M20_FASTLIO2_IMU=airy
+```
+
+This removes `CmdVelMux`, the planner stack, and the Rerun bridge. The
+controlled rotation therefore published directly to:
+
+```
+/cmd_vel#geometry_msgs.Twist -> nav_cmd_pub -> rt/NAV_CMD
+```
+
+Important safety correction made during this test: `rotate_and_log.py`
+previously always flooded zero Twists to `/tele_cmd_vel`, even when
+`--topic_cmd /cmd_vel#geometry_msgs.Twist` was supplied. In
+`M20_NAV_ENABLED=0` mode that is unsafe because `nav_cmd_pub` continues
+publishing the last received `/cmd_vel` at 10 Hz. The script now zeros the
+actual command topic selected by `--topic_cmd`.
+
+Command summary:
+
+```
+rotate_and_log.py \
+  --yaw -0.4 \
+  --warmup 2 \
+  --rotate_duration 8 \
+  --cooldown 3 \
+  --pub_hz 20 \
+  --topic_cmd /cmd_vel#geometry_msgs.Twist
+```
+
+Rotation script output:
+
+```
+ROTATION active: gz mean=-0.2833 rad/s
+[safety] sent 97 zero Twists. ROBOT SHOULD BE STOPPED.
+```
+
+The passive localization probe saw only direct `/cmd_vel` traffic:
+
+```
+cmd_counts:         /cmd_vel=257, /nav_cmd_vel=0, /tele_cmd_vel=0
+nonzero_cmd_counts: /cmd_vel=160, /nav_cmd_vel=0, /tele_cmd_vel=0
+```
+
+FAST-LIO `/odometry` moved during the turn:
+
+```
+count=431
+frame_id=map
+child_frame_id=body
+delta yaw=-125.859 deg
+delta x=-0.214 m
+delta y=-0.071 m
+delta z=+0.025 m
+max_xy_from_first=0.267 m
+max_z_from_first=0.060 m
+```
+
+Point-cloud counters during the same probe:
+
+```
+/registered_scan: count=179, frame_id=map
+/global_map:      count=0
+/global_map_pgo:  count=0
+```
+
+### Interpretation
+
+The raw FAST-LIO LCM pose is not frozen in yaw in this configuration. It
+rotated by about 126 degrees during the direct yaw probe, with modest
+translation drift for that large in-place rotation. That contradicts the
+viewer-observed symptom "pose is NOT rotating" as a statement about raw
+`/odometry`.
+
+The remaining failure is therefore likely in one of:
+
+1. Rerun bridge/viewer overload or stale display state.
+2. Rerun visualization of the registered scan / pose transform.
+3. A different runtime mode than this SLAM-only direct-command probe.
+
+It is no longer correct to describe the current bug simply as "FAST-LIO
+pose does not rotate" without also checking the LCM `/odometry` stream.
+
+## Finding #44: Rerun Bridge Was Over-Subscribing Heavy M20 Point Clouds (2026-04-28)
+
+The viewer freeze and SSH `Connection timed out during banner exchange`
+correlated with the Rerun/tunnel path. With the local viewer and tunnel
+stopped, NOS SSH recovered. With `VIEWER=none`, the Rerun gRPC server on
+`9877` disappeared and the stack stayed reachable.
+
+The M20 Rerun path was expensive for two reasons:
+
+1. `RerunBridgeModule` used `LCM().subscribe_all()`, so it received and
+   decoded every LCM topic, including raw and registered point clouds.
+2. The default `PointCloud2.to_rerun()` renders point clouds as boxes; at
+   M20 lidar rates this means tens of thousands of box archetypes per scan.
+
+Mitigation added:
+
+```
+dimos/robot/deeprobotics/m20/blueprints/nav/m20_rerun.py
+dimos/robot/deeprobotics/m20/blueprints/nav/m20_smartnav_native.py
+```
+
+The M20 Rerun config now:
+
+1. Uses `M20RerunLCM`, an allowlisted pubsub for display topics instead
+   of global `subscribe_all()`.
+2. Does not subscribe to `/raw_points`.
+3. Throttles `/registered_scan` in the raw LCM callback before decoding
+   so only one scan per second reaches Rerun.
+4. Samples registered scans to at most 8,000 points and renders them as
+   `rr.Points3D`, not boxes.
+5. Keeps the normal Rerun click/teleop WebSocket server separate from the
+   display bridge.
+
+`deploy.sh` now also passes `VIEWER=${VIEWER}` into the remote stack, so
+`VIEWER=none` reliably disables Rerun for script-only diagnosis.
+
+Live measurements after the allowlist/throttle patch, with the read-only
+local viewer connected:
+
+```
+load average: 4.33, 5.61, 10.28
+fastlio2_native: ~93% elapsed CPU
+RerunBridge/NavCmdPub worker: ~20% elapsed CPU
+SSH remained responsive
+```
+
+This is still a CPU-heavy stack, but it no longer reproduced the immediate
+viewer/tunnel-induced SSH starvation seen before the patch. If the viewer
+still appears stale, next distinguish viewer rendering from SLAM by running
+the same rotation probe while watching `/odometry` directly.
+
+## Finding #45: Viewer Rotation Path Now Matches FAST-LIO Odometry (2026-04-27 PDT)
+
+After the Rerun allowlist/throttle patch and a fresh local viewer connection,
+the earlier "pose is NOT rotating in the viewer" symptom did not reproduce.
+
+Controlled test:
+
+```
+rotate_and_log.py \
+  --topic_cmd /tele_cmd_vel#geometry_msgs.Twist \
+  --topic_imu /airy_imu_front#sensor_msgs.Imu \
+  --yaw -0.35 \
+  --rotate_duration 7 \
+  --warmup 1 \
+  --cooldown 2 \
+  --pub_hz 20
+```
+
+The operator observed the physical robot rotate and saw the pose rotate in
+the viewer. The concurrent pose monitor showed the backend pose rotating too:
+
+```
+/odometry delta:
+  dx=-0.0186 m
+  dy=+0.2045 m
+  dyaw=-65.51 deg
+
+/corrected_odometry delta:
+  dx=-0.0627 m
+  dy=+0.1290 m
+  dyaw=-67.40 deg
+
+nonzero command counts:
+  /tele_cmd_vel=140
+  /cmd_vel=140
+  /nav_cmd_vel=0
+```
+
+The Airy IMU confirmed the commanded yaw motion:
+
+```
+ROTATION active:
+  gz mean=-0.1743 rad/s
+```
+
+### Interpretation
+
+The viewer-rotation failure was not present after restarting the viewer
+against the patched Rerun bridge. In this run, physical yaw, `/odometry`,
+`/corrected_odometry`, and the displayed viewer pose all moved consistently.
+
+The remaining viewer issue is performance, not correctness: the viewer can
+lag behind real time after motion, but it eventually updates and the displayed
+pose is no longer frozen.
+
+## Finding #46: Click-To-Goal Reached a Clicked Goal With 30s Nav Watchdog (2026-04-27 PDT)
+
+The click-to-goal chain worked end-to-end with the command-capable viewer,
+FAST-LIO2, Airy IMU, direct click waypoint mode, and a longer nav watchdog:
+
+```
+VIEWER=rerun
+M20_NAV_ENABLED=1
+M20_DIRECT_CLICK_WAYPOINT=1
+M20_SLAM_BACKEND=fastlio2
+M20_FASTLIO2_IMU=airy
+M20_NAV_MAX_SPEED=0.08
+M20_NAV_AUTONOMY_SPEED=0.08
+M20_NAV_MAX_YAW_RATE=20.0
+M20_NAV_MAX_COMMAND_DURATION=30.0
+M20_NAV_OMNI_DIR_GOAL_THRESHOLD=2.0
+```
+
+The local viewer event bridge forwarded the click:
+
+```
+[viewer_lcm_ws_bridge] forwarded click
+x=-0.780 y=+1.408 z=+0.005 frame='/world/floor'
+```
+
+The live navigation monitor saw the full chain:
+
+```
+/clicked_point count: 1
+/way_point count:     1
+/path count:          443
+nonempty /path count: 443
+max path length:      101
+final path length:    1
+stop_movement count:  0
+
+nonzero command counts:
+  /nav_cmd_vel=723
+  /cmd_vel=723
+  /tele_cmd_vel=0
+
+max command:
+  vxy=0.081 m/s
+  |wz|=0.349 rad/s
+```
+
+FAST-LIO pose changed substantially during the run:
+
+```
+/odometry delta:
+  dx=-0.310 m
+  dy=+1.028 m
+  dyaw=+47.86 deg
+
+/corrected_odometry delta:
+  dx=-0.213 m
+  dy=+1.060 m
+  dyaw=+32.07 deg
+```
+
+Operator observation:
+
+```
+"she moved to the goal i clicked. viewer updated really slowly after but
+seemed to work"
+```
+
+### Interpretation
+
+This is the first verified successful click-to-goal pass in the native M20
+FAST-LIO2 stack. The click reached the local WebSocket bridge, the NOS
+`RerunWebSocketServer`, `ClickToGoal`, `LocalPlanner`, `PathFollower`,
+`CmdVelMux`, and `NavCmdPub`, then the robot physically moved to the clicked
+goal.
+
+The previous "turned for a second then stopped" behavior was at least partly
+explained by the nav watchdog: at 0.08 m/s, a roughly 1.5-2.0 m click needs
+well over 5 seconds, so a 5 second command-duration limit cannot test goal
+arrival. With the watchdog at 30 seconds, no watchdog trip occurred and the
+planner stopped by converging the path to length 1.
+
+Remaining caveat: Rerun is still slow under the full nav stack. It is usable
+for click-to-goal testing after the display-throttle patch, but lag is still
+visible and should be treated as a performance issue separate from SLAM pose
+correctness.
+
+## Finding #47: Multi-Goal Click Test Shows Arrival Quality Is Not Yet Robust (2026-04-27 PDT)
+
+A segmented click-to-goal monitor was added for repeated live tests:
+
+```
+dimos/robot/deeprobotics/m20/scripts/demo_click_goal_sequence_monitor.py
+```
+
+It segments each click and records the clicked point, waypoint, path counts,
+nonzero command counts, final path length, stop count, odometry delta, and
+distance from FAST-LIO `/odometry` to the clicked coordinate.
+
+Two sequential click goals completed without a watchdog or teleop stop:
+
+```
+Goal 1 click: (-1.574, -0.586)
+  start distance to click: 2.036 m
+  final distance to click: 0.398 m
+  /odometry delta: dx=-0.664 m, dy=-1.504 m, dyaw=-27.95 deg
+  nonzero commands: /nav_cmd_vel=850, /cmd_vel=849, /tele_cmd_vel=0
+  max path length: 101
+  final path length: 1
+  stop_movement: 0
+
+Goal 2 click: (-1.122, +1.401)
+  start distance to click: 1.466 m
+  final distance to click: 0.860 m
+  /odometry delta: dx=+0.760 m, dy=+0.685 m, dyaw=-76.16 deg
+  nonzero commands: /nav_cmd_vel=511, /cmd_vel=511, /tele_cmd_vel=0
+  max path length: 101
+  final path length: 1
+  stop_movement: 0
+```
+
+A follow-up trajectory run on one additional click recorded closest approach
+and post-closest yaw:
+
+```
+Click: (-2.344, -0.713)
+  start distance to click: 2.216 m
+  minimum distance to click: 0.427 m
+  final distance to click: 0.460 m
+  /odometry delta: dx=-0.907 m, dy=-1.505 m, dyaw=-20.52 deg
+  yaw after closest approach: -24.20 deg
+  nonzero commands: /nav_cmd_vel=521, /cmd_vel=521, /tele_cmd_vel=0
+  max path length: 101
+  final path length: 1
+  stop_movement: 0
+```
+
+### Interpretation
+
+Click-to-goal is operational end-to-end, but arrival quality is not robust.
+The planner can declare the path consumed (`final path length = 1`) and stop
+without the robot being close enough to the clicked coordinate. Goal 2 ended
+0.86 m from the clicked point by FAST-LIO `/odometry`, which is too large for
+a clean indoor click-to-goal arrival.
+
+The trajectory run did not show large spatial overshoot: minimum distance was
+0.427 m and final distance was 0.460 m. It did show continued heading motion
+after closest approach (`~24 deg` yaw after closest), matching the operator's
+observation that the robot rotates a lot before stopping.
+
+This points next at local planner / path follower goal semantics rather than
+click delivery or raw SLAM pose. High-value next checks:
+
+1. Compare path follower `goalTolerance`, local planner `goalClearance`, and
+   local planner reached/behind-goal logic against the observed final distance.
+2. Reduce the omni/yaw behavior for close goals and test whether post-closest
+   yaw drops without increasing final distance.
+3. Instrument the published `/path` endpoint over time so we can distinguish
+   "path endpoint moved to robot" from "path follower reached the clicked
+   endpoint".
+4. Investigate why `/corrected_odometry` moved far less than raw `/odometry`
+   during these runs; direct-click local planning uses raw `/odometry`, but
+   terrain analysis and higher-level planning consume corrected odometry.
+
+## Finding #48: Behind/Side Clicks Needed Explicit M20 Local-Planner and Omni-Follower Tuning (2026-04-27 PDT)
+
+Followed up Finding #47 by testing with odometry instead of eyeballing the
+viewer. The issue split into two separate native SmartNav defaults that were
+bad for M20 click-to-goal.
+
+### Local planner defaults were too permissive
+
+The native local planner binary defaults to:
+
+```
+goalReachedThreshold=0.5
+goalBehindRange=0.8
+freezeAng=90.0
+twoWayDrive=true
+```
+
+The M20 wrapper was not passing these fields, so side/behind clicks could
+collapse into a one-pose stop path while still visibly far from the clicked
+point. The M20 native blueprint now passes explicit values:
+
+```
+goalReachedThreshold=0.30
+goalBehindRange=0.30
+freezeAng=180.0
+twoWayDrive=false
+```
+
+A map-frame injected forward goal still worked with these arrival semantics:
+
+```
+Injected goal: 0.8 m forward from current pose
+  start distance: 0.800 m
+  minimum distance: 0.214 m
+  final distance: 0.273 m
+  yaw after closest: +0.739 deg
+  /odometry delta: dx=-0.507 m, dy=+0.181 m, dyaw=+19.56 deg
+  /corrected_odometry delta: dx=-0.214 m, dy=+0.100 m, dyaw=+5.52 deg
+  nonzero commands: /nav_cmd_vel=225, /cmd_vel=224
+  max path length: 81
+  final path length: 1
+  stop_movement: 0
+```
+
+### Local planner fix alone exposed a path-follower heading gate
+
+After syncing the local-planner params, a deliberately behind/side viewer
+click no longer prematurely emitted a one-pose stop path. It did still fail
+to approach the goal:
+
+```
+Click: (-2.951, -0.060)
+  start distance: 2.903 m
+  minimum distance: 2.840 m
+  final distance: 2.854 m
+  max command: vxy=0.000 m/s, |wz|=0.349 rad/s
+  /odometry delta: dx=-0.049 m, dy=-0.051 m, dyaw=-29.64 deg
+  path length: stayed 101
+  end reason: monitor timeout
+  stop_movement: 1
+```
+
+This was not a click-delivery failure and not a local-planner stop-path
+failure. The path follower was publishing yaw-only commands until the
+`CmdVelMux` nav watchdog cut `/cmd_vel`. The relevant path-follower source
+gate is:
+
+```
+if ((fabs(dirDiff) < dirDiffThre ||
+     (dis < omniDirGoalThre && fabs(dirDiff) < omniDirDiffThre)) &&
+    dis > stopDisThre) {
+    // allow linear speed ramp
+} else {
+    // ramp vehicleSpeed toward zero
+}
+```
+
+The native default `omniDirDiffThre=1.5 rad` is about 86 degrees. For a
+behind click, `dirDiff` can be close to 180 degrees, so the follower rotates
+in place instead of using the M20's omni-directional drive capability.
+
+The M20 wrapper now passes:
+
+```
+omniDirGoalThre=2.0
+omniDirDiffThre=3.2
+```
+
+and `deploy.sh` forwards these through env vars:
+
+```
+M20_NAV_MAX_COMMAND_DURATION
+M20_NAV_OMNI_DIR_GOAL_THRESHOLD
+M20_NAV_OMNI_DIR_DIFF_THRESHOLD
+M20_NAV_GOAL_REACHED_THRESHOLD
+M20_NAV_GOAL_BEHIND_RANGE
+M20_NAV_FREEZE_ANG
+```
+
+The M20 default `M20_NAV_MAX_COMMAND_DURATION` was also raised from `3.0s`
+to `30.0s`. This is still a safety cap, but `3.0s` is too short for
+click-to-goal at the current bringup speed and recreates the apparent
+"turned briefly, then dropped out of nav" failure.
+
+### Verified side/behind click after omni follower tuning
+
+With:
+
+```
+M20_NAV_MAX_SPEED=0.08
+M20_NAV_AUTONOMY_SPEED=0.08
+M20_NAV_MAX_YAW_RATE=20.0
+M20_NAV_MAX_COMMAND_DURATION=75.0
+M20_NAV_OMNI_DIR_GOAL_THRESHOLD=2.0
+M20_NAV_OMNI_DIR_DIFF_THRESHOLD=3.2
+M20_NAV_GOAL_REACHED_THRESHOLD=0.30
+M20_NAV_GOAL_BEHIND_RANGE=0.30
+M20_NAV_FREEZE_ANG=180.0
+```
+
+the same side/behind class of viewer click produced immediate linear and yaw
+motion:
+
+```
+Click: (-0.683, -0.951)
+  start distance: 1.159 m
+  minimum distance: 0.290 m
+  final distance: 0.414 m
+  end reason: settled_path_consumed
+  max command: vxy=0.081 m/s, |wz|=0.349 rad/s
+  nonzero commands: /nav_cmd_vel=607, /cmd_vel=606, /tele_cmd_vel=0
+  max path length: 101
+  final path length: 1
+  stop_movement: 0
+  yaw after closest: +14.91 deg
+```
+
+### Interpretation
+
+The click-to-goal stack now handles side/behind clicks materially better:
+the robot no longer gets stuck rotating in place until the watchdog stops
+the command stream. The planner consumed the path and stopped by its own
+goal semantics.
+
+The remaining arrival error is still nonzero: the best measured distance was
+0.29 m and the final distance settled at 0.41 m after yaw/settling. That is
+consistent with the new `goalReachedThreshold=0.30` plus slow update/settle
+lag, but it is not yet a "clean parking" behavior. Next tuning should test a
+smaller `goalReachedThreshold` such as `0.20-0.25`, and decide whether the
+extra final yaw is acceptable for click-to-goal or should be reduced by
+lowering `maxYawRate` / close-goal yaw behavior.
+
+## Finding #49 — click-to-goal works under viewer-core isolation, but keep affinity opt-in
+
+Date: 2026-04-28
+
+After the Rerun/viewer path began stalling intermittently, live CPU sampling
+showed that the initial Rerun "pin" only moved the three listener process
+leaders to CPU5; most of their threads still had `Cpus_allowed_list=0-3`.
+Thread-level pinning changed that to:
+
+```
+listener pid 21142: all 67 threads on CPU5
+listener pid 21143: all 41 threads on CPU5
+listener pid 21144: all 48 threads on CPU5
+```
+
+The next one-second CPU sample shifted real load onto CPU5 and reduced the
+default worker cores:
+
+```
+Before thread pin:
+  cpu0 70.9%, cpu1 64.9%, cpu2 67.7%, cpu3 63.6%, cpu4 100.0%, cpu5 0.0%
+
+After thread pin:
+  cpu0 52.8%, cpu1 44.4%, cpu2 48.6%, cpu3 52.8%, cpu4 100.0%, cpu5 41.2%
+```
+
+The viewer remained usable during follow-up click tests. Three clean
+click-to-goal segments reached the configured `0.25 m` class threshold by
+actual odometry:
+
+```
+Run A, click (+1.88, -0.34):
+  start 1.951 m, min 0.235 m, final 0.386 m
+  end_reason=settled_path_consumed, stop_movement=0
+  odom delta dx=+1.646 m, dy=-0.601 m, dyaw=-80.8 deg
+
+Run B, click (-0.26, -1.13):
+  start 1.912 m, min 0.241 m, final 0.468 m
+  end_reason=settled_path_consumed, stop_movement=0
+  odom delta dx=-1.599 m, dy=-0.755 m, dyaw=-13.1 deg
+
+Run C, click (-0.73, -0.35):
+  start 2.101 m, min 0.229 m, final 0.313 m
+  end_reason=settled_path_consumed, stop_movement=0
+  odom delta dx=-1.653 m, dy=+0.742 m, dyaw=-67.7 deg
+```
+
+One late second click in a 180s monitor window did not finish before the
+monitor timed out:
+
+```
+click (+1.50, -0.66):
+  start 1.778 m, min 0.294 m, final 0.508 m
+  end_reason=monitor_timeout
+  last_path_len=51
+  nonzero /nav_cmd_vel and /cmd_vel continued until timeout
+```
+
+That segment was explicitly canceled afterward by publishing
+`/stop_movement#std_msgs.Bool=True`, flooding zero `/tele_cmd_vel`, then
+injecting a zero-distance current-pose goal. A 3s verification sample after
+the cancel saw `/cmd_vel` and `/nav_cmd_vel` both quiet:
+
+```
+{'cmd': 140, 'nav': 141, 'nz_cmd': 0, 'nz_nav': 0}
+```
+
+### Affinity decision
+
+Do not hard-code the exact live split as the unconditional default. During
+the test, `fastlio2_native` was effectively one hot thread on CPU4 and CPU4
+remained at 100%, so forcing FAST-LIO to CPU4-only is a brittle default.
+
+Keep the affinity mechanism as explicit knobs:
+
+```
+M20_SLAM_CORES              default native-path core set
+M20_FASTLIO_CORES           optional FAST-LIO override
+M20_DRDDS_LIDAR_CORES       optional lidar bridge override
+M20_AIRY_IMU_CORES          optional Airy IMU bridge override
+M20_RERUN_CORES             optional deploy-time Rerun listener thread pin
+```
+
+For viewer-heavy click testing, the proven profile is:
+
+```
+M20_FASTLIO_CORES=4
+M20_DRDDS_LIDAR_CORES=4
+M20_AIRY_IMU_CORES=6
+M20_RERUN_CORES=5
+```
+
+For non-viewer autonomy, prefer keeping FAST-LIO on the broader isolated
+set (`M20_SLAM_CORES=4,5,6,7`, or later a measured `4,5`) until we have
+evidence that a narrower default preserves localization under rotation.
+
+## Finding #50 — M20 Rerun viewer allowlist re-enabled PGO and planner debug topics
+
+Date: 2026-04-28
+
+The point-cloud viewer load was reduced in two places:
+
+```
+Live process:
+  M20_RERUN_REGISTERED_SCAN_HZ=0.1
+  M20_RERUN_REGISTERED_SCAN_MAX_POINTS=1000
+
+Persisted deploy defaults:
+  M20_RERUN_REGISTERED_SCAN_HZ=0.2
+  M20_RERUN_REGISTERED_SCAN_MAX_POINTS=2000
+```
+
+The persisted default is therefore lighter than the original viewer but
+heavier than the exact live test run. The live process had the 0.1 Hz /
+1000-point override because it was launched during the NOS-overload
+debugging pass.
+
+The M20 Rerun path was also hiding many SmartNav debug streams because
+`M20RerunLCM` used a narrow allowlist. The generic SmartNav renderer already
+knows how to draw terrain maps, obstacle clouds, costmaps, local path, and
+goal path; the M20-specific allowlist simply was not subscribing to those
+topics.
+
+The M20 allowlist now includes:
+
+```
+/corrected_odometry#nav_msgs.Odometry
+/global_map#sensor_msgs.PointCloud2
+/global_map_pgo#sensor_msgs.PointCloud2
+/terrain_map#sensor_msgs.PointCloud2
+/terrain_map_ext#sensor_msgs.PointCloud2
+/obstacle_cloud#sensor_msgs.PointCloud2
+/costmap_cloud#sensor_msgs.PointCloud2
+/path#nav_msgs.Path
+/goal_path#nav_msgs.Path
+```
+
+Heavy debug point clouds are pre-decode throttled by:
+
+```
+M20_RERUN_DEBUG_CLOUD_HZ=1.0   # <=0 disables these debug clouds
+```
+
+This is separate from `M20_RERUN_REGISTERED_SCAN_HZ`, so PGO/planner debug
+visibility can be tuned without restoring the full registered-scan load.
+
+Caveat: with `M20_DIRECT_CLICK_WAYPOINT=1`, clicked goals bypass
+SimplePlanner. In that mode the viewer can show terrain, terrain ext,
+local obstacle cloud, local path, PGO corrected odometry, and PGO global map,
+but `costmap_cloud` / `goal_path` may stay quiet for clicked goals because
+SimplePlanner is intentionally not active. To see SimplePlanner costmap and
+goal-path behavior for clicks, restart with:
+
+```
+M20_DIRECT_CLICK_WAYPOINT=0
+```
+
+## Finding #51 — WASD teleop bridge listened to the wrong local viewer channel
+
+Date: 2026-04-28
+
+During SimplePlanner click testing, a clicked goal reached NOS and produced
+nonzero `/nav_cmd_vel` and `/cmd_vel`, but `/tele_cmd_vel` stayed at zero.
+The local bridge also printed no forwarded twist while WASD was expected to
+move the robot.
+
+The installed Mac `dimos-viewer` binary contains the keyboard teleop path, but
+its embedded channel string is:
+
+```
+/cmd_vel#geometry_msgs.Twist
+```
+
+The local `viewer_lcm_ws_bridge.py` was subscribing to:
+
+```
+/tele_cmd_vel#geometry_msgs.Twist
+```
+
+That meant click forwarding could work while WASD forwarding was silent. The
+bridge default now matches the viewer keyboard output (`/cmd_vel#geometry_msgs.Twist`);
+the NOS WebSocket server still republishes incoming `twist` JSON messages as
+the SmartNav `tele_cmd_vel` stream.
+
+Regression guard:
+
+```
+uv run pytest --confcutdir=dimos/robot/deeprobotics/m20/scripts \
+  dimos/robot/deeprobotics/m20/scripts/test_viewer_lcm_ws_bridge.py -q
+```
+
+Note: after the bridge restart, forwarded twist output still depends on the
+Rerun viewer window having keyboard focus.
+
+## Finding #52 — M20 Rerun goal/waypoint subscriptions used the wrong SmartNav type
+
+Date: 2026-04-28
+
+The M20 Rerun allowlist did contain `/goal` and `/way_point`, but it subscribed
+to them as `geometry_msgs.PoseStamped`. The active SmartNav path publishes both
+as `geometry_msgs.PointStamped`:
+
+```
+ClickToGoal.goal      -> /goal#geometry_msgs.PointStamped
+ClickToGoal.way_point -> /way_point#geometry_msgs.PointStamped
+SimplePlanner.goal    <- /goal#geometry_msgs.PointStamped
+LocalPlanner.way_point <- /way_point#geometry_msgs.PointStamped
+```
+
+So the viewer was effectively listening to inactive channels:
+
+```
+/goal#geometry_msgs.PoseStamped
+/way_point#geometry_msgs.PoseStamped
+```
+
+The M20 allowlist now subscribes to:
+
+```
+/goal#geometry_msgs.PointStamped
+/way_point#geometry_msgs.PointStamped
+```
+
+`/goal_request#geometry_msgs.PoseStamped` remains enabled for the older
+ReplanningAStar path, but it is not the SmartNav click-to-goal marker.
+
+Follow-up: `/clicked_point#geometry_msgs.PointStamped` is also enabled in the
+M20 Rerun allowlist so the raw viewer click can be visualized alongside the
+ClickToGoal outputs (`/goal` and `/way_point`).

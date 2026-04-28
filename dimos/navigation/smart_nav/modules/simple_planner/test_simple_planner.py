@@ -18,9 +18,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import math
+import threading
+from typing import Any
 
+from dimos_lcm.std_msgs import Bool
+import numpy as np
 import pytest
 
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.navigation.smart_nav.modules.simple_planner.simple_planner import (
     Costmap,
     SimplePlanner,
@@ -247,6 +252,33 @@ class TestSimplePlannerPlan:
         assert math.isclose(wx, 0.1)
         assert math.isclose(wy, 0.0)
 
+    def test_cached_short_path_publishes_exact_goal_not_grid_cell_center(self) -> None:
+        class _Out:
+            def __init__(self) -> None:
+                self.messages: list[Any] = []
+
+            def publish(self, msg: Any) -> None:
+                self.messages.append(msg)
+
+        p = SimplePlanner.__new__(SimplePlanner)
+
+        class _C:
+            lookahead_distance = 2.0
+
+        p.config = _C()  # type: ignore[assignment]
+        p._lock = threading.Lock()
+        p._cached_path = [(-0.15, -0.15), (0.75, -0.15)]
+        p._goal_x = 0.761
+        p._goal_y = -0.008
+        p.way_point = _Out()  # type: ignore[assignment]
+
+        p._publish_from_cached(rx=-0.039, ry=-0.009, gz=-0.004, now=123.0)
+
+        assert len(p.way_point.messages) == 1
+        msg = p.way_point.messages[0]
+        assert math.isclose(msg.x, 0.761)
+        assert math.isclose(msg.y, -0.008)
+
     def test_lookahead_empty_path(self) -> None:
         wx, wy = SimplePlanner._lookahead([], 3.0, 4.0, 1.0)
         assert wx == 3.0 and wy == 4.0
@@ -282,6 +314,78 @@ class TestSimplePlannerPlan:
         # From (2, 0), first point ≥ 1.5 m away is (4, 0) (dist 2.0),
         # not (3, 0) which is only 1.0 m away.
         assert math.isclose(wx, 4.0)
+
+    def test_classify_points_uses_configured_ground_offset(self) -> None:
+        p = SimplePlanner.__new__(SimplePlanner)
+        p._lock = threading.Lock()
+        p._robot_z = 0.0
+        p._has_odom = True
+
+        class _C:
+            ground_offset_below_robot = 0.57
+
+        p.config = _C()  # type: ignore[assignment]
+        cm = Costmap(cell_size=0.3, obstacle_height=0.2, inflation_radius=0.0)
+
+        points = np.array(
+            [
+                [0.0, 0.0, -0.52],
+                [0.3, 0.0, -0.10],
+            ],
+            dtype=np.float32,
+        )
+        p._classify_points(points, cm)
+
+        ground_cell = cm.world_to_cell(0.0, 0.0)
+        obstacle_cell = cm.world_to_cell(0.3, 0.0)
+        assert ground_cell not in cm.blocked_cells()
+        assert obstacle_cell in cm.blocked_cells()
+
+
+class TestSimplePlannerGoalCallbacks:
+    def _planner(self) -> SimplePlanner:
+        p = SimplePlanner.__new__(SimplePlanner)
+
+        class _Cfg:
+            pass
+
+        p.config = _Cfg()  # type: ignore[assignment]
+        p.config.inflation_radius = 0.4
+
+        p._lock = threading.Lock()
+        p._ref_goal_dist = 0.0
+        p._last_progress_time = 123.0
+        p._effective_inflation = 0.2
+        p._cached_path = [(0.0, 0.0), (1.0, 0.0)]
+        p._last_plan_time = 456.0
+        return p
+
+    def test_clicked_point_uses_goal_handler(self) -> None:
+        p = self._planner()
+
+        p._on_clicked_point(PointStamped(x=1.5, y=-2.0, z=0.3, frame_id="map"))
+
+        assert p._goal_x == 1.5
+        assert p._goal_y == -2.0
+        assert p._goal_z == 0.3
+        assert p._ref_goal_dist == float("inf")
+        assert p._effective_inflation == p.config.inflation_radius
+        assert p._cached_path is None
+        assert p._last_plan_time == 0.0
+
+    def test_stop_movement_clears_active_goal(self) -> None:
+        p = self._planner()
+        p._goal_x = 1.0
+        p._goal_y = 2.0
+        p._goal_z = 0.5
+
+        p._on_stop_movement(Bool(data=True))
+
+        assert p._goal_x is None
+        assert p._goal_y is None
+        assert p._goal_z == 0.0
+        assert p._cached_path is None
+        assert p._last_plan_time == 0.0
 
 
 # ─── _blocked_at_inflation helper ─────────────────────────────────────────

@@ -27,7 +27,6 @@ import lcm
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 
-
 ODOM_TOPIC = "/odometry#nav_msgs.Odometry"
 GOAL_TOPIC = "/clicked_point#geometry_msgs.PointStamped"
 
@@ -91,7 +90,8 @@ def main() -> int:
     )
     print(
         "[inject_goal] publishing once to /clicked_point. "
-        "ClickToGoal will forward to /goal + /way_point.",
+        "SimplePlanner consumes this directly; ClickToGoal also forwards "
+        "compatibility outputs.",
         flush=True,
     )
 

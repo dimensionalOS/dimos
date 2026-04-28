@@ -33,6 +33,7 @@ import threading
 import time
 from typing import Any
 
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 import numpy as np
 
 from dimos.core.core import rpc
@@ -246,6 +247,10 @@ class SimplePlannerConfig(ModuleConfig):
     replan_cooldown: float = 2.0
     # Hard cap on A* node expansions per call.
     max_expansions: int = 200_000
+    # Vertical distance from the odometry/robot frame origin to the ground
+    # plane. G1's historic default is 1.3 m; shorter robots must override
+    # this or floor returns will be classified as obstacles.
+    ground_offset_below_robot: float = 1.3
 
     # ── No-progress detection + escalation ──────────────────────────────
     # Consider the robot "stuck" if its distance-to-goal hasn't decreased
@@ -272,7 +277,12 @@ class SimplePlanner(Module[SimplePlannerConfig]):
             TerrainAnalysis. Layered on top of the ext map between
             rebuilds so dynamic obstacles show up within ~1 scan tick.
         odometry (In[Odometry]): Robot pose (world frame).
+        clicked_point (In[PointStamped]): User-specified click goal
+            (world frame). This is subscribed directly so click-to-goal does
+            not depend on an intermediate republish hop.
         goal (In[PointStamped]): User-specified goal (world frame).
+        stop_movement (In[Bool]): Clears the active global goal when teleop
+            starts.
         way_point (Out[PointStamped]): Next look-ahead waypoint for local
             planner.
         goal_path (Out[Path]): Full A* path for visualisation.
@@ -286,7 +296,9 @@ class SimplePlanner(Module[SimplePlannerConfig]):
     terrain_map_ext: In[PointCloud2]
     terrain_map: In[PointCloud2]
     odometry: In[Odometry]
+    clicked_point: In[PointStamped]
     goal: In[PointStamped]
+    stop_movement: In[Bool]
     way_point: Out[PointStamped]
     goal_path: Out[Path]
     costmap_cloud: Out[PointCloud2]
@@ -345,7 +357,9 @@ class SimplePlanner(Module[SimplePlannerConfig]):
     @rpc
     def start(self) -> None:
         self.odometry.subscribe(self._on_odom)
+        self.clicked_point.subscribe(self._on_clicked_point)
         self.goal.subscribe(self._on_goal)
+        self.stop_movement.subscribe(self._on_stop_movement)
         self.terrain_map_ext.subscribe(self._on_terrain_map_ext)
         self.terrain_map.subscribe(self._on_terrain_map)
         self._running = True
@@ -385,25 +399,39 @@ class SimplePlanner(Module[SimplePlannerConfig]):
             self._effective_inflation = self.config.inflation_radius
             self._cached_path = None
             self._last_plan_time = 0.0
-        print(f"[simple_planner] Goal received: ({msg.x:.2f}, {msg.y:.2f}, {msg.z:.2f})")
+        print(
+            f"[simple_planner] Goal received: ({msg.x:.2f}, {msg.y:.2f}, {msg.z:.2f})",
+            flush=True,
+        )
 
-    # Sensor height assumed for the G1 (m). Points below robot_z minus
-    # this offset are interpreted as floor; anything higher is obstacle.
-    _GROUND_OFFSET_BELOW_ROBOT = 1.3
+    def _on_clicked_point(self, msg: PointStamped) -> None:
+        print("[simple_planner] clicked_point received", flush=True)
+        self._on_goal(msg)
+
+    def _on_stop_movement(self, msg: Bool) -> None:
+        if not msg.data:
+            return
+        with self._lock:
+            self._goal_x = None
+            self._goal_y = None
+            self._goal_z = 0.0
+            self._cached_path = None
+            self._last_plan_time = 0.0
+        print("[simple_planner] stop_movement received: cleared active goal", flush=True)
 
     def _classify_points(self, points: np.ndarray, cm: Costmap) -> None:
         """Add points (Nx3) to ``cm`` using z-relative-to-ground as height.
 
         The dimos PointCloud2 wrapper drops the intensity field, so we
         can't read elevation-above-ground directly. Instead we classify
-        by the point's absolute z relative to the robot's standing
-        ground (rz - ``_GROUND_OFFSET_BELOW_ROBOT``). TerrainAnalysis
-        only publishes ground/low-height obstacle voxels, so
+        by the point's absolute z relative to the robot's configured
+        standing ground plane. TerrainAnalysis only publishes
+        ground/low-height obstacle voxels, so
         z-relative-to-ground is a good elevation proxy.
         """
         with self._lock:
             rz = self._robot_z if self._has_odom else 0.0
-        ground_z = rz - self._GROUND_OFFSET_BELOW_ROBOT
+        ground_z = rz - self.config.ground_offset_below_robot
         for p in points:
             h = float(p[2]) - ground_z
             if h <= 0.0:
@@ -496,9 +524,14 @@ class SimplePlanner(Module[SimplePlannerConfig]):
         """
         with self._lock:
             cached = self._cached_path
+            fallback = (
+                (self._goal_x, self._goal_y)
+                if self._goal_x is not None and self._goal_y is not None
+                else None
+            )
         if not cached:
             return
-        wx, wy = self._lookahead(cached, rx, ry, self.config.lookahead_distance)
+        wx, wy = self._lookahead(cached, rx, ry, self.config.lookahead_distance, fallback=fallback)
         self.way_point.publish(PointStamped(ts=now, frame_id="map", x=wx, y=wy, z=gz))
 
     def _replan_once(self) -> None:
@@ -610,7 +643,13 @@ class SimplePlanner(Module[SimplePlannerConfig]):
         self.goal_path.publish(Path(ts=now, frame_id="map", poses=poses))
 
         # Pick look-ahead waypoint
-        wx, wy = self._lookahead(path_world, rx, ry, self.config.lookahead_distance)
+        wx, wy = self._lookahead(
+            path_world,
+            rx,
+            ry,
+            self.config.lookahead_distance,
+            fallback=(gx, gy),
+        )
         self.way_point.publish(PointStamped(ts=now, frame_id="map", x=wx, y=wy, z=gz))
 
         # 1 Hz diagnostic: cells in costmap, path length, chosen waypoint
@@ -664,15 +703,19 @@ class SimplePlanner(Module[SimplePlannerConfig]):
 
     @staticmethod
     def _lookahead(
-        path: list[tuple[float, float]], rx: float, ry: float, distance: float
+        path: list[tuple[float, float]],
+        rx: float,
+        ry: float,
+        distance: float,
+        fallback: tuple[float, float] | None = None,
     ) -> tuple[float, float]:
         """Pick a look-ahead point at least ``distance`` metres ahead of the
         robot along the path.
 
         First finds the path index closest to (rx, ry), then walks forward
         until the cumulative distance from that closest point exceeds
-        ``distance``. Falls back to the final path node if nothing is far
-        enough. Path is ordered start → goal.
+        ``distance``. Falls back to ``fallback`` or the final path node if
+        nothing is far enough. Path is ordered start → goal.
         """
         if not path:
             return (rx, ry)
@@ -690,4 +733,6 @@ class SimplePlanner(Module[SimplePlannerConfig]):
             wx, wy = path[i]
             if (wx - rx) ** 2 + (wy - ry) ** 2 >= d2_target:
                 return (wx, wy)
+        if fallback is not None:
+            return fallback
         return path[-1]

@@ -45,8 +45,12 @@ from dimos.navigation.smart_nav.main import smart_nav, smart_nav_rerun_config
 from dimos.navigation.smart_nav.modules.arise_slam.arise_slam import AriseSLAM
 from dimos.navigation.smart_nav.modules.fastlio2.fastlio2 import FastLio2
 from dimos.robot.deeprobotics.m20.blueprints.nav.m20_rerun import (
+    M20RerunLCM,
     camera_info_override,
+    m20_odometry_tf_override,
     m20_rerun_blueprint,
+    raw_points_override,
+    registered_scan_override,
     static_robot,
 )
 from dimos.robot.deeprobotics.m20.connection import m20_connection
@@ -61,19 +65,43 @@ from dimos.visualization.vis_module import vis_module
 M20_HEIGHT_CLEARANCE = 0.57  # 570mm standing height
 M20_LIDAR_HEIGHT = 0.47  # lidar at 47cm in agile stance
 
-# CPU affinity for the latency-critical SLAM/IMU native path.
+# CPU affinity for the latency-critical native sensor/SLAM path.
 # NOS boots with `isolcpus=4,5,6,7` so cores 4-7 are reserved (no default
-# scheduler placement). Pinning the native binaries there gives them
-# exclusive access while Python smartnav workers run on 0-3. Without this
-# pinning, 15+ R/D threads crammed onto 4 scheduler-default cores produced
-# 3-4 SECOND IMU delivery gaps during rotation, which caused FAST-LIO2 to
-# extrapolate forward on stale IMU and lock ICP to wrong local minima —
-# the root cause of click-to-goal rotation drift. See FASTLIO2_LOG Finding
-# #35. Override via M20_SLAM_CORES="4,5,6,7" env var.
-_slam_cores_env = os.environ.get("M20_SLAM_CORES", "4,5,6,7").strip()
-_SLAM_CPU_AFFINITY: frozenset[int] | None = (
-    frozenset(int(c) for c in _slam_cores_env.split(",") if c.strip())
-    if _slam_cores_env else None
+# scheduler placement). Pinning the native binaries there gives them isolation
+# while Python smartnav workers run on 0-3. Without this pinning, 15+ R/D
+# threads crammed onto 4 scheduler-default cores produced 3-4 SECOND IMU
+# delivery gaps during rotation, which caused FAST-LIO2 to extrapolate forward
+# on stale IMU and lock ICP to wrong local minima. See FASTLIO2_LOG Finding
+# #35. M20_SLAM_CORES is the default for the native path; per-process overrides
+# let viewer-test runs reserve one isolated core for Rerun listener workers.
+def _cpu_affinity_from_env(
+    name: str,
+    default_raw: str | None,
+) -> frozenset[int] | None:
+    raw = os.environ.get(name)
+    if raw is None:
+        raw = default_raw
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return frozenset(int(c.strip()) for c in raw.split(",") if c.strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a comma-separated CPU list") from exc
+
+
+_SLAM_CORES_RAW = os.environ.get("M20_SLAM_CORES", "4,5,6,7")
+_SLAM_CPU_AFFINITY = _cpu_affinity_from_env("M20_SLAM_CORES", "4,5,6,7")
+_FASTLIO_CPU_AFFINITY = _cpu_affinity_from_env("M20_FASTLIO_CORES", _SLAM_CORES_RAW)
+_DRDDS_LIDAR_CPU_AFFINITY = _cpu_affinity_from_env(
+    "M20_DRDDS_LIDAR_CORES",
+    _SLAM_CORES_RAW,
+)
+_AIRY_IMU_CPU_AFFINITY = _cpu_affinity_from_env(
+    "M20_AIRY_IMU_CORES",
+    _SLAM_CORES_RAW,
 )
 
 # Robot-body AABB in base_link meters for lidar self-filtering. Computed
@@ -121,7 +149,7 @@ if _SLAM_BACKEND == "fastlio2":
         build_command=None,
         config="velodyne.yaml",
         native_clock=(_FASTLIO2_IMU == "airy"),
-        cpu_affinity=_SLAM_CPU_AFFINITY,
+        cpu_affinity=_FASTLIO_CPU_AFFINITY,
     )
 else:
     _slam_module = AriseSLAM.blueprint(
@@ -151,7 +179,7 @@ if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy":
             which="front",
             frame="base_link",
             lever_arm_base_m=_lever_arm_env or None,
-            cpu_affinity=_SLAM_CPU_AFFINITY,
+            cpu_affinity=_AIRY_IMU_CPU_AFFINITY,
         ),
     )
 
@@ -161,12 +189,35 @@ if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy":
 # could inject conflicting cmd_vel and make it impossible to isolate
 # SLAM issues from planner issues.
 _NAV_ENABLED = os.environ.get("M20_NAV_ENABLED", "1").strip() != "0"
+_DIRECT_CLICK_WAYPOINT = os.environ.get("M20_DIRECT_CLICK_WAYPOINT", "0").strip() == "1"
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return default
+    return float(value)
+
+
+# Conservative live-bringup limits. Override with env vars once click-to-goal
+# behavior is proven in the current physical test area.
+_NAV_MAX_SPEED = _env_float("M20_NAV_MAX_SPEED", 0.20)
+_NAV_AUTONOMY_SPEED = _env_float("M20_NAV_AUTONOMY_SPEED", _NAV_MAX_SPEED)
+_NAV_MAX_ACCEL = _env_float("M20_NAV_MAX_ACCEL", 0.30)
+_NAV_MAX_YAW_RATE = _env_float("M20_NAV_MAX_YAW_RATE", 40.0)
+_NAV_MAX_COMMAND_DURATION = _env_float("M20_NAV_MAX_COMMAND_DURATION", 30.0)
+_NAV_OMNI_DIR_GOAL_THRESHOLD = _env_float("M20_NAV_OMNI_DIR_GOAL_THRESHOLD", 2.0)
+_NAV_OMNI_DIR_DIFF_THRESHOLD = _env_float("M20_NAV_OMNI_DIR_DIFF_THRESHOLD", 3.2)
+_NAV_GOAL_REACHED_THRESHOLD = _env_float("M20_NAV_GOAL_REACHED_THRESHOLD", 0.30)
+_NAV_GOAL_BEHIND_RANGE = _env_float("M20_NAV_GOAL_BEHIND_RANGE", 0.30)
+_NAV_FREEZE_ANG = _env_float("M20_NAV_FREEZE_ANG", 180.0)
 
 _nav_modules: tuple = ()
 if _NAV_ENABLED:
     _nav_modules = (
         smart_nav(
             use_simple_planner=True,
+            direct_click_waypoint=_DIRECT_CLICK_WAYPOINT,
             vehicle_height=M20_HEIGHT_CLEARANCE,
             terrain_analysis={
                 "build_command": None,
@@ -175,18 +226,34 @@ if _NAV_ENABLED:
             },
             local_planner={
                 "build_command": None,
+                "max_speed": _NAV_MAX_SPEED,
+                "autonomy_speed": _NAV_AUTONOMY_SPEED,
+                "goal_reached_threshold": _NAV_GOAL_REACHED_THRESHOLD,
+                "goal_behind_range": _NAV_GOAL_BEHIND_RANGE,
+                "freeze_ang": _NAV_FREEZE_ANG,
+                "two_way_drive": False,
             },
             path_follower={
                 "build_command": None,
+                "max_speed": _NAV_MAX_SPEED,
+                "autonomy_speed": _NAV_AUTONOMY_SPEED,
+                "max_acceleration": _NAV_MAX_ACCEL,
+                "max_yaw_rate": _NAV_MAX_YAW_RATE,
+                "omni_dir_goal_threshold": _NAV_OMNI_DIR_GOAL_THRESHOLD,
+                "omni_dir_diff_threshold": _NAV_OMNI_DIR_DIFF_THRESHOLD,
                 "two_way_drive": False,
             },
             simple_planner={
                 "cell_size": 0.3,
                 "obstacle_height_threshold": 0.20,
                 "inflation_radius": 0.4,
+                "ground_offset_below_robot": M20_HEIGHT_CLEARANCE,
                 "lookahead_distance": 2.0,
                 "replan_rate": 5.0,
                 "replan_cooldown": 2.0,
+            },
+            cmd_vel_mux={
+                "max_nav_command_duration_sec": _NAV_MAX_COMMAND_DURATION,
             },
         ),
     )
@@ -201,7 +268,7 @@ m20_smartnav_native = (
         DrddsLidarBridge.blueprint(
             build_command=None,
             body_crop=_M20_BODY_CROP or None,
-            cpu_affinity=_SLAM_CPU_AFFINITY,
+            cpu_affinity=_DRDDS_LIDAR_CPU_AFFINITY,
         ),
         *_extra_imu_modules,
         _slam_module,
@@ -213,6 +280,13 @@ m20_smartnav_native = (
                     "blueprint": m20_rerun_blueprint,
                     "visual_override": {
                         "world/camera_info": camera_info_override,
+                        "world/odometry": m20_odometry_tf_override,
+                        "world/raw_points": raw_points_override,
+                        "world/registered_scan": registered_scan_override,
+                    },
+                    "pubsubs": [M20RerunLCM()],
+                    "max_hz": {
+                        "world/registered_scan": 1.0,
                     },
                     "static": {
                         "world/tf/base_link": static_robot,

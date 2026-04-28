@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import math
 import threading
-import time
 from typing import Any
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
@@ -38,7 +37,8 @@ class ClickToGoal(Module[ModuleConfig]):
     Ports:
         clicked_point (In[PointStamped]): Click from viewer.
         odometry (In[Odometry]): Vehicle pose (cached, used only on stop_movement).
-        stop_movement (In[Bool]): Cancel active goal by anchoring at robot pose.
+        stop_movement (In[Bool]): Teleop-start signal. Goal cancellation is
+            handled by planners that subscribe to the same stream.
         way_point (Out[PointStamped]): Navigation waypoint for LocalPlanner.
         goal (Out[PointStamped]): Navigation goal for FarPlanner.
     """
@@ -75,7 +75,8 @@ class ClickToGoal(Module[ModuleConfig]):
         self.stop_movement.subscribe(self._on_stop_movement)
 
     def _on_odom(self, msg: Odometry) -> None:
-        # Cache the robot pose so stop_movement can anchor at it.
+        # Cache the robot pose for diagnostics and compatibility with older
+        # call sites. stop_movement no longer republishes this as a goal.
         # No publishing happens here — publishes are driven only by user input.
         with self._lock:
             self._robot_x = msg.pose.position.x
@@ -98,13 +99,4 @@ class ClickToGoal(Module[ModuleConfig]):
         self.goal.publish(msg)
 
     def _on_stop_movement(self, msg: Bool) -> None:
-        """Cancel navigation by setting the goal to the robot's current position."""
-        if not msg.data:
-            return
-
-        with self._lock:
-            rx, ry, rz = self._robot_x, self._robot_y, self._robot_z
-
-        here = PointStamped(ts=time.time(), frame_id="map", x=rx, y=ry, z=rz)
-        self.way_point.publish(here)
-        self.goal.publish(here)
+        """Do not synthesize a goal from teleop cancellation."""

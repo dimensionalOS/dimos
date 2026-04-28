@@ -223,9 +223,11 @@ class RerunWebSocketServer(Module[Config]):
                 ),
             )
             logger.debug(f"RerunWebSocketServer: twist → {twist}")
-            if not self._teleop_clients:
+            is_zero = twist.is_zero()
+            if not is_zero and not self._teleop_clients:
                 self.stop_movement.publish(Bool(data=True))
-            self._teleop_clients.add(client_id)
+            if not is_zero:
+                self._teleop_clients.add(client_id)
             self.tele_cmd_vel.publish(twist)
 
         elif msg_type == "stop":
