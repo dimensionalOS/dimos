@@ -12,16 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the PGO (Pose Graph Optimization) module.
-
-Exercises `_SimplePGO` (the algorithm core inside `pgo.py`) directly, covering:
-- Keyframe detection
-- Loop closure detection and correction
-- Global map accumulation
-- ICP matching
-- Edge cases
-"""
-
 from __future__ import annotations
 
 import math
