@@ -351,6 +351,21 @@ tests = [
 
     # Lightweight project extras safe for ubuntu-latest
     "dimos[web,visualization,drone,cpu,psql]",
+
+    # Minimum heavy deps required for test collection to succeed.
+    # These modules are imported unconditionally by production code that
+    # tests transitively reach during pytest collection (even if the
+    # tests themselves are marked `slow` and skipped):
+    #   - torch:   `dimos.perception.detection.type.detection2d.seg`
+    #              (collected via perception/detection/conftest.py)
+    #   - langchain (+ core): `dimos.agents.vlm_agent`
+    #              (collected via blueprints/smart/*_test.py)
+    #   - unitree-webrtc-connect-leshy: `dimos.robot.unitree.connection`
+    #              (collected via test_moment.py, test_actors.py)
+    "torch",
+    "langchain==1.2.3",
+    "langchain-core==1.2.3",
+    "unitree-webrtc-connect-leshy>=2.0.7",
 ]
 
 # Full CI test group for the self-hosted runner. Inherits `tests` and adds
