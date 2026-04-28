@@ -40,6 +40,7 @@ from dimos.core.global_config import global_config
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
+from dimos.protocol.service.lcmservice import _DEFAULT_LCM_URL
 from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
 from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.utils.logging_config import setup_logger
@@ -164,8 +165,7 @@ class TestCrossWallPlanning:
         robot_x = 0.0
         robot_y = 0.0
 
-        lcm_url = os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
-        lcm = lcmlib.LCM(lcm_url)
+        lcm = lcmlib.LCM(_DEFAULT_LCM_URL)
 
         def _odom_handler(channel: str, data: bytes) -> None:
             nonlocal odom_count, robot_x, robot_y

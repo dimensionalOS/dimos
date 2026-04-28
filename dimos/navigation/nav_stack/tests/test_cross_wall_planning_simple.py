@@ -40,6 +40,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.nav_stack.main import create_nav_stack
+from dimos.protocol.service.lcmservice import _DEFAULT_LCM_URL
 from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.utils.logging_config import setup_logger
 
@@ -165,8 +166,7 @@ class TestCrossWallPlanningSimple:
         # (roof is at ~3 m+).
         MAX_ALLOWED_Z = 2.0
 
-        lcm_url = os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
-        lcm = lcmlib.LCM(lcm_url)
+        lcm = lcmlib.LCM(_DEFAULT_LCM_URL)
 
         def _odom_handler(channel: str, data: bytes) -> None:
             nonlocal odom_count, robot_x, robot_y, robot_z, max_z

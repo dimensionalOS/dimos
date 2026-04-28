@@ -80,17 +80,6 @@ except ImportError:
     _has_gtsam = False
 
 
-class TestFrameConstants:
-    def test_frame_map(self):
-        assert FRAME_MAP == "map"
-
-    def test_frame_odom(self):
-        assert FRAME_ODOM == "odom"
-
-    def test_frame_body(self):
-        assert FRAME_BODY == "body"
-
-
 class TestTFChainComposition:
     """Verify that publishing odom→body and map→odom composes to map→body."""
 
@@ -98,7 +87,7 @@ class TestTFChainComposition:
         return MultiTBuffer()
 
     def test_direct_lookup(self):
-        buf = self._make_buffer()
+        buffer = self._make_buffer()
         tf = Transform(
             frame_id=FRAME_ODOM,
             child_frame_id=FRAME_BODY,
@@ -106,8 +95,8 @@ class TestTFChainComposition:
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
             ts=time.time(),
         )
-        buf.receive_transform(tf)
-        result = buf.get(FRAME_ODOM, FRAME_BODY)
+        buffer.receive_transform(tf)
+        result = buffer.get(FRAME_ODOM, FRAME_BODY)
         assert result is not None
         assert result.translation.x == pytest.approx(1.0)
         assert result.translation.y == pytest.approx(2.0)
@@ -115,11 +104,11 @@ class TestTFChainComposition:
 
     def test_chain_map_odom_body(self):
         """map→odom + odom→body should compose to map→body via BFS."""
-        buf = self._make_buffer()
+        buffer = self._make_buffer()
         now = time.time()
 
         # odom→body: robot at (1, 2, 0) in odom frame
-        buf.receive_transform(
+        buffer.receive_transform(
             Transform(
                 frame_id=FRAME_ODOM,
                 child_frame_id=FRAME_BODY,
@@ -130,7 +119,7 @@ class TestTFChainComposition:
         )
 
         # map→odom: correction offset of (10, 20, 0) with identity rotation
-        buf.receive_transform(
+        buffer.receive_transform(
             Transform(
                 frame_id=FRAME_MAP,
                 child_frame_id=FRAME_ODOM,
@@ -141,7 +130,7 @@ class TestTFChainComposition:
         )
 
         # BFS should find map→body
-        result = buf.get(FRAME_MAP, FRAME_BODY)
+        result = buffer.get(FRAME_MAP, FRAME_BODY)
         assert result is not None
         # With identity rotations, translations add up:
         # map→body = map→odom(10,20) + odom→body(1,2) = (11,22)
@@ -150,11 +139,11 @@ class TestTFChainComposition:
 
     def test_chain_with_rotation(self):
         """map→odom with 90° yaw + odom→body should rotate correctly."""
-        buf = self._make_buffer()
+        buffer = self._make_buffer()
         now = time.time()
 
         # odom→body: robot at (1, 0, 0) in odom frame, no rotation
-        buf.receive_transform(
+        buffer.receive_transform(
             Transform(
                 frame_id=FRAME_ODOM,
                 child_frame_id=FRAME_BODY,
@@ -166,7 +155,7 @@ class TestTFChainComposition:
 
         # map→odom: 90° yaw rotation, no translation
         yaw_90 = Quaternion.from_euler(Vector3(0.0, 0.0, math.pi / 2))
-        buf.receive_transform(
+        buffer.receive_transform(
             Transform(
                 frame_id=FRAME_MAP,
                 child_frame_id=FRAME_ODOM,
@@ -176,7 +165,7 @@ class TestTFChainComposition:
             )
         )
 
-        result = buf.get(FRAME_MAP, FRAME_BODY)
+        result = buffer.get(FRAME_MAP, FRAME_BODY)
         assert result is not None
         # odom→body (1,0) rotated 90° around Z → (0,1) in map frame
         assert result.translation.x == pytest.approx(0.0, abs=0.05)
@@ -184,14 +173,14 @@ class TestTFChainComposition:
 
     def test_no_chain_returns_none(self):
         """Querying a frame that hasn't been published should return None."""
-        buf = self._make_buffer()
-        result = buf.get(FRAME_MAP, FRAME_BODY)
+        buffer = self._make_buffer()
+        result = buffer.get(FRAME_MAP, FRAME_BODY)
         assert result is None
 
     def test_partial_chain_returns_none(self):
         """Only odom→body published, map→body should return None."""
-        buf = self._make_buffer()
-        buf.receive_transform(
+        buffer = self._make_buffer()
+        buffer.receive_transform(
             Transform(
                 frame_id=FRAME_ODOM,
                 child_frame_id=FRAME_BODY,
@@ -200,15 +189,15 @@ class TestTFChainComposition:
                 ts=time.time(),
             )
         )
-        result = buf.get(FRAME_MAP, FRAME_BODY)
+        result = buffer.get(FRAME_MAP, FRAME_BODY)
         assert result is None
 
     def test_updates_reflect_latest(self):
         """Publishing a new transform should update the chain result."""
-        buf = self._make_buffer()
+        buffer = self._make_buffer()
         now = time.time()
 
-        buf.receive_transform(
+        buffer.receive_transform(
             Transform(
                 frame_id=FRAME_MAP,
                 child_frame_id=FRAME_ODOM,
@@ -217,7 +206,7 @@ class TestTFChainComposition:
                 ts=now,
             )
         )
-        buf.receive_transform(
+        buffer.receive_transform(
             Transform(
                 frame_id=FRAME_ODOM,
                 child_frame_id=FRAME_BODY,
@@ -227,12 +216,12 @@ class TestTFChainComposition:
             )
         )
 
-        r1 = buf.get(FRAME_MAP, FRAME_BODY)
-        assert r1 is not None
-        assert r1.translation.x == pytest.approx(1.0, abs=0.01)
+        result1 = buffer.get(FRAME_MAP, FRAME_BODY)
+        assert result1 is not None
+        assert result1.translation.x == pytest.approx(1.0, abs=0.01)
 
         # Update odom→body
-        buf.receive_transform(
+        buffer.receive_transform(
             Transform(
                 frame_id=FRAME_ODOM,
                 child_frame_id=FRAME_BODY,
@@ -242,10 +231,10 @@ class TestTFChainComposition:
             )
         )
 
-        r2 = buf.get(FRAME_MAP, FRAME_BODY)
-        assert r2 is not None
-        assert r2.translation.x == pytest.approx(5.0, abs=0.01)
-        assert r2.translation.y == pytest.approx(3.0, abs=0.01)
+        result2 = buffer.get(FRAME_MAP, FRAME_BODY)
+        assert result2 is not None
+        assert result2.translation.x == pytest.approx(5.0, abs=0.01)
+        assert result2.translation.y == pytest.approx(3.0, abs=0.01)
 
 
 class TestFastLio2TF:
