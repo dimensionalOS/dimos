@@ -56,15 +56,15 @@ def test_teleop_suppresses_nav_and_cancels_goal(manager: MovementManager) -> Non
     manager._on_teleop(_twist(lx=0.3))
 
     # Nav is suppressed
-    manager.cmd_vel.publish.reset_mock()  # type: ignore[union-attr]
+    manager.cmd_vel.publish.reset_mock()  # type: ignore[attr-defined]
     manager._on_nav(_twist(lx=0.9))
-    manager.cmd_vel.publish.assert_not_called()  # type: ignore[union-attr]
+    manager.cmd_vel.publish.assert_not_called()  # type: ignore[attr-defined]
 
     # stop_movement fired
-    manager.stop_movement.publish.assert_called_once()  # type: ignore[union-attr]
+    manager.stop_movement.publish.assert_called_once()  # type: ignore[attr-defined]
 
     # Goal cancelled with NaN
-    cancel_msg = manager.goal.publish.call_args[0][0]  # type: ignore[union-attr]
+    cancel_msg = manager.goal.publish.call_args[0][0]  # type: ignore[attr-defined]
     assert math.isnan(cancel_msg.x)
 
 
@@ -73,18 +73,18 @@ def test_nav_resumes_after_cooldown(manager: MovementManager) -> None:
     manager.config.tele_cooldown_sec = 0.05
     manager._on_teleop(_twist(lx=0.3))
     time.sleep(0.1)
-    manager.cmd_vel.publish.reset_mock()  # type: ignore[union-attr]
+    manager.cmd_vel.publish.reset_mock()  # type: ignore[attr-defined]
 
     manager._on_nav(_twist(lx=0.9))
-    manager.cmd_vel.publish.assert_called_once()  # type: ignore[union-attr]
+    manager.cmd_vel.publish.assert_called_once()  # type: ignore[attr-defined]
 
 
 def test_valid_click_publishes_goal(manager: MovementManager) -> None:
     """A valid click should publish to both goal and way_point."""
     click = _click(x=5.0, y=3.0, z=0.1)
     manager._on_click(click)
-    manager.goal.publish.assert_called_once_with(click)  # type: ignore[union-attr]
-    manager.way_point.publish.assert_called_once_with(click)  # type: ignore[union-attr]
+    manager.goal.publish.assert_called_once_with(click)  # type: ignore[attr-defined]
+    manager.way_point.publish.assert_called_once_with(click)  # type: ignore[attr-defined]
 
 
 def test_invalid_clicks_rejected(manager: MovementManager) -> None:
@@ -95,7 +95,7 @@ def test_invalid_clicks_rejected(manager: MovementManager) -> None:
         _click(x=600.0),
     ]:
         manager._on_click(bad_click)
-    manager.goal.publish.assert_not_called()  # type: ignore[union-attr]
+    manager.goal.publish.assert_not_called()  # type: ignore[attr-defined]
 
 
 def test_tele_cmd_vel_scaling() -> None:
@@ -109,7 +109,7 @@ def test_tele_cmd_vel_scaling() -> None:
 
     module._on_teleop(Twist(Vector3(1, 1, 1), Vector3(1, 1, 1)))
 
-    published = module.cmd_vel.publish.call_args[0][0]  # type: ignore[union-attr]
+    published = module.cmd_vel.publish.call_args[0][0]  # type: ignore[attr-defined]
     assert published.linear.x == pytest.approx(0.5)
     assert published.linear.y == pytest.approx(2.0)
     assert published.linear.z == pytest.approx(0.0)

@@ -91,27 +91,27 @@ class StubProducer(Module):
 
 def test_process_crash_triggers_stop() -> None:
     """When the native process dies unexpectedly, the watchdog calls stop()."""
-    mod = StubNativeModule(die_after=0.2)
-    mod.pointcloud.transport = LCMTransport("/pc", PointCloud2)
-    mod.start()
+    module = StubNativeModule(die_after=0.2)
+    module.pointcloud.transport = LCMTransport("/pc", PointCloud2)
+    module.start()
 
-    assert mod._process is not None
-    pid = mod._process.pid
+    assert module._process is not None
+    pid = module._process.pid
 
     # Wait for the process to die and the watchdog to call stop()
     for _ in range(30):
         time.sleep(0.1)
-        if mod._process is None:
+        if module._process is None:
             break
 
-    assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
+    assert module._process is None, f"Watchdog did not clean up after process {pid} died"
 
     # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
     # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
     time.sleep(0.5)
 
     # Ensure all threads (LCM transport, event loop) are cleaned up
-    mod.stop()
+    module.stop()
 
 
 @pytest.mark.slow

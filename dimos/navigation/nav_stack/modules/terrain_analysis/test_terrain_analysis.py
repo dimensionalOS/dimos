@@ -15,9 +15,11 @@
 """Tests for TerrainAnalysis NativeModule wrapper."""
 
 from pathlib import Path
+from typing import get_origin, get_type_hints
 
 import pytest
 
+from dimos.core.stream import In, Out
 from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import (
     TerrainAnalysis,
     TerrainAnalysisConfig,
@@ -52,10 +54,6 @@ class TestTerrainAnalysisModule:
 
     def test_ports_declared(self):
         """Module should declare the expected In/Out ports."""
-        from typing import get_origin, get_type_hints
-
-        from dimos.core.stream import In, Out
-
         hints = get_type_hints(TerrainAnalysis)
         in_ports = {k for k, v in hints.items() if get_origin(v) is In}
         out_ports = {k for k, v in hints.items() if get_origin(v) is Out}

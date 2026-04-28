@@ -181,160 +181,160 @@ def _make_dds_module(**config_overrides: Any) -> G1HighLevelDdsSdk:
     """Create a G1HighLevelDdsSdk with mocked internals."""
     gc = MagicMock()
     with patch.object(G1HighLevelDdsSdk, "__init__", lambda self, *a, **kw: None):
-        mod = G1HighLevelDdsSdk.__new__(G1HighLevelDdsSdk)
+        module = G1HighLevelDdsSdk.__new__(G1HighLevelDdsSdk)
 
-    mod.config = G1HighLevelDdsSdkConfig(**config_overrides)
-    mod._global_config = gc
-    mod._stop_timer = None
-    mod._running = False
-    mod._mode_selected = False
-    mod.motion_switcher = MagicMock()
-    mod.loco_client = MagicMock()
-    mod._standup_step_delay = 0.0  # no real sleeps in tests
-    return mod
+    module.config = G1HighLevelDdsSdkConfig(**config_overrides)
+    module._global_config = gc
+    module._stop_timer = None
+    module._running = False
+    module._mode_selected = False
+    module.motion_switcher = MagicMock()
+    module.loco_client = MagicMock()
+    module._standup_step_delay = 0.0  # no real sleeps in tests
+    return module
 
 
 class TestDdsSdkGetState:
     def test_known_fsm(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client._Call.return_value = (0, json.dumps({"data": 0}))
-        assert mod.get_state() == "ZERO_TORQUE"
+        module = _make_dds_module()
+        module.loco_client._Call.return_value = (0, json.dumps({"data": 0}))
+        assert module.get_state() == "ZERO_TORQUE"
 
     def test_ai_mode_fsm(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client._Call.return_value = (0, json.dumps({"data": 200}))
-        assert mod.get_state() == "AI_MODE"
+        module = _make_dds_module()
+        module.loco_client._Call.return_value = (0, json.dumps({"data": 200}))
+        assert module.get_state() == "AI_MODE"
 
     def test_unknown_fsm(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client._Call.return_value = (0, json.dumps({"data": 999}))
-        assert mod.get_state() == "UNKNOWN_999"
+        module = _make_dds_module()
+        module.loco_client._Call.return_value = (0, json.dumps({"data": 999}))
+        assert module.get_state() == "UNKNOWN_999"
 
     def test_query_failed(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client._Call.return_value = (1, None)
-        assert mod.get_state() == "Unknown (query failed)"
+        module = _make_dds_module()
+        module.loco_client._Call.return_value = (1, None)
+        assert module.get_state() == "Unknown (query failed)"
 
     def test_call_raises(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client._Call.side_effect = RuntimeError("timeout")
-        assert mod.get_state() == "Unknown (query failed)"
+        module = _make_dds_module()
+        module.loco_client._Call.side_effect = RuntimeError("timeout")
+        assert module.get_state() == "Unknown (query failed)"
 
 
 class TestDdsSdkStandUp:
     def test_ai_standup_from_zero_torque(self) -> None:
-        mod = _make_dds_module(ai_standup=True)
-        mod.loco_client._Call.return_value = (0, json.dumps({"data": FsmState.ZERO_TORQUE}))
-        result = mod.stand_up()
+        module = _make_dds_module(ai_standup=True)
+        module.loco_client._Call.return_value = (0, json.dumps({"data": FsmState.ZERO_TORQUE}))
+        result = module.stand_up()
         assert result is True
-        calls = mod.loco_client.SetFsmId.call_args_list
+        calls = module.loco_client.SetFsmId.call_args_list
         assert calls[0] == call(FsmState.DAMP)
         assert calls[1] == call(FsmState.AI_MODE)
         assert calls[2] == call(FsmState.SQUAT_STANDUP_TOGGLE)
 
     def test_ai_standup_already_ai_mode(self) -> None:
-        mod = _make_dds_module(ai_standup=True)
-        mod.loco_client._Call.return_value = (0, json.dumps({"data": FsmState.AI_MODE}))
-        result = mod.stand_up()
+        module = _make_dds_module(ai_standup=True)
+        module.loco_client._Call.return_value = (0, json.dumps({"data": FsmState.AI_MODE}))
+        result = module.stand_up()
         assert result is True
-        calls = mod.loco_client.SetFsmId.call_args_list
+        calls = module.loco_client.SetFsmId.call_args_list
         # Should skip DAMP and AI_MODE, go straight to toggle
         assert len(calls) == 1
         assert calls[0] == call(FsmState.SQUAT_STANDUP_TOGGLE)
 
     def test_normal_standup(self) -> None:
-        mod = _make_dds_module(ai_standup=False)
-        result = mod.stand_up()
+        module = _make_dds_module(ai_standup=False)
+        result = module.stand_up()
         assert result is True
-        calls = mod.loco_client.SetFsmId.call_args_list
+        calls = module.loco_client.SetFsmId.call_args_list
         assert calls[0] == call(FsmState.DAMP)
         assert calls[1] == call(FsmState.SQUAT_STANDUP_TOGGLE)
 
     def test_standup_exception(self) -> None:
-        mod = _make_dds_module(ai_standup=False)
-        mod.loco_client.SetFsmId.side_effect = RuntimeError("comms lost")
-        result = mod.stand_up()
+        module = _make_dds_module(ai_standup=False)
+        module.loco_client.SetFsmId.side_effect = RuntimeError("comms lost")
+        result = module.stand_up()
         assert result is False
 
 
 class TestDdsSdkLieDown:
     def test_lie_down(self) -> None:
-        mod = _make_dds_module()
-        result = mod.lie_down()
+        module = _make_dds_module()
+        result = module.lie_down()
         assert result is True
-        mod.loco_client.StandUp2Squat.assert_called_once()
-        mod.loco_client.Damp.assert_called_once()
+        module.loco_client.StandUp2Squat.assert_called_once()
+        module.loco_client.Damp.assert_called_once()
 
     def test_lie_down_exception(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client.StandUp2Squat.side_effect = RuntimeError("err")
-        result = mod.lie_down()
+        module = _make_dds_module()
+        module.loco_client.StandUp2Squat.side_effect = RuntimeError("err")
+        result = module.lie_down()
         assert result is False
 
 
 class TestDdsSdkMove:
     def test_move_with_duration(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client.SetVelocity.return_value = 0
+        module = _make_dds_module()
+        module.loco_client.SetVelocity.return_value = 0
         twist = Twist(linear=Vector3(1.0, 0.5, 0), angular=Vector3(0, 0, 0.3))
-        result = mod.move(twist, duration=2.0)
+        result = module.move(twist, duration=2.0)
         assert result is True
-        mod.loco_client.SetVelocity.assert_called_once_with(1.0, 0.5, 0.3, 2.0)
+        module.loco_client.SetVelocity.assert_called_once_with(1.0, 0.5, 0.3, 2.0)
 
     def test_move_with_duration_error_code(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client.SetVelocity.return_value = -1
+        module = _make_dds_module()
+        module.loco_client.SetVelocity.return_value = -1
         twist = Twist(linear=Vector3(1.0, 0, 0), angular=Vector3(0, 0, 0))
-        result = mod.move(twist, duration=1.0)
+        result = module.move(twist, duration=1.0)
         assert result is False
 
     def test_move_continuous(self) -> None:
-        mod = _make_dds_module()
+        module = _make_dds_module()
         twist = Twist(linear=Vector3(0.5, 0, 0), angular=Vector3(0, 0, 0.1))
-        result = mod.move(twist)
+        result = module.move(twist)
         assert result is True
-        mod.loco_client.Move.assert_called_once_with(0.5, 0, 0.1, continous_move=True)
+        module.loco_client.Move.assert_called_once_with(0.5, 0, 0.1, continous_move=True)
         # Timer should have been started
-        assert mod._stop_timer is not None
-        mod._stop_timer.cancel()
-        mod._stop_timer.join()  # wait for thread to finish
+        assert module._stop_timer is not None
+        module._stop_timer.cancel()
+        module._stop_timer.join()  # wait for thread to finish
 
     def test_move_exception(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client.SetVelocity.side_effect = RuntimeError("err")
+        module = _make_dds_module()
+        module.loco_client.SetVelocity.side_effect = RuntimeError("err")
         twist = Twist(linear=Vector3(1.0, 0, 0), angular=Vector3(0, 0, 0))
-        result = mod.move(twist, duration=1.0)
+        result = module.move(twist, duration=1.0)
         assert result is False
 
 
 class TestDdsSdkPublishRequest:
     def test_set_fsm_id(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client.SetFsmId.return_value = 0
-        result = mod.publish_request("topic", {"api_id": 7101, "parameter": {"data": 200}})
+        module = _make_dds_module()
+        module.loco_client.SetFsmId.return_value = 0
+        result = module.publish_request("topic", {"api_id": 7101, "parameter": {"data": 200}})
         assert result == {"code": 0}
-        mod.loco_client.SetFsmId.assert_called_once_with(200)
+        module.loco_client.SetFsmId.assert_called_once_with(200)
 
     def test_set_velocity(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client.SetVelocity.return_value = 0
-        result = mod.publish_request(
+        module = _make_dds_module()
+        module.loco_client.SetVelocity.return_value = 0
+        result = module.publish_request(
             "topic",
             {"api_id": 7105, "parameter": {"velocity": [1.0, 0.5, 0.2], "duration": 3.0}},
         )
         assert result == {"code": 0}
-        mod.loco_client.SetVelocity.assert_called_once_with(1.0, 0.5, 0.2, 3.0)
+        module.loco_client.SetVelocity.assert_called_once_with(1.0, 0.5, 0.2, 3.0)
 
     def test_unsupported_api(self) -> None:
-        mod = _make_dds_module()
-        result = mod.publish_request("topic", {"api_id": 9999})
+        module = _make_dds_module()
+        result = module.publish_request("topic", {"api_id": 9999})
         assert result["code"] == -1
         assert result["error"] == "unsupported_api"
 
     def test_exception(self) -> None:
-        mod = _make_dds_module()
-        mod.loco_client.SetFsmId.side_effect = RuntimeError("boom")
-        result = mod.publish_request("topic", {"api_id": 7101, "parameter": {"data": 1}})
+        module = _make_dds_module()
+        module.loco_client.SetFsmId.side_effect = RuntimeError("boom")
+        result = module.publish_request("topic", {"api_id": 7101, "parameter": {"data": 1}})
         assert result["code"] == -1
         assert "boom" in result["error"]
 
@@ -344,12 +344,12 @@ class TestDdsSdkPublishRequest:
 
 def _make_webrtc_module(**config_overrides: Any) -> G1HighLevelWebRtc:
     with patch.object(G1HighLevelWebRtc, "__init__", lambda self, *a, **kw: None):
-        mod = G1HighLevelWebRtc.__new__(G1HighLevelWebRtc)
+        module = G1HighLevelWebRtc.__new__(G1HighLevelWebRtc)
 
-    mod.config = G1HighLevelWebRtcConfig(**config_overrides)
-    mod._global_config = MagicMock()
-    mod.connection = MagicMock()
-    return mod
+    module.config = G1HighLevelWebRtcConfig(**config_overrides)
+    module._global_config = MagicMock()
+    module.connection = MagicMock()
+    return module
 
 
 class TestWebRtcConstants:
@@ -378,71 +378,71 @@ class TestWebRtcConstants:
 
 class TestWebRtcGetState:
     def test_connected(self) -> None:
-        mod = _make_webrtc_module()
-        assert mod.get_state() == "Connected (WebRTC)"
+        module = _make_webrtc_module()
+        assert module.get_state() == "Connected (WebRTC)"
 
     def test_not_connected(self) -> None:
-        mod = _make_webrtc_module()
-        mod.connection = None
-        assert mod.get_state() == "Not connected"
+        module = _make_webrtc_module()
+        module.connection = None
+        assert module.get_state() == "Not connected"
 
 
 class TestWebRtcMove:
     def test_move_delegates(self) -> None:
-        mod = _make_webrtc_module()
-        mod.connection.move.return_value = True  # type: ignore[union-attr]
+        module = _make_webrtc_module()
+        module.connection.move.return_value = True  # type: ignore[union-attr]
         twist = Twist(linear=Vector3(1.0, 0, 0), angular=Vector3(0, 0, 0))
-        assert mod.move(twist, duration=2.0) is True
-        mod.connection.move.assert_called_once_with(twist, 2.0)  # type: ignore[union-attr]
+        assert module.move(twist, duration=2.0) is True
+        module.connection.move.assert_called_once_with(twist, 2.0)  # type: ignore[union-attr]
 
 
 class TestWebRtcStandUp:
     def test_stand_up_delegates(self) -> None:
-        mod = _make_webrtc_module()
-        mod.connection.standup.return_value = True  # type: ignore[union-attr]
-        assert mod.stand_up() is True
-        mod.connection.standup.assert_called_once()  # type: ignore[union-attr]
+        module = _make_webrtc_module()
+        module.connection.standup.return_value = True  # type: ignore[union-attr]
+        assert module.stand_up() is True
+        module.connection.standup.assert_called_once()  # type: ignore[union-attr]
 
 
 class TestWebRtcLieDown:
     def test_lie_down_delegates(self) -> None:
-        mod = _make_webrtc_module()
-        mod.connection.liedown.return_value = True  # type: ignore[union-attr]
-        assert mod.lie_down() is True
-        mod.connection.liedown.assert_called_once()  # type: ignore[union-attr]
+        module = _make_webrtc_module()
+        module.connection.liedown.return_value = True  # type: ignore[union-attr]
+        assert module.lie_down() is True
+        module.connection.liedown.assert_called_once()  # type: ignore[union-attr]
 
 
 class TestWebRtcPublishRequest:
     def test_delegates(self) -> None:
-        mod = _make_webrtc_module()
-        mod.connection.publish_request.return_value = {"code": 0}  # type: ignore[union-attr]
-        result = mod.publish_request("topic", {"api_id": 7101})
+        module = _make_webrtc_module()
+        module.connection.publish_request.return_value = {"code": 0}  # type: ignore[union-attr]
+        result = module.publish_request("topic", {"api_id": 7101})
         assert result == {"code": 0}
 
 
 class TestWebRtcArmCommand:
     def test_valid_command(self) -> None:
-        mod = _make_webrtc_module()
-        mod.connection.publish_request.return_value = {"code": 0}  # type: ignore[union-attr]
-        result = mod.execute_arm_command("Handshake")
+        module = _make_webrtc_module()
+        module.connection.publish_request.return_value = {"code": 0}  # type: ignore[union-attr]
+        result = module.execute_arm_command("Handshake")
         assert "successfully" in result
 
     def test_invalid_command(self) -> None:
-        mod = _make_webrtc_module()
-        result = mod.execute_arm_command("NotARealCommand")
+        module = _make_webrtc_module()
+        result = module.execute_arm_command("NotARealCommand")
         assert "no" in result.lower() or "There's" in result
 
 
 class TestWebRtcModeCommand:
     def test_valid_command(self) -> None:
-        mod = _make_webrtc_module()
-        mod.connection.publish_request.return_value = {"code": 0}  # type: ignore[union-attr]
-        result = mod.execute_mode_command("WalkMode")
+        module = _make_webrtc_module()
+        module.connection.publish_request.return_value = {"code": 0}  # type: ignore[union-attr]
+        result = module.execute_mode_command("WalkMode")
         assert "successfully" in result
 
     def test_invalid_command(self) -> None:
-        mod = _make_webrtc_module()
-        result = mod.execute_mode_command("FlyMode")
+        module = _make_webrtc_module()
+        result = module.execute_mode_command("FlyMode")
         assert "no" in result.lower() or "There's" in result
 
 
@@ -494,7 +494,7 @@ def _make_dds_with_fsm_sim(
 ) -> tuple[G1HighLevelDdsSdk, FsmSimulator]:
     """Build a DDS module whose loco_client tracks an FsmSimulator."""
     sim = FsmSimulator(initial_state)
-    mod = _make_dds_module(ai_standup=ai_standup)
+    module = _make_dds_module(ai_standup=ai_standup)
 
     def mock_set_fsm_id(fsm_id: int) -> int:
         sim.transition(FsmState(fsm_id))
@@ -503,8 +503,8 @@ def _make_dds_with_fsm_sim(
     def mock_call(api_id: int, payload: str) -> tuple[int, str]:
         return (0, json.dumps({"data": int(sim.state)}))
 
-    mod.loco_client.SetFsmId.side_effect = mock_set_fsm_id
-    mod.loco_client._Call.side_effect = mock_call
+    module.loco_client.SetFsmId.side_effect = mock_set_fsm_id
+    module.loco_client._Call.side_effect = mock_call
 
     # StandUp2Squat is the high-level SDK wrapper around SQUAT_STANDUP_TOGGLE
     def mock_standup2squat() -> None:
@@ -513,10 +513,10 @@ def _make_dds_with_fsm_sim(
     def mock_damp() -> None:
         sim.transition(FsmState.DAMP)
 
-    mod.loco_client.StandUp2Squat.side_effect = mock_standup2squat
-    mod.loco_client.Damp.side_effect = mock_damp
+    module.loco_client.StandUp2Squat.side_effect = mock_standup2squat
+    module.loco_client.Damp.side_effect = mock_damp
 
-    return mod, sim
+    return module, sim
 
 
 class TestFsmSimulator:
@@ -539,8 +539,8 @@ class TestFsmSimulator:
 
 class TestStandUpTransitions:
     def test_ai_standup_from_zero_torque_valid_transitions(self) -> None:
-        mod, sim = _make_dds_with_fsm_sim(FsmState.ZERO_TORQUE, ai_standup=True)
-        assert mod.stand_up() is True
+        module, sim = _make_dds_with_fsm_sim(FsmState.ZERO_TORQUE, ai_standup=True)
+        assert module.stand_up() is True
         assert sim.history == [
             FsmState.ZERO_TORQUE,
             FsmState.DAMP,
@@ -549,8 +549,8 @@ class TestStandUpTransitions:
         ]
 
     def test_ai_standup_from_damp_valid_transitions(self) -> None:
-        mod, sim = _make_dds_with_fsm_sim(FsmState.DAMP, ai_standup=True)
-        assert mod.stand_up() is True
+        module, sim = _make_dds_with_fsm_sim(FsmState.DAMP, ai_standup=True)
+        assert module.stand_up() is True
         assert sim.history == [
             FsmState.DAMP,
             FsmState.AI_MODE,
@@ -558,14 +558,14 @@ class TestStandUpTransitions:
         ]
 
     def test_ai_standup_already_in_ai_mode(self) -> None:
-        mod, sim = _make_dds_with_fsm_sim(FsmState.AI_MODE, ai_standup=True)
-        assert mod.stand_up() is True
+        module, sim = _make_dds_with_fsm_sim(FsmState.AI_MODE, ai_standup=True)
+        assert module.stand_up() is True
         assert sim.history == [FsmState.AI_MODE, FsmState.SQUAT_STANDUP_TOGGLE]
 
     def test_normal_standup_from_zero_torque_invalid(self) -> None:
         """Normal standup tries DAMP first, which is valid from ZERO_TORQUE."""
-        mod, sim = _make_dds_with_fsm_sim(FsmState.ZERO_TORQUE, ai_standup=False)
-        assert mod.stand_up() is True
+        module, sim = _make_dds_with_fsm_sim(FsmState.ZERO_TORQUE, ai_standup=False)
+        assert module.stand_up() is True
         assert sim.history == [
             FsmState.ZERO_TORQUE,
             FsmState.DAMP,
@@ -573,8 +573,8 @@ class TestStandUpTransitions:
         ]
 
     def test_normal_standup_from_damp(self) -> None:
-        mod, sim = _make_dds_with_fsm_sim(FsmState.DAMP, ai_standup=False)
-        assert mod.stand_up() is True
+        module, sim = _make_dds_with_fsm_sim(FsmState.DAMP, ai_standup=False)
+        assert module.stand_up() is True
         assert sim.history == [
             FsmState.DAMP,
             # DAMP -> DAMP is not in valid transitions, but SetFsmId
@@ -588,8 +588,8 @@ class TestStandUpTransitions:
 class TestLieDownTransitions:
     def test_lie_down_from_standing(self) -> None:
         """Assumes the robot is in SQUAT_STANDUP_TOGGLE (standing) state."""
-        mod, sim = _make_dds_with_fsm_sim(FsmState.SQUAT_STANDUP_TOGGLE)
-        assert mod.lie_down() is True
+        module, sim = _make_dds_with_fsm_sim(FsmState.SQUAT_STANDUP_TOGGLE)
+        assert module.lie_down() is True
         # StandUp2Squat toggles -> SQUAT_STANDUP_TOGGLE, then Damp -> DAMP
         assert sim.history == [
             FsmState.SQUAT_STANDUP_TOGGLE,
@@ -598,6 +598,6 @@ class TestLieDownTransitions:
         ]
 
     def test_lie_down_from_ai_mode(self) -> None:
-        mod, sim = _make_dds_with_fsm_sim(FsmState.AI_MODE)
-        assert mod.lie_down() is True
+        module, sim = _make_dds_with_fsm_sim(FsmState.AI_MODE)
+        assert module.lie_down() is True
         assert FsmState.DAMP in sim.history

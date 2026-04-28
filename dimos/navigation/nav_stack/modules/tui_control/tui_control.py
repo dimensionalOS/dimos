@@ -52,9 +52,8 @@ class TUIControlModule(Module):
     cmd_vel: Out[Twist]
     way_point: Out[PointStamped]
 
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._lock = threading.Lock()
         self._fwd = 0.0
         self._left = 0.0
         self._yaw = 0.0
@@ -63,21 +62,10 @@ class TUIControlModule(Module):
         self._publish_thread: threading.Thread | None = None
         self._input_thread: threading.Thread | None = None
 
-    def __getstate__(self) -> dict[str, Any]:
-        state: dict[str, Any] = super().__getstate__()  # type: ignore[no-untyped-call]
-        state.pop("_lock", None)
-        state.pop("_publish_thread", None)
-        state.pop("_input_thread", None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        super().__setstate__(state)
-        self._lock = threading.Lock()
-        self._publish_thread = None
-        self._input_thread = None
-
     @rpc
     def start(self) -> None:
+        super().start()
+        self._lock = threading.Lock()
         self._running = True
         self._publish_thread = threading.Thread(target=self._publish_loop, daemon=True)
         self._publish_thread.start()

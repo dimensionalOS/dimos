@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import math
+import threading
 
 import pytest
 
@@ -363,9 +364,7 @@ class TestStuckEscalation:
         p._ref_goal_dist = float("inf")
         p._last_progress_time = 0.0
         p._effective_inflation = inflation_radius
-        import threading as _th
-
-        p._lock = _th.Lock()
+        p._lock = threading.Lock()
         return p
 
     @staticmethod

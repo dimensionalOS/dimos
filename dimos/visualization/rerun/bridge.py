@@ -377,7 +377,7 @@ class RerunBridgeModule(Module):
 
         for pubsub in self.config.pubsubs:
             if hasattr(pubsub, "stop"):
-                self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
+                self.register_disposable(Disposable(pubsub.stop))
 
         self._log_static()
 

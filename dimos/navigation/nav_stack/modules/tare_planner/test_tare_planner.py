@@ -15,9 +15,11 @@
 """Tests for TarePlanner NativeModule wrapper."""
 
 from pathlib import Path
+from typing import get_origin, get_type_hints
 
 import pytest
 
+from dimos.core.stream import In, Out
 from dimos.navigation.nav_stack.modules.tare_planner.tare_planner import (
     TarePlanner,
     TarePlannerConfig,
@@ -49,10 +51,6 @@ class TestTarePlannerModule:
     """Test TarePlanner module declaration."""
 
     def test_ports_declared(self):
-        from typing import get_origin, get_type_hints
-
-        from dimos.core.stream import In, Out
-
         hints = get_type_hints(TarePlanner)
         in_ports = {k for k, v in hints.items() if get_origin(v) is In}
         out_ports = {k for k, v in hints.items() if get_origin(v) is Out}

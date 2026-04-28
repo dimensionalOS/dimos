@@ -34,7 +34,8 @@ try:
     import gtsam  # noqa: F401
     from scipy.spatial.transform import Rotation
 
-    from dimos.navigation.nav_stack.modules.pgo.pgo import PGOConfig, _icp, _SimplePGO
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.navigation.nav_stack.modules.pgo.pgo import PGO, PGOConfig, _icp, _SimplePGO
 
     _HAS_PGO_DEPS = True
 except ImportError:
@@ -405,8 +406,6 @@ class TestGlobalMap:
 
     def test_global_map_is_published_as_pointcloud(self):
         """Global map should produce a valid numpy array that can become PointCloud2."""
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
         pgo = _SimplePGO(PGOConfig(key_pose_delta_trans=0.3))
 
         for i in range(3):
@@ -510,8 +509,6 @@ class TestPGOWrapper:
 
     def test_pgo_module_has_correct_ports(self):
         """PGO module should declare the right input/output ports."""
-        from dimos.navigation.nav_stack.modules.pgo.pgo import PGO
-
         # Check class annotations for port definitions
         annotations = PGO.__annotations__
         assert "registered_scan" in annotations
@@ -521,8 +518,6 @@ class TestPGOWrapper:
 
     def test_pgo_config_defaults(self):
         """PGO config should have sensible defaults."""
-        from dimos.navigation.nav_stack.modules.pgo.pgo import PGOConfig
-
         # NativeModuleConfig is Pydantic; check model_fields for defaults
         fields = PGOConfig.model_fields
         assert fields["key_pose_delta_trans"].default == 0.5
