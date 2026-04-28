@@ -370,6 +370,10 @@ tests = [
     "mujoco>=3.3.4",
     "transformers[torch]==4.49.0",
     "ultralytics>=8.3.70",
+    "hydra-core>=1.3.0",
+    "open_clip_torch==3.2.0",
+    "openai",
+    "moondream",
 ]
 
 # Full CI test group for the self-hosted runner. Inherits `tests` and adds
