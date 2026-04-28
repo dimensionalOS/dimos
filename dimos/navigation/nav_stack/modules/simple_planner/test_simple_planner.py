@@ -33,52 +33,52 @@ _DEFAULT_MAX_EXPANSIONS = 200_000
 
 class TestCostmap:
     def test_world_cell_roundtrip(self):
-        cm = Costmap(cell_size=0.5, obstacle_height=0.1, inflation_radius=0.0)
+        costmap = Costmap(cell_size=0.5, obstacle_height=0.1, inflation_radius=0.0)
         for x, y in [(0.0, 0.0), (1.25, -2.75), (10.1, 4.4)]:
-            ix, iy = cm.world_to_cell(x, y)
-            cx, cy = cm.cell_to_world(ix, iy)
+            ix, iy = costmap.world_to_cell(x, y)
+            cx, cy = costmap.cell_to_world(ix, iy)
             # Cell center is within half-cell of original
             assert abs(cx - x) <= 0.5
             assert abs(cy - y) <= 0.5
 
     def test_height_max_tracks_tallest(self):
-        cm = Costmap(cell_size=1.0, obstacle_height=0.5, inflation_radius=0.0)
-        cm.update(0.1, 0.1, 0.2)
-        cm.update(0.2, 0.3, 0.8)
-        cm.update(0.4, 0.4, 0.4)  # same cell, smaller than 0.8
-        assert cm.is_blocked(0, 0)  # 0.8 > 0.5
+        costmap = Costmap(cell_size=1.0, obstacle_height=0.5, inflation_radius=0.0)
+        costmap.update(0.1, 0.1, 0.2)
+        costmap.update(0.2, 0.3, 0.8)
+        costmap.update(0.4, 0.4, 0.4)  # same cell, smaller than 0.8
+        assert costmap.is_blocked(0, 0)  # 0.8 > 0.5
 
     def test_height_below_threshold_not_blocked(self):
-        cm = Costmap(cell_size=1.0, obstacle_height=0.5, inflation_radius=0.0)
-        cm.update(0.5, 0.5, 0.3)  # below threshold
-        assert not cm.is_blocked(0, 0)
+        costmap = Costmap(cell_size=1.0, obstacle_height=0.5, inflation_radius=0.0)
+        costmap.update(0.5, 0.5, 0.3)  # below threshold
+        assert not costmap.is_blocked(0, 0)
 
     def test_clear_wipes_obstacles(self):
-        cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
-        cm.update(0.0, 0.0, 1.0)
-        assert cm.is_blocked(0, 0)
-        cm.clear()
-        assert not cm.is_blocked(0, 0)
+        costmap = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
+        costmap.update(0.0, 0.0, 1.0)
+        assert costmap.is_blocked(0, 0)
+        costmap.clear()
+        assert not costmap.is_blocked(0, 0)
 
     def test_inflation_blocks_neighbours(self):
-        cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=1.5)
-        cm.update(0.0, 0.0, 1.0)
+        costmap = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=1.5)
+        costmap.update(0.0, 0.0, 1.0)
         # Center is blocked
-        assert cm.is_blocked(0, 0)
+        assert costmap.is_blocked(0, 0)
         # Cells within radius 1.5 are blocked (Manhattan dist ≤ 1 is always in a circle of r=1.5)
-        assert cm.is_blocked(1, 0)
-        assert cm.is_blocked(0, 1)
-        assert cm.is_blocked(-1, 0)
-        assert cm.is_blocked(1, 1)  # sqrt(2) ≈ 1.41 < 1.5
+        assert costmap.is_blocked(1, 0)
+        assert costmap.is_blocked(0, 1)
+        assert costmap.is_blocked(-1, 0)
+        assert costmap.is_blocked(1, 1)  # sqrt(2) ≈ 1.41 < 1.5
         # Cells outside radius 1.5 are not blocked
-        assert not cm.is_blocked(2, 0)
-        assert not cm.is_blocked(0, 2)
+        assert not costmap.is_blocked(2, 0)
+        assert not costmap.is_blocked(0, 2)
 
     def test_zero_inflation(self):
-        cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
-        cm.update(0.0, 0.0, 1.0)
-        assert cm.is_blocked(0, 0)
-        assert not cm.is_blocked(1, 0)
+        costmap = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
+        costmap.update(0.0, 0.0, 1.0)
+        assert costmap.is_blocked(0, 0)
+        assert not costmap.is_blocked(1, 0)
 
     def test_invalid_cell_size(self):
         with pytest.raises(ValueError):
@@ -174,8 +174,8 @@ class TestSimplePlannerPlan:
         return Costmap(cell_size=cell_size, obstacle_height=0.1, inflation_radius=0.0)
 
     def test_plan_straight_open_path(self):
-        cm = self._make_costmap(cell_size=0.5)
-        path = plan_on_costmap(cm, 0.0, 0.0, 2.0, 0.0, _DEFAULT_MAX_EXPANSIONS)
+        costmap = self._make_costmap(cell_size=0.5)
+        path = plan_on_costmap(costmap, 0.0, 0.0, 2.0, 0.0, _DEFAULT_MAX_EXPANSIONS)
         assert path is not None
         assert path[0][0] == pytest.approx(0.25)
         assert path[0][1] == pytest.approx(0.25)
@@ -183,26 +183,26 @@ class TestSimplePlannerPlan:
         assert path[-1][1] == pytest.approx(0.25)
 
     def test_plan_routes_around_obstacle(self):
-        cm = self._make_costmap(cell_size=0.5)
+        costmap = self._make_costmap(cell_size=0.5)
         for y in (-0.5, 0.0, 0.5, 1.0):
-            cm.update(1.0, y, 1.0)
-        path = plan_on_costmap(cm, 0.0, 0.0, 2.0, 0.0, _DEFAULT_MAX_EXPANSIONS)
+            costmap.update(1.0, y, 1.0)
+        path = plan_on_costmap(costmap, 0.0, 0.0, 2.0, 0.0, _DEFAULT_MAX_EXPANSIONS)
         assert path is not None
-        blocked = cm.blocked_cells()
+        blocked = costmap.blocked_cells()
         for wx, wy in path:
-            ix, iy = cm.world_to_cell(wx, wy)
+            ix, iy = costmap.world_to_cell(wx, wy)
             assert (
                 (ix, iy) not in blocked
-                or (ix, iy) == cm.world_to_cell(0.0, 0.0)
-                or (ix, iy) == cm.world_to_cell(2.0, 0.0)
+                or (ix, iy) == costmap.world_to_cell(0.0, 0.0)
+                or (ix, iy) == costmap.world_to_cell(2.0, 0.0)
             )
 
     def test_plan_returns_none_when_blocked(self):
-        cm = self._make_costmap(cell_size=1.0)
+        costmap = self._make_costmap(cell_size=1.0)
         gx, gy = 5.0, 0.0
         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)):
-            cm.update(gx + dx * 1.0, gy + dy * 1.0, 1.0)
-        path = plan_on_costmap(cm, 0.0, 0.0, gx, gy, _DEFAULT_MAX_EXPANSIONS)
+            costmap.update(gx + dx * 1.0, gy + dy * 1.0, 1.0)
+        path = plan_on_costmap(costmap, 0.0, 0.0, gx, gy, _DEFAULT_MAX_EXPANSIONS)
         assert path is None
 
     def test_lookahead_picks_far_enough(self):
@@ -222,23 +222,23 @@ class TestSimplePlannerPlan:
         assert wx == 3.0 and wy == 4.0
 
     def test_plan_with_inflation_override_opens_doorway(self):
-        cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=1.0)
+        costmap = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=1.0)
         for ix in range(-3, 4):
-            cm.update(float(ix), -1.0, 1.0)
-            cm.update(float(ix), 7.0, 1.0)
+            costmap.update(float(ix), -1.0, 1.0)
+            costmap.update(float(ix), 7.0, 1.0)
         for iy in range(-1, 8):
-            cm.update(-3.0, float(iy), 1.0)
-            cm.update(3.0, float(iy), 1.0)
+            costmap.update(-3.0, float(iy), 1.0)
+            costmap.update(3.0, float(iy), 1.0)
         for ix in range(-2, 3):
             if ix == 0:
                 continue
-            cm.update(float(ix), 3.0, 1.0)
-        assert plan_on_costmap(cm, 0.0, 0.0, 0.0, 6.0, _DEFAULT_MAX_EXPANSIONS) is None
+            costmap.update(float(ix), 3.0, 1.0)
+        assert plan_on_costmap(costmap, 0.0, 0.0, 0.0, 6.0, _DEFAULT_MAX_EXPANSIONS) is None
         path = plan_on_costmap(
-            cm, 0.0, 0.0, 0.0, 6.0, _DEFAULT_MAX_EXPANSIONS, inflation_override=0.0
+            costmap, 0.0, 0.0, 0.0, 6.0, _DEFAULT_MAX_EXPANSIONS, inflation_override=0.0
         )
         assert path is not None
-        assert any(cm.world_to_cell(wx, wy) == (0, 3) for wx, wy in path)
+        assert any(costmap.world_to_cell(wx, wy) == (0, 3) for wx, wy in path)
 
     def test_lookahead_moving_robot(self):
         path = [(x, 0.0) for x in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0)]
@@ -248,44 +248,44 @@ class TestSimplePlannerPlan:
 
 class TestBlockedAtInflation:
     def _cm_with_single_obstacle(self) -> Costmap:
-        cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
-        cm.update(0.0, 0.0, 1.0)
-        return cm
+        costmap = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
+        costmap.update(0.0, 0.0, 1.0)
+        return costmap
 
     def test_zero_inflation_single_cell(self):
-        cm = self._cm_with_single_obstacle()
-        blocked = _blocked_at_inflation(cm, 0.0)
+        costmap = self._cm_with_single_obstacle()
+        blocked = _blocked_at_inflation(costmap, 0.0)
         assert blocked == {(0, 0)}
 
     def test_larger_inflation_includes_neighbours(self):
-        cm = self._cm_with_single_obstacle()
-        blocked_0 = _blocked_at_inflation(cm, 0.0)
-        blocked_2 = _blocked_at_inflation(cm, 2.0)
+        costmap = self._cm_with_single_obstacle()
+        blocked_0 = _blocked_at_inflation(costmap, 0.0)
+        blocked_2 = _blocked_at_inflation(costmap, 2.0)
         assert blocked_0.issubset(blocked_2)
         assert (1, 0) in blocked_2
         assert (0, 1) in blocked_2
         assert (2, 2) not in blocked_2  # sqrt(8) ≈ 2.83 > 2
 
     def test_below_height_threshold_ignored(self):
-        cm = Costmap(cell_size=1.0, obstacle_height=0.5, inflation_radius=0.0)
-        cm.update(0.0, 0.0, 0.3)  # below threshold
-        cm.update(5.0, 0.0, 1.0)  # above threshold
-        blocked = _blocked_at_inflation(cm, 0.0)
+        costmap = Costmap(cell_size=1.0, obstacle_height=0.5, inflation_radius=0.0)
+        costmap.update(0.0, 0.0, 0.3)  # below threshold
+        costmap.update(5.0, 0.0, 1.0)  # above threshold
+        blocked = _blocked_at_inflation(costmap, 0.0)
         assert blocked == {(5, 0)}
 
     def test_does_not_mutate_costmap(self):
-        cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
-        cm.update(0.0, 0.0, 1.0)
-        assert cm.inflation_radius == 0.0
-        _blocked_at_inflation(cm, 3.0)
-        assert cm.inflation_radius == 0.0  # unchanged
+        costmap = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
+        costmap.update(0.0, 0.0, 1.0)
+        assert costmap.inflation_radius == 0.0
+        _blocked_at_inflation(costmap, 3.0)
+        assert costmap.inflation_radius == 0.0  # unchanged
         # Live costmap's own blocked_cells still reflects its own inflation
-        assert cm.blocked_cells() == {(0, 0)}
+        assert costmap.blocked_cells() == {(0, 0)}
 
     def test_rejects_negative_inflation(self):
-        cm = self._cm_with_single_obstacle()
+        costmap = self._cm_with_single_obstacle()
         with pytest.raises(ValueError):
-            _blocked_at_inflation(cm, -0.5)
+            _blocked_at_inflation(costmap, -0.5)
 
 
 class TestStuckEscalation:
