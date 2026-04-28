@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import resource
 import struct
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from dimos.protocol.service.system_configurator.base import (
     SystemConfigurator,
-    _is_root_user,
     _read_sysctl_int,
     _write_sysctl_int,
     configure_system,
-    sudo_run,
 )
 from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
 from dimos.protocol.service.system_configurator.lcm import (
@@ -36,43 +36,24 @@ from dimos.protocol.service.system_configurator.lcm import (
     MulticastConfiguratorLinux,
     MulticastConfiguratorMacOS,
 )
+from dimos.utils import prompt
 
 # Helper function tests
 
 
-class TestIsRootUser:
-    def test_is_root_when_euid_is_zero(self) -> None:
-        # Clear the cache before testing
-        _is_root_user.cache_clear()
-        with patch("os.geteuid", return_value=0):
-            assert _is_root_user() is True
-
-    def test_is_not_root_when_euid_is_nonzero(self) -> None:
-        _is_root_user.cache_clear()
-        with patch("os.geteuid", return_value=1000):
-            assert _is_root_user() is False
-
-    def test_returns_false_when_geteuid_not_available(self) -> None:
-        _is_root_user.cache_clear()
-        with patch("os.geteuid", side_effect=AttributeError):
-            assert _is_root_user() is False
-
-
 class TestSudoRun:
     def test_runs_without_sudo_when_root(self) -> None:
-        _is_root_user.cache_clear()
         with patch("os.geteuid", return_value=0):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
-                sudo_run("echo", "hello", check=True)
+                prompt.sudo_run("echo", "hello", check=True)
                 mock_run.assert_called_once_with(["echo", "hello"], check=True)
 
     def test_runs_with_sudo_when_not_root(self) -> None:
-        _is_root_user.cache_clear()
         with patch("os.geteuid", return_value=1000):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
-                sudo_run("echo", "hello", check=True)
+                prompt.sudo_run("echo", "hello", check=True)
                 mock_run.assert_called_once_with(["sudo", "echo", "hello"], check=True)
 
 
@@ -109,7 +90,6 @@ class TestReadSysctlInt:
 
 class TestWriteSysctlInt:
     def test_calls_sudo_run_with_correct_args(self) -> None:
-        _is_root_user.cache_clear()
         with patch("os.geteuid", return_value=1000):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
@@ -118,7 +98,7 @@ class TestWriteSysctlInt:
                     ["sudo", "sysctl", "-w", "net.core.rmem_max=67108864"],
                     check=True,
                     text=True,
-                    capture_output=False,
+                    capture_output=True,
                 )
 
 
@@ -168,19 +148,19 @@ class TestConfigureSystem:
 
     def test_prompts_user_and_fixes_on_yes(self, mocker) -> None:
         mock_check = MockConfigurator(passes=False)
-        mocker.patch("typer.confirm", return_value=True)
+        mocker.patch("dimos.utils.prompt.confirm", return_value=True)
         configure_system([mock_check])
         assert mock_check.fix_called
 
     def test_does_not_fix_on_no(self, mocker) -> None:
         mock_check = MockConfigurator(passes=False)
-        mocker.patch("typer.confirm", return_value=False)
+        mocker.patch("dimos.utils.prompt.confirm", return_value=False)
         configure_system([mock_check])
         assert not mock_check.fix_called
 
     def test_exits_on_no_with_critical_check(self, mocker) -> None:
         mock_check = MockConfigurator(passes=False, is_critical=True)
-        mocker.patch("typer.confirm", return_value=False)
+        mocker.patch("dimos.utils.prompt.confirm", return_value=False)
         with pytest.raises(SystemExit) as exc_info:
             configure_system([mock_check])
         assert exc_info.value.code == 1
@@ -248,7 +228,6 @@ class TestMulticastConfiguratorLinux:
         assert "ip route add 224.0.0.0/4 dev lo" in explanation
 
     def test_fix_runs_needed_commands(self) -> None:
-        _is_root_user.cache_clear()
         configurator = MulticastConfiguratorLinux()
         configurator.loopback_ok = False
         configurator.route_ok = False
@@ -292,7 +271,6 @@ class TestMulticastConfiguratorMacOS:
         assert "route add -net 224.0.0.0/4 -interface lo0" in explanation
 
     def test_fix_runs_route_command(self) -> None:
-        _is_root_user.cache_clear()
         configurator = MulticastConfiguratorMacOS()
         with patch("os.geteuid", return_value=0):
             with patch("subprocess.run") as mock_run:
@@ -362,9 +340,9 @@ class TestBufferConfiguratorMacOS:
         configurator = BufferConfiguratorMacOS()
         with patch("dimos.protocol.service.system_configurator.lcm._read_sysctl_int") as mock_read:
             mock_read.side_effect = [
-                BufferConfiguratorMacOS.TARGET_BUFFER_SIZE,
-                BufferConfiguratorMacOS.TARGET_RECVSPACE,
-                BufferConfiguratorMacOS.TARGET_DGRAM_SIZE,
+                BufferConfiguratorMacOS.TARGET,
+                BufferConfiguratorMacOS.TARGET,
+                BufferConfiguratorMacOS.TARGET,
             ]
             assert configurator.check() is True
             assert configurator.needs == []
@@ -376,10 +354,27 @@ class TestBufferConfiguratorMacOS:
             assert configurator.check() is False
             assert len(configurator.needs) == 3
 
+    def test_check_uses_saved_config_as_target(self, tmp_path) -> None:
+        conf = tmp_path / "sysctl.json"
+        user_limit = 32 * 2**20  # 32 MiB
+        conf.write_text(json.dumps({"kern.ipc.maxsockbuf": user_limit}))
+        configurator = BufferConfiguratorMacOS()
+        with (
+            patch("dimos.protocol.service.system_configurator.lcm._SYSCTL_CONF", conf),
+            patch("dimos.protocol.service.system_configurator.lcm._read_sysctl_int") as mock_read,
+        ):
+            # maxsockbuf: saved target is 32M, current is 32M → ok
+            # recvspace/maxdgram: no saved value → uses IDEAL (64M) → needs fix
+            mock_read.side_effect = [user_limit] * 3
+            assert configurator.check() is False
+            assert len(configurator.needs) == 2
+            # maxsockbuf should not be in needs
+            assert all(k != "kern.ipc.maxsockbuf" for k, _, _ in configurator.needs)
+
     def test_explanation_lists_needed_changes(self) -> None:
         configurator = BufferConfiguratorMacOS()
         configurator.needs = [
-            ("kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET_BUFFER_SIZE),
+            ("kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET, BufferConfiguratorMacOS.TARGET),
         ]
         explanation = configurator.explanation()
         assert "kern.ipc.maxsockbuf" in explanation
@@ -387,15 +382,50 @@ class TestBufferConfiguratorMacOS:
     def test_fix_writes_needed_values(self) -> None:
         configurator = BufferConfiguratorMacOS()
         configurator.needs = [
-            ("kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET_BUFFER_SIZE),
+            ("kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET, 0),
         ]
-        with patch(
-            "dimos.protocol.service.system_configurator.lcm._write_sysctl_int"
-        ) as mock_write:
+        with (
+            patch("dimos.protocol.service.system_configurator.lcm._write_sysctl_int") as mock_write,
+            patch("dimos.protocol.service.system_configurator.lcm._save_sysctl_conf"),
+        ):
             configurator.fix()
             mock_write.assert_called_once_with(
-                "kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET_BUFFER_SIZE
+                "kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET
             )
+
+    def test_fix_halves_on_failure_and_saves(self, tmp_path) -> None:
+        conf = tmp_path / "sysctl.json"
+        configurator = BufferConfiguratorMacOS()
+        configurator.needs = [("kern.ipc.maxsockbuf", 64000000, 0)]
+        with (
+            patch("dimos.protocol.service.system_configurator.lcm._SYSCTL_CONF", conf),
+            patch("dimos.protocol.service.system_configurator.lcm._write_sysctl_int") as mock_write,
+        ):
+            # Fail at 64M, fail at 32M, succeed at 16M
+            mock_write.side_effect = [
+                subprocess.CalledProcessError(1, "sysctl"),
+                subprocess.CalledProcessError(1, "sysctl"),
+                None,
+            ]
+            configurator.fix()
+            assert mock_write.call_count == 3
+            mock_write.assert_called_with("kern.ipc.maxsockbuf", 16000000)
+            # Saved value should be 16M
+            saved = json.loads(conf.read_text())
+            assert saved["kern.ipc.maxsockbuf"] == 16000000
+
+    def test_fix_stops_at_current_value(self) -> None:
+        configurator = BufferConfiguratorMacOS()
+        configurator.needs = [("kern.ipc.maxsockbuf", 64000000, 32000000)]
+        with (
+            patch("dimos.protocol.service.system_configurator.lcm._write_sysctl_int") as mock_write,
+            patch("dimos.protocol.service.system_configurator.lcm._save_sysctl_conf"),
+        ):
+            # All attempts fail — should stop when halved below current (32M)
+            mock_write.side_effect = subprocess.CalledProcessError(1, "sysctl")
+            configurator.fix()
+            # 64M fails, 32M == current → stops
+            assert mock_write.call_count == 1
 
 
 # MaxFileConfiguratorMacOS tests
@@ -464,7 +494,6 @@ class TestMaxFileConfiguratorMacOS:
             mock_setrlimit.assert_not_called()
 
     def test_fix_uses_launchctl_when_hard_limit_low(self) -> None:
-        _is_root_user.cache_clear()
         configurator = MaxFileConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 10240
@@ -594,7 +623,6 @@ class TestClockSyncConfigurator:
         assert configurator.explanation() is None
 
     def test_fix_on_linux_with_ntpdate(self) -> None:
-        _is_root_user.cache_clear()
         configurator = ClockSyncConfigurator()
         with (
             patch(
@@ -615,7 +643,6 @@ class TestClockSyncConfigurator:
             assert "ntpdate" in mock_run.call_args_list[0][0][0]
 
     def test_fix_on_linux_sntp_fallback(self) -> None:
-        _is_root_user.cache_clear()
         configurator = ClockSyncConfigurator()
         with (
             patch(
@@ -636,7 +663,6 @@ class TestClockSyncConfigurator:
             assert "sntp" in mock_run.call_args_list[0][0][0]
 
     def test_fix_on_linux_date_fallback(self) -> None:
-        _is_root_user.cache_clear()
         configurator = ClockSyncConfigurator()
         configurator._offset = 1.0
         with (
@@ -658,7 +684,6 @@ class TestClockSyncConfigurator:
             assert "date" in mock_run.call_args_list[0][0][0]
 
     def test_fix_on_macos(self) -> None:
-        _is_root_user.cache_clear()
         configurator = ClockSyncConfigurator()
         with (
             patch(

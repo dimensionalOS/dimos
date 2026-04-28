@@ -26,14 +26,14 @@ class BlobStoreConfig(BaseConfig):
     pass
 
 
-class BlobStore(Configurable[BlobStoreConfig], CompositeResource):
+class BlobStore(Configurable, CompositeResource):
     """Persistent storage for encoded payload blobs.
 
     Separates payload data from metadata indexing so that large blobs
     (images, point clouds) don't penalize metadata queries.
     """
 
-    default_config: type[BlobStoreConfig] = BlobStoreConfig
+    config: BlobStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)

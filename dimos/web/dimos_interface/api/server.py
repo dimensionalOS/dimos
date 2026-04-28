@@ -49,6 +49,7 @@ import soundfile as sf  # type: ignore[import-untyped]
 from sse_starlette.sse import EventSourceResponse
 import uvicorn
 
+from dimos.core.global_config import global_config
 from dimos.stream.audio.base import AudioEvent
 from dimos.web.edge_io import EdgeIO
 
@@ -60,7 +61,7 @@ class FastAPIServer(EdgeIO):
         self,
         dev_name: str = "FastAPI Server",
         edge_type: str = "Bidirectional",
-        host: str = "0.0.0.0",
+        host: str | None = None,
         port: int = 5555,
         text_streams=None,
         audio_subject=None,
@@ -81,7 +82,7 @@ class FastAPIServer(EdgeIO):
         )
 
         self.port = port
-        self.host = host
+        self.host = host if host is not None else global_config.listen_host
         BASE_DIR = Path(__file__).resolve().parent
         self.templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
         self.streams = streams
@@ -210,7 +211,7 @@ class FastAPIServer(EdgeIO):
             self.text_clients.remove(client_id)
 
     @staticmethod
-    def _decode_audio(raw: bytes) -> tuple[np.ndarray, int]:  # type: ignore[type-arg]
+    def _decode_audio(raw: bytes) -> tuple[np.ndarray, int]:
         """Convert the webm/opus blob sent by the browser into mono 16-kHz PCM."""
         try:
             # Use ffmpeg to convert to 16-kHz mono 16-bit PCM WAV in memory

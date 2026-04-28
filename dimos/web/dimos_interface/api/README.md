@@ -15,7 +15,7 @@ pip install -r requirements.txt
 python unitree_server.py
 ```
 
-The server will start on `http://0.0.0.0:5555`.
+The server will start on `http://127.0.0.1:5555`.
 
 ## Integration with Frontend
 

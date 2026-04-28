@@ -16,11 +16,12 @@
 """G1 stack with shared memory image transport."""
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1 import unitree_g1
+from dimos.visualization.vis_module import vis_module
 
 unitree_g1_shm = autoconnect(
     unitree_g1.transports(
@@ -30,10 +31,9 @@ unitree_g1_shm = autoconnect(
             ),
         }
     ),
-    FoxgloveBridge.blueprint(
-        shm_channels=[
-            "/color_image#sensor_msgs.Image",
-        ]
+    vis_module(
+        viewer_backend=global_config.viewer,
+        foxglove_config={"shm_channels": ["/color_image#sensor_msgs.Image"]},
     ),
 )
 

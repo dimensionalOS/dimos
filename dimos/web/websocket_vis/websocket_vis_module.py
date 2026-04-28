@@ -28,7 +28,7 @@ import time
 from typing import Any
 import webbrowser
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
@@ -45,7 +45,9 @@ _COMMAND_CENTER_DIR = (
     FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
 )
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.models import LatLon
@@ -71,7 +73,7 @@ class WebsocketConfig(ModuleConfig):
     port: int = 7779
 
 
-class WebsocketVisModule(Module[WebsocketConfig]):
+class WebsocketVisModule(Module):
     """
     WebSocket-based visualization module for real-time navigation data.
 
@@ -90,7 +92,7 @@ class WebsocketVisModule(Module[WebsocketConfig]):
         - click_goal: Goal position from user clicks
     """
 
-    default_config = WebsocketConfig
+    config: WebsocketConfig
 
     # LCM inputs
     odom: In[PoseStamped]
@@ -103,7 +105,7 @@ class WebsocketVisModule(Module[WebsocketConfig]):
     gps_goal: Out[LatLon]
     explore_cmd: Out[Bool]
     stop_explore_cmd: Out[Bool]
-    cmd_vel: Out[Twist]
+    tele_cmd_vel: Out[Twist]
     movecmd_stamped: Out[TwistStamped]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -156,9 +158,11 @@ class WebsocketVisModule(Module[WebsocketConfig]):
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
 
-        # Auto-open browser only for rerun-web (dashboard with Rerun iframe + command center)
-        # For rerun and foxglove, users access the command center manually if needed
-        if self.config.g.viewer == "rerun-web":
+        # Auto-open the dashboard tab only when the user explicitly asked for a
+        # web-based viewer (rerun_open == "web" or "both"). `rerun_web` alone
+        # only means "serve the viewer"; it should not trigger a browser popup
+        # when the user chose the native viewer.
+        if self.config.g.viewer == "rerun" and self.config.g.rerun_open in ("web", "both"):
             url = f"http://localhost:{self.config.port}/"
             logger.info(f"Dimensional Command Center: {url}")
 
@@ -173,25 +177,25 @@ class WebsocketVisModule(Module[WebsocketConfig]):
 
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 
         try:
             unsub = self.gps_location.subscribe(self._on_gps_location)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 
         try:
             unsub = self.path.subscribe(self._on_path)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 
         try:
             unsub = self.global_costmap.subscribe(self._on_global_costmap)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 
@@ -215,10 +219,10 @@ class WebsocketVisModule(Module[WebsocketConfig]):
             self._broadcast_loop.call_soon_threadsafe(self._broadcast_loop.stop)
 
         if self._broadcast_thread and self._broadcast_thread.is_alive():
-            self._broadcast_thread.join(timeout=1.0)
+            self._broadcast_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         if self._uvicorn_server_thread and self._uvicorn_server_thread.is_alive():
-            self._uvicorn_server_thread.join(timeout=2.0)
+            self._uvicorn_server_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 
@@ -234,11 +238,13 @@ class WebsocketVisModule(Module[WebsocketConfig]):
 
         async def serve_index(request):  # type: ignore[no-untyped-def]
             """Serve appropriate HTML based on viewer mode."""
-            # If running native Rerun, redirect to standalone command center
-            if self.config.g.viewer != "rerun-web":
+            # Serve the full dashboard (with Rerun iframe) only when the rerun
+            # web server is enabled; otherwise redirect to the standalone
+            # command center.
+            if not (
+                self.config.g.viewer == "rerun" and self.config.g.rerun_open in ("web", "both")
+            ):
                 return RedirectResponse(url="/command-center")
-
-            # Otherwise serve full dashboard with Rerun iframe
             return FileResponse(_DASHBOARD_HTML, media_type="text/html")
 
         async def serve_command_center(request):  # type: ignore[no-untyped-def]
@@ -331,14 +337,14 @@ class WebsocketVisModule(Module[WebsocketConfig]):
         @self.sio.event  # type: ignore[untyped-decorator]
         async def move_command(sid: str, data: dict[str, Any]) -> None:
             # Publish Twist if transport is configured
-            if self.cmd_vel and self.cmd_vel.transport:
+            if self.tele_cmd_vel and self.tele_cmd_vel.transport:
                 twist = Twist(
                     linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
                     angular=Vector3(
                         data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]
                     ),
                 )
-                self.cmd_vel.publish(twist)
+                self.tele_cmd_vel.publish(twist)
 
             # Publish TwistStamped if transport is configured
             if self.movecmd_stamped and self.movecmd_stamped.transport:
@@ -355,7 +361,7 @@ class WebsocketVisModule(Module[WebsocketConfig]):
     def _run_uvicorn_server(self) -> None:
         config = uvicorn.Config(
             self.app,  # type: ignore[arg-type]
-            host="0.0.0.0",
+            host=global_config.listen_host,
             port=self.config.port,
             log_level="error",  # Reduce verbosity
         )

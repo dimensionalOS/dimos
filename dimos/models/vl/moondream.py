@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from functools import cached_property
 from typing import Any
 import warnings
@@ -5,7 +19,7 @@ import warnings
 import numpy as np
 from PIL import Image as PILImage
 import torch
-from transformers import AutoModelForCausalLM  # type: ignore[import-untyped]
+from transformers import AutoModelForCausalLM
 
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
 from dimos.models.vl.base import VlModel, VlModelConfig
@@ -26,9 +40,9 @@ class MoondreamConfig(HuggingFaceModelConfig, VlModelConfig):
     auto_resize: tuple[int, int] | None = MOONDREAM_DEFAULT_AUTO_RESIZE
 
 
-class MoondreamVlModel(HuggingFaceModel, VlModel[MoondreamConfig]):
+class MoondreamVlModel(HuggingFaceModel, VlModel):
+    config: MoondreamConfig
     _model_class = AutoModelForCausalLM
-    default_config = MoondreamConfig  # type: ignore[assignment]
 
     @cached_property
     def _model(self) -> AutoModelForCausalLM:
@@ -55,7 +69,7 @@ class MoondreamVlModel(HuggingFaceModel, VlModel[MoondreamConfig]):
         rgb_image = image.to_rgb()
         return PILImage.fromarray(rgb_image.data)
 
-    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
+    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
         pil_image = self._to_pil(image)
 
         # Query the model

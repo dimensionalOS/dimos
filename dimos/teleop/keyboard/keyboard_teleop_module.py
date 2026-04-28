@@ -40,6 +40,7 @@ try:
 except ImportError:
     pygame = None  # type: ignore[assignment]
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.examples.cartesian_ik_jogger import JogState
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -69,13 +70,13 @@ class KeyboardTeleopConfig(ModuleConfig):
     task_name: str = "cartesian_ik_arm"
 
 
-class KeyboardTeleopModule(Module[KeyboardTeleopConfig]):
+class KeyboardTeleopModule(Module):
     """Pygame-based cartesian keyboard teleop as a DimOS Module.
 
     Publishes absolute EE PoseStamped commands for CartesianIKTask.
     """
 
-    default_config = KeyboardTeleopConfig
+    config: KeyboardTeleopConfig
 
     cartesian_command: Out[PoseStamped]
 
@@ -100,7 +101,7 @@ class KeyboardTeleopModule(Module[KeyboardTeleopConfig]):
     def stop(self) -> None:
         self._stop_event.set()
         if self._thread is not None:
-            self._thread.join(2)
+            self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
     def _pygame_loop(self) -> None:

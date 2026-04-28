@@ -49,7 +49,7 @@ class ImageFormat(Enum):
     DEPTH16 = "DEPTH16"
 
 
-def _format_to_rerun(data: np.ndarray, fmt: ImageFormat) -> Any:  # type: ignore[type-arg]
+def _format_to_rerun(data: np.ndarray, fmt: ImageFormat) -> Any:
     """Convert image data to Rerun archetype based on format."""
     match fmt:
         case ImageFormat.RGB:
@@ -161,7 +161,7 @@ class Image(Timestamped):
     @classmethod
     def from_numpy(
         cls,
-        np_image: np.ndarray,  # type: ignore[type-arg]
+        np_image: np.ndarray,
         format: ImageFormat = ImageFormat.BGR,
         frame_id: str = "",
         ts: float | None = None,
@@ -195,7 +195,7 @@ class Image(Timestamped):
     @classmethod
     def from_opencv(
         cls,
-        cv_image: np.ndarray,  # type: ignore[type-arg]
+        cv_image: np.ndarray,
         format: ImageFormat = ImageFormat.BGR,
         frame_id: str = "",
         ts: float | None = None,
@@ -208,7 +208,7 @@ class Image(Timestamped):
             ts=ts if ts is not None else time.time(),
         )
 
-    def to_opencv(self) -> np.ndarray:  # type: ignore[type-arg]
+    def to_opencv(self) -> np.ndarray:
         """Convert to OpenCV BGR format."""
         arr = self.data
         if self.format == ImageFormat.BGR:
@@ -228,7 +228,7 @@ class Image(Timestamped):
             return arr
         raise ValueError(f"Unsupported format: {self.format}")
 
-    def as_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
+    def as_numpy(self) -> np.ndarray:
         """Get image data as numpy array."""
         return self.data
 
@@ -375,6 +375,17 @@ class Image(Timestamped):
         return Image(data=cropped_data, format=self.format, frame_id=self.frame_id, ts=self.ts)
 
     @property
+    def brightness(self) -> float:
+        """Return mean brightness in [0, 1].
+
+        Strides to ~256px on the long edge first — ~O(N/step²) cheaper than
+        reading every pixel, and the mean converges quickly (CLT).
+        """
+        max_val = 65535.0 if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16) else 255.0
+        step = max(1, max(self.data.shape[:2]) // 256)
+        return float(self.data[::step, ::step].mean() / max_val)
+
+    @property
     def sharpness(self) -> float:
         """Return sharpness score.
 
@@ -509,7 +520,7 @@ class Image(Timestamped):
         Returns:
             LCM-encoded bytes with JPEG-compressed image data
         """
-        from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
+        from turbojpeg import TurboJPEG
 
         jpeg = TurboJPEG()
         msg = LCMImage()
@@ -556,7 +567,7 @@ class Image(Timestamped):
         Returns:
             Image instance
         """
-        from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
+        from turbojpeg import TurboJPEG
 
         jpeg = TurboJPEG()
         msg = LCMImage.lcm_decode(data)
@@ -617,10 +628,10 @@ def sharpness_barrier(target_frequency: float) -> Callable[[Observable[Image]], 
     """Select the sharpest Image within each time window."""
     if target_frequency <= 0:
         raise ValueError("target_frequency must be positive")
-    return quality_barrier(lambda image: image.sharpness, target_frequency)  # type: ignore[attr-defined]
+    return quality_barrier(lambda image: image.sharpness, target_frequency)
 
 
-def _get_lcm_encoding(fmt: ImageFormat, dtype: np.dtype) -> str:  # type: ignore[type-arg]
+def _get_lcm_encoding(fmt: ImageFormat, dtype: np.dtype) -> str:
     if fmt == ImageFormat.GRAY:
         if dtype == np.uint8:
             return "mono8"

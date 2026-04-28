@@ -18,11 +18,12 @@ import pytest
 
 from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT
 
 
 @pytest.fixture
 def lcmrpc() -> Generator[LCMRPC, None, None]:
-    ret = LCMRPC()
+    ret = LCMRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT)
     ret.start()
     yield ret
     ret.stop()

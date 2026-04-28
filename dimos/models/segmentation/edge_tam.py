@@ -20,10 +20,10 @@ import tempfile
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import cv2
-from hydra.utils import instantiate  # type: ignore[import-not-found]
+from hydra.utils import instantiate
 import numpy as np
 from numpy.typing import NDArray
-from omegaconf import OmegaConf  # type: ignore[import-not-found]
+from omegaconf import OmegaConf
 from PIL import Image as PILImage
 import torch
 
@@ -79,15 +79,14 @@ class EdgeTAMProcessor(Detector):
             OmegaConf.update(cfg, key, value)
 
         if cfg.model._target_ != "sam2.sam2_video_predictor.SAM2VideoPredictor":
-            logger.warning(
-                f"Config target is {cfg.model._target_}, forcing SAM2VideoPredictor"
-            )
+            logger.warning(f"Config target is {cfg.model._target_}, forcing SAM2VideoPredictor")
             cfg.model._target_ = "sam2.sam2_video_predictor.SAM2VideoPredictor"
 
         self._predictor = instantiate(cfg.model, _recursive_=True)
 
         # Suppress the per-frame "propagate in video" tqdm bar from sam2
         import sam2.sam2_video_predictor as _svp
+
         _svp.tqdm = lambda iterable, *a, **kw: iterable
 
         ckpt_path = str(get_data("models_edgetam") / "edgetam.pt")

@@ -18,7 +18,8 @@ import time
 import pytest
 
 from dimos.mapping.pointclouds.occupancy import OCCUPANCY_ALGOS
-from dimos.mapping.voxels import VoxelGridMapper
+from dimos.mapping.voxels import VoxelGrid
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.cli.plot import bar
 from dimos.utils.data import get_data, get_data_dir
 from dimos.utils.testing.replay import TimedSensorReplay
@@ -26,18 +27,19 @@ from dimos.utils.testing.replay import TimedSensorReplay
 
 @pytest.mark.tool
 def test_build_map():
-    mapper = VoxelGridMapper(publish_interval=-1)
+    grid = VoxelGrid()
 
-    for _ts, frame in TimedSensorReplay("unitree_go2_bigoffice/lidar").iterate():
-        mapper.add_frame(frame)
+    replay: TimedSensorReplay[PointCloud2] = TimedSensorReplay("go2_bigoffice/lidar")
+    for _ts, frame in replay.iterate_ts():
+        grid.add_frame(frame)
 
     pickle_file = get_data_dir() / "unitree_go2_bigoffice_map.pickle"
-    global_pcd = mapper.get_global_pointcloud2()
+    global_pcd = grid.get_global_pointcloud2()
 
     with open(pickle_file, "wb") as f:
         pickle.dump(global_pcd, f)
 
-    mapper.stop()
+    grid.dispose()
 
 
 def test_costmap_calc():

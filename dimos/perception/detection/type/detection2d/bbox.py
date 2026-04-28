@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from typing_extensions import Self
-    from ultralytics.engine.results import Results  # type: ignore[import-not-found]
+    from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs.Image import Image
 
@@ -98,32 +98,47 @@ class Detection2DBBox(Detection2D):
             "bbox": f"[{x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}]",
         }
 
-    def center_to_3d(
-        self,
-        pixel: tuple[int, int],
-        camera_info: CameraInfo,  # type: ignore[name-defined]
-        assumed_depth: float = 1.0,
-    ) -> PoseStamped:  # type: ignore[name-defined]
-        """Unproject 2D pixel coordinates to 3D position in camera optical frame.
+    def draw_on(self, img: Any, scale: float = 1.0) -> None:
+        """Draw this detection's bbox and label onto a BGR numpy array (in-place)."""
+        import cv2
+        import numpy as np
 
-        Args:
-            camera_info: Camera calibration information
-            assumed_depth: Assumed depth in meters (default 1.0m from camera)
+        x1, y1, x2, y2 = map(int, self.bbox)
 
-        Returns:
-            Vector3 position in camera optical frame coordinates
-        """
-        # Extract camera intrinsics
-        fx, fy = camera_info.K[0], camera_info.K[4]
-        cx, cy = camera_info.K[2], camera_info.K[5]
+        h = hashlib.md5(self.name.encode()).digest()[0]
+        bgr = [
+            int(c)
+            for c in cv2.applyColorMap(np.array([[h]], dtype=np.uint8), cv2.COLORMAP_HSV)[0][0]
+        ]
 
-        # Unproject pixel to normalized camera coordinates
-        x_norm = (pixel[0] - cx) / fx
-        y_norm = (pixel[1] - cy) / fy
+        thickness = max(1, int(2 * scale))
+        cv2.rectangle(img, (x1, y1), (x2, y2), bgr, thickness)
 
-        # Create 3D point at assumed depth in camera optical frame
-        # Camera optical frame: X right, Y down, Z forward
-        return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)  # type: ignore[name-defined]
+        label = self.name
+        if self.confidence < 1.0:
+            label = f"{self.name} {self.confidence:.2f}"
+        font_scale = 0.5 * scale
+        font_thickness = max(1, int(scale))
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
+        cv2.rectangle(img, (x1, y1 - th - 6), (x1 + tw + 4, y1), (0, 0, 0), -1)
+        cv2.rectangle(img, (x1, y1 - th - 6), (x1 + tw + 4, y1), bgr, max(1, int(scale)))
+        cv2.putText(
+            img,
+            label,
+            (x1 + 2, y1 - 4),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (255, 255, 255),
+            font_thickness,
+        )
+
+    def annotated_image(self, scale: float = 1.0) -> Image:
+        """Return the full image with this detection's bbox and label drawn on it."""
+        img = self.image.to_opencv().copy()
+        self.draw_on(img, scale=scale)
+        from dimos.msgs.sensor_msgs.Image import Image
+
+        return Image.from_opencv(img, ts=self.ts)
 
     # return focused image, only on the bbox
     def cropped_image(self, padding: int = 20) -> Image:

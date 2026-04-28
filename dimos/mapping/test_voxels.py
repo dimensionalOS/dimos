@@ -19,19 +19,19 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.mapping.voxels import VoxelGridMapper
+from dimos.mapping.voxels import VoxelGrid
+from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
-from dimos.utils.testing.replay import TimedSensorReplay
 from dimos.utils.testing.test_moment import Go2Moment
 
 
 @pytest.fixture
-def mapper() -> Generator[VoxelGridMapper, None, None]:
-    mapper = VoxelGridMapper()
-    yield mapper
-    mapper.stop()
+def grid() -> Generator[VoxelGrid, None, None]:
+    g = VoxelGrid()
+    yield g
+    g.dispose()
 
 
 class Go2MapperMoment(Go2Moment):
@@ -78,21 +78,19 @@ def two_perspectives_loop(moment: MomentFactory) -> None:
 
 
 @pytest.mark.tool
-def test_carving(
-    mapper: VoxelGridMapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment
-) -> None:
+def test_carving(grid: VoxelGrid, moment1: Go2MapperMoment, moment2: Go2MapperMoment) -> None:
     lidar_frame1 = moment1.lidar.value
     assert lidar_frame1 is not None
 
     lidar_frame2 = moment2.lidar.value
     assert lidar_frame2 is not None
 
-    # Carving mapper (default, carve_columns=True)
-    mapper.add_frame(lidar_frame1)
-    mapper.add_frame(lidar_frame2)
-    count_carving = mapper.size()
+    # Carving grid (default, carve_columns=True)
+    grid.add_frame(lidar_frame1)
+    grid.add_frame(lidar_frame2)
+    count_carving = grid.size()
 
-    voxel_size = mapper.config.voxel_size
+    voxel_size = grid._voxel_size
     pts1 = np.asarray(lidar_frame1.pointcloud.points)
     pts2 = np.asarray(lidar_frame2.pointcloud.points)
     combined_vox = np.floor(np.vstack([pts1, pts2]) / voxel_size).astype(np.int64)
@@ -109,17 +107,17 @@ def test_carving(
     )
 
 
-def test_injest_a_few(mapper: VoxelGridMapper) -> None:
+def test_ingest_a_few(grid: VoxelGrid) -> None:
     data_dir = get_data("unitree_go2_office_walk2")
-    lidar_store = TimedSensorReplay(f"{data_dir}/lidar")
+    lidar_store = LegacyPickleStore(f"{data_dir}/lidar")
 
     for i in [1, 4, 8]:
         frame = lidar_store.find_closest_seek(i)
         assert frame is not None
         print("add", frame)
-        mapper.add_frame(frame)
+        grid.add_frame(frame)
 
-    assert len(mapper.get_global_pointcloud2()) == 30136
+    assert len(grid.get_global_pointcloud2()) == 30136
 
 
 @pytest.mark.parametrize(
@@ -134,10 +132,10 @@ def test_roundtrip(moment1: Go2MapperMoment, voxel_size: float, expected_points:
     lidar_frame = moment1.lidar.value
     assert lidar_frame is not None
 
-    mapper = VoxelGridMapper(voxel_size=voxel_size)
-    mapper.add_frame(lidar_frame)
+    grid = VoxelGrid(voxel_size=voxel_size)
+    grid.add_frame(lidar_frame)
 
-    global1 = mapper.get_global_pointcloud2()
+    global1 = grid.get_global_pointcloud2()
     assert len(global1) == expected_points
 
     # loseless roundtrip
@@ -146,29 +144,29 @@ def test_roundtrip(moment1: Go2MapperMoment, voxel_size: float, expected_points:
         # TODO: we want __eq__ on PointCloud2 - should actually compare
         # all points in both frames
 
-    mapper.add_frame(global1)
+    grid.add_frame(global1)
     # no new information, no global map change
-    assert len(mapper.get_global_pointcloud2()) == len(global1)
+    assert len(grid.get_global_pointcloud2()) == len(global1)
 
     moment1.publish()
-    mapper.stop()
+    grid.dispose()
 
 
-def test_roundtrip_range_preserved(mapper: VoxelGridMapper) -> None:
+def test_roundtrip_range_preserved(grid: VoxelGrid) -> None:
     """Test that input coordinate ranges are preserved in output."""
     data_dir = get_data("unitree_go2_office_walk2")
-    lidar_store = TimedSensorReplay(f"{data_dir}/lidar")
+    lidar_store = LegacyPickleStore(f"{data_dir}/lidar")
 
     frame = lidar_store.find_closest_seek(1.0)
     assert frame is not None
     input_pts = np.asarray(frame.pointcloud.points)
 
-    mapper.add_frame(frame)
+    grid.add_frame(frame)
 
-    out_pcd = mapper.get_global_pointcloud().to_legacy()
+    out_pcd = grid.get_global_pointcloud().to_legacy()
     out_pts = np.asarray(out_pcd.points)
 
-    voxel_size = mapper.config.voxel_size
+    voxel_size = grid._voxel_size
     tolerance = voxel_size  # Allow one voxel of difference at boundaries
 
     # TODO: we want __eq__ on PointCloud2 - should actually compare

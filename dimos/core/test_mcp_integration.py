@@ -37,7 +37,8 @@ from typer.testing import CliRunner
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.core.run_registry import (
     RunEntry,
@@ -50,7 +51,6 @@ from dimos.robot.cli.dimos import main
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from dimos.core.module_coordinator import ModuleCoordinator
 
 MCP_URL = f"http://localhost:{global_config.mcp_port}/mcp"
 
@@ -84,7 +84,7 @@ def mcp_shared(request: pytest.FixtureRequest) -> Generator[ModuleCoordinator, N
         StressTestModule.blueprint(),
         McpServer.blueprint(),
     )
-    coord = bp.build()
+    coord = ModuleCoordinator.build(bp)
     ready = _adapter().wait_for_ready()
     yield coord
     coord.stop()
@@ -121,7 +121,7 @@ class TestMCPLifecycle:
     """MCP server lifecycle: start -> respond -> stop -> dead."""
 
     def test_mcp_responds_after_build(self, mcp_shared: ModuleCoordinator) -> None:
-        """After blueprint.build(), MCP should accept requests."""
+        """After ModuleCoordinator.build(blueprint), MCP should accept requests."""
         result = _adapter().call("initialize")
         assert result["result"]["serverInfo"]["name"] == "dimensional"
 
@@ -323,14 +323,14 @@ class TestDaemonMCPRecovery:
 
         # First run
         bp1 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
-        coord1 = bp1.build()
+        coord1 = ModuleCoordinator.build(bp1)
         assert _adapter().wait_for_ready(), "First MCP start failed"
         coord1.stop()
         assert _adapter().wait_for_down(), "MCP didn't stop"
 
         # Second run -- should work without port conflicts
         bp2 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
-        coord2 = bp2.build()
+        coord2 = ModuleCoordinator.build(bp2)
         assert _adapter().wait_for_ready(), "Second MCP start failed (port conflict?)"
         coord2.stop()
 
@@ -372,7 +372,7 @@ class TestMCPRapidRestart:
 
         for cycle in range(3):
             bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
-            coord = bp.build()
+            coord = ModuleCoordinator.build(bp)
             assert _adapter().wait_for_ready(timeout=15), f"MCP failed to start on cycle {cycle}"
 
             result = _adapter().call("tools/call", {"name": "ping", "arguments": {}})
@@ -390,7 +390,7 @@ class TestMCPNoServer:
         """After coordinator.stop(), MCP should stop responding."""
         global_config.update(viewer="none", n_workers=1)
         bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
-        coord = bp.build()
+        coord = ModuleCoordinator.build(bp)
         assert _adapter().wait_for_ready(), "MCP server did not start"
 
         coord.stop()

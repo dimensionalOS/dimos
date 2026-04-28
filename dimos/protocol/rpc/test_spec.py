@@ -27,6 +27,7 @@ import pytest
 
 from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC
 from dimos.protocol.rpc.rpc_utils import RemoteError
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT
 
 
 class CustomTestError(Exception):
@@ -46,8 +47,8 @@ def lcm_rpc_context():
     from dimos.protocol.service.lcmservice import autoconf
 
     autoconf()
-    server = LCMRPC()
-    client = LCMRPC()
+    server = LCMRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT)
+    client = LCMRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT)
     server.start()
     client.start()
 
@@ -65,8 +66,8 @@ testdata.append((lcm_rpc_context, "lcm"))
 def shm_rpc_context():
     """Context manager for Shared Memory RPC implementation."""
     # Create two separate instances that communicate through shared memory segments
-    server = ShmRPC(prefer="cpu")
-    client = ShmRPC(prefer="cpu")
+    server = ShmRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT, prefer="cpu")
+    client = ShmRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT, prefer="cpu")
     server.start()
     client.start()
 

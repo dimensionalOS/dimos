@@ -52,13 +52,15 @@ IGNORED_DIRS = {
     ".tox",
     # third-party vendored code
     "gtsam",
+    # hidden/personal directories
+    ".hidden",
 }
 
 # Lines that match section patterns but are actually programmatic / intentional.
 # Each entry is (relative_path, line_substring) — if both match, the line is skipped.
 WHITELIST = [
     # Sentinel marker used at runtime to detect already-converted Dockerfiles
-    ("dimos/core/docker_build.py", "DIMOS_SENTINEL"),
+    ("dimos/core/docker_module.py", "DIMOS_SENTINEL"),
 ]
 
 

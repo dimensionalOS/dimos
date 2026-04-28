@@ -17,12 +17,12 @@ from collections.abc import Generator
 import difflib
 import os
 from pathlib import Path
-import re
 import subprocess
 
 import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.robot.get_all_blueprints import class_name_to_registry_key
 
 IGNORED_FILES: set[str] = {
     "dimos/robot/all_blueprints.py",
@@ -33,7 +33,7 @@ IGNORED_FILES: set[str] = {
     "dimos/core/test_blueprints.py",
 }
 BLUEPRINT_METHODS = {"transports", "global_config", "remappings", "requirements", "configurators"}
-_EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase"}
+_EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule"}
 
 
 def test_all_blueprints_is_current() -> None:
@@ -76,13 +76,6 @@ def test_all_blueprints_is_current() -> None:
                 "all_blueprints.py was updated and has uncommitted changes. "
                 "Please commit the changes."
             )
-
-
-def _camel_to_snake(name: str) -> str:
-    """Convert CamelCase class name to snake_case."""
-    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
-    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
-    return s.lower()
 
 
 def _get_base_class_names(node: ast.ClassDef) -> list[str]:
@@ -171,9 +164,8 @@ def _scan_for_blueprints(root: Path) -> tuple[dict[str, str], dict[str, str]]:
 
         # Only register modules from production files (skip test, deprecated, core)
         if _is_production_module_file(file_path, root):
-            for var_name in module_vars:
-                cli_name = var_name.replace("_", "-")
-                all_modules[cli_name] = module_name
+            for class_name in module_vars:
+                all_modules[class_name_to_registry_key(class_name)] = f"{module_name}.{class_name}"
 
     # Blueprints take priority when names collide (e.g. a pre-configured
     # blueprint named "mid360" vs the raw Mid360 Module class).
@@ -281,7 +273,7 @@ def _find_blueprints_in_file(
             if node.name.startswith("_") or node.name in _EXCLUDED_MODULE_NAMES:
                 continue
             if any(b in module_classes for b in _get_base_class_names(node)):
-                module_vars.append(_camel_to_snake(node.name))
+                module_vars.append(node.name)
 
     return blueprint_vars, module_vars
 

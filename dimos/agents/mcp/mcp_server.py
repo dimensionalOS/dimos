@@ -188,6 +188,7 @@ class McpServer(Module):
 
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
+        # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
         app.state.skills = [
             skill_info for module in modules for skill_info in (module.get_skills() or [])
@@ -245,7 +246,7 @@ class McpServer(Module):
         from dimos.core.global_config import global_config
 
         _port = port if port is not None else global_config.mcp_port
-        _host = global_config.mcp_host
+        _host = global_config.listen_host
         config = uvicorn.Config(app, host=_host, port=_port, log_level="info")
         server = uvicorn.Server(config)
         self._uvicorn_server = server

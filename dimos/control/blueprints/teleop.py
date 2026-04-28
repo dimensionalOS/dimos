@@ -27,32 +27,40 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.blueprints._hardware import (
-    PIPER_MODEL_PATH,
-    XARM6_MODEL_PATH,
-    XARM7_MODEL_PATH,
-    mock_arm,
-    piper,
-    xarm6,
-    xarm7,
-)
 from dimos.control.components import make_gripper_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.catalog.piper import PIPER_FK_MODEL, piper as _catalog_piper
+from dimos.robot.catalog.ufactory import (
+    XARM6_FK_MODEL,
+    XARM7_FK_MODEL,
+    xarm6 as _catalog_xarm6,
+    xarm7 as _catalog_xarm7,
+)
 from dimos.teleop.quest.quest_types import Buttons
+
+# -- Shared configs -----------------------------------------------------------
+
+_xarm6_cfg = _catalog_xarm6(
+    name="arm", adapter_type="xarm", address=global_config.xarm6_ip, add_gripper=False
+)
+_xarm7_cfg = _catalog_xarm7(
+    name="arm", adapter_type="xarm", address=global_config.xarm7_ip, add_gripper=True
+)
+_piper_cfg = _catalog_piper(
+    name="arm", adapter_type="piper", address=global_config.can_port or "can0"
+)
+
+# -- Servo / velocity ---------------------------------------------------------
 
 # XArm6 servo - streaming position control
 coordinator_servo_xarm6 = ControlCoordinator.blueprint(
-    hardware=[xarm6()],
+    hardware=[_xarm6_cfg.to_hardware_component()],
     tasks=[
-        TaskConfig(
-            name="servo_arm",
-            type="servo",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-        ),
+        _xarm6_cfg.to_task_config(task_type="servo", task_name="servo_arm"),
     ],
 ).transports(
     {
@@ -63,14 +71,9 @@ coordinator_servo_xarm6 = ControlCoordinator.blueprint(
 
 # XArm6 velocity control - streaming velocity for joystick
 coordinator_velocity_xarm6 = ControlCoordinator.blueprint(
-    hardware=[xarm6()],
+    hardware=[_xarm6_cfg.to_hardware_component()],
     tasks=[
-        TaskConfig(
-            name="velocity_arm",
-            type="velocity",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-        ),
+        _xarm6_cfg.to_task_config(task_type="velocity", task_name="velocity_arm"),
     ],
 ).transports(
     {
@@ -81,20 +84,10 @@ coordinator_velocity_xarm6 = ControlCoordinator.blueprint(
 
 # XArm6 combined (servo + velocity tasks)
 coordinator_combined_xarm6 = ControlCoordinator.blueprint(
-    hardware=[xarm6()],
+    hardware=[_xarm6_cfg.to_hardware_component()],
     tasks=[
-        TaskConfig(
-            name="servo_arm",
-            type="servo",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-        ),
-        TaskConfig(
-            name="velocity_arm",
-            type="velocity",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-        ),
+        _xarm6_cfg.to_task_config(task_type="servo", task_name="servo_arm"),
+        _xarm6_cfg.to_task_config(task_type="velocity", task_name="velocity_arm"),
     ],
 ).transports(
     {
@@ -103,18 +96,19 @@ coordinator_combined_xarm6 = ControlCoordinator.blueprint(
     }
 )
 
+# -- Cartesian IK -------------------------------------------------------------
 
 # Mock 6-DOF arm with CartesianIK
+_mock_6dof_cfg = _catalog_piper(name="arm")
+
 coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
-    hardware=[mock_arm("arm", 6)],
+    hardware=[_mock_6dof_cfg.to_hardware_component()],
     tasks=[
-        TaskConfig(
-            name="cartesian_ik_arm",
-            type="cartesian_ik",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-            model_path=PIPER_MODEL_PATH,
-            ee_joint_id=6,
+        _mock_6dof_cfg.to_task_config(
+            task_type="cartesian_ik",
+            task_name="cartesian_ik_arm",
+            model_path=PIPER_FK_MODEL,
+            ee_joint_id=_mock_6dof_cfg.dof,
         ),
     ],
 ).transports(
@@ -128,15 +122,13 @@ coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
 
 # Piper arm with CartesianIK
 coordinator_cartesian_ik_piper = ControlCoordinator.blueprint(
-    hardware=[piper()],
+    hardware=[_piper_cfg.to_hardware_component()],
     tasks=[
-        TaskConfig(
-            name="cartesian_ik_arm",
-            type="cartesian_ik",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-            model_path=PIPER_MODEL_PATH,
-            ee_joint_id=6,
+        _piper_cfg.to_task_config(
+            task_type="cartesian_ik",
+            task_name="cartesian_ik_arm",
+            model_path=PIPER_FK_MODEL,
+            ee_joint_id=_piper_cfg.dof,
         ),
     ],
 ).transports(
@@ -148,18 +140,17 @@ coordinator_cartesian_ik_piper = ControlCoordinator.blueprint(
     }
 )
 
+# -- TeleopIK -----------------------------------------------------------------
 
 # Single XArm7 with TeleopIK
 coordinator_teleop_xarm7 = ControlCoordinator.blueprint(
-    hardware=[xarm7(gripper=True)],
+    hardware=[_xarm7_cfg.to_hardware_component()],
     tasks=[
-        TaskConfig(
-            name="teleop_xarm",
-            type="teleop_ik",
-            joint_names=[f"arm_joint{i + 1}" for i in range(7)],
-            priority=10,
-            model_path=XARM7_MODEL_PATH,
-            ee_joint_id=7,
+        _xarm7_cfg.to_task_config(
+            task_type="teleop_ik",
+            task_name="teleop_xarm",
+            model_path=XARM7_FK_MODEL,
+            ee_joint_id=_xarm7_cfg.dof,
             hand="right",
             gripper_joint=make_gripper_joints("arm")[0],
             gripper_open_pos=0.85,
@@ -178,15 +169,13 @@ coordinator_teleop_xarm7 = ControlCoordinator.blueprint(
 
 # Single Piper with TeleopIK
 coordinator_teleop_piper = ControlCoordinator.blueprint(
-    hardware=[piper()],
+    hardware=[_piper_cfg.to_hardware_component()],
     tasks=[
-        TaskConfig(
-            name="teleop_piper",
-            type="teleop_ik",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-            model_path=PIPER_MODEL_PATH,
-            ee_joint_id=6,
+        _piper_cfg.to_task_config(
+            task_type="teleop_ik",
+            task_name="teleop_piper",
+            model_path=PIPER_FK_MODEL,
+            ee_joint_id=_piper_cfg.dof,
             hand="left",
         ),
     ],
@@ -202,15 +191,13 @@ coordinator_teleop_piper = ControlCoordinator.blueprint(
 
 # Single XArm6 with TeleopIK
 coordinator_teleop_xarm6 = ControlCoordinator.blueprint(
-    hardware=[xarm6()],
+    hardware=[_xarm6_cfg.to_hardware_component()],
     tasks=[
-        TaskConfig(
-            name="teleop_xarm",
-            type="teleop_ik",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-            model_path=XARM6_MODEL_PATH,
-            ee_joint_id=6,
+        _xarm6_cfg.to_task_config(
+            task_type="teleop_ik",
+            task_name="teleop_xarm",
+            model_path=XARM6_FK_MODEL,
+            ee_joint_id=_xarm6_cfg.dof,
             hand="right",
         ),
     ],
@@ -225,25 +212,28 @@ coordinator_teleop_xarm6 = ControlCoordinator.blueprint(
 )
 
 # Dual arm teleop: XArm6 + Piper with TeleopIK
+_xarm6_dual_cfg = _catalog_xarm6(
+    name="xarm_arm", adapter_type="xarm", address=global_config.xarm6_ip, add_gripper=False
+)
+_piper_dual_cfg = _catalog_piper(
+    name="piper_arm", adapter_type="piper", address=global_config.can_port
+)
+
 coordinator_teleop_dual = ControlCoordinator.blueprint(
-    hardware=[xarm6("xarm_arm"), piper("piper_arm")],
+    hardware=[_xarm6_dual_cfg.to_hardware_component(), _piper_dual_cfg.to_hardware_component()],
     tasks=[
-        TaskConfig(
-            name="teleop_xarm",
-            type="teleop_ik",
-            joint_names=[f"xarm_arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-            model_path=XARM6_MODEL_PATH,
-            ee_joint_id=6,
+        _xarm6_dual_cfg.to_task_config(
+            task_type="teleop_ik",
+            task_name="teleop_xarm",
+            model_path=XARM6_FK_MODEL,
+            ee_joint_id=_xarm6_dual_cfg.dof,
             hand="left",
         ),
-        TaskConfig(
-            name="teleop_piper",
-            type="teleop_ik",
-            joint_names=[f"piper_arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-            model_path=PIPER_MODEL_PATH,
-            ee_joint_id=6,
+        _piper_dual_cfg.to_task_config(
+            task_type="teleop_ik",
+            task_name="teleop_piper",
+            model_path=PIPER_FK_MODEL,
+            ee_joint_id=_piper_dual_cfg.dof,
             hand="right",
         ),
     ],

@@ -18,7 +18,7 @@ from typing import Any, overload
 import open_clip
 from PIL import Image as PILImage
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as F  # noqa: N812
 
 from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
@@ -33,7 +33,6 @@ class MobileCLIPModelConfig(EmbeddingModelConfig):
 class MobileCLIPModel(EmbeddingModel, LocalModel):
     """MobileCLIP embedding model for vision-language re-identification."""
 
-    default_config = MobileCLIPModelConfig
     config: MobileCLIPModelConfig
 
     @cached_property

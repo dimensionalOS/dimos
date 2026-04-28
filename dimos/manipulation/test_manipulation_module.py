@@ -46,8 +46,8 @@ def _drake_available() -> bool:
 def _xarm_urdf_available() -> bool:
     try:
         desc_path = get_data("xarm_description")
-        urdf_path = desc_path / "urdf/xarm_device.urdf.xacro"
-        return urdf_path.exists()
+        model_path = desc_path / "urdf/xarm_device.urdf.xacro"
+        return model_path.exists()
     except Exception:
         return False
 
@@ -57,7 +57,7 @@ def _get_xarm7_config() -> RobotModelConfig:
     desc_path = get_data("xarm_description")
     return RobotModelConfig(
         name="test_arm",
-        urdf_path=desc_path / "urdf/xarm_device.urdf.xacro",
+        model_path=desc_path / "urdf/xarm_device.urdf.xacro",
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
         end_effector_link="link7",
@@ -68,13 +68,13 @@ def _get_xarm7_config() -> RobotModelConfig:
         max_velocity=1.0,
         max_acceleration=2.0,
         joint_name_mapping={
-            "arm_joint1": "joint1",
-            "arm_joint2": "joint2",
-            "arm_joint3": "joint3",
-            "arm_joint4": "joint4",
-            "arm_joint5": "joint5",
-            "arm_joint6": "joint6",
-            "arm_joint7": "joint7",
+            "arm/joint1": "joint1",
+            "arm/joint2": "joint2",
+            "arm/joint3": "joint3",
+            "arm/joint4": "joint4",
+            "arm/joint5": "joint5",
+            "arm/joint6": "joint6",
+            "arm/joint7": "joint7",
         },
         coordinator_task_name="traj_arm",
     )
@@ -90,13 +90,13 @@ def joint_state_zeros():
     """Create a JointState message with zeros for XArm7."""
     return JointState(
         name=[
-            "arm_joint1",
-            "arm_joint2",
-            "arm_joint3",
-            "arm_joint4",
-            "arm_joint5",
-            "arm_joint6",
-            "arm_joint7",
+            "arm/joint1",
+            "arm/joint2",
+            "arm/joint3",
+            "arm/joint4",
+            "arm/joint5",
+            "arm/joint6",
+            "arm/joint7",
         ],
         position=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         velocity=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],

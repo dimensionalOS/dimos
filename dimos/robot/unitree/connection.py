@@ -29,11 +29,12 @@ from unitree_webrtc_connect.constants import (
     SPORT_CMD,
     VUI_COLOR,
 )
-from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untyped]
+from unitree_webrtc_connect.webrtc_driver import (
     UnitreeWebRTCConnection as LegionConnection,
     WebRTCConnectionMethod,
 )
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -53,7 +54,7 @@ VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 class SerializableVideoFrame:
     """Pickleable wrapper for av.VideoFrame with all metadata"""
 
-    data: np.ndarray  # type: ignore[type-arg]
+    data: np.ndarray
     pts: int | None = None
     time: float | None = None
     dts: int | None = None
@@ -78,6 +79,8 @@ class SerializableVideoFrame:
 
 
 class UnitreeWebRTCConnection(Resource):
+    _SPORT_API_ID_RAGEMODE: int = 2059
+
     def __init__(self, ip: str, mode: str = "ai") -> None:
         self.ip = ip
         self.mode = mode
@@ -147,7 +150,7 @@ class UnitreeWebRTCConnection(Resource):
             self.loop.call_soon_threadsafe(self.loop.stop)
 
         if self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+            self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to the robot using Twist commands.
@@ -295,6 +298,29 @@ class UnitreeWebRTCConnection(Resource):
         """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
 
+    def enable_rage_mode(self) -> bool:
+        """Enable Rage Mode on the Go2 via WebRTC.
+        Assumes the robot is already in BalanceStand.
+        """
+        rage_ok = bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {"api_id": self._SPORT_API_ID_RAGEMODE, "parameter": {"data": True}},
+            )
+        )
+        time.sleep(2.0)
+
+        joystick_ok = bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {
+                    "api_id": SPORT_CMD["SwitchJoystick"],
+                    "parameter": {"data": True},
+                },
+            )
+        )
+        return rage_ok and joystick_ok
+
     def liedown(self) -> bool:
         return bool(
             self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
@@ -323,7 +349,7 @@ class UnitreeWebRTCConnection(Resource):
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
 
-        from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
+        from aiortc import MediaStreamTrack
 
         async def accept_track(track: MediaStreamTrack) -> None:
             while True:
@@ -365,7 +391,7 @@ class UnitreeWebRTCConnection(Resource):
         Returns:
             Observable: An observable stream of video frames or None if video is not available.
         """
-        return self.video_stream()  # type: ignore[no-any-return]
+        return self.video_stream()
 
     def stop_movement(self) -> None:
         """Cancel the auto-stop timer (used by move() for continuous commands)."""
@@ -397,4 +423,4 @@ class UnitreeWebRTCConnection(Resource):
             self.loop.call_soon_threadsafe(self.loop.stop)
 
         if hasattr(self, "thread") and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+            self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)

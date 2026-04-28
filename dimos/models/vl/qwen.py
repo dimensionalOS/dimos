@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from functools import cached_property
 import os
 from typing import Any
@@ -16,8 +30,8 @@ class QwenVlModelConfig(VlModelConfig):
     api_key: str | None = None
 
 
-class QwenVlModel(VlModel[QwenVlModelConfig]):
-    default_config = QwenVlModelConfig
+class QwenVlModel(VlModel):
+    config: QwenVlModelConfig
 
     @cached_property
     def _client(self) -> OpenAI:
@@ -32,7 +46,7 @@ class QwenVlModel(VlModel[QwenVlModelConfig]):
             api_key=api_key,
         )
 
-    def query(self, image: Image | np.ndarray, query: str) -> str:  # type: ignore[override, type-arg]
+    def query(self, image: Image | np.ndarray, query: str) -> str:  # type: ignore[override]
         if isinstance(image, np.ndarray):
             import warnings
 
@@ -68,17 +82,23 @@ class QwenVlModel(VlModel[QwenVlModelConfig]):
         return response.choices[0].message.content  # type: ignore[return-value]
 
     def query_batch(
-        self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
-    ) -> list[str]:  # type: ignore[override]
+        self,
+        images: list[Image],
+        query: str,
+        response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[str]:
         """Query VLM with multiple images using a single API call."""
         if not images:
             return []
 
         content: list[dict[str, Any]] = [
-                {
-                    "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"},
-                }
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"
+                },
+            }
             for img in images
         ]
         content.append({"type": "text", "text": query})

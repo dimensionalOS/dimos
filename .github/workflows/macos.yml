@@ -12,7 +12,7 @@ on:
     paths-ignore:
       - '**.md'
       - 'docker/**'
-      - '.github/workflows/docker.yml'
+      - '.github/workflows/docker-build.yml'
       - '.github/workflows/_docker-build-template.yml'
 
 permissions:
@@ -25,9 +25,9 @@ jobs:
     outputs:
       should-run: ${{ steps.filter.outputs.python }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             python:
@@ -36,13 +36,15 @@ jobs:
               - 'uv.lock'
               - '.github/workflows/macos.yml'
 
-  macos-tests:
+  checks:
     needs: [check-changes]
     if: needs.check-changes.outputs.should-run == 'true'
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 60
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           lfs: false
 
@@ -55,7 +57,10 @@ jobs:
         run: uv python install 3.12
 
       - name: Install system dependencies
-        run: brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo
+        run: |
+          for pkg in gnu-sed gcc portaudio git-lfs libjpeg-turbo; do
+            brew list "$pkg" &>/dev/null || brew install "$pkg"
+          done
 
       - name: Set up git-lfs
         run: |
@@ -64,7 +69,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --all-extras --no-extra dds --no-extra cuda --frozen
+          uv sync --all-extras --no-extra dds --no-extra unitree-dds --no-extra cuda --frozen
+
+      - name: Build C++ extensions
+        run: |
+          source .venv/bin/activate
+          uv pip install pybind11
+          python setup.py build_ext --inplace
 
       - name: Check disk usage
         run: |
@@ -94,31 +105,8 @@ jobs:
         if: always()
         run: df -h .
 
-  macos-mypy:
-    needs: [check-changes]
-    if: needs.check-changes.outputs.should-run == 'true'
-    runs-on: [self-hosted, macos, arm64]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: false
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install system dependencies
-        run: brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo
-
-      - name: Install dependencies
-        run: |
-          uv sync --all-extras --no-extra dds --no-extra cuda --frozen
-
       - name: Run mypy
+        if: ${{ !cancelled() }}
         run: |
           source .venv/bin/activate
           mypy dimos

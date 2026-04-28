@@ -1,9 +1,22 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import json
 import logging
-import sys
 from typing import Any
 import warnings
 
@@ -16,11 +29,6 @@ from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import retry
 from dimos.utils.llm_utils import extract_json
-
-if sys.version_info < (3, 13):
-    from typing_extensions import TypeVar
-else:
-    from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -171,10 +179,7 @@ class VlModelConfig(BaseConfig):
     """Optional (width, height) tuple. If set, images are resized to fit."""
 
 
-_VlConfig = TypeVar("_VlConfig", bound=VlModelConfig)
-
-
-class VlModel(Captioner, Resource, Configurable[_VlConfig]):
+class VlModel(Captioner, Resource, Configurable):
     """Vision-language model that can answer questions about images.
 
     Inherits from Captioner, providing a default caption() implementation
@@ -183,7 +188,7 @@ class VlModel(Captioner, Resource, Configurable[_VlConfig]):
     Implements Resource interface for lifecycle management.
     """
 
-    default_config: type[_VlConfig] = VlModelConfig  # type: ignore[assignment]
+    config: VlModelConfig
 
     def _prepare_image(self, image: Image) -> tuple[Image, float]:
         """Prepare image for inference, applying any configured transformations.

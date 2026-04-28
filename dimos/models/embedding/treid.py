@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import warnings
 from typing import overload
+import warnings
 
 warnings.filterwarnings("ignore", message="Cython evaluation.*unavailable", category=UserWarning)
 
@@ -39,7 +39,6 @@ class TorchReIDModelConfig(EmbeddingModelConfig):
 class TorchReIDModel(EmbeddingModel, LocalModel):
     """TorchReID embedding model for person re-identification."""
 
-    default_config = TorchReIDModelConfig
     config: TorchReIDModelConfig
 
     @cached_property

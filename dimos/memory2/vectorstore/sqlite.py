@@ -53,7 +53,6 @@ class SqliteVectorStore(VectorStore):
     - ``SqliteVectorStore(path="file.db")`` — opens and owns its own connection.
     """
 
-    default_config = SqliteVectorStoreConfig
     config: SqliteVectorStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
@@ -76,7 +75,7 @@ class SqliteVectorStore(VectorStore):
         if self._conn is None:
             assert self._path is not None
             disposable, self._conn = open_disposable_sqlite_connection(self._path)
-            self.register_disposables(disposable)
+            self.register_disposable(disposable)
 
     def put(self, stream_name: str, key: int, embedding: Embedding) -> None:
         vec = embedding.to_numpy().tolist()
@@ -86,13 +85,17 @@ class SqliteVectorStore(VectorStore):
             (key, json.dumps(vec)),
         )
 
-    def search(self, stream_name: str, query: Embedding, k: int) -> list[tuple[int, float]]:
+    # vec0 virtual tables require an explicit k in the MATCH clause; apply a
+    # default cap when the caller did not specify one.
+    _DEFAULT_K = 4096
+
+    def search(self, stream_name: str, query: Embedding, k: int | None) -> list[tuple[int, float]]:
         validate_identifier(stream_name)
         vec = query.to_numpy().tolist()
         try:
             rows = self._conn.execute(
                 f'SELECT rowid, distance FROM "{stream_name}_vec" WHERE embedding MATCH ? AND k = ?',
-                (json.dumps(vec), k),
+                (json.dumps(vec), k if k is not None else self._DEFAULT_K),
             ).fetchall()
         except sqlite3.OperationalError as e:
             if "no such table" in str(e):

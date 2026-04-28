@@ -38,6 +38,7 @@ from dimos.control.components import (
     HardwareType,
     JointName,
     TaskName,
+    split_joint_name,
 )
 from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
 from dimos.control.task import ControlTask
@@ -59,7 +60,6 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
 
 logger = setup_logger()
 
@@ -115,7 +115,7 @@ class ControlCoordinatorConfig(ModuleConfig):
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
 
 
-class ControlCoordinator(Module[ControlCoordinatorConfig]):
+class ControlCoordinator(Module):
     """Centralized control coordinator with per-joint arbitration.
 
     Single tick loop that:
@@ -143,6 +143,8 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         >>> orch.start()
     """
 
+    config: ControlCoordinatorConfig
+
     # Output: Aggregated joint state for external consumers
     joint_state: Out[JointState]
 
@@ -158,9 +160,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
     # Input: Teleop buttons for engage/disengage signaling
     buttons: In[Buttons]
-
-    config: ControlCoordinatorConfig
-    default_config = ControlCoordinatorConfig
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -250,6 +249,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             dof=len(component.joints),
             address=component.address,
             hardware_id=component.hardware_id,
+            **component.adapter_kwargs,
         )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
@@ -536,8 +536,8 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 if hw.component.hardware_type != HardwareType.BASE:
                     continue
                 for joint_name in hw.joint_names:
-                    # Extract suffix (e.g., "base_vx" → "vx")
-                    suffix = joint_name.rsplit("_", 1)[-1]
+                    # Extract suffix (e.g., "base/vx" → "vx")
+                    _, suffix = split_joint_name(joint_name)
                     mapping = TWIST_SUFFIX_MAP.get(suffix)
                     if mapping is None:
                         continue

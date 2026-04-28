@@ -25,7 +25,7 @@ from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents.skills.osm import OsmSkill
 from dimos.agents.web_human_input import WebInput
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.drone.blueprints.basic.drone_basic import drone_basic
 from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
 

@@ -37,29 +37,28 @@ class StreamAccessor:
     __slots__ = ("_store",)
 
     def __init__(self, store: Store) -> None:
-        object.__setattr__(self, "_store", store)
+        self._store = store
 
     def __getattr__(self, name: str) -> Stream[Any]:
         if name.startswith("_"):
             raise AttributeError(name)
-        store: Store = object.__getattribute__(self, "_store")
-        if name not in store.list_streams():
-            raise AttributeError(f"No stream {name!r}. Available: {store.list_streams()}")
-        return store.stream(name)
+        if name not in self._store.list_streams():
+            raise AttributeError(f"No stream {name!r}. Available: {self._store.list_streams()}")
+        return self._store.stream(name)
 
     def __getitem__(self, name: str) -> Stream[Any]:
-        store: Store = object.__getattribute__(self, "_store")
-        if name not in store.list_streams():
+        if name not in self._store.list_streams():
             raise KeyError(name)
-        return store.stream(name)
+        return self._store.stream(name)
 
     def __dir__(self) -> list[str]:
-        store: Store = object.__getattribute__(self, "_store")
-        return store.list_streams()
+        return self._store.list_streams()
 
     def __repr__(self) -> str:
-        names = object.__getattribute__(self, "_store").list_streams()
-        return f"StreamAccessor({names})"
+        return f"StreamAccessor({self._store.list_streams()})"
+
+    def items(self) -> list[tuple[str, Stream[Any]]]:
+        return [(name, self._store.stream(name)) for name in self._store.list_streams()]
 
 
 class StoreConfig(BaseConfig):
@@ -77,13 +76,13 @@ class StoreConfig(BaseConfig):
     eager_blobs: bool = False
 
 
-class Store(Configurable[StoreConfig], CompositeResource):
+class Store(Configurable, CompositeResource):
     """Top-level entry point — wraps a storage location (file, URL, etc.).
 
     Store directly manages streams. No Session layer.
     """
 
-    default_config: type[StoreConfig] = StoreConfig
+    config: StoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)
@@ -120,17 +119,14 @@ class Store(Configurable[StoreConfig], CompositeResource):
         obs = config.pop("observation_store", self.config.observation_store)
         if obs is None or isinstance(obs, type):
             obs = (obs or ListObservationStore)(name=name)
-            obs.start()
 
         bs = config.pop("blob_store", self.config.blob_store)
         if isinstance(bs, type):
             bs = bs()
-            bs.start()
 
         vs = config.pop("vector_store", self.config.vector_store)
         if isinstance(vs, type):
             vs = vs()
-            vs.start()
 
         notifier = config.pop("notifier", self.config.notifier)
         if notifier is None or isinstance(notifier, type):
@@ -139,6 +135,7 @@ class Store(Configurable[StoreConfig], CompositeResource):
         return Backend(
             metadata_store=obs,
             codec=codec,
+            data_type=payload_type or object,
             blob_store=bs,
             vector_store=vs,
             notifier=notifier,
@@ -154,6 +151,7 @@ class Store(Configurable[StoreConfig], CompositeResource):
         if name not in self._streams:
             resolved = {**self.config.model_dump(exclude_none=True), **overrides}
             backend = self._create_backend(name, payload_type, **resolved)
+            backend.start()
             self._streams[name] = Stream(source=backend)
         return cast("Stream[T]", self._streams[name])
 
@@ -163,4 +161,11 @@ class Store(Configurable[StoreConfig], CompositeResource):
 
     def delete_stream(self, name: str) -> None:
         """Delete a stream by name (from cache and underlying storage)."""
-        self._streams.pop(name, None)
+        stream = self._streams.pop(name, None)
+        if stream is not None:
+            stream.stop()
+
+    def stop(self) -> None:
+        for stream in self._streams.values():
+            stream.stop()
+        super().stop()

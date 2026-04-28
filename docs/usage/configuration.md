@@ -13,8 +13,8 @@ class Config(BaseConfig):
     x: int = 3
     hello: str = "world"
 
-class MyClass(Configurable[Config]):
-    default_config = Config
+class MyClass(Configurable):
+    config: Config
 
 myclass1 = MyClass()
 print(myclass1.config)
@@ -55,8 +55,8 @@ class Config(ModuleConfig):
     voxel_size: float = 0.05
     device: str = "CUDA:0"
 
-class MyModule(Module[Config]):
-    default_config = Config
+class MyModule(Module):
+    config: Config
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)

@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from dimos.memory2.backend import Backend
 from dimos.memory2.blobstore.base import BlobStore
 from dimos.memory2.vectorstore.base import VectorStore
 
@@ -48,7 +49,7 @@ class TestStoreBasic:
         s.append(2.0, ts=200.0)
         s.append(3.0, ts=300.0)
 
-        results = s.fetch()
+        results = s.to_list()
         assert len(results) == 3
         assert [o.data for o in results] == [1.0, 2.0, 3.0]
 
@@ -93,7 +94,7 @@ class TestStoreBasic:
         s.append(2, ts=20.0)
         s.append(3, ts=30.0)
 
-        results = s.after(15.0).fetch()
+        results = s.after(15.0).to_list()
         assert [o.data for o in results] == [2, 3]
 
     def test_filter_before(self, session: Store) -> None:
@@ -102,7 +103,7 @@ class TestStoreBasic:
         s.append(2, ts=20.0)
         s.append(3, ts=30.0)
 
-        results = s.before(25.0).fetch()
+        results = s.before(25.0).to_list()
         assert [o.data for o in results] == [1, 2]
 
     def test_filter_time_range(self, session: Store) -> None:
@@ -111,7 +112,7 @@ class TestStoreBasic:
         s.append(2, ts=20.0)
         s.append(3, ts=30.0)
 
-        results = s.time_range(15.0, 25.0).fetch()
+        results = s.time_range(15.0, 25.0).to_list()
         assert [o.data for o in results] == [2]
 
     def test_filter_tags(self, session: Store) -> None:
@@ -120,7 +121,7 @@ class TestStoreBasic:
         s.append("b", tags={"kind": "error"})
         s.append("c", tags={"kind": "info"})
 
-        results = s.tags(kind="info").fetch()
+        results = s.tags(kind="info").to_list()
         assert [o.data for o in results] == ["a", "c"]
 
     def test_limit_and_offset(self, session: Store) -> None:
@@ -128,7 +129,7 @@ class TestStoreBasic:
         for i in range(5):
             s.append(i, ts=float(i))
 
-        page = s.offset(1).limit(2).fetch()
+        page = s.offset(1).limit(2).to_list()
         assert [o.data for o in page] == [1, 2]
 
     def test_order_by_desc(self, session: Store) -> None:
@@ -137,7 +138,7 @@ class TestStoreBasic:
         s.append(2, ts=20.0)
         s.append(3, ts=30.0)
 
-        results = s.order_by("ts", desc=True).fetch()
+        results = s.order_by("ts", desc=True).to_list()
         assert [o.data for o in results] == [3, 2, 1]
 
     def test_separate_streams_isolated(self, session: Store) -> None:
@@ -181,7 +182,7 @@ class TestStoreBasic:
         s.append("east", embedding=_emb([1, 0, 0]))
         s.append("south", embedding=_emb([0, -1, 0]))
 
-        results = s.search(_emb([0, 1, 0]), k=2).fetch()
+        results = s.search(_emb([0, 1, 0]), k=2).to_list()
         assert len(results) == 2
         assert results[0].data == "north"
         assert results[0].similarity > 0.99
@@ -193,7 +194,7 @@ class TestStoreBasic:
 
         # SqliteObservationStore blocks search_text to prevent full table scans
         try:
-            results = s.search_text("motor").fetch()
+            results = s.search_text("motor").to_list()
         except NotImplementedError:
             pytest.skip("search_text not supported on this backend")
         assert len(results) == 1
@@ -242,11 +243,11 @@ class TestBlobLoading:
         lazy_s.append("beta", ts=2.0, tags={"k": "w"})
 
         # Lazy read
-        lazy_results = lazy_s.fetch()
+        lazy_results = lazy_s.to_list()
 
         # Eager read — new stream handle with eager_blobs on same backend
         eager_s = sqlite_store.stream("vals", str, eager_blobs=True)
-        eager_results = eager_s.fetch()
+        eager_results = eager_s.to_list()
 
         assert [o.data for o in lazy_results] == [o.data for o in eager_results]
         assert [o.tags for o in lazy_results] == [o.tags for o in eager_results]
@@ -411,7 +412,7 @@ class TestStoreDelegation:
         s.append("north", ts=1.0, embedding=_emb([0, 1, 0]))
         s.append("east", ts=2.0, embedding=_emb([1, 0, 0]))
 
-        results = s.search(_emb([0, 1, 0]), k=2).fetch()
+        results = s.search(_emb([0, 1, 0]), k=2).to_list()
         assert len(vec_spy.searches) == 1
         assert results[0].data == "north"
 
@@ -525,3 +526,94 @@ class TestStreamAccessor:
         assert "late" not in dir(session.streams)
         session.stream("late", str)
         assert "late" in dir(session.streams)
+
+
+class TestStoreLifecycle:
+    """Cleanup chain: Store → Stream → Backend → components."""
+
+    def test_stop_stream_keeps_other_streams(self, session: Store) -> None:
+        """Stopping one stream doesn't affect another."""
+        s1 = session.stream("a", int)
+        s2 = session.stream("b", int)
+        s1.append(1)
+        s2.append(2)
+
+        s1.stop()
+
+        # s2 still works
+        s2.append(3)
+        assert [obs.data for obs in s2] == [2, 3]
+
+    def test_store_stop_stops_backends(self, session: Store) -> None:
+        """Store.stop() disposes backends transitively via streams."""
+        s1 = session.stream("x", int)
+        s2 = session.stream("y", int)
+        s1.append(10)
+        s2.append(20)
+
+        backend1 = s1._source
+        backend2 = s2._source
+        assert isinstance(backend1, Backend)
+        assert isinstance(backend2, Backend)
+
+        session.stop()
+
+        # Both backends' disposables are disposed
+        assert backend1._disposables is not None
+        assert backend1._disposables.is_disposed
+        assert backend2._disposables is not None
+        assert backend2._disposables.is_disposed
+
+    def test_stream_stop_stops_backend(self, session: Store) -> None:
+        """stream.stop() disposes its backend (Stream owns Backend)."""
+        s = session.stream("owned", int)
+        s.append(42)
+
+        backend = s._source
+        assert isinstance(backend, Backend)
+
+        s.stop()
+
+        assert backend._disposables is not None
+        assert backend._disposables.is_disposed
+
+    def test_stream_stop_stops_backend_components(self, session: Store) -> None:
+        """stream.stop() cascades through backend to its components."""
+        s = session.stream("cascade", int)
+        backend = s._source
+        assert isinstance(backend, Backend)
+
+        s.stop()
+
+        # Backend registers notifier as disposable, so it gets disposed
+        assert backend._disposables is not None
+        assert backend._disposables.is_disposed
+        # Notifier's own disposables may be None (no children registered),
+        # but the backend's disposal cascade is what matters.
+
+    def test_delete_stream_stops_backend(self, session: Store) -> None:
+        """delete_stream() stops the stream+backend and removes from cache."""
+        s = session.stream("ephemeral", int)
+        s.append(1)
+
+        backend = s._source
+        assert isinstance(backend, Backend)
+        assert "ephemeral" in session.list_streams()
+
+        session.delete_stream("ephemeral")
+
+        assert backend._disposables is not None
+        assert backend._disposables.is_disposed
+        assert "ephemeral" not in session.list_streams()
+
+    def test_backend_stop_stops_components(self, session: Store) -> None:
+        """Backend.stop() propagates to metadata_store, blob_store, vector_store."""
+        s = session.stream("z", int)
+        backend = s._source
+        assert isinstance(backend, Backend)
+
+        session.stop()
+
+        # Backend always registers its components, so _disposables is always set
+        assert backend._disposables is not None
+        assert backend._disposables.is_disposed

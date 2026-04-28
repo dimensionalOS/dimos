@@ -71,7 +71,7 @@ def connected_hardware(mock_adapter):
 def trajectory_task():
     """Create a JointTrajectoryTask for testing."""
     config = JointTrajectoryTaskConfig(
-        joint_names=["arm_joint1", "arm_joint2", "arm_joint3"],
+        joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
         priority=10,
     )
     return JointTrajectoryTask(name="test_traj", config=config)
@@ -81,7 +81,7 @@ def trajectory_task():
 def simple_trajectory():
     """Create a simple 2-point trajectory."""
     return JointTrajectory(
-        joint_names=["arm_joint1", "arm_joint2", "arm_joint3"],
+        joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
         points=[
             TrajectoryPoint(
                 positions=[0.0, 0.0, 0.0],
@@ -101,9 +101,9 @@ def simple_trajectory():
 def coordinator_state():
     """Create a sample CoordinatorState."""
     joints = JointStateSnapshot(
-        joint_positions={"arm_joint1": 0.0, "arm_joint2": 0.0, "arm_joint3": 0.0},
-        joint_velocities={"arm_joint1": 0.0, "arm_joint2": 0.0, "arm_joint3": 0.0},
-        joint_efforts={"arm_joint1": 0.0, "arm_joint2": 0.0, "arm_joint3": 0.0},
+        joint_positions={"arm/joint1": 0.0, "arm/joint2": 0.0, "arm/joint3": 0.0},
+        joint_velocities={"arm/joint1": 0.0, "arm/joint2": 0.0, "arm/joint3": 0.0},
+        joint_efforts={"arm/joint1": 0.0, "arm/joint2": 0.0, "arm/joint3": 0.0},
         timestamp=time.perf_counter(),
     )
     return CoordinatorState(joints=joints, t_now=time.perf_counter(), dt=0.01)
@@ -162,27 +162,27 @@ class TestConnectedHardware:
     def test_joint_names_prefixed(self, connected_hardware):
         names = connected_hardware.joint_names
         assert names == [
-            "arm_joint1",
-            "arm_joint2",
-            "arm_joint3",
-            "arm_joint4",
-            "arm_joint5",
-            "arm_joint6",
+            "arm/joint1",
+            "arm/joint2",
+            "arm/joint3",
+            "arm/joint4",
+            "arm/joint5",
+            "arm/joint6",
         ]
 
     def test_read_state(self, connected_hardware):
         state = connected_hardware.read_state()
-        assert "arm_joint1" in state
+        assert "arm/joint1" in state
         assert len(state) == 6
-        joint_state = state["arm_joint1"]
+        joint_state = state["arm/joint1"]
         assert joint_state.position == 0.0
         assert joint_state.velocity == 0.0
         assert joint_state.effort == 0.0
 
     def test_write_command(self, connected_hardware, mock_adapter):
         commands = {
-            "arm_joint1": 0.5,
-            "arm_joint2": 1.0,
+            "arm/joint1": 0.5,
+            "arm/joint2": 1.0,
         }
         connected_hardware.write_command(commands, ControlMode.POSITION)
         mock_adapter.write_joint_positions.assert_called()
@@ -197,9 +197,9 @@ class TestJointTrajectoryTask:
     def test_claim(self, trajectory_task):
         claim = trajectory_task.claim()
         assert claim.priority == 10
-        assert "arm_joint1" in claim.joints
-        assert "arm_joint2" in claim.joints
-        assert "arm_joint3" in claim.joints
+        assert "arm/joint1" in claim.joints
+        assert "arm/joint2" in claim.joints
+        assert "arm/joint3" in claim.joints
 
     def test_execute_trajectory(self, trajectory_task, simple_trajectory):
         time.perf_counter()
@@ -270,7 +270,7 @@ class TestJointTrajectoryTask:
     def test_preemption(self, trajectory_task, simple_trajectory):
         trajectory_task.execute(simple_trajectory)
 
-        trajectory_task.on_preempted("safety_task", frozenset({"arm_joint1"}))
+        trajectory_task.on_preempted("safety_task", frozenset({"arm/joint1"}))
         assert trajectory_task.get_state() == TrajectoryState.ABORTED
         assert not trajectory_task.is_active()
 
@@ -404,7 +404,7 @@ class TestTickLoop:
         hw = ConnectedHardware(mock_adapter, component)
         hardware = {"arm": hw}
         tasks: dict = {}
-        joint_to_hardware = {f"arm_joint{i + 1}": "arm" for i in range(6)}
+        joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 
         tick_loop = TickLoop(
             tick_rate=100.0,
@@ -437,17 +437,17 @@ class TestTickLoop:
         mock_task.name = "test_task"
         mock_task.is_active.return_value = True
         mock_task.claim.return_value = ResourceClaim(
-            joints=frozenset({"arm_joint1"}),
+            joints=frozenset({"arm/joint1"}),
             priority=10,
         )
         mock_task.compute.return_value = JointCommandOutput(
-            joint_names=["arm_joint1"],
+            joint_names=["arm/joint1"],
             positions=[0.5],
             mode=ControlMode.POSITION,
         )
 
         tasks = {"test_task": mock_task}
-        joint_to_hardware = {f"arm_joint{i + 1}": "arm" for i in range(6)}
+        joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 
         tick_loop = TickLoop(
             tick_rate=100.0,
@@ -476,13 +476,13 @@ class TestIntegration:
         hardware = {"arm": hw}
 
         config = JointTrajectoryTaskConfig(
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
+            joint_names=[f"arm/joint{i + 1}" for i in range(6)],
             priority=10,
         )
         traj_task = JointTrajectoryTask(name="traj_arm", config=config)
         tasks = {"traj_arm": traj_task}
 
-        joint_to_hardware = {f"arm_joint{i + 1}": "arm" for i in range(6)}
+        joint_to_hardware = {f"arm/joint{i + 1}": "arm" for i in range(6)}
 
         tick_loop = TickLoop(
             tick_rate=100.0,
@@ -494,7 +494,7 @@ class TestIntegration:
         )
 
         trajectory = JointTrajectory(
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
+            joint_names=[f"arm/joint{i + 1}" for i in range(6)],
             points=[
                 TrajectoryPoint(
                     positions=[0.0] * 6,

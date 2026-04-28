@@ -29,7 +29,7 @@ class VectorStoreConfig(BaseConfig):
     pass
 
 
-class VectorStore(Configurable[VectorStoreConfig], CompositeResource):
+class VectorStore(Configurable, CompositeResource):
     """Pluggable storage and ANN index for embedding vectors.
 
     Separates vector indexing from metadata so backends can swap
@@ -40,7 +40,7 @@ class VectorStore(Configurable[VectorStoreConfig], CompositeResource):
     first ``put`` for a stream determines dimensionality.
     """
 
-    default_config: type[VectorStoreConfig] = VectorStoreConfig
+    config: VectorStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)
@@ -52,8 +52,12 @@ class VectorStore(Configurable[VectorStoreConfig], CompositeResource):
         ...
 
     @abstractmethod
-    def search(self, stream_name: str, query: Embedding, k: int) -> list[tuple[int, float]]:
-        """Return top-k (observation_id, similarity) pairs, descending."""
+    def search(self, stream_name: str, query: Embedding, k: int | None) -> list[tuple[int, float]]:
+        """Return top-k (observation_id, similarity) pairs, descending.
+
+        ``k=None`` means "store default" — backends that require a bound
+        (e.g. sqlite-vec) pick one internally; unbounded backends return all.
+        """
         ...
 
     @abstractmethod

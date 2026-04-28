@@ -157,7 +157,7 @@ Goal candidates are filtered through a **safe mask** — the free-space region e
 The navigation stack is composed in the [`unitree_go2`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py) blueprint:
 
 ```python fold output=assets/go2_blueprint.svg
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.introspection import to_svg
 from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper

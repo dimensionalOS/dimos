@@ -188,7 +188,7 @@ dimos run unitree-go2
 | Run command | What it does |
 |-------------|-------------|
 | `dimos --replay run unitree-go2` | Quadruped navigation replay — SLAM, costmap, A* planning |
-| `dimos --replay --replay-dir unitree_go2_office_walk2 run unitree-go2-temporal-memory` | Quadruped temporal memory replay |
+| `dimos --replay --replay-db go2_bigoffice run unitree-go2-memory` | Quadruped temporal memory replay |
 | `dimos --simulation run unitree-go2-agentic` | Quadruped agentic + MCP server in simulation |
 | `dimos --simulation run unitree-g1` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video + telemetry replay |
@@ -224,7 +224,7 @@ See below a simple robot connection module that sends streams of continuous `cmd
 
 ```py
 import threading, time, numpy as np
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
@@ -272,7 +272,7 @@ Blueprints can be composed, remapped, and have transports overridden if `autocon
 
 A blueprint example that connects the image stream from a robot to an MCP-backed LLM agent for reasoning and action execution.
 ```py
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree.go2.connection import go2_connection
