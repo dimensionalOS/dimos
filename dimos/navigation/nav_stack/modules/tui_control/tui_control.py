@@ -31,8 +31,6 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 
 
 class TUIControlConfig(ModuleConfig):
-    """Configuration for the TUI controller."""
-
     max_speed: float = 2.0
     max_yaw_rate: float = 1.5
     speed_step: float = 0.1
@@ -144,7 +142,6 @@ class TUIControlModule(Module):
                 time.sleep(1.0)
 
     def _handle_key(self, ch: str) -> None:
-        """Process a single keypress."""
         with self._lock:
             if ch in ("w", "W"):
                 self._fwd = 1.0
