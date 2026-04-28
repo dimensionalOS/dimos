@@ -39,7 +39,7 @@ def manager() -> MovementManager:
     module.goal.publish = MagicMock()
     module.way_point.publish = MagicMock()
     yield module
-    module._close_module()
+    module.stop()
 
 
 def _twist(lx: float = 0.0) -> Twist:
@@ -114,4 +114,4 @@ def test_tele_cmd_vel_scaling() -> None:
     assert published.linear.y == pytest.approx(2.0)
     assert published.linear.z == pytest.approx(0.0)
     assert published.angular.z == pytest.approx(0.25)
-    module._close_module()
+    module.stop()
