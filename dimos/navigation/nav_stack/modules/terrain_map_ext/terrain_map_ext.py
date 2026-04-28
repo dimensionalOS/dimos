@@ -39,8 +39,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class TerrainMapExtConfig(ModuleConfig):
-    """Config for extended terrain map."""
-
     voxel_size: float = 0.4  # meters per voxel (coarser than local)
     decay_time: float = 8.0  # seconds before points expire
     publish_rate: float = 2.0  # Hz
