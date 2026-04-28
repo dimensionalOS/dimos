@@ -33,6 +33,7 @@ except ImportError:
 
 logger = setup_logger()
 
+
 class BaseAgentConfig(ModuleConfig):
     model: str = "openai::gpt-4o-mini"
     system_prompt: str | None = None
@@ -46,12 +47,14 @@ class BaseAgentConfig(ModuleConfig):
     rag_threshold: float = 0.45
     process_all_inputs: bool = False
 
+
 class BaseAgentModule(BaseAgent, Module):  # type: ignore[misc]
     """Agent module that inherits from BaseAgent and adds DimOS module interface.
 
     This provides a thin wrapper around BaseAgent functionality, exposing it
     through the DimOS module system with RPC methods and stream I/O.
     """
+
     config: BaseAgentConfig
 
     # Module I/O - AgentMessage based communication

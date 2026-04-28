@@ -71,7 +71,7 @@ def test_query(store: SqliteStore) -> None:
     assert store.stream("video", Image).count() > 0
 
 def test_search(store: SqliteStore) -> None:
-    results = store.stream("video", Image).limit(5).fetch()
+    results = store.stream("video", Image).limit(5).to_list()
     assert len(results) == 5
 ```
 

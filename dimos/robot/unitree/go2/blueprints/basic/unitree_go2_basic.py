@@ -22,10 +22,9 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+from dimos.visualization.vis_module import vis_module
 
 # Mac has some issue with high bandwidth UDP, so we use pSHMTransport for color_image
 # actually we can use pSHMTransport for all platforms, and for all streams
@@ -48,6 +47,10 @@ def _convert_camera_info(camera_info: Any) -> Any:
     )
 
 
+def _convert_global_map(grid: Any) -> Any:
+    return grid.to_rerun(bottom_cutoff=0)
+
+
 def _convert_navigation_costmap(grid: Any) -> Any:
     return grid.to_rerun(
         colormap="Accent",
@@ -62,7 +65,6 @@ def _static_base_link(rr: Any) -> list[Any]:
         rr.Boxes3D(
             half_sizes=[0.35, 0.155, 0.2],
             colors=[(0, 255, 127)],
-            fill_mode="wireframe",
         ),
         rr.Transform3D(parent_frame="tf#/base_link"),
     ]
@@ -83,6 +85,9 @@ def _go2_rerun_blueprint() -> Any:
                 line_grid=rrb.LineGrid3D(
                     plane=rr.components.Plane3D.XY.with_distance(0.5),
                 ),
+                overrides={
+                    "world/lidar": rrb.EntityBehavior(visible=False),
+                },
             ),
             column_shares=[1, 2],
         ),
@@ -93,9 +98,6 @@ def _go2_rerun_blueprint() -> Any:
 
 rerun_config = {
     "blueprint": _go2_rerun_blueprint,
-    # any pubsub that supports subscribe_all and topic that supports str(topic)
-    # is acceptable here
-    "pubsubs": [LCM()],
     # Custom converters for specific rerun entity paths
     # Normally all these would be specified in their respectative modules
     # Until this is implemented we have central overrides here
@@ -103,6 +105,7 @@ rerun_config = {
     # This is unsustainable once we move to multi robot etc
     "visual_override": {
         "world/camera_info": _convert_camera_info,
+        "world/global_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,
     },
     "max_hz": {
@@ -116,29 +119,20 @@ rerun_config = {
     },
 }
 
+_with_vis = autoconnect(
+    _transports_base,
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config=rerun_config,
+        foxglove_config={"shm_channels": ["/color_image#sensor_msgs.Image"]},
+    ),
+)
 
-if global_config.viewer == "foxglove":
-    from dimos.robot.foxglove_bridge import FoxgloveBridge
-
-    with_vis = autoconnect(
-        _transports_base,
-        FoxgloveBridge.blueprint(shm_channels=["/color_image#sensor_msgs.Image"]),
-    )
-elif global_config.viewer.startswith("rerun"):
-    from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
-
-    with_vis = autoconnect(
-        _transports_base,
-        RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode(), **rerun_config),
-    )
-else:
-    with_vis = _transports_base
 
 unitree_go2_basic = (
     autoconnect(
-        with_vis,
+        _with_vis,
         GO2Connection.blueprint(),
-        WebsocketVisModule.blueprint(),
     )
     .global_config(n_workers=4, robot_model="unitree_go2")
     .configurators(ClockSyncConfigurator())
