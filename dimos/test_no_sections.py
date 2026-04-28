@@ -52,8 +52,6 @@ IGNORED_DIRS = {
     ".tox",
     # third-party vendored code
     "gtsam",
-    # hidden/personal directories
-    ".hidden",
     # local enhancement overlays (not part of the project source)
     ".ignore.enhance",
 }
