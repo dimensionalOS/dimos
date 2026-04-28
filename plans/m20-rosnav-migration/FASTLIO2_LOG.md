@@ -4331,3 +4331,31 @@ clicked_point -> SimplePlanner -> way_point -> LocalPlanner
 or passed by `deploy.sh`. The generic SmartNav `direct_click_waypoint=True`
 option remains available for deliberate non-M20 diagnostic experiments, but it
 is no longer a normal M20 runtime knob.
+
+## Finding #54 — M20 Rerun subscriptions now use one typed topic table
+
+Date: 2026-04-28
+
+The M20 viewer allowlist is now declared as a single typed table:
+
+```
+M20_RERUN_TOPIC_SPECS = (
+    name,
+    msg_type,
+    throttle_group,
+)
+```
+
+This replaces the previous split between hard-coded throttled point-cloud
+channel strings and a separate unthrottled `Topic(...)` tuple. The table is now
+the only source of truth for:
+
+- the topic name,
+- the LCM message type,
+- whether the topic uses registered-scan throttling, debug-cloud throttling, or
+  no throttling.
+
+This is specifically meant to prevent another `/goal#PoseStamped` vs
+`/goal#PointStamped` class of bug. The test now asserts that
+`M20RerunLCM.subscribe_all()` subscribes exactly to the table's typed channels,
+with no hidden second allowlist.

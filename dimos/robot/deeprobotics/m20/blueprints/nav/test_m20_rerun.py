@@ -67,6 +67,9 @@ def test_m20_rerun_lcm_subscribes_to_pgo_and_planner_topics(monkeypatch):
 
     pubsub.subscribe_all(lambda _msg, _topic: None)
 
+    assert set(pubsub.l.channels) == {
+        spec.channel for spec in m20_rerun.M20_RERUN_TOPIC_SPECS
+    }
     assert set(pubsub.l.channels) >= {
         "/corrected_odometry#nav_msgs.Odometry",
         "/global_map_pgo#sensor_msgs.PointCloud2",
@@ -80,6 +83,21 @@ def test_m20_rerun_lcm_subscribes_to_pgo_and_planner_topics(monkeypatch):
         "/goal#geometry_msgs.PointStamped",
         "/way_point#geometry_msgs.PointStamped",
     }
+
+
+def test_m20_rerun_topics_are_declared_in_one_typed_table():
+    channels = {
+        spec.channel: spec.throttle_group for spec in m20_rerun.M20_RERUN_TOPIC_SPECS
+    }
+
+    assert channels["/registered_scan#sensor_msgs.PointCloud2"] == "registered_scan"
+    assert channels["/terrain_map#sensor_msgs.PointCloud2"] == "debug_cloud"
+    assert channels["/global_map_pgo#sensor_msgs.PointCloud2"] == "debug_cloud"
+    assert channels["/clicked_point#geometry_msgs.PointStamped"] is None
+    assert channels["/goal#geometry_msgs.PointStamped"] is None
+    assert channels["/way_point#geometry_msgs.PointStamped"] is None
+    assert "/goal#geometry_msgs.PoseStamped" not in channels
+    assert len(channels) == len(m20_rerun.M20_RERUN_TOPIC_SPECS)
 
 
 def test_static_robot_attaches_to_sensor_tf():

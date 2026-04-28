@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -15,6 +16,43 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
+
+REGISTERED_SCAN_THROTTLE = "registered_scan"
+DEBUG_CLOUD_THROTTLE = "debug_cloud"
+
+
+@dataclass(frozen=True)
+class M20RerunTopicSpec:
+    name: str
+    msg_type: type[Any]
+    throttle_group: str | None = None
+
+    @property
+    def topic(self) -> Topic:
+        return Topic(self.name, self.msg_type)
+
+    @property
+    def channel(self) -> str:
+        return str(self.topic)
+
+
+M20_RERUN_TOPIC_SPECS = (
+    M20RerunTopicSpec("/registered_scan", PointCloud2, REGISTERED_SCAN_THROTTLE),
+    M20RerunTopicSpec("/terrain_map", PointCloud2, DEBUG_CLOUD_THROTTLE),
+    M20RerunTopicSpec("/terrain_map_ext", PointCloud2, DEBUG_CLOUD_THROTTLE),
+    M20RerunTopicSpec("/obstacle_cloud", PointCloud2, DEBUG_CLOUD_THROTTLE),
+    M20RerunTopicSpec("/costmap_cloud", PointCloud2, DEBUG_CLOUD_THROTTLE),
+    M20RerunTopicSpec("/global_map", PointCloud2, DEBUG_CLOUD_THROTTLE),
+    M20RerunTopicSpec("/global_map_pgo", PointCloud2, DEBUG_CLOUD_THROTTLE),
+    M20RerunTopicSpec("/odometry", Odometry),
+    M20RerunTopicSpec("/corrected_odometry", Odometry),
+    M20RerunTopicSpec("/path", Path),
+    M20RerunTopicSpec("/goal_path", Path),
+    M20RerunTopicSpec("/clicked_point", PointStamped),
+    M20RerunTopicSpec("/goal_request", PoseStamped),
+    M20RerunTopicSpec("/goal", PointStamped),
+    M20RerunTopicSpec("/way_point", PointStamped),
+)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -53,66 +91,41 @@ class M20RerunLCM(LCM):
     """LCM pubsub allowlist for the M20 Rerun bridge."""
 
     def subscribe_all(self, callback: Any) -> Any:
-        registered_scan_period = registered_scan_period_sec()
-        debug_cloud_period = debug_cloud_period_sec()
-        last_registered_scan = [0.0]
-        debug_cloud_last: dict[str, float] = {}
+        periods = {
+            REGISTERED_SCAN_THROTTLE: registered_scan_period_sec(),
+            DEBUG_CLOUD_THROTTLE: debug_cloud_period_sec(),
+        }
+        last_by_channel: dict[str, float] = {}
         point_cloud_subs = []
 
-        def subscribe_point_cloud(channel_name: str, period: float | None) -> None:
+        def subscribe_throttled(spec: M20RerunTopicSpec, period: float | None) -> None:
             if period is None:
                 return
 
             def on_point_cloud(channel: str, data: bytes) -> None:
                 now = time.monotonic()
-                last = (
-                    last_registered_scan[0]
-                    if channel_name == "/registered_scan#sensor_msgs.PointCloud2"
-                    else debug_cloud_last.get(channel_name, 0.0)
-                )
+                last = last_by_channel.get(spec.channel, 0.0)
                 if now - last < period:
                     return
-                if channel_name == "/registered_scan#sensor_msgs.PointCloud2":
-                    last_registered_scan[0] = now
-                else:
-                    debug_cloud_last[channel_name] = now
+                last_by_channel[spec.channel] = now
                 callback(
-                    PointCloud2.lcm_decode(data),
-                    Topic.from_channel_str(channel, PointCloud2),
+                    spec.msg_type.lcm_decode(data),
+                    Topic.from_channel_str(channel, spec.msg_type),
                 )
 
             sub = self.l.subscribe(  # type: ignore[union-attr]
-                channel_name,
+                spec.channel,
                 on_point_cloud,
             )
             sub.set_queue_capacity(2)
             point_cloud_subs.append(sub)
 
-        subscribe_point_cloud(
-            "/registered_scan#sensor_msgs.PointCloud2",
-            registered_scan_period,
-        )
-        for channel in (
-            "/terrain_map#sensor_msgs.PointCloud2",
-            "/terrain_map_ext#sensor_msgs.PointCloud2",
-            "/obstacle_cloud#sensor_msgs.PointCloud2",
-            "/costmap_cloud#sensor_msgs.PointCloud2",
-            "/global_map#sensor_msgs.PointCloud2",
-            "/global_map_pgo#sensor_msgs.PointCloud2",
-        ):
-            subscribe_point_cloud(channel, debug_cloud_period)
-
-        topics = (
-            Topic("/odometry", Odometry),
-            Topic("/corrected_odometry", Odometry),
-            Topic("/path", Path),
-            Topic("/goal_path", Path),
-            Topic("/clicked_point", PointStamped),
-            Topic("/goal_request", PoseStamped),
-            Topic("/goal", PointStamped),
-            Topic("/way_point", PointStamped),
-        )
-        unsubscribes = [self.subscribe(topic, callback) for topic in topics]
+        unsubscribes = []
+        for spec in M20_RERUN_TOPIC_SPECS:
+            if spec.throttle_group is None:
+                unsubscribes.append(self.subscribe(spec.topic, callback))
+            else:
+                subscribe_throttled(spec, periods[spec.throttle_group])
 
         def unsubscribe_all() -> None:
             for sub in point_cloud_subs:
