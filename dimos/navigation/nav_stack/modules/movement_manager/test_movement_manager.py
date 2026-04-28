@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for MovementManager: click-to-goal + teleop/nav velocity mux."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
