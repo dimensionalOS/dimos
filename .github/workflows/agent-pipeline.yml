@@ -39,6 +39,18 @@ jobs:
         with:
           lfs: false
 
+      - name: Install system dependencies
+        # Mirrors macos.yml `brew install portaudio libjpeg-turbo` on the
+        # apt side. Without these, `pyaudio` (pulled in by
+        # `unitree-webrtc-connect-leshy`) fails with `portaudio.h: No such
+        # file or directory` during `uv sync`.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            portaudio19-dev \
+            libjpeg-turbo8-dev \
+            libturbojpeg0-dev
+
       - name: Install uv (with cache)
         uses: astral-sh/setup-uv@v6
         with:
