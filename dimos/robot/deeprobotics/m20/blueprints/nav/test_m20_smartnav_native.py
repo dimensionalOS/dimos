@@ -18,9 +18,11 @@ import sys
 import pytest
 
 from dimos.navigation.cmd_vel_mux import CmdVelMux
+from dimos.navigation.smart_nav.modules.click_to_goal.click_to_goal import ClickToGoal
 from dimos.navigation.smart_nav.modules.fastlio2.fastlio2 import FastLio2
 from dimos.navigation.smart_nav.modules.local_planner.local_planner import LocalPlanner
 from dimos.navigation.smart_nav.modules.path_follower.path_follower import PathFollower
+from dimos.navigation.smart_nav.modules.simple_planner.simple_planner import SimplePlanner
 from dimos.robot.deeprobotics.m20.drdds_bridge.module import (
     AiryImuBridge,
     DrddsLidarBridge,
@@ -232,3 +234,14 @@ def test_m20_blueprint_accepts_split_native_cpu_affinity(monkeypatch):
     assert _native_kwargs(module, FastLio2)["cpu_affinity"] == frozenset({4})
     assert _native_kwargs(module, DrddsLidarBridge)["cpu_affinity"] == frozenset({4})
     assert _native_kwargs(module, AiryImuBridge)["cpu_affinity"] == frozenset({6})
+
+
+def test_m20_click_goals_always_flow_through_simple_planner(monkeypatch):
+    monkeypatch.setenv("M20_DIRECT_CLICK_WAYPOINT", "1")
+
+    module = _load_m20_native(monkeypatch)
+    remappings = module.m20_smartnav_native.remapping_map
+
+    assert remappings[(ClickToGoal, "way_point")] == "_click_way_point_unused"
+    assert (SimplePlanner, "goal") not in remappings
+    assert (SimplePlanner, "clicked_point") not in remappings

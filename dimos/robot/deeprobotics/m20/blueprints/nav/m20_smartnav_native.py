@@ -189,7 +189,6 @@ if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy":
 # could inject conflicting cmd_vel and make it impossible to isolate
 # SLAM issues from planner issues.
 _NAV_ENABLED = os.environ.get("M20_NAV_ENABLED", "1").strip() != "0"
-_DIRECT_CLICK_WAYPOINT = os.environ.get("M20_DIRECT_CLICK_WAYPOINT", "0").strip() == "1"
 
 
 def _env_float(name: str, default: float) -> float:
@@ -217,7 +216,6 @@ if _NAV_ENABLED:
     _nav_modules = (
         smart_nav(
             use_simple_planner=True,
-            direct_click_waypoint=_DIRECT_CLICK_WAYPOINT,
             vehicle_height=M20_HEIGHT_CLEARANCE,
             terrain_analysis={
                 "build_command": None,

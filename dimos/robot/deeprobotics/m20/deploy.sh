@@ -69,7 +69,6 @@ SMARTNAV_LOG="/tmp/smartnav_native.log"
 M20_SLAM_BACKEND="${M20_SLAM_BACKEND:-fastlio2}"
 M20_FASTLIO2_IMU="${M20_FASTLIO2_IMU:-airy}"
 M20_NAV_ENABLED="${M20_NAV_ENABLED:-1}"
-M20_DIRECT_CLICK_WAYPOINT="${M20_DIRECT_CLICK_WAYPOINT:-0}"
 M20_NAV_MAX_SPEED="${M20_NAV_MAX_SPEED:-0.20}"
 M20_NAV_AUTONOMY_SPEED="${M20_NAV_AUTONOMY_SPEED:-${M20_NAV_MAX_SPEED}}"
 M20_NAV_MAX_ACCEL="${M20_NAV_MAX_ACCEL:-0.30}"
@@ -682,7 +681,7 @@ PROVISION_EOF
         ;;
 
     start)
-        echo "=== Starting smartnav (backend=${M20_SLAM_BACKEND}, imu=${M20_FASTLIO2_IMU}, nav=${M20_NAV_ENABLED}, viewer=${VIEWER}, speed=${M20_NAV_MAX_SPEED}, yaw=${M20_NAV_MAX_YAW_RATE}, omni_threshold=${M20_NAV_OMNI_DIR_GOAL_THRESHOLD}, omni_diff=${M20_NAV_OMNI_DIR_DIFF_THRESHOLD}, goal_reached=${M20_NAV_GOAL_REACHED_THRESHOLD}, goal_behind=${M20_NAV_GOAL_BEHIND_RANGE}, freeze_ang=${M20_NAV_FREEZE_ANG}, direct_click=${M20_DIRECT_CLICK_WAYPOINT}, rerun_registered_scan_hz=${M20_RERUN_REGISTERED_SCAN_HZ}, rerun_debug_cloud_hz=${M20_RERUN_DEBUG_CLOUD_HZ}, slam_cores=${M20_SLAM_CORES}, fastlio_cores=${M20_FASTLIO_CORES}, drdds_lidar_cores=${M20_DRDDS_LIDAR_CORES}, airy_imu_cores=${M20_AIRY_IMU_CORES}, rerun_cores=${M20_RERUN_CORES:-none}) ==="
+        echo "=== Starting smartnav (backend=${M20_SLAM_BACKEND}, imu=${M20_FASTLIO2_IMU}, nav=${M20_NAV_ENABLED}, viewer=${VIEWER}, speed=${M20_NAV_MAX_SPEED}, yaw=${M20_NAV_MAX_YAW_RATE}, omni_threshold=${M20_NAV_OMNI_DIR_GOAL_THRESHOLD}, omni_diff=${M20_NAV_OMNI_DIR_DIFF_THRESHOLD}, goal_reached=${M20_NAV_GOAL_REACHED_THRESHOLD}, goal_behind=${M20_NAV_GOAL_BEHIND_RANGE}, freeze_ang=${M20_NAV_FREEZE_ANG}, rerun_registered_scan_hz=${M20_RERUN_REGISTERED_SCAN_HZ}, rerun_debug_cloud_hz=${M20_RERUN_DEBUG_CLOUD_HZ}, slam_cores=${M20_SLAM_CORES}, fastlio_cores=${M20_FASTLIO_CORES}, drdds_lidar_cores=${M20_DRDDS_LIDAR_CORES}, airy_imu_cores=${M20_AIRY_IMU_CORES}, rerun_cores=${M20_RERUN_CORES:-none}) ==="
         ssh -n ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "bash -lc '
             # Clear old log first so the readiness poll only sees this boot.
             : > ${SMARTNAV_LOG}
@@ -695,7 +694,6 @@ PROVISION_EOF
                 M20_DRDDS_LIDAR_CORES=${M20_DRDDS_LIDAR_CORES} \
                 M20_AIRY_IMU_CORES=${M20_AIRY_IMU_CORES} \
                 M20_NAV_ENABLED=${M20_NAV_ENABLED} \
-                M20_DIRECT_CLICK_WAYPOINT=${M20_DIRECT_CLICK_WAYPOINT} \
                 M20_NAV_MAX_SPEED=${M20_NAV_MAX_SPEED} \
                 M20_NAV_AUTONOMY_SPEED=${M20_NAV_AUTONOMY_SPEED} \
                 M20_NAV_MAX_ACCEL=${M20_NAV_MAX_ACCEL} \

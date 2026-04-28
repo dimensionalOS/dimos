@@ -4222,15 +4222,15 @@ M20_RERUN_DEBUG_CLOUD_HZ=1.0   # <=0 disables these debug clouds
 This is separate from `M20_RERUN_REGISTERED_SCAN_HZ`, so PGO/planner debug
 visibility can be tuned without restoring the full registered-scan load.
 
-Caveat: with `M20_DIRECT_CLICK_WAYPOINT=1`, clicked goals bypass
-SimplePlanner. In that mode the viewer can show terrain, terrain ext,
-local obstacle cloud, local path, PGO corrected odometry, and PGO global map,
-but `costmap_cloud` / `goal_path` may stay quiet for clicked goals because
-SimplePlanner is intentionally not active. To see SimplePlanner costmap and
-goal-path behavior for clicks, restart with:
+Caveat from the original test state: with `M20_DIRECT_CLICK_WAYPOINT=1`,
+clicked goals bypassed SimplePlanner. In that mode the viewer could show
+terrain, terrain ext, local obstacle cloud, local path, PGO corrected odometry,
+and PGO global map, but `costmap_cloud` / `goal_path` could stay quiet for
+clicked goals because SimplePlanner was intentionally not active. As of
+Finding #53, this bypass is no longer a normal M20 deploy/runtime knob.
 
 ```
-M20_DIRECT_CLICK_WAYPOINT=0
+M20 direct-click bypass removed; use the normal SimplePlanner path.
 ```
 
 ## Finding #51 — WASD teleop bridge listened to the wrong local viewer channel
@@ -4305,3 +4305,29 @@ ReplanningAStar path, but it is not the SmartNav click-to-goal marker.
 Follow-up: `/clicked_point#geometry_msgs.PointStamped` is also enabled in the
 M20 Rerun allowlist so the raw viewer click can be visualized alongside the
 ClickToGoal outputs (`/goal` and `/way_point`).
+
+## Finding #53 — M20 click-to-goal is now SimplePlanner-only by default
+
+Date: 2026-04-28
+
+After the 2026-04-28 live tests, the diagnostic direct-click bypass is no
+longer the M20 deploy path. The earlier bypass mode routed:
+
+```
+clicked_point -> ClickToGoal.way_point -> LocalPlanner
+```
+
+That was useful while isolating click transport from planner/costmap behavior,
+but it hides SimplePlanner debug outputs (`goal_path`, `costmap_cloud`) and is
+not the path we want to keep validating.
+
+The M20 native blueprint now always uses the normal SimplePlanner click path:
+
+```
+clicked_point -> SimplePlanner -> way_point -> LocalPlanner
+```
+
+`M20_DIRECT_CLICK_WAYPOINT` is no longer consumed by `m20_smartnav_native.py`
+or passed by `deploy.sh`. The generic SmartNav `direct_click_waypoint=True`
+option remains available for deliberate non-M20 diagnostic experiments, but it
+is no longer a normal M20 runtime knob.
