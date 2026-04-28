@@ -37,10 +37,6 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# ──────────────────────────────────────────────────────────────────────────
-# Pure-Python costmap + A* (no dependencies beyond numpy/stdlib)
-# ──────────────────────────────────────────────────────────────────────────
-
 
 class Costmap:
     def __init__(self, cell_size: float, obstacle_height: float, inflation_radius: float) -> None:
@@ -304,7 +300,6 @@ class SimplePlannerConfig(ModuleConfig):
     # candidates. Should match or slightly exceed the robot's standing height.
     ground_offset_below_robot: float = 1.3
 
-    # ── No-progress detection + escalation ──────────────────────────────
     # Consider the robot "stuck" if its distance-to-goal hasn't decreased
     # by at least ``progress_epsilon`` metres within ``stuck_seconds``.
     stuck_seconds: float = 5.0
@@ -395,8 +390,6 @@ class SimplePlanner(Module):
             self._thread = None
         super().stop()
 
-    # ── TF pose query ───────────────────────────────────────────────────────
-
     # Ordered list of (parent, child) TF lookups to try for the robot pose.
     # The first successful lookup wins.  ``body`` is the standard REP-105
     # child frame; ``sensor`` is used by the Unity sim bridge.
@@ -434,8 +427,6 @@ class SimplePlanner(Module):
             self._robot_z = float(tf.translation.z)
             self._has_odom = True
         return True
-
-    # ── Subscription callbacks ─────────────────────────────────────────────
 
     def _on_goal(self, msg: PointStamped) -> None:
         # NaN sentinel = cancel navigation (e.g. teleop took over).
@@ -554,8 +545,6 @@ class SimplePlanner(Module):
             return
         self._classify_points(points, self._costmap)
 
-    # ── Planning loop ──────────────────────────────────────────────────────
-
     def _planning_loop(self) -> None:
         rate = self.config.replan_rate
         period = 1.0 / rate if rate > 0 else 0.2
@@ -648,12 +637,12 @@ class SimplePlanner(Module):
         goal_dist = math.hypot(gx - rx, gy - ry)
         now = time.time()
 
-        # ── Waypoint advance: keep the next waypoint ahead of the robot
-        # so the local planner never stops on an intermediate waypoint ──
+        # Keep the next waypoint ahead of the robot so the local planner
+        # never stops on an intermediate waypoint.
         self._maybe_advance_waypoint(rx, ry, gz)
 
-        # ── Cooldown: if it's too soon for a fresh A*, just refresh
-        # the waypoint from the cached path using the current pose ────
+        # If it's too soon for a fresh A*, just refresh the waypoint from
+        # the cached path using the current pose.
         with self._lock:
             cooldown_active = (
                 self._cached_path is not None
