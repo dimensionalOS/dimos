@@ -14,21 +14,14 @@
 
 """E2E integration test: cross-wall planning using SimplePlanner.
 
-Mirrors ``test_cross_wall_planning.py`` but swaps FarPlanner for
+Mirrors ``test_cross_wall_planning_far.py`` but swaps FarPlanner for
 SimplePlanner (grid A*). Same blueprint, same waypoint sequence, same
-success thresholds — this is the apples-to-apples comparison to see
-whether the simple planner can route through doorways.
+success thresholds — apples-to-apples comparison plus a z-ceiling guard
+to catch the robot climbing geometry.
 """
 
 from __future__ import annotations
 
-import math
-import os
-from pathlib import Path
-import threading
-import time
-
-import lcm as lcmlib
 import pytest
 
 # create_nav_stack pulls in PGO which requires gtsam — skip the whole module
@@ -36,65 +29,25 @@ import pytest
 pytest.importorskip("gtsam")
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.nav_stack.main import create_nav_stack
-from dimos.protocol.service.lcmservice import _DEFAULT_LCM_URL
+from dimos.navigation.nav_stack.tests.conftest import run_cross_wall_test
 from dimos.simulation.unity.module import UnityBridgeModule
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
-
-
-@pytest.fixture
-def display_env():
-    """Set DISPLAY for the test, restore the prior value on teardown."""
-    prior = os.environ.get("DISPLAY")
-    os.environ.setdefault("DISPLAY", ":1")
-    yield
-    if prior is None:
-        os.environ.pop("DISPLAY", None)
-    else:
-        os.environ["DISPLAY"] = prior
-
-
-ODOM_TOPIC = "/odometry#nav_msgs.Odometry"
-GOAL_TOPIC = "/clicked_point#geometry_msgs.PointStamped"
-
-# Waypoint definitions: (name, x, y, z, timeout_sec, reach_threshold_m)
-WAYPOINTS = [
-    ("p0", -0.3, 2.5, 0.0, 30, 1.5),
-    ("p1", 11.2, -1.8, 0.0, 120, 2.0),
-    ("p2", 3.3, -4.9, 0.0, 120, 2.0),
-    ("p3", 7.0, -5.0, 0.0, 120, 2.0),
-    ("p4", 11.3, -5.6, 0.0, 120, 2.0),
-    ("p4→p1", 11.2, -1.8, 0.0, 180, 2.0),
-]
-
-WARMUP_SEC = 15.0
-
-
-def _distance(x1: float, y1: float, x2: float, y2: float) -> float:
-    return math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
-
 
 pytestmark = [pytest.mark.slow]
+
+# If the robot's z ever exceeds this, it has gone through the ceiling /
+# climbed on top of geometry — navigation is broken. The sim's terrain-z
+# estimate drifts ~0.3 m near walls (wall points within the 0.5 m terrain
+# sampling radius pull the ground estimate upward), so this must tolerate
+# vehicle_height (1.24 m) + terrain drift while still catching
+# through-the-roof failures (roof is at ~3 m+).
+MAX_ALLOWED_Z = 2.0
 
 
 class TestCrossWallPlanningSimple:
     """E2E: cross-wall routing with SimplePlanner (A* on 2D costmap)."""
 
-    def test_cross_wall_sequence_simple(self, display_env):
-        paths_dir = (
-            Path(__file__).resolve().parents[3]
-            / "data"
-            / "unitree_g1_local_planner_precomputed_paths"
-        )
-        if paths_dir.exists():
-            for f in paths_dir.iterdir():
-                f.unlink(missing_ok=True)
-
+    def test_cross_wall_sequence_simple(self, display_env: None) -> None:
         blueprint = (
             autoconnect(
                 UnityBridgeModule.blueprint(
@@ -149,124 +102,4 @@ class TestCrossWallPlanningSimple:
             .global_config(n_workers=8, robot_model="unitree_g1", simulation=True)
         )
 
-        coordinator = ModuleCoordinator.build(blueprint)
-
-        lock = threading.Lock()
-        odom_count = 0
-        robot_x = 0.0
-        robot_y = 0.0
-        robot_z = 0.0
-        max_z = 0.0
-        # If the robot's z ever exceeds this, it has gone through the
-        # ceiling / climbed on top of geometry — navigation is broken.
-        # The sim's terrain-z estimate drifts ~0.3 m near walls (wall
-        # points within the 0.5 m terrain sampling radius pull the ground
-        # estimate upward), so this must tolerate vehicle_height (1.24 m)
-        # + terrain drift while still catching through-the-roof failures
-        # (roof is at ~3 m+).
-        MAX_ALLOWED_Z = 2.0
-
-        lcm = lcmlib.LCM(_DEFAULT_LCM_URL)
-
-        def _odom_handler(channel: str, data: bytes) -> None:
-            nonlocal odom_count, robot_x, robot_y, robot_z, max_z
-            msg = Odometry.lcm_decode(data)
-            with lock:
-                odom_count += 1
-                robot_x = msg.x
-                robot_y = msg.y
-                robot_z = msg.pose.position.z
-                if robot_z > max_z:
-                    max_z = robot_z
-
-        lcm.subscribe(ODOM_TOPIC, _odom_handler)
-
-        lcm_stop = threading.Event()
-
-        def _lcm_loop() -> None:
-            while not lcm_stop.is_set():
-                try:
-                    lcm.handle_timeout(100)
-                except Exception:
-                    pass
-
-        lcm_thread = threading.Thread(target=_lcm_loop, daemon=True)
-        lcm_thread.start()
-
-        try:
-            coordinator.start()
-            logger.info("[test-simple] Blueprint started, waiting for odom…")
-
-            deadline = time.monotonic() + 60.0
-            while time.monotonic() < deadline:
-                with lock:
-                    if odom_count > 0:
-                        break
-                time.sleep(0.5)
-
-            with lock:
-                assert odom_count > 0, "No odometry received after 60s — sim not running?"
-
-            logger.info(f"[test-simple] Odom online. Robot at ({robot_x:.2f}, {robot_y:.2f})")
-            logger.info(f"[test-simple] Warming up for {WARMUP_SEC}s…")
-            time.sleep(WARMUP_SEC)
-
-            for name, gx, gy, gz, timeout_sec, threshold in WAYPOINTS:
-                with lock:
-                    sx, sy = robot_x, robot_y
-
-                logger.info(
-                    f"[test-simple] === {name}: goal ({gx}, {gy}) | "
-                    f"robot ({sx:.2f}, {sy:.2f}) | "
-                    f"dist={_distance(sx, sy, gx, gy):.2f}m | "
-                    f"budget={timeout_sec}s ==="
-                )
-
-                goal = PointStamped(x=gx, y=gy, z=gz, ts=time.time(), frame_id="map")
-                lcm.publish(GOAL_TOPIC, goal.lcm_encode())
-
-                t0 = time.monotonic()
-                reached = False
-                cx, cy = sx, sy
-                dist = _distance(cx, cy, gx, gy)
-                while True:
-                    with lock:
-                        cx, cy = robot_x, robot_y
-                        cz = robot_z
-                        cur_max_z = max_z
-
-                    assert cz <= MAX_ALLOWED_Z, (
-                        f"{name}: robot z={cz:.2f}m exceeded {MAX_ALLOWED_Z}m — "
-                        f"robot went through the ceiling. "
-                        f"pos=({cx:.2f}, {cy:.2f}, {cz:.2f}), max_z={cur_max_z:.2f}m"
-                    )
-
-                    dist = _distance(cx, cy, gx, gy)
-                    elapsed = time.monotonic() - t0
-
-                    if dist <= threshold:
-                        reached = True
-                        break
-                    if elapsed >= timeout_sec:
-                        break
-                    time.sleep(0.1)
-
-                assert reached, (
-                    f"{name}: robot did not reach ({gx}, {gy}) within {timeout_sec}s. "
-                    f"Final pos=({cx:.2f}, {cy:.2f}), dist={dist:.2f}m"
-                )
-
-            # Final guard: the robot should never have gone above the
-            # allowed height at any point during the entire test run.
-            with lock:
-                final_max_z = max_z
-            assert final_max_z <= MAX_ALLOWED_Z, (
-                f"Robot z peaked at {final_max_z:.2f}m during the run "
-                f"(limit {MAX_ALLOWED_Z}m) — went through the ceiling"
-            )
-
-        finally:
-            lcm_stop.set()
-            lcm_thread.join(timeout=3)
-            assert not lcm_thread.is_alive(), "LCM loop thread didn't exit cleanly"
-            coordinator.stop()
+        run_cross_wall_test(blueprint, label="simple", max_z=MAX_ALLOWED_Z)
