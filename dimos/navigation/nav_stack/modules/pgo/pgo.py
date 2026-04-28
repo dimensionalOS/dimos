@@ -89,7 +89,6 @@ def _icp(
     max_dist: float = 10.0,
     tol: float = 1e-6,
 ) -> tuple[np.ndarray, float]:
-    """Simple point-to-point ICP. Returns (4x4 transform, fitness score)."""
     if len(source) == 0 or len(target) == 0:
         return np.eye(4), float("inf")
 
@@ -146,8 +145,6 @@ def _voxel_downsample(pts: np.ndarray, voxel_size: float) -> np.ndarray:
 
 
 class _SimplePGO:
-    """Python port of the C++ SimplePGO class."""
-
     def __init__(self, config: PGOConfig) -> None:
         self._cfg = config
         self._key_poses: list[_KeyPose] = []
