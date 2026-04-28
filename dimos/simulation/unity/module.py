@@ -161,7 +161,7 @@ def _download_unity_scene(scene: str, dest_dir: Path) -> Path:
     except ImportError:
         raise RuntimeError(
             "Unity sim binary not found and 'gdown' is not installed for auto-download. "
-            "Install it with: uv sync --extra misc\n"
+            "Install it with: pip install gdown\n"
             "Or manually download from: "
             f"https://drive.google.com/drive/folders/{_GDRIVE_FOLDER_ID}"
         ) from None
