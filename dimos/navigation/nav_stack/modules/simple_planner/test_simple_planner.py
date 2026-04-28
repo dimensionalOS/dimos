@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for Costmap + A* used by SimplePlanner."""
-
 from __future__ import annotations
 
 from collections.abc import Callable
