@@ -321,6 +321,15 @@ If multiple modules match the spec, use `.remappings()` to resolve. Source: `dim
 5. Update the system prompt — add to the `# AVAILABLE SKILLS` section.
 6. Expose as `my_container = MySkillContainer.blueprint` and include in the agentic blueprint.
 
+> **Package convention.** `dimos/agents/skills/` (and every other subpackage
+> under `dimos/`) is a **PEP 420 namespace package** — there is intentionally
+> no `__init__.py`. The only `__init__.py` in the entire `dimos/` tree is the
+> top-level `dimos/__init__.py`, which exists solely as a lazy re-export shim
+> for `Dimos`. Do not add `__init__.py` files when adding skills, modules, or
+> subpackages: doing so converts a namespace package into a regular package
+> and changes import resolution for tools (pytest collection, mypy, the
+> `all_blueprints.py` regen, etc.) that walk the tree.
+
 ---
 
 ## Testing
