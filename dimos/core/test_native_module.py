@@ -78,7 +78,7 @@ class StubConsumer(Module):
 
     @rpc
     def start(self) -> None:
-        pass
+        super().start()
 
 
 class StubProducer(Module):
@@ -86,7 +86,7 @@ class StubProducer(Module):
 
     @rpc
     def start(self) -> None:
-        pass
+        super().start()
 
 
 def test_process_crash_triggers_stop() -> None:
