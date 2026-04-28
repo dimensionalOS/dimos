@@ -135,7 +135,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
     # we don't want UnitreeWebRTCConnection to init
     def __init__(  # type: ignore[no-untyped-def]
         self,
-        dataset: str = "go2_bigoffice",
+        dataset: str = "go2_china_office",
         **kwargs,
     ) -> None:
         self.dataset = dataset
@@ -178,7 +178,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
 
     @simple_mcache
     def video_stream(self):  # type: ignore[no-untyped-def]
-        video_store = TimedSensorReplay(f"{self.dataset}/color_image")
+        video_store: TimedSensorReplay[Image] = TimedSensorReplay(f"{self.dataset}/color_image")
         return video_store.stream(**self.replay_config)
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:

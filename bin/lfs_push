@@ -35,6 +35,12 @@ for dir_path in data/*; do
     # Skip .lfs directory if it exists
     [ "$dir_name" = ".lfs" ] && continue
 
+    # Skip SQLite ephemeral sidecar files (WAL / shared memory / rollback journal).
+    # These are runtime-only and would otherwise produce useless tarballs in LFS.
+    case "$dir_name" in
+        *-wal|*-shm|*-journal) continue ;;
+    esac
+
     # Define compressed file path
     compressed_file="data/.lfs/${dir_name}.tar.gz"
 
