@@ -36,7 +36,8 @@ from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -62,6 +63,7 @@ class ViserRenderModule(Module):
 
     joint_state: In[JointState]
     odom: In[PoseStamped]
+    clicked_point: Out[PointStamped]
 
     def __init__(
         self,
@@ -187,6 +189,29 @@ class ViserRenderModule(Module):
                 color=self._camera_spec.frustum_color,
             )
 
+        # Click-to-navigate. We arm a one-shot scene click callback when
+        # the user presses "Set nav goal", because viser disables camera
+        # orbit while the click callback is registered (App.tsx:514) — so
+        # leaving it always-on would break LMB orbit globally.
+        nav_goal_button = self._server.gui.add_button("Set nav goal")
+
+        @nav_goal_button.on_click
+        def _arm_nav_goal_click(_event: Any) -> None:
+            nav_goal_button.disabled = True
+            nav_goal_button.label = "Click on floor..."
+
+            @self._server.scene.on_pointer_event(event_type="click")
+            def _on_floor_click(event: Any) -> None:
+                try:
+                    self._handle_floor_click(event)
+                finally:
+                    self._server.scene.remove_pointer_callback()
+
+            @self._server.scene.on_pointer_callback_removed
+            def _rearm_button() -> None:
+                nav_goal_button.disabled = False
+                nav_goal_button.label = "Set nav goal"
+
         try:
             unsub = self.joint_state.subscribe(self._on_joint_state)
             self.register_disposable(Disposable(unsub))
@@ -215,6 +240,40 @@ class ViserRenderModule(Module):
             except Exception:
                 pass
         super().stop()
+
+    def _handle_floor_click(self, event: Any) -> None:
+        """Project the click ray onto the z=0 floor and publish a goal."""
+        ray_origin = event.ray_origin
+        ray_direction = event.ray_direction
+        if ray_origin is None or ray_direction is None:
+            return
+
+        ox, oy, oz = ray_origin
+        dx, dy, dz = ray_direction
+        if abs(dz) < 1e-6:
+            logger.info("Viser nav-goal: click ray is parallel to floor, ignoring")
+            return
+        t = -oz / dz
+        if t <= 0:
+            logger.info("Viser nav-goal: click is above the horizon, ignoring")
+            return
+        x = ox + t * dx
+        y = oy + t * dy
+
+        marker_color = (0, 200, 255)
+        try:
+            self._server.scene.add_icosphere(
+                "/nav_goal_marker",
+                radius=0.08,
+                position=(float(x), float(y), 0.05),
+                color=marker_color,
+            )
+        except Exception as e:
+            logger.debug(f"Viser nav-goal marker failed: {e}")
+
+        point = PointStamped(x=float(x), y=float(y), z=0.0, ts=time.time(), frame_id="map")
+        self.clicked_point.publish(point)
+        logger.info(f"Viser nav-goal: published clicked_point=({x:.3f}, {y:.3f})")
 
     def _on_joint_state(self, msg: JointState) -> None:
         names = list(msg.name)

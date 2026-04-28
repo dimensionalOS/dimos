@@ -20,15 +20,17 @@ SHM whole-body adapter pair don't implement that spec, so the regular
 container can't be composed in sim blueprints.
 
 This skill talks to the same ``/cmd_vel`` topic the WASD dashboard
-publishes on — ``ControlCoordinator`` + ``GrootWBCTask`` already
-consume that twist. ``move(duration=0)`` leaves the twist applied
-until a new call (matches the DDS skill's semantics).
+publishes on. ``GrootWBCTask`` zeros the velocity command if no twist
+arrives within ``timeout=1.0`` seconds (`groot_wbc_task.py:152`), so
+``move(duration>0)`` republishes the twist in a tight loop until the
+duration elapses, mirroring ``unitree.connection.move`` (which
+republishes every 10ms on real WebRTC).
 """
 
 from __future__ import annotations
 
 import threading
-from typing import Any
+import time
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -37,25 +39,29 @@ from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
+# 20Hz republish — well below the 1s WBC timeout, low overhead. Real
+# Unitree WebRTC connection uses 100Hz; LCM through autoconnect has
+# more per-publish overhead so we slow it down.
+_REPUBLISH_INTERVAL_S = 0.05
+
 
 class G1SimLocomotion(Module):
     cmd_vel: Out[Twist]
 
-    _lock: threading.Lock
-    _stop_timer: threading.Timer | None
+    _continuous_thread: threading.Thread | None
+    _continuous_stop: threading.Event | None
+    _control_lock: threading.Lock
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self._lock = threading.Lock()
-        self._stop_timer = None
+        self._continuous_thread = None
+        self._continuous_stop = None
+        self._control_lock = threading.Lock()
 
     @rpc
     def stop(self) -> None:
-        with self._lock:
-            if self._stop_timer is not None:
-                self._stop_timer.cancel()
-                self._stop_timer = None
-            self.cmd_vel.publish(_zero_twist())
+        self._stop_continuous()
+        self.cmd_vel.publish(_zero_twist())
         super().stop()
 
     @skill
@@ -70,27 +76,56 @@ class G1SimLocomotion(Module):
             x: Forward velocity (m/s)
             y: Left/right velocity (m/s)
             yaw: Rotational velocity (rad/s)
-            duration: How long to move (seconds). 0 keeps the velocity until the next move() call.
+            duration: How long to move (seconds). 0 means run continuously until the next move call.
         """
 
         twist = Twist(linear=Vector3(x, y, 0.0), angular=Vector3(0.0, 0.0, yaw))
 
-        with self._lock:
-            if self._stop_timer is not None:
-                self._stop_timer.cancel()
-                self._stop_timer = None
-            self.cmd_vel.publish(twist)
-            if duration > 0:
-                self._stop_timer = threading.Timer(duration, self._publish_zero)
-                self._stop_timer.daemon = True
-                self._stop_timer.start()
+        # Always cancel any prior continuous-mode publisher first.
+        self._stop_continuous()
 
-        return f"Moving at velocity=({x}, {y}, {yaw}) for {duration} seconds"
-
-    def _publish_zero(self) -> None:
-        with self._lock:
-            self._stop_timer = None
+        if duration > 0:
+            # Blocking republish loop; the LLM tool call returns when the
+            # motion completes, then we send a zero twist to halt cleanly.
+            deadline = time.monotonic() + duration
+            while time.monotonic() < deadline:
+                self.cmd_vel.publish(twist)
+                time.sleep(_REPUBLISH_INTERVAL_S)
             self.cmd_vel.publish(_zero_twist())
+            return f"Moved at velocity=({x}, {y}, {yaw}) for {duration} seconds"
+
+        # duration == 0: continuous mode. Spawn a background thread that
+        # keeps republishing this twist until cancelled (next move() call
+        # or stop()).
+        with self._control_lock:
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=self._republish_until_cancelled,
+                args=(twist, stop_event),
+                name="G1SimLocomotion-continuous",
+                daemon=True,
+            )
+            self._continuous_stop = stop_event
+            self._continuous_thread = thread
+            thread.start()
+
+        return f"Moving continuously at velocity=({x}, {y}, {yaw}). Call move with non-zero values or duration to change."
+
+    def _republish_until_cancelled(self, twist: Twist, stop_event: threading.Event) -> None:
+        while not stop_event.is_set():
+            self.cmd_vel.publish(twist)
+            stop_event.wait(_REPUBLISH_INTERVAL_S)
+
+    def _stop_continuous(self) -> None:
+        with self._control_lock:
+            stop_event = self._continuous_stop
+            thread = self._continuous_thread
+            self._continuous_stop = None
+            self._continuous_thread = None
+        if stop_event is not None:
+            stop_event.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
 
 
 def _zero_twist() -> Twist:
