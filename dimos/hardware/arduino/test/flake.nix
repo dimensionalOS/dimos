@@ -9,13 +9,17 @@
       url = "github:dimensionalOS/dimos-lcm/jeff/feat/arduino";
       flake = false;
     };
+    lcm-extended = {
+      url = "github:jeff-hykin/lcm_extended";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, dimos-lcm }:
+  outputs = { self, nixpkgs, flake-utils, dimos-lcm, lcm-extended }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        lcmFull = pkgs.lcm.overrideAttrs (old: {
+        lcmFull = (lcm-extended.packages.${system}.default).overrideAttrs (old: {
           outputs = [ "out" ];
           postInstall = "";
         });

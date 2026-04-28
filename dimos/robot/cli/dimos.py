@@ -210,7 +210,7 @@ def run(
         cleanup_stale,
         generate_run_id,
     )
-    from dimos.robot.get_all_blueprints import get_by_name, get_module_by_name
+    from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
     setup_exception_handler()
@@ -240,10 +240,12 @@ def run(
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
     set_run_log_dir(log_dir)
 
-    blueprint = autoconnect(*map(get_by_name, robot_types))
+    blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
 
     if disable:
-        disabled_classes = tuple(get_module_by_name(name).blueprints[0].module for name in disable)
+        disabled_classes = tuple(
+            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
+        )
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
     if show_help:
@@ -283,6 +285,7 @@ def run(
 
         daemonize(log_dir)
 
+        rpyc_port = coordinator.start_rpyc_service()  # After daemonize().
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -291,12 +294,14 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
         install_signal_handlers(entry, coordinator)
         coordinator.loop()
     else:
+        rpyc_port = coordinator.start_rpyc_service()
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -305,6 +310,7 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()

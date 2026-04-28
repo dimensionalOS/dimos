@@ -44,6 +44,7 @@ class RunEntry:
     cli_args: list[str] = field(default_factory=list)
     config_overrides: dict[str, object] = field(default_factory=dict)
     grpc_port: int = 9877
+    rpyc_port: int = 0
     original_argv: list[str] = field(default_factory=list)
 
     @property
@@ -169,3 +170,25 @@ def stop_entry(entry: RunEntry, force: bool = False) -> tuple[str, bool]:
 
     entry.remove()
     return (f"Stopped with {sig_name}", True)
+
+
+def get_most_recent_rpyc_port(run_id: str | None = None) -> int:
+    entry: RunEntry
+
+    if run_id is not None:
+        entries = [e for e in list_runs(alive_only=True) if e.run_id == run_id]
+        if not entries:
+            raise RuntimeError(f"No running DimOS instance with run_id={run_id!r}")
+        entry = entries[0]
+    else:
+        most_recent = get_most_recent(alive_only=True)
+        if most_recent is None:
+            raise RuntimeError("No running DimOS instance. Start one with `dimos run <blueprint>`.")
+        entry = most_recent
+
+    if not entry.rpyc_port:
+        raise RuntimeError(
+            f"Run {entry.run_id} has no rpyc_port. Was it started with an older version of dimos?"
+        )
+
+    return entry.rpyc_port

@@ -18,6 +18,8 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 def test_no_init_files():
     dimos_dir = DIMOS_PROJECT_ROOT / "dimos"
     init_files = sorted(dimos_dir.rglob("__init__.py"))
+    # The root dimos/__init__.py is allowed for the porcelain lazy import.
+    init_files = [f for f in init_files if f != dimos_dir / "__init__.py"]
     if init_files:
         listing = "\n".join(f"  - {f.relative_to(dimos_dir)}" for f in init_files)
         raise AssertionError(

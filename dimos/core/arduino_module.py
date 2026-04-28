@@ -68,30 +68,10 @@ _BRIDGE_BUILD_LOCK_PATH = _ARDUINO_HW_DIR / ".bridge_build.lock"
 
 @functools.lru_cache(maxsize=1)
 def _arduino_tools_bin_dir() -> Path:
-    """Resolve the ``bin/`` directory of the ``dimos_arduino_tools`` flake output.
+    """Resolve dimos_arduino_tools via ``nix build`` and return its bin/ path.
 
-    The flake packages ``arduino-cli`` (unwrapped Go binary), ``avrdude``,
-    and ``qemu-system-avr`` into a single ``symlinkJoin``.  We materialize
-    it via ``nix build --print-out-paths --no-link`` — no ``result``
-    symlink in the tree, just an absolute ``/nix/store/...`` path we can
-    cache for the process lifetime.
-
-    Why not rely on ``$PATH``: ArduinoModule is imported and run from
-    plain Python scripts, ``uv run``, ``dimos run``, ``pytest``, etc. —
-    none of which inherit the flake's ``devShells.default`` environment.
-    Hard-coding the bare names ``arduino-cli`` / ``avrdude`` /
-    ``qemu-system-avr`` only works if the user has already entered
-    ``nix develop``, which defeats the point of making the module a
-    normal Python dependency.  Resolving tools through ``nix build`` means
-    the caller's shell environment is irrelevant: as long as ``nix`` is on
-    ``PATH``, everything ArduinoModule needs resolves to a content-
-    addressed store path that it calls by absolute path.
-
-    The build is a no-op after the first cold run — the symlinkJoin
-    output is content-addressed and all three inputs are in nixpkgs'
-    public binary cache.  ``functools.lru_cache(maxsize=1)`` keeps the
-    resolved path in memory so subsequent calls within the same Python
-    process don't re-invoke nix at all.
+    Uses nix rather than $PATH so the module works without ``nix develop``.
+    Cached for the process lifetime; no-op after the first cold build.
     """
     logger.info("Resolving dimos_arduino_tools via nix build")
     try:
@@ -135,11 +115,7 @@ def _arduino_tools_bin_dir() -> Path:
 
 
 def _arduino_msgs_dir() -> Path:
-    """Return the path to Arduino LCM message headers from dimos_arduino_tools.
-
-    These are the generated C encode/decode headers from dimos-lcm,
-    packaged into the dimos_arduino_tools nix output at share/arduino_msgs/.
-    """
+    """Return the path to generated Arduino LCM message headers (share/arduino_msgs/)."""
     tools_bin = _arduino_tools_bin_dir()
     msgs_dir = tools_bin.parent / "share" / "arduino_msgs"
     if not msgs_dir.is_dir():
@@ -203,20 +179,8 @@ _KNOWN_TYPE_HEADERS: dict[str, str] = {
 
 
 class ArduinoModuleConfig(NativeModuleConfig):
-    """Configuration for an Arduino module."""
-
     def to_cli_args(self) -> list[str]:
-        """Disable NativeModule's field-driven CLI auto-generation.
-
-        ``ArduinoModule.start()`` builds the full bridge command line
-        explicitly (``--serial_port``, ``--baudrate``, ``--topic_in``,
-        ``--topic_out``, ...) because the bridge uses numeric topic IDs
-        and a fixed schema — not the generic ``--<field> <value>`` shape
-        that ``NativeModuleConfig.to_cli_args`` produces.  Returning an
-        empty list here also prevents sketch-only fields like
-        ``echo_delay_ms`` and internal metadata like ``cli_exclude`` /
-        ``arduino_config_exclude`` from leaking into the bridge CLI.
-        """
+        # Bridge CLI is built explicitly in start() — suppress generic emission.
         return []
 
     # Sketch
@@ -243,119 +207,100 @@ class ArduinoModuleConfig(NativeModuleConfig):
     auto_flash: bool = True
     flash_timeout: float = 60.0
 
-    # `cli_exclude` is inherited from NativeModuleConfig.  It's irrelevant
-    # for ArduinoModule — we override ``to_cli_args`` above to return [],
-    # so no config field is ever auto-emitted to the bridge CLI.  Left
-    # empty here and documented for subclasses that might still want to
-    # override it for some non-standard flow.
+    # --- Compile-time tuning (passed as -D flags to arduino-cli) ---
+    # These override the defaults in dimos_lcm_pubsub.h / dsp_protocol.h.
+    # Set to None (the default) to keep the header's built-in default.
+    max_subs: int | None = None  # DIMOS_LCM_MAX_SUBS (AVR default: 4)
+    max_pending: int | None = None  # DIMOS_LCM_MAX_PENDING (AVR default: 2)
+    max_msg_size: int | None = None  # DIMOS_LCM_MAX_MSG_SIZE (AVR default: 64)
+    max_payload: int | None = None  # DSP_MAX_PAYLOAD (AVR default: 256)
 
-    # Extra subclass-defined fields to exclude from the generated
-    # Arduino ``#define`` embedding.  Fields declared on this class (and
-    # its parents, i.e. ``NativeModuleConfig``) are excluded
-    # automatically in ``_generate_header``, so the user only needs to
-    # list fields on their *own* subclass that should not be embedded.
-    # In the common case this stays empty.
+    # Arbitrary user-defined #defines emitted in dimos_arduino.h and
+    # passed as -D compiler flags.  Example:
+    #   arduino_defines={"MOTOR_PIN": 13, "SENSOR_THRESHOLD": 0.5}
+    # becomes:
+    #   #define MOTOR_PIN 13
+    #   #define SENSOR_THRESHOLD 0.5f
+    arduino_defines: dict[str, int | float | str | bool] = {}
+
+    # Subclass fields to exclude from the generated #define embedding.
+    # Framework fields are excluded automatically; this is for user fields
+    # that shouldn't reach the sketch.
     arduino_config_exclude: frozenset[str] = frozenset()
 
 
-# Framework-owned fields on ``ArduinoModuleConfig`` that DO belong in the
-# generated sketch header (all other framework fields are host-only —
-# ``port``, ``virtual``, ``flash_timeout``, etc.).  Adding a new field
-# that the sketch needs to know about?  Add it both on the config class
-# and here, and ``_generate_header`` will emit the ``#define``.
+# Framework fields that DO get embedded in the sketch header.
 _ARDUINO_SKETCH_FIELDS: frozenset[str] = frozenset({"baudrate"})
 
 
-# Default ``DSP_MAX_PAYLOAD`` on AVR targets.  Must match the
-# ``#ifdef __AVR__`` branch in ``dsp_protocol.h`` — kept in sync by
-# ``test_arduino_msg_registry_sync``.  Users who override the limit for
-# a chip with more SRAM (e.g. Mega 2560) via ``-DDSP_MAX_PAYLOAD=<N>``
-# in their sketch's extra compile flags also need to document that on
-# their module's config — we can't introspect the compile flags here.
+# Must match #ifdef __AVR__ in dsp_protocol.h.
 _AVR_DEFAULT_DSP_MAX_PAYLOAD = 256
 
-# FQBN prefixes that identify an AVR microcontroller target.  Listed
-# explicitly rather than pattern-matched so a typo or unfamiliar board
-# is a hard error at validation time rather than a silent fallthrough.
+# Mapping from ArduinoModuleConfig field names to C preprocessor macros
+# for the compile-time tuning knobs.
+_TUNING_FIELD_TO_DEFINE: dict[str, str] = {
+    "max_subs": "DIMOS_LCM_MAX_SUBS",
+    "max_pending": "DIMOS_LCM_MAX_PENDING",
+    "max_msg_size": "DIMOS_LCM_MAX_MSG_SIZE",
+    "max_payload": "DSP_MAX_PAYLOAD",
+}
+
+
+def _c_literal(name: str, val: int | float | str | bool) -> str:
+    """Convert a Python value to a C literal string for ``#define``."""
+    if isinstance(val, bool):
+        return "1" if val else "0"
+    if isinstance(val, int):
+        return str(val)
+    if isinstance(val, float):
+        if not math.isfinite(val):
+            raise ValueError(
+                f"Cannot embed non-finite float for arduino_defines key {name!r} (value={val!r})"
+            )
+        return f"{val}f"
+    if isinstance(val, str):
+        return json.dumps(val)
+    raise TypeError(
+        f"arduino_defines key {name!r} has unsupported type "
+        f"{type(val).__name__}. Use int, float, str, or bool."
+    )
+
+
 _AVR_FQBN_PREFIXES: tuple[str, ...] = ("arduino:avr:",)
 
 
 class ArduinoModule(NativeModule):
-    """Module that manages an Arduino board with a generated header, sketch
-    compilation, flashing, and a C++ serial↔LCM bridge.
-
-    Subclass this, declare In/Out ports, and set ``config`` to an
-    :class:`ArduinoModuleConfig` subclass pointing at your sketch.
+    """Manages an Arduino board: generates header, compiles sketch, flashes,
+    and runs a C++ serial↔LCM bridge.
     """
 
     config: ArduinoModuleConfig
-
-    # The bridge has its own CLI schema (``--topic_in <id> <channel>``,
-    # ``--topic_out <id> <channel>``) so we build the command line
-    # ourselves in :meth:`start` and opt out of ``NativeModule``'s
-    # generic ``--<stream_name> <topic>`` emission.
-    _auto_emit_topic_cli_args: ClassVar[bool] = False
-
-    # Override for custom message type C code generation
     c_type_generators: ClassVar[dict[type, CTypeGenerator]] = {}
 
-    # Virtual mode state
     _qemu_proc: subprocess.Popen[bytes] | None = None
     _virtual_pty: str | None = None
     _qemu_log_path: str | None = None
     _qemu_log_fd: IO[bytes] | None = None
-
-    # Resolved bridge binary path, set by build().  Declared at class scope
-    # so it survives pickling and is visible to mypy.
     _bridge_bin: str | None = None
 
     @rpc
     def build(self) -> None:
-        """Build step: generate header, compile sketch, build bridge, (flash)."""
-        # 1. Detect port (only for physical hardware)
+        """Generate header, compile sketch, build bridge, and optionally flash."""
         if not self.config.virtual and self.config.auto_detect and not self.config.port:
             self.config.port = self._detect_port()
             logger.info("Auto-detected Arduino port", port=self.config.port)
 
-        # 2. Generate dimos_arduino.h
         self._generate_header()
-
-        # 3. Ensure the arduino core for this board's FQBN is installed
-        # (cheap idempotent check — e.g. first-run of a fresh
-        # `nix develop` shell where arduino-cli has no data directory).
         self._ensure_core_installed()
-
-        # 4. Compile Arduino sketch
         self._compile_sketch()
-
-        # 5. Build the C++ bridge binary if needed (shared across all
-        # ArduinoModule subclasses — lives in dimos/hardware/arduino/)
         self._build_bridge()
-
-        # Record the resolved bridge path as instance state so start() can
-        # reach it without mutating self.config (which is meant to be the
-        # user-facing, effectively read-only config after build).
         self._bridge_bin = str(_ARDUINO_HW_DIR / "result" / "bin" / "arduino_bridge")
 
-        # 6. Flash Arduino (only for physical hardware)
         if not self.config.virtual and self.config.auto_flash and self.config.port:
             self._flash()
 
     def _build_bridge(self) -> None:
-        """Build the shared C++ bridge binary via the arduino flake.
-
-        ``nix build`` is content-addressed and a no-op when nothing has
-        changed since the last invocation, so we always run it rather
-        than short-circuiting on ``result/bin/arduino_bridge`` existing
-        — the symlink can be stale (source changed, but a previous build
-        left the old binary in place) and would silently ship users an
-        outdated bridge.
-
-        Multiple ArduinoModule instances in one blueprint race on the
-        same ``result`` symlink, so we serialize builds with a file
-        lock to avoid nix's own "another instance of nix is running"
-        errors and duplicated work.
-        """
+        """Build the C++ bridge via nix. File-locked to handle concurrent modules."""
         bridge_bin = _ARDUINO_HW_DIR / "result" / "bin" / "arduino_bridge"
 
         # Ensure the lock file exists (nix flake dir is always present).
@@ -385,16 +330,8 @@ class ArduinoModule(NativeModule):
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
     def _resolve_topics(self) -> dict[str, str]:
-        """Get the ``{stream_name: lcm_channel}`` mapping for the bridge.
-
-        Wraps :meth:`NativeModule._collect_topics` with a validation
-        pass: each channel string must have the ``"topic#msg_type"``
-        shape the ``arduino_bridge`` binary expects.  ``LCMTransport``
-        produces this shape via ``LCMTopic.__str__`` when given a typed
-        topic; other transports (``pLCMTransport``, ``SHMTransport``,
-        etc.) produce bare topic names and would make the bridge fail
-        with "Unknown message type: " at startup.  Fail fast at build
-        time with a clearer error instead.
+        """Collect topics and validate they have the ``channel#msg_type`` shape
+        the bridge requires (only LCMTransport produces this).
         """
         raw = super()._collect_topics()
         bad: list[tuple[str, str]] = []
@@ -413,23 +350,23 @@ class ArduinoModule(NativeModule):
             )
         return raw
 
+    def _build_topic_args(self) -> list[str]:
+        # The bridge uses its own CLI schema (--topic_in <id> <channel>,
+        # --topic_out <id> <channel>) built in start(), so suppress the
+        # generic --<stream_name> <topic> args from NativeModule.
+        return []
+
     @rpc
     def start(self) -> None:
         """Launch the C++ bridge subprocess (and QEMU if virtual)."""
         topics = self._resolve_topics()
         topic_enum = self._build_topic_enum()
 
-        # If virtual, launch QEMU first and use its PTY as the serial port.
-        # On any failure inside _start_qemu, the helper has already run full
-        # cleanup so we can simply propagate the exception.
         if self.config.virtual:
             serial_port = self._start_qemu()
         else:
             serial_port = self.config.port or "/dev/ttyACM0"
 
-        # Build extra CLI args for the bridge.  We keep the user's original
-        # `extra_args` (which may be set for debugging) and append the
-        # bridge-specific ones after it.
         bridge_args = [
             "--serial_port",
             serial_port,
@@ -450,15 +387,10 @@ class ArduinoModule(NativeModule):
             elif stream_name in self.inputs:
                 bridge_args.extend(["--topic_in", str(topic_id), lcm_channel])
 
-        # Point NativeModule at the bridge binary that build() resolved.
-        # This is a stable, idempotent assignment — not a per-call mutation
-        # of user-provided config.
         if self._bridge_bin is not None:
             self.config.executable = self._bridge_bin
 
-        # Save and restore the user-facing `extra_args` across the super()
-        # call so repeated start()/stop() cycles don't accumulate bridge
-        # flags on the config.
+        # Save/restore extra_args so start()/stop() cycles don't accumulate.
         user_extra = list(self.config.extra_args)
         self.config.extra_args = user_extra + bridge_args
         try:
@@ -473,21 +405,13 @@ class ArduinoModule(NativeModule):
 
     @rpc
     def stop(self) -> None:
-        # Stop the bridge first so it closes the PTY before we terminate
-        # QEMU — otherwise QEMU sits there with a dangling PTY reader for a
-        # brief window.  Wrap in try/finally so QEMU cleanup runs even if
-        # the bridge stop raises.
         try:
             super().stop()
         finally:
             self._cleanup_qemu()
 
     def _cleanup_qemu(self) -> None:
-        """Fully tear down QEMU state — process, log fd, temp log file.
-
-        Safe to call even if QEMU was never started or was already
-        partially cleaned up.
-        """
+        """Tear down QEMU state. Safe to call even if never started."""
         if self._qemu_proc is not None:
             try:
                 if self._qemu_proc.poll() is None:
@@ -532,11 +456,9 @@ class ArduinoModule(NativeModule):
 
     @rpc
     def flash(self) -> None:
-        """Manual re-flash without full rebuild."""
         self._flash()
 
     def _get_stream_types(self) -> dict[str, type]:
-        """Get {stream_name: message_type} for all In/Out ports."""
         hints = get_type_hints(type(self))
         result: dict[str, type] = {}
         for name, hint in hints.items():
@@ -547,37 +469,20 @@ class ArduinoModule(NativeModule):
                     result[name] = args[0]
         return result
 
-    # Topic IDs are transmitted as a single byte on the wire (DSP
-    # protocol) with id 0 reserved for the debug channel, leaving 1..255
-    # usable — 255 streams per ArduinoModule.
-    MAX_TOPICS: ClassVar[int] = 255
+    # Topic IDs are transmitted as 2 bytes on the wire (DSP protocol)
+    # with id 0 reserved for the debug channel, leaving 1..65534 usable.
+    MAX_TOPICS: ClassVar[int] = 65534
 
     def _validate_inbound_payload_sizes(self, stream_types: dict[str, type]) -> None:
-        """Fail the build if a host→Arduino stream exceeds AVR's DSP_MAX_PAYLOAD.
+        """Reject inbound streams that exceed AVR's DSP_MAX_PAYLOAD (256B).
 
-        The AVR-side parser (``dimos_check_message`` in
-        ``dsp_protocol.h``) allocates a fixed ``_dsp_rx_buf`` sized by
-        ``DSP_MAX_PAYLOAD`` (256 on AVR by default) and silently drops
-        any frame with ``rx_len > DSP_MAX_PAYLOAD``.  Without this
-        check, a user declaring e.g. ``pose_in: In[PoseWithCovariance]``
-        (344 bytes) on an Uno would get a module that starts, compiles,
-        flashes, and silently discards every inbound message — very hard
-        to diagnose.
-
-        Only inbound streams (``In[T]``) need the check: the host-side
-        buffer is 1024 bytes, and outbound streams are constructed on
-        the Arduino so the sketch can't exceed the AVR buffer it itself
-        allocated.
-
-        Outputs the check for AVR targets only — non-AVR boards (e.g.
-        ESP32 via ``esp32:esp32:*``) compile without the ``__AVR__``
-        branch and get the 1024-byte default, which is already enough
-        for every message type we ship.
+        Only checks AVR targets — non-AVR boards use a 1024B buffer.
+        Only checks inbound (In[T]) — outbound is the Arduino's own buffer.
         """
         if not self.config.board_fqbn.startswith(_AVR_FQBN_PREFIXES):
             return
 
-        limit = _AVR_DEFAULT_DSP_MAX_PAYLOAD
+        limit = self.config.max_payload or _AVR_DEFAULT_DSP_MAX_PAYLOAD
         offenders: list[tuple[str, str, int]] = []
         for name, msg_type in stream_types.items():
             if name not in self.inputs:
@@ -604,11 +509,33 @@ class ArduinoModule(NativeModule):
                 f"`_validate_inbound_payload_sizes`."
             )
 
+    def _warn_avr_sram_pressure(self, stream_types: dict[str, type]) -> None:
+        """Log a warning if the number of streams is likely to overflow AVR SRAM.
+
+        Each stream adds a subscription entry (~9 bytes), a topic mapping
+        entry, and the type's encode/decode code.  The LCM pubsub engine
+        itself uses ~256 bytes (decode buffer + outbox) on AVR.  With
+        Arduino Uno's 2KB total SRAM, more than ~4 streams is risky.
+        """
+        if not self.config.board_fqbn.startswith(_AVR_FQBN_PREFIXES):
+            return
+        n = len(stream_types)
+        threshold = self.config.max_subs or 4
+        if n > threshold:
+            logger.warning(
+                "AVR SRAM pressure: %d streams declared (max_subs=%d) on a "
+                "board with ~2KB SRAM. Each stream adds subscriptions, type "
+                "descriptors, and encode/decode buffers. Compilation may fail "
+                "with 'data section exceeds available space'. Consider "
+                "reducing streams, increasing max_subs (if your board has "
+                "enough SRAM), or using a board with more SRAM.",
+                n,
+                threshold,
+            )
+
     def _build_topic_enum(self) -> dict[str, int]:
-        """Assign topic IDs to streams. Topic 0 is reserved for debug."""
         stream_types = self._get_stream_types()
-        # Topic IDs are uint16_t (2 bytes) with 0 reserved for debug.
-        max_topics = 65534
+        max_topics = self.MAX_TOPICS
         if len(stream_types) > max_topics:
             raise ValueError(
                 f"{type(self).__name__} declares {len(stream_types)} streams, "
@@ -624,14 +551,7 @@ class ArduinoModule(NativeModule):
         return topic_enum
 
     def _detect_port(self) -> str:
-        """Auto-detect Arduino port using arduino-cli.
-
-        Only returns a port whose FQBN exactly matches the configured
-        board.  On multi-device systems, guessing among unmatched
-        `/dev/ttyACM*` / `/dev/ttyUSB*` candidates is a footgun (picks up
-        printers, USB-serial adapters, etc.) so the unmatched-fallback
-        path now raises with a clear message instead of guessing.
-        """
+        """Find port whose FQBN matches config.board_fqbn, or raise."""
         result = subprocess.run(
             [_arduino_cli_bin(), "board", "list", "--format", "json"],
             capture_output=True,
@@ -650,10 +570,7 @@ class ArduinoModule(NativeModule):
                 f"stdout was:\n{result.stdout[:4096]}"
             ) from exc
 
-        # arduino-cli >=0.18 returns ``{"detected_ports": [...]}``, older
-        # versions returned a bare JSON list.  Accept both.  Calling
-        # ``.get`` unconditionally on a ``list`` would raise
-        # ``AttributeError`` so we branch on the shape first.
+        # Accept both old (bare list) and new ({"detected_ports": [...]}) formats.
         if isinstance(boards, list):
             entries = boards
         elif isinstance(boards, dict):
@@ -682,32 +599,18 @@ class ArduinoModule(NativeModule):
         stream_types = self._get_stream_types()
         topic_enum = self._build_topic_enum()
         self._validate_inbound_payload_sizes(stream_types)
+        self._warn_avr_sram_pressure(stream_types)
 
         sections: list[str] = []
 
-        # Header guard
         sections.append(
             "/* Auto-generated by DimOS ArduinoModule — do not edit */\n"
             "#ifndef DIMOS_ARDUINO_H\n"
             "#define DIMOS_ARDUINO_H\n"
         )
 
-        # Config #defines.
-        #
-        # Two categories of fields reach the sketch:
-        #   1. Fields declared on the user's ``ArduinoModuleConfig``
-        #      subclass — any field the user added is assumed to be
-        #      sketch-relevant and gets a ``#define``.
-        #   2. A small, explicit allowlist of framework-owned fields
-        #      (see ``_ARDUINO_SKETCH_FIELDS``) — currently just
-        #      ``baudrate``, but the sketch legitimately needs to know
-        #      the wire speed so it's embedded.
-        #
-        # All other ``ArduinoModuleConfig`` / ``NativeModuleConfig``
-        # fields are host-only plumbing (``executable``, ``sketch_path``,
-        # ``virtual``, ``log_format``, ...) and are skipped.  The user
-        # can also extend ``arduino_config_exclude`` to suppress fields
-        # from their own subclass.
+        # Emit #defines for user-defined config fields + _ARDUINO_SKETCH_FIELDS.
+        # Framework-internal fields (executable, virtual, etc.) are skipped.
         sections.append("/* --- Config --- */")
         framework_fields = set(ArduinoModuleConfig.model_fields)
         emit_framework = framework_fields & _ARDUINO_SKETCH_FIELDS
@@ -743,6 +646,17 @@ class ArduinoModule(NativeModule):
                     f"arduino_config_exclude or convert it to str/int/float/bool."
                 )
         sections.append("")
+
+        # User-defined #defines from arduino_defines config.
+        if self.config.arduino_defines:
+            sections.append("/* --- User-defined constants --- */")
+            for def_name, def_val in self.config.arduino_defines.items():
+                if not def_name.isidentifier():
+                    raise ValueError(
+                        f"arduino_defines key {def_name!r} is not a valid C identifier."
+                    )
+                sections.append(f"#define {def_name} {_c_literal(def_name, def_val)}")
+            sections.append("")
 
         # Topic enum (still used by bridge CLI args and backward compat)
         sections.append("/* --- Topic enum (shared with C++ bridge) --- */")
@@ -838,40 +752,9 @@ class ArduinoModule(NativeModule):
         # Close header guard
         sections.append("#endif /* DIMOS_ARDUINO_H */")
 
-        # Write the generated header directly next to the .ino.  The
-        # arduino-cli sketch preprocessor only honors ``-I`` flags from
-        # ``compiler.cpp.extra_flags`` during the main compile pass,
-        # **not** during its initial sketch-preprocessing phase (the
-        # ctags-driven step that scans the .ino to parse top-level
-        # declarations).  If the header lives outside the sketch dir,
-        # that phase parses the .ino with ``dimos_arduino.h`` unresolved,
-        # the ``enum dimos_topic`` tag never becomes visible, and
-        # ``case DIMOS_TOPIC__FOO:`` fails with "not declared in this
-        # scope" — even though the main compile pass would have found
-        # it.  Placing the header in the sketch dir puts it on arduino-
-        # cli's built-in search path and sidesteps the whole mess.
-        #
-        # Repo-cleanliness trade-off: the header is listed in
-        # ``dimos/hardware/arduino/.gitignore`` under
-        # ``examples/*/sketch/dimos_arduino.h`` so it stays untracked.
-        # Subclass authors shipping their own sketch directory outside
-        # ``examples/`` need to add an equivalent ignore entry.
-        #
-        # Note: two ArduinoModule subclasses that share a ``sketch_path``
-        # share this header.  That's intentional — a single compiled
-        # sketch can only have one header baked in — but it means
-        # subclasses sharing a sketch must also agree on the set of
-        # streams and config fields they embed.  If you need divergent
-        # headers, give each module its own ``sketch_path``.
-        #
-        # We also wipe the build dir.  arduino-cli writes
-        # ``includes.cache`` and ``build.options.json`` under
-        # ``--build-path`` and uses them to skip preprocessing on the
-        # next incremental compile — if the header's content changes
-        # between runs (very common: it's regenerated from config on
-        # every build), a stale cache can lead to mysterious "not
-        # declared in this scope" errors even though the file on disk
-        # is correct.  Clearing the build dir forces a clean compile.
+        # Header must live in the sketch dir — arduino-cli's preprocessor
+        # ignores -I flags during its ctags pass. Wipe build dir to avoid
+        # stale includes.cache causing "not declared" errors.
         sketch_dir = self._resolve_sketch_dir()
         header_path = sketch_dir / "dimos_arduino.h"
         header_path.write_text("\n".join(sections))
@@ -882,7 +765,6 @@ class ArduinoModule(NativeModule):
         logger.info("Generated Arduino header", path=str(header_path))
 
     def _resolve_sketch_dir(self) -> Path:
-        """Resolve the sketch directory path."""
         subclass_file = Path(inspect.getfile(type(self)))
         base_dir = subclass_file.parent
         if self.config.cwd:
@@ -891,19 +773,11 @@ class ArduinoModule(NativeModule):
         return sketch_path.parent
 
     def _build_dir(self) -> Path:
-        """Per-module build directory for compiled sketch artifacts."""
         sketch_dir = self._resolve_sketch_dir()
         return sketch_dir / "build"
 
     def _ensure_core_installed(self) -> None:
-        """Ensure the arduino-cli core for ``config.board_fqbn`` is installed.
-
-        Fresh ``arduino-cli`` invocations (for example the first time a
-        developer enters ``nix develop`` for this flake) have an empty
-        data directory with no cores installed, and ``arduino-cli compile``
-        fails with ``platform not installed``.  Installing the core is
-        idempotent and fast on subsequent runs, so we always check.
-        """
+        """Install the arduino-cli core for board_fqbn if not already present."""
         # board_fqbn is e.g. "arduino:avr:uno" — the core id is the first
         # two colon-separated segments: "arduino:avr".
         parts = self.config.board_fqbn.split(":")
@@ -942,26 +816,27 @@ class ArduinoModule(NativeModule):
         logger.info("Arduino core installed", core=core_id)
 
     def _compile_sketch(self) -> None:
-        """Compile the Arduino sketch using arduino-cli."""
         sketch_dir = self._resolve_sketch_dir()
         build_dir = self._build_dir()
         build_dir.mkdir(parents=True, exist_ok=True)
 
         common = str(_COMMON_DIR)
         msgs = str(_arduino_msgs_dir())
-        # ``dimos_arduino.h`` lives in the sketch dir (see
-        # ``_generate_header`` for why); the sketch dir is on arduino-cli's
-        # default include path, so no ``-I`` is needed for it.  The
-        # remaining ``-I`` flags point at the shared ``common/`` headers
-        # (dsp_protocol, lcm_coretypes_arduino) and the generated
-        # per-message Arduino type headers under ``arduino_msgs/``.
         extra_flags = f"-I{common} -I{msgs} -DF_CPU=16000000UL"
         if self.config.virtual:
-            # QEMU's AVR USART model doesn't fire interrupts, so
-            # HardwareSerial's ISR never triggers.  Use direct register
-            # access instead (the 2-byte FIFO doesn't overflow in
-            # simulation because QEMU runs AVR faster than real time).
+            # QEMU AVR doesn't fire USART interrupts — use direct register I/O.
             extra_flags += " -DDSP_DIRECT_USART"
+
+        # Compile-time tuning knobs from config fields.
+        for field, macro in _TUNING_FIELD_TO_DEFINE.items():
+            val = getattr(self.config, field)
+            if val is not None:
+                extra_flags += f" -D{macro}={val}"
+
+        # User-defined #defines also passed as -D flags so they're
+        # visible in all translation units, not just via the header.
+        for def_name, def_val in self.config.arduino_defines.items():
+            extra_flags += f" -D{def_name}={_c_literal(def_name, def_val)}"
 
         cmd = [
             _arduino_cli_bin(),
@@ -991,20 +866,13 @@ class ArduinoModule(NativeModule):
         logger.info("Arduino sketch compiled successfully", build_dir=str(build_dir))
 
     def _start_qemu(self) -> str:
-        """Launch qemu-system-avr with the compiled sketch and return the PTY path.
-
-        On any failure the helper fully tears down everything it allocated
-        (subprocess, log fd, temp file) before raising, so callers can
-        treat the raise as a clean "never started" signal.
-        """
+        """Launch qemu-system-avr and return the PTY path. Cleans up on failure."""
         build_dir = self._build_dir()
-        # arduino-cli outputs <sketch_name>.ino.elf
         sketch_name = Path(self.config.sketch_path).stem
         elf_path = build_dir / f"{sketch_name}.ino.elf"
         if not elf_path.exists():
             raise RuntimeError(f"Compiled sketch not found: {elf_path}")
 
-        # Map FQBN to QEMU machine type
         machine_map = {
             "arduino:avr:uno": "uno",
             "arduino:avr:mega": "mega",
@@ -1012,7 +880,6 @@ class ArduinoModule(NativeModule):
         }
         machine = machine_map.get(self.config.board_fqbn, "uno")
 
-        # Temp log file for QEMU stderr (where it announces the PTY path).
         tmp_log = tempfile.NamedTemporaryFile(
             prefix="dimos_qemu_", suffix=".log", delete=False, mode="w"
         )
@@ -1052,12 +919,7 @@ class ArduinoModule(NativeModule):
                         )
                 with open(self._qemu_log_path) as f:
                     content = f.read()
-                # QEMU announces the PTY via a line like
-                #   `char device redirected to <path> (label serial0)`
-                # `<path>` is `/dev/pts/N` on Linux and `/dev/ttysNNN` on
-                # macOS.  Match either, anchored on the "redirected to"
-                # phrase so unrelated `/dev/*` mentions in logs don't
-                # get picked up.
+                # Match "char device redirected to /dev/pts/N" or /dev/ttysNNN
                 m = re.search(
                     r"char device redirected to (/dev/(?:pts/\d+|ttys\d+))",
                     content,
@@ -1079,13 +941,10 @@ class ArduinoModule(NativeModule):
             logger.info("QEMU virtual Arduino running", pty=pty, pid=self._qemu_proc.pid)
             return pty
         except BaseException:
-            # Any error between Popen and "pty is announced" — tear it all
-            # down so the module is in a clean state before we re-raise.
             self._cleanup_qemu()
             raise
 
     def _flash(self) -> None:
-        """Flash the compiled sketch to the Arduino."""
         sketch_dir = self._resolve_sketch_dir()
         build_dir = self._build_dir()
         port = self.config.port
@@ -1136,16 +995,8 @@ class ArduinoModule(NativeModule):
 
 
 def _encoded_payload_size(msg_type: type) -> int | None:
-    """Return the LCM-encoded payload size of ``msg_type`` in bytes, or None.
-
-    Instantiates the type with a zero-arg constructor, calls
-    ``lcm_encode()``, and strips the 8-byte fingerprint header LCM
-    prepends (the Arduino DSP wire format doesn't carry the hash — it
-    lives in the bridge's registry).
-
-    Returns ``None`` if the type can't be introspected — no zero-arg
-    ctor, no ``lcm_encode``, or it raises.  Callers treat ``None`` as
-    "trust the user" rather than failing the build on unknown shapes.
+    """Return the full DSP wire payload size (fingerprint + data), or None if
+    the type can't be introspected.
     """
     try:
         instance = msg_type()
@@ -1158,11 +1009,10 @@ def _encoded_payload_size(msg_type: type) -> int | None:
         encoded = encode()
     except Exception:
         return None
-    return max(0, len(encoded) - 8)
+    return len(encoded)
 
 
 def _tail_text(path: str, max_bytes: int) -> str:
-    """Return the last `max_bytes` of `path`, or "" on error."""
     try:
         with open(path, "rb") as f:
             try:
