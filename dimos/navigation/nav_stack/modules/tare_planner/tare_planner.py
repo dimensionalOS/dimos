@@ -29,8 +29,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class TarePlannerConfig(NativeModuleConfig):
-    """Config for the TARE planner native module."""
-
     cwd: str | None = "."
     executable: str = "result/bin/tare_planner"
     build_command: str | None = (
