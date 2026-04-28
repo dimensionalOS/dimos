@@ -128,16 +128,20 @@ class RerunWebSocketServer(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        assert self._loop is not None
-        asyncio.run_coroutine_threadsafe(self._serve(), self._loop)
+        assert self._async_thread.loop is not None
+        asyncio.run_coroutine_threadsafe(self._serve(), self._async_thread.loop)
         self._server_ready.wait(timeout=self.config.start_timeout)
         self._log_connect_hints()
 
     @rpc
     def stop(self) -> None:
         self._server_ready.wait(timeout=self.config.start_timeout)
-        if self._loop is not None and not self._loop.is_closed() and self._stop_event is not None:
-            self._loop.call_soon_threadsafe(self._stop_event.set)
+        if (
+            self._async_thread.loop is not None
+            and not self._async_thread.loop.is_closed()
+            and self._stop_event is not None
+        ):
+            self._async_thread.loop.call_soon_threadsafe(self._stop_event.set)
         super().stop()
 
     def _log_connect_hints(self) -> None:
