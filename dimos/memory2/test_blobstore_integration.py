@@ -81,7 +81,7 @@ class TestBlobStoreIntegration:
             s.append("payload", ts=1.0)
 
             # Iterating with eager_blobs triggers load
-            results = s.fetch()
+            results = s.to_list()
             assert len(results) == 1
             # Data should be loaded (not _UNLOADED)
             assert not isinstance(results[0]._data, type(_UNLOADED))
@@ -96,8 +96,8 @@ class TestBlobStoreIntegration:
         eager_stream = store.stream("eager", str, eager_blobs=True)
         eager_stream.append("eager-val", ts=1.0)
 
-        lazy_results = lazy_stream.fetch()
-        eager_results = eager_stream.fetch()
+        lazy_results = lazy_stream.to_list()
+        eager_results = eager_stream.to_list()
 
         # Lazy: data stays unloaded until accessed
         assert lazy_results[0].data == "lazy-val"
@@ -127,7 +127,7 @@ class TestBlobStoreIntegration:
             s.append("south", ts=3.0, embedding=_emb([0, -1, 0]))
 
             # Vector search triggers lazy load via obs.derive(data=obs.data, ...)
-            results = s.search(_emb([0, 1, 0]), k=2).fetch()
+            results = s.search(_emb([0, 1, 0]), k=2).to_list()
             assert len(results) == 2
             assert results[0].data == "north"
             assert results[0].similarity > 0.99
@@ -138,7 +138,7 @@ class TestBlobStoreIntegration:
         s.append("temperature ok", ts=2.0)
 
         # Text search triggers lazy load via str(obs.data)
-        results = s.search_text("motor").fetch()
+        results = s.search_text("motor").to_list()
         assert len(results) == 1
         assert results[0].data == "motor fault"
 
@@ -148,7 +148,7 @@ class TestBlobStoreIntegration:
         s.append("second", ts=2.0)
         s.append("third", ts=3.0)
 
-        results = s.fetch()
+        results = s.to_list()
         assert [r.data for r in results] == ["first", "second", "third"]
 
     def test_fetch_preserves_metadata(self, store: MemoryStore) -> None:

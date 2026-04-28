@@ -45,7 +45,7 @@ class Double(Transformer[int, int]):
 # -- Pipeline styles -------------------------------------------------------
 
 
-class StaticStreamModule(StreamModule):
+class StaticStreamModule(StreamModule[int, int]):
     """Pipeline as a static Stream chain on the class."""
 
     pipeline = Stream().transform(Double())
@@ -53,7 +53,7 @@ class StaticStreamModule(StreamModule):
     doubled: Out[int]
 
 
-class StaticTransformerModule(StreamModule):
+class StaticTransformerModule(StreamModule[int, int]):
     """Pipeline as a bare Transformer on the class."""
 
     pipeline = Double()
@@ -65,12 +65,12 @@ class MethodPipelineConfig(ModuleConfig):
     factor: int = 2
 
 
-class MethodPipelineModule(StreamModule):
+class MethodPipelineModule(StreamModule[int, int]):
     """Pipeline as a method with access to self.config."""
 
     config: MethodPipelineConfig
 
-    def pipeline(self, stream: Stream) -> Stream:
+    def pipeline(self, stream: Stream[int]) -> Stream[int]:
         return stream.transform(Double(factor=self.config.factor))
 
     numbers: In[int]
