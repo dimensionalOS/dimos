@@ -14,9 +14,9 @@
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.livox.module import Mid360
-from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.vis_module import vis_module
 
 mid360 = autoconnect(
     Mid360.blueprint(),
-    RerunBridgeModule.blueprint(),
+    vis_module("rerun"),
 ).global_config(n_workers=2, robot_model="mid360")

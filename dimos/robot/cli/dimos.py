@@ -21,10 +21,11 @@ import inspect
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
 
 import click
 from dotenv import load_dotenv
@@ -48,7 +49,10 @@ from dimos.core.instance_registry import (
     stop as registry_stop,
     unregister,
 )
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.constants import RerunOpenOption
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
@@ -717,17 +721,43 @@ def send(
 
 @main.command(name="rerun-bridge")
 def rerun_bridge_cmd(
-    viewer_mode: str = typer.Option(
-        "native", help="Viewer mode: native (desktop), web (browser), none (headless)"
-    ),
     memory_limit: str = typer.Option(
         "25%", help="Memory limit for Rerun viewer (e.g., '4GB', '16GB', '25%')"
     ),
+    rerun_open: str = typer.Option(
+        "native", help="How to open Rerun: one of native, web, both, none"
+    ),
+    rerun_web: bool = typer.Option(
+        True, "--rerun-web/--no-rerun-web", help="Enable/Disable Rerun web server"
+    ),
 ) -> None:
-    """Launch the Rerun visualization bridge."""
-    from dimos.visualization.rerun.bridge import run_bridge
+    """Launch the Rerun visualization bridge.
 
-    run_bridge(viewer_mode=viewer_mode, memory_limit=memory_limit)
+    Standalone utility: runs the bridge directly in the main process (no
+    blueprint / worker pool) so users can attach a viewer to existing LCM
+    traffic without building a full module graph.
+    """
+    # Deferred: RerunBridgeModule pulls in the rerun package (~1s), keep it
+    # out of the CLI's hot path so `dimos --help` stays fast.
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+    valid = get_args(RerunOpenOption)
+    if rerun_open not in valid:
+        raise typer.BadParameter(
+            f"rerun_open must be one of {valid}, got {rerun_open!r}", param_hint="--rerun-open"
+        )
+    autoconf(check_only=True)
+
+    bridge = RerunBridgeModule(
+        memory_limit=memory_limit,
+        rerun_open=cast("RerunOpenOption", rerun_open),
+        rerun_web=rerun_web,
+        pubsubs=[LCM()],
+    )
+    bridge.start()
+
+    signal.signal(signal.SIGINT, lambda *_: bridge.stop())
+    signal.pause()
 
 
 if __name__ == "__main__":
