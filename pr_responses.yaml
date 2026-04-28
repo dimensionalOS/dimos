@@ -1,0 +1,18 @@
+- pr: 1922
+  comment_id: 3151786732
+  author: leshy
+  file: dimos/visualization/rerun/bridge.py
+  line: 305
+  problem: >
+    "I need to init rerun without a bridge for memory stuff, which 'grpc work'
+    do you need to do? what's the issue?"
+  solution: >
+    The issue is that register_colormap_annotation (called before serve_grpc)
+    needs a recording stream, but the recording stream can only be created
+    after the gRPC server starts. The PR refactors init order so serve_grpc
+    runs first, then register_colormap_annotation runs against the live
+    recording. This is specific to the bridge use-case where the viewer
+    connection is gRPC-based. For non-bridge rerun usage (like memory),
+    rr.init() alone is sufficient since there's no gRPC dependency.
+    Requires PR author input on whether to respond directly to leshy.
+  commit: null
