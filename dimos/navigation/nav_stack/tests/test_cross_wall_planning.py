@@ -38,6 +38,16 @@ import time
 import lcm as lcmlib
 import pytest
 
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.global_config import global_config
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
+from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
+from dimos.simulation.unity.module import UnityBridgeModule
+from dimos.visualization.vis_module import vis_module
+
 os.environ.setdefault("DISPLAY", ":1")
 
 ODOM_TOPIC = "/odometry#nav_msgs.Odometry"
@@ -67,20 +77,12 @@ class TestCrossWallPlanning:
     """E2E integration test: cross-wall routing through Unity sim."""
 
     def test_cross_wall_sequence(self) -> None:
-        from dimos.core.coordination.blueprints import autoconnect
-        from dimos.core.coordination.module_coordinator import ModuleCoordinator
-        from dimos.core.global_config import global_config
-        from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-        from dimos.msgs.nav_msgs.Odometry import Odometry
-        from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
-        from dimos.robot.unitree.g1.g1_rerun import (
-            g1_static_robot,
-        )
-        from dimos.simulation.unity.module import UnityBridgeModule
-        from dimos.visualization.vis_module import vis_module
-
         # -- Clear stale nav paths from previous runs -------------------------
-        paths_dir = Path(__file__).resolve().parents[3] / "data" / "smart_nav_paths"
+        paths_dir = (
+            Path(__file__).resolve().parents[3]
+            / "data"
+            / "unitree_g1_local_planner_precomputed_paths"
+        )
         if paths_dir.exists():
             for f in paths_dir.iterdir():
                 f.unlink(missing_ok=True)
