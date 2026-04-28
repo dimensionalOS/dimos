@@ -327,8 +327,6 @@ def astar(
 
 
 class SimplePlannerConfig(ModuleConfig):
-    """Config for the simple grid-A* planner."""
-
     # Costmap resolution in metres per cell.
     cell_size: float = 0.3
     # Points above this elevation (height above ground from terrain_map
