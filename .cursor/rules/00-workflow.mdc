@@ -1,0 +1,102 @@
+---
+description: Repository-wide workflow rules for Cursor agent in dimensionalOS/dimos
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Cursor agent rules for `dimensionalOS/dimos`
+
+> This is an `alwaysApply` rule. It outranks ad-hoc instructions in the chat.
+> If the user asks for something that conflicts with these rules, **stop and
+> surface the conflict** before acting.
+
+## Required behavior
+
+1. **Before any code change**, read `AGENTS.md` to confirm the change is in
+   scope. The "Agent Pipeline" and "Codex Review Guidelines" sections are
+   especially relevant.
+2. **After any code change**, run `bash scripts/verify.sh` at least once.
+   On failure, enter the debug loop: read the error → minimal fix → re-run
+   verify. Never bypass verify to make CI green.
+3. Land code via `feat/`, `fix/`, `chore/`, `docs/`, `test/`, `refactor/`,
+   or `perf/` branch + PR targeting **`dev`**:
+   - `git checkout -b <type>/<topic> origin/dev`
+   - `git add <only the files this change touches>`
+   - `git commit -m "<type>: <one-liner>"`
+   - `git push -u origin <branch>`
+   - Open the PR with the REST API (more reliable than `gh pr create`
+     immediately after push):
+     `gh api repos/dimensionalOS/dimos/pulls -X POST -f base=dev -f head=<branch> -f title=... -F body=@/tmp/pr-body.md`
+   - Enable squash auto-merge: `gh pr merge --auto --squash <pr-url>`
+4. When a step requires the GitHub web UI (auto-merge toggle, branch
+   protection, Codex App install), output a clear "human one-time todo
+   list" instead of pretending to do it.
+
+## Strictly forbidden
+
+1. **Never push** directly to `main` or `dev`. PRs only.
+2. **Never `git push --force`** to any reachable remote branch (especially
+   `dev`, `main`, or someone else's open PR branch).
+3. **Never modify existing entries** in `~/.ssh/config` — only append. The
+   user may have entries for company GitLab, robot dock IPs, etc.
+4. **Never `git add`** any of:
+   - `__pycache__/`, `*.pyc`, `.venv/`, `*.log`,
+   - `build/`, `dist/`, `*.egg-info/`,
+   - any file containing tokens, PATs, private IPs, or SSH keys,
+   - files larger than 50 MB without a Git LFS pointer.
+5. **Never silence `verify.sh`** to make CI green — do not comment out tests,
+   replace assertions with `pass`, or change `exit 1` to `exit 0`.
+6. **Never do large-scale refactors / renames / directory moves** without
+   explicit user approval. One PR, one concern.
+7. **Never stack `@rpc` and `@skill`** on the same method — `@skill` already
+   implies `@rpc` (see `dimos/agents/annotation.py`).
+8. **Never remove docstrings or type annotations** from a `@skill` method —
+   they are mandatory and the agent will fail to start without them.
+
+## dimos-specific guardrails
+
+- `dimos/robot/all_blueprints.py` is auto-generated. After adding/renaming a
+  blueprint, run `pytest dimos/robot/test_all_blueprints_generation.py` and
+  commit the regenerated file in the same PR.
+- Blueprints `target dev` for review and run via `dimos run <blueprint>`.
+  Real-hardware blueprints (`unitree-go2-agentic`, `unitree-g1-agentic`,
+  `xarm-perception-agent`) MUST NOT be invoked unless the user explicitly
+  asks.
+- Robot motion commands (`SportClient.Move`, `Twist`, MAVLink velocity
+  setpoints, xArm joint targets) require a `clamp` or saturation step
+  whenever the value originates from an LLM, RPC, or user input.
+- Transport / topic strings (LCM channels, ROS2 topics, DDS topics) are
+  searchable strings — when renaming, grep the entire repo and update
+  every site in the same PR.
+- System prompts (`dimos/agents/system_prompt.py`,
+  `dimos/robot/unitree/g1/system_prompt.py`) are hot — every change
+  ripples through every agent call. Document the before/after in the PR.
+- `mypy strict` is enabled. Never add `# type: ignore` on a public API
+  surface; if you must, add it on the narrowest possible scope and
+  explain in a comment.
+- Imports go at the top of the file. Inline imports are only acceptable
+  with a circular-dependency comment.
+- HTTP uses `requests`, not `urllib`. JSON values are typed `Any`, not
+  `object`.
+- Manual test scripts are prefixed `demo_` so pytest does not collect them.
+
+## Tooling expectations
+
+- Use Cursor's built-in tools (Read / Write / StrReplace / Glob / Grep)
+  before reaching for shell `cat` / `sed` / `awk` / `grep`.
+- Long-running commands (`bash scripts/verify.sh`, `uv sync`, `pytest -x`)
+  must be backgrounded with a sane timeout instead of blocking the agent.
+- `gh` CLI is at `/opt/homebrew/bin/gh` (mac) and the user is logged in.
+  Use it for all PR / status / merge actions.
+- SSH-over-443 is configured in `~/.ssh/config`. The git remote MUST stay
+  in `git@github.com:...` form; never silently rewrite it to HTTPS.
+
+## Definition of Done
+
+Every task ends with this output:
+
+1. List of files changed (use `git diff --stat`).
+2. The exact verify command that was run and its result.
+3. The PR URL (if a PR was opened).
+4. A bulleted human-todo list for anything that needed the GitHub web UI.
