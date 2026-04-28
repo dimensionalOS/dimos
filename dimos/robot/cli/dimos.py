@@ -21,11 +21,10 @@ import inspect
 import json
 import os
 from pathlib import Path
-import signal
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
 import click
 from dotenv import load_dotenv
@@ -39,10 +38,7 @@ from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.logging_config import setup_logger
-from dimos.visualization.rerun.constants import RerunOpenOption
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
@@ -225,10 +221,6 @@ def run(
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
-
-    # this is a workaround until we have a proper way to have delayed-module-choice in blueprints
-    # ex: vis_module(viewer=global_config.viewer) is WRONG (viewer will always be default value) without this patch
-    global_config.update(**cli_config_overrides)
 
     # Clean stale registry entries
     stale = cleanup_stale()
@@ -668,43 +660,17 @@ def send(
 
 @main.command(name="rerun-bridge")
 def rerun_bridge_cmd(
+    viewer_mode: str = typer.Option(
+        "native", help="Viewer mode: native (desktop), web (browser), none (headless)"
+    ),
     memory_limit: str = typer.Option(
         "25%", help="Memory limit for Rerun viewer (e.g., '4GB', '16GB', '25%')"
     ),
-    rerun_open: str = typer.Option(
-        "native", help="How to open Rerun: one of native, web, both, none"
-    ),
-    rerun_web: bool = typer.Option(
-        True, "--rerun-web/--no-rerun-web", help="Enable/Disable Rerun web server"
-    ),
 ) -> None:
-    """Launch the Rerun visualization bridge.
+    """Launch the Rerun visualization bridge."""
+    from dimos.visualization.rerun.bridge import run_bridge
 
-    Standalone utility: runs the bridge directly in the main process (no
-    blueprint / worker pool) so users can attach a viewer to existing LCM
-    traffic without building a full module graph.
-    """
-    # Deferred: RerunBridgeModule pulls in the rerun package (~1s), keep it
-    # out of the CLI's hot path so `dimos --help` stays fast.
-    from dimos.visualization.rerun.bridge import RerunBridgeModule
-
-    valid = get_args(RerunOpenOption)
-    if rerun_open not in valid:
-        raise typer.BadParameter(
-            f"rerun_open must be one of {valid}, got {rerun_open!r}", param_hint="--rerun-open"
-        )
-    autoconf(check_only=True)
-
-    bridge = RerunBridgeModule(
-        memory_limit=memory_limit,
-        rerun_open=cast("RerunOpenOption", rerun_open),
-        rerun_web=rerun_web,
-        pubsubs=[LCM()],
-    )
-    bridge.start()
-
-    signal.signal(signal.SIGINT, lambda *_: bridge.stop())
-    signal.pause()
+    run_bridge(viewer_mode=viewer_mode, memory_limit=memory_limit)
 
 
 if __name__ == "__main__":
