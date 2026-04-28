@@ -167,5 +167,4 @@ class EmbeddingModel(Resource, ABC):
         top_values, top_indices = similarities.topk(k=min(top_k, len(candidates)))
         return [(idx.item(), val.item()) for idx, val in zip(top_indices, top_values, strict=False)]
 
-
         ...
