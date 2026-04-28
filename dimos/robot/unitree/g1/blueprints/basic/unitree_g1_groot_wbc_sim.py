@@ -54,10 +54,12 @@ from pathlib import Path
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.navigation import NavigationSkillContainer
+from dimos.agents.skills.sim_g1_locomotion import G1SimLocomotion
 from dimos.agents.skills.speak_skill import SpeakSkill
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
@@ -71,8 +73,14 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool as DimosBool
+from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+    WavefrontFrontierExplorer,
+)
+from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.perception.experimental.temporal_memory.temporal_memory import TemporalMemory
 from dimos.perception.object_tracker import ObjectTracking
+from dimos.perception.perceive_loop_skill import PerceiveLoopSkill
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.robot.unitree.g1.blueprints.basic._groot_wbc_common import (
     ARM_DEFAULT_POSE,
@@ -282,24 +290,51 @@ _g1_perception_stack = (
     ),
 )
 
+# Agentic stack — Go2 parity minus xArm and minus PersonFollow.
+# UnitreeG1SkillContainer is still skipped (its move()/arm-gesture/mode
+# skills need G1ConnectionSpec which our in-process engine doesn't
+# provide); G1SimLocomotion gives the agent move() via /cmd_vel instead.
+# Vision is via PerceiveLoopSkill (Qwen API), memory introspection via
+# TemporalMemory.query().  Requires OPENAI_API_KEY (LLM + TTS) and
+# ALIBABA_API_KEY (Qwen-VL for navigate_with_text + look_out_for).
+_g1_agentic_stack = (
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT),
+    G1SimLocomotion.blueprint().transports(
+        {
+            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+        }
+    ),
+    NavigationSkillContainer.blueprint(),
+    SpeakSkill.blueprint(),
+    PerceiveLoopSkill.blueprint().transports(
+        {
+            ("color_image", Image): LCMTransport("/splat/color_image", Image),
+        }
+    ),
+    TemporalMemory.blueprint(
+        new_memory=global_config.new_memory,
+        # CLIP filter is ~350MB on GPU; gsplat already lives there, and
+        # Qwen-VL is API-based so we don't need a local image encoder.
+        # Disable to keep VRAM headroom.
+        use_clip_filtering=False,
+    ).transports(
+        {
+            ("color_image", Image): LCMTransport("/splat/color_image", Image),
+            ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
+        }
+    ),
+    PatrollingModule.blueprint(),
+    WavefrontFrontierExplorer.blueprint(),
+)
+
 unitree_g1_groot_wbc_sim = autoconnect(
     _g1_coordinator,
     _g1_engine,
     _g1_ws_vis,
     *_viser_modules,
     *_g1_perception_stack,
-    # Agentic loop: MCP server + LLM client + skill containers.
-    # Requires OPENAI_API_KEY (LLM is gpt-4o by default, SpeakSkill uses
-    # OpenAI TTS).  We compose a sim-friendly subset: skip
-    # UnitreeG1SkillContainer (its move()/arm-gesture/mode skills require
-    # a G1Connection-spec module, i.e. the old subprocess sim path that
-    # would conflict with our in-process MujocoSimModule).  Agent has
-    # navigate_with_text/tag_location/etc. via NavigationSkillContainer
-    # and speak() via SpeakSkill.  TODO: G1Sim-compatible move() skill.
-    McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT),
-    NavigationSkillContainer.blueprint(),
-    SpeakSkill.blueprint(),
-).global_config(n_workers=14)
+    *_g1_agentic_stack,
+).global_config(n_workers=18, detection_model="qwen")
 
 __all__ = ["unitree_g1_groot_wbc_sim"]
