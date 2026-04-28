@@ -139,13 +139,13 @@ class TestLoopClosure:
 
             for _s in range(n_steps):
                 if not positions:
-                    pos = np.array([0.0, 0.0, 0.0])
+                    position = np.array([0.0, 0.0, 0.0])
                 else:
-                    pos = positions[-1] + np.array([dx, dy, 0.0])
-                positions.append(pos)
+                    position = positions[-1] + np.array([dx, dy, 0.0])
+                positions.append(position)
 
                 cloud = make_structured_sphere_cloud(np.zeros(3), n_points=300, seed=int(t) % 1000)
-                added = pgo.add_key_pose(r, pos, t, cloud)
+                added = pgo.add_key_pose(r, position, t, cloud)
                 if added:
                     pgo.search_for_loops()
                     pgo.smooth_and_update()
@@ -173,8 +173,8 @@ class TestLoopClosure:
         # are far enough in time. Loop closure should be detected.
         assert len(pgo._history_pairs) > 0, (
             f"No loop closure detected with {len(pgo._key_poses)} keyframes. "
-            f"Start pos: {pgo._key_poses[0].t_global}, "
-            f"End pos: {pgo._key_poses[-1].t_global}"
+            f"Start position: {pgo._key_poses[0].t_global}, "
+            f"End position: {pgo._key_poses[-1].t_global}"
         )
 
     def test_no_false_loop_closure(self):
@@ -192,9 +192,9 @@ class TestLoopClosure:
         # Drive in a straight line — no revisiting
         r = np.eye(3)
         for i in range(100):
-            pos = np.array([i * 0.5, 0.0, 0.0])
+            position = np.array([i * 0.5, 0.0, 0.0])
             cloud = make_random_cloud(np.zeros(3), n_points=100, seed=i)
-            added = pgo.add_key_pose(r, pos, float(i), cloud)
+            added = pgo.add_key_pose(r, position, float(i), cloud)
             if added:
                 pgo.search_for_loops()
                 pgo.smooth_and_update()
@@ -217,16 +217,16 @@ class TestLoopClosure:
         # Time stamps are close together (1s apart), so loop_time_thresh=60 blocks detection
         r = np.eye(3)
         for i in range(20):
-            pos = np.array([i * 0.5, 0.0, 0.0])
+            position = np.array([i * 0.5, 0.0, 0.0])
             cloud = make_random_cloud(np.zeros(3), n_points=100, seed=i)
-            pgo.add_key_pose(r, pos, float(i), cloud)
+            pgo.add_key_pose(r, position, float(i), cloud)
             pgo.smooth_and_update()
 
         # Come back to start
         for i in range(20):
-            pos = np.array([(19 - i) * 0.5, 0.1, 0.0])
+            position = np.array([(19 - i) * 0.5, 0.1, 0.0])
             cloud = make_random_cloud(np.zeros(3), n_points=100, seed=i + 100)
-            added = pgo.add_key_pose(r, pos, float(20 + i), cloud)
+            added = pgo.add_key_pose(r, position, float(20 + i), cloud)
             if added:
                 pgo.search_for_loops()
                 pgo.smooth_and_update()
@@ -315,9 +315,9 @@ class TestGlobalMap:
         n_keyframes = 5
         pts_per_frame = 50
         for i in range(n_keyframes):
-            pos = np.array([i * 1.0, 0.0, 0.0])
+            position = np.array([i * 1.0, 0.0, 0.0])
             cloud = make_random_cloud(np.zeros(3), n_points=pts_per_frame, seed=i)
-            pgo.add_key_pose(np.eye(3), pos, float(i), cloud)
+            pgo.add_key_pose(np.eye(3), position, float(i), cloud)
             pgo.smooth_and_update()
 
         assert len(pgo._key_poses) == n_keyframes
@@ -340,9 +340,9 @@ class TestGlobalMap:
 
         # Add enough keyframes for a trajectory
         for i in range(15):
-            pos = np.array([i * 0.5, 0.0, 0.0])
+            position = np.array([i * 0.5, 0.0, 0.0])
             cloud = make_random_cloud(np.zeros(3), n_points=50, seed=i % 3)
-            pgo.add_key_pose(np.eye(3), pos, float(i), cloud)
+            pgo.add_key_pose(np.eye(3), position, float(i), cloud)
             pgo.smooth_and_update()
 
         map_before = pgo.build_global_map(voxel_size=0.0)
@@ -374,19 +374,19 @@ class TestGlobalMap:
         pgo = _SimplePGO(PGOConfig(key_pose_delta_trans=0.3))
 
         for i in range(3):
-            pos = np.array([i * 1.0, 0.0, 0.0])
+            position = np.array([i * 1.0, 0.0, 0.0])
             cloud = make_random_cloud(np.zeros(3), n_points=100, seed=i)
-            pgo.add_key_pose(np.eye(3), pos, float(i), cloud)
+            pgo.add_key_pose(np.eye(3), position, float(i), cloud)
             pgo.smooth_and_update()
 
         global_map = pgo.build_global_map(0.0)
         assert len(global_map) > 0
 
         # Convert to PointCloud2 — verify it's valid
-        pc2 = PointCloud2.from_numpy(
+        cloud = PointCloud2.from_numpy(
             global_map.astype(np.float32), frame_id="map", timestamp=time.time()
         )
-        points_back, _ = pc2.as_numpy()
+        points_back, _ = cloud.as_numpy()
         assert len(points_back) > 0
         assert points_back.shape[1] >= 3
 

@@ -279,7 +279,7 @@ class TestBlockedAtInflation:
         assert costmap.inflation_radius == 0.0
         _blocked_at_inflation(costmap, 3.0)
         assert costmap.inflation_radius == 0.0  # unchanged
-        # Live costmap's own blocked_cells still reflects its own inflation
+        # Live costmap'state own blocked_cells still reflects its own inflation
         assert costmap.blocked_cells() == {(0, 0)}
 
     def test_rejects_negative_inflation(self):
@@ -319,42 +319,42 @@ class TestStuckEscalation:
         return new_state
 
     def test_progress_refreshes_last_time(self):
-        s = self._initial_state()
-        s = self._step(s, 10.0, 0.0)
-        assert s.ref_goal_dist == 10.0
-        s = self._step(s, 9.0, 1.0)
-        assert s.last_progress_time == 1.0
-        assert s.ref_goal_dist == 9.0
-        assert s.effective_inflation == 0.4
+        state = self._initial_state()
+        state = self._step(state, 10.0, 0.0)
+        assert state.ref_goal_dist == 10.0
+        state = self._step(state, 9.0, 1.0)
+        assert state.last_progress_time == 1.0
+        assert state.ref_goal_dist == 9.0
+        assert state.effective_inflation == 0.4
 
     def test_tiny_progress_does_not_count(self):
-        s = self._initial_state()
-        s = self._step(s, 10.0, 0.0, progress_epsilon=0.25)
-        s = self._step(s, 9.9, 1.0, progress_epsilon=0.25)
-        assert s.ref_goal_dist == 10.0
-        assert s.last_progress_time == 0.0
+        state = self._initial_state()
+        state = self._step(state, 10.0, 0.0, progress_epsilon=0.25)
+        state = self._step(state, 9.9, 1.0, progress_epsilon=0.25)
+        assert state.ref_goal_dist == 10.0
+        assert state.last_progress_time == 0.0
 
     def test_escalation_shrinks_inflation(self):
-        s = self._initial_state(inflation_radius=0.4)
+        state = self._initial_state(inflation_radius=0.4)
         kw = dict(stuck_seconds=5.0, stuck_shrink_factor=0.5)
-        s = self._step(s, 10.0, 0.0, **kw)
-        s = self._step(s, 10.0, 4.9, **kw)
-        assert s.effective_inflation == 0.4
-        s = self._step(s, 10.0, 5.0, **kw)
-        assert s.effective_inflation == 0.2
-        s = self._step(s, 10.0, 10.0, **kw)
-        assert s.effective_inflation == 0.1
+        state = self._step(state, 10.0, 0.0, **kw)
+        state = self._step(state, 10.0, 4.9, **kw)
+        assert state.effective_inflation == 0.4
+        state = self._step(state, 10.0, 5.0, **kw)
+        assert state.effective_inflation == 0.2
+        state = self._step(state, 10.0, 10.0, **kw)
+        assert state.effective_inflation == 0.1
 
     def test_escalation_respects_floor(self):
-        s = self._initial_state(inflation_radius=0.4)
+        state = self._initial_state(inflation_radius=0.4)
         kw = dict(stuck_seconds=1.0, stuck_shrink_factor=0.5, stuck_min_inflation=0.2)
-        s = self._step(s, 10.0, 0.0, **kw)
-        s = self._step(s, 10.0, 1.0, **kw)
-        assert s.effective_inflation == 0.2
-        s = self._step(s, 10.0, 2.0, **kw)
-        assert s.effective_inflation == 0.2
-        s = self._step(s, 10.0, 3.0, **kw)
-        assert s.effective_inflation == 0.2
+        state = self._step(state, 10.0, 0.0, **kw)
+        state = self._step(state, 10.0, 1.0, **kw)
+        assert state.effective_inflation == 0.2
+        state = self._step(state, 10.0, 2.0, **kw)
+        assert state.effective_inflation == 0.2
+        state = self._step(state, 10.0, 3.0, **kw)
+        assert state.effective_inflation == 0.2
 
     def test_cached_path_lookahead_tracks_robot_position(self):
         cached = [(x, 0.0) for x in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0)]
@@ -366,10 +366,10 @@ class TestStuckEscalation:
         # Once we shrink inflation to clear a tight spot, we DON'T bump
         # it back up on subsequent progress — escalated value stays in
         # force until the next goal arrives.
-        s = self._initial_state(inflation_radius=0.4)
-        s = self._step(s, 10.0, 0.0, stuck_seconds=1.0)
-        s = self._step(s, 10.0, 1.0, stuck_seconds=1.0)
-        assert s.effective_inflation == 0.2
-        s = self._step(s, 9.0, 1.5, stuck_seconds=1.0)
-        assert s.effective_inflation == 0.2
-        assert s.ref_goal_dist == 9.0
+        state = self._initial_state(inflation_radius=0.4)
+        state = self._step(state, 10.0, 0.0, stuck_seconds=1.0)
+        state = self._step(state, 10.0, 1.0, stuck_seconds=1.0)
+        assert state.effective_inflation == 0.2
+        state = self._step(state, 9.0, 1.5, stuck_seconds=1.0)
+        assert state.effective_inflation == 0.2
+        assert state.ref_goal_dist == 9.0
