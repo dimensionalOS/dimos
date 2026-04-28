@@ -27,7 +27,6 @@ from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSd
 
 
 def draw_ui(stdscr: Any, state_text: str = "Not connected") -> None:
-    """Draw the control UI."""
     stdscr.clear()
     height, width = stdscr.getmaxyx()
 

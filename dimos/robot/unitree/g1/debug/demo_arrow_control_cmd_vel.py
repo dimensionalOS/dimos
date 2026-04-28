@@ -37,7 +37,6 @@ def publish_twist(lc: lcm.LCM, twist: Twist) -> None:
 
 
 def draw_ui(stdscr: Any, state_text: str = "Not connected") -> None:
-    """Draw the control UI."""
     stdscr.clear()
     height, width = stdscr.getmaxyx()
 
