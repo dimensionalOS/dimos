@@ -45,14 +45,12 @@ pytestmark = pytest.mark.skipif(not _HAS_PGO_DEPS, reason="gtsam not installed")
 
 
 def make_rotation(yaw_deg: float) -> np.ndarray:
-    """Create a 3x3 rotation matrix from a yaw angle in degrees."""
     return Rotation.from_euler("z", yaw_deg, degrees=True).as_matrix()
 
 
 def make_random_cloud(
     center: np.ndarray, n_points: int = 200, spread: float = 1.0, seed: int | None = None
 ) -> np.ndarray:
-    """Create a random Nx3 point cloud around a center point."""
     rng = np.random.default_rng(seed)
     return center + rng.normal(0, spread, (n_points, 3))
 
@@ -60,14 +58,14 @@ def make_random_cloud(
 def make_box_cloud(
     center: np.ndarray, size: float = 2.0, n_points: int = 500, seed: int | None = None
 ) -> np.ndarray:
-    """Create a uniform-random box-shaped point cloud."""
     rng = np.random.default_rng(seed)
     pts = rng.uniform(-size / 2, size / 2, (n_points, 3))
     return pts + center
 
 
-def make_structured_cloud(center: np.ndarray, n_points: int = 500, seed: int = 42) -> np.ndarray:
-    """Create a structured point cloud (sphere surface) around a center."""
+def make_structured_sphere_cloud(
+    center: np.ndarray, n_points: int = 500, seed: int = 42
+) -> np.ndarray:
     rng = np.random.default_rng(seed)
     phi = rng.uniform(0, 2 * np.pi, n_points)
     theta = rng.uniform(0, np.pi, n_points)
@@ -156,7 +154,7 @@ class TestLoopClosure:
                     pos = positions[-1] + np.array([dx, dy, 0.0])
                 positions.append(pos)
 
-                cloud = make_structured_cloud(np.zeros(3), n_points=300, seed=int(t) % 1000)
+                cloud = make_structured_sphere_cloud(np.zeros(3), n_points=300, seed=int(t) % 1000)
                 added = pgo.add_key_pose(r, pos, t, cloud)
                 if added:
                     pgo.search_for_loops()
@@ -280,7 +278,7 @@ class TestLoopClosure:
             yaw = angle + math.pi / 2  # Tangent direction
             r = Rotation.from_euler("z", yaw).as_matrix()
 
-            cloud = make_structured_cloud(
+            cloud = make_structured_sphere_cloud(
                 np.zeros(3), n_points=200, seed=i % 50
             )  # Reuse clouds for loop match
             t_sec = float(i) * 1.0  # 1 second per step
@@ -406,7 +404,7 @@ class TestGlobalMap:
 class TestICP:
     def test_icp_matches_identical_clouds(self):
         """ICP between two identical clouds should return identity transform."""
-        cloud = make_structured_cloud(np.zeros(3), n_points=500, seed=42)
+        cloud = make_structured_sphere_cloud(np.zeros(3), n_points=500, seed=42)
 
         transform, score = _icp(cloud, cloud)
         np.testing.assert_allclose(transform[:3, :3], np.eye(3), atol=0.1)
@@ -414,7 +412,7 @@ class TestICP:
         assert score < 0.1
 
     def test_icp_matches_translated_cloud(self):
-        cloud = make_structured_cloud(np.zeros(3), n_points=500, seed=42)
+        cloud = make_structured_sphere_cloud(np.zeros(3), n_points=500, seed=42)
         shifted = cloud + np.array([1.0, 0.0, 0.0])
 
         transform, _score = _icp(shifted, cloud, max_dist=5.0)
@@ -425,8 +423,8 @@ class TestICP:
 
     def test_icp_rejects_dissimilar_clouds(self):
         """ICP between far-apart clouds should report infinite fitness (no match)."""
-        cloud_a = make_structured_cloud(np.array([0.0, 0.0, 0.0]), n_points=200, seed=1)
-        cloud_b = make_structured_cloud(np.array([100.0, 100.0, 0.0]), n_points=200, seed=2)
+        cloud_a = make_structured_sphere_cloud(np.array([0.0, 0.0, 0.0]), n_points=200, seed=1)
+        cloud_b = make_structured_sphere_cloud(np.array([100.0, 100.0, 0.0]), n_points=200, seed=2)
 
         # With max_dist=2.0 and clouds ~141m apart, _icp finds <10 correspondences
         # and returns early with fitness=inf.
