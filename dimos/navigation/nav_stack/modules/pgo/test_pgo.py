@@ -404,8 +404,6 @@ class TestGlobalMap:
 
 
 class TestICP:
-    """Test ICP matching functionality."""
-
     def test_icp_matches_identical_clouds(self):
         """ICP between two identical clouds should return identity transform."""
         cloud = make_structured_cloud(np.zeros(3), n_points=500, seed=42)
@@ -437,8 +435,6 @@ class TestICP:
 
 
 class TestEdgeCases:
-    """Test edge cases and robustness."""
-
     def test_empty_cloud_handled(self):
         """Adding a keyframe with an empty cloud should not crash."""
         pgo = _SimplePGO(PGOConfig())
@@ -471,10 +467,7 @@ class TestEdgeCases:
 
 
 class TestPGOWrapper:
-    """Test the Python NativeModule wrapper (port definitions)."""
-
     def test_pgo_module_has_correct_ports(self):
-        """PGO module should declare the right input/output ports."""
         # Check class annotations for port definitions
         annotations = PGO.__annotations__
         assert "registered_scan" in annotations
@@ -483,7 +476,6 @@ class TestPGOWrapper:
         assert "global_map" in annotations
 
     def test_pgo_config_defaults(self):
-        """PGO config should have sensible defaults."""
         # NativeModuleConfig is Pydantic; check model_fields for defaults
         fields = PGOConfig.model_fields
         assert fields["key_pose_delta_trans"].default == 0.5
