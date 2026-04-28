@@ -38,6 +38,7 @@ from dimos.utils.characterization.modeling.pool import (
     compare_rise_fall,
     pool_session,
 )
+from dimos.utils.characterization.modeling.simulate import simulate_fopdt
 
 
 # -------------------------- recipe-name parser ---------------------------
@@ -133,6 +134,118 @@ def test_fopdt_returns_failure_for_too_few_samples() -> None:
     y = np.array([0.0, 0.1, 0.2])
     fit = fit_fopdt(t, y, u_step=1.0)
     assert not fit.converged
+
+
+# -------------------------- simulate (forward model) --------------------
+
+def _params(K: float, tau: float, L: float) -> FopdtParams:
+    return FopdtParams(
+        K=K, tau=tau, L=L,
+        K_ci=(K, K), tau_ci=(tau, tau), L_ci=(L, L),
+        rmse=0.0, r_squared=1.0, n_samples=0,
+        fit_window_s=(0.0, 0.0), degenerate=False, converged=True,
+    )
+
+
+def test_simulate_fopdt_step_matches_closed_form() -> None:
+    """Step input through the simulator should reproduce the closed-form
+    step response within numerical tolerance."""
+    K, tau, L = 0.92, 0.28, 0.06
+    u_step = 1.0
+    dt = 0.005
+    t = np.arange(0.0, 3.0, dt)
+    cmd = np.where(t >= 0.0, u_step, 0.0)  # step at t=0
+    y = simulate_fopdt(t, cmd, _params(K, tau, L))
+    y_truth = fopdt_step_response(t, K, tau, L, u_step)
+    # Discrete Euler with small dt should track the analytic curve closely.
+    assert np.max(np.abs(y - y_truth)) < 5e-3
+
+
+def test_simulate_then_fit_round_trip() -> None:
+    """Generate a step trace via simulate_fopdt, fit it, recover params."""
+    K, tau, L = 0.85, 0.22, 0.08
+    u_step = 1.0
+    dt = 0.01
+    t = np.arange(0.0, 3.0, dt)
+    cmd = np.where(t >= 0.0, u_step, 0.0)
+    y = simulate_fopdt(t, cmd, _params(K, tau, L))
+    fit = fit_fopdt(t, y, u_step=u_step)
+    assert fit.converged
+    assert abs(fit.K - K) / K < 0.02
+    assert abs(fit.tau - tau) / tau < 0.05
+    assert abs(fit.L - L) < 0.01
+
+
+def test_simulate_handles_nonuniform_timestamps() -> None:
+    """Simulator integrates on the input timestamps directly. Mildly
+    non-uniform spacing should still yield a reasonable response."""
+    K, tau, L = 0.9, 0.20, 0.05
+    rng = np.random.default_rng(0)
+    base = np.arange(0.0, 3.0, 0.01)
+    jitter = rng.uniform(-0.002, 0.002, size=base.shape)
+    t = np.sort(base + jitter)
+    cmd = np.where(t >= 0.0, 1.0, 0.0)
+    y = simulate_fopdt(t, cmd, _params(K, tau, L))
+    # Tail should approach K * u_step.
+    assert abs(np.mean(y[-30:]) - K) < 0.02
+
+
+def test_simulate_asymmetric_reverse_step() -> None:
+    """For a reverse step (cmd 0 -> -A -> 0), the accel phase has |target|
+    growing from 0 to K*A and should use rise_params; the brake phase has
+    |target| dropping back to 0 and should use fall_params. The signed
+    target is always <= y[k-1] in this trace, so a heuristic based on
+    signed-target-vs-y would pick fall_params throughout — wrong.
+    """
+    rise = _params(K=0.95, tau=0.20, L=0.05)
+    fall = _params(K=0.95, tau=0.40, L=0.05)
+    dt = 0.005
+    t = np.arange(0.0, 4.0, dt)
+    cmd = np.zeros_like(t)
+    cmd[(t >= 0.5) & (t < 2.0)] = -1.0  # reverse step
+
+    y = simulate_fopdt(t, cmd, rise, fall_params=fall)
+
+    # During accel (just before step-down at t=2.0), y should be near -K.
+    pre_down = y[(t > 1.9) & (t < 2.0)]
+    assert abs(np.mean(pre_down) - (-0.95)) < 0.02
+
+    # Accel rise time used should be tau_rise=0.2 not tau_fall=0.4.
+    # At t = 0.5 + L + tau_rise = 0.75, y should have crossed 63% of -K.
+    target_63 = -0.63 * 0.95
+    near_one_tau = y[(t > 0.74) & (t < 0.76)]
+    # If tau_rise (0.2) was used: y ≈ -0.6 here. If tau_fall (0.4) was
+    # used by mistake: y ≈ -0.37. Threshold at -0.5 cleanly separates.
+    assert np.mean(near_one_tau) < -0.5, (
+        f"reverse-accel decay seems to have used fall_params; "
+        f"y at t≈0.75 = {np.mean(near_one_tau):.3f} should be < -0.5 "
+        f"(target_63 = {target_63:.3f})"
+    )
+
+
+def test_simulate_asymmetric_rise_fall() -> None:
+    """With distinct fall_params, a step-up-then-step-down trace should
+    show different time constants on rise vs fall."""
+    rise = _params(K=0.95, tau=0.20, L=0.05)
+    fall = _params(K=0.95, tau=0.40, L=0.05)  # fall is 2x slower
+    dt = 0.005
+    t = np.arange(0.0, 4.0, dt)
+    cmd = np.zeros_like(t)
+    cmd[(t >= 0.5) & (t < 2.0)] = 1.0  # step up at 0.5, down at 2.0
+    y = simulate_fopdt(t, cmd, rise, fall_params=fall)
+
+    # At t=2.0+rise_tau, rise response should be near steady-state.
+    # At t=2.0+fall_tau, fall response should be ~63% down from peak.
+    # Rough sanity: y near steady ~= K just before the step-down...
+    pre_down = y[(t > 1.9) & (t < 2.0)]
+    assert abs(np.mean(pre_down) - 0.95) < 0.02
+
+    # ...and after fall_tau (0.4s) past the down-step, should still be
+    # well above zero (slower decay than rise would predict).
+    after_one_tau = y[(t > 2.05 + 0.40) & (t < 2.10 + 0.40)]
+    # Symmetric (tau=0.20) would have y ~ 0.95*exp(-2) ~= 0.13.
+    # Asymmetric with tau=0.40 should give y ~ 0.95*exp(-1) ~= 0.35.
+    assert np.mean(after_one_tau) > 0.25
 
 
 # -------------------------- aggregate ------------------------------------

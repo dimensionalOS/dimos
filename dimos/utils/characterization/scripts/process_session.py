@@ -208,6 +208,93 @@ def main_fit_all(argv: list[str] | None = None) -> int:
     return 0
 
 
+def main_tune(argv: list[str] | None = None) -> int:
+    """``python -m dimos.utils.characterization.scripts.process_session tune`` — lambda-tune PI gains for each channel.
+
+    Loads ``model_summary.json`` from the session, runs a multiplier sweep
+    (λ ∈ [τ, 3τ]) per channel through a battery of reference signals,
+    picks the lowest-cost candidate, runs robustness sweeps on K (±15%)
+    and on τ / L (±20%), and writes ``tuning_summary.json`` +
+    ``tuning_report.md`` + plots under ``<session>/modeling/tuning/``.
+    """
+    parser = argparse.ArgumentParser(
+        description="Lambda-tune PI controller gains per channel.")
+    parser.add_argument("session_dir")
+    parser.add_argument("--no-plots", action="store_true",
+                        help="Skip step / sweep plots (faster)")
+    parser.add_argument("--control-rate-hz", type=float, default=50.0,
+                        help="Discrete control rate (default 50 Hz)")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+
+    from dimos.utils.characterization.modeling.tune_session import tune_session
+    s = Path(args.session_dir)
+    print(f"tuning PI gains: {s}")
+    out = tune_session(
+        s,
+        write_plots_enabled=not args.no_plots,
+        control_dt_s=1.0 / args.control_rate_hz,
+    )
+    for channel, ch in sorted((out.get("channels") or {}).items()):
+        if "skip_reason" in ch:
+            print(f"  {channel}: SKIPPED - {ch['skip_reason']}")
+            continue
+        gains = (ch.get("tuning") or {}).get("best_gains") or {}
+        print(
+            f"  {channel}: verdict={ch.get('verdict','?').upper():<8s} "
+            f"Kp={gains.get('Kp', 0):.3f}, Ki={gains.get('Ki', 0):.3f}, "
+            f"Kt={gains.get('Kt', 0):.3f} (λ-mult={gains.get('multiplier', 0):.2f})"
+        )
+    out_dir = s / "modeling" / "tuning"
+    print(f"artifacts: {out_dir / 'tuning_report.md'}, "
+          f"{out_dir / 'tuning_summary.json'}, {out_dir / 'plots'}/")
+    return 0
+
+
+def main_validate_model(argv: list[str] | None = None) -> int:
+    """``python -m dimos.utils.characterization.scripts.process_session validate-model`` — direction-holdout validation of the FOPDT fit.
+
+    Refits the model on forward-direction runs only, then predicts the
+    held-out reverse-direction runs and reports per-channel pass/marginal/
+    fail verdicts. Outputs land in ``<session>/modeling/validation/``.
+    """
+    parser = argparse.ArgumentParser(
+        description="Validate FOPDT fit on held-out reverse-direction runs.")
+    parser.add_argument("session_dir")
+    parser.add_argument("--no-plots", action="store_true",
+                        help="Skip overlay/distribution plots (faster)")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+
+    from dimos.utils.characterization.modeling.validate_session import (
+        validate_session_direction_holdout,
+    )
+    s = Path(args.session_dir)
+    print(f"validating FOPDT model: {s}")
+    summary = validate_session_direction_holdout(
+        s, write_plots_enabled=not args.no_plots,
+    )
+    print(f"  mode: {summary.get('mode')}")
+    print(f"  trained on {summary.get('n_train_runs_forward', 0)} forward runs; "
+          f"validated on {summary.get('n_validate_runs_reverse', 0)} reverse runs")
+    for channel, cs in sorted((summary.get("channels") or {}).items()):
+        rn = (cs.get("rise_norm_rmse") or {}).get("median")
+        fn = (cs.get("fall_norm_rmse") or {}).get("median") if cs.get("fall_norm_rmse") else None
+        rn_str = f"{rn:.1%}" if isinstance(rn, float) else "—"
+        fn_str = f"{fn:.1%}" if isinstance(fn, float) else "—"
+        print(
+            f"  {channel}: {cs.get('verdict','?').upper():<8} "
+            f"({cs.get('n_pass',0)}/{cs.get('n_total',0)} pass; "
+            f"rise nRMSE med={rn_str}, fall nRMSE med={fn_str})"
+        )
+    out_dir = s / "modeling" / "validation"
+    print(f"artifacts: {out_dir / 'validation_report.md'}, "
+          f"{out_dir / 'validation_summary.json'}, {out_dir / 'plots'}/")
+    return 0
+
+
 def main_compare_models(argv: list[str] | None = None) -> int:
     """``python -m dimos.utils.characterization.scripts.process_session compare-models`` — default vs rage FOPDT comparison.
 
@@ -263,6 +350,8 @@ _SUBCOMMANDS: dict[str, callable] = {
     "compare-modes": main_compare_modes,
     "fit": main_fit,
     "fit-all": main_fit_all,
+    "validate-model": main_validate_model,
+    "tune": main_tune,
     "compare-models": main_compare_models,
 }
 
