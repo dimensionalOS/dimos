@@ -190,7 +190,7 @@ class ModuleBase(Configurable, CompositeResource):
         self.__dict__.update(state)
         # Reinitialize runtime attributes
         self._disposables = CompositeDisposable()
-        self._async_thread = None  # type: ignore[assignment]
+        self._async_thread = AsyncModuleThread(module=self)
         self._rpc = None
         self._tf = None
 
