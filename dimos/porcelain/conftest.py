@@ -14,10 +14,19 @@
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from dimos.core.tests.stress_test_module import StressTestModule
 from dimos.porcelain.dimos import Dimos
+
+
+def _join_daemon_threads(timeout: float = 2.0) -> None:
+    """Join any daemon threads spawned by event-loop threads."""
+    for t in threading.enumerate():
+        if t.daemon and "event-loop" in t.name:
+            t.join(timeout=timeout)
 
 
 @pytest.fixture
@@ -27,6 +36,7 @@ def app():
         yield instance
     finally:
         instance.stop()
+        _join_daemon_threads()
 
 
 @pytest.fixture
@@ -37,6 +47,7 @@ def running_app():
         yield instance
     finally:
         instance.stop()
+        _join_daemon_threads()
 
 
 @pytest.fixture

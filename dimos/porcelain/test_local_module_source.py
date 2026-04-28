@@ -29,7 +29,7 @@ def test_list_module_names(running_app):
 
 def test_get_rpyc_module(running_app):
     module = running_app._source.get_rpyc_module("StressTestModule")
-    assert module._module_closed is False
+    assert module.mod_state.get() != "stopped"
 
 
 def test_get_rpyc_module_caches_connection(running_app):
@@ -45,7 +45,7 @@ def test_invalidate_allows_reconnect(running_app):
     source.invalidate("StressTestModule")
     m2 = source.get_rpyc_module("StressTestModule")
     assert m1 is not m2
-    assert m2._module_closed is False
+    assert m2.mod_state.get() != "stopped"
 
 
 def test_invalidate_unknown_name_is_noop(running_app):
@@ -58,4 +58,4 @@ def test_close_then_get_reconnects(running_app):
     source.close()
     m2 = source.get_rpyc_module("StressTestModule")
     assert m1 is not m2
-    assert m2._module_closed is False
+    assert m2.mod_state.get() != "stopped"

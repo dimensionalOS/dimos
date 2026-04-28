@@ -119,7 +119,7 @@ def test_run_blueprint_object(app):
 def test_rpyc_module_access(running_app):
     module = running_app.StressTestModule
     # Access an attribute from ModuleBase
-    assert module._module_closed is False
+    assert module.mod_state.get() != "stopped"
 
 
 def test_dir_lists_modules(running_app):

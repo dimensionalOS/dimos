@@ -38,7 +38,7 @@ def test_connect_via_host_port_skill_call(running_app, client):
 
 def test_connect_attribute_access(client):
     module = client.StressTestModule
-    assert module._module_closed is False
+    assert module.mod_state.get() != "stopped"
 
 
 @pytest.mark.slow
