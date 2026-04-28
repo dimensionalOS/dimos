@@ -71,7 +71,6 @@ _logger = setup_logger()
 
 
 def _odom_to_body_tf(msg: Odometry) -> Transform:
-    """Build the ``odom → body`` Transform that mirrors a SLAM odometry pose."""
     return Transform(
         frame_id=FRAME_ODOM,
         child_frame_id=FRAME_BODY,
@@ -214,14 +213,6 @@ class FastLio2Config(NativeModuleConfig):
 
 
 class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.GlobalPointcloud):
-    """FAST-LIO2 SLAM module with integrated Livox Mid-360 driver.
-
-    Ports:
-        lidar (Out[PointCloud2]): World-frame registered point cloud.
-        odometry (Out[Odometry]): Pose with covariance at LiDAR scan rate.
-        global_map (Out[PointCloud2]): Global voxel map (optional, enable via map_freq > 0).
-    """
-
     config: FastLio2Config
 
     lidar: Out[PointCloud2]
@@ -232,21 +223,17 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     def start(self) -> None:
         self._validate_network()
         super().start()
-        # Subscribe to our own odometry output so we can mirror each
-        # pose update into the TF tree as an odom→body transform.
         self.register_disposable(
             Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
         )
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
-        """Publish the SLAM pose as an ``odom → body`` TF transform."""
         self.tf.publish(_odom_to_body_tf(msg))
 
     def stop(self) -> None:
         super().stop()
 
     def _validate_network(self) -> None:
-        """Pre-flight check: verify host_ip is reachable and suggest alternatives."""
         host_ip = self.config.host_ip
         lidar_ip = self.config.lidar_ip
         local_ips = _get_local_ips()
