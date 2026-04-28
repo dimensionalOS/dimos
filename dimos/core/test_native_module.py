@@ -120,7 +120,7 @@ def test_process_crash_triggers_stop():
 
 
 @pytest.mark.slow
-def test_manual(dimos_cluster: ModuleCoordinator, args_file: str):
+def test_manual(dimos_cluster, args_file):
     native_module = dimos_cluster.deploy(
         StubNativeModule,
         some_param=2.5,
@@ -142,7 +142,7 @@ def test_manual(dimos_cluster: ModuleCoordinator, args_file: str):
 
 
 @pytest.mark.slow
-def test_autoconnect(args_file: str):
+def test_autoconnect(args_file):
     """autoconnect passes correct topic args to the native subprocess."""
     blueprint = autoconnect(
         StubNativeModule.blueprint(

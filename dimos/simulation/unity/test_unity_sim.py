@@ -275,8 +275,6 @@ class TestKinematicSim:
 
 
 class TestTerrainFit:
-    """Tests for RANSAC-style terrain plane fit."""
-
     def _feed_terrain(self, module, points):
         cloud = PointCloud2.from_numpy(points.astype(np.float32), frame_id="map", timestamp=0.0)
         module._on_terrain(cloud)
@@ -351,8 +349,6 @@ class TestTerrainFit:
 
 
 class TestSensorOffset:
-    """Tests for sensor_offset_x/y in kinematics."""
-
     def test_zero_offset_matches_old_behavior(self):
         module = UnityBridgeModule(
             unity_binary="", sim_rate=200.0, sensor_offset_x=0.0, sensor_offset_y=0.0
