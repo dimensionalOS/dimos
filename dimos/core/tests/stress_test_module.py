@@ -23,6 +23,7 @@ from __future__ import annotations
 import time
 
 from dimos.agents.annotation import skill
+from dimos.core.core import rpc
 from dimos.core.module import Module
 
 
@@ -52,5 +53,6 @@ class StressTestModule(Module):
 
         return f"pid={os.getpid()}, module={self.__class__.__name__}"
 
+    @rpc
     def start(self) -> None:
         super().start()
