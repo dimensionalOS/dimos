@@ -98,8 +98,6 @@ def drive_trajectory(
 
 
 class TestGlobalMapAccumulation:
-    """Test that PGO produces a valid global map from keyframes."""
-
     def test_global_map_contains_all_keyframes(self):
         """Global map should contain transformed points from every keyframe."""
         config = PGOConfig(
@@ -123,7 +121,6 @@ class TestGlobalMapAccumulation:
         )
 
     def test_global_map_points_are_in_world_frame(self):
-        """Points in the global map should be transformed to world coordinates."""
         config = PGOConfig(
             key_pose_delta_trans=0.3,
             # submap_resolution=0 disables the voxel-downsample-on-insert inside
@@ -167,7 +164,6 @@ class TestGlobalMapAccumulation:
         np.testing.assert_allclose(global_map[0, 2], 0.0, atol=1e-6)
 
     def test_global_map_grows_with_trajectory(self):
-        """Global map should grow as more keyframes are added."""
         config = PGOConfig(key_pose_delta_trans=0.3, global_map_voxel_size=0.0)
         pgo = _SimplePGO(config)
 
@@ -184,7 +180,6 @@ class TestGlobalMapAccumulation:
             assert sizes[j] >= sizes[j - 1], f"Map shrunk: {sizes[j]} < {sizes[j - 1]} at step {j}"
 
     def test_global_map_voxel_downsampling(self):
-        """Downsampled global map should have fewer points."""
         config = PGOConfig(key_pose_delta_trans=0.3)
         pgo = _SimplePGO(config)
 
@@ -204,10 +199,7 @@ class TestGlobalMapAccumulation:
 
 
 class TestLoopClosureGlobalMap:
-    """Test that loop closure correctly updates the global map."""
-
     def test_global_map_updates_after_loop_closure(self):
-        """After loop closure, global map positions should be corrected."""
         config = PGOConfig(
             key_pose_delta_trans=0.4,
             key_pose_delta_deg=10.0,
@@ -281,8 +273,6 @@ class TestLoopClosureGlobalMap:
 
 
 class TestGlobalMapExport:
-    """Test that global map can be exported as valid PointCloud2."""
-
     def test_export_as_pointcloud2(self):
         """Global map numpy array should convert to valid PointCloud2."""
         config = PGOConfig(key_pose_delta_trans=0.3, global_map_voxel_size=0.0)
@@ -345,7 +335,6 @@ class TestGlobalMapExport:
         assert len(points_back) == len(global_map)
 
     def test_global_map_spatial_extent(self):
-        """Global map should span the spatial extent of the trajectory."""
         config = PGOConfig(
             key_pose_delta_trans=0.3,
             global_map_voxel_size=0.0,
