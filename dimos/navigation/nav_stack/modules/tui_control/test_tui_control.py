@@ -14,36 +14,11 @@
 
 """Tests for TUIControlModule."""
 
+import threading
+
 import pytest
 
 from dimos.navigation.nav_stack.modules.tui_control.tui_control import TUIControlModule
-
-
-class _MockTransport:
-    """Lightweight mock transport that captures published messages."""
-
-    def __init__(self):
-        self._messages = []
-        self._subscribers = []
-
-    def publish(self, msg):
-        self._messages.append(msg)
-        for cb in self._subscribers:
-            cb(msg)
-
-    def broadcast(self, _stream, msg):
-        self.publish(msg)
-
-    def subscribe(self, cb):
-        self._subscribers.append(cb)
-
-        def unsub():
-            self._subscribers.remove(cb)
-
-        return unsub
-
-    def stop(self):
-        pass
 
 
 class TestTUIControl:
@@ -52,6 +27,10 @@ class TestTUIControl:
     @pytest.fixture(autouse=True)
     def _create_module(self):
         self.module = TUIControlModule(max_speed=2.0, max_yaw_rate=1.5)
+        # _lock is normally created by start(); these unit tests poke
+        # _handle_key() directly without starting the publish/input
+        # threads, so initialise the lock by hand.
+        self.module._lock = threading.Lock()
         yield
         self.module.stop()
 
@@ -145,16 +124,17 @@ class TestTUIControl:
         """send_waypoint should publish a PointStamped message."""
         module = self.module
 
-        # Wire a mock transport onto the way_point output port
-        wp_transport = _MockTransport()
-        module.way_point._transport = wp_transport
-
         results = []
-        wp_transport.subscribe(lambda msg: results.append(msg))
+        unsub = module.way_point.subscribe(lambda msg: results.append(msg))
+        try:
+            module.send_waypoint(5.0, 10.0, 0.0)
 
-        module.send_waypoint(5.0, 10.0, 0.0)
-
-        assert len(results) == 1
-        assert results[0].x == 5.0
-        assert results[0].y == 10.0
-        assert results[0].frame_id == "map"
+            assert len(results) == 1
+            assert results[0].x == 5.0
+            assert results[0].y == 10.0
+            assert results[0].frame_id == "map"
+        finally:
+            if hasattr(unsub, "dispose"):
+                unsub.dispose()
+            elif callable(unsub):
+                unsub()

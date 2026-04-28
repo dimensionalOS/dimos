@@ -31,14 +31,32 @@ import time
 import lcm as lcmlib
 import pytest
 
+# create_nav_stack pulls in PGO which requires gtsam — skip the whole module
+# if it isn't installed.
+pytest.importorskip("gtsam")
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.nav_stack.main import create_nav_stack
 from dimos.simulation.unity.module import UnityBridgeModule
+from dimos.utils.logging_config import setup_logger
 
-os.environ.setdefault("DISPLAY", ":1")
+logger = setup_logger()
+
+
+@pytest.fixture
+def display_env():
+    """Set DISPLAY for the test, restore the prior value on teardown."""
+    prior = os.environ.get("DISPLAY")
+    os.environ.setdefault("DISPLAY", ":1")
+    yield
+    if prior is None:
+        os.environ.pop("DISPLAY", None)
+    else:
+        os.environ["DISPLAY"] = prior
+
 
 ODOM_TOPIC = "/odometry#nav_msgs.Odometry"
 GOAL_TOPIC = "/clicked_point#geometry_msgs.PointStamped"
@@ -66,7 +84,7 @@ pytestmark = [pytest.mark.slow]
 class TestCrossWallPlanningSimple:
     """E2E: cross-wall routing with SimplePlanner (A* on 2D costmap)."""
 
-    def test_cross_wall_sequence_simple(self) -> None:
+    def test_cross_wall_sequence_simple(self, display_env):
         paths_dir = (
             Path(__file__).resolve().parents[3]
             / "data"
@@ -148,7 +166,7 @@ class TestCrossWallPlanningSimple:
         MAX_ALLOWED_Z = 2.0
 
         lcm_url = os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
-        lc = lcmlib.LCM(lcm_url)
+        lcm = lcmlib.LCM(lcm_url)
 
         def _odom_handler(channel: str, data: bytes) -> None:
             nonlocal odom_count, robot_x, robot_y, robot_z, max_z
@@ -161,14 +179,14 @@ class TestCrossWallPlanningSimple:
                 if robot_z > max_z:
                     max_z = robot_z
 
-        lc.subscribe(ODOM_TOPIC, _odom_handler)
+        lcm.subscribe(ODOM_TOPIC, _odom_handler)
 
-        lcm_running = True
+        lcm_stop = threading.Event()
 
         def _lcm_loop() -> None:
-            while lcm_running:
+            while not lcm_stop.is_set():
                 try:
-                    lc.handle_timeout(100)
+                    lcm.handle_timeout(100)
                 except Exception:
                     pass
 
@@ -177,7 +195,7 @@ class TestCrossWallPlanningSimple:
 
         try:
             coordinator.start()
-            print("[test-simple] Blueprint started, waiting for odom…")
+            logger.info("[test-simple] Blueprint started, waiting for odom…")
 
             deadline = time.monotonic() + 60.0
             while time.monotonic() < deadline:
@@ -189,34 +207,26 @@ class TestCrossWallPlanningSimple:
             with lock:
                 assert odom_count > 0, "No odometry received after 60s — sim not running?"
 
-            print(f"[test-simple] Odom online. Robot at ({robot_x:.2f}, {robot_y:.2f})")
-
-            print(f"[test-simple] Warming up for {WARMUP_SEC}s…")
+            logger.info(f"[test-simple] Odom online. Robot at ({robot_x:.2f}, {robot_y:.2f})")
+            logger.info(f"[test-simple] Warming up for {WARMUP_SEC}s…")
             time.sleep(WARMUP_SEC)
-            with lock:
-                print(
-                    f"[test-simple] Warmup complete. odom_count={odom_count}, "
-                    f"pos=({robot_x:.2f}, {robot_y:.2f})"
-                )
 
             for name, gx, gy, gz, timeout_sec, threshold in WAYPOINTS:
                 with lock:
                     sx, sy = robot_x, robot_y
 
-                print(
-                    f"\n[test-simple] === {name}: goal ({gx}, {gy}) | "
+                logger.info(
+                    f"[test-simple] === {name}: goal ({gx}, {gy}) | "
                     f"robot ({sx:.2f}, {sy:.2f}) | "
                     f"dist={_distance(sx, sy, gx, gy):.2f}m | "
                     f"budget={timeout_sec}s ==="
                 )
 
                 goal = PointStamped(x=gx, y=gy, z=gz, ts=time.time(), frame_id="map")
-                lc.publish(GOAL_TOPIC, goal.lcm_encode())
-                print(f"[test-simple] Goal published for {name}")
+                lcm.publish(GOAL_TOPIC, goal.lcm_encode())
 
                 t0 = time.monotonic()
                 reached = False
-                last_print = t0
                 cx, cy = sx, sy
                 dist = _distance(cx, cy, gx, gy)
                 while True:
@@ -232,31 +242,13 @@ class TestCrossWallPlanningSimple:
                     )
 
                     dist = _distance(cx, cy, gx, gy)
-                    now = time.monotonic()
-                    elapsed = now - t0
-
-                    if now - last_print >= 5.0:
-                        print(
-                            f"[test-simple]   {name}: {elapsed:.0f}s/{timeout_sec}s | "
-                            f"pos ({cx:.2f}, {cy:.2f}, z={cz:.2f}) | dist={dist:.2f}m"
-                        )
-                        last_print = now
+                    elapsed = time.monotonic() - t0
 
                     if dist <= threshold:
                         reached = True
-                        print(
-                            f"[test-simple] ✓ {name}: reached in {elapsed:.1f}s "
-                            f"(dist={dist:.2f}m ≤ {threshold}m)"
-                        )
                         break
-
                     if elapsed >= timeout_sec:
-                        print(
-                            f"[test-simple] ✗ {name}: NOT reached after {elapsed:.1f}s "
-                            f"(dist={dist:.2f}m > {threshold}m)"
-                        )
                         break
-
                     time.sleep(0.1)
 
                 assert reached, (
@@ -274,8 +266,7 @@ class TestCrossWallPlanningSimple:
             )
 
         finally:
-            print("\n[test-simple] Stopping blueprint…")
-            lcm_running = False
+            lcm_stop.set()
             lcm_thread.join(timeout=3)
+            assert not lcm_thread.is_alive(), "LCM loop thread didn't exit cleanly"
             coordinator.stop()
-            print("[test-simple] Done.")

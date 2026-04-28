@@ -206,7 +206,7 @@ class MockVehicle(Module):
 
             now = time.time()
             quat = Quaternion.from_euler(Vector3(0.0, 0.0, self._yaw))
-            self.odometry._transport.publish(
+            self.odometry.publish(
                 Odometry(
                     ts=now,
                     frame_id="map",
@@ -240,7 +240,7 @@ class MockVehicle(Module):
         while self._running:
             now = time.time()
             cloud_data = _make_room_cloud(self._x, self._y)
-            self.registered_scan._transport.publish(
+            self.registered_scan.publish(
                 PointCloud2.from_numpy(cloud_data, frame_id="map", timestamp=now)
             )
             time.sleep(dt)
@@ -255,9 +255,6 @@ class Collector:
     cmd_vels: list = field(default_factory=list)
     terrain_maps: list = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
-
-
-# Test
 
 
 def test_explore_produces_movement():
@@ -297,10 +294,12 @@ def test_explore_produces_movement():
         with collector.lock:
             collector.cmd_vels.append((msg.linear.x, msg.linear.y, msg.angular.z))
 
-    tare.way_point._transport.subscribe(_on_wp)
-    planner.path._transport.subscribe(_on_path)
-    follower.cmd_vel._transport.subscribe(_on_cmd)
-    terrain.terrain_map._transport.subscribe(_on_terrain)
+    subs = [
+        tare.way_point.subscribe(_on_wp),
+        planner.path.subscribe(_on_path),
+        follower.cmd_vel.subscribe(_on_cmd),
+        terrain.terrain_map.subscribe(_on_terrain),
+    ]
 
     try:
         coordinator.start()
@@ -341,4 +340,9 @@ def test_explore_produces_movement():
             )
 
     finally:
+        for sub in subs:
+            try:
+                sub.dispose()
+            except Exception:
+                pass
         coordinator.stop()
