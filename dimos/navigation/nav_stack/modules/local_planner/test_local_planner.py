@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for LocalPlanner NativeModule wrapper."""
-
 from pathlib import Path
 from typing import get_origin, get_type_hints
 

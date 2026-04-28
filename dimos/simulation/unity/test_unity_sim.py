@@ -35,6 +35,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.unity.module import (
     UnityBridgeConfig,
     UnityBridgeModule,
@@ -273,8 +274,6 @@ class TestTerrainFit:
     """Tests for RANSAC-style terrain plane fit."""
 
     def _feed_terrain(self, m, points):
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
         cloud = PointCloud2.from_numpy(points.astype(np.float32), frame_id="map", timestamp=0.0)
         m._on_terrain(cloud)
 

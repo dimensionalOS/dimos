@@ -52,6 +52,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
 from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
 from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
+from dimos.utils.logging_config import setup_logger
 
 _NATIVE_DIR = Path(__file__).resolve().parent.parent
 _HAS_BINARIES = all(
@@ -69,6 +70,9 @@ pytestmark = [
     pytest.mark.skipif(not _IS_LINUX_X86, reason="Native modules require Linux x86_64"),
     pytest.mark.skipif(not _HAS_BINARIES, reason="Native binaries not built"),
 ]
+
+
+logger = setup_logger()
 
 
 def _make_ground_cloud(rx: float, ry: float) -> np.ndarray:
@@ -147,7 +151,7 @@ class SimVehicle(Module):
             self.y += dt * (sy * fwd + cy * left)
             now = time.time()
             q = Quaternion.from_euler(Vector3(0.0, 0.0, self.yaw))
-            self.odometry._transport.publish(
+            self.odometry.publish(
                 Odometry(
                     ts=now,
                     frame_id="map",
@@ -174,7 +178,7 @@ class SimVehicle(Module):
         while self._running:
             now = time.time()
             cloud = _make_ground_cloud(self.x, self.y)
-            self.registered_scan._transport.publish(
+            self.registered_scan.publish(
                 PointCloud2.from_numpy(cloud, frame_id="map", timestamp=now)
             )
             time.sleep(dt)
@@ -199,28 +203,27 @@ def test_waypoint_nav_produces_path_and_movement():
     planner = coordinator.get_instance(LocalPlanner)
     follower = coordinator.get_instance(PathFollower)
 
-    terrain.terrain_map._transport.subscribe(
-        lambda m: (lock.acquire(), terrain_msgs.append(1), lock.release())
-    )
-    planner.path._transport.subscribe(
-        lambda m: (lock.acquire(), path_msgs.append(1), lock.release())
-    )
-    follower.cmd_vel._transport.subscribe(
-        lambda m: (
-            lock.acquire(),
-            cmd_msgs.append((m.linear.x, m.linear.y, m.angular.z)),
-            lock.release(),
-        )
-    )
+    subs = [
+        terrain.terrain_map.subscribe(
+            lambda m: (lock.acquire(), terrain_msgs.append(1), lock.release())
+        ),
+        planner.path.subscribe(lambda m: (lock.acquire(), path_msgs.append(1), lock.release())),
+        follower.cmd_vel.subscribe(
+            lambda m: (
+                lock.acquire(),
+                cmd_msgs.append((m.linear.x, m.linear.y, m.angular.z)),
+                lock.release(),
+            )
+        ),
+    ]
 
-    # Send waypoint after modules warm up
     def _send_wp():
         time.sleep(2.0)
         wp = PointStamped(x=10.0, y=0.0, z=0.0, frame_id="map")
-        planner.way_point._transport.publish(wp)
-        print("[test] Sent waypoint (10, 0)")
+        planner.way_point.publish(wp)
 
-    threading.Thread(target=_send_wp, daemon=True).start()
+    wp_thread = threading.Thread(target=_send_wp, daemon=True)
+    wp_thread.start()
 
     try:
         coordinator.start()
@@ -234,7 +237,6 @@ def test_waypoint_nav_produces_path_and_movement():
                 break
             time.sleep(0.5)
 
-        # Let movement accumulate
         time.sleep(5.0)
 
         with lock:
@@ -247,15 +249,17 @@ def test_waypoint_nav_produces_path_and_movement():
                 if abs(vx) > 0.01 or abs(vy) > 0.01 or abs(wz) > 0.01
             ]
 
-        print(
-            f"[test] terrain_map: {n_terrain}, path: {n_path}, "
-            f"cmd_vel: {n_cmd} (nonzero: {len(nonzero)})"
-        )
-
         assert n_terrain > 0, "TerrainAnalysis produced no terrain_map"
         assert n_path > 0, "LocalPlanner produced no path"
         assert n_cmd > 0, "PathFollower produced no cmd_vel"
         assert len(nonzero) > 0, f"All {n_cmd} cmd_vel messages were zero — robot not moving"
 
     finally:
+        for sub in subs:
+            try:
+                sub.dispose()
+            except Exception:
+                pass
+        wp_thread.join(timeout=5.0)
+        assert not wp_thread.is_alive(), "_send_wp thread didn't exit"
         coordinator.stop()

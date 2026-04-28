@@ -17,14 +17,6 @@
 Verifies that the FAR planner routes through doorways instead of through walls.
 Uses the full navigation stack (same blueprint as unitree_g1_nav_sim) and
 tracks the robot position via odometry to verify goal-reaching.
-
-Test sequence:
-  p0  (-0.3,  2.5) — open corridor speed test
-  p1  (11.2, -1.8) — navigate with furniture
-  p2  ( 3.3, -4.9) — intermediate waypoint near doorway (explore lower area)
-  p3  ( 7.0, -5.0) — through the doorway into the right room
-  p4  (11.3, -5.6) — explore right room
-  p4→p1 (11.2, -1.8) — CRITICAL: must route through doorway, NOT wall
 """
 
 from __future__ import annotations
@@ -38,6 +30,10 @@ import time
 import lcm as lcmlib
 import pytest
 
+# create_nav_stack pulls in PGO which requires gtsam — skip the whole module
+# if it isn't installed.
+pytest.importorskip("gtsam")
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
@@ -46,9 +42,23 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
 from dimos.simulation.unity.module import UnityBridgeModule
+from dimos.utils.logging_config import setup_logger
 from dimos.visualization.vis_module import vis_module
 
-os.environ.setdefault("DISPLAY", ":1")
+logger = setup_logger()
+
+
+@pytest.fixture
+def display_env():
+    """Set DISPLAY for the test, restore the prior value on teardown."""
+    prior = os.environ.get("DISPLAY")
+    os.environ.setdefault("DISPLAY", ":1")
+    yield
+    if prior is None:
+        os.environ.pop("DISPLAY", None)
+    else:
+        os.environ["DISPLAY"] = prior
+
 
 ODOM_TOPIC = "/odometry#nav_msgs.Odometry"
 GOAL_TOPIC = "/clicked_point#geometry_msgs.PointStamped"
@@ -76,8 +86,7 @@ pytestmark = [pytest.mark.slow]
 class TestCrossWallPlanning:
     """E2E integration test: cross-wall routing through Unity sim."""
 
-    def test_cross_wall_sequence(self) -> None:
-        # -- Clear stale nav paths from previous runs -------------------------
+    def test_cross_wall_sequence(self, display_env):
         paths_dir = (
             Path(__file__).resolve().parents[3]
             / "data"
@@ -87,7 +96,6 @@ class TestCrossWallPlanning:
             for f in paths_dir.iterdir():
                 f.unlink(missing_ok=True)
 
-        # -- Build blueprint (same composition as unitree_g1_nav_sim) ----------
         blueprint = (
             autoconnect(
                 UnityBridgeModule.blueprint(
@@ -151,14 +159,13 @@ class TestCrossWallPlanning:
 
         coordinator = ModuleCoordinator.build(blueprint)
 
-        # -- Odom tracking via LCM -------------------------------------------
         lock = threading.Lock()
         odom_count = 0
         robot_x = 0.0
         robot_y = 0.0
 
         lcm_url = os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
-        lc = lcmlib.LCM(lcm_url)
+        lcm = lcmlib.LCM(lcm_url)
 
         def _odom_handler(channel: str, data: bytes) -> None:
             nonlocal odom_count, robot_x, robot_y
@@ -168,15 +175,15 @@ class TestCrossWallPlanning:
                 robot_x = msg.x
                 robot_y = msg.y
 
-        lc.subscribe(ODOM_TOPIC, _odom_handler)
+        lcm.subscribe(ODOM_TOPIC, _odom_handler)
 
         # LCM receive thread
-        lcm_running = True
+        lcm_stop = threading.Event()
 
         def _lcm_loop() -> None:
-            while lcm_running:
+            while not lcm_stop.is_set():
                 try:
-                    lc.handle_timeout(100)
+                    lcm.handle_timeout(100)
                 except Exception:
                     pass
 
@@ -184,7 +191,7 @@ class TestCrossWallPlanning:
         lcm_thread.start()
 
         try:
-            print("[test] Blueprint started, waiting for odom…")
+            logger.info("[test] Blueprint started, waiting for odom…")
 
             # Wait for first odom (sim is up)
             deadline = time.monotonic() + 60.0
@@ -197,71 +204,40 @@ class TestCrossWallPlanning:
             with lock:
                 assert odom_count > 0, "No odometry received after 60s — sim not running?"
 
-            print(f"[test] Odom online. Robot at ({robot_x:.2f}, {robot_y:.2f})")
+            logger.info(f"[test] Odom online. Robot at ({robot_x:.2f}, {robot_y:.2f})")
 
             # Let the nav stack warm up (terrain analysis, PGO, FAR visibility graph)
-            print(f"[test] Warming up for {WARMUP_SEC}s…")
+            logger.info(f"[test] Warming up for {WARMUP_SEC}s…")
             time.sleep(WARMUP_SEC)
-            with lock:
-                print(
-                    f"[test] Warmup complete. odom_count={odom_count}, "
-                    f"pos=({robot_x:.2f}, {robot_y:.2f})"
-                )
 
-            # -- Navigate waypoint sequence -----------------------------------
             for name, gx, gy, gz, timeout_sec, threshold in WAYPOINTS:
                 with lock:
                     sx, sy = robot_x, robot_y
 
-                print(
-                    f"\n[test] === {name}: goal ({gx}, {gy}) | "
+                logger.info(
+                    f"[test] === {name}: goal ({gx}, {gy}) | "
                     f"robot ({sx:.2f}, {sy:.2f}) | "
                     f"dist={_distance(sx, sy, gx, gy):.2f}m | "
                     f"budget={timeout_sec}s ==="
                 )
 
-                # Publish goal
                 goal = PointStamped(x=gx, y=gy, z=gz, ts=time.time(), frame_id="map")
-                lc.publish(GOAL_TOPIC, goal.lcm_encode())
-                print(f"[test] Goal published for {name}")
+                lcm.publish(GOAL_TOPIC, goal.lcm_encode())
 
-                # Wait for robot to reach goal or timeout
                 t0 = time.monotonic()
                 reached = False
-                last_print = t0
                 cx, cy = sx, sy
                 dist = _distance(cx, cy, gx, gy)
                 while True:
                     with lock:
                         cx, cy = robot_x, robot_y
-
                     dist = _distance(cx, cy, gx, gy)
-                    now = time.monotonic()
-                    elapsed = now - t0
-
-                    # Progress log every 5 seconds
-                    if now - last_print >= 5.0:
-                        print(
-                            f"[test]   {name}: {elapsed:.0f}s/{timeout_sec}s | "
-                            f"pos ({cx:.2f}, {cy:.2f}) | dist={dist:.2f}m"
-                        )
-                        last_print = now
-
+                    elapsed = time.monotonic() - t0
                     if dist <= threshold:
                         reached = True
-                        print(
-                            f"[test] ✓ {name}: reached in {elapsed:.1f}s "
-                            f"(dist={dist:.2f}m ≤ {threshold}m)"
-                        )
                         break
-
                     if elapsed >= timeout_sec:
-                        print(
-                            f"[test] ✗ {name}: NOT reached after {elapsed:.1f}s "
-                            f"(dist={dist:.2f}m > {threshold}m)"
-                        )
                         break
-
                     time.sleep(0.1)
 
                 assert reached, (
@@ -270,8 +246,7 @@ class TestCrossWallPlanning:
                 )
 
         finally:
-            print("\n[test] Stopping blueprint…")
-            lcm_running = False
+            lcm_stop.set()
             lcm_thread.join(timeout=3)
+            assert not lcm_thread.is_alive(), "LCM loop thread didn't exit cleanly"
             coordinator.stop()
-            print("[test] Done.")

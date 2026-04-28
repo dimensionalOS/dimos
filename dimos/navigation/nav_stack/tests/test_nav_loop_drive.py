@@ -33,6 +33,8 @@ import numpy as np
 import pytest
 from reactivex.disposable import Disposable
 
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -44,6 +46,10 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
+from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
+from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
+from dimos.utils.logging_config import setup_logger
 
 _NATIVE_DIR = Path(__file__).resolve().parent.parent
 _HAS_BINARIES = all(
@@ -61,6 +67,9 @@ pytestmark = [
     pytest.mark.skipif(not _IS_LINUX_X86, reason="Native modules require Linux x86_64"),
     pytest.mark.skipif(not _HAS_BINARIES, reason="Native binaries not built"),
 ]
+
+
+logger = setup_logger()
 
 
 def _make_ground(rx: float, ry: float) -> np.ndarray:
@@ -133,7 +142,7 @@ class Vehicle(Module):
             self.y += dt * (sy * fwd + cy * left)
             now = time.time()
             q = Quaternion.from_euler(Vector3(0.0, 0.0, self.yaw))
-            self.odometry._transport.publish(
+            self.odometry.publish(
                 Odometry(
                     ts=now,
                     frame_id="map",
@@ -160,7 +169,7 @@ class Vehicle(Module):
         while self._running:
             now = time.time()
             cloud = _make_ground(self.x, self.y)
-            self.registered_scan._transport.publish(
+            self.registered_scan.publish(
                 PointCloud2.from_numpy(cloud, frame_id="map", timestamp=now)
             )
             time.sleep(dt)
@@ -168,13 +177,6 @@ class Vehicle(Module):
 
 def test_multi_waypoint_loop():
     """Send 4 waypoints in a square, verify robot moves toward each."""
-    from dimos.core.coordination.blueprints import autoconnect
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
-    from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
-    from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
-
-    # Collect cmd_vel to verify non-zero commands
     cmd_log: list[tuple[float, float, float]] = []
     cmd_lock = threading.Lock()
 
@@ -199,7 +201,7 @@ def test_multi_waypoint_loop():
     planner = coord.get_instance(LocalPlanner)
     follower = coord.get_instance(PathFollower)
 
-    follower.cmd_vel._transport.subscribe(
+    follower.cmd_vel.subscribe(
         lambda m: (
             cmd_lock.acquire(),
             cmd_log.append((m.linear.x, m.linear.y, m.angular.z)),
@@ -210,7 +212,7 @@ def test_multi_waypoint_loop():
     # Also track path sizes to diagnose stop paths
     path_sizes: list[int] = []
     path_lock = threading.Lock()
-    planner.path._transport.subscribe(
+    planner.path.subscribe(
         lambda m: (path_lock.acquire(), path_sizes.append(len(m.poses)), path_lock.release())
     )
 
@@ -224,7 +226,7 @@ def test_multi_waypoint_loop():
             positions.append((msg.pose.position.x, msg.pose.position.y))
 
     vehicle_actor = coord.get_instance(Vehicle)
-    vehicle_actor.odometry._transport.subscribe(_on_odom)
+    vehicle_actor.odometry.subscribe(_on_odom)
 
     coord.start()
 
@@ -232,72 +234,33 @@ def test_multi_waypoint_loop():
 
     try:
         # Wait for C++ modules to initialize
-        print("[test] Waiting 3s for modules to start...")
         time.sleep(3.0)
 
-        for i, (wx, wy) in enumerate(waypoints):
+        for wx, wy in waypoints:
             wp = PointStamped(x=wx, y=wy, z=0.0, frame_id="map")
-            planner.way_point._transport.publish(wp)
-            print(f"[test] Sent waypoint {i}: ({wx}, {wy})")
+            planner.way_point.publish(wp)
 
             # Drive toward waypoint for up to 8 seconds
             t0 = time.monotonic()
             while time.monotonic() - t0 < 8.0:
                 time.sleep(0.5)
                 with pos_lock:
-                    if positions:
-                        cx, cy = positions[-1]
-                    else:
-                        cx, cy = 0.0, 0.0
+                    cx, cy = positions[-1] if positions else (0.0, 0.0)
                 dist = math.sqrt((cx - wx) ** 2 + (cy - wy) ** 2)
                 if dist < 1.0:
-                    print(f"[test]   Reached wp{i} at ({cx:.2f}, {cy:.2f}), dist={dist:.2f}")
                     break
-            else:
-                with pos_lock:
-                    if positions:
-                        cx, cy = positions[-1]
-                    else:
-                        cx, cy = 0.0, 0.0
-                dist = math.sqrt((cx - wx) ** 2 + (cy - wy) ** 2)
-                print(f"[test]   Timeout wp{i}: pos=({cx:.2f}, {cy:.2f}), dist={dist:.2f}")
 
-        # Final position summary
-        with pos_lock:
-            if positions:
-                fx, fy = positions[-1]
-            else:
-                fx, fy = 0.0, 0.0
-        print(f"[test] Final position: ({fx:.2f}, {fy:.2f})")
-
-        # Check we actually moved
         with pos_lock:
             all_x = [p[0] for p in positions]
             all_y = [p[1] for p in positions]
         x_range = max(all_x) - min(all_x) if all_x else 0
         y_range = max(all_y) - min(all_y) if all_y else 0
-        print(
-            f"[test] Position range: x=[{min(all_x):.2f}, {max(all_x):.2f}] y=[{min(all_y):.2f}, {max(all_y):.2f}]"
-        )
 
         with cmd_lock:
             total_cmds = len(cmd_log)
             nonzero = sum(
                 1 for vx, vy, wz in cmd_log if abs(vx) > 0.01 or abs(vy) > 0.01 or abs(wz) > 0.01
             )
-        print(f"[test] cmd_vel: {total_cmds} total, {nonzero} non-zero")
-
-        with path_lock:
-            n_paths = len(path_sizes)
-            stop_paths = sum(1 for s in path_sizes if s <= 1)
-            real_paths = sum(1 for s in path_sizes if s > 1)
-            if path_sizes:
-                avg_len = sum(path_sizes) / len(path_sizes)
-            else:
-                avg_len = 0
-        print(
-            f"[test] paths: {n_paths} total, {real_paths} real (>1 pose), {stop_paths} stop (<=1 pose), avg_len={avg_len:.1f}"
-        )
 
         # Hard assertions
         assert total_cmds > 0, "No cmd_vel messages at all"

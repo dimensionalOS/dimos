@@ -43,8 +43,6 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not _HAS_PGO_DEPS, reason="gtsam not installed")
 
-# ─── Helper functions ─────────────────────────────────────────────────────────
-
 
 def make_rotation(yaw_deg: float) -> np.ndarray:
     """Create a 3x3 rotation matrix from a yaw angle in degrees."""
@@ -78,9 +76,6 @@ def make_structured_cloud(center: np.ndarray, n_points: int = 500, seed: int = 4
     y = r * np.sin(theta) * np.sin(phi) + center[1]
     z = r * np.cos(theta) + center[2]
     return np.column_stack([x, y, z])
-
-
-# ─── Keyframe Detection Tests ────────────────────────────────────────────────
 
 
 class TestKeyframeDetection:
@@ -134,9 +129,6 @@ class TestKeyframeDetection:
         result = pgo.add_key_pose(r_rotated, np.zeros(3), 1.0, cloud)
         assert result is True
         assert len(pgo._key_poses) == 2
-
-
-# ─── Loop Closure Tests ──────────────────────────────────────────────────────
 
 
 class TestLoopClosure:
@@ -331,9 +323,6 @@ class TestLoopClosure:
             )
 
 
-# ─── Global Map Tests ────────────────────────────────────────────────────────
-
-
 class TestGlobalMap:
     """Test global map accumulation and publishing."""
 
@@ -426,9 +415,6 @@ class TestGlobalMap:
         assert points_back.shape[1] >= 3
 
 
-# ─── ICP Tests ────────────────────────────────────────────────────────────────
-
-
 class TestICP:
     """Test ICP matching functionality."""
 
@@ -461,9 +447,6 @@ class TestICP:
         # and returns early with fitness=inf.
         _transform, score = _icp(cloud_a, cloud_b, max_dist=2.0, max_iter=30)
         assert score == float("inf"), f"Expected inf fitness (no correspondences), got {score}"
-
-
-# ─── Edge Case Tests ─────────────────────────────────────────────────────────
 
 
 class TestEdgeCases:
@@ -499,9 +482,6 @@ class TestEdgeCases:
         # Loop search with single keyframe should not crash
         pgo.search_for_loops()
         assert len(pgo._history_pairs) == 0
-
-
-# ─── Python Wrapper Port Tests ───────────────────────────────────────────────
 
 
 class TestPGOWrapper:

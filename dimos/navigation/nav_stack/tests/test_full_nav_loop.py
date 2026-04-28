@@ -109,11 +109,11 @@ class MockSensor(Module):
         dt = 1.0 / self.config.rate
         while self._running:
             now = time.time()
-            self.registered_scan._transport.publish(
+            self.registered_scan.publish(
                 PointCloud2.from_numpy(_make_flat_ground_cloud(), frame_id="map", timestamp=now)
             )
             quat = Quaternion(0.0, 0.0, 0.0, 1.0)
-            self.odometry._transport.publish(
+            self.odometry.publish(
                 Odometry(
                     ts=now,
                     frame_id="map",
@@ -164,20 +164,20 @@ def test_full_nav_closed_loop():
     planner = coordinator.get_instance(LocalPlanner)
     follower = coordinator.get_instance(PathFollower)
 
-    terrain.terrain_map._transport.subscribe(
-        lambda m: (lock.acquire(), terrain_maps.append(m), lock.release())
-    )
-    planner.path._transport.subscribe(lambda m: (lock.acquire(), paths.append(m), lock.release()))
-    follower.cmd_vel._transport.subscribe(
-        lambda m: (lock.acquire(), cmd_vels.append(m), lock.release())
-    )
+    subs = [
+        terrain.terrain_map.subscribe(
+            lambda m: (lock.acquire(), terrain_maps.append(m), lock.release())
+        ),
+        planner.path.subscribe(lambda m: (lock.acquire(), paths.append(m), lock.release())),
+        follower.cmd_vel.subscribe(lambda m: (lock.acquire(), cmd_vels.append(m), lock.release())),
+    ]
 
     # Send waypoint after warmup
     def _send_waypoint() -> None:
         time.sleep(3.0)
         lp = coordinator.get_instance(LocalPlanner)
         wp = PointStamped(x=5.0, y=0.0, z=0.0, frame_id="map")
-        lp.way_point._transport.publish(wp)
+        lp.way_point.publish(wp)
 
     wp_thread = threading.Thread(target=_send_waypoint, daemon=True)
     wp_thread.start()
@@ -198,4 +198,11 @@ def test_full_nav_closed_loop():
             assert len(paths) > 0, "LocalPlanner produced no path"
             assert len(cmd_vels) > 0, "PathFollower produced no cmd_vel"
     finally:
+        for sub in subs:
+            try:
+                sub.dispose()
+            except Exception:
+                pass
+        wp_thread.join(timeout=5.0)
+        assert not wp_thread.is_alive(), "_send_waypoint thread didn't exit"
         coordinator.stop()

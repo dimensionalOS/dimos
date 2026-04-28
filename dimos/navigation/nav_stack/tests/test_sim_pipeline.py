@@ -24,11 +24,15 @@ import pytest
 
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
+from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
+from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
 from dimos.navigation.nav_stack.modules.tui_control.tui_control import TUIControlModule
 from dimos.simulation.unity.module import UnityBridgeModule
 
@@ -60,7 +64,7 @@ class TestTransportWiring:
                     orientation=[quat.x, quat.y, quat.z, quat.w],
                 ),
             )
-            m.odometry._transport.publish(odom)
+            m.odometry.publish(odom)
 
             # LCM transport delivers asynchronously -- give it a moment
             time.sleep(0.1)
@@ -75,9 +79,6 @@ class TestTransportWiring:
 
         transport = LCMTransport("/_test/nav_stack/tui/cmd_vel", Twist)
         m.cmd_vel._transport = transport
-
-        # Also wire way_point so it doesn't error
-        from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 
         wp_transport = LCMTransport("/_test/nav_stack/tui/way_point", PointStamped)
         m.way_point._transport = wp_transport
@@ -104,13 +105,6 @@ class TestPortTypeCompatibility:
     def test_all_stream_types_match(self):
         from typing import get_args, get_origin, get_type_hints
 
-        from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
-        from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
-        from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import (
-            TerrainAnalysis,
-        )
-        from dimos.simulation.unity.module import UnityBridgeModule
-
         def get_streams(cls):
             hints = get_type_hints(cls)
             streams = {}
@@ -127,18 +121,24 @@ class TestPortTypeCompatibility:
         planner = get_streams(LocalPlanner)
         follower = get_streams(PathFollower)
 
-        # Odometry types must match across all consumers
-        odom_type = sim["odometry"][1]
-        assert terrain["odometry"][1] == odom_type
-        assert planner["odometry"][1] == odom_type
-        assert follower["odometry"][1] == odom_type
+        # Odometry: sim produces, terrain/planner/follower consume
+        odom = sim["odometry"]
+        assert odom[0] == "out"
+        for cls in (terrain, planner, follower):
+            entry = cls["odometry"]
+            assert entry[0] == "in", f"odometry on {cls} should be In, got {entry[0]}"
+            assert entry[1] == odom[1], f"odometry type mismatch: {entry[1]} != {odom[1]}"
 
-        # Path: planner out == follower in
+        # Path: planner produces, follower consumes
+        assert planner["path"][0] == "out"
+        assert follower["path"][0] == "in"
         assert planner["path"][1] == follower["path"][1]
 
-        # cmd_vel: follower out == sim in
+        # cmd_vel: follower produces, sim consumes
+        assert follower["cmd_vel"][0] == "out"
+        assert sim["cmd_vel"][0] == "in"
         assert follower["cmd_vel"][1] == sim["cmd_vel"][1]
 
-        # registered_scan: all consumers match
+        # registered_scan: terrain produces, planner consumes (or both consume)
         pc_type = terrain["registered_scan"][1]
         assert planner["registered_scan"][1] == pc_type

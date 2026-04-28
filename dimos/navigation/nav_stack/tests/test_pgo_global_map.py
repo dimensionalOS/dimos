@@ -41,8 +41,6 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not _HAS_PGO_DEPS, reason="gtsam not installed")
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────
-
 
 def make_rotation(yaw_deg: float) -> np.ndarray:
     return Rotation.from_euler("z", yaw_deg, degrees=True).as_matrix()
@@ -97,9 +95,6 @@ def drive_trajectory(
                 pgo.search_for_loops()
                 pgo.smooth_and_update()
             t += time_per_step
-
-
-# ─── Global Map Accumulation Tests ───────────────────────────────────────────
 
 
 class TestGlobalMapAccumulation:
@@ -208,9 +203,6 @@ class TestGlobalMapAccumulation:
         assert len(map_ds) > 0
 
 
-# ─── Loop Closure Global Map Tests ──────────────────────────────────────────
-
-
 class TestLoopClosureGlobalMap:
     """Test that loop closure correctly updates the global map."""
 
@@ -286,9 +278,6 @@ class TestLoopClosureGlobalMap:
         assert len(global_map) == expected_points, (
             f"Expected {expected_points} points from {n_poses} keyframes, got {len(global_map)}"
         )
-
-
-# ─── PointCloud2 Export Tests ────────────────────────────────────────────────
 
 
 class TestGlobalMapExport:

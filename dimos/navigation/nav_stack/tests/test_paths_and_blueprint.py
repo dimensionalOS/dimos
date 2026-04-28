@@ -78,6 +78,10 @@ class TestDataFiles:
 
 class TestBlueprintImport:
     def test_g1_nav_sim_blueprint_importable(self):
+        # The G1 nav sim blueprint pulls in PGO which requires gtsam.
+        import pytest
+
+        pytest.importorskip("gtsam")
         from dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_sim import (
             unitree_g1_nav_sim,
         )
