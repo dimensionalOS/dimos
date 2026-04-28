@@ -366,6 +366,10 @@ tests = [
     "langchain==1.2.3",
     "langchain-core==1.2.3",
     "unitree-webrtc-connect-leshy>=2.0.7",
+    "googlemaps>=4.10.0",
+    "mujoco>=3.3.4",
+    "transformers[torch]==4.49.0",
+    "ultralytics>=8.3.70",
 ]
 
 # Full CI test group for the self-hosted runner. Inherits `tests` and adds
