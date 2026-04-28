@@ -52,8 +52,6 @@ IGNORED_DIRS = {
     ".tox",
     # third-party vendored code
     "gtsam",
-    # hidden/personal directories
-    ".hidden",
 }
 
 # Lines that match section patterns but are actually programmatic / intentional.
