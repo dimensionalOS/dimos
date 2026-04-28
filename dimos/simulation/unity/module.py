@@ -49,7 +49,7 @@ import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.constants import CACHE_DIR, DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -224,7 +224,7 @@ class UnityBridgeConfig(ModuleConfig):
     unity_scene: str = _DEFAULT_SCENE
 
     # Directory to download/cache Unity scenes.
-    unity_cache_dir: str = "~/.cache/dimos/unity_envs"
+    unity_cache_dir: Path = CACHE_DIR / "unity_envs"
 
     # Auto-download the scene from Google Drive if binary is missing.
     auto_download: bool = True
@@ -478,8 +478,7 @@ class UnityBridgeModule(Module):
         # Auto-download from Google Drive (VLA Challenge scenes)
         if cfg.auto_download:
             try:
-                cache = Path(cfg.unity_cache_dir).expanduser()
-                return _download_unity_scene(cfg.unity_scene, cache)
+                return _download_unity_scene(cfg.unity_scene, cfg.unity_cache_dir)
             except Exception as e:
                 logger.warning(f"Auto-download failed: {e}")
 
