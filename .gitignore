@@ -74,9 +74,6 @@ CLAUDE.MD
 /.mcp.json
 *.speedscope.json
 
-# Hidden/personal directories
-.hidden/
-
 # Coverage
 htmlcov/
 .coverage
