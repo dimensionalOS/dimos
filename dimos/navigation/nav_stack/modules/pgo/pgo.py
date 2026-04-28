@@ -534,11 +534,6 @@ class PGO(Module):
                     self.global_map.publish(
                         PointCloud2.from_numpy(cloud_np, frame_id=FRAME_MAP, timestamp=now)
                     )
-                    logger.debug(
-                        "Global map published",
-                        points=len(cloud_np),
-                        keyframes=pgo.num_key_poses,
-                    )
                 self._last_global_map_time = now
 
             elapsed = time.monotonic() - t0
