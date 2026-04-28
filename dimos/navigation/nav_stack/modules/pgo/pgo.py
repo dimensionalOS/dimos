@@ -48,8 +48,6 @@ logger = setup_logger()
 
 
 class PGOConfig(ModuleConfig):
-    """Config for the PGO Python module."""
-
     # Keyframe detection
     key_pose_delta_trans: float = 0.5
     key_pose_delta_deg: float = 10.0
@@ -140,7 +138,6 @@ def _icp(
 
 
 def _voxel_downsample(pts: np.ndarray, voxel_size: float) -> np.ndarray:
-    """Voxel grid downsampling."""
     if len(pts) == 0 or voxel_size <= 0:
         return pts
     keys = np.floor(pts / voxel_size).astype(np.int32)
@@ -357,6 +354,46 @@ class _SimplePGO:
         return len(self._key_poses)
 
 
+def process_scan(
+    pgo: _SimplePGO,
+    cloud: PointCloud2,
+    r_local: np.ndarray,
+    t_local: np.ndarray,
+    ts: float,
+    unregister_input: bool,
+) -> tuple[Odometry, Transform] | None:
+    """Add a keyframe (if it qualifies), run loop closure, and return the
+    messages to publish. Returns None if the cloud is empty.
+
+    Caller is responsible for holding ``pgo``'s lock during this call.
+    """
+    points, _ = cloud.as_numpy()
+    if len(points) == 0:
+        return None
+
+    if unregister_input:
+        # registered_scan is world-frame; transform back to body-frame.
+        body_pts = (r_local.T @ (points[:, :3].T - t_local[:, None])).T
+    else:
+        body_pts = points[:, :3]
+
+    added = pgo.add_key_pose(r_local, t_local, ts, body_pts)
+    if added:
+        pgo.search_for_loops()
+        pgo.smooth_and_update()
+        logger.info(
+            "Keyframe added",
+            keyframe=pgo.num_key_poses,
+            position=f"({t_local[0]:.1f}, {t_local[1]:.1f}, {t_local[2]:.1f})",
+        )
+
+    r_corr, t_corr = pgo.get_corrected_pose(r_local, t_local)
+    return (
+        build_corrected_odometry(r_corr, t_corr, ts),
+        build_map_odom_tf(pgo._r_offset.copy(), pgo._t_offset.copy(), ts),
+    )
+
+
 def build_corrected_odometry(r: np.ndarray, t: np.ndarray, ts: float) -> Odometry:
     """Build a ``map → body`` corrected Odometry message from rotation/translation."""
     q = Rotation.from_matrix(r).as_quat()  # [x,y,z,w]
@@ -415,6 +452,12 @@ class PGO(Module):
         self._has_odom = False
         self._last_global_map_time = 0.0
 
+    def _seed_initial_tf(self, ts: float) -> None:
+        """Publish an identity ``map → odom`` so consumers querying
+        ``map → body`` get a result immediately, before any loop closure
+        correction has been computed."""
+        self._publish_map_odom_tf(np.eye(3), np.zeros(3), ts)
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -424,10 +467,7 @@ class PGO(Module):
         # from _on_scan and _publish_loop threads.
         self._pgo_lock = threading.Lock()
         self._pgo = _SimplePGO(self.config)
-        # Seed the TF tree with an identity map→odom so that consumers
-        # querying map→body get a result immediately (before any loop
-        # closure correction has been computed).
-        self._publish_map_odom_tf(np.eye(3), np.zeros(3), time.time())
+        self._seed_initial_tf(time.time())
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odom)))
         self.register_disposable(Disposable(self.registered_scan.subscribe(self._on_scan)))
         self._running = True
@@ -458,10 +498,6 @@ class PGO(Module):
             self._has_odom = True
 
     def _on_scan(self, cloud: PointCloud2) -> None:
-        points, _ = cloud.as_numpy()
-        if len(points) == 0:
-            return
-
         with self._lock:
             if not self._has_odom:
                 return
@@ -472,30 +508,13 @@ class PGO(Module):
         pgo = self._pgo
         assert pgo is not None
 
-        # Body-frame points
-        if self.config.unregister_input:
-            # registered_scan is world-frame, transform back to body-frame
-            body_pts = (r_local.T @ (points[:, :3].T - t_local[:, None])).T
-        else:
-            body_pts = points[:, :3]
-
         with self._pgo_lock:
-            added = pgo.add_key_pose(r_local, t_local, ts, body_pts)
-            if added:
-                pgo.search_for_loops()
-                pgo.smooth_and_update()
-                logger.info(
-                    "Keyframe added",
-                    keyframe=pgo.num_key_poses,
-                    position=f"({t_local[0]:.1f}, {t_local[1]:.1f}, {t_local[2]:.1f})",
-                )
-
-            # Publish corrected odometry
-            r_corr, t_corr = pgo.get_corrected_pose(r_local, t_local)
-            r_offset = pgo._r_offset.copy()
-            t_offset = pgo._t_offset.copy()
-        self._publish_corrected_odom(r_corr, t_corr, ts)
-        self._publish_map_odom_tf(r_offset, t_offset, ts)
+            result = process_scan(pgo, cloud, r_local, t_local, ts, self.config.unregister_input)
+        if result is None:
+            return
+        corrected_odom, tf_msg = result
+        self.corrected_odometry.publish(corrected_odom)
+        self.tf.publish(tf_msg)
 
     def _publish_corrected_odom(self, r: np.ndarray, t: np.ndarray, ts: float) -> None:
         self.corrected_odometry.publish(build_corrected_odometry(r, t, ts))
@@ -509,7 +528,6 @@ class PGO(Module):
         self.tf.publish(build_map_odom_tf(r_offset, t_offset, ts))
 
     def _publish_loop(self) -> None:
-        """Periodically publish global map."""
         pgo = self._pgo
         assert pgo is not None
         rate = self.config.global_map_publish_rate

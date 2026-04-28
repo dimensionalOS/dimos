@@ -91,7 +91,6 @@ def _odom_to_body_tf(msg: Odometry) -> Transform:
 
 
 def _get_local_ips() -> list[str]:
-    """Return all IPv4 addresses assigned to local interfaces."""
     ips: list[str] = []
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
@@ -134,8 +133,6 @@ def _find_candidate_ips(lidar_ip: str, local_ips: list[str]) -> list[str]:
 
 
 class FastLio2Config(NativeModuleConfig):
-    """Config for the FAST-LIO2 + Livox Mid-360 native module."""
-
     cwd: str | None = "cpp"
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build .#fastlio2_native"

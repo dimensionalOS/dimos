@@ -198,11 +198,8 @@ def test_full_nav_closed_loop():
             assert len(paths) > 0, "LocalPlanner produced no path"
             assert len(cmd_vels) > 0, "PathFollower produced no cmd_vel"
     finally:
-        for sub in subs:
-            try:
-                sub.dispose()
-            except Exception:
-                pass
+        for unsub in subs:
+            unsub()
         wp_thread.join(timeout=5.0)
         assert not wp_thread.is_alive(), "_send_waypoint thread didn't exit"
         coordinator.stop()

@@ -43,8 +43,41 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
+from dimos.navigation.nav_stack.modules.movement_manager.movement_manager import (
+    MovementManager,
+    MovementManagerConfig,
+)
+from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import (
+    Costmap,
+    SimplePlanner,
+    SimplePlannerConfig,
+    resolve_tf_chain,
+)
 from dimos.protocol.tf.tf import MultiTBuffer
+
+# PGO + create_nav_stack pull in gtsam; gate behind a try so the rest of the
+# file is still importable without it. Tests that touch these are class- or
+# module-level skipped via ``_has_gtsam`` below.
+_has_gtsam: bool
+try:
+    import gtsam  # noqa: F401
+
+    from dimos.navigation.nav_stack.main import create_nav_stack
+    from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanner
+    from dimos.navigation.nav_stack.modules.pgo.pgo import (
+        PGO,
+        PGOConfig,
+        _SimplePGO,
+        build_corrected_odometry,
+        build_map_odom_tf,
+    )
+    from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
+
+    _has_gtsam = True
+except ImportError:
+    _has_gtsam = False
 
 
 class TestFrameConstants:
@@ -246,20 +279,12 @@ class TestFastLio2TF:
         assert tf_arg.ts == pytest.approx(100.0)
 
 
-_has_gtsam = True
-try:
-    import gtsam  # noqa: F401
-except ImportError:
-    _has_gtsam = False
-
-
 @pytest.mark.skipif(not _has_gtsam, reason="gtsam not installed")
 class TestPGOTF:
     """Verify PGO publishes map→odom TF and corrected odometry uses correct frames."""
 
     def test_build_map_odom_tf(self):
         """build_map_odom_tf should produce a map→odom Transform from r/t."""
-        from dimos.navigation.nav_stack.modules.pgo.pgo import build_map_odom_tf
 
         r_offset = np.eye(3)
         t_offset = np.array([1.0, 2.0, 0.0])
@@ -272,7 +297,6 @@ class TestPGOTF:
 
     def test_build_corrected_odometry_uses_frame_constants(self):
         """build_corrected_odometry should use FRAME_MAP and FRAME_BODY."""
-        from dimos.navigation.nav_stack.modules.pgo.pgo import build_corrected_odometry
 
         r = np.eye(3)
         t = np.array([5.0, 6.0, 0.0])
@@ -280,86 +304,71 @@ class TestPGOTF:
         assert odom_msg.frame_id == FRAME_MAP
         assert odom_msg.child_frame_id == FRAME_BODY
 
-    def test_start_seeds_identity_map_odom(self):
-        """PGO.start() should publish identity map→odom so the chain works immediately."""
-        from dimos.navigation.nav_stack.modules.pgo.pgo import PGO, PGOConfig
-
-        # Construct via __new__ — PGO.__init__ takes the full Module pipeline
-        # we don't have in unit tests. The fields below mirror what __init__
-        # would set up.
+    def test_seed_initial_tf_publishes_identity(self):
+        """PGO._seed_initial_tf should publish identity map→odom (called during start)."""
+        # Use __new__ to avoid the full Module construction; the helper
+        # only reads ``self._tf`` so we don't need any other state here.
         pgo_mod = cast("Any", PGO.__new__(PGO))
-        pgo_mod.config = PGOConfig()
-        pgo_mod._lock = threading.Lock()
-        pgo_mod._pgo_lock = threading.Lock()
-        pgo_mod._pgo = None
-        pgo_mod._has_odom = False
-        pgo_mod._latest_r = np.eye(3)
-        pgo_mod._latest_t = np.zeros(3)
-        pgo_mod._latest_time = 0.0
-        pgo_mod._last_global_map_time = 0.0
-        pgo_mod._running = False
-        pgo_mod._thread = None
-        pgo_mod._tf = MagicMock()
-        pgo_mod.odometry = MagicMock()
-        pgo_mod.registered_scan = MagicMock()
-        pgo_mod.corrected_odometry = MagicMock()
-
-        try:
-            pgo_mod.start()
-
-            # Should have published identity TF immediately
-            assert pgo_mod.tf.publish.call_count >= 1
-            tf_arg = pgo_mod.tf.publish.call_args_list[0][0][0]
-            assert tf_arg.frame_id == FRAME_MAP
-            assert tf_arg.child_frame_id == FRAME_ODOM
-            assert tf_arg.translation.x == pytest.approx(0.0, abs=1e-6)
-            assert tf_arg.translation.y == pytest.approx(0.0, abs=1e-6)
-            assert tf_arg.rotation.w == pytest.approx(1.0, abs=1e-6)
-        finally:
-            pgo_mod._running = False
-            if pgo_mod._thread:
-                pgo_mod._thread.join(timeout=2.0)
-
-    def test_on_scan_publishes_both_odom_and_tf(self):
-        """After _on_scan, both corrected_odometry and map→odom TF should be published."""
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-        from dimos.navigation.nav_stack.modules.pgo.pgo import PGO, PGOConfig, _SimplePGO
-
-        pgo_mod = cast("Any", PGO.__new__(PGO))
-        cfg = PGOConfig()
-        pgo_mod.config = cfg
-        pgo_mod._lock = threading.Lock()
-        pgo_mod._pgo_lock = threading.Lock()
-        pgo_mod._pgo = _SimplePGO(cfg)
-        pgo_mod._has_odom = True
-        pgo_mod._latest_r = np.eye(3)
-        pgo_mod._latest_t = np.array([1.0, 2.0, 0.0])
-        pgo_mod._latest_time = 1.0
-        pgo_mod.corrected_odometry = MagicMock()
         pgo_mod._tf = MagicMock()
 
-        pts = np.random.default_rng(42).standard_normal((100, 3)).astype(np.float32)
-        cloud = PointCloud2.from_numpy(pts, frame_id="map", timestamp=1.0)
-        pgo_mod._on_scan(cloud)
+        pgo_mod._seed_initial_tf(123.0)
 
-        pgo_mod.corrected_odometry.publish.assert_called_once()
         pgo_mod.tf.publish.assert_called_once()
-
         tf_arg = pgo_mod.tf.publish.call_args[0][0]
         assert tf_arg.frame_id == FRAME_MAP
         assert tf_arg.child_frame_id == FRAME_ODOM
+        assert tf_arg.translation.x == pytest.approx(0.0, abs=1e-6)
+        assert tf_arg.translation.y == pytest.approx(0.0, abs=1e-6)
+        assert tf_arg.rotation.w == pytest.approx(1.0, abs=1e-6)
+        assert tf_arg.ts == pytest.approx(123.0)
+
+    def test_process_scan_returns_odom_and_map_tf(self):
+        """process_scan should return both a corrected odometry and a map→odom TF."""
+        from dimos.navigation.nav_stack.modules.pgo.pgo import process_scan
+
+        cfg = PGOConfig()
+        pgo = _SimplePGO(cfg)
+
+        pts = np.random.default_rng(42).standard_normal((100, 3)).astype(np.float32)
+        cloud = PointCloud2.from_numpy(pts, frame_id="map", timestamp=1.0)
+        result = process_scan(
+            pgo,
+            cloud,
+            r_local=np.eye(3),
+            t_local=np.array([1.0, 2.0, 0.0]),
+            ts=1.0,
+            unregister_input=cfg.unregister_input,
+        )
+
+        assert result is not None
+        odom_msg, tf_msg = result
+        assert odom_msg.frame_id == FRAME_MAP
+        assert odom_msg.child_frame_id == FRAME_BODY
+        assert tf_msg.frame_id == FRAME_MAP
+        assert tf_msg.child_frame_id == FRAME_ODOM
+
+    def test_process_scan_empty_cloud_returns_none(self):
+        """process_scan should return None for an empty point cloud."""
+        from dimos.navigation.nav_stack.modules.pgo.pgo import process_scan
+
+        cfg = PGOConfig()
+        pgo = _SimplePGO(cfg)
+        empty = PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32), "map", 0.0)
+        result = process_scan(
+            pgo,
+            empty,
+            r_local=np.eye(3),
+            t_local=np.zeros(3),
+            ts=0.0,
+            unregister_input=cfg.unregister_input,
+        )
+        assert result is None
 
 
 class TestSimplePlannerTF:
     """Verify SimplePlanner queries TF instead of subscribing to Odometry."""
 
     def _make_planner(self) -> Any:
-        from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import (
-            Costmap,
-            SimplePlanner,
-            SimplePlannerConfig,
-        )
-
         p = SimplePlanner.__new__(SimplePlanner)
         p.config = SimplePlannerConfig()
         p._lock = threading.Lock()
@@ -394,7 +403,6 @@ class TestSimplePlannerTF:
 
     def test_no_odometry_port(self):
         """SimplePlanner should not have an odometry In stream."""
-        from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
 
         # Check class annotations for In[Odometry]
         annotations = {}
@@ -431,30 +439,6 @@ class TestSimplePlannerTF:
         assert result is False
         assert p._has_odom is False
 
-    def test_query_pose_falls_back_to_odom_body(self):
-        """_query_pose should fall back to odom→body when map→body unavailable."""
-        p = self._make_planner()
-
-        odom_tf = Transform(
-            frame_id=FRAME_ODOM,
-            child_frame_id=FRAME_BODY,
-            translation=Vector3(1.0, 2.0, 0.3),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            ts=time.time(),
-        )
-
-        def _side_effect(parent: str, child: str) -> Transform | None:
-            if parent == FRAME_MAP:
-                return None  # map→body not available yet
-            return odom_tf
-
-        p.tf.get.side_effect = _side_effect
-
-        result = p._query_pose()
-        assert result is True
-        assert p._robot_x == pytest.approx(1.0)
-        assert p._robot_y == pytest.approx(2.0)
-
     def test_replan_once_queries_tf(self):
         """_replan_once should call _query_pose (which queries TF)."""
         p = self._make_planner()
@@ -476,7 +460,6 @@ class TestSimplePlannerTF:
         """Published waypoints should use FRAME_MAP as frame_id."""
         p = self._make_planner()
 
-        # Set up state for waypoint publishing
         p._has_odom = True
         p._goal_x = 5.0
         p._goal_y = 0.0
@@ -485,7 +468,6 @@ class TestSimplePlannerTF:
         p._current_wp = (2.0, 0.0)
         p._current_wp_is_goal = False
 
-        # Robot is very close to the current waypoint → should advance
         p._robot_x = 1.9
         p._robot_y = 0.0
         p._maybe_advance_waypoint(1.9, 0.0, 0.0)
@@ -495,16 +477,55 @@ class TestSimplePlannerTF:
             assert msg.frame_id == FRAME_MAP
 
 
+class TestResolveTfChain:
+    """resolve_tf_chain handles the (parent, child) priority list."""
+
+    def test_returns_first_available(self):
+        """First chain that returns non-None wins."""
+        odom_tf = Transform(
+            frame_id=FRAME_ODOM,
+            child_frame_id=FRAME_BODY,
+            translation=Vector3(1.0, 2.0, 0.3),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            ts=time.time(),
+        )
+        tf_buffer = MagicMock()
+        tf_buffer.get.side_effect = lambda p, c: None if p == FRAME_MAP else odom_tf
+        result = resolve_tf_chain(tf_buffer, [(FRAME_MAP, FRAME_BODY), (FRAME_ODOM, FRAME_BODY)])
+        assert result is odom_tf
+
+    def test_returns_none_when_all_chains_empty(self):
+        tf_buffer = MagicMock()
+        tf_buffer.get.return_value = None
+        result = resolve_tf_chain(tf_buffer, [(FRAME_MAP, FRAME_BODY), (FRAME_ODOM, FRAME_BODY)])
+        assert result is None
+
+    def test_first_match_wins(self):
+        """Earlier query wins over later one when both have transforms."""
+        first = Transform(
+            frame_id=FRAME_MAP,
+            child_frame_id=FRAME_BODY,
+            translation=Vector3(7.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            ts=time.time(),
+        )
+        second = Transform(
+            frame_id=FRAME_ODOM,
+            child_frame_id=FRAME_BODY,
+            translation=Vector3(99.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            ts=time.time(),
+        )
+        tf_buffer = MagicMock()
+        tf_buffer.get.side_effect = lambda p, c: first if p == FRAME_MAP else second
+        result = resolve_tf_chain(tf_buffer, [(FRAME_MAP, FRAME_BODY), (FRAME_ODOM, FRAME_BODY)])
+        assert result is first
+
+
 class TestWaypointAdvance:
     """Verify the waypoint advance logic prevents stopping on intermediate waypoints."""
 
     def _make_planner(self) -> Any:
-        from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import (
-            Costmap,
-            SimplePlanner,
-            SimplePlannerConfig,
-        )
-
         p = SimplePlanner.__new__(SimplePlanner)
         p.config = SimplePlannerConfig(
             lookahead_distance=2.0,
@@ -583,11 +604,6 @@ class TestMovementManagerTF:
     """Verify MovementManager queries TF instead of subscribing to Odometry."""
 
     def _make_mgr(self) -> Any:
-        from dimos.navigation.nav_stack.modules.movement_manager.movement_manager import (
-            MovementManager,
-            MovementManagerConfig,
-        )
-
         # MovementManager.__init__ pulls the full Module lifecycle which we
         # don't want to spin up for unit tests. Construct via __new__ and
         # set up the fields the methods under test actually read.
@@ -609,10 +625,6 @@ class TestMovementManagerTF:
 
     def test_no_odometry_port(self):
         """MovementManager should not have an odometry In stream."""
-        from dimos.navigation.nav_stack.modules.movement_manager.movement_manager import (
-            MovementManager,
-        )
-
         annotations = {}
         for cls in reversed(MovementManager.__mro__):
             annotations.update(getattr(cls, "__annotations__", {}))
@@ -636,9 +648,6 @@ class TestSmartNavRemappings:
     """Verify that odometry remappings only apply to NativeModules."""
 
     def test_simple_planner_no_odometry_remapping(self):
-        from dimos.navigation.nav_stack.main import create_nav_stack
-        from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
-
         bp = create_nav_stack(use_simple_planner=True)
         rmap = bp.remapping_map
         assert (SimplePlanner, "odometry") not in rmap, (
@@ -646,11 +655,6 @@ class TestSmartNavRemappings:
         )
 
     def test_movement_manager_no_odometry_remapping(self):
-        from dimos.navigation.nav_stack.main import create_nav_stack
-        from dimos.navigation.nav_stack.modules.movement_manager.movement_manager import (
-            MovementManager,
-        )
-
         bp = create_nav_stack(use_simple_planner=True)
         rmap = bp.remapping_map
         assert (MovementManager, "odometry") not in rmap, (
@@ -658,20 +662,12 @@ class TestSmartNavRemappings:
         )
 
     def test_terrain_analysis_still_remapped(self):
-        from dimos.navigation.nav_stack.main import create_nav_stack
-        from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import (
-            TerrainAnalysis,
-        )
-
         bp = create_nav_stack(use_simple_planner=True)
         rmap = bp.remapping_map
         assert (TerrainAnalysis, "odometry") in rmap
         assert rmap[(TerrainAnalysis, "odometry")] == "corrected_odometry"
 
     def test_far_planner_remapped_when_active(self):
-        from dimos.navigation.nav_stack.main import create_nav_stack
-        from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanner
-
         bp = create_nav_stack(use_simple_planner=False)
         rmap = bp.remapping_map
         assert (FarPlanner, "odometry") in rmap
@@ -683,8 +679,6 @@ class TestPGOCorrectionToTF:
     """Verify PGO's R/t offset correctly maps to a TF transform."""
 
     def test_identity_correction(self):
-        from dimos.navigation.nav_stack.modules.pgo.pgo import build_map_odom_tf
-
         tf_arg = build_map_odom_tf(np.eye(3), np.zeros(3), 1.0)
         assert tf_arg.translation.x == pytest.approx(0.0, abs=1e-6)
         assert tf_arg.translation.y == pytest.approx(0.0, abs=1e-6)
@@ -692,15 +686,11 @@ class TestPGOCorrectionToTF:
         assert tf_arg.rotation.w == pytest.approx(1.0, abs=1e-6)
 
     def test_translation_correction(self):
-        from dimos.navigation.nav_stack.modules.pgo.pgo import build_map_odom_tf
-
         tf_arg = build_map_odom_tf(np.eye(3), np.array([0.5, -0.3, 0.0]), 1.0)
         assert tf_arg.translation.x == pytest.approx(0.5, abs=1e-6)
         assert tf_arg.translation.y == pytest.approx(-0.3, abs=1e-6)
 
     def test_rotation_correction(self):
-        from dimos.navigation.nav_stack.modules.pgo.pgo import build_map_odom_tf
-
         yaw = math.pi / 6  # 30°
         r_offset = Rotation.from_euler("z", yaw).as_matrix()
         tf_arg = build_map_odom_tf(r_offset, np.zeros(3), 1.0)

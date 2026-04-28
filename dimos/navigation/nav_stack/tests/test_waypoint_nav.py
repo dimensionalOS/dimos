@@ -255,11 +255,8 @@ def test_waypoint_nav_produces_path_and_movement():
         assert len(nonzero) > 0, f"All {n_cmd} cmd_vel messages were zero — robot not moving"
 
     finally:
-        for sub in subs:
-            try:
-                sub.dispose()
-            except Exception:
-                pass
+        for unsub in subs:
+            unsub()
         wp_thread.join(timeout=5.0)
         assert not wp_thread.is_alive(), "_send_wp thread didn't exit"
         coordinator.stop()

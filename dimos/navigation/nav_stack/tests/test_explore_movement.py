@@ -340,9 +340,6 @@ def test_explore_produces_movement():
             )
 
     finally:
-        for sub in subs:
-            try:
-                sub.dispose()
-            except Exception:
-                pass
+        for unsub in subs:
+            unsub()
         coordinator.stop()

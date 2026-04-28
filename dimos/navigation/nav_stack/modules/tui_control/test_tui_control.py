@@ -134,7 +134,4 @@ class TestTUIControl:
             assert results[0].y == 10.0
             assert results[0].frame_id == "map"
         finally:
-            if hasattr(unsub, "dispose"):
-                unsub.dispose()
-            elif callable(unsub):
-                unsub()
+            unsub()

@@ -188,6 +188,18 @@ def progress_tick(
     return (state, False)
 
 
+def resolve_tf_chain(tf_buffer: Any, queries: list[tuple[str, str]]) -> Any:
+    """Walk ``queries`` in priority order, returning the first transform
+    from ``tf_buffer.get(parent, child)`` that's not None. Returns None if
+    none of the chains are available.
+    """
+    for parent, child in queries:
+        tf = tf_buffer.get(parent, child)
+        if tf is not None:
+            return tf
+    return None
+
+
 def plan_on_costmap(
     costmap: Costmap,
     rx: float,
@@ -476,11 +488,7 @@ class SimplePlanner(Module):
 
         Returns True if a pose was obtained from any chain.
         """
-        tf = None
-        for parent, child in self._TF_POSE_QUERIES:
-            tf = self.tf.get(parent, child)
-            if tf is not None:
-                break
+        tf = resolve_tf_chain(self.tf, list(self._TF_POSE_QUERIES))
         if tf is None:
             now = time.monotonic()
             if now - getattr(self, "_last_tf_warn", 0.0) > 5.0:
