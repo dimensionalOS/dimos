@@ -143,7 +143,9 @@ def _configure_structlog() -> Path:
 
 
 _CONSOLE_PATH_WIDTH = 30
-_CONSOLE_USE_COLORS = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+_CONSOLE_USE_COLORS = os.environ.get("FORCE_COLOR", "") == "1" or (
+    hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+)
 
 _CONSOLE_LEVEL_COLORS = {
     "dbg": "\033[1;36m",  # bold cyan

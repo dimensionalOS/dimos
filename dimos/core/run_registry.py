@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run registry for tracking DimOS daemon processes."""
+"""Compatibility shim — delegates to instance_registry.
+
+.. deprecated::
+    Use ``dimos.core.instance_registry`` directly.
+"""
 
 from __future__ import annotations
 
@@ -26,16 +30,34 @@ import time
 
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.process_lifecycle import kill_run_processes
-from dimos.utils.logging_config import setup_logger
+from dimos.core.instance_registry import (
+    is_pid_alive,
+    list_running,
+    stop as _stop_by_name,
+)
 
-logger = setup_logger()
+# Re-export
+__all__ = [
+    "REGISTRY_DIR",
+    "RunEntry",
+    "check_port_conflicts",
+    "cleanup_stale",
+    "generate_run_id",
+    "get_most_recent",
+    "is_pid_alive",
+    "list_runs",
+    "stop_entry",
+]
 
 REGISTRY_DIR = STATE_DIR / "runs"
 
 
 @dataclass
 class RunEntry:
-    """Metadata for a single DimOS run (daemon or foreground)."""
+    """Legacy RunEntry — kept for test and migration compatibility.
+
+    New code should use ``InstanceInfo`` from ``instance_registry``.
+    """
 
     run_id: str
     pid: int
@@ -48,12 +70,21 @@ class RunEntry:
     rpyc_port: int = 0
     original_argv: list[str] = field(default_factory=list)
 
+    # Alias for instance_registry compat
+    @property
+    def name(self) -> str:
+        return self.blueprint
+
+    @property
+    def run_dir(self) -> str:
+        return self.log_dir
+
     @property
     def registry_path(self) -> Path:
         return REGISTRY_DIR / f"{self.run_id}.json"
 
     def save(self) -> None:
-        """Persist this entry to disk."""
+        """Persist this entry to disk (legacy format)."""
         REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
         self.registry_path.write_text(json.dumps(asdict(self), indent=2))
 
@@ -69,42 +100,53 @@ class RunEntry:
 
 
 def generate_run_id(blueprint: str) -> str:
-    """Generate a human-readable, timestamp-prefixed run ID."""
     ts = time.strftime("%Y%m%d-%H%M%S")
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", blueprint)
     return f"{ts}-{safe_name}"
 
 
-def is_pid_alive(pid: int) -> bool:
-    """Check whether a process with the given PID is still running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # Process exists but we can't signal it — still alive.
-        return True
-
-
 def list_runs(alive_only: bool = True) -> list[RunEntry]:
-    """List all registered runs, optionally filtering to alive processes."""
-    REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-    entries: list[RunEntry] = []
+    """List runs.  Checks both new instance registry and legacy format."""
+    # Check new instance registry first
+    new_entries = list_running()
+    results: list[RunEntry] = []
+    for info in new_entries:
+        results.append(
+            RunEntry(
+                run_id=info.name,
+                pid=info.pid,
+                blueprint=info.blueprint,
+                started_at=info.started_at,
+                log_dir=info.run_dir,
+                grpc_port=info.grpc_port,
+                original_argv=info.original_argv,
+                config_overrides=info.config_overrides,
+            )
+        )
+
+    # Also check legacy registry dir (don't create it if it doesn't exist)
+    if not REGISTRY_DIR.exists():
+        return results
+    seen_pids = {r.pid for r in results}
     for f in sorted(REGISTRY_DIR.glob("*.json")):
         try:
             entry = RunEntry.load(f)
         except Exception:
-            logger.warning("Corrupt registry entry, removing", path=str(f))
             f.unlink()
             continue
-
+        if entry.pid in seen_pids:
+            continue
         if alive_only and not is_pid_alive(entry.pid):
-            logger.info("Cleaning stale run entry", run_id=entry.run_id, pid=entry.pid)
             entry.remove()
             continue
-        entries.append(entry)
-    return entries
+        results.append(entry)
+
+    return results
+
+
+def get_most_recent(alive_only: bool = True) -> RunEntry | None:
+    runs = list_runs(alive_only=alive_only)
+    return runs[-1] if runs else None
 
 
 def cleanup_stale() -> int:
@@ -142,24 +184,22 @@ def cleanup_stale() -> int:
 
 
 def check_port_conflicts(grpc_port: int = 9877) -> RunEntry | None:
-    """Check if any alive run is using the gRPC port. Returns conflicting entry or None."""
     for entry in list_runs(alive_only=True):
         if entry.grpc_port == grpc_port:
             return entry
     return None
 
 
-def get_most_recent(alive_only: bool = True) -> RunEntry | None:
-    """Return the most recently created run entry, or None."""
-    runs = list_runs(alive_only=alive_only)
-    return runs[-1] if runs else None
-
-
 def stop_entry(entry: RunEntry, force: bool = False) -> tuple[str, bool]:
-    """Stop a DimOS instance by registry entry.
+    """Stop a DimOS instance by RunEntry."""
+    # Try new registry first
+    msg, ok = _stop_by_name(entry.name, force=force)
+    if ok:
+        # Also clean legacy entry if present
+        entry.remove()
+        return msg, ok
 
-    Returns (message, success) for the CLI to display.
-    """
+    # Fall back to direct PID kill (legacy)
     sig = signal.SIGKILL if force else signal.SIGTERM
     sig_name = "SIGKILL" if force else "SIGTERM"
 
@@ -170,7 +210,7 @@ def stop_entry(entry: RunEntry, force: bool = False) -> tuple[str, bool]:
         return ("Process already dead, cleaning registry", True)
 
     if not force:
-        for _ in range(50):  # 5 seconds
+        for _ in range(50):
             if not is_pid_alive(entry.pid):
                 break
             time.sleep(0.1)

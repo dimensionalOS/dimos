@@ -134,12 +134,12 @@ class MulticastConfiguratorLinux(SystemConfigurator):
         return bool(self.loopback_ok and self.route_ok)
 
     def explanation(self) -> str | None:
-        output = ""
+        lines = []
         if not self.loopback_ok:
-            output += f"- Multicast: sudo {' '.join(self.enable_multicast_cmd)}\n"
+            lines.append(f"Enable multicast with: `sudo {' '.join(self.enable_multicast_cmd)}`")
         if not self.route_ok:
-            output += f"- Multicast: sudo {' '.join(self.add_route_cmd)}\n"
-        return output
+            lines.append(f"Add multicast route with: `sudo {' '.join(self.add_route_cmd)}`")
+        return "\n".join(lines) if lines else None
 
     def fix(self) -> None:
         if not self.loopback_ok:
@@ -182,7 +182,7 @@ class MulticastConfiguratorMacOS(SystemConfigurator):
             return False
 
     def explanation(self) -> str | None:
-        return f"Multicast: - sudo {' '.join(self.add_route_cmd)}"
+        return f"Enable multicast with: `sudo {' '.join(self.add_route_cmd)}`"
 
     def fix(self) -> None:
         # Delete any existing 224.0.0.0/4 route (e.g. on en0) before adding on lo0,

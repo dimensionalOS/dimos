@@ -3,6 +3,7 @@
 **/*.ignore.*
 
 .vscode/
+MUJOCO_LOG.TXT
 
 # Ignore Python cache files
 __pycache__/
@@ -11,6 +12,7 @@ __pycache__/
 # Ignore virtual environment directories
 *venv*/
 .venv*/
+.venv
 .ssh/
 .direnv/
 

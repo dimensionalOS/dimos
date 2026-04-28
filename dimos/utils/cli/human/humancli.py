@@ -106,9 +106,13 @@ class ThinkingIndicator:
         if not self._strips:
             return
         strip_ids = {id(s) for s in self._strips}
+        # Textual's RichLog has no public API for removing individual lines.
+        # We must mutate private internals directly. If Textual changes these
+        # internals, the thinking indicator animation will break visibly (not
+        # silently), so the risk is acceptable.  Pinned: textual>=0.86,<1.0
         self._chat_log.lines = [line for line in self._chat_log.lines if id(line) not in strip_ids]
         self._strips = []
-        self._chat_log._line_cache.clear()
+        self._chat_log._line_cache.clear()  # type: ignore[attr-defined]
         self._chat_log.virtual_size = Size(
             self._chat_log.virtual_size.width, len(self._chat_log.lines)
         )

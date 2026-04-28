@@ -1,0 +1,26 @@
+- pr: 1544
+  comment_id: null
+  author: autofix
+  file: dimos/core/blueprints.py
+  line: null
+  problem: "modify/delete conflict: dev deleted blueprints.py (moved to dimos/core/coordination/), but dio branch had modifications"
+  solution: "Deleted the file. The canonical location is now dimos/core/coordination/blueprints.py on dev. Any dio-specific changes to blueprints.py need to be manually ported to the new location by Jeff."
+  commit: 1fc74f547
+
+- pr: 1544
+  comment_id: null
+  author: autofix
+  file: dimos/core/module_coordinator.py
+  line: null
+  problem: "modify/delete conflict: dev deleted module_coordinator.py (moved to dimos/core/coordination/), but dio branch had modifications"
+  solution: "Deleted the file. The canonical location is now dimos/core/coordination/module_coordinator.py on dev. Any dio-specific changes need to be manually ported by Jeff."
+  commit: 1fc74f547
+
+- pr: 1544
+  comment_id: null
+  author: autofix
+  file: dimos/core/worker_manager.py
+  line: null
+  problem: "modify/delete conflict: dev deleted worker_manager.py (moved to dimos/core/coordination/), but dio branch had modifications"
+  solution: "Deleted the file. The canonical location is now dimos/core/coordination/worker_manager.py on dev. Any dio-specific changes need to be manually ported by Jeff."
+  commit: 1fc74f547

@@ -21,10 +21,11 @@ import inspect
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
 
 import click
 from dotenv import load_dotenv
@@ -34,11 +35,24 @@ import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
-from dimos.constants import CONFIG_DIR, LOG_DIR
-from dimos.core.daemon import daemonize, install_signal_handlers
+from dimos.constants import CONFIG_DIR
+from dimos.core.daemon import install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.core.instance_registry import (
+    InstanceInfo,
+    get,
+    get_sole_running,
+    is_pid_alive,
+    list_running,
+    make_run_dir,
+    register,
+    stop as registry_stop,
+    unregister,
+)
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.constants import RerunOpenOption
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
@@ -119,6 +133,21 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 
 
+def _resolve_name(name: str | None) -> InstanceInfo:
+    """Resolve an instance name.  If None, use sole running instance."""
+    if name:
+        info = get(name)
+        if info is None:
+            typer.echo(f"No running instance named '{name}'", err=True)
+            raise typer.Exit(1)
+        return info
+    info = get_sole_running()
+    if info is None:
+        typer.echo("No running DimOS instance", err=True)
+        raise typer.Exit(1)
+    return info
+
+
 def arg_help(
     config: type[BaseModel],
     blueprint: Blueprint,
@@ -192,7 +221,16 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
-    daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
+    daemon: bool = typer.Option(
+        False, "--daemon", "-d", help="Run as daemon (always daemonizes; without -d stays attached)"
+    ),
+    detach: bool = typer.Option(
+        False, "--detach", help="Exit CLI after successful build (implies --daemon)"
+    ),
+    name: str = typer.Option("", "--name", help="Global instance name (default: blueprint name)"),
+    force_replace: bool = typer.Option(
+        False, "--force-replace", help="Auto-stop existing instance with same name"
+    ),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(
@@ -200,146 +238,147 @@ def run(
     ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
-    """Start a robot blueprint"""
+    """Start a robot blueprint."""
     logger.info("Starting DimOS")
 
     from dimos.core.coordination.blueprints import autoconnect
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.core.coordination.process_lifecycle import (
-        DIMOS_RUN_ID_ENV,
-        spawn_watchdog,
-    )
-    from dimos.core.run_registry import (
-        RunEntry,
-        check_port_conflicts,
-        cleanup_stale,
-        generate_run_id,
-    )
-    from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
 
-    # Clean stale registry entries
-    stale = cleanup_stale()
-    if stale:
-        logger.info(f"Cleaned {stale} stale run entries")
+    if daemon or detach:
+        # Daemon path: spawn + double-fork
+        # launch_blueprint handles everything: config, existing instance,
+        # run_dir creation, config snapshot, and spawning the daemon.
+        from dimos.core.daemon import attached_tail, launch_blueprint
 
-    # Port conflict check
-    conflict = check_port_conflicts()
-    if conflict:
-        typer.echo(
-            f"Error: Ports in use by {conflict.run_id} (PID {conflict.pid}). "
-            f"Run 'dimos stop' first.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    blueprint_name = "-".join(robot_types)
-    run_id = generate_run_id(blueprint_name)
-    log_dir = LOG_DIR / run_id
-
-    # Tag every descendant with the run id so the watchdog and stale-run
-    # cleanup can identify them via os.environ after main dies.
-    os.environ[DIMOS_RUN_ID_ENV] = run_id
-
-    # Route structured logs (main.jsonl) to the per-run directory.
-    # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
-    set_run_log_dir(log_dir)
-
-    blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
-
-    if disable:
-        disabled_classes = tuple(
-            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
-        )
-        blueprint = blueprint.disabled_modules(*disabled_classes)
-
-    if show_help:
-        print("Blueprint arguments:")
-        print(arg_help(blueprint.config(), blueprint))
-        return
-
-    blueprint_config = blueprint.config()
-    kwargs = load_config_args(blueprint_config, blueprint_args, config_path)
-    if cli_config_overrides:
-        kwargs["g"] = cli_config_overrides
-
-    coordinator = ModuleCoordinator.build(blueprint, kwargs)
-
-    if daemon:
-        # Health check before daemonizing — catch early crashes
-        if not coordinator.health_check():
-            typer.echo("Error: health check failed — a worker process died.", err=True)
-            coordinator.stop()
-            raise typer.Exit(1)
-
-        n_modules = coordinator.n_modules
-        typer.echo(f"✓ All modules started ({n_modules} modules)")
-        typer.echo("✓ Health check passed")
-        typer.echo("✓ DimOS running in background\n")
-        typer.echo(f"  Run ID:    {run_id}")
-        typer.echo(f"  Log:       {log_dir}")
-        typer.echo("  Stop:      dimos stop")
-        typer.echo("  Status:    dimos status")
-
-        coordinator.suppress_console()
-
-        daemonize(log_dir)
-
-        rpyc_port = coordinator.start_rpyc_service()  # After daemonize().
-        entry = RunEntry(
-            run_id=run_id,
-            pid=os.getpid(),
-            blueprint=blueprint_name,
-            started_at=datetime.now(timezone.utc).isoformat(),
-            log_dir=str(log_dir),
-            cli_args=list(robot_types),
+        result = launch_blueprint(
+            robot_types=list(robot_types),
             config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
-            original_argv=sys.argv,
+            instance_name=name or None,
+            force_replace=force_replace,
+            disable=list(disable) if disable else None,
         )
-        entry.save()
-        spawn_watchdog(run_id, log_dir=log_dir)
-        install_signal_handlers(entry, coordinator)
-        coordinator.loop()
+
+        if not detach:
+            # Attached mode: tail stdout.log, forward ctrl+c as SIGTERM
+            exit_code = attached_tail(result.run_dir / "stdout.log", result.instance_name)
+            raise typer.Exit(exit_code)
+
+        typer.echo(f"Launched {result.instance_name}")
+        typer.echo(f"  Run dir: {result.run_dir}")
+        typer.echo("  Stop:    dimos stop")
+        raise typer.Exit(0)
     else:
-        rpyc_port = coordinator.start_rpyc_service()
-        entry = RunEntry(
-            run_id=run_id,
+        # Foreground path
+        from dimos.core.coordination.blueprints import autoconnect
+        from dimos.robot.get_all_blueprints import get_by_name, get_module_by_name
+
+        global_config.update(**cli_config_overrides)
+
+        blueprint_name = "-".join(robot_types)
+        instance_name = name or blueprint_name
+
+        blueprint = autoconnect(*map(get_by_name, robot_types))
+
+        if disable:
+            disabled_classes = tuple(get_module_by_name(d).blueprints[0].module for d in disable)
+            blueprint = blueprint.disabled_modules(*disabled_classes)
+
+        if show_help:
+            print("Blueprint arguments:")
+            print(arg_help(blueprint.config(), blueprint))
+            return
+
+        # Check for existing instance
+        existing = get(instance_name)
+        if existing is not None:
+            if force_replace:
+                typer.echo(f"Stopping existing instance '{instance_name}' (PID {existing.pid})...")
+                msg, _ok = registry_stop(instance_name)
+                typer.echo(f"  {msg}")
+                for _ in range(20):
+                    if not is_pid_alive(existing.pid):
+                        break
+                    time.sleep(0.1)
+            elif sys.stdin.isatty():
+                typer.echo(
+                    f"Instance '{instance_name}' is already running (PID {existing.pid}). "
+                    f"Stop it and launch new? [y/N] ",
+                    nl=False,
+                )
+                answer = input().strip().lower()
+                if answer not in ("y", "yes"):
+                    raise typer.Exit(0)
+                msg, _ok = registry_stop(instance_name)
+                typer.echo(f"  {msg}")
+                for _ in range(20):
+                    if not is_pid_alive(existing.pid):
+                        break
+                    time.sleep(0.1)
+            else:
+                typer.echo(
+                    f"Error: Instance '{instance_name}' already running (PID {existing.pid}). "
+                    f"Use --force-replace to auto-stop.",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+        run_dir = make_run_dir(instance_name)
+        set_run_log_dir(run_dir)
+
+        config_snapshot = run_dir / "config.json"
+        config_snapshot.write_text(json.dumps(global_config.model_dump(mode="json"), indent=2))
+
+        coordinator = blueprint.build(cli_config_overrides=cli_config_overrides)
+
+        info = InstanceInfo(
+            name=instance_name,
             pid=os.getpid(),
             blueprint=blueprint_name,
             started_at=datetime.now(timezone.utc).isoformat(),
-            log_dir=str(log_dir),
-            cli_args=list(robot_types),
-            config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
+            run_dir=str(run_dir),
+            grpc_port=global_config.grpc_port if hasattr(global_config, "grpc_port") else 9877,
             original_argv=sys.argv,
+            config_overrides=cli_config_overrides,
         )
-        entry.save()
-        spawn_watchdog(run_id, log_dir=log_dir)
-        # Foreground: only SIGTERM goes through the handler. SIGINT stays at
-        # default so Ctrl+C raises KeyboardInterrupt and the try/finally below
-        # runs with a visible traceback.
-        install_signal_handlers(entry, coordinator, sigint=False)
+        register(info)
+        install_signal_handlers(info, coordinator, sigint=False)
         try:
             coordinator.loop()
         finally:
-            entry.remove()
+            unregister(instance_name)
 
 
 @main.command()
-def status() -> None:
-    """Show the running DimOS instance."""
-    entry = get_most_recent(alive_only=True)
-    if not entry:
-        typer.echo("No running DimOS instance")
+def status(
+    name: str = typer.Argument("", help="Instance name (optional)"),
+) -> None:
+    """Show running DimOS instance(s)."""
+    if name:
+        info = get(name)
+        if not info:
+            typer.echo(f"No running instance named '{name}'")
+            return
+        _print_instance(info)
         return
 
+    running = list_running()
+    if not running:
+        typer.echo("No running DimOS instances")
+        return
+
+    for info in running:
+        _print_instance(info)
+        if len(running) > 1:
+            typer.echo("")
+
+
+def _print_instance(info: InstanceInfo) -> None:
     try:
-        started = datetime.fromisoformat(entry.started_at)
+        started = datetime.fromisoformat(info.started_at)
         age = datetime.now(timezone.utc) - started
         hours, remainder = divmod(int(age.total_seconds()), 3600)
         minutes, seconds = divmod(remainder, 60)
@@ -347,42 +386,55 @@ def status() -> None:
     except Exception:
         uptime = "unknown"
 
-    typer.echo(f"  Run ID:    {entry.run_id}")
-    typer.echo(f"  PID:       {entry.pid}")
-    typer.echo(f"  Blueprint: {entry.blueprint}")
+    typer.echo(f"  Name:      {info.name}")
+    typer.echo(f"  PID:       {info.pid}")
+    typer.echo(f"  Blueprint: {info.blueprint}")
     typer.echo(f"  Uptime:    {uptime}")
-    typer.echo(f"  Log:       {entry.log_dir}")
+    typer.echo(f"  Run dir:   {info.run_dir}")
 
 
 @main.command()
 def stop(
+    name: str = typer.Argument("", help="Instance name (optional)"),
     force: bool = typer.Option(False, "--force", "-f", help="Force kill (SIGKILL)"),
 ) -> None:
-    """Stop the running DimOS instance."""
-
-    entry = get_most_recent(alive_only=True)
-    if not entry:
-        typer.echo("No running DimOS instance", err=True)
-        raise typer.Exit(1)
+    """Stop a running DimOS instance."""
+    if name:
+        info = get(name)
+        if not info:
+            typer.echo(f"No running instance named '{name}'", err=True)
+            raise typer.Exit(1)
+    else:
+        running = list_running()
+        if len(running) == 0:
+            typer.echo("No running DimOS instances", err=True)
+            raise typer.Exit(1)
+        if len(running) > 1:
+            typer.echo("Multiple instances running. Specify a name:", err=True)
+            for r in running:
+                typer.echo(f"  {r.name} (PID {r.pid}, blueprint: {r.blueprint})")
+            raise typer.Exit(1)
+        info = running[0]
 
     sig_name = "SIGKILL" if force else "SIGTERM"
-    typer.echo(f"Stopping {entry.run_id} (PID {entry.pid}) with {sig_name}...")
-    msg, _ok = stop_entry(entry, force=force)
+    typer.echo(f"Stopping {info.name} (PID {info.pid}) with {sig_name}...")
+    msg, _ok = registry_stop(info.name, force=force)
     typer.echo(f"  {msg}")
 
 
 @main.command("log")
 def log_cmd(
+    name: str = typer.Argument("", help="Instance name (optional)"),
     follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output"),
     lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
     all_lines: bool = typer.Option(False, "--all", "-a", help="Show full log"),
     json_output: bool = typer.Option(False, "--json", help="Raw JSONL output"),
-    run_id: str = typer.Option("", "--run", "-r", help="Specific run ID"),
+    run_datetime: str = typer.Option("", "--run", "-r", help="Specific run datetime"),
 ) -> None:
     """View logs from a DimOS run."""
     from dimos.core.log_viewer import follow_log, format_line, read_log, resolve_log_path
 
-    path = resolve_log_path(run_id)
+    path = resolve_log_path(name=name, run_datetime=run_datetime)
     if not path:
         typer.echo("No log files found", err=True)
         raise typer.Exit(1)
@@ -540,28 +592,25 @@ def agent_send_cmd(
 
 @main.command()
 def restart(
+    name: str = typer.Argument("", help="Instance name (optional)"),
     force: bool = typer.Option(False, "--force", "-f", help="Force kill before restarting"),
 ) -> None:
-    """Restart the running DimOS instance with the same arguments."""
-    entry = get_most_recent(alive_only=True)
-    if not entry:
-        typer.echo("No running DimOS instance to restart", err=True)
+    """Restart a running DimOS instance with the same arguments."""
+    info = _resolve_name(name or None)
+
+    if not info.original_argv:
+        typer.echo("Cannot restart: instance missing original command", err=True)
         raise typer.Exit(1)
 
-    if not entry.original_argv:
-        typer.echo("Cannot restart: run entry missing original command", err=True)
-        raise typer.Exit(1)
+    argv = info.original_argv
+    old_pid = info.pid
+    instance_name = info.name
 
-    # Save argv and pid before stopping (stop removes the entry)
-    argv = entry.original_argv
-    old_pid = entry.pid
-
-    typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
-    msg, _ok = stop_entry(entry, force=force)
+    typer.echo(f"Restarting {instance_name} ({info.blueprint})...")
+    msg, _ok = registry_stop(instance_name, force=force)
     typer.echo(f"  {msg}")
 
-    # Wait for the old process to fully exit so ports are released.
-    for _ in range(20):  # up to 2s
+    for _ in range(20):
         if not is_pid_alive(old_pid):
             break
         time.sleep(0.1)
@@ -593,6 +642,18 @@ def list_blueprints() -> None:
     blueprints = [name for name in all_blueprints.keys() if not name.startswith("demo-")]
     for blueprint_name in sorted(blueprints):
         typer.echo(blueprint_name)
+
+
+@main.command()
+def dio(
+    debug: bool = typer.Option(False, "--debug", help="Show debug panel with key event log"),
+) -> None:
+    """Launch the DimOS Unified TUI."""
+    from dimos.utils.cli.dio.app import main as dio_main
+
+    if debug:
+        sys.argv.append("--debug")
+    dio_main()
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
@@ -660,17 +721,43 @@ def send(
 
 @main.command(name="rerun-bridge")
 def rerun_bridge_cmd(
-    viewer_mode: str = typer.Option(
-        "native", help="Viewer mode: native (desktop), web (browser), none (headless)"
-    ),
     memory_limit: str = typer.Option(
         "25%", help="Memory limit for Rerun viewer (e.g., '4GB', '16GB', '25%')"
     ),
+    rerun_open: str = typer.Option(
+        "native", help="How to open Rerun: one of native, web, both, none"
+    ),
+    rerun_web: bool = typer.Option(
+        True, "--rerun-web/--no-rerun-web", help="Enable/Disable Rerun web server"
+    ),
 ) -> None:
-    """Launch the Rerun visualization bridge."""
-    from dimos.visualization.rerun.bridge import run_bridge
+    """Launch the Rerun visualization bridge.
 
-    run_bridge(viewer_mode=viewer_mode, memory_limit=memory_limit)
+    Standalone utility: runs the bridge directly in the main process (no
+    blueprint / worker pool) so users can attach a viewer to existing LCM
+    traffic without building a full module graph.
+    """
+    # Deferred: RerunBridgeModule pulls in the rerun package (~1s), keep it
+    # out of the CLI's hot path so `dimos --help` stays fast.
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+    valid = get_args(RerunOpenOption)
+    if rerun_open not in valid:
+        raise typer.BadParameter(
+            f"rerun_open must be one of {valid}, got {rerun_open!r}", param_hint="--rerun-open"
+        )
+    autoconf(check_only=True)
+
+    bridge = RerunBridgeModule(
+        memory_limit=memory_limit,
+        rerun_open=cast("RerunOpenOption", rerun_open),
+        rerun_web=rerun_web,
+        pubsubs=[LCM()],
+    )
+    bridge.start()
+
+    signal.signal(signal.SIGINT, lambda *_: bridge.stop())
+    signal.pause()
 
 
 if __name__ == "__main__":

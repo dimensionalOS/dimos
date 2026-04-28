@@ -63,7 +63,7 @@ _BRAILLE_BASE = 0x2800
 _LDOTS = (0x00, 0x40, 0x44, 0x46, 0x47)  # left col: 0‥4 filled rows
 _RDOTS = (0x00, 0x80, 0xA0, 0xB0, 0xB8)  # right col: 0‥4 filled rows
 _SPARK_WIDTH = 12  # characters (×2 = 24 samples of history)
-_LABEL_COLOR = "#cccccc"  # metric label color (CPU, PSS, Thr, etc.)
+_LABEL_COLOR = theme.LABEL_COLOR  # metric label color (CPU, PSS, Thr, etc.)
 
 
 def _spark(history: deque[float], width: int = _SPARK_WIDTH) -> Text:
