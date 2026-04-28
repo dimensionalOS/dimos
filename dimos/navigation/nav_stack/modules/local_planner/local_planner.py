@@ -39,11 +39,6 @@ from dimos.msgs.std_msgs.Int8 import Int8
 
 
 class LocalPlannerConfig(NativeModuleConfig):
-    """Config for the local planner native module.
-
-    Fields with ``None`` default are omitted from the CLI.
-    """
-
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/local_planner"
     # build_command: str | None = "nix build --no-write-lock-file"

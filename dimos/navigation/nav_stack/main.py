@@ -538,13 +538,19 @@ def _static_floor(rr: Any) -> list[Any]:
     getting z-fought / occluded by the floor quad.
     """
 
-    s = 50.0  # half-size
-    z = -0.2
+    half_size = 50.0
+    z_below_ground = -0.2
+    floor_color_rgba = [40, 40, 40, 120]  # dark grey, semi-transparent
     return [
         rr.Mesh3D(
-            vertex_positions=[[-s, -s, z], [s, -s, z], [s, s, z], [-s, s, z]],
+            vertex_positions=[
+                [-half_size, -half_size, z_below_ground],
+                [half_size, -half_size, z_below_ground],
+                [half_size, half_size, z_below_ground],
+                [-half_size, half_size, z_below_ground],
+            ],
             triangle_indices=[[0, 1, 2], [0, 2, 3]],
-            vertex_colors=[[40, 40, 40, 120]] * 4,
+            vertex_colors=[floor_color_rgba] * 4,
         )
     ]
 
