@@ -63,7 +63,6 @@ dependencies = [
     "annotation-protocol>=1.4.0",
     "lazy_loader",
     "plum-dispatch==2.5.7",
-    "xxhash>=3.0.0",
     # Logging
     "structlog>=25.5.0,<26",
     "colorlog==6.9.0",
@@ -89,7 +88,6 @@ dependencies = [
     "psutil>=7.0.0",
     "sqlite-vec>=0.1.6",
     "lz4>=4.4.5",
-    "open3d-unofficial-arm>=0.19.0.post9",
     "rpyc>=6.0.0",
 ]
 

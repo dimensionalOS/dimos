@@ -24,16 +24,13 @@ import pytest
 
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
 from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
 from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
-from dimos.navigation.nav_stack.modules.tui_control.tui_control import TUIControlModule
 from dimos.simulation.unity.module import UnityBridgeModule
 
 
@@ -72,31 +69,6 @@ class TestTransportWiring:
             assert abs(received[0].x - 1.0) < 0.01
         finally:
             transport.stop()
-
-    def test_tui_publishes_twist_via_transport(self):
-        """TUI module should publish cmd_vel through its transport."""
-        m = TUIControlModule(max_speed=2.0, publish_rate=50.0)
-
-        transport = LCMTransport("/_test/nav_stack/tui/cmd_vel", Twist)
-        m.cmd_vel._transport = transport
-
-        wp_transport = LCMTransport("/_test/nav_stack/tui/way_point", PointStamped)
-        m.way_point._transport = wp_transport
-
-        received: list[Twist] = []
-        transport.subscribe(lambda msg: received.append(msg))
-
-        try:
-            m._handle_key("w")  # forward
-            m.start()
-            time.sleep(0.15)  # let publish loop run a few times
-            m.stop()
-
-            assert len(received) >= 1
-            assert received[-1].linear.x > 0  # forward velocity
-        finally:
-            transport.stop()
-            wp_transport.stop()
 
 
 class TestPortTypeCompatibility:

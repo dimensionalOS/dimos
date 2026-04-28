@@ -28,4 +28,4 @@ RerunOpenOption: TypeAlias = Literal["none", "web", "native", "both"]
 RERUN_OPEN_DEFAULT: RerunOpenOption = "native"
 RERUN_ENABLE_WEB = False
 RERUN_GRPC_PORT = 9876
-RERUN_WEB_PORT = 9888
+RERUN_WEB_PORT = 9877

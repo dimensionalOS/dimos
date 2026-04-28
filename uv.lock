@@ -1955,7 +1955,7 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
-    { name = "open3d-unofficial-arm" },
+    { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "opencv-python" },
     { name = "pin" },
     { name = "plotext" },
@@ -1979,7 +1979,6 @@ dependencies = [
     { name = "toolz" },
     { name = "typer" },
     { name = "typing-extensions", marker = "python_full_version < '3.11'" },
-    { name = "xxhash" },
 ]
 
 [package.optional-dependencies]
@@ -2314,7 +2313,6 @@ requires-dist = [
     { name = "open-clip-torch", marker = "extra == 'misc'", specifier = "==3.2.0" },
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=0.18.0" },
     { name = "open3d", marker = "(platform_machine != 'aarch64' and extra == 'docker') or (sys_platform != 'linux' and extra == 'docker')", specifier = ">=0.18.0" },
-    { name = "open3d-unofficial-arm", specifier = ">=0.19.0.post9" },
     { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.19.0.post9" },
     { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'docker'", specifier = ">=0.19.0.post9" },
     { name = "openai", marker = "extra == 'agents'" },
@@ -2419,7 +2417,6 @@ requires-dist = [
     { name = "xarm-python-sdk", marker = "extra == 'manipulation'", specifier = ">=1.17.0" },
     { name = "xarm-python-sdk", marker = "extra == 'misc'", specifier = ">=1.17.0" },
     { name = "xformers", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=0.0.20" },
-    { name = "xxhash", specifier = ">=3.0.0" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
 provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "dev", "psql", "sim", "navigation", "drone", "dds", "docker", "base"]
@@ -7240,13 +7237,13 @@ name = "open3d-unofficial-arm"
 version = "0.19.0.post9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "configargparse" },
-    { name = "dash" },
-    { name = "flask" },
-    { name = "nbformat" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "werkzeug" },
+    { name = "configargparse", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "dash", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "flask", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "nbformat", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "werkzeug", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ec/f9/edcfaa213800ea278804402baa65693840bc7a323b3de8a31c54ce4e42c8/open3d_unofficial_arm-0.19.0.post9.tar.gz", hash = "sha256:ee300bd557f04750db6e47ccb6c6867c6dd6cfc04169dddeb92505da9ea739ef", size = 5327, upload-time = "2026-04-16T21:21:11.152Z" }
 wheels = [
