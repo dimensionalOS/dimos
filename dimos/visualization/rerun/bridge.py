@@ -248,7 +248,9 @@ class RerunBridgeModule(Module):
             return None
 
         # compose all converters
-        composed = lambda msg: pipe(msg, *matches, final_convert)
+        def composed(msg):
+            return pipe(msg, *matches, final_convert)
+
         self._override_cache[entity_path] = composed
         return composed
 
