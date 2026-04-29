@@ -214,6 +214,10 @@ manipulation = [
     "pyrealsense2; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
 
+    # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
+    "trimesh",
+    "pycollada",
+
     # Visualization (Optional)
     "kaleido>=0.2.1",
     "plotly>=5.9.0",
