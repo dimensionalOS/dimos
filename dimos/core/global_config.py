@@ -38,6 +38,7 @@ class GlobalConfig(BaseSettings):
     new_memory: bool = False
     viewer: ViewerBackend = "rerun"
     n_workers: int = 2
+    worker_to_module_ratio: float = 1.0
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None
     mujoco_room: str | None = None
