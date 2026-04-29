@@ -53,8 +53,6 @@ IGNORED_DIRS = {
     ".ignore.enhance",
     # third-party vendored code
     "gtsam",
-    # hidden/personal directories
-    ".hidden",
 }
 
 # Lines that match section patterns but are actually programmatic / intentional.
