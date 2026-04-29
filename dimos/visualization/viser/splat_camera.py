@@ -82,6 +82,10 @@ class SplatCameraBackend(Protocol):
         ...
 
 
+def _wxyz_to_rotmat_args(w: float, x: float, y: float, z: float) -> np.ndarray:
+    return _wxyz_to_rotmat(np.array([w, x, y, z], dtype=np.float64))
+
+
 def _wxyz_to_rotmat(wxyz: np.ndarray) -> np.ndarray:
     """(4,) wxyz quaternion -> (3, 3) rotation matrix."""
     w, x, y, z = (float(c) for c in wxyz)
@@ -388,6 +392,98 @@ class SplatCameraModule(Module):
                 t.join(timeout=2.0)
         super().stop()
 
+    # Naive top-priority compositing of MJCF scene meshes onto the
+    # splat-rendered image.  No depth check — meshes always win.
+    # Acceptable here because manip_table / manip_cube / scene editor
+    # exports are physically in front of the camera with no splat
+    # geometry between them and the lens.  If you ever place an
+    # overlay object behind splat geometry (e.g. inside a closet),
+    # add depth-aware compositing using gsplat's depth output.
+    def _composite_scene_meshes(
+        self,
+        rgb: np.ndarray,
+        cam_pos: np.ndarray,
+        cam_wxyz: np.ndarray,
+    ) -> np.ndarray:
+        if self._robot is None:
+            return rgb
+        # Filter to non-robot bodies — anything authored as scene rigging
+        # (manip_*, scene_editor_*) overlays; robot meshes are rendered
+        # by the splat / hardware textures.
+        scene_geoms = [
+            g
+            for g in self._robot.geoms
+            if g.body_name.startswith("manip_") or g.body_name.startswith("scene_editor_")
+        ]
+        if not scene_geoms:
+            return rgb
+
+        try:
+            import cv2  # type: ignore[import-untyped]
+        except Exception:
+            return rgb
+
+        # World→camera transform.  cam_wxyz / cam_pos are camera-in-world;
+        # invert to get world→camera.
+        cw, cx, cy, cz = cam_wxyz
+        R_wc = _wxyz_to_rotmat_args(cw, cx, cy, cz)
+        R_cw = R_wc.T  # world→camera rotation
+        t_cw = -R_cw @ cam_pos
+
+        spec = self._camera_spec
+        fx = spec.focal_pixels()
+        fy = spec.focal_pixels()
+        cx_p, cy_p = spec.cx(), spec.cy()
+        _H, _W = rgb.shape[0], rgb.shape[1]
+
+        body_name_to_id = {n: i for i, n in enumerate(self._robot.body_names)}
+
+        out = rgb.copy()
+        for geom in scene_geoms:
+            body_id = body_name_to_id.get(geom.body_name)
+            if body_id is None:
+                continue
+            # Body world pose
+            body_world_pos = self._robot.data.xpos[body_id]
+            body_world_quat = self._robot.data.xquat[body_id]  # wxyz
+            R_wb = _wxyz_to_rotmat_args(*body_world_quat)
+            # Geom local→body pose (constant from MJCF)
+            R_bg = _wxyz_to_rotmat_args(*geom.local_wxyz)
+            t_bg = geom.local_pos
+
+            # vertices: geom-local → world → camera → image
+            v_g = geom.vertices.astype(np.float64)  # (V, 3)
+            v_b = (R_bg @ v_g.T).T + t_bg
+            v_w = (R_wb @ v_b.T).T + body_world_pos
+            v_c = (R_cw @ v_w.T).T + t_cw  # (V, 3) in camera frame
+
+            # Image-space projection (image y axis is down; camera Z is forward).
+            # Skip vertices behind the camera.
+            mask_in_front = v_c[:, 2] > 1e-3
+            if not mask_in_front.any():
+                continue
+            # Project all vertices; for a face we only draw if all 3 are in front.
+            zs = np.where(mask_in_front, v_c[:, 2], 1.0)
+            u = fx * (v_c[:, 0] / zs) + cx_p
+            v = fy * (v_c[:, 1] / zs) + cy_p
+            uv = np.stack([u, v], axis=1)
+
+            color_bgr = (
+                int(geom.rgba[2] * 255),
+                int(geom.rgba[1] * 255),
+                int(geom.rgba[0] * 255),
+            )
+
+            for tri in geom.faces:
+                if not (mask_in_front[tri[0]] and mask_in_front[tri[1]] and mask_in_front[tri[2]]):
+                    continue
+                pts = uv[tri].astype(np.int32)
+                # OpenCV expects BGR ordering for color but rgb buffer is RGB;
+                # convert when drawing then convert back is wasteful — easier
+                # to swap channels of rgb before drawing.
+                cv2.fillConvexPoly(out, pts, (color_bgr[2], color_bgr[1], color_bgr[0]))
+        return out
+
     def _on_joint_state(self, msg: JointState) -> None:
         names = list(msg.name)
         positions = list(msg.position)
@@ -443,6 +539,7 @@ class SplatCameraModule(Module):
                 body_wxyz = self._robot.data.xquat[self._cam_body_id]
                 cam_pos, cam_wxyz = world_pose(body_pos, body_wxyz, self._camera_spec)
                 rgb = self._backend.render(cam_pos, cam_wxyz)
+                rgb = self._composite_scene_meshes(rgb, cam_pos, cam_wxyz)
                 self.color_image.publish(
                     Image(
                         ts=time.time(),
