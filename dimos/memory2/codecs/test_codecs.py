@@ -123,7 +123,7 @@ def _jpeg_case() -> Case | None:
 
         TurboJPEG()  # fail fast if native lib is missing
 
-        replay = TimedSensorReplay("unitree_go2_bigoffice/video")
+        replay = TimedSensorReplay("go2_bigoffice/color_image")
         frames = [replay.find_closest_seek(float(i)) for i in range(1, 4)]
         codec = JpegCodec(quality=95)
     except (ImportError, RuntimeError):

@@ -54,7 +54,7 @@ Available filters: `.after(t)`, `.before(t)`, `.at(t)`, `.near(pose, radius)`, `
 Terminals materialize or consume the stream:
 
 ```python session=memory ansi=false
-print(logs.before(5.0).tags(level="error").fetch())
+print(logs.before(5.0).tags(level="error").to_list())
 ```
 
 <!--Result:-->
@@ -62,7 +62,9 @@ print(logs.before(5.0).tags(level="error").fetch())
 [Observation(id=2, ts=2.0, pose=None, tags={'level': 'error'})]
 ```
 
-Available terminals: `.fetch()`, `.first()`, `.last()`, `.count()`, `.exists()`, `.summary()`, `.get_time_range()`, `.drain()`, `.save(target)`.
+Available terminals: `.to_list()`, `.first()`, `.last()`, `.count()`, `.exists()`, `.summary()`, `.get_time_range()`, `.drain()`, `.drain_thread()`.
+
+`.save(target)` is a lazy pass-through — pair it with a terminal (e.g. `.drain()` or `.drain_thread()`).
 
 ## Transforms
 
@@ -143,7 +145,7 @@ from dimos.memory2.embed import EmbedText
 
 clip = CLIPModel()
 
-for obs in logs.transform(EmbedText(clip)).search(clip.embed_text("hardware problem"), k=3).fetch():
+for obs in logs.transform(EmbedText(clip)).search(clip.embed_text("hardware problem"), k=3).to_list():
     print(f"{obs.similarity:.3f}  {obs.data}")
 ```
 
@@ -157,14 +159,15 @@ for obs in logs.transform(EmbedText(clip)).search(clip.embed_text("hardware prob
 The embedded stream above was ephemeral — built on the fly for one query. To persist embeddings automatically as logs arrive, pipe a live stream through the transform into a stored stream:
 
 ```python skip
-import threading
-
 embedded_logs = store.stream("embedded_logs", str)
-threading.Thread(
-    target=lambda: logs.live().transform(EmbedText(clip)).save(embedded_logs),
-    daemon=True,
-).start()
+handle = (
+    logs.live()
+    .transform(EmbedText(clip))
+    .save(embedded_logs)
+    .drain_thread()
+)
 
 # every new log is now automatically embedded and stored
-# embedded_logs.search(query, k=5).fetch() to query at any time
+# embedded_logs.search(query, k=5).to_list() to query at any time
+# handle.dispose() to stop
 ```

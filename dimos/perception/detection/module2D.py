@@ -78,7 +78,8 @@ class Detection2DModule(Module):
         imageDetections = self.detector.process_image(image)
         if not self.config.filter:
             return imageDetections
-        return imageDetections.filter(*self.config.filter)  # type: ignore[return-value]
+        filtered: ImageDetections2D = imageDetections.filter(*self.config.filter)
+        return filtered
 
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:
