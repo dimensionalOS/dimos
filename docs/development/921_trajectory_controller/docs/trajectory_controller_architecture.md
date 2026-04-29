@@ -177,8 +177,7 @@ Read in this order:
 6. `docs/development/921_trajectory_controller/docs/trajectory_simulation_validation.md` - the confidence envelope before P8 hardware validation - how simulation was actually performed. Also - `dimos/docs/development/921_trajectory_controller/simulation/matrix_presets_and_scenarios.md` - a description of sim-matrix presets and scenarios.
 
 7. (optional) `dimos/docs/development/921_trajectory_controller/docs/robot_running_simulation_plan.md` - full simulation development story and pipeline, intended for agents.
-8. (optional) `dimos/docs/development/921_trajectory_controller/docs/trajectory_controller_backlog.md` - complete 921 implementation backlog + audit
-9. (optional) `dimos/docs/development/921_trajectory_controller/docs` - other docs not covered by this paper
+8. (optional) `dimos/docs/development/921_trajectory_controller/docs` - other docs not covered by this paper
 
 
 
