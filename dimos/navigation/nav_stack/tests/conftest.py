@@ -84,6 +84,36 @@ def _clear_precomputed_paths() -> None:
             f.unlink(missing_ok=True)
 
 
+# Shared nav-stack configs for cross-wall E2E tests.  Both the FAR and
+# Simple planner tests use the same terrain/local/path_follower tuning so
+# results are apples-to-apples.
+CROSS_WALL_TERRAIN_ANALYSIS = {
+    "obstacle_height_threshold": 0.1,
+    "ground_height_threshold": 0.05,
+    "max_relative_z": 0.3,
+    "min_relative_z": -1.5,
+}
+
+CROSS_WALL_LOCAL_PLANNER = {
+    "max_speed": 2.0,
+    "autonomy_speed": 2.0,
+    "obstacle_height_threshold": 0.1,
+    "max_relative_z": 0.3,
+    "min_relative_z": -1.5,
+    "freeze_ang": 180.0,
+    "two_way_drive": False,
+}
+
+CROSS_WALL_PATH_FOLLOWER = {
+    "max_speed": 2.0,
+    "autonomy_speed": 2.0,
+    "max_acceleration": 4.0,
+    "slow_down_distance_threshold": 0.5,
+    "omni_dir_goal_threshold": 0.5,
+    "two_way_drive": False,
+}
+
+
 def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None = None) -> None:
     """Build the coordinator, drive the cross-wall waypoint sequence, tear down.
 

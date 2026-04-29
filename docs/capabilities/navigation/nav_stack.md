@@ -114,127 +114,18 @@ Key visual elements:
 
 Set `agentic_debug=True` to raise goals, paths, and waypoints 3m above the scene for a clear top-down view when terrain occludes planning elements.
 
-### Module Parameter Reference
+### Module Parameters
 
-<details>
-<summary><b>TerrainAnalysis</b> -- classifies lidar points into ground vs. obstacle, publishes a terrain cost map</summary>
+Each module's config is a Pydantic model with documented defaults. Check the source for the full list:
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `obstacle_height_threshold` | 0.1 m | Height above ground to classify as obstacle |
-| `ground_height_threshold` | 0.1 m | Ground classification threshold |
-| `vehicle_height` | 1.5 m | Ignore points above this height |
-| `terrain_voxel_size` | 0.2 m | Terrain grid cell size |
-| `terrain_voxel_half_width` | 10 | Grid radius in cells (full grid = 2N+1) |
-| `decay_time` | 1.0 s | Point expiry time |
-| `clearing_distance` | 8.0 m | Dynamic obstacle clearing distance |
-| `scan_voxel_size` | 0.05 m | Input scan downsampling |
-| `min_relative_z` | -1.5 m | Height-band filter min |
-| `max_relative_z` | 0.3 m | Height-band filter max |
-
-</details>
-
-<details>
-<summary><b>LocalPlanner</b> -- evaluates candidate paths against terrain/obstacles to select collision-free trajectories</summary>
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `max_speed` | 2.0 m/s | Maximum velocity |
-| `autonomy_speed` | 1.0 m/s | Velocity cap in autonomous mode |
-| `obstacle_height_threshold` | 0.15 m | Height to classify as obstacle |
-| `goal_clearance` | 0.5 m | Minimum clearance around the goal |
-| `two_way_drive` | false | Allow reverse driving |
-| `use_terrain_analysis` | true | Use terrain cost map for avoidance |
-| `min_relative_z` | -0.4 m | Height-band filter min |
-| `max_relative_z` | 0.3 m | Height-band filter max |
-| `vehicle_length`, `vehicle_width` | -- | Robot footprint dimensions |
-
-</details>
-
-<details>
-<summary><b>PathFollower</b> -- pure-pursuit controller with PID yaw control</summary>
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `look_ahead_distance` | 0.5 m | Pure pursuit lookahead |
-| `max_speed` | 2.0 m/s | Maximum velocity |
-| `max_yaw_rate` | 80.0 deg/s | Maximum turning rate |
-| `goal_tolerance` | 0.3 m | Path-end distance threshold |
-| `autonomy_speed` | -- | Autonomous velocity cap (overrides max_speed) |
-| `max_acceleration` | -- | Linear acceleration limit |
-| `vehicle_config` | `"omniDir"` | Kinematics model (`"omniDir"` or `"standard"`) |
-
-</details>
-
-<details>
-<summary><b>FarPlanner</b> -- visibility-graph global planner</summary>
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `sensor_range` | 30.0 m | Sensor range for graph building |
-| `terrain_range` | 7.5 m | Terrain processing range |
-| `local_planner_range` | 2.5 m | Overlap with local planner |
-| `robot_dimension` | 0.5 m | Robot footprint size |
-| `vehicle_height` | 0.75 m | Robot height |
-| `converge_dist` | 1.5 m | Goal convergence distance |
-| `goal_adjust_radius` | 10.0 m | Goal adjustment search radius |
-| `update_rate` | 5.0 Hz | Planning rate |
-
-</details>
-
-<details>
-<summary><b>SimplePlanner</b> -- grid-based A* with stuck detection</summary>
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `cell_size` | 0.3 m | Costmap grid resolution |
-| `obstacle_height_threshold` | 0.15 m | Height to classify as obstacle |
-| `inflation_radius` | 0.2 m | Safety margin around obstacles |
-| `lookahead_distance` | 2.0 m | Waypoint lookahead on the path |
-| `replan_rate` | 5.0 Hz | Planning loop frequency |
-| `replan_cooldown` | 2.0 s | Minimum time between A* searches |
-| `stuck_seconds` | 5.0 s | Time stationary before declaring stuck |
-| `progress_epsilon` | 0.25 m | Minimum progress to not be stuck |
-| `stuck_shrink_factor` | 0.5 | Inflation shrink per stuck escalation |
-| `stuck_min_inflation` | 0.2 m | Floor for inflation shrink |
-
-</details>
-
-<details>
-<summary><b>PGO</b> -- keyframe-based loop closure with ICP + GTSAM iSAM2</summary>
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `key_pose_delta_trans` | 0.5 m | Translation threshold for new keyframe |
-| `key_pose_delta_deg` | 10 deg | Rotation threshold for new keyframe |
-| `loop_search_radius` | 15.0 m | Radius to search for loop closures |
-| `loop_time_thresh` | 60.0 s | Minimum time gap for loop candidate |
-| `loop_score_thresh` | 0.3 | ICP fitness score threshold |
-| `global_map_publish_rate` | 0.5 Hz | Map publication frequency |
-| `global_map_voxel_size` | 0.15 m | Map voxel downsampling |
-
-</details>
-
-<details>
-<summary><b>TerrainMapExt</b> -- persistent rolling voxel grid for wider terrain context</summary>
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `voxel_size` | 0.1 m | Voxel cell size |
-| `decay_time` | 30.0 s | Point expiry time |
-| `publish_rate` | 2.0 Hz | Publication frequency |
-| `max_range` | 40.0 m | Maximum distance from robot |
-
-</details>
-
-<details>
-<summary><b>MovementManager</b> -- multiplexes teleop and autonomous velocity, relays goals</summary>
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `tele_cooldown_sec` | 1.0 s | Cooldown before nav re-enables after teleop |
-
-</details>
+- **TerrainAnalysis** — `dimos/navigation/nav_stack/modules/terrain_analysis/terrain_analysis.py`
+- **LocalPlanner** — `dimos/navigation/nav_stack/modules/local_planner/local_planner.py`
+- **PathFollower** — `dimos/navigation/nav_stack/modules/path_follower/path_follower.py`
+- **FarPlanner** — `dimos/navigation/nav_stack/modules/far_planner/far_planner.py`
+- **SimplePlanner** — `dimos/navigation/nav_stack/modules/simple_planner/simple_planner.py`
+- **PGO** — `dimos/navigation/nav_stack/modules/pgo/pgo.py`
+- **TerrainMapExt** — `dimos/navigation/nav_stack/modules/terrain_map_ext/terrain_map_ext.py`
+- **MovementManager** — `dimos/navigation/nav_stack/modules/movement_manager/movement_manager.py`
 
 ## Architecture
 

@@ -29,7 +29,12 @@ pytest.importorskip("gtsam")
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
-from dimos.navigation.nav_stack.tests.conftest import run_cross_wall_test
+from dimos.navigation.nav_stack.tests.conftest import (
+    CROSS_WALL_LOCAL_PLANNER,
+    CROSS_WALL_PATH_FOLLOWER,
+    CROSS_WALL_TERRAIN_ANALYSIS,
+    run_cross_wall_test,
+)
 from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
 from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.visualization.vis_module import vis_module
@@ -47,29 +52,9 @@ class TestCrossWallPlanning:
                     vehicle_height=1.24,
                 ),
                 create_nav_stack(
-                    terrain_analysis={
-                        "obstacle_height_threshold": 0.1,
-                        "ground_height_threshold": 0.05,
-                        "max_relative_z": 0.3,
-                        "min_relative_z": -1.5,
-                    },
-                    local_planner={
-                        "max_speed": 2.0,
-                        "autonomy_speed": 2.0,
-                        "obstacle_height_threshold": 0.1,
-                        "max_relative_z": 0.3,
-                        "min_relative_z": -1.5,
-                        "freeze_ang": 180.0,
-                        "two_way_drive": False,
-                    },
-                    path_follower={
-                        "max_speed": 2.0,
-                        "autonomy_speed": 2.0,
-                        "max_acceleration": 4.0,
-                        "slow_down_distance_threshold": 0.5,
-                        "omni_dir_goal_threshold": 0.5,
-                        "two_way_drive": False,
-                    },
+                    terrain_analysis=CROSS_WALL_TERRAIN_ANALYSIS,
+                    local_planner=CROSS_WALL_LOCAL_PLANNER,
+                    path_follower=CROSS_WALL_PATH_FOLLOWER,
                     far_planner={
                         "sensor_range": 15.0,
                         "is_static_env": True,

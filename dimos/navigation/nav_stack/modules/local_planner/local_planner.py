@@ -43,7 +43,7 @@ class LocalPlannerConfig(NativeModuleConfig):
     executable: str = "result/bin/local_planner"
     # build_command: str | None = "nix build --no-write-lock-file"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-local-planner/v0.4.0 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-local-planner/v0.5.0 --no-write-lock-file"
     )
 
     # C++ binary uses camelCase CLI args.
@@ -94,6 +94,7 @@ class LocalPlannerConfig(NativeModuleConfig):
         "joy_to_speed_delay": "joyToSpeedDelay",
         "joy_to_check_obstacle_delay": "joyToCheckObstacleDelay",
         "omni_dir_goal_thre": "omniDirGoalThre",
+        "publish_free_paths": "publishFreePaths",
     }
 
     # Path data directory. When empty, the C++ binary falls back to its
@@ -200,6 +201,9 @@ class LocalPlannerConfig(NativeModuleConfig):
     # Delay before obstacle check override from autonomy (s).
     joy_to_check_obstacle_delay: float | None = None
 
+    # Publish free_paths visualization cloud. Disable to save CPU.
+    publish_free_paths: bool | None = None
+
 
 class LocalPlanner(NativeModule):
     """Local path planner with obstacle avoidance.
@@ -224,6 +228,7 @@ class LocalPlanner(NativeModule):
     def start(self) -> None:
         super().start()
 
+    @rpc
     def stop(self) -> None:
         super().stop()
 
@@ -240,6 +245,7 @@ class LocalPlanner(NativeModule):
     cancel_goal: In[Bool]
 
     path: Out[NavPath]
+    effective_cmd_vel: Out[Twist]
     obstacle_cloud: Out[PointCloud2]
     free_paths: Out[PointCloud2]
     slow_down: Out[Int8]

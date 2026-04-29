@@ -20,18 +20,12 @@ import time
 import numpy as np
 import pytest
 
-try:
-    import gtsam  # noqa: F401
-    from scipy.spatial.transform import Rotation
+pytest.importorskip("gtsam")
 
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.navigation.nav_stack.modules.pgo.pgo import PGO, PGOConfig, _icp, _SimplePGO
+from scipy.spatial.transform import Rotation
 
-    _HAS_PGO_DEPS = True
-except ImportError:
-    _HAS_PGO_DEPS = False
-
-pytestmark = pytest.mark.skipif(not _HAS_PGO_DEPS, reason="gtsam not installed")
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.nav_stack.modules.pgo.pgo import PGO, PGOConfig, _icp, _SimplePGO
 
 
 def make_rotation(yaw_deg: float) -> np.ndarray:
