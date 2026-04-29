@@ -271,6 +271,7 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
                     logger.info("Robot in zero torque, enabling damp mode...")
                     self.loco_client.SetFsmId(FsmState.DAMP)
                     time.sleep(self._standup_step_delay / 3)
+                    fsm_id = self._get_fsm_id()
                 if fsm_id != FsmState.AI_MODE:
                     logger.info("Starting AI mode...")
                     self.loco_client.SetFsmId(FsmState.AI_MODE)

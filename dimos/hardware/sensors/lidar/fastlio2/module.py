@@ -34,7 +34,6 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 import socket
-import subprocess
 import time
 from typing import TYPE_CHECKING, Annotated
 
@@ -64,6 +63,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM
 from dimos.spec import mapping, perception
+from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
 
 _CONFIG_DIR = Path(__file__).parent / "config"
@@ -90,32 +90,8 @@ def _odom_to_body_tf(msg: Odometry) -> Transform:
 
 
 def _get_local_ips() -> list[str]:
-    ips: list[str] = []
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            addr = str(info[4][0])
-            if addr not in ips:
-                ips.append(addr)
-    except socket.gaierror:
-        pass
-    # Also grab addresses via DGRAM trick for interfaces without DNS
-    try:
-        out = subprocess.check_output(
-            ["ip", "-4", "-o", "addr", "show"],
-            timeout=5,
-            stderr=subprocess.DEVNULL,
-        ).decode()
-        for line in out.splitlines():
-            # e.g. "2: eth0    inet 192.168.123.5/24 ..."
-            parts = line.split()
-            for i, p in enumerate(parts):
-                if p == "inet" and i + 1 < len(parts):
-                    addr = parts[i + 1].split("/")[0]
-                    if addr not in ips:
-                        ips.append(addr)
-    except Exception:
-        pass
-    return ips
+    """Return all non-loopback IPv4 addresses on this machine."""
+    return [ip for ip, _iface in get_local_ips()]
 
 
 def _find_candidate_ips(lidar_ip: str, local_ips: list[str]) -> list[str]:
