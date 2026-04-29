@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
+import warnings
 
 import cv2
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
@@ -244,10 +245,21 @@ class Image(Timestamped):
                 ts=self.ts,
             )
         if self.format == ImageFormat.RGBA:
-            return self.copy()  # RGBA contains RGB + alpha
+            warnings.warn("to_rgb() drops alpha channel from RGBA image", stacklevel=2)
+            return Image(
+                data=cv2.cvtColor(arr, cv2.COLOR_RGBA2RGB),
+                format=ImageFormat.RGB,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
         if self.format == ImageFormat.BGRA:
-            rgba = cv2.cvtColor(arr, cv2.COLOR_BGRA2RGBA)
-            return Image(data=rgba, format=ImageFormat.RGBA, frame_id=self.frame_id, ts=self.ts)
+            warnings.warn("to_rgb() drops alpha channel from BGRA image", stacklevel=2)
+            return Image(
+                data=cv2.cvtColor(arr, cv2.COLOR_BGRA2RGB),
+                format=ImageFormat.RGB,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH16):
             gray8 = (arr / 256).astype(np.uint8) if self.format != ImageFormat.GRAY else arr
             rgb = cv2.cvtColor(gray8, cv2.COLOR_GRAY2RGB)
@@ -266,6 +278,7 @@ class Image(Timestamped):
                 ts=self.ts,
             )
         if self.format == ImageFormat.RGBA:
+            warnings.warn("to_bgr() drops alpha channel from RGBA image", stacklevel=2)
             return Image(
                 data=cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR),
                 format=ImageFormat.BGR,
@@ -273,6 +286,7 @@ class Image(Timestamped):
                 ts=self.ts,
             )
         if self.format == ImageFormat.BGRA:
+            warnings.warn("to_bgr() drops alpha channel from BGRA image", stacklevel=2)
             return Image(
                 data=cv2.cvtColor(arr, cv2.COLOR_BGRA2BGR),
                 format=ImageFormat.BGR,

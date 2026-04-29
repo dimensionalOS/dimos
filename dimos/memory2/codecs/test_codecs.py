@@ -29,7 +29,7 @@ from dimos.memory2.codecs.jpeg import JpegCodec
 from dimos.memory2.codecs.lcm import LcmCodec
 from dimos.memory2.codecs.pickle import PickleCodec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.testing.replay import TimedSensorReplay
 
 if TYPE_CHECKING:
@@ -113,8 +113,6 @@ def _jpeg_eq(original: Any, decoded: Any) -> bool:
     the wire (so a BGR-tagged input comes back RGB-tagged with channels swapped accordingly).
     """
     import numpy as np
-
-    from dimos.msgs.sensor_msgs.Image import ImageFormat
 
     if decoded.data.shape != original.data.shape:
         return False
