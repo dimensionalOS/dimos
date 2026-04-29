@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from pathlib import Path
 
@@ -26,6 +27,10 @@ from dimos.utils.ament_prefix import ensure_ament_packages, process_xacro
 
 _needs_ament = pytest.mark.skipif(
     not ament_prefix._has_ament, reason="ament_index_python not installed"
+)
+
+_needs_xacro = pytest.mark.skipif(
+    not importlib.util.find_spec("xacro"), reason="xacro not installed"
 )
 
 
@@ -129,6 +134,7 @@ def test_ament_index_resolves(tmp_path: Path) -> None:
     assert Path(resolved).resolve() == pkg_dir.resolve()
 
 
+@_needs_xacro
 def test_process_xacro_with_simple_file(tmp_path: Path) -> None:
     """Test process_xacro works with a minimal xacro file (no $(find))."""
     xacro_file = tmp_path / "test.urdf.xacro"
