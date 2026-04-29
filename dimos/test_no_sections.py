@@ -91,7 +91,7 @@ def find_section_markers() -> list[tuple[str, int, str]]:
 
     for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
         # Prune ignored directories in-place
-        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS and not d.startswith(".ignore")]
 
         if _is_ignored_dir(dirpath):
             continue
