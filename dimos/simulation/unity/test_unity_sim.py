@@ -77,6 +77,11 @@ class _MockTransport:
 
 
 def _wire(module) -> dict[str, _MockTransport]:
+    """Attach mock transports to every port so the module can publish/subscribe.
+
+    Out ports use the public ``transport`` setter; In ports (cmd_vel) lack a
+    public setter, so we assign ``_transport`` directly.
+    """
     subscribers = {}
     for name in (
         "odometry",
@@ -88,7 +93,13 @@ def _wire(module) -> dict[str, _MockTransport]:
         "camera_info",
     ):
         transport = _MockTransport()
-        getattr(module, name)._transport = transport
+        port = getattr(module, name)
+        if hasattr(type(port), "transport") and isinstance(
+            getattr(type(port), "transport", None), property
+        ):
+            port.transport = transport
+        else:
+            port._transport = transport  # In ports have no public setter
         subscribers[name] = transport
     return subscribers
 

@@ -26,6 +26,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.nav_stack.frames import FRAME_MAP
 
 
 class TerrainMapExtConfig(ModuleConfig):
@@ -155,7 +156,7 @@ class TerrainMapExt(Module):
             if pts:
                 arr = np.array(pts, dtype=np.float32)
                 self.terrain_map_ext.publish(
-                    PointCloud2.from_numpy(arr, frame_id="map", timestamp=now)
+                    PointCloud2.from_numpy(arr, frame_id=FRAME_MAP, timestamp=now)
                 )
 
             elapsed = time.monotonic() - t0
