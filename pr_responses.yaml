@@ -1,0 +1,35 @@
+- pr: 1485
+  comment_id: 2900603055
+  author: greptile-apps[bot]
+  file: dimos/utils/cli/graph.py
+  line: 104
+  problem: "HTTP server exposed on all network interfaces (0.0.0.0)"
+  solution: "Changed to bind to 127.0.0.1 instead of 0.0.0.0"
+  commit: 8b8326b3c
+
+- pr: 1485
+  comment_id: 2900603115
+  author: greptile-apps[bot]
+  file: dimos/utils/cli/graph.py
+  line: 67
+  problem: "Temp file leaked if to_svg raises an exception"
+  solution: "Wrapped in try/finally to ensure os.unlink runs even on exception"
+  commit: 8b8326b3c
+
+- pr: 1485
+  comment_id: 2900603172
+  author: greptile-apps[bot]
+  file: dimos/utils/cli/graph.py
+  line: 68
+  problem: "Blueprint name embedded into HTML without escaping"
+  solution: "Added html.escape(name) for both Mermaid tab buttons and graphviz HTML renderer"
+  commit: 33eeea594
+
+- pr: 1485
+  comment_id: 2900603213
+  author: greptile-apps[bot]
+  file: dimos/utils/cli/test_graph.py
+  line: 28
+  problem: "Incorrect type annotation for pytest tmp_path fixture (typed as object instead of pathlib.Path)"
+  solution: "Changed type to pathlib.Path, moved import to top, removed unnecessary Path(str(...)) round-trip"
+  commit: 8b8326b3c
