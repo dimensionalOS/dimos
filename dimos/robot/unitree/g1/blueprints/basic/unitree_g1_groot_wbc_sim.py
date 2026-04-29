@@ -177,7 +177,7 @@ _g1_coordinator = (
             # Higher priority than servo so when manipulation is idle the
             # arm just dangles under WBC kp/kd damping; when active, the
             # planned trajectory wins.
-            _g1_left_arm_cfg.to_task_config(),
+            _g1_left_arm_cfg.task_config,
         ],
     )
     .transports(
@@ -330,7 +330,7 @@ _g1_agentic_stack = (
     # joint_state for live state sync.  Meshcat viz off in this
     # composed sim (we already have viser as the live 3D view).
     ManipulationModule.blueprint(
-        robots=[_g1_left_arm_cfg.to_robot_model_config()],
+        robots=[_g1_left_arm_cfg.robot_model_config],
         planning_timeout=10.0,
         enable_viz=False,
     ).transports(
