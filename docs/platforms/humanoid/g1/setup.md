@@ -9,7 +9,7 @@ For DimOS software setup, see [Getting Started](index.md).
 Enable movement (may vary by G1 version):
 1. **L2 + B**
 3. **L2 + Up**
-4. **R2 + X**
+4. **R2 + A**
 
 FSM state transitions after enabling:
 ```
