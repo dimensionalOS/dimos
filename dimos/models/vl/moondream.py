@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from functools import cached_property
 from typing import Any
 import warnings
@@ -17,12 +31,14 @@ from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 # Moondream works well with 512x512 max
 MOONDREAM_DEFAULT_AUTO_RESIZE = (512, 512)
 
+
 class MoondreamConfig(HuggingFaceModelConfig, VlModelConfig):
     """Configuration for MoondreamVlModel."""
 
     model_name: str = "vikhyatk/moondream2"
     dtype: torch.dtype = torch.bfloat16
     auto_resize: tuple[int, int] | None = MOONDREAM_DEFAULT_AUTO_RESIZE
+
 
 class MoondreamVlModel(HuggingFaceModel, VlModel):
     config: MoondreamConfig
