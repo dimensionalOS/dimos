@@ -28,7 +28,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
+from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -60,7 +60,6 @@ def read_json_file(path: str) -> dict[str, str]:
 
 class StubNativeConfig(NativeModuleConfig):
     executable: str = _ECHO
-    log_format: LogFormat = LogFormat.TEXT
     output_file: str | None = None
     die_after: float | None = None
     some_param: float = 1.5
