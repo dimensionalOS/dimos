@@ -78,6 +78,7 @@ from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector impo
 )
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.perception.detection.detectors.yoloe import YoloePromptMode
 from dimos.perception.experimental.temporal_memory.temporal_memory import TemporalMemory
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.perception.object_tracker import ObjectTracking
@@ -365,7 +366,14 @@ _g1_agentic_stack = (
     # target_frame="world" matches what MujocoSimModule publishes TF
     # for (frame_id="world", child=head_color_color_optical_frame);
     # the default "map" doesn't connect to anything in this stack.
-    ObjectSceneRegistrationModule.blueprint(target_frame="world").transports(
+    # prompt_mode=PROMPT loads yoloe-11l-seg.pt (text-prompted model)
+    # so the agent can call detect(["red cube"]).  The default LRPC
+    # loads yoloe-11l-seg-pf.pt which is a fixed-class prompt-FREE
+    # model and rejects set_classes() with an AssertionError.
+    ObjectSceneRegistrationModule.blueprint(
+        target_frame="world",
+        prompt_mode=YoloePromptMode.PROMPT,
+    ).transports(
         {
             ("color_image", Image): LCMTransport("/splat/color_image", Image),
             ("depth_image", Image): LCMTransport("/head/depth_image", Image),
