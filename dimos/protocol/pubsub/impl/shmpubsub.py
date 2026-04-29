@@ -23,7 +23,7 @@ import os
 import struct
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 import uuid
 
 import numpy as np
@@ -104,14 +104,14 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         self,
         *,
         prefer: str = "auto",
-        default_capacity: int = 3686400,
+        default_capacity: int | None = None,
         close_channels_on_stop: bool = True,
         **_: Any,
     ) -> None:
         super().__init__()
         self.config = SharedMemoryConfig(
             prefer=prefer,
-            default_capacity=default_capacity,
+            default_capacity=default_capacity or SharedMemoryConfig.default_capacity,
             close_channels_on_stop=close_channels_on_stop,
         )
         self._topics: dict[str, SharedMemoryPubSubBase._TopicState] = {}
@@ -303,6 +303,80 @@ class PickleSharedMemory(
     """SharedMemory pubsub that transports arbitrary Python objects via pickle."""
 
     ...
+
+
+# QUALITY_LEVEL: temporary (out of [deprecated, temporary, experimental, sufficient, robust])
+class ShmSubset:
+    """Subscribe-all adapter for a fixed set of shared-memory topics.
+
+    Stop-gap for the Rerun bridge: SHM pubsub has no topic discovery, so the
+    bridge can't ``subscribe_all`` like it does with LCM. This class wraps
+    known SHM topics so they can be passed in the bridge's ``pubsubs`` list.
+    Replace once the bridge auto-discovers active transports from blueprint wiring.
+
+    Wraps PickleSharedMemory or BytesSharedMemory and exposes the
+    ``subscribe_all`` interface so it can be used in the bridge's ``pubsubs``
+    list alongside LCM.
+
+    Example::
+
+        from dimos.protocol.pubsub.impl.shmpubsub import ShmSubset
+
+        bridge = RerunBridgeModule(
+            pubsubs=[LCM(), ShmSubset(topics=[("color_image", 6220800, "pickle")])],
+        )
+
+    Each topic entry is ``(name, capacity, encoding)`` where encoding is
+    ``"pickle"`` (for pSHMTransport / PickleSharedMemory) or
+    ``"bytes"`` (for SHMTransport / BytesSharedMemory).
+    """
+
+    def __init__(self, topics: list[tuple[str, int, Literal["pickle", "bytes"]]]) -> None:
+        self._topic_specs = topics
+        self._shm_instances: list[SharedMemoryPubSubBase] = []
+        self._unsubs: list[Callable[[], None]] = []
+
+    def start(self) -> None:
+        pass  # instances are started lazily in subscribe_all
+
+    def stop(self) -> None:
+        for unsub in self._unsubs:
+            unsub()
+        self._unsubs.clear()
+        for shm in self._shm_instances:
+            shm.stop()
+        self._shm_instances.clear()
+
+    def subscribe_all(self, callback: Callable[[Any, Any], Any]) -> Callable[[], None]:
+        try:
+            for topic_name, capacity, encoding in self._topic_specs:
+                if encoding == "pickle":
+                    shm: SharedMemoryPubSubBase = PickleSharedMemory(default_capacity=capacity)
+                elif encoding == "bytes":
+                    shm = BytesSharedMemory(default_capacity=capacity)
+                else:
+                    logger.error(
+                        f"ShmSubset: unknown encoding '{encoding}', skipping topic '{topic_name}'"
+                    )
+                    continue
+                shm.start()
+                self._shm_instances.append(shm)
+
+                def _cb(msg: Any, _topic: Any, _tn: str = topic_name) -> None:
+                    callback(msg, _tn)
+
+                unsub = shm.subscribe(topic_name, _cb)
+                self._unsubs.append(unsub)
+        except Exception:
+            # If a later topic fails (e.g. bad capacity, SHM allocation error),
+            # clean up SHM instances already started for earlier topics.
+            self.stop()
+            raise
+
+        def unsubscribe_all() -> None:
+            self.stop()
+
+        return unsubscribe_all
 
 
 class LCMSharedMemoryPubSubBase(PubSub[Topic, Any]):
