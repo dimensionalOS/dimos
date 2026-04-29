@@ -73,6 +73,7 @@ unitree_g1_nav_onboard = (
             },
             local_planner={
                 "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
+                "publish_free_paths": False,
             },
             simple_planner={
                 "cell_size": 0.3,
