@@ -42,14 +42,12 @@ import subprocess
 import threading
 import time
 from typing import Any
-import zipfile
-
 import cv2
 import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 
-from dimos.constants import CACHE_DIR, DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -75,11 +73,6 @@ PI = math.pi
 
 # LFS data asset name for the Unity sim binary
 _LFS_ASSET = "unity_sim_x86"
-
-# Google Drive folder containing VLA Challenge environment zips
-_GDRIVE_FOLDER_ID = "1UD5v6cSfcwIMWmsq9WSk7blJut4kgb-1"
-_DEFAULT_SCENE = "office_1"
-
 
 # Read timeout for the Unity TCP connection (seconds).  If Unity stops
 # sending data for longer than this the bridge treats it as a hung
@@ -152,102 +145,6 @@ def _validate_platform() -> None:
         )
 
 
-def _list_gdrive_folder(folder_id: str) -> list[tuple[str, str]]:
-    """List files in a public Google Drive folder via gdown internals.
-
-    Returns a list of ``(file_id, filename)`` tuples without downloading
-    anything.  Scrapes the public folder page to get the file listing.
-    """
-    try:
-        import requests
-        from gdown.download_folder import (  # type: ignore[import-untyped]
-            _download_and_parse_google_drive_link,
-        )
-    except ImportError:
-        return []
-    try:
-        sess = requests.Session()
-        url = f"https://drive.google.com/drive/folders/{folder_id}"
-        return_code, gdrive_file = _download_and_parse_google_drive_link(
-            sess=sess, url=url, quiet=True,
-        )
-        if not return_code or not gdrive_file:
-            return []
-        return [(child.id, child.name) for child in gdrive_file.children]
-    except Exception:
-        return []
-
-
-def _download_unity_scene(scene: str, dest_dir: Path) -> Path:
-    """Download a Unity environment zip from Google Drive and extract it.
-
-    Lists the folder to find the specific scene zip file ID, then
-    downloads only that file.  Falls back to downloading the entire
-    folder if the listing fails.
-
-    Returns the path to the Model.x86_64 binary.
-    """
-    try:
-        import gdown  # type: ignore[import-untyped]
-    except ImportError:
-        raise RuntimeError(
-            "Unity sim binary not found and 'gdown' is not installed for auto-download. "
-            "Install it with: pip install gdown\n"
-            "Or manually download from: "
-            f"https://drive.google.com/drive/folders/{_GDRIVE_FOLDER_ID}"
-        ) from None
-
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = dest_dir / f"{scene}.zip"
-
-    if not zip_path.exists():
-        logger.info(f"Downloading Unity scene '{scene}' from Google Drive…")
-
-        # Try to find and download just the single scene zip.
-        target = f"{scene}.zip"
-        file_id = None
-        for fid, fname in _list_gdrive_folder(_GDRIVE_FOLDER_ID):
-            if fname == target:
-                file_id = fid
-                break
-
-        if file_id:
-            gdown.download(id=file_id, output=str(zip_path), quiet=False)
-        else:
-            # Fallback: download the whole folder (can't resolve single file).
-            logger.warning(
-                f"Could not resolve file ID for '{target}', "
-                "downloading entire folder."
-            )
-            gdown.download_folder(
-                id=_GDRIVE_FOLDER_ID, output=str(dest_dir), quiet=False,
-            )
-            for candidate in dest_dir.rglob(target):
-                zip_path = candidate
-                break
-
-    if not zip_path.exists():
-        raise FileNotFoundError(
-            f"Failed to download scene '{scene}'. "
-            f"Check https://drive.google.com/drive/folders/{_GDRIVE_FOLDER_ID}"
-        )
-
-    extract_dir = dest_dir / scene
-    if not extract_dir.exists():
-        logger.info(f"Extracting {zip_path}…")
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(dest_dir)
-
-    binary = extract_dir / "environment" / "Model.x86_64"
-    if not binary.exists():
-        raise FileNotFoundError(
-            f"Extracted scene but Model.x86_64 not found at {binary}. "
-            f"Expected structure: {scene}/environment/Model.x86_64"
-        )
-
-    binary.chmod(binary.stat().st_mode | 0o111)
-    return binary
-
 
 # Config
 
@@ -261,18 +158,11 @@ class UnityBridgeConfig(ModuleConfig):
     """
 
     # Path to the Unity x86_64 binary. Leave empty to auto-resolve
-    # from LFS data or auto-download from Google Drive.
+    # from LFS data (unity_sim_x86/environment/Model.x86_64).
     unity_binary: str = ""
 
-    # Scene name for auto-download (e.g. "office_1", "hotel_room_1").
-    # Only used when unity_binary is not found and auto_download is True.
-    unity_scene: str = _DEFAULT_SCENE
-
-    # Directory to download/cache Unity scenes.
-    unity_cache_dir: Path = CACHE_DIR / "unity_envs"
-
-    # Auto-download the scene from Google Drive if binary is missing.
-    auto_download: bool = True
+    # Scene name — used when building the blueprint to identify the environment.
+    unity_scene: str = "office_1"
 
     # Max seconds to wait for Unity to connect after launch.
     unity_connect_timeout: float = 30.0
@@ -519,13 +409,6 @@ class UnityBridgeModule(Module):
             logger.warning(f"LFS asset '{_LFS_ASSET}' extracted but Model.x86_64 not found")
         except Exception as e:
             logger.warning(f"Failed to resolve Unity binary from LFS: {e}")
-
-        # Auto-download from Google Drive (VLA Challenge scenes)
-        if cfg.auto_download:
-            try:
-                return _download_unity_scene(cfg.unity_scene, cfg.unity_cache_dir)
-            except Exception as e:
-                logger.warning(f"Auto-download failed: {e}")
 
         return None
 
