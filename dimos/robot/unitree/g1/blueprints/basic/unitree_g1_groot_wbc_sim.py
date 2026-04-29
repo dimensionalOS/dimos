@@ -328,7 +328,11 @@ _g1_agentic_stack = (
             _g1_right_arm_cfg.robot_model_config,
         ],
         planning_timeout=10.0,
-        enable_viz=False,
+        # Meshcat viewer for what Drake actually sees: URDF model in
+        # the planner's frame, planned trajectories, world-monitored
+        # obstacles. Logged at startup as
+        # "Visualization started: http://localhost:7000/".
+        enable_viz=True,
     ).transports(
         {
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
