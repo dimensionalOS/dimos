@@ -157,9 +157,23 @@ class G1ManipulationModule(ManipulationModule):
             robot_name: Robot to move (only needed for multi-arm setups).
         """
         x_l, y_l, z_l = self._world_to_pelvis(x, y, z)
+
+        # Auto-pick which arm to use when the agent doesn't specify.
+        # Pelvis-local +Y is the robot's left side; left-arm shoulder is
+        # roughly at +Y so targets there are in its natural workspace,
+        # right-arm targets at -Y.  Mirror to whichever side fits.
+        if not robot_name:
+            available = list(self._robots.keys())
+            if len(available) == 1:
+                robot_name = available[0]
+            elif "left_arm" in available and "right_arm" in available:
+                robot_name = "left_arm" if y_l >= 0 else "right_arm"
+            elif available:
+                robot_name = available[0]
+
         logger.info(
             f"G1Manipulation move_to_pose: world=({x:.3f}, {y:.3f}, {z:.3f}) -> "
-            f"pelvis=({x_l:.3f}, {y_l:.3f}, {z_l:.3f})"
+            f"pelvis=({x_l:.3f}, {y_l:.3f}, {z_l:.3f}) on {robot_name}"
         )
         return super().move_to_pose(  # type: ignore[no-any-return]
             x=x_l, y=y_l, z=z_l, roll=roll, pitch=pitch, yaw=yaw, robot_name=robot_name
