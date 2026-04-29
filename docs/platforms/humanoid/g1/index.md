@@ -159,6 +159,7 @@ primitive (sensors + vis)
 
 ## Deep Dive
 
+- [Hardware Setup Guide](setup.md) — network config, SSH access, SDK installation, controller instructions
 - [Navigation Stack](/docs/capabilities/navigation/readme.md) — path planning and autonomous exploration
 - [Visualization](/docs/usage/visualization.md) — Rerun, Foxglove, performance tuning
 - [Data Streams](/docs/usage/data_streams) — RxPY streams, backpressure, quality filtering
