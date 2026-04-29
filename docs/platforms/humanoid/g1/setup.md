@@ -1,6 +1,6 @@
 # Unitree G1 — Hardware Setup
 
-Tribal knowledge for working with the physical G1 robot: network addresses, SSH access, controller buttons, and common issues.
+Practical reference for working with the physical G1 robot: network addresses, SSH access, controller buttons, and common issues.
 
 For DimOS software setup, see [Getting Started](index.md).
 
