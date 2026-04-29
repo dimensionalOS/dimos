@@ -24,6 +24,7 @@ Usage:
     # CAN-FD (only if your adapter supports it)
     python dimos/robot/manipulators/openarm/scripts/openarm_set_mit_mode.py --channel can0 --fd
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,13 +44,17 @@ DEFAULT_IDS = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
 
 def write_ctrl_mode(bus: can.BusABC, send_id: int, fd: bool) -> bool:
     val = struct.pack("<I", MIT_MODE)  # little-endian uint32
-    data = bytes([send_id & 0xFF, (send_id >> 8) & 0xFF, 0x55, RID_CTRL_MODE,
-                  val[0], val[1], val[2], val[3]])
+    data = bytes(
+        [send_id & 0xFF, (send_id >> 8) & 0xFF, 0x55, RID_CTRL_MODE, val[0], val[1], val[2], val[3]]
+    )
     # Flush
     while bus.recv(0.0) is not None:
         pass
-    bus.send(can.Message(arbitration_id=0x7FF, data=data,
-                         is_extended_id=False, is_fd=fd, bitrate_switch=fd))
+    bus.send(
+        can.Message(
+            arbitration_id=0x7FF, data=data, is_extended_id=False, is_fd=fd, bitrate_switch=fd
+        )
+    )
     # Wait for ack on 0x7FF (per openarm_can param response)
     t0 = time.monotonic()
     while time.monotonic() - t0 < 0.2:
@@ -61,19 +66,24 @@ def write_ctrl_mode(bus: can.BusABC, send_id: int, fd: bool) -> bool:
             rid = msg.data[3]
             if rid == RID_CTRL_MODE:
                 echoed = int(struct.unpack("<I", bytes(msg.data[4:8]))[0])
-                print(f"  0x{send_id:02X}: ack  CTRL_MODE={echoed} "
-                      f"({'MIT' if echoed == MIT_MODE else f'code {echoed}'})")
+                print(
+                    f"  0x{send_id:02X}: ack  CTRL_MODE={echoed} "
+                    f"({'MIT' if echoed == MIT_MODE else f'code {echoed}'})"
+                )
                 return echoed == MIT_MODE
     print(f"  0x{send_id:02X}: no ack on 0x7FF")
     return False
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--channel", default="can0")
     ap.add_argument("--fd", action="store_true", help="Use CAN-FD (default: classical CAN)")
-    ap.add_argument("--id", type=lambda s: int(s, 0), default=None,
-                    help="Single send ID (default: all 8)")
+    ap.add_argument(
+        "--id", type=lambda s: int(s, 0), default=None, help="Single send ID (default: all 8)"
+    )
     args = ap.parse_args()
 
     fd = args.fd
@@ -87,7 +97,10 @@ def main() -> int:
         return 1
     if not (flags & 0x1):
         print(f"ERROR: SocketCAN interface '{args.channel}' is DOWN.", file=sys.stderr)
-        print(f"  Run: sudo ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh {args.channel}", file=sys.stderr)
+        print(
+            f"  Run: sudo ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh {args.channel}",
+            file=sys.stderr,
+        )
         return 1
 
     print(f"Opening {args.channel} ({'CAN-FD' if fd else 'classical'})")

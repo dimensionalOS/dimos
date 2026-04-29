@@ -16,10 +16,8 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
-
-from dimos.utils.data import LfsPath
+import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -35,6 +33,7 @@ from dimos.hardware.manipulators.spec import (
     JointLimits,
     ManipulatorInfo,
 )
+from dimos.utils.data import LfsPath
 
 if TYPE_CHECKING:
     from dimos.hardware.manipulators.registry import AdapterRegistry
@@ -163,7 +162,7 @@ class OpenArmAdapter:
                 interface=self._interface,
             )
             self._bus.open()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"ERROR: OpenArm {self._side}@{self._address} connect failed: {e}")
             self._bus = None
             return False
@@ -200,8 +199,10 @@ class OpenArmAdapter:
                 urdf = str(self._URDF_LEFT if self._side == "left" else self._URDF_RIGHT)
                 self._pin_model = pinocchio.buildModelFromUrdf(urdf)
                 self._pin_data = self._pin_model.createData()
-                print(f"OpenArm {self._side}: gravity compensation enabled (nq={self._pin_model.nq})")
-            except Exception as e:  # noqa: BLE001
+                print(
+                    f"OpenArm {self._side}: gravity compensation enabled (nq={self._pin_model.nq})"
+                )
+            except Exception as e:
                 print(f"WARNING: gravity comp disabled — {e}")
                 self._pin_model = None
                 self._pin_data = None
@@ -213,7 +214,7 @@ class OpenArmAdapter:
             return
         try:
             self._bus.disable_all()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         self._enabled = False
         self._bus.close()
@@ -324,15 +325,10 @@ class OpenArmAdapter:
         import pinocchio
 
         q_arr = np.array(q, dtype=np.float64)
-        tau_g = pinocchio.computeGeneralizedGravity(
-            self._pin_model, self._pin_data, q_arr
-        )
+        tau_g = pinocchio.computeGeneralizedGravity(self._pin_model, self._pin_data, q_arr)
         # Clamp to motor torque limits for safety
         limits = [m.limits for m in self._motors]  # (p_max, v_max, t_max)
-        return [
-            float(np.clip(tau_g[i], -lim[2], lim[2]))
-            for i, lim in enumerate(limits)
-        ]
+        return [float(np.clip(tau_g[i], -lim[2], lim[2])) for i, lim in enumerate(limits)]
 
     # ------------------------------------------------------------------
     # Commands
@@ -354,7 +350,7 @@ class OpenArmAdapter:
         tau_ff = self._compute_gravity_torques(q_current)
         commands = [
             (q, 0.0, kp * velocity, kd, tau)
-            for q, kp, kd, tau in zip(positions, self._kp, self._kd, tau_ff)
+            for q, kp, kd, tau in zip(positions, self._kp, self._kd, tau_ff, strict=False)
         ]
         self._bus.send_mit_many(commands)
         self._last_cmd_q = list(positions)
@@ -376,7 +372,7 @@ class OpenArmAdapter:
         tau_ff = self._compute_gravity_torques(q_current)
         commands = [
             (q_anchor, dq, 0.0, kd, tau)
-            for q_anchor, dq, kd, tau in zip(anchor, velocities, self._kd, tau_ff)
+            for q_anchor, dq, kd, tau in zip(anchor, velocities, self._kd, tau_ff, strict=False)
         ]
         self._bus.send_mit_many(commands)
         return True
@@ -386,11 +382,12 @@ class OpenArmAdapter:
             return False
         try:
             q_now = self.read_joint_positions()
-        except Exception:  # noqa: BLE001
+        except Exception:
             q_now = [0.0] * self._dof
         tau_ff = self._compute_gravity_torques(q_now)
-        commands = [(q, 0.0, kp, kd, tau)
-                    for q, kp, kd, tau in zip(q_now, self._kp, self._kd, tau_ff)]
+        commands = [
+            (q, 0.0, kp, kd, tau) for q, kp, kd, tau in zip(q_now, self._kp, self._kd, tau_ff, strict=False)
+        ]
         self._bus.send_mit_many(commands)
         self._last_cmd_q = q_now
         return True
@@ -425,9 +422,7 @@ class OpenArmAdapter:
     def read_cartesian_position(self) -> dict[str, float] | None:
         return None
 
-    def write_cartesian_position(
-        self, pose: dict[str, float], velocity: float = 1.0
-    ) -> bool:
+    def write_cartesian_position(self, pose: dict[str, float], velocity: float = 1.0) -> bool:
         return False
 
     def read_gripper_position(self) -> float | None:
@@ -441,7 +436,7 @@ class OpenArmAdapter:
 
 
 # ── Registry hook (required for auto-discovery) ───────────────────
-def register(registry: "AdapterRegistry") -> None:
+def register(registry: AdapterRegistry) -> None:
     registry.register("openarm", OpenArmAdapter)
 
 

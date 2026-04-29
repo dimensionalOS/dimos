@@ -81,7 +81,10 @@ def openarm_arm(
     # Merge adapter_kwargs rather than replace, so callers can add keys
     # (e.g. auto_set_mit_mode) without clobbering the catalog's "side".
     if "adapter_kwargs" in overrides:
-        defaults["adapter_kwargs"] = {**defaults["adapter_kwargs"], **overrides.pop("adapter_kwargs")}
+        defaults["adapter_kwargs"] = {
+            **defaults["adapter_kwargs"],
+            **overrides.pop("adapter_kwargs"),
+        }
     defaults.update(overrides)
     return RobotConfig(**defaults)
 

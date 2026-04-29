@@ -21,9 +21,9 @@ can = pytest.importorskip("can")
 
 from dimos.hardware.manipulators.openarm.driver import (
     CTRL_MODE_MIT,
-    DamiaoMotor,
     KD_MAX,
     KP_MAX,
+    DamiaoMotor,
     MotorType,
     OpenArmBus,
     float_to_uint,
@@ -32,7 +32,6 @@ from dimos.hardware.manipulators.openarm.driver import (
     parse_state_frame,
     uint_to_float,
 )
-
 
 # ---------------------------------------------------------------------------
 # Pack / unpack primitives
@@ -192,9 +191,7 @@ def test_rx_thread_populates_state_cache() -> None:
                 28,
             ]
         )
-        sender.send(
-            can.Message(arbitration_id=0x11, data=payload, is_extended_id=False)
-        )
+        sender.send(can.Message(arbitration_id=0x11, data=payload, is_extended_id=False))
         # Poll briefly for the RX thread to consume it
         deadline = time.monotonic() + 0.5
         s = None

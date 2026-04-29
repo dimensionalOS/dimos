@@ -11,6 +11,7 @@ Usage:
     python dimos/robot/manipulators/openarm/scripts/openarm_can_probe.py --channel can0
     python dimos/robot/manipulators/openarm/scripts/openarm_can_probe.py --channel can1 --ids 1,2,3,4,5,6,7
 """
+
 from __future__ import annotations
 
 import argparse
@@ -26,7 +27,7 @@ except ImportError:
 #      [p_max rad, v_max rad/s, t_max Nm]
 LIMITS: dict[str, tuple[float, float, float]] = {
     "DM4310": (12.5, 30.0, 10.0),
-    "DM4340": (12.5,  8.0, 28.0),
+    "DM4340": (12.5, 8.0, 28.0),
     "DM8006": (12.5, 45.0, 40.0),
 }
 
@@ -42,7 +43,7 @@ DEFAULT_MOTORS: list[tuple[int, str]] = [
     (0x08, "DM4310"),  # gripper
 ]
 
-ENABLE  = bytes([0xFF] * 7 + [0xFC])
+ENABLE = bytes([0xFF] * 7 + [0xFC])
 DISABLE = bytes([0xFF] * 7 + [0xFD])
 
 FD = False  # set by --fd at runtime; defaults to classical CAN @ 1 Mbit
@@ -57,24 +58,28 @@ def parse_state(motor_type: str, data: bytes) -> tuple[float, float, float, int,
     if len(data) < 8:
         return None
     p_max, v_max, t_max = LIMITS[motor_type]
-    q_u   = (data[1] << 8) | data[2]
-    dq_u  = (data[3] << 4) | (data[4] >> 4)
+    q_u = (data[1] << 8) | data[2]
+    dq_u = (data[3] << 4) | (data[4] >> 4)
     tau_u = ((data[4] & 0x0F) << 8) | data[5]
-    q   = uint_to_float(q_u,   -p_max, p_max, 16)
-    dq  = uint_to_float(dq_u,  -v_max, v_max, 12)
+    q = uint_to_float(q_u, -p_max, p_max, 16)
+    dq = uint_to_float(dq_u, -v_max, v_max, 12)
     tau = uint_to_float(tau_u, -t_max, t_max, 12)
     return q, dq, tau, data[6], data[7]
 
 
-def probe_motor(bus: can.BusABC, send_id: int, recv_id: int,
-                motor_type: str, timeout: float = 0.2) -> bool:
+def probe_motor(
+    bus: can.BusABC, send_id: int, recv_id: int, motor_type: str, timeout: float = 0.2
+) -> bool:
     """Enable motor, wait for state reply on recv_id, print result, disable."""
     # Flush any stale frames
     while bus.recv(0.0) is not None:
         pass
 
-    bus.send(can.Message(arbitration_id=send_id, data=ENABLE,
-                         is_extended_id=False, is_fd=FD, bitrate_switch=FD))
+    bus.send(
+        can.Message(
+            arbitration_id=send_id, data=ENABLE, is_extended_id=False, is_fd=FD, bitrate_switch=FD
+        )
+    )
     t0 = time.monotonic()
     while time.monotonic() - t0 < timeout:
         msg = bus.recv(timeout - (time.monotonic() - t0))
@@ -85,29 +90,55 @@ def probe_motor(bus: can.BusABC, send_id: int, recv_id: int,
         parsed = parse_state(motor_type, bytes(msg.data))
         if parsed is None:
             print(f"  0x{send_id:02X} ({motor_type}): short reply {list(msg.data)}")
-            bus.send(can.Message(arbitration_id=send_id, data=DISABLE,
-                                 is_extended_id=False, is_fd=FD, bitrate_switch=FD))
+            bus.send(
+                can.Message(
+                    arbitration_id=send_id,
+                    data=DISABLE,
+                    is_extended_id=False,
+                    is_fd=FD,
+                    bitrate_switch=FD,
+                )
+            )
             return False
         q, dq, tau, t_mos, t_rot = parsed
-        print(f"  0x{send_id:02X} ({motor_type:>6}): "
-              f"q={q:+.3f} rad  dq={dq:+.3f} rad/s  tau={tau:+.3f} Nm  "
-              f"T_mos={t_mos}C  T_rotor={t_rot}C")
-        bus.send(can.Message(arbitration_id=send_id, data=DISABLE,
-                             is_extended_id=False, is_fd=FD, bitrate_switch=FD))
+        print(
+            f"  0x{send_id:02X} ({motor_type:>6}): "
+            f"q={q:+.3f} rad  dq={dq:+.3f} rad/s  tau={tau:+.3f} Nm  "
+            f"T_mos={t_mos}C  T_rotor={t_rot}C"
+        )
+        bus.send(
+            can.Message(
+                arbitration_id=send_id,
+                data=DISABLE,
+                is_extended_id=False,
+                is_fd=FD,
+                bitrate_switch=FD,
+            )
+        )
         return True
 
-    print(f"  0x{send_id:02X} ({motor_type:>6}): NO REPLY on 0x{recv_id:02X} within {timeout*1e3:.0f}ms")
-    bus.send(can.Message(arbitration_id=send_id, data=DISABLE,
-                         is_extended_id=False, is_fd=FD, bitrate_switch=FD))
+    print(
+        f"  0x{send_id:02X} ({motor_type:>6}): NO REPLY on 0x{recv_id:02X} within {timeout * 1e3:.0f}ms"
+    )
+    bus.send(
+        can.Message(
+            arbitration_id=send_id, data=DISABLE, is_extended_id=False, is_fd=FD, bitrate_switch=FD
+        )
+    )
     return False
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--channel", default="can0", help="SocketCAN interface (default: can0)")
-    ap.add_argument("--fd", action="store_true", help="Use CAN-FD (requires FD-capable adapter). Default is classical CAN @ 1 Mbit, which is what most gs_usb adapters support.")
-    ap.add_argument("--ids", default=None,
-                    help="Comma-separated send IDs to probe (default: 1..8)")
+    ap.add_argument(
+        "--fd",
+        action="store_true",
+        help="Use CAN-FD (requires FD-capable adapter). Default is classical CAN @ 1 Mbit, which is what most gs_usb adapters support.",
+    )
+    ap.add_argument("--ids", default=None, help="Comma-separated send IDs to probe (default: 1..8)")
     ap.add_argument("--timeout", type=float, default=0.2, help="Reply timeout per motor (s)")
     args = ap.parse_args()
 
@@ -127,7 +158,10 @@ def main() -> int:
         return 1
     if not iface_up:
         print(f"ERROR: SocketCAN interface '{args.channel}' is DOWN.", file=sys.stderr)
-        print(f"  Run: sudo ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh {args.channel}", file=sys.stderr)
+        print(
+            f"  Run: sudo ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh {args.channel}",
+            file=sys.stderr,
+        )
         return 1
 
     print(f"Opening {args.channel} ({'CAN-FD' if FD else 'classical CAN'})...")
@@ -135,7 +169,10 @@ def main() -> int:
         bus = can.Bus(interface="socketcan", channel=args.channel, fd=FD)
     except Exception as e:
         print(f"ERROR opening {args.channel}: {e}", file=sys.stderr)
-        print("  Did you run 'sudo ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh' first?", file=sys.stderr)
+        print(
+            "  Did you run 'sudo ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh' first?",
+            file=sys.stderr,
+        )
         return 1
 
     try:

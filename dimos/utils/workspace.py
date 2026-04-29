@@ -20,9 +20,9 @@ Run ``python -m dimos.utils.workspace <urdf> [viz|query|suggest|interactive]``.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import sys
 import time
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -64,7 +64,9 @@ class WorkspaceMap:
             self.configs[i] = q
 
             J = self._pin.getJointJacobian(
-                self.model, self.data, self.ee_id,
+                self.model,
+                self.data,
+                self.ee_id,
                 self._pin.ReferenceFrame.LOCAL_WORLD_ALIGNED,
             )
             JJt = J[:3, :] @ J[:3, :].T
@@ -114,9 +116,9 @@ class WorkspaceMap:
         lines = [
             "Workspace stats:",
             f"  Samples: {len(p):,}",
-            f"  X range: [{p[:,0].min():.3f}, {p[:,0].max():.3f}] m",
-            f"  Y range: [{p[:,1].min():.3f}, {p[:,1].max():.3f}] m",
-            f"  Z range: [{p[:,2].min():.3f}, {p[:,2].max():.3f}] m",
+            f"  X range: [{p[:, 0].min():.3f}, {p[:, 0].max():.3f}] m",
+            f"  Y range: [{p[:, 1].min():.3f}, {p[:, 1].max():.3f}] m",
+            f"  Z range: [{p[:, 2].min():.3f}, {p[:, 2].max():.3f}] m",
             f"  Max reach from origin: {np.linalg.norm(p, axis=1).max():.3f} m",
             f"  Manipulability: [{self.manipulability.min():.4f}, {self.manipulability.max():.4f}]",
         ]
@@ -125,7 +127,7 @@ class WorkspaceMap:
 
             hull = ConvexHull(p)
             lines.append(f"  Convex hull volume: {hull.volume:.4f} m³")
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         return "\n".join(lines)
 
@@ -222,7 +224,9 @@ def _cmd_suggest(args: argparse.Namespace) -> int:
         p, q = ws.positions[idx], ws.configs[idx]
         pos_str = f"({p[0]:+.3f}, {p[1]:+.3f}, {p[2]:+.3f})"
         q_str = "[" + ", ".join(f"{v:.2f}" for v in q) + "]"
-        print(f"{rank:>3}  {dists[idx]:>6.3f}  {ws.manipulability[idx]:>7.4f}  {pos_str:>30}  {q_str}")
+        print(
+            f"{rank:>3}  {dists[idx]:>6.3f}  {ws.manipulability[idx]:>7.4f}  {pos_str:>30}  {q_str}"
+        )
     return 0
 
 
@@ -257,8 +261,10 @@ def _cmd_interactive(args: argparse.Namespace) -> int:
         if result["reachable"]:
             render_target(meshcat, (x, y, z), "target", (0.0, 1.0, 0.0))
             render_target(meshcat, result["best_position"], "best_ee", (0.0, 0.5, 1.0))
-            print(f"  REACHABLE — {result['n_configs']} configs, "
-                  f"manip={result['mean_manipulability']:.4f}")
+            print(
+                f"  REACHABLE — {result['n_configs']} configs, "
+                f"manip={result['mean_manipulability']:.4f}"
+            )
             print(f"  Joint config: {[round(q, 3) for q in result['best_config']]}")
         else:
             render_target(meshcat, (x, y, z), "target", (1.0, 0.0, 0.0))

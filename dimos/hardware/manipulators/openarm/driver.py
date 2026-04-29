@@ -20,12 +20,12 @@ Ported from ``enactic/openarm_can`` (C++). No dimos deps — testable with
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import enum
 import errno
 import struct
 import threading
 import time
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -57,19 +57,19 @@ class MotorType(str, enum.Enum):
 
 # (p_max [rad], v_max [rad/s], t_max [Nm])
 _MOTOR_LIMITS: dict[MotorType, tuple[float, float, float]] = {
-    MotorType.DM3507:     (12.5, 50.0,   5.0),
-    MotorType.DM4310:     (12.5, 30.0,  10.0),
-    MotorType.DM4310_48V: (12.5, 50.0,  10.0),
-    MotorType.DM4340:     (12.5,  8.0,  28.0),
-    MotorType.DM4340_48V: (12.5, 10.0,  28.0),
-    MotorType.DM6006:     (12.5, 45.0,  20.0),
-    MotorType.DM8006:     (12.5, 45.0,  40.0),
-    MotorType.DM8009:     (12.5, 45.0,  54.0),
-    MotorType.DM10010L:   (12.5, 25.0, 200.0),
-    MotorType.DM10010:    (12.5, 20.0, 200.0),
-    MotorType.DMH3510:    (12.5, 280.0,  1.0),
-    MotorType.DMH6215:    (12.5, 45.0,  10.0),
-    MotorType.DMG6220:    (12.5, 45.0,  10.0),
+    MotorType.DM3507: (12.5, 50.0, 5.0),
+    MotorType.DM4310: (12.5, 30.0, 10.0),
+    MotorType.DM4310_48V: (12.5, 50.0, 10.0),
+    MotorType.DM4340: (12.5, 8.0, 28.0),
+    MotorType.DM4340_48V: (12.5, 10.0, 28.0),
+    MotorType.DM6006: (12.5, 45.0, 20.0),
+    MotorType.DM8006: (12.5, 45.0, 40.0),
+    MotorType.DM8009: (12.5, 45.0, 54.0),
+    MotorType.DM10010L: (12.5, 25.0, 200.0),
+    MotorType.DM10010: (12.5, 20.0, 200.0),
+    MotorType.DMH3510: (12.5, 280.0, 1.0),
+    MotorType.DMH6215: (12.5, 45.0, 10.0),
+    MotorType.DMG6220: (12.5, 45.0, 10.0),
 }
 
 # MIT gain ranges (protocol-fixed, same for every motor type)
@@ -139,11 +139,11 @@ def pack_mit_frame(
 class MotorState:
     """Decoded state from a Damiao reply frame."""
 
-    q: float        # rad
-    dq: float       # rad/s
-    tau: float      # Nm
-    t_mos: int      # °C
-    t_rotor: int    # °C
+    q: float  # rad
+    dq: float  # rad/s
+    tau: float  # Nm
+    t_mos: int  # °C
+    t_rotor: int  # °C
     timestamp: float  # monotonic seconds when received
 
 
@@ -240,7 +240,7 @@ class OpenArmBus:
         self._interface = interface
         self._by_recv: dict[int, DamiaoMotor] = {m.effective_recv_id: m for m in motors}
 
-        self._bus: "can.BusABC | None" = None
+        self._bus: can.BusABC | None = None
         self._rx_thread: threading.Thread | None = None
         self._rx_stop = threading.Event()
         self._state_lock = threading.Lock()
@@ -275,7 +275,7 @@ class OpenArmBus:
             finally:
                 self._bus = None
 
-    def __enter__(self) -> "OpenArmBus":
+    def __enter__(self) -> OpenArmBus:
         self.open()
         return self
 
@@ -327,10 +327,8 @@ class OpenArmBus:
     ) -> None:
         """One MIT frame per motor; commands[i] → self.motors[i] = (q, dq, kp, kd, tau)."""
         if len(commands) != len(self._motors):
-            raise ValueError(
-                f"expected {len(self._motors)} commands, got {len(commands)}"
-            )
-        for i, (motor, cmd) in enumerate(zip(self._motors, commands)):
+            raise ValueError(f"expected {len(self._motors)} commands, got {len(commands)}")
+        for i, (motor, cmd) in enumerate(zip(self._motors, commands, strict=False)):
             q, dq, kp, kd, tau = cmd
             data = pack_mit_frame(motor.motor_type, q, dq, kp, kd, tau)
             self._send_raw(motor.send_id, data)
@@ -362,9 +360,7 @@ class OpenArmBus:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             with self._state_lock:
-                if all(
-                    m.effective_recv_id in self._states for m in self._motors
-                ):
+                if all(m.effective_recv_id in self._states for m in self._motors):
                     return True
             time.sleep(0.005)
         return False
@@ -422,11 +418,11 @@ class OpenArmBus:
 
 __all__ = [
     "CTRL_MODE_MIT",
-    "DamiaoMotor",
     "KD_MAX",
     "KD_MIN",
     "KP_MAX",
     "KP_MIN",
+    "DamiaoMotor",
     "MotorState",
     "MotorType",
     "OpenArmBus",
