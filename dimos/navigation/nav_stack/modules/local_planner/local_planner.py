@@ -224,6 +224,7 @@ class LocalPlanner(NativeModule):
     def start(self) -> None:
         super().start()
 
+    @rpc
     def stop(self) -> None:
         super().stop()
 
