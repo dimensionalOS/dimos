@@ -362,7 +362,10 @@ _g1_agentic_stack = (
     # back-projected into 3D via the aligned MuJoCo depth + intrinsics.
     # Exposes detect()/select() skills the agent uses to register
     # graspable objects with the manipulation pipeline.
-    ObjectSceneRegistrationModule.blueprint().transports(
+    # target_frame="world" matches what MujocoSimModule publishes TF
+    # for (frame_id="world", child=head_color_color_optical_frame);
+    # the default "map" doesn't connect to anything in this stack.
+    ObjectSceneRegistrationModule.blueprint(target_frame="world").transports(
         {
             ("color_image", Image): LCMTransport("/splat/color_image", Image),
             ("depth_image", Image): LCMTransport("/head/depth_image", Image),
