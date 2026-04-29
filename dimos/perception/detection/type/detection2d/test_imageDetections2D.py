@@ -50,3 +50,34 @@ def test_from_ros_detection2d_array(get_moment_2d) -> None:
     print(f"  Recovered bbox: {recovered_det.bbox}")
     print(f"  Track ID: {recovered_det.track_id}")
     print(f"  Confidence: {recovered_det.confidence:.3f}")
+
+
+def test_filter(imageDetections2d: ImageDetections2D) -> None:
+    dets = imageDetections2d.detections
+    assert len(dets) >= 1, "fixture should provide at least one detection"
+
+    # No predicates → keep everything.
+    assert imageDetections2d.filter().detections == dets
+
+    # Single predicate that always fails → empty.
+    result = imageDetections2d.filter(lambda d: False)
+    assert result.detections == []
+    assert isinstance(result, ImageDetections2D)  # subclass preserved
+
+    # Single predicate that always passes → same detections, new instance.
+    result = imageDetections2d.filter(lambda d: True)
+    assert result.detections == dets
+    assert result is not imageDetections2d
+
+    # Multi-predicate cascade: only keep detections with confidence > 0.5 AND
+    # class_id == first detection's class_id. Cascade must AND all predicates.
+    target_cls = dets[0].class_id
+    expected = [d for d in dets if d.confidence > 0.5 and d.class_id == target_cls]
+    result = imageDetections2d.filter(
+        lambda d: d.confidence > 0.5,
+        lambda d: d.class_id == target_cls,
+    )
+    assert result.detections == expected
+
+    # Preserves image.
+    assert result.image is imageDetections2d.image

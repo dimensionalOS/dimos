@@ -203,7 +203,8 @@ class ManipShmWriter:
             return None
         self._last_pos_cmd_seq = seq
         arr = self._array(self.shm.pos_t, MAX_JOINTS, np.float64)
-        return arr[:num_joints].copy()
+        result: NDArray[np.float64] = arr[:num_joints].copy()
+        return result
 
     def read_velocity_command(self, num_joints: int) -> NDArray[np.float64] | None:
         seq = self._get_seq(SEQ_VELOCITY_CMD)
@@ -211,7 +212,8 @@ class ManipShmWriter:
             return None
         self._last_vel_cmd_seq = seq
         arr = self._array(self.shm.vel_t, MAX_JOINTS, np.float64)
-        return arr[:num_joints].copy()
+        result: NDArray[np.float64] = arr[:num_joints].copy()
+        return result
 
     def read_gripper_command(self) -> float | None:
         seq = self._get_seq(SEQ_GRIPPER_CMD)

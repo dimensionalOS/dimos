@@ -47,6 +47,7 @@ _COMMAND_CENTER_DIR = (
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.models import LatLon
@@ -360,7 +361,7 @@ class WebsocketVisModule(Module):
     def _run_uvicorn_server(self) -> None:
         config = uvicorn.Config(
             self.app,  # type: ignore[arg-type]
-            host="0.0.0.0",
+            host=global_config.listen_host,
             port=self.config.port,
             log_level="error",  # Reduce verbosity
         )

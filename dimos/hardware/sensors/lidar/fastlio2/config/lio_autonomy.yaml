@@ -16,7 +16,7 @@ mapping:
     b_gyr_cov: 0.0001
     fov_degree:    360
     det_range:     60.0          # reduced from 100 — less noise from distant points
-    extrinsic_est_en:  false
+    extrinsic_est_en:  true      # enable live calibration
     extrinsic_T: [ -0.011, -0.02329, 0.04412 ]
     extrinsic_R: [ 1, 0, 0,
                    0, 1, 0,

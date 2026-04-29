@@ -2,7 +2,7 @@
 
 ## Smart Nav
 
-- [Smart Nav](/docs/capabilities/navigation/smart_nav.md) — modular navigation stack with terrain analysis, local/global planning, PGO, and exploration
+- [Smart Nav](/docs/capabilities/navigation/nav_stack.md) — modular navigation stack with terrain analysis, local/global planning, PGO, and exploration
 
 ## Non-ROS
 

@@ -77,45 +77,50 @@ class StubConsumer(Module):
     imu: In[Imu]
 
     @rpc
-    def start(self) -> None:
-        pass
+    def start(self):
+        super().start()
 
 
 class StubProducer(Module):
     cmd_vel: Out[Twist]
 
     @rpc
-    def start(self) -> None:
-        pass
+    def start(self):
+        super().start()
 
 
-def test_process_crash_triggers_stop() -> None:
+def test_process_crash_triggers_stop():
     """When the native process dies unexpectedly, the watchdog calls stop()."""
-    mod = StubNativeModule(die_after=0.2)
-    mod.pointcloud.transport = LCMTransport("/pc", PointCloud2)
-    mod.start()
+    module = StubNativeModule(die_after=0.2)
+    transport = LCMTransport("/pc", PointCloud2)
+    module.pointcloud.transport = transport
+    try:
+        module.start()
 
-    assert mod._process is not None
-    pid = mod._process.pid
+        assert module._process is not None
+        pid = module._process.pid
 
-    # Wait for the process to die and the watchdog to call stop()
-    for _ in range(30):
-        time.sleep(0.1)
-        if mod._process is None:
-            break
+        # Wait for the process to die and the watchdog to call stop()
+        for _ in range(30):
+            time.sleep(0.1)
+            if module._process is None:
+                break
 
-    assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
+        assert module._process is None, f"Watchdog did not clean up after process {pid} died"
 
-    # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
-    # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
-    time.sleep(0.5)
-
-    # Ensure all threads (LCM transport, event loop) are cleaned up
-    mod.stop()
+        # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
+        # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
+        time.sleep(0.5)
+    finally:
+        module.stop()
+        try:
+            transport.stop()
+        except Exception:
+            pass
 
 
 @pytest.mark.slow
-def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
+def test_manual(dimos_cluster, args_file):
     native_module = dimos_cluster.deploy(
         StubNativeModule,
         some_param=2.5,
@@ -137,7 +142,7 @@ def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
 
 
 @pytest.mark.slow
-def test_autoconnect(args_file: str) -> None:
+def test_autoconnect(args_file):
     """autoconnect passes correct topic args to the native subprocess."""
     blueprint = autoconnect(
         StubNativeModule.blueprint(
@@ -155,7 +160,7 @@ def test_autoconnect(args_file: str) -> None:
     coordinator = ModuleCoordinator.build(blueprint.global_config(viewer="none"))
     try:
         # Validate blueprint wiring: all modules deployed
-        native = coordinator.get_instance(StubNativeModule)  # type: ignore[arg-type]
+        native = coordinator.get_instance(StubNativeModule)
         consumer = coordinator.get_instance(StubConsumer)
         producer = coordinator.get_instance(StubProducer)
         assert native is not None

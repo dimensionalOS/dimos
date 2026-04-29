@@ -249,6 +249,7 @@ class ControlCoordinator(Module):
             dof=len(component.joints),
             address=component.address,
             hardware_id=component.hardware_id,
+            **component.adapter_kwargs,
         )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:

@@ -22,16 +22,17 @@ automatically. Generates RobotModelConfig, HardwareComponent, and TaskConfig.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr
 
+from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.coordinator import TaskConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.model_parser import ModelDescription, parse_model
-
-if TYPE_CHECKING:
-    from dimos.control.components import HardwareComponent
-    from dimos.control.coordinator import TaskConfig
-    from dimos.manipulation.planning.spec.config import RobotModelConfig
 
 
 class GripperConfig(BaseModel):
@@ -61,7 +62,7 @@ class RobotConfig(BaseModel):
 
     # These offsets are applied so that odometry  at 0,0,0 corresponds roughly with the floor
     # Note: these cannot (easily) be calculated from the URDF because
-    #       the URDF doesn't always have an initial robot pose/stance so the
+    #       the URDF doesn't always have an initial robot pose/stance
     # This is a quality of life offset, not exact
     # The key names should match keys in the urdf
     internal_odom_offsets: dict[str, Any] = Field(default_factory=dict)
@@ -187,11 +188,6 @@ class RobotConfig(BaseModel):
 
     def to_robot_model_config(self) -> RobotModelConfig:
         """Generate RobotModelConfig for ManipulationModule."""
-        from dimos.manipulation.planning.spec.config import RobotModelConfig as _RobotModelConfig
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
         if self.end_effector_link is None:
             raise ValueError(
                 f"RobotConfig '{self.name}' has no end_effector_link — "
@@ -213,7 +209,7 @@ class RobotConfig(BaseModel):
         )
         base_link = self.base_link if self.base_link is not None else self.resolved_base_link
 
-        return _RobotModelConfig(
+        return RobotModelConfig(
             name=self.name,
             model_path=self.model_path,
             base_pose=base_pose,
@@ -236,8 +232,6 @@ class RobotConfig(BaseModel):
 
     def to_hardware_component(self) -> HardwareComponent:
         """Generate HardwareComponent for ControlCoordinator."""
-        from dimos.control.components import HardwareComponent as _HardwareComponent, HardwareType
-
         self._ensure_prefix()
         gripper_joints: list[str] = []
         if self.gripper and self.gripper.joints:
@@ -247,7 +241,7 @@ class RobotConfig(BaseModel):
         if self.home_joints is not None:
             adapter_kwargs.setdefault("initial_positions", self.home_joints)
 
-        return _HardwareComponent(
+        return HardwareComponent(
             hardware_id=self.name,
             hardware_type=HardwareType.MANIPULATOR,
             joints=self.coordinator_joint_names,
@@ -274,8 +268,6 @@ class RobotConfig(BaseModel):
             **task_kwargs: Extra fields passed to TaskConfig (e.g., model_path,
                 ee_joint_id, hand, gripper_joint, gripper_open_pos, gripper_closed_pos).
         """
-        from dimos.control.coordinator import TaskConfig
-
         return TaskConfig(
             name=task_name if task_name is not None else self.coordinator_task_name,
             type=task_type if task_type is not None else self.task_type,

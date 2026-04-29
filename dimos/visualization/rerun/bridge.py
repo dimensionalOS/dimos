@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import field
+import socket
 import subprocess
 import time
 from typing import (
@@ -29,25 +30,30 @@ from typing import (
     get_args,
     runtime_checkable,
 )
+from urllib.parse import urlparse
 
 from reactivex.disposable import Disposable
+import rerun as rr
 from rerun._baseclasses import Archetype
+import rerun.blueprint as rrb
 from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
+from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
-from dimos.visualization.constants import (
+from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
     RERUN_GRPC_PORT,
     RERUN_OPEN_DEFAULT,
+    RERUN_WEB_PORT,
     RerunOpenOption,
 )
+from dimos.visualization.rerun.init import rerun_init
 
 # TODO OUT visual annotations
 #
@@ -94,7 +100,6 @@ logger = setup_logger()
 
 BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
 
-# to_rerun() can return a single archetype or a list of (entity_path, archetype) tuples
 RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
 RerunData: TypeAlias = "Archetype | RerunMulti"
 
@@ -128,8 +133,6 @@ def _hex_to_rgba(hex_color: str) -> int:
 
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
     """Add a Graph tab alongside the existing viewer layout without changing it."""
-    import rerun.blueprint as rrb
-
     root = bp.root_container
     return rrb.Blueprint(
         rrb.Tabs(
@@ -144,9 +147,6 @@ def _with_graph_tab(bp: Blueprint) -> Blueprint:
 
 def _default_blueprint() -> Blueprint:
     """Default blueprint with black background and raised grid."""
-    import rerun as rr
-    import rerun.blueprint as rrb
-
     return rrb.Blueprint(
         rrb.Spatial3DView(
             origin="world",
@@ -159,17 +159,10 @@ def _default_blueprint() -> Blueprint:
 
 
 class Config(ModuleConfig):
-    """Configuration for RerunBridgeModule."""
-
     pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
     visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
-
-    # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
-
-    # Per-entity max update rate (Hz). Entities not listed are unthrottled.
-    # Use for heavy entities to prevent viewer backpressure.
     max_hz: dict[str, float] = field(default_factory=dict)
 
     entity_prefix: str = "world"
@@ -178,10 +171,11 @@ class Config(ModuleConfig):
     memory_limit: str = "25%"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
-
-    # Blueprint factory: callable(rrb) -> Blueprint for viewer layout configuration
-    # Set to None to disable default blueprint
+    web_port: int = RERUN_WEB_PORT
     blueprint: BlueprintFactory | None = _default_blueprint
+
+
+Config.model_rebuild(_types_namespace={"Archetype": Archetype, "Blueprint": Blueprint})
 
 
 class RerunBridgeModule(Module):
@@ -203,18 +197,14 @@ class RerunBridgeModule(Module):
     config: Config
     _last_log: dict[str, float]
 
-    # Graphviz layout scale and node radii for blueprint graph
-    GV_SCALE = 100.0
+    # TODO this doesn't belong here, either hardcode it or put it to rerun bridge config
+    GRAPH_VIZ_SCALE = 100.0
     MODULE_RADIUS = 20.0
     CHANNEL_RADIUS = 12.0
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._last_log = {}
-        # Manual cache replaces @lru_cache on this method.  lru_cache captures
-        # ``self`` as a cache key, which prevents garbage collection of the
-        # entire RerunBridgeModule (and everything it references).  A plain
-        # dict on the instance avoids the leak and is cleared in stop().
         self._override_cache: dict[str, Callable[[Any], RerunData | None]] = {}
 
     def _visual_override_for_entity_path(
@@ -223,13 +213,13 @@ class RerunBridgeModule(Module):
         """Return a composed visual override for the entity path.
 
         Chains matching overrides from config, ending with final_convert
-        which handles .to_rerun() or passes through Archetypes.
+        which handles .to_rerun() or passes through Archetypes. Cached per
+        instance (not via ``lru_cache`` on a method, which would leak ``self``).
         """
         cached = self._override_cache.get(entity_path)
         if cached is not None:
             return cached
 
-        # find all matching converters for this entity path
         matches = [
             fn
             for pattern, fn in self.config.visual_override.items()
@@ -238,11 +228,13 @@ class RerunBridgeModule(Module):
 
         # None means "suppress this topic entirely"
         if any(fn is None for fn in matches):
-            result: Callable[[Any], RerunData | None] = lambda msg: None  # noqa: E731
-            self._override_cache[entity_path] = result
-            return result
 
-        # final step (ensures we return Archetype or None)
+            def suppressed(msg: Any) -> RerunData | None:
+                return None
+
+            self._override_cache[entity_path] = suppressed
+            return suppressed
+
         def final_convert(msg: Any) -> RerunData | None:
             if isinstance(msg, Archetype):
                 return msg
@@ -252,28 +244,21 @@ class RerunBridgeModule(Module):
                 return msg.to_rerun()
             return None
 
-        # compose all converters
-        composed: Callable[[Any], RerunData | None] = lambda msg: pipe(  # noqa: E731
-            msg, *matches, final_convert
-        )
+        def composed(msg: Any) -> RerunData | None:
+            return cast("RerunData | None", pipe(msg, *matches, final_convert))
+
         self._override_cache[entity_path] = composed
         return composed
 
     def _get_entity_path(self, topic: Any) -> str:
-        """Convert a topic to a Rerun entity path."""
         if self.config.topic_to_entity:
             return self.config.topic_to_entity(topic)
 
-        # Default: use topic.name if available (LCM Topic), else str
         topic_str = getattr(topic, "name", None) or str(topic)
-        # Strip everything after # (LCM topic suffix)
-        topic_str = topic_str.split("#")[0]
+        topic_str = topic_str.split("#")[0]  # strip LCM topic suffix
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:
-        """Handle incoming message - log to rerun."""
-        import rerun as rr
-
         entity_path: str = self._get_entity_path(topic)
 
         # Throttle entities with a max_hz limit
@@ -283,7 +268,6 @@ class RerunBridgeModule(Module):
                 return
             self._last_log[entity_path] = now
 
-        # apply visual overrides (including final_convert which handles .to_rerun())
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
         if not rerun_data:
@@ -298,26 +282,16 @@ class RerunBridgeModule(Module):
 
     @rpc
     def start(self) -> None:
-        import socket
-        from urllib.parse import urlparse
-
-        import rerun as rr
-
         super().start()
 
         logger.info("Rerun bridge starting")
 
-        # Build throttle lookup: entity_path → min interval in seconds
         self._last_log = {}
         self._min_intervals: dict[str, float] = {
             entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
         }
 
-        # Initialize and spawn Rerun viewer
-        rr.init("dimos")
-
-        # start grpc if needed
-        # If the port is already in use (another instance running), connect
+        rerun_init("dimos")
 
         parsed = urlparse(self.config.connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
@@ -337,14 +311,12 @@ class RerunBridgeModule(Module):
             )
             logger.info(f"Rerun gRPC server ready at {server_uri}")
 
-        # Check open arg
         if self.config.rerun_open not in get_args(RerunOpenOption):
             logger.warning(
                 f"rerun_open was {self.config.rerun_open} which is not one of "
                 f"{get_args(RerunOpenOption)}"
             )
 
-        # launch native viewer if desired
         spawned = False
         if self.config.rerun_open in ("native", "both"):
             try:
@@ -375,27 +347,24 @@ class RerunBridgeModule(Module):
                     logger.warning(
                         "Rerun native viewer not available (headless?). "
                         "Bridge will continue without a viewer — data is still "
-                        "accessible via rerun-connect or rerun-web.",
+                        "accessible via --rerun-open web or by connecting a viewer to the gRPC server.",
                         exc_info=True,
                     )
 
-        # web
         open_web = self.config.rerun_open == "web" or self.config.rerun_open == "both"
         if open_web or self.config.rerun_web:
-            rr.serve_web_viewer(connect_to=server_uri, open_browser=open_web)
+            rr.serve_web_viewer(
+                connect_to=server_uri,
+                open_browser=open_web,
+                web_port=self.config.web_port,
+            )
 
-        # printout
         if self.config.rerun_open == "none" or (self.config.rerun_open == "native" and not spawned):
             self._log_connect_hints(grpc_port)
 
-        # setup blueprint
         if self.config.blueprint:
             rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
 
-        # Register colormap for viewer-side color resolution (PointCloud2 class_ids)
-        register_colormap_annotation("turbo")
-
-        # Start pubsubs and subscribe to all messages
         for pubsub in self.config.pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
@@ -403,7 +372,6 @@ class RerunBridgeModule(Module):
             unsub = pubsub.subscribe_all(self._on_message)
             self.register_disposable(Disposable(unsub))
 
-        # Add pubsub stop as disposable
         for pubsub in self.config.pubsubs:
             if hasattr(pubsub, "stop"):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
@@ -412,10 +380,6 @@ class RerunBridgeModule(Module):
 
     def _log_connect_hints(self, grpc_port: int) -> None:
         """Log CLI commands for connecting a viewer to this bridge."""
-        import socket
-
-        from dimos.utils.generic import get_local_ips
-
         local_ips = get_local_ips()
         hostname = socket.gethostname()
         connect_url = f"rerun+http://127.0.0.1:{grpc_port}/proxy"
@@ -438,8 +402,6 @@ class RerunBridgeModule(Module):
         logger.info("\n".join(lines))
 
     def _log_static(self) -> None:
-        import rerun as rr
-
         for entity_path, factory in self.config.static.items():
             data = factory(rr)
             if isinstance(data, list):
@@ -459,8 +421,6 @@ class RerunBridgeModule(Module):
             dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
             module_names: List of module class names (to distinguish modules from channels).
         """
-        import rerun as rr
-
         try:
             result = subprocess.run(
                 ["dot", "-Tplain"], input=dot_code, text=True, capture_output=True, timeout=30
@@ -482,8 +442,8 @@ class RerunBridgeModule(Module):
             if line.startswith("node "):
                 parts = line.split()
                 node_id = parts[1].strip('"')
-                x = float(parts[2]) * self.GV_SCALE
-                y = -float(parts[3]) * self.GV_SCALE
+                x = float(parts[2]) * self.GRAPH_VIZ_SCALE
+                y = -float(parts[3]) * self.GRAPH_VIZ_SCALE
                 label = parts[6].strip('"')
                 color = parts[9].strip('"')
 

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.mapping.voxels import VoxelGridMapper
@@ -19,13 +21,18 @@ from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.05
 
+
+def _voxel_grid_to_boxes(grid: Any) -> Any:
+    return grid.to_rerun(voxel_size=voxel_size, mode="boxes")
+
+
 mid360_fastlio = autoconnect(
     FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
     vis_module(
         "rerun",
         rerun_config={
             "visual_override": {
-                "world/lidar": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),
+                "world/lidar": _voxel_grid_to_boxes,
             },
         },
     ),
@@ -38,7 +45,7 @@ mid360_fastlio_voxels = autoconnect(
         "rerun",
         rerun_config={
             "visual_override": {
-                "world/global_map": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),
+                "world/global_map": _voxel_grid_to_boxes,
                 "world/lidar": None,
             },
         },
@@ -52,7 +59,7 @@ mid360_fastlio_voxels_native = autoconnect(
         rerun_config={
             "visual_override": {
                 "world/lidar": None,
-                "world/global_map": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),
+                "world/global_map": _voxel_grid_to_boxes,
             },
         },
     ),
