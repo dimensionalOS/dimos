@@ -16,6 +16,7 @@ import re
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from dimos.constants import DEFAULT_BUILD_NATIVE
 from dimos.models.vl.types import VlModelName
 from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
@@ -57,8 +58,7 @@ class GlobalConfig(BaseSettings):
     nerf_speed: float = 1.0
     planner_robot_speed: float | None = None
     mcp_port: int = 9990
-    mcp_host: str = "127.0.0.1"
-    build_native: bool = False
+    build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = False
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
