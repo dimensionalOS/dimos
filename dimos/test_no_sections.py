@@ -94,9 +94,13 @@ def find_section_markers() -> list[tuple[str, int, str]]:
     violations: list[tuple[str, int, str]] = []
 
     for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
-        # Prune ignored directories in-place (also skip any venv-like dir)
+        # Prune ignored directories in-place (also skip any venv-like dir and .ignore* dirs)
         dirnames[:] = [
-            d for d in dirnames if d not in IGNORED_DIRS and not d.lstrip(".").startswith("venv")
+            d
+            for d in dirnames
+            if d not in IGNORED_DIRS
+            and not d.lstrip(".").startswith("venv")
+            and not d.startswith(".ignore")
         ]
 
         if _is_ignored_dir(dirpath):
