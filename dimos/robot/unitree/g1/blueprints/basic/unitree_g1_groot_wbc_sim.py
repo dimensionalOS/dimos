@@ -63,6 +63,7 @@ from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.memory2.module import Recorder, RecorderConfig
@@ -82,6 +83,7 @@ from dimos.perception.experimental.temporal_memory.temporal_memory import Tempor
 from dimos.perception.object_tracker import ObjectTracking
 from dimos.perception.perceive_loop_skill import PerceiveLoopSkill
 from dimos.perception.spatial_perception import SpatialMemory
+from dimos.robot.catalog.g1 import g1_left_arm
 from dimos.robot.unitree.g1.blueprints.basic._groot_wbc_common import (
     ARM_DEFAULT_POSE,
     G1_GROOT_KD,
@@ -120,6 +122,12 @@ class G1Memory(Recorder):
 # subprocess (and now the in-process MujocoEngine) computes PD itself.
 _MJCF_PATH = "data/mujoco_sim/g1_gear_wbc.xml"
 
+# Manipulation: the G1's left arm as a 7-DOF stationary manipulator
+# rooted at torso_link.  Drake-driven IK + RRT plans trajectories;
+# the coordinator's "trajectory" task on the same joint subset
+# executes them.  See dimos/robot/catalog/g1.py for the details.
+_g1_left_arm_cfg = g1_left_arm()
+
 _g1_coordinator = (
     ControlCoordinator.blueprint(
         tick_rate=500.0,
@@ -155,14 +163,21 @@ _g1_coordinator = (
                 auto_dry_run=False,
                 default_ramp_seconds=0.0,
             ),
+            # Right arm: servo-hold at the default pose (manipulation
+            # only drives the left arm in this blueprint).
             TaskConfig(
-                name="servo_arms",
+                name="servo_right_arm",
                 type="servo",
-                joint_names=g1_arms,
+                joint_names=g1_arms[7:],  # right arm joints (7)
                 priority=10,
-                default_positions=ARM_DEFAULT_POSE,
+                default_positions=ARM_DEFAULT_POSE[7:],
                 auto_start=True,
             ),
+            # Left arm: trajectory follower driven by ManipulationModule.
+            # Higher priority than servo so when manipulation is idle the
+            # arm just dangles under WBC kp/kd damping; when active, the
+            # planned trajectory wins.
+            _g1_left_arm_cfg.to_task_config(),
         ],
     )
     .transports(
@@ -310,6 +325,19 @@ _g1_agentic_stack = (
     ),
     NavigationSkillContainer.blueprint(),
     SpeakSkill.blueprint(),
+    # Manipulation — Drake IK + RRT planner driving the G1 left arm via
+    # the coordinator's trajectory task.  Subscribes to coordinator
+    # joint_state for live state sync.  Meshcat viz off in this
+    # composed sim (we already have viser as the live 3D view).
+    ManipulationModule.blueprint(
+        robots=[_g1_left_arm_cfg.to_robot_model_config()],
+        planning_timeout=10.0,
+        enable_viz=False,
+    ).transports(
+        {
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        }
+    ),
     PerceiveLoopSkill.blueprint().transports(
         {
             ("color_image", Image): LCMTransport("/splat/color_image", Image),
