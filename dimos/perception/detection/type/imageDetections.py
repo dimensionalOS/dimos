@@ -24,6 +24,11 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
+
 from dimos_lcm.vision_msgs import Detection2DArray
 
 from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
