@@ -80,6 +80,7 @@ _LFS_ASSET = "unity_sim_x86"
 _GDRIVE_FOLDER_ID = "1UD5v6cSfcwIMWmsq9WSk7blJut4kgb-1"
 _DEFAULT_SCENE = "office_1"
 
+
 # Read timeout for the Unity TCP connection (seconds).  If Unity stops
 # sending data for longer than this the bridge treats it as a hung
 # connection and drops it.
@@ -151,8 +152,38 @@ def _validate_platform() -> None:
         )
 
 
+def _list_gdrive_folder(folder_id: str) -> list[tuple[str, str]]:
+    """List files in a public Google Drive folder via gdown internals.
+
+    Returns a list of ``(file_id, filename)`` tuples without downloading
+    anything.  Scrapes the public folder page to get the file listing.
+    """
+    try:
+        import requests
+        from gdown.download_folder import (  # type: ignore[import-untyped]
+            _download_and_parse_google_drive_link,
+        )
+    except ImportError:
+        return []
+    try:
+        sess = requests.Session()
+        url = f"https://drive.google.com/drive/folders/{folder_id}"
+        return_code, gdrive_file = _download_and_parse_google_drive_link(
+            sess=sess, url=url, quiet=True,
+        )
+        if not return_code or not gdrive_file:
+            return []
+        return [(child.id, child.name) for child in gdrive_file.children]
+    except Exception:
+        return []
+
+
 def _download_unity_scene(scene: str, dest_dir: Path) -> Path:
     """Download a Unity environment zip from Google Drive and extract it.
+
+    Lists the folder to find the specific scene zip file ID, then
+    downloads only that file.  Falls back to downloading the entire
+    folder if the listing fails.
 
     Returns the path to the Model.x86_64 binary.
     """
@@ -170,16 +201,30 @@ def _download_unity_scene(scene: str, dest_dir: Path) -> Path:
     zip_path = dest_dir / f"{scene}.zip"
 
     if not zip_path.exists():
-        print("\n" + "=" * 70, flush=True)
-        print(f"  DOWNLOADING UNITY SIMULATOR — scene: '{scene}'", flush=True)
-        print("  Source: Google Drive (VLA Challenge environments)", flush=True)
-        print(f"  Destination: {dest_dir}", flush=True)
-        print("  This is a one-time download.", flush=True)
-        print("=" * 70 + "\n", flush=True)
-        gdown.download_folder(id=_GDRIVE_FOLDER_ID, output=str(dest_dir), quiet=False)
-        for candidate in dest_dir.rglob(f"{scene}.zip"):
-            zip_path = candidate
-            break
+        logger.info(f"Downloading Unity scene '{scene}' from Google Drive…")
+
+        # Try to find and download just the single scene zip.
+        target = f"{scene}.zip"
+        file_id = None
+        for fid, fname in _list_gdrive_folder(_GDRIVE_FOLDER_ID):
+            if fname == target:
+                file_id = fid
+                break
+
+        if file_id:
+            gdown.download(id=file_id, output=str(zip_path), quiet=False)
+        else:
+            # Fallback: download the whole folder (can't resolve single file).
+            logger.warning(
+                f"Could not resolve file ID for '{target}', "
+                "downloading entire folder."
+            )
+            gdown.download_folder(
+                id=_GDRIVE_FOLDER_ID, output=str(dest_dir), quiet=False,
+            )
+            for candidate in dest_dir.rglob(target):
+                zip_path = candidate
+                break
 
     if not zip_path.exists():
         raise FileNotFoundError(
@@ -189,7 +234,7 @@ def _download_unity_scene(scene: str, dest_dir: Path) -> Path:
 
     extract_dir = dest_dir / scene
     if not extract_dir.exists():
-        logger.info(f"Extracting {zip_path}...")
+        logger.info(f"Extracting {zip_path}…")
         with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(dest_dir)
 
