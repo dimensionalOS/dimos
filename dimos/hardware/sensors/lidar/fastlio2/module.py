@@ -206,6 +206,7 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     def _on_odom_for_tf(self, msg: Odometry) -> None:
         self.tf.publish(_odom_to_body_tf(msg))
 
+    @rpc
     def stop(self) -> None:
         super().stop()
 

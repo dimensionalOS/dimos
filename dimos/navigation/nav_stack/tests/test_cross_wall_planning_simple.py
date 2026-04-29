@@ -30,7 +30,12 @@ pytest.importorskip("gtsam")
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.nav_stack.main import create_nav_stack
-from dimos.navigation.nav_stack.tests.conftest import run_cross_wall_test
+from dimos.navigation.nav_stack.tests.conftest import (
+    CROSS_WALL_LOCAL_PLANNER,
+    CROSS_WALL_PATH_FOLLOWER,
+    CROSS_WALL_TERRAIN_ANALYSIS,
+    run_cross_wall_test,
+)
 from dimos.simulation.unity.module import UnityBridgeModule
 
 pytestmark = [pytest.mark.slow]
@@ -57,29 +62,9 @@ class TestCrossWallPlanningSimple:
                 ),
                 create_nav_stack(
                     use_simple_planner=True,
-                    terrain_analysis={
-                        "obstacle_height_threshold": 0.1,
-                        "ground_height_threshold": 0.05,
-                        "max_relative_z": 0.3,
-                        "min_relative_z": -1.5,
-                    },
-                    local_planner={
-                        "max_speed": 2.0,
-                        "autonomy_speed": 2.0,
-                        "obstacle_height_threshold": 0.1,
-                        "max_relative_z": 0.3,
-                        "min_relative_z": -1.5,
-                        "freeze_ang": 180.0,
-                        "two_way_drive": False,
-                    },
-                    path_follower={
-                        "max_speed": 2.0,
-                        "autonomy_speed": 2.0,
-                        "max_acceleration": 4.0,
-                        "slow_down_distance_threshold": 0.5,
-                        "omni_dir_goal_threshold": 0.5,
-                        "two_way_drive": False,
-                    },
+                    terrain_analysis=CROSS_WALL_TERRAIN_ANALYSIS,
+                    local_planner=CROSS_WALL_LOCAL_PLANNER,
+                    path_follower=CROSS_WALL_PATH_FOLLOWER,
                     simple_planner={
                         "cell_size": 0.3,
                         "obstacle_height_threshold": 0.15,

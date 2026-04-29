@@ -123,21 +123,18 @@ def test_invalid_clicks_rejected(manager_and_captured):
     assert captured.goal == []
 
 
-def test_tele_cmd_vel_scaling():
+def test_tele_cmd_vel_scaling(manager_and_captured):
     """tele_cmd_vel_scaling multiplies each teleop twist component independently."""
+    manager, captured = manager_and_captured
     scaling = Twist(Vector3(0.5, 2.0, 0.0), Vector3(1.0, 1.0, 0.25))
-    module = MovementManager(tele_cooldown_sec=10.0, tele_cmd_vel_scaling=scaling)
-    captured, unsubs = _attach(module)
-    try:
-        module._on_teleop(Twist(Vector3(1, 1, 1), Vector3(1, 1, 1)))
+    manager.config.tele_cmd_vel_scaling = scaling
+    manager.config.tele_cooldown_sec = 10.0
 
-        assert len(captured.cmd_vel) == 1
-        published = captured.cmd_vel[0]
-        assert published.linear.x == pytest.approx(0.5)
-        assert published.linear.y == pytest.approx(2.0)
-        assert published.linear.z == pytest.approx(0.0)
-        assert published.angular.z == pytest.approx(0.25)
-    finally:
-        for unsub in unsubs:
-            unsub()
-        module._close_module()
+    manager._on_teleop(Twist(Vector3(1, 1, 1), Vector3(1, 1, 1)))
+
+    assert len(captured.cmd_vel) == 1
+    published = captured.cmd_vel[0]
+    assert published.linear.x == pytest.approx(0.5)
+    assert published.linear.y == pytest.approx(2.0)
+    assert published.linear.z == pytest.approx(0.0)
+    assert published.angular.z == pytest.approx(0.25)
