@@ -1,0 +1,50 @@
+- pr: 1879
+  comment_id: 3106141416
+  author: jeff-hykin
+  file: dimos/protocol/rpc/pubsubrpc.py
+  line: null
+  problem: "this shouldnt be here"
+  solution: >
+    Jeff's self-note. The file is identical to origin/dev on this branch — the
+    diff visible in the PR is an artifact of the merge-base being behind dev.
+    No commits on jeff/feat/arduino touch this file. File was included
+    unintentionally; requires Jeff's confirmation on what specifically to remove.
+  commit: null
+
+- pr: 1879
+  comment_id: 3106141794
+  author: jeff-hykin
+  file: dimos/robot/all_blueprints.py
+  line: 172
+  problem: "should be named different"
+  solution: >
+    Jeff's self-note about naming. Requires Jeff's input on preferred name.
+    Previous autofix renamed twist-echo to arduino-twist-echo in the
+    all_modules registry to distinguish it from non-Arduino modules.
+  commit: null
+
+- pr: 1879
+  comment_id: 3106142023
+  author: jeff-hykin
+  file: dimos/simulation/engines/mujoco_shm.py
+  line: null
+  problem: "shouldnt be here"
+  solution: >
+    Jeff's self-note. The file is identical to origin/dev on this branch — the
+    diff visible in the PR is an artifact of the merge-base being behind dev.
+    No commits on jeff/feat/arduino touch this file. Needs Jeff's confirmation
+    before removal.
+  commit: null
+
+- pr: 1879
+  comment_id: 4272491345
+  author: leshy
+  file: null
+  line: null
+  problem: >
+    Discord comment about using LCM proto for serial comms instead of custom
+    DSP framing — LCM proto gives pubsub, topic encoding, packets for serial.
+  solution: >
+    Design discussion about architecture direction. Requires in-person
+    discussion between Jeff and leshy. No code change made.
+  commit: null
