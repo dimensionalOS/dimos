@@ -32,11 +32,6 @@ if TYPE_CHECKING:
     import can
 
 
-# ---------------------------------------------------------------------------
-# Motor tables (from enactic/openarm_can dm_motor_constants.hpp)
-# ---------------------------------------------------------------------------
-
-
 class MotorType(str, enum.Enum):
     """Damiao motor types used on OpenArm. Values match the reference library."""
 
@@ -83,11 +78,6 @@ _CMD_DISABLE = 0xFD
 _CMD_SET_ZERO = 0xFE
 _RID_CTRL_MODE = 10
 CTRL_MODE_MIT = 1
-
-
-# ---------------------------------------------------------------------------
-# Pack / unpack helpers (pure — safe to unit test in isolation)
-# ---------------------------------------------------------------------------
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -186,11 +176,6 @@ def pack_write_param_frame(send_id: int, rid: int, value_u32: int) -> bytes:
     )
 
 
-# ---------------------------------------------------------------------------
-# Motor descriptor
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class DamiaoMotor:
     """One Damiao motor on a CAN bus. recv_id defaults to send_id | 0x10."""
@@ -206,11 +191,6 @@ class DamiaoMotor:
     @property
     def limits(self) -> tuple[float, float, float]:
         return _MOTOR_LIMITS[self.motor_type]
-
-
-# ---------------------------------------------------------------------------
-# Bus wrapper with background receive thread
-# ---------------------------------------------------------------------------
 
 
 class OpenArmBus:
@@ -246,10 +226,6 @@ class OpenArmBus:
         self._state_lock = threading.Lock()
         self._states: dict[int, MotorState] = {}
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     def open(self) -> None:
         """Open the CAN bus and start the background RX thread."""
         if self._bus is not None:
@@ -281,10 +257,6 @@ class OpenArmBus:
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
-
-    # ------------------------------------------------------------------
-    # Control commands
-    # ------------------------------------------------------------------
 
     def enable_all(self) -> None:
         for m in self._motors:
@@ -337,10 +309,6 @@ class OpenArmBus:
             if i < len(self._motors) - 1:
                 time.sleep(0.0005)
 
-    # ------------------------------------------------------------------
-    # State access
-    # ------------------------------------------------------------------
-
     @property
     def motors(self) -> tuple[DamiaoMotor, ...]:
         return tuple(self._motors)
@@ -364,10 +332,6 @@ class OpenArmBus:
                     return True
             time.sleep(0.005)
         return False
-
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
 
     def _send_raw(self, arbitration_id: int, data: bytes) -> None:
         if self._bus is None:

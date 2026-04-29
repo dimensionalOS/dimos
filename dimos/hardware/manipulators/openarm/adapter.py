@@ -138,10 +138,6 @@ class OpenArmAdapter:
         self._pin_model: Any = None
         self._pin_data: Any = None
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     def connect(self) -> bool:
         # Preflight: verify the SocketCAN interface is up before opening the bus.
         # Bringing the interface up requires root privileges, so we don't do it
@@ -223,10 +219,6 @@ class OpenArmAdapter:
     def is_connected(self) -> bool:
         return self._bus is not None
 
-    # ------------------------------------------------------------------
-    # Info
-    # ------------------------------------------------------------------
-
     def get_info(self) -> ManipulatorInfo:
         return ManipulatorInfo(
             vendor="Enactic",
@@ -250,10 +242,6 @@ class OpenArmAdapter:
             velocity_max=list(_V10_VEL_MAX),
         )
 
-    # ------------------------------------------------------------------
-    # Mode
-    # ------------------------------------------------------------------
-
     def set_control_mode(self, mode: ControlMode) -> bool:
         # OpenArm runs exclusively in Damiao MIT register mode; we emulate
         # dimos ControlModes by tuning kp/kd/q/dq/tau on each MIT frame.
@@ -270,10 +258,6 @@ class OpenArmAdapter:
 
     def get_control_mode(self) -> ControlMode:
         return self._control_mode
-
-    # ------------------------------------------------------------------
-    # State reads
-    # ------------------------------------------------------------------
 
     def _states_or_raise(self) -> list[Any]:
         if self._bus is None:
@@ -314,10 +298,6 @@ class OpenArmAdapter:
             return 1, f"rotor over-temperature ({t_rotor}°C)"
         return 0, ""
 
-    # ------------------------------------------------------------------
-    # Gravity compensation
-    # ------------------------------------------------------------------
-
     def _compute_gravity_torques(self, q: list[float]) -> list[float]:
         """Pinocchio G(q), clamped to motor torque limits. Zero if model not loaded."""
         if self._pin_model is None or self._pin_data is None:
@@ -329,10 +309,6 @@ class OpenArmAdapter:
         # Clamp to motor torque limits for safety
         limits = [m.limits for m in self._motors]  # (p_max, v_max, t_max)
         return [float(np.clip(tau_g[i], -lim[2], lim[2])) for i, lim in enumerate(limits)]
-
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
 
     def write_joint_positions(
         self,
@@ -386,7 +362,8 @@ class OpenArmAdapter:
             q_now = [0.0] * self._dof
         tau_ff = self._compute_gravity_torques(q_now)
         commands = [
-            (q, 0.0, kp, kd, tau) for q, kp, kd, tau in zip(q_now, self._kp, self._kd, tau_ff, strict=False)
+            (q, 0.0, kp, kd, tau)
+            for q, kp, kd, tau in zip(q_now, self._kp, self._kd, tau_ff, strict=False)
         ]
         self._bus.send_mit_many(commands)
         self._last_cmd_q = q_now
@@ -414,10 +391,6 @@ class OpenArmAdapter:
         self._bus.enable_all()
         self._enabled = True
         return True
-
-    # ------------------------------------------------------------------
-    # Cartesian / gripper / F/T — not supported at this layer
-    # ------------------------------------------------------------------
 
     def read_cartesian_position(self) -> dict[str, float] | None:
         return None

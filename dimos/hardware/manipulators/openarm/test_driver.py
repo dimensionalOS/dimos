@@ -5,6 +5,13 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Unit tests for the Damiao MIT-mode driver — no hardware required.
 
 Uses ``can.Bus(interface="virtual")`` for loopback.
@@ -32,10 +39,6 @@ from dimos.hardware.manipulators.openarm.driver import (
     parse_state_frame,
     uint_to_float,
 )
-
-# ---------------------------------------------------------------------------
-# Pack / unpack primitives
-# ---------------------------------------------------------------------------
 
 
 def test_float_to_uint_endpoints_and_roundtrip() -> None:
@@ -135,11 +138,6 @@ def test_pack_write_param_ctrl_mode_mit() -> None:
     assert data[2] == 0x55
     assert data[3] == 10
     assert struct.unpack("<I", data[4:8])[0] == 1
-
-
-# ---------------------------------------------------------------------------
-# OpenArmBus wiring (virtual bus loopback)
-# ---------------------------------------------------------------------------
 
 
 def _make_bus(channel: str, motors: list[DamiaoMotor]) -> OpenArmBus:
