@@ -79,6 +79,7 @@ from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector impo
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.perception.experimental.temporal_memory.temporal_memory import TemporalMemory
+from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.perception.object_tracker import ObjectTracking
 from dimos.perception.perceive_loop_skill import PerceiveLoopSkill
 from dimos.perception.spatial_perception import SpatialMemory
@@ -209,7 +210,14 @@ _g1_engine = MujocoSimModule.blueprint(
     enable_depth=True,
     enable_pointcloud=True,
     pointcloud_fps=2.0,
-    camera_name="lidar_front_camera",
+    # head_color camera in the MJCF mirrors g1_d435_default's pose
+    # (torso-mounted, 47.6° downward pitch) so MuJoCo's depth aligns
+    # pixel-for-pixel with the splat-rendered RGB.  ObjectSceneRegistration
+    # consumes (color_image, depth_image, camera_info) and they must
+    # match in pose + intrinsics + resolution.
+    camera_name="head_color",
+    width=320,
+    height=180,
     # G1 GR00T MJCF references meshes by bare filename (menagerie convention);
     # without the legacy asset injection MjModel.from_xml_path can't find them.
     inject_legacy_assets=True,
@@ -223,6 +231,11 @@ _g1_engine = MujocoSimModule.blueprint(
         # (VoxelGridMapper, G1Memory) with ``lidar`` In ports can
         # subscribe by topic regardless of port-name mismatch.
         ("pointcloud", PointCloud2): LCMTransport("/lidar", PointCloud2),
+        # Depth + intrinsics flow to ObjectSceneRegistration so it can
+        # back-project 2D detections into 3D world poses for grasping.
+        ("depth_image", Image): LCMTransport("/head/depth_image", Image),
+        ("camera_info", CameraInfo): LCMTransport("/head/camera_info", CameraInfo),
+        ("depth_camera_info", CameraInfo): LCMTransport("/head/depth_camera_info", CameraInfo),
     }
 )
 
@@ -337,6 +350,17 @@ _g1_agentic_stack = (
         {
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
             ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
+        }
+    ),
+    # Detect-and-pick: YOLO-E 2D detection on the splat-rendered RGB,
+    # back-projected into 3D via the aligned MuJoCo depth + intrinsics.
+    # Exposes detect()/select() skills the agent uses to register
+    # graspable objects with the manipulation pipeline.
+    ObjectSceneRegistrationModule.blueprint().transports(
+        {
+            ("color_image", Image): LCMTransport("/splat/color_image", Image),
+            ("depth_image", Image): LCMTransport("/head/depth_image", Image),
+            ("camera_info", CameraInfo): LCMTransport("/head/camera_info", CameraInfo),
         }
     ),
     PerceiveLoopSkill.blueprint().transports(

@@ -98,29 +98,26 @@ def _quat_from_matrix(R: np.ndarray) -> tuple[float, float, float, float]:
 
 
 def g1_d435_default() -> CameraSpec:
-    """RealSense D435i color sensor mounted forward at G1 eye level.
+    """RealSense D435i color sensor mounted on G1 torso, pitched down.
 
-    Intrinsics are the Intel datasheet values for the D435i color
-    sensor (HFOV 69.4 deg, VFOV 42.5 deg).  Output is binned to 320x180
-    to match the resolution real-robot deployments typically capture
-    at.
+    Mount: on ``torso_link``.  Offset
+    ``(0.0576, 0.0325, 0.4299)`` matches the URDF d435_joint position
+    (Intel-spec RGB sensor offset already baked in).  Optical axis
+    pitched down by ~47.6° (0.831 rad) — same value Matrix uses on
+    real G1 deployments — so the camera sees the workspace in front
+    of the chest, not the horizon.  This is what manipulation /
+    object registration consume; pick-and-place needs a downward
+    view of the table.
 
-    Mount: on ``torso_link`` (the body that owns the G1 head mesh —
-    there's no separate head_link in the bundled MJCF).  Offset
-    ``(0.10, 0.0, 0.40)`` puts the optical center 10 cm forward of the
-    torso origin and 40 cm up — roughly at eye level, in front of the
-    head, looking forward.  The head mesh itself sits at local
-    ``(0.0077, 0, 0.385)`` so the camera ends up just past the
-    forehead.  Override the spec to pitch down for manipulation, mount
-    on the actual head body if a richer MJCF adds one, etc.
+    Intrinsics are Intel datasheet for D435i color
+    (HFOV 69.4°, VFOV 42.5°), binned to 320x180.
     """
     # Body frame  : +x forward, +y left, +z up
     # Image frame : +x right,   +y down, +z forward
-    # Columns of body_R_image are the image axes expressed in body coords:
-    #   image_x (right)   = -body_y
-    #   image_y (down)    = -body_z
-    #   image_z (forward) =  body_x
-    body_R_image = np.array(
+    # body_R_image = horizontal_forward @ R_pitch_down(47.6°)
+    pitch_rad = 0.831
+    c, s = np.cos(pitch_rad), np.sin(pitch_rad)
+    horizontal = np.array(
         [
             [0.0, 0.0, 1.0],
             [-1.0, 0.0, 0.0],
@@ -128,9 +125,14 @@ def g1_d435_default() -> CameraSpec:
         ],
         dtype=np.float64,
     )
+    pitch_down = np.array(
+        [[1.0, 0.0, 0.0], [0.0, c, s], [0.0, -s, c]],
+        dtype=np.float64,
+    )
+    body_R_image = horizontal @ pitch_down
     return CameraSpec(
         body_name="torso_link",
-        mount_pos=(0.10, 0.0, 0.40),
+        mount_pos=(0.0576, 0.0325, 0.4299),
         mount_wxyz=_quat_from_matrix(body_R_image),
         vfov_deg=42.5,
         width=320,
