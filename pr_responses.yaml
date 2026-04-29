@@ -1,0 +1,141 @@
+- pr: 1875
+  comment_id: 3098034329
+  author: leshy
+  file: dimos/core/native_module.py
+  line: 71
+  problem: >
+    "why was this killed?" — asking about removed stdout/stderr capture for
+    native module subprocesses.
+  solution: >
+    Jeff restored the functionality and opened issue #1904 to track adding a
+    toggle for all modules (not just native). See Jeff's reply (comment
+    3127636769).
+  commit: null
+
+- pr: 1875
+  comment_id: 3098072709
+  author: leshy
+  file: dimos/core/native_module.py
+  line: 71
+  problem: >
+    "why was this killed?" — duplicate question on same line about removed
+    stdout/stderr capture.
+  solution: >
+    Same as above — Jeff restored the code. See comment 3127636769.
+  commit: null
+
+- pr: 1875
+  comment_id: 3098044443
+  author: leshy
+  file: dimos/core/native_module.py
+  line: 355
+  problem: >
+    "you are introducing magical env var, please use config system and global
+    config" — objecting to environment variable for controlling autobuild.
+  solution: >
+    Jeff acknowledged and updated to ensure build on prod if missing. See
+    Jeff's reply (comment 3127657201). Requires PR author to confirm config
+    system integration.
+  commit: null
+
+- pr: 1875
+  comment_id: 3098047253
+  author: leshy
+  file: dimos/core/native_module.py
+  line: 358
+  problem: >
+    "we do want autobuild to work in prod on the first run, in case of nix
+    this will let us distribute binaries but intelligently locally build when
+    needed" — requesting autobuild remain enabled in production.
+  solution: >
+    Jeff agreed and updated to build on prod if binary is missing. See
+    comment 3127657201.
+  commit: null
+
+- pr: 1875
+  comment_id: 3098069742
+  author: leshy
+  file: dimos/core/native_module.py
+  line: 357
+  problem: >
+    "We shouldn't by default run build system change detection (even to
+    validate file changes) for all native modules all of the time in dev,
+    this is expensive, toggle this per module if you are developing" —
+    concerned about performance of file-change detection running on every
+    module start.
+  solution: >
+    Jeff discussed this in comment 3127190023 and paul-nechifor confirmed the
+    current implementation is fine (comment 3127548517). The change detection
+    approach was accepted as-is.
+  commit: null
+
+- pr: 1875
+  comment_id: 3098097885
+  author: paul-nechifor
+  file: dimos/core/native_module.py
+  line: 67
+  problem: >
+    Suggested using ctypes.util.find_library("c") instead of hardcoded libc
+    path for portability.
+  solution: >
+    Jeff replied "fixed" (comment 3127625206). Code was updated to use
+    find_library.
+  commit: null
+
+- pr: 1875
+  comment_id: 3098133214
+  author: paul-nechifor
+  file: dimos/core/native_module.py
+  line: 62
+  problem: >
+    "I assume this is LLM generate code because it adds a lot of unnecessary
+    explanations" — requesting simplification of verbose comments around
+    ctypes/process management code.
+  solution: >
+    Jeff agreed — "on the same page with comments" (comment 3127707050).
+    Comments cleaned up. paul-nechifor also noted (comment 3127736223) that
+    the orphan-killing code may no longer be needed due to watchdog process
+    in PR #1886.
+  commit: null
+
+- pr: 1875
+  comment_id: 3116100390
+  author: leshy
+  file: dimos/core/native_module.py
+  line: 71
+  problem: >
+    Follow-up explaining that the py logging system supports rich metadata
+    (dictionaries) attached to each log line, and for native modules they
+    support STDOUT/STDERR parsing into structured log entries.
+  solution: >
+    Informational comment clarifying the logging architecture. Jeff's
+    restoration of stdout/stderr capture (see comment 3127636769) aligns
+    with this guidance.
+  commit: null
+
+- pr: 1875
+  comment_id: 3127736223
+  author: paul-nechifor
+  file: dimos/core/native_module.py
+  line: 62
+  problem: >
+    "this should no longer be needed as I've added a watchdog process to
+    kill orphans" — referencing PR #1886 which adds a watchdog that handles
+    orphan subprocess cleanup.
+  solution: >
+    Informational — the watchdog in PR #1886 may supersede the manual orphan
+    cleanup code. Requires PR author decision on whether to remove the
+    redundant code.
+  commit: null
+
+- pr: 1875
+  comment_id: 3135885059
+  author: jeff-hykin
+  file: dimos/core/global_config.py
+  line: 55
+  problem: >
+    Jeff's own comment: "`mcp_host` needs to be removed"
+  solution: >
+    mcp_host has been removed from global_config.py (no longer present on
+    the autofix branch after dev merge).
+  commit: null
