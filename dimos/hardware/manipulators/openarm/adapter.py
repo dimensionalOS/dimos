@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+
+from dimos.utils.data import LfsPath
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -60,7 +62,8 @@ _OPENARM_V10_ARM_MOTORS: list[tuple[int, MotorType]] = [
     (0x06, MotorType.DM4310),  # joint6
     (0x07, MotorType.DM4310),  # joint7
 ]
-_OPENARM_V10_GRIPPER_MOTOR: tuple[int, MotorType] = (0x08, MotorType.DM4310)
+# Gripper (motor id 0x08, DM4310) is on the bus but not currently wired up
+# through the adapter — see the gripper-write methods which return None/False.
 
 # Physical joint limits (measured). Joints 1 & 2 are mirrored between sides.
 _V10_POS_LOWER_LEFT = [-3.45, -3.30, -1.50, -0.01, -1.50, -0.75, -1.50]
@@ -91,11 +94,9 @@ class OpenArmAdapter:
         interface: python-can backend; "virtual" for unit tests
     """
 
-    # Per-side URDFs for Pinocchio gravity model
-    _REPO_ROOT = Path(__file__).resolve().parents[4]
-    _OPENARM_PKG = _REPO_ROOT / "data" / "openarm_description"
-    _URDF_LEFT = _OPENARM_PKG / "urdf" / "robot" / "openarm_v10_left.urdf"
-    _URDF_RIGHT = _OPENARM_PKG / "urdf" / "robot" / "openarm_v10_right.urdf"
+    # Per-side URDFs for Pinocchio gravity model (LFS-backed)
+    _URDF_LEFT = LfsPath("openarm_description/urdf/robot/openarm_v10_left.urdf")
+    _URDF_RIGHT = LfsPath("openarm_description/urdf/robot/openarm_v10_right.urdf")
 
     def __init__(
         self,

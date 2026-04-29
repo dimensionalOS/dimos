@@ -16,10 +16,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from dimos.robot.config import RobotConfig
+from dimos.utils.data import LfsPath
 
 # Collision exclusion pairs — structural mesh overlaps in the OpenArm URDF.
 # link5 and link7 collision meshes overlap by ~3mm at zero pose (and every
@@ -29,20 +29,16 @@ OPENARM_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("openarm_right_link5", "openarm_right_link7"),
 ]
 
-# Local path during bring-up. Swap to ``LfsPath("openarm_description/...")``
-# once the URDF is migrated to LFS.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_OPENARM_PKG = _REPO_ROOT / "data" / "openarm_description"
-_OPENARM_MODEL_PATH = _OPENARM_PKG / "urdf" / "robot" / "openarm_v10_bimanual.urdf"
+# LFS-backed: data/.lfs/openarm_description.tar.gz extracts to data/openarm_description/
+_OPENARM_PKG = LfsPath("openarm_description")
+_OPENARM_MODEL_PATH = _OPENARM_PKG / "urdf/robot/openarm_v10_bimanual.urdf"
 # Per-side URDFs: extracted from bimanual expansion, only one arm + torso each.
 # Avoids phantom-arm collisions when Drake loads both sides into one world.
-_OPENARM_LEFT_MODEL = _OPENARM_PKG / "urdf" / "robot" / "openarm_v10_left.urdf"
-_OPENARM_RIGHT_MODEL = _OPENARM_PKG / "urdf" / "robot" / "openarm_v10_right.urdf"
+_OPENARM_LEFT_MODEL = _OPENARM_PKG / "urdf/robot/openarm_v10_left.urdf"
+_OPENARM_RIGHT_MODEL = _OPENARM_PKG / "urdf/robot/openarm_v10_right.urdf"
 
 # Pre-expanded single-arm URDF for Pinocchio FK (keyboard teleop, IK, etc.)
-# Pinocchio doesn't handle xacro — this file is the expansion of the bimanual
-# xacro with only one side's links kept.
-OPENARM_V10_FK_MODEL = _OPENARM_PKG / "urdf" / "robot" / "openarm_v10_single.urdf"
+OPENARM_V10_FK_MODEL = _OPENARM_PKG / "urdf/robot/openarm_v10_single.urdf"
 
 
 def openarm_arm(

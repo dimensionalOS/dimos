@@ -159,7 +159,7 @@ openarm_planner_coordinator = autoconnect(
 _teleop_cfg = _openarm_single(name="arm")
 
 keyboard_teleop_openarm_mock = autoconnect(
-    KeyboardTeleopModule.blueprint(model_path=str(OPENARM_V10_FK_MODEL), ee_joint_id=_teleop_cfg.dof),
+    KeyboardTeleopModule.blueprint(model_path=OPENARM_V10_FK_MODEL, ee_joint_id=_teleop_cfg.dof),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
@@ -191,7 +191,7 @@ keyboard_teleop_openarm_mock = autoconnect(
 _teleop_hw_cfg = _openarm_single(name="arm", adapter_type="openarm", address=LEFT_CAN)
 
 keyboard_teleop_openarm = autoconnect(
-    KeyboardTeleopModule.blueprint(model_path=str(OPENARM_V10_FK_MODEL), ee_joint_id=_teleop_hw_cfg.dof),
+    KeyboardTeleopModule.blueprint(model_path=OPENARM_V10_FK_MODEL, ee_joint_id=_teleop_hw_cfg.dof),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
