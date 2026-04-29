@@ -30,7 +30,7 @@ from dimos.core.module import ModuleBase, ModuleConfig
 from dimos.core.rpc_client import ModuleProxyProtocol, RpcCall
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
-from dimos.visualization.constants import RERUN_GRPC_PORT, RERUN_WEB_PORT
+from dimos.visualization.rerun.constants import RERUN_GRPC_PORT, RERUN_WEB_PORT
 
 if TYPE_CHECKING:
     from collections.abc import Callable

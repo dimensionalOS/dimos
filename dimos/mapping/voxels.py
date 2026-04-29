@@ -242,7 +242,7 @@ class VoxelGridMapperConfig(ModuleConfig):
     frame_id: str = "world"
 
 
-class VoxelGridMapper(StreamModule):
+class VoxelGridMapper(StreamModule[PointCloud2, PointCloud2]):
     """Accumulate lidar point clouds into a global voxel map."""
 
     config: VoxelGridMapperConfig

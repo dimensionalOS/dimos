@@ -18,10 +18,10 @@
 class TestGlobalConfigSecurityDefaults:
     """Network services must bind to localhost by default (not 0.0.0.0)."""
 
-    def test_mcp_host_defaults_to_localhost(self) -> None:
+    def test_listen_host_defaults_to_localhost(self) -> None:
         from dimos.core.global_config import GlobalConfig
 
         config = GlobalConfig()
-        assert config.mcp_host == "127.0.0.1", (
-            f"mcp_host must default to 127.0.0.1, got {config.mcp_host}"
+        assert config.listen_host == "127.0.0.1", (
+            f"listen_host must default to 127.0.0.1, got {config.listen_host}"
         )

@@ -21,8 +21,6 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.disposable import CompositeDisposable, Disposable
-from reactivex.scheduler import TimeoutScheduler
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -292,74 +290,12 @@ class TimeSeriesStore(Generic[T], ABC):
 
         Uses scheduler-based timing with absolute time reference to prevent drift.
         """
+        from dimos.utils.testing.replay import timed_playback
 
-        def subscribe(
-            observer: rx.abc.ObserverBase[T],
-            scheduler: rx.abc.SchedulerBase | None = None,
-        ) -> rx.abc.DisposableBase:
-            sched = scheduler or TimeoutScheduler()
-            disp = CompositeDisposable()
-            is_disposed = False
-
-            iterator = self.iterate_items(
+        return timed_playback(
+            lambda: self.iterate_items(
                 seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
-            )
-
-            try:
-                first_ts, first_data = next(iterator)
-            except StopIteration:
-                observer.on_completed()
-                return Disposable()
-
-            start_local_time = time.time()
-            start_replay_time = first_ts
-
-            observer.on_next(first_data)
-
-            try:
-                next_message: tuple[float, T] | None = next(iterator)
-            except StopIteration:
-                observer.on_completed()
-                return disp
-
-            def schedule_emission(message: tuple[float, T]) -> None:
-                nonlocal next_message, is_disposed
-
-                if is_disposed:
-                    return
-
-                msg_ts, msg_data = message
-
-                try:
-                    next_message = next(iterator)
-                except StopIteration:
-                    next_message = None
-
-                target_time = start_local_time + (msg_ts - start_replay_time) / speed
-                delay = max(0.0, target_time - time.time())
-
-                def emit(
-                    _scheduler: rx.abc.SchedulerBase, _state: object
-                ) -> rx.abc.DisposableBase | None:
-                    if is_disposed:
-                        return None
-                    observer.on_next(msg_data)
-                    if next_message is not None:
-                        schedule_emission(next_message)
-                    else:
-                        observer.on_completed()
-                    return None
-
-                sched.schedule_relative(delay, emit)
-
-            if next_message is not None:
-                schedule_emission(next_message)
-
-            def dispose() -> None:
-                nonlocal is_disposed
-                is_disposed = True
-                disp.dispose()
-
-            return Disposable(dispose)
-
-        return rx.create(subscribe)
+            ),
+            speed=speed,
+            detect_loop=loop,
+        )

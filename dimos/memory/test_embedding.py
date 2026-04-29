@@ -16,17 +16,16 @@ import pytest
 
 from dimos.memory.embedding import EmbeddingMemory, SpatialEntry
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.utils.data import get_data
 from dimos.utils.testing.replay import TimedSensorReplay
-
-dir_name = "unitree_go2_bigoffice"
 
 
 @pytest.mark.skip
 def test_embed_frame() -> None:
     """Test embedding a single frame."""
     # Load a frame from recorded data
-    video = TimedSensorReplay(get_data(dir_name) / "video")
+    from dimos.msgs.sensor_msgs.Image import Image
+
+    video: TimedSensorReplay[Image] = TimedSensorReplay("go2_bigoffice/color_image")
     frame = video.find_closest_seek(10)
 
     # Create memory and embed

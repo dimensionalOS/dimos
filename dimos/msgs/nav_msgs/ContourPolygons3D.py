@@ -23,7 +23,10 @@ points by id, ear-clips each polygon into triangles, and renders via
 from __future__ import annotations
 
 from collections import defaultdict
+import struct
 from typing import TYPE_CHECKING, BinaryIO
+
+from dimos_lcm.sensor_msgs import PointCloud2 as LCMPointCloud2
 
 from dimos.types.timestamped import Timestamped
 
@@ -61,8 +64,6 @@ class ContourPolygons3D(Timestamped):
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO) -> ContourPolygons3D:
         raw = data if isinstance(data, bytes) else data.read()
-        from dimos_lcm.sensor_msgs import PointCloud2 as LCMPointCloud2
-
         lcm_msg = LCMPointCloud2.lcm_decode(raw)
         header_ts = lcm_msg.header.stamp.sec + lcm_msg.header.stamp.nsec / 1e9
         frame_id = lcm_msg.header.frame_id
@@ -70,12 +71,8 @@ class ContourPolygons3D(Timestamped):
 
     def _parse_xyzi(self) -> list[tuple[float, float, float, float]]:
         """Extract (x, y, z, intensity) from raw PointCloud2 bytes."""
-        import struct
-
         if self._raw_bytes is None:
             return []
-
-        from dimos_lcm.sensor_msgs import PointCloud2 as LCMPointCloud2
 
         lcm_msg = LCMPointCloud2.lcm_decode(self._raw_bytes)
 

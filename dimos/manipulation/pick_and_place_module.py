@@ -284,9 +284,17 @@ class PickAndPlaceModule(ManipulationModule):
 
         # First pass: match by object_id (supports both full and truncated IDs)
         if object_id:
-            for det in self._detection_snapshot:
-                if det.object_id == object_id or det.object_id.startswith(object_id):
-                    return det
+            matches = [
+                det
+                for det in self._detection_snapshot
+                if det.object_id == object_id or det.object_id.startswith(object_id)
+            ]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                ids = [det.object_id for det in matches]
+                logger.warning(f"Ambiguous object_id prefix '{object_id}' matches {ids}")
+                return None
 
         # Second pass: match by name
         for det in self._detection_snapshot:

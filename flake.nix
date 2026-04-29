@@ -77,6 +77,7 @@
           { vals.pkg=pkgs.python312Packages.pip;        flags={}; }
           { vals.pkg=pkgs.python312Packages.setuptools; flags={}; }
           { vals.pkg=pkgs.python312Packages.virtualenv; flags={}; }
+          { vals.pkg=pkgs.uv;                             flags={}; }
           { vals.pkg=pkgs.pre-commit;                   flags={}; }
 
           ### Runtime deps

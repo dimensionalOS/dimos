@@ -65,6 +65,7 @@ yolo11n.pt
 
 *mobileclip*
 /results
+/result
 **/cpp/result
 
 CLAUDE.MD
@@ -73,7 +74,13 @@ CLAUDE.MD
 /.mcp.json
 *.speedscope.json
 
+# Hidden/personal directories
+.hidden/
+
 # Coverage
 htmlcov/
 .coverage
 .coverage.*
+
+# Memory2 autorecord
+recording*.db
