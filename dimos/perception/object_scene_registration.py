@@ -239,21 +239,21 @@ class ObjectSceneRegistrationModule(Module):
         return pc
 
     @skill
-    def detect(self, *prompts: str) -> str:
+    def detect(self, prompts: list[str]) -> str:
         """Detect objects matching the given text prompts.
 
-        Do NOT call this tool multiple times for one query. Pass all objects in a single call.
-        For example, to detect a cup and mouse, call detect("cup", "mouse") not detect("cup") then detect("mouse").
+        Pass ALL objects you want detected in a single call as a list.
+        Do not call this tool multiple times for one query.
 
         Args:
-            prompts (str): Text descriptions of objects to detect (e.g., "person", "car", "dog")
+            prompts: List of text descriptions to detect.
 
         Returns:
-            str: Detected objects with their object_id (stable UUID) and name.
+            str: Detected objects with their object_id (stable UUID), name, and 3D world position.
 
         Example:
-            detect("person", "car", "dog")
-            detect("cup")
+            detect(["cup"])
+            detect(["person", "car", "dog"])
         """
         if not prompts:
             return "No prompts provided."
