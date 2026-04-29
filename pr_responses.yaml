@@ -1,0 +1,88 @@
+- pr: 1791
+  comment_id: 3091103980
+  author: leshy
+  file: dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp
+  line: 68
+  problem: "shouldn't we use named frames and TF tree for this? I see below you are doing coordinate frame transforms by hand"
+  solution: >
+    Jeff responded that his first attempt used TFs and they work fine. The current
+    manual offset is for debugging convenience (keeping 0,0 near ground height).
+    leshy followed up suggesting TF can handle this via a world→frame message.
+    This is an ongoing architectural discussion — no unilateral code change is
+    appropriate; the PR authors need to agree on the approach.
+  commit: null
+
+- pr: 1791
+  comment_id: 3091114008
+  author: leshy
+  file: dimos/navigation/smart_nav/modules/global_map_updater/global_map_updater.py
+  line: null
+  problem: "as far as I can tell this is a less efficient clone of existing voxels.py module, can just use voxels.py"
+  solution: >
+    Jeff agreed and said he'd delete it. The global_map_updater directory has been
+    removed from the branch — verified via git ls-tree.
+  commit: null
+
+- pr: 1791
+  comment_id: 3098254147
+  author: leshy
+  file: dimos/hardware/sensors/lidar/fastlio2/cpp/cloud_filter.hpp
+  line: null
+  problem: "This is already mid360 sdk config — don't run custom code for this on fastlio side, configure the sdk"
+  solution: >
+    cloud_filter.hpp still exists on the branch. This is architectural feedback
+    that the robot-body filtering should use the mid360 SDK's built-in `blind`
+    config parameter rather than custom C++ code. Jeff did not respond to this
+    comment. Leaving for PR author to address as it requires domain knowledge
+    about the sensor SDK integration.
+  commit: null
+
+- pr: 1791
+  comment_id: 3098262031
+  author: leshy
+  file: dimos/hardware/sensors/lidar/fastlio2/cpp/flake.nix
+  line: null
+  problem: "let's decide upon and start creating actual dimensional hosted repos, above was my 2 day experiment, this is a serious feature now, I'd like to see the diff"
+  solution: >
+    This is a process/infrastructure request to migrate from Jeff's personal forks
+    (jeff-hykin/fastlio2-pure, jeff-hykin/livox-sdk2) to dimensionalOS-hosted repos.
+    Not a code fix — requires org-level decision. Leaving for PR author.
+  commit: null
+
+- pr: 1791
+  comment_id: 3098263094
+  author: leshy
+  file: dimos/hardware/sensors/lidar/fastlio2/cpp/flake.nix
+  line: 20
+  problem: "what is this repository? should this be in dimos-lcm? what was changed?"
+  solution: >
+    Jeff responded on a nearby comment explaining these are forks with macOS
+    patches (libpqxx arg fixes). Related to the repo-hosting discussion above.
+    Leaving for PR author to clarify in the PR description or migrate repos.
+  commit: null
+
+- pr: 1791
+  comment_id: 3098280684
+  author: leshy
+  file: dimos/hardware/sensors/lidar/fastlio2/module.py
+  line: 123
+  problem: "you should only be setting frame_id, actual structural relationships are defined by a transform system"
+  solution: >
+    This is the same TF-vs-manual-transforms architectural discussion as the
+    main.cpp comment. Jeff's rosnav8 branch now includes a full TF integration
+    (PGO module, TF-based pose queries in SimplePlanner and MovementManager).
+    The specific fastlio2 module.py line sets a child_frame_id which is part of
+    the TF publisher setup — this appears to be correct TF usage, not a manual
+    transform. The comment may have been about an earlier version of the code.
+  commit: null
+
+- pr: 1791
+  comment_id: 4265932188
+  author: leshy
+  file: null
+  line: null
+  problem: "how to test — can we get docs for this so I can give them out to G1 owners and test on G1?"
+  solution: >
+    Request for hardware testing documentation. Not a code fix — requires
+    Jeff to write setup/testing docs for G1 owners. Leaving for PR author.
+  commit: null
