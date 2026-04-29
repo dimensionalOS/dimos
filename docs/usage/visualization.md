@@ -116,6 +116,34 @@ voxel_mapper(voxel_size=0.1),   # 10cm voxels
 
 ---
 
+## Direct Visualization from a Module
+
+If you want to log data to Rerun directly from inside a module (e.g. for debugging or one-off visualizations), use `rerun_init` instead of calling `rr.init()` yourself. It handles colormap registration and can optionally start a gRPC server so a viewer can connect.
+
+```python
+import rerun as rr
+from dimos.visualization.rerun.init import rerun_init
+
+# Basic init (no gRPC server — use when RerunBridgeModule is already running)
+rerun_init()
+rr.log("debug/my_points", rr.Points3D(positions=[[1, 2, 3]]))
+
+# Start a gRPC server so you can connect a viewer
+rerun_init(start_grpc=True)
+# Then connect with: dimos-viewer --connect rerun+http://127.0.0.1:9877/proxy
+
+# Custom gRPC config
+rerun_init(
+    start_grpc=True,
+    grpc_config={
+        "connect_url": "rerun+http://127.0.0.1:9999/proxy",
+        "server_memory_limit": "4GB",
+    },
+)
+```
+
+When a `RerunBridgeModule` is already part of your blueprint, you typically don't need `start_grpc` — just call `rerun_init()` and log directly with `rr.log()`. The data will appear in the existing viewer.
+
 ## How to use Rerun on `dev` (and the TF/entity nuances)
 
 Rerun on `dev` is **module-driven**: modules decide what to log, and `Blueprint.build()` sets up the shared viewer + default layout.

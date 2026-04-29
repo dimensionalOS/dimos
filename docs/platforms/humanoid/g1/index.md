@@ -1,6 +1,4 @@
-# Unitree G1 — Getting Started
-
-The Unitree G1 is a humanoid robot platform with full-body locomotion, arm gesture control, and agentic capabilities — no ROS required for basic operation.
+# Unitree G1
 
 ## Requirements
 
@@ -8,118 +6,90 @@ The Unitree G1 is a humanoid robot platform with full-body locomotion, arm gestu
 - Ubuntu 22.04/24.04 with CUDA GPU (recommended), or macOS (experimental)
 - Python 3.12
 - ZED camera (mounted at chest height) for perception blueprints
-- ROS 2 for navigation (the G1 navigation stack uses ROS nav)
 
-## Install
+## Robot Setup
 
-First, install system dependencies for your platform:
-- [Ubuntu](/docs/installation/ubuntu.md)
-- [macOS](/docs/installation/osx.md)
-- [Nix](/docs/installation/nix.md)
+### Network
 
-Then install DimOS:
+1. Connect robot via Ethernet
+2. Set your machine's IP to `192.168.123.100`
+3. Robot's default IP: `192.168.123.164`
 
-```bash
-uv venv --python "3.12"
-source .venv/bin/activate
-uv pip install 'dimos[base,unitree]'
-```
-
-## MuJoCo Simulation
-
-No hardware? Start with simulation:
+### SSH
 
 ```bash
-uv pip install 'dimos[base,unitree,sim]'
-dimos --simulation run unitree-g1-basic-sim
+ssh unitree@192.168.123.164
+# Password: 123
 ```
 
-This runs the G1 in MuJoCo with the native A* navigation stack — same blueprint structure, simulated robot. Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3D visualization.
+### WiFi
 
-## Run on Your G1
+After Ethernet connection, find additional IPs:
+```bash
+hostname -I
+```
+The second address allows SSH after disconnecting Ethernet.
+
+WiFi passwords (varies by unit): `888888888` or `00000000`
+
+### Install DimOS on the G1
+
+SSH into the robot, then:
+
+```bash
+bash <(curl -fsSL https://pub-4767fdd15e6a41b6b2ce2558d71ec8d9.r2.dev/install.sh)
+```
+
+### Controller
+
+Enable movement (may vary by G1 version):
+1. **L2 + B**
+2. **L2 + Up**
+
+FSM state transitions after enabling:
+```
+(after L2 + Up):  FSM 4: Unknown FSM 4
+After stand command: FSM 200: Start
+```
+
+### Safety
+- Always ensure clear space before enabling movement
+- Keep the emergency stop accessible
+- When using low-level control, disable high-level motion services first
+
+## Running DimOS
+
+### On Hardware
 
 ```bash
 export ROBOT_IP=<YOUR_G1_IP>
 dimos run unitree-g1-basic
 ```
 
-DimOS connects via WebRTC, starts the ROS navigation stack, and opens the command center.
+### Simulation (no hardware needed)
 
-### What's Running
+```bash
+uv pip install 'dimos[base,unitree,sim]'
+dimos --simulation run unitree-g1-basic-sim
+```
 
-| Module | What It Does |
-|--------|-------------|
-| **G1Connection** | WebRTC connection to the robot — streams video, odometry |
-| **Webcam** | ZED camera capture (stereo left, 15 fps) |
-| **VoxelGridMapper** | Builds a 3D voxel map using column-carving (CUDA accelerated) |
-| **CostMapper** | Converts 3D map → 2D costmap via terrain slope analysis |
-| **WavefrontFrontierExplorer** | Autonomous exploration of unmapped areas |
-| **ROSNav** | ROS 2 navigation integration for path planning |
-| **RerunBridge** | 3D visualization in browser |
-| **WebsocketVis** | Command center at localhost:7779 |
+### Navigation (LiDAR nav stack)
 
-### Send Goals
+```bash
+dimos run unitree-g1-nav-onboard   # on robot
+dimos run unitree-g1-nav-sim       # in simulation
+```
 
-From the command center ([localhost:7779](http://localhost:7779)):
-- Click on the map to set navigation goals
-- Toggle autonomous exploration
-- Monitor robot pose, costmap, and planned path
-
-## Agentic Control
-
-Natural language control with an LLM agent that understands physical space and can command arm gestures:
+### Agentic Control
 
 ```bash
 export OPENAI_API_KEY=<YOUR_KEY>
-export ROBOT_IP=<YOUR_G1_IP>
 dimos run unitree-g1-agentic
 ```
 
-Then use the human CLI:
+### Keyboard Teleop
 
 ```bash
-humancli
-> wave hello
-> explore the room
-> give me a high five
-```
-
-The agent subscribes to camera and spatial memory streams and has access to G1-specific skills including arm gestures and movement modes.
-
-### Arm Gestures
-
-The G1 agent can perform expressive arm gestures:
-
-| Gesture | Description |
-|---------|-------------|
-| Handshake | Perform a handshake gesture with the right hand |
-| HighFive | Give a high five with the right hand |
-| Hug | Perform a hugging gesture with both arms |
-| HighWave | Wave with the hand raised high |
-| Clap | Clap hands together |
-| FaceWave | Wave near the face level |
-| LeftKiss | Blow a kiss with the left hand |
-| ArmHeart | Make a heart shape with both arms overhead |
-| RightHeart | Make a heart gesture with the right hand |
-| HandsUp | Raise both hands up in the air |
-| RightHandUp | Raise only the right hand up |
-| Reject | Make a rejection or "no" gesture |
-| CancelAction | Cancel any current arm action and return to neutral |
-
-### Movement Modes
-
-| Mode | Description |
-|------|-------------|
-| WalkMode | Normal walking |
-| WalkControlWaist | Walking with waist control |
-| RunMode | Running |
-
-## Keyboard Teleop
-
-Direct keyboard control via a pygame-based joystick:
-
-```bash
-export ROBOT_IP=<YOUR_G1_IP>
 dimos run unitree-g1-joystick
 ```
 
@@ -127,41 +97,37 @@ dimos run unitree-g1-joystick
 
 | Blueprint | Description |
 |-----------|-------------|
-| `unitree-g1-basic` | Connection + ROS navigation + visualization |
-| `unitree-g1-basic-sim` | Simulation with A* navigation |
+| `unitree-g1-basic` | Connection + visualization |
+| `unitree-g1-basic-sim` | Simulation with basic nav |
+| `unitree-g1-nav-onboard` | LiDAR nav stack on hardware |
+| `unitree-g1-nav-sim` | LiDAR nav stack in simulation |
 | `unitree-g1` | Navigation + perception + spatial memory |
-| `unitree-g1-sim` | Simulation with perception + spatial memory |
+| `unitree-g1-sim` | Perception stack in simulation |
 | `unitree-g1-agentic` | Full stack with LLM agent and G1 skills |
 | `unitree-g1-agentic-sim` | Agentic stack in simulation |
-| `unitree-g1-full` | Agentic + SHM image transport + keyboard teleop |
+| `unitree-g1-full` | Agentic + SHM + keyboard teleop |
 | `unitree-g1-joystick` | Navigation + keyboard teleop |
-| `unitree-g1-detection` | Navigation + YOLO person detection and tracking |
-| `unitree-g1-shm` | Navigation + perception with shared memory image transport |
-| `uintree-g1-primitive-no-nav` | Sensors + visualization only (no navigation, base for custom blueprints) |
+| `unitree-g1-detection` | Navigation + YOLO person detection |
+| `unitree-g1-shm` | Perception with shared memory transport |
 
-### Blueprint Hierarchy
+## Troubleshooting
 
-Blueprints compose incrementally:
+### No data received from robot
+1. `ping 192.168.123.164`
+2. Verify correct network interface name (`ip addr show`)
+3. Confirm robot is powered on
 
-```
-primitive (sensors + vis)
-├── basic (+ connection + navigation)
-│   ├── basic-sim (sim connection + A* nav)
-│   ├── joystick (+ keyboard teleop)
-│   └── detection (+ YOLO person tracking)
-├── perceptive (+ spatial memory + object tracking)
-│   ├── sim (sim variant)
-│   └── shm (+ shared memory transport)
-└── agentic (+ LLM agent + G1 skills)
-    ├── agentic-sim (sim variant)
-    └── full (+ SHM + keyboard teleop)
-```
+### Robot not responding to commands
+1. Ensure high-level motion service is enabled (for high-level control)
+2. Disable high-level motion service via the app (for low-level control)
+3. Verify L2+B / L2+Up was pressed on controller
+4. Test DDS with the SDK helloworld examples
 
-## Deep Dive
+## Resources
 
-- [Navigation Stack](/docs/capabilities/navigation/readme.md) — path planning and autonomous exploration
-- [Visualization](/docs/usage/visualization.md) — Rerun, Foxglove, performance tuning
-- [Data Streams](/docs/usage/data_streams) — RxPY streams, backpressure, quality filtering
-- [Transports](/docs/usage/transports/index.md) — LCM, SHM, DDS
-- [Blueprints](/docs/usage/blueprints.md) — composing modules
-- [Agents](/docs/capabilities/agents/readme.md) — LLM agent framework
+- [Unitree Developer Docs](https://support.unitree.com/home/en/developer)
+- [Sport Mode Services](https://support.unitree.com/home/en/developer/sports_services)
+- [Unitree SDK2 Python](https://github.com/unitreerobotics/unitree_sdk2_python)
+- [Navigation Stack](/docs/capabilities/navigation/readme.md)
+- [Visualization](/docs/usage/visualization.md)
+- [Blueprints](/docs/usage/blueprints.md)

@@ -28,6 +28,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.msgs.std_msgs.Int8 import Int8
 
 
 class PathFollowerConfig(NativeModuleConfig):
@@ -39,7 +40,7 @@ class PathFollowerConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/path_follower"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-path-follower/v0.1.1 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-path-follower/v0.2.0 --no-write-lock-file"
     )
 
     # C++ binary uses camelCase CLI args.
@@ -111,9 +112,12 @@ class PathFollower(NativeModule):
     def start(self) -> None:
         super().start()
 
+    @rpc
     def stop(self) -> None:
         super().stop()
 
     path: In[NavPath]
     odometry: In[Odometry]
+    slow_down: In[Int8]
+    safety_stop: In[Int8]
     cmd_vel: Out[Twist]
