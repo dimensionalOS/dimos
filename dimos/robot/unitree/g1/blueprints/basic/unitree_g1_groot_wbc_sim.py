@@ -63,7 +63,6 @@ from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
-from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.memory2.module import Recorder, RecorderConfig
@@ -92,6 +91,7 @@ from dimos.robot.unitree.g1.blueprints.basic._groot_wbc_common import (
     g1_joints,
     g1_legs_waist,
 )
+from dimos.robot.unitree.g1.g1_manipulation import G1ManipulationModule
 from dimos.robot.unitree.g1.system_prompt import G1_SYSTEM_PROMPT
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.data import get_data
@@ -329,13 +329,14 @@ _g1_agentic_stack = (
     # the coordinator's trajectory task.  Subscribes to coordinator
     # joint_state for live state sync.  Meshcat viz off in this
     # composed sim (we already have viser as the live 3D view).
-    ManipulationModule.blueprint(
+    G1ManipulationModule.blueprint(
         robots=[_g1_left_arm_cfg.robot_model_config],
         planning_timeout=10.0,
         enable_viz=False,
     ).transports(
         {
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+            ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
         }
     ),
     PerceiveLoopSkill.blueprint().transports(

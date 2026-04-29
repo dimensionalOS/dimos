@@ -100,7 +100,10 @@ def _g1_arm(
         model_path=_G1_URDF,
         joint_names=urdf_joints,
         end_effector_link=end_effector_link,
-        base_link="torso_link",
+        # Pelvis = the floating base.  /odom publishes pelvis pose
+        # directly, so a world→pelvis transform is just the inverse
+        # odom — no need to chain through the waist's URDF transforms.
+        base_link="pelvis",
         package_paths={"unitree_g1": _G1_PACKAGE_DIR},
         joint_name_mapping=coord_to_urdf,
         coordinator_task_name=f"traj_{name}",
