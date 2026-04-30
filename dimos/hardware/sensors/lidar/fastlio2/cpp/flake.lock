@@ -37,11 +37,11 @@
     "fast-lio": {
       "flake": false,
       "locked": {
-        "lastModified": 1775524369,
-        "narHash": "sha256-XyfHAHkj5jIKSCiyk83KcuvpOQSW3lQ8ha5svBBznGg=",
+        "lastModified": 1777585753,
+        "narHash": "sha256-F/lbYlD+lVUv4piv4E8UQ2UAsulZ5C9nYu1zF5KDDz0=",
         "owner": "dimensionalOS",
         "repo": "dimos-module-fastlio2",
-        "rev": "f3bbefa6686989a874ba91d3be6ed37caa8f8904",
+        "rev": "2a7a04519aac72652625572cac39385b06695422",
         "type": "github"
       },
       "original": {
