@@ -21,9 +21,11 @@ try:
 except ImportError:
     CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "dimos"
+    CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "dimos"
 else:
     CONFIG_DIR = Path(GLib.get_user_config_dir())
     STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
+    CACHE_DIR = Path(GLib.get_user_cache_dir()) / "dimos"
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 
@@ -51,3 +53,5 @@ LCM_MAX_CHANNEL_NAME_LENGTH = 63
 
 # Default timeout (seconds) for thread.join() during shutdown.
 DEFAULT_THREAD_JOIN_TIMEOUT = 2.0
+
+DEFAULT_BUILD_NATIVE = False

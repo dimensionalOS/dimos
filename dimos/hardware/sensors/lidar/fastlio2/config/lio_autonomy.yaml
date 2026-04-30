@@ -1,0 +1,33 @@
+common:
+    lid_topic:  "/livox/lidar"
+    imu_topic:  "/livox/imu"
+    time_sync_en: false
+    time_offset_lidar_to_imu: 0.0
+
+preprocess:
+    lidar_type: 1                # 1 for Livox serials LiDAR
+    scan_line: 4
+    blind: 0.5                   # spherical min range (metres)
+
+mapping:
+    acc_cov: 0.01                # tighter than mid360 default (0.1)
+    gyr_cov: 0.01                # tighter than mid360 default (0.1)
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
+    fov_degree:    360
+    det_range:     60.0          # reduced from 100 — less noise from distant points
+    extrinsic_est_en:  true      # enable live calibration
+    extrinsic_T: [ -0.011, -0.02329, 0.04412 ]
+    extrinsic_R: [ 1, 0, 0,
+                   0, 1, 0,
+                   0, 0, 1]
+
+publish:
+    path_en:  false
+    scan_publish_en:  true
+    dense_publish_en: true
+    scan_bodyframe_pub_en: true
+
+pcd_save:
+    pcd_save_en: false
+    interval: -1

@@ -42,7 +42,6 @@ import subprocess
 import threading
 import time
 from typing import Any
-
 import cv2
 import numpy as np
 from pydantic import Field
@@ -146,6 +145,7 @@ def _validate_platform() -> None:
         )
 
 
+
 # Config
 
 
@@ -160,6 +160,9 @@ class UnityBridgeConfig(ModuleConfig):
     # Path to the Unity x86_64 binary. Leave empty to auto-resolve
     # from LFS data (unity_sim_x86/environment/Model.x86_64).
     unity_binary: str = ""
+
+    # Scene name — used when building the blueprint to identify the environment.
+    unity_scene: str = "office_1"
 
     # Max seconds to wait for Unity to connect after launch.
     unity_connect_timeout: float = 30.0
@@ -199,6 +202,32 @@ class UnityBridgeConfig(ModuleConfig):
     # At 200Hz with drift_rate=0.001: ~4.5cm drift after 10s, ~14cm after 100s.
     # Set to 0.0 for no drift.
     odom_drift_rate: float = 0.0
+
+    # ─── Terrain inclination fitting (port from ROS vehicleSimulator) ─────
+    # Enable RANSAC-style terrain plane fit to produce vehicle roll/pitch.
+    # Disabled by default — robot stays level when off.
+    terrain_inclination_enabled: bool = False
+    # Radius around robot to collect terrain points for the plane fit (m).
+    terrain_fit_radius: float = 1.5
+    # Voxel downsample size for terrain points before fit (m).
+    terrain_fit_voxel_size: float = 0.05
+    # Max iterations for outlier rejection.
+    terrain_fit_max_iterations: int = 5
+    # Reject points farther than this from the current fit (m).
+    terrain_fit_outlier_threshold: float = 0.2
+    # Require at least this many inliers for a valid fit.
+    terrain_fit_min_inliers: int = 500
+    # Clamp terrain tilt to this absolute value (degrees).
+    terrain_max_incline_deg: float = 30.0
+    # Band (m) around current terrain_z to treat as ground for plane fit.
+    terrain_ground_band: float = 0.3
+    # Exponential smoothing rate for roll/pitch updates.
+    inclination_smooth_rate: float = 0.2
+
+    # ─── Sensor offset in kinematics (port from ROS vehicleSimulator) ─────
+    # Offset of the sensor origin from the vehicle center (m).
+    sensor_offset_x: float = 0.0
+    sensor_offset_y: float = 0.0
 
 
 # Camera intrinsics constants.
@@ -243,6 +272,26 @@ class UnityBridgeModule(Module):
     camera_info: Out[CameraInfo]
 
     @staticmethod
+    def rerun_blueprint() -> Any:
+        """3D world view stacked over a 2D camera panel for the Unity panoramic camera."""
+        import rerun.blueprint as rrb
+
+        return rrb.Blueprint(
+            rrb.Vertical(
+                rrb.Spatial3DView(
+                    origin="world",
+                    name="3D",
+                    eye_controls=rrb.EyeControls3D(
+                        position=(0.0, 0.0, 20.0),
+                        look_target=(0.0, 0.0, 0.0),
+                        eye_up=(0.0, 1.0, 0.0),
+                    ),
+                ),
+            ),
+            collapse_panels=True,
+        )
+
+    @staticmethod
     def rerun_static_pinhole(rr: Any) -> list[Any]:
         """Static Pinhole + Transform3D for the Unity panoramic camera."""
         return [
@@ -273,6 +322,12 @@ class UnityBridgeModule(Module):
         self._pitch = 0.0
         self._yaw = self.config.init_yaw
         self._terrain_z = self.config.init_z
+        # Terrain plane tilt in world frame (updated by _on_terrain).
+        self._terrain_roll = 0.0
+        self._terrain_pitch = 0.0
+        # Previous frame roll/pitch/z for angular velocity estimate.
+        self._prev_roll = 0.0
+        self._prev_pitch = 0.0
         self._fwd_speed = 0.0
         self._left_speed = 0.0
         self._yaw_rate = 0.0
@@ -434,12 +489,89 @@ class UnityBridgeModule(Module):
             return
         with self._state_lock:
             cur_x, cur_y = self._x, self._y
+            cur_terrain_z = self._terrain_z
         dx = points[:, 0] - cur_x
         dy = points[:, 1] - cur_y
-        near = points[np.sqrt(dx * dx + dy * dy) < 0.5]
+        dist = np.sqrt(dx * dx + dy * dy)
+
+        # Z adjustment: points in a tight radius around robot set the terrain Z.
+        near = points[dist < 0.5]
         if len(near) >= 10:
             with self._state_lock:
-                self._terrain_z = 0.8 * self._terrain_z + 0.2 * near[:, 2].mean()
+                self._terrain_z = 0.8 * self._terrain_z + 0.2 * float(near[:, 2].mean())
+
+        if not self.config.terrain_inclination_enabled:
+            return
+
+        # Collect ground-band points within the fit radius for plane fit.
+        in_radius = dist < self.config.terrain_fit_radius
+        near_z = np.abs(points[:, 2] - cur_terrain_z) < self.config.terrain_ground_band
+        fit_points = points[in_radius & near_z]
+        if len(fit_points) < self.config.terrain_fit_min_inliers:
+            return
+
+        # Voxel downsample at terrain_fit_voxel_size.
+        vs = self.config.terrain_fit_voxel_size
+        keys = np.floor(fit_points / vs).astype(np.int64)
+        _, unique_idx = np.unique(keys, axis=0, return_index=True)
+        fit_points = fit_points[unique_idx]
+        if len(fit_points) < self.config.terrain_fit_min_inliers:
+            return
+
+        # Local-frame A, B for least-squares solve:
+        #   pitch*(-x+dx) + roll*(y-dy) = z - elev_mean
+        elev_mean = float(fit_points[:, 2].mean())
+        a0 = -fit_points[:, 0] + cur_x
+        a1 = fit_points[:, 1] - cur_y
+        b = fit_points[:, 2] - elev_mean
+
+        # Seed solution with current terrain tilt.
+        with self._state_lock:
+            pitch = self._terrain_pitch
+            roll = self._terrain_roll
+
+        max_incl_rad = math.radians(self.config.terrain_max_incline_deg)
+        inlier_count = 0
+        final_inliers = len(fit_points)
+        for it in range(self.config.terrain_fit_max_iterations):
+            # Build weight mask: outliers get zeroed out.
+            if it == 0:
+                w = np.ones_like(b)
+            else:
+                resid = np.abs(a0 * pitch + a1 * roll - b)
+                w = (resid <= self.config.terrain_fit_outlier_threshold).astype(np.float64)
+
+            # Solve weighted least squares: [pitch, roll] = (A^T W A)^-1 A^T W b
+            wa0 = w * a0
+            wa1 = w * a1
+            m00 = float((wa0 * a0).sum())
+            m01 = float((wa0 * a1).sum())
+            m11 = float((wa1 * a1).sum())
+            r0 = float((wa0 * b).sum())
+            r1 = float((wa1 * b).sum())
+            det = m00 * m11 - m01 * m01
+            if abs(det) < 1e-9:
+                return
+            pitch = (m11 * r0 - m01 * r1) / det
+            roll = (-m01 * r0 + m00 * r1) / det
+
+            new_inliers = int(w.sum())
+            if new_inliers == inlier_count:
+                final_inliers = new_inliers
+                break
+            inlier_count = new_inliers
+            final_inliers = new_inliers
+
+        if final_inliers < self.config.terrain_fit_min_inliers:
+            return
+        if abs(pitch) > max_incl_rad or abs(roll) > max_incl_rad:
+            return
+
+        # Exponentially smooth terrain tilt in world frame.
+        alpha = self.config.inclination_smooth_rate
+        with self._state_lock:
+            self._terrain_pitch = (1.0 - alpha) * self._terrain_pitch + alpha * pitch
+            self._terrain_roll = (1.0 - alpha) * self._terrain_roll + alpha * roll
 
     def _unity_loop(self) -> None:
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -606,6 +738,15 @@ class UnityBridgeModule(Module):
 
         with self._state_lock:
             prev_z = self._z
+            prev_roll = self._roll
+            prev_pitch = self._pitch
+
+            # Rotate terrain tilt (world frame) into the vehicle body frame by yaw.
+            t_roll = self._terrain_roll
+            t_pitch = self._terrain_pitch
+            cy_prev, sy_prev = math.cos(self._yaw), math.sin(self._yaw)
+            self._roll = t_roll * cy_prev + t_pitch * sy_prev
+            self._pitch = -t_roll * sy_prev + t_pitch * cy_prev
 
             self._yaw += dt * yaw_rate
             if self._yaw > PI:
@@ -614,8 +755,10 @@ class UnityBridgeModule(Module):
                 self._yaw += 2 * PI
 
             cy, sy = math.cos(self._yaw), math.sin(self._yaw)
-            self._x += dt * cy * fwd - dt * sy * left
-            self._y += dt * sy * fwd + dt * cy * left
+            ox = self.config.sensor_offset_x
+            oy = self.config.sensor_offset_y
+            self._x += dt * cy * fwd - dt * sy * left + dt * yaw_rate * (-sy * ox - cy * oy)
+            self._y += dt * sy * fwd + dt * cy * left + dt * yaw_rate * (cy * ox - sy * oy)
             self._z = self._terrain_z + self.config.vehicle_height
 
             x, y, z = self._x, self._y, self._z
@@ -648,7 +791,11 @@ class UnityBridgeModule(Module):
                 ),
                 twist=Twist(
                     linear=[fwd, left, (z - prev_z) * self.config.sim_rate],
-                    angular=[0.0, 0.0, yaw_rate],
+                    angular=[
+                        (roll - prev_roll) * self.config.sim_rate,
+                        (pitch - prev_pitch) * self.config.sim_rate,
+                        yaw_rate,
+                    ],
                 ),
             )
         )
