@@ -25,7 +25,7 @@ import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs import Image
+    from dimos.msgs.sensor_msgs.Image import Image
 
 
 @dataclass
@@ -72,10 +72,6 @@ class FrameWindowAccumulator:
         self.stride_s = stride_s
         self.fps = fps
 
-    # ------------------------------------------------------------------
-    # Ingest
-    # ------------------------------------------------------------------
-
     def set_start_time(self, wall_time: float) -> None:
         with self._lock:
             if self._video_start_wall_time is None:
@@ -103,10 +99,6 @@ class FrameWindowAccumulator:
             self._buffer.append(frame)
             self._frame_count += 1
 
-    # ------------------------------------------------------------------
-    # Window extraction
-    # ------------------------------------------------------------------
-
     def try_extract_window(self) -> list[Frame] | None:
         """Try to extract a window of frames.
 
@@ -130,10 +122,6 @@ class FrameWindowAccumulator:
         """Manually advance the last-analysis timestamp (e.g. after a skip)."""
         with self._lock:
             self._last_analysis_time = t
-
-    # ------------------------------------------------------------------
-    # Accessors
-    # ------------------------------------------------------------------
 
     @property
     def frame_count(self) -> int:

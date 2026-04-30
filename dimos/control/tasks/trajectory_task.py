@@ -32,7 +32,8 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -70,7 +71,7 @@ class JointTrajectoryTask(BaseControlTask):
         >>> task = JointTrajectoryTask(
         ...     name="traj_left",
         ...     config=JointTrajectoryTaskConfig(
-        ...         joint_names=["left_joint1", "left_joint2"],
+        ...         joint_names=["left/joint1", "left/joint2"],
         ...         priority=10,
         ...     ),
         ... )
@@ -170,10 +171,6 @@ class JointTrajectoryTask(BaseControlTask):
         # Abort if any of our joints were preempted
         if joints & self._joint_names:
             self._state = TrajectoryState.ABORTED
-
-    # =========================================================================
-    # Task-specific methods
-    # =========================================================================
 
     def execute(self, trajectory: JointTrajectory) -> bool:
         """Start executing a trajectory.

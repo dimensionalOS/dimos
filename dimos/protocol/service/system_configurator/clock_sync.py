@@ -20,7 +20,8 @@ import socket
 import struct
 import time
 
-from dimos.protocol.service.system_configurator.base import SystemConfigurator, sudo_run
+from dimos.protocol.service.system_configurator.base import SystemConfigurator
+from dimos.utils import prompt
 from dimos.utils.human import human_duration
 
 
@@ -122,4 +123,4 @@ class ClockSyncConfigurator(SystemConfigurator):
         # Recompute the corrected time at fix-time (not stale from check-time)
         if cmd[:2] == ["date", "-s"] and self._offset is not None:
             cmd[2] = f"@{time.time() - self._offset:.3f}"
-        sudo_run(*cmd, check=True, text=True, capture_output=True)
+        prompt.sudo_run(*cmd, check=True, text=True, capture_output=True)

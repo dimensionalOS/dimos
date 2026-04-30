@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import reactivex as rx
 import reactivex.operators as ops
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.transport import pLCMTransport
@@ -64,11 +65,11 @@ class WebInput(Module):
         # Subscribe to both text input sources
         # 1. Direct text from web interface
         unsub = self._web_interface.query_stream.subscribe(self._human_transport.publish)
-        self._disposables.add(unsub)
+        self.register_disposable(unsub)
 
         # 2. Transcribed text from STT
         unsub = stt_node.emit_text().subscribe(self._human_transport.publish)
-        self._disposables.add(unsub)
+        self.register_disposable(unsub)
 
         self._thread = Thread(target=self._web_interface.run, daemon=True)
         self._thread.start()
@@ -80,12 +81,7 @@ class WebInput(Module):
         if self._web_interface:
             self._web_interface.shutdown()
         if self._thread:
-            self._thread.join(timeout=1.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._human_transport:
             self._human_transport.lcm.stop()
         super().stop()
-
-
-web_input = WebInput.blueprint
-
-__all__ = ["WebInput", "web_input"]

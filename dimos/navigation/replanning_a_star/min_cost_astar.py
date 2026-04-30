@@ -14,8 +14,11 @@
 
 import heapq
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, VectorLike
-from dimos.msgs.nav_msgs import CostValues, OccupancyGrid, Path
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import VectorLike
+from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
 
 # Try to import C++ extension for faster pathfinding
@@ -25,8 +28,10 @@ try:
     )
 
     _USE_CPP = True
-except ImportError:
+    _CPP_IMPORT_ERROR: ImportError | None = None
+except ImportError as e:
     _USE_CPP = False
+    _CPP_IMPORT_ERROR = e
 
 logger = setup_logger()
 
@@ -151,7 +156,10 @@ def min_cost_astar(
                 return None
             return _reconstruct_path_from_coords(path_coords, costmap)
         else:
-            logger.warning("C++ A* module could not be imported. Using Python.")
+            logger.warning(
+                "C++ A* module could not be imported (%s). Using Python.",
+                _CPP_IMPORT_ERROR,
+            )
 
     open_set: list[tuple[float, float, tuple[int, int]]] = []  # Priority queue for nodes to explore
     closed_set: set[tuple[int, int]] = set()  # Set of explored nodes
@@ -195,8 +203,9 @@ def min_cost_astar(
                 continue
 
             if neighbor_val == CostValues.UNKNOWN:
-                # Unknown cells have a moderate traversal cost
                 cell_cost = cost_threshold * unknown_penalty
+                if cell_cost >= cost_threshold:
+                    continue
             elif neighbor_val == CostValues.FREE:
                 cell_cost = 0.0
             else:

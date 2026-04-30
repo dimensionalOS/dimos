@@ -14,23 +14,24 @@
 # limitations under the License.
 from pathlib import Path
 
-from dimos.agents.agent import agent
-from dimos.core.blueprints import autoconnect
-from dimos.hardware.sensors.camera.realsense import realsense_camera
-from dimos.manipulation.grasping import graspgen
-from dimos.manipulation.grasping.grasping import grasping_module
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.grasping.graspgen_module import graspgen
+from dimos.manipulation.grasping.grasping import GraspingModule
 from dimos.perception.detection.detectors.yoloe import YoloePromptMode
-from dimos.perception.object_scene_registration import object_scene_registration_module
-from dimos.robot.foxglove_bridge import foxglove_bridge
+from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.robot.foxglove_bridge import FoxgloveBridge
 
-camera_module = realsense_camera(enable_pointcloud=False)
+camera_module = RealSenseCamera.blueprint(enable_pointcloud=False)
 
 demo_grasping = autoconnect(
     camera_module,
-    object_scene_registration_module(
+    ObjectSceneRegistrationModule.blueprint(
         target_frame="camera_color_optical_frame", prompt_mode=YoloePromptMode.PROMPT
     ),
-    grasping_module(),
+    GraspingModule.blueprint(),
     graspgen(
         docker_file_path=Path(__file__).parent / "docker_context" / "Dockerfile",
         docker_build_context=Path(__file__).parent.parent.parent.parent,  # repo root
@@ -43,6 +44,7 @@ demo_grasping = autoconnect(
             ("/tmp", "/tmp", "rw")
         ],  # Grasp visualization debug standalone: python -m dimos.manipulation.grasping.visualize_grasps
     ),
-    foxglove_bridge(),
-    agent(),
+    FoxgloveBridge.blueprint(),
+    McpServer.blueprint(),
+    McpClient.blueprint(),
 ).global_config(viewer="foxglove")

@@ -13,21 +13,22 @@
 # limitations under the License.
 
 import asyncio
+from collections.abc import Sequence
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from dimos_lcm.foxglove_bridge import (
     FoxgloveBridge as LCMFoxgloveBridge,
 )
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.module import Module, ModuleConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.global_config import GlobalConfig
     from dimos.core.rpc_client import ModuleProxy
 
 logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
@@ -36,31 +37,23 @@ logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
 logger = setup_logger()
 
 
+class FoxgloveConfig(ModuleConfig):
+    shm_channels: Sequence[str] = ()
+    jpeg_shm_channels: Sequence[str] = ()
+
+
 class FoxgloveBridge(Module):
+    config: FoxgloveConfig
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
-    _global_config: "GlobalConfig | None" = None
-
-    def __init__(
-        self,
-        *args: Any,
-        shm_channels: list[str] | None = None,
-        jpeg_shm_channels: list[str] | None = None,
-        global_config: "GlobalConfig | None" = None,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        self.shm_channels = shm_channels or []
-        self.jpeg_shm_channels = jpeg_shm_channels or []
-        self._global_config = global_config
 
     @rpc
     def start(self) -> None:
         super().start()
 
         # Skip if Rerun is the selected viewer
-        if self._global_config and self._global_config.viewer.startswith("rerun"):
-            logger.info("Foxglove bridge skipped", viewer=self._global_config.viewer)
+        if self.config.g.viewer.startswith("rerun"):
+            logger.info("Foxglove bridge skipped", viewer=self.config.g.viewer)
             return
 
         def run_bridge() -> None:
@@ -74,12 +67,12 @@ class FoxgloveBridge(Module):
                         handler.setLevel(logging.ERROR)
 
                 bridge = LCMFoxgloveBridge(
-                    host="0.0.0.0",
+                    host="127.0.0.1",
                     port=8765,
                     debug=False,
                     num_threads=4,
-                    shm_channels=self.shm_channels,
-                    jpeg_shm_channels=self.jpeg_shm_channels,
+                    shm_channels=self.config.shm_channels,
+                    jpeg_shm_channels=self.config.jpeg_shm_channels,
                 )
                 self._loop.run_until_complete(bridge.run())
             except Exception as e:
@@ -92,7 +85,7 @@ class FoxgloveBridge(Module):
     def stop(self) -> None:
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 
@@ -107,15 +100,9 @@ def deploy(
             "/lidar#sensor_msgs.PointCloud2",
             "/map#sensor_msgs.PointCloud2",
         ]
-    foxglove_bridge = dimos.deploy(  # type: ignore[attr-defined]
+    foxglove_bridge = dimos.deploy(
         FoxgloveBridge,
         shm_channels=shm_channels,
     )
     foxglove_bridge.start()
     return foxglove_bridge
-
-
-foxglove_bridge = FoxgloveBridge.blueprint
-
-
-__all__ = ["FoxgloveBridge", "deploy", "foxglove_bridge"]

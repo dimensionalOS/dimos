@@ -30,7 +30,7 @@ from dimos.types.timestamped import to_ros_stamp
 if TYPE_CHECKING:
     from ultralytics.engine.results import Results
 
-    from dimos.msgs.sensor_msgs import Image
+    from dimos.msgs.sensor_msgs.Image import Image
 
 
 @dataclass
@@ -95,7 +95,7 @@ class Detection2DSeg(Detection2DBBox):
             name=name,
             ts=image.ts,
             image=image,
-            mask=mask.astype(np.uint8),  # type: ignore[arg-type]
+            mask=mask.astype(np.uint8),
         )
 
     @classmethod
@@ -157,7 +157,7 @@ class Detection2DSeg(Detection2DBBox):
                 )
 
             # Binarize mask
-            mask = (mask_np > 0.5).astype(np.uint8) * 255  # type: ignore[assignment]
+            mask = (mask_np > 0.5).astype(np.uint8) * 255
 
         return cls(
             bbox=bbox,

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import os
 import time
@@ -22,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.requests import Request  # noqa: TC002
+from starlette.requests import Request
 from starlette.responses import Response
 import uvicorn
 
@@ -32,13 +33,10 @@ from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger()
-
-
 if TYPE_CHECKING:
-    import concurrent.futures
-
     from dimos.core.module import SkillInfo
+
+logger = setup_logger()
 
 
 app = FastAPI()
@@ -52,11 +50,6 @@ app.state.skills = []
 app.state.rpc_calls = {}
 
 
-# ---------------------------------------------------------------------------
-# JSON-RPC helpers
-# ---------------------------------------------------------------------------
-
-
 def _jsonrpc_result(req_id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
@@ -67,11 +60,6 @@ def _jsonrpc_result_text(req_id: Any, text: str) -> dict[str, Any]:
 
 def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
-
-
-# ---------------------------------------------------------------------------
-# JSON-RPC handlers (standard MCP protocol only)
-# ---------------------------------------------------------------------------
 
 
 def _handle_initialize(req_id: Any) -> dict[str, Any]:
@@ -179,16 +167,9 @@ async def mcp_endpoint(request: Request) -> Response:
     return JSONResponse(result)
 
 
-# ---------------------------------------------------------------------------
-# McpServer Module
-# ---------------------------------------------------------------------------
-
-
 class McpServer(Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self._uvicorn_server: uvicorn.Server | None = None
-        self._serve_future: concurrent.futures.Future[None] | None = None
+    _uvicorn_server: uvicorn.Server | None = None
+    _serve_future: concurrent.futures.Future[None] | None = None
 
     @rpc
     def start(self) -> None:
@@ -208,6 +189,7 @@ class McpServer(Module):
 
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
+        # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
         app.state.skills = [
             skill_info for module in modules for skill_info in (module.get_skills() or [])
@@ -218,10 +200,6 @@ class McpServer(Module):
             )
             for skill_info in app.state.skills
         }
-
-    # ------------------------------------------------------------------
-    # Introspection skills (exposed as MCP tools via tools/list)
-    # ------------------------------------------------------------------
 
     @skill
     def server_status(self) -> str:
@@ -269,7 +247,7 @@ class McpServer(Module):
         from dimos.core.global_config import global_config
 
         _port = port if port is not None else global_config.mcp_port
-        _host = global_config.mcp_host
+        _host = global_config.listen_host
         config = uvicorn.Config(app, host=_host, port=_port, log_level="info")
         server = uvicorn.Server(config)
         self._uvicorn_server = server

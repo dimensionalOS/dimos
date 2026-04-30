@@ -72,11 +72,6 @@ def _entry(run_id: str, pid: int, blueprint: str = "test", **kwargs) -> RunEntry
     return e
 
 
-# ---------------------------------------------------------------------------
-# STATUS
-# ---------------------------------------------------------------------------
-
-
 class TestStatusCLI:
     """Tests for `dimos status` command."""
 
@@ -130,11 +125,6 @@ class TestStatusCLI:
 
         result = CliRunner().invoke(main, ["status"])
         assert "No running" in result.output
-
-
-# ---------------------------------------------------------------------------
-# STOP
-# ---------------------------------------------------------------------------
 
 
 class TestStopCLI:

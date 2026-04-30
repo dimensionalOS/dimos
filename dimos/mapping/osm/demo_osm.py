@@ -13,13 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.agent import agent
-from dimos.agents.skills.demo_robot import demo_robot
-from dimos.agents.skills.osm import osm_skill
-from dimos.core.blueprints import autoconnect
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.skills.demo_robot import DemoRobot
+from dimos.agents.skills.osm import OsmSkill
+from dimos.core.coordination.blueprints import autoconnect
 
 demo_osm = autoconnect(
-    demo_robot(),
-    osm_skill(),
-    agent(),
+    DemoRobot.blueprint(),
+    OsmSkill.blueprint(),
+    McpServer.blueprint(),
+    McpClient.blueprint(),
 )

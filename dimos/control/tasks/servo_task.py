@@ -65,7 +65,7 @@ class JointServoTask(BaseControlTask):
         >>> task = JointServoTask(
         ...     name="servo_arm",
         ...     config=JointServoTaskConfig(
-        ...         joint_names=["arm_joint1", "arm_joint2", "arm_joint3"],
+        ...         joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
         ...         priority=10,
         ...         timeout=0.5,
         ...     ),
@@ -158,10 +158,6 @@ class JointServoTask(BaseControlTask):
         """
         if joints & self._joint_names:
             logger.warning(f"JointServoTask {self._name} preempted by {by_task} on joints {joints}")
-
-    # =========================================================================
-    # Task-specific methods
-    # =========================================================================
 
     def set_target(self, positions: list[float], t_now: float) -> bool:
         """Set target joint positions.

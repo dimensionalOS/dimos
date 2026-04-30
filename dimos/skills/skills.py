@@ -14,28 +14,21 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from openai import pydantic_function_tool
 from pydantic import BaseModel
 
 from dimos.types.constants import Colors
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# Configure logging for the module
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-# region SkillLibrary
+logger = setup_logger()
 
 
 class SkillLibrary:
-    # ==== Flat Skill Library ====
-
     def __init__(self) -> None:
         self.registered_skills: list[AbstractSkill] = []
         self.class_skills: list[AbstractSkill] = []
@@ -111,8 +104,6 @@ class SkillLibrary:
     def __getitem__(self, index):  # type: ignore[no-untyped-def]
         return self.registered_skills[index]
 
-    # ==== Calling a Function ====
-
     _instances: dict[str, dict] = {}  # type: ignore[type-arg]
 
     def create_instance(self, name: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -153,8 +144,6 @@ class SkillLibrary:
             error_msg = f"Error executing skill '{name}': {e!s}"
             logger.error(error_msg)
             return error_msg
-
-    # ==== Tools ====
 
     def get_tools(self) -> Any:
         tools_json = self.get_list_of_skills_as_json(list_of_skills=self.registered_skills)
@@ -250,11 +239,6 @@ class SkillLibrary:
             return f"No running skill found with name: {name}"
 
 
-# endregion SkillLibrary
-
-# region AbstractSkill
-
-
 class AbstractSkill(BaseModel):
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         print("Initializing AbstractSkill Class")
@@ -289,7 +273,6 @@ class AbstractSkill(BaseModel):
         """
         skill_library.unregister_running_skill(name)
 
-    # ==== Tools ====
     def get_tools(self) -> Any:
         tools_json = self.get_list_of_skills_as_json(list_of_skills=self._list_of_skills)
         # print(f"Tools JSON: {tools_json}")
@@ -298,10 +281,6 @@ class AbstractSkill(BaseModel):
     def get_list_of_skills_as_json(self, list_of_skills: list[AbstractSkill]) -> list[str]:
         return list(map(pydantic_function_tool, list_of_skills))  # type: ignore[arg-type]
 
-
-# endregion AbstractSkill
-
-# region Abstract Robot Skill
 
 if TYPE_CHECKING:
     from dimos.robot.robot import Robot
@@ -338,6 +317,3 @@ class AbstractRobotSkill(AbstractSkill):
             print(
                 f"{Colors.BLUE_PRINT_COLOR}Robot Instance provided to Robot Skill: {self.__class__.__name__}{Colors.RESET_COLOR}"
             )
-
-
-# endregion Abstract Robot Skill

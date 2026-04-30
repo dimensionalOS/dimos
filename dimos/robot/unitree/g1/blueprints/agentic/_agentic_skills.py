@@ -15,18 +15,20 @@
 
 """Agentic skills used by higher-level G1 blueprints."""
 
-from dimos.agents.agent import agent
-from dimos.agents.skills.navigation import navigation_skill
-from dimos.agents.skills.speak_skill import speak_skill
-from dimos.core.blueprints import autoconnect
-from dimos.robot.unitree.g1.skill_container import g1_skills
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.skills.navigation import NavigationSkillContainer
+from dimos.agents.skills.speak_skill import SpeakSkill
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.unitree.g1.skill_container import UnitreeG1SkillContainer
 from dimos.robot.unitree.g1.system_prompt import G1_SYSTEM_PROMPT
 
 _agentic_skills = autoconnect(
-    agent(system_prompt=G1_SYSTEM_PROMPT),
-    navigation_skill(),
-    speak_skill(),
-    g1_skills(),
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT),
+    NavigationSkillContainer.blueprint(),
+    SpeakSkill.blueprint(),
+    UnitreeG1SkillContainer.blueprint(),
 )
 
 __all__ = ["_agentic_skills"]

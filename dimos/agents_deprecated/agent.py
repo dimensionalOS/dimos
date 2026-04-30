@@ -68,9 +68,6 @@ _TOKEN_BUDGET_PARTS = 4  # Number of parts to divide token budget
 _MAX_SAVED_FRAMES = 100  # Maximum number of frames to save
 
 
-# -----------------------------------------------------------------------------
-# region Agent Base Class
-# -----------------------------------------------------------------------------
 class Agent:
     """Base agent that manages memory and subscriptions."""
 
@@ -105,12 +102,6 @@ class Agent:
             logger.info("No disposables to dispose.")
 
 
-# endregion Agent Base Class
-
-
-# -----------------------------------------------------------------------------
-# region LLMAgent Base Class (Generic LLM Agent)
-# -----------------------------------------------------------------------------
 class LLMAgent(Agent):
     """Generic LLM agent containing common logic for LLM-based agents.
 
@@ -689,12 +680,6 @@ class LLMAgent(Agent):
         self.response_subject.on_completed()
 
 
-# endregion LLMAgent Base Class (Generic LLM Agent)
-
-
-# -----------------------------------------------------------------------------
-# region OpenAIAgent Subclass (OpenAI-Specific Implementation)
-# -----------------------------------------------------------------------------
 class OpenAIAgent(LLMAgent):
     """OpenAI agent implementation that uses OpenAI's API for processing.
 
@@ -912,6 +897,3 @@ class OpenAIAgent(LLMAgent):
         return create(
             lambda observer, _: self._observable_query(observer, incoming_query=query_text)  # type: ignore[arg-type]
         )
-
-
-# endregion OpenAIAgent Subclass (OpenAI-Specific Implementation)

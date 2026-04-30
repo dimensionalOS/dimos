@@ -12,11 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from pathlib import Path
+
+try:
+    # Not a dependency, just the best way to get config path if available.
+    from gi.repository import GLib  # type: ignore[import-untyped,import-not-found]
+except ImportError:
+    CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "dimos"
+else:
+    CONFIG_DIR = Path(GLib.get_user_config_dir())
+    STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 
-DIMOS_LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
+if (DIMOS_PROJECT_ROOT / ".git").exists():
+    # Running from Git repository
+    LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
+else:
+    # Running from an installed package - use XDG_STATE_HOME
+    LOG_DIR = STATE_DIR / "logs"
 
 """
 Constants for shared memory
@@ -32,3 +48,6 @@ DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4
 
 # From https://github.com/lcm-proj/lcm.git
 LCM_MAX_CHANNEL_NAME_LENGTH = 63
+
+# Default timeout (seconds) for thread.join() during shutdown.
+DEFAULT_THREAD_JOIN_TIMEOUT = 2.0

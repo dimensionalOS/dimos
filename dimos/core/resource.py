@@ -12,10 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
+from __future__ import annotations
+
+from abc import abstractmethod
+import sys
+from typing import TYPE_CHECKING, TypeVar
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
+
+if TYPE_CHECKING:
+    from types import TracebackType
+
+from reactivex.abc import DisposableBase
+from reactivex.disposable import CompositeDisposable
+
+D = TypeVar("D", bound=DisposableBase)
 
 
-class Resource(ABC):
+class Resource(DisposableBase):
     @abstractmethod
     def start(self) -> None: ...
 
@@ -43,3 +60,34 @@ class Resource(ABC):
 
         """
         self.stop()
+
+    def __enter__(self) -> Self:
+        self.start()
+        return self
+
+    def __exit__(
+        self,
+        exctype: type[BaseException] | None,
+        excinst: BaseException | None,
+        exctb: TracebackType | None,
+    ) -> None:
+        self.stop()
+
+
+class CompositeResource(Resource):
+    """Resource that owns child disposables, disposed on stop()."""
+
+    _disposables: CompositeDisposable | None = None
+
+    def register_disposable(self, disposable: D) -> D:
+        """Register a child disposable to be disposed when this resource stops."""
+        if self._disposables is None:
+            self._disposables = CompositeDisposable()
+        self._disposables.add(disposable)
+        return disposable
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None:
+        if self._disposables is not None:
+            self._disposables.dispose()

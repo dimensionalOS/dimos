@@ -18,14 +18,14 @@ import argparse
 import logging
 import time
 
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.gstreamer.gstreamer_camera import GstreamerCameraModule
-from dimos.msgs.sensor_msgs import Image
-from dimos.protocol import pubsub
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.pubsub.impl import lcmpubsub as _lcm
+from dimos.utils.logging_config import setup_logger
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 def main() -> None:
@@ -59,7 +59,7 @@ def main() -> None:
         logging.getLogger().setLevel(logging.DEBUG)
 
     # Initialize LCM
-    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
+    _lcm.autoconf()
 
     # Start dimos
     dimos = ModuleCoordinator()
@@ -67,7 +67,7 @@ def main() -> None:
 
     # Deploy the GStreamer camera module
     logger.info(f"Deploying GStreamer TCP camera module (connecting to {args.host}:{args.port})...")
-    camera = dimos.deploy(  # type: ignore[attr-defined]
+    camera = dimos.deploy(
         GstreamerCameraModule,
         host=args.host,
         port=args.port,

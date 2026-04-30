@@ -52,7 +52,7 @@ def _get_user_data_dir() -> Path:
 
 
 @cache
-def _get_repo_root() -> Path:
+def get_project_root() -> Path:
     # Check if running from git repo
     if (DIMOS_PROJECT_ROOT / ".git").exists():
         return DIMOS_PROJECT_ROOT
@@ -107,8 +107,8 @@ def _get_repo_root() -> Path:
 @cache
 def get_data_dir(extra_path: str | None = None) -> Path:
     if extra_path:
-        return _get_repo_root() / "data" / extra_path
-    return _get_repo_root() / "data"
+        return get_project_root() / "data" / extra_path
+    return get_project_root() / "data"
 
 
 @cache
@@ -186,7 +186,7 @@ def _pull_lfs_archive(filename: str | Path) -> Path:
     _check_git_lfs_available()
 
     # Find repository root
-    repo_root = _get_repo_root()
+    repo_root = get_project_root()
 
     # Construct path to test data file
     file_path = _get_lfs_dir() / (str(filename) + ".tar.gz")
@@ -288,7 +288,7 @@ class LfsPath(type(Path())):  # type: ignore[misc]
     def __new__(cls, filename: str | Path) -> "LfsPath":
         # Create instance with a placeholder path to satisfy Path.__new__
         # We use "." as a dummy path that always exists
-        instance: LfsPath = super().__new__(cls, ".")  # type: ignore[call-arg]
+        instance: LfsPath = super().__new__(cls, ".")
         # Store the actual filename as an instance attribute
         object.__setattr__(instance, "_lfs_filename", filename)
         object.__setattr__(instance, "_lfs_resolved_cache", None)
@@ -327,10 +327,11 @@ class LfsPath(type(Path())):  # type: ignore[misc]
         """Return filesystem path, downloading from LFS if needed."""
         return str(self._ensure_downloaded())
 
-    def __truediv__(self, other: object) -> Path:
-        """Path division operator - returns resolved path."""
-        return self._ensure_downloaded() / other  # type: ignore[operator, return-value]
+    def __truediv__(self, other: object) -> "LfsPath":
+        """Path division operator - returns a new lazy LfsPath (no download)."""
+        filename = object.__getattribute__(self, "_lfs_filename")
+        return LfsPath(f"{filename}/{other}")
 
     def __rtruediv__(self, other: object) -> Path:
         """Reverse path division operator."""
-        return other / self._ensure_downloaded()  # type: ignore[operator, return-value]
+        return other / self._ensure_downloaded()  # type: ignore[operator]

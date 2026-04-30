@@ -14,57 +14,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 import logging
 import sys
 import threading
 import time
+from typing import Any
 
 import numpy as np
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 
 # Add system path for gi module if needed
 if "/usr/lib/python3/dist-packages" not in sys.path:
     sys.path.insert(0, "/usr/lib/python3/dist-packages")
 
-import gi  # type: ignore[import-not-found, import-untyped]
+import gi  # type: ignore[import-not-found,import-untyped]
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-from gi.repository import GLib, Gst  # type: ignore[import-not-found, import-untyped]
+from gi.repository import GLib, Gst  # type: ignore[import-not-found,import-untyped]
 
 logger = setup_logger(level=logging.INFO)
 
 Gst.init(None)
 
 
-@dataclass
 class Config(ModuleConfig):
     frame_id: str = "camera"
+    host: str = "localhost"
+    port: int = 5000
+    timestamp_offset: float = 0.0
+    reconnect_interval: float = 5.0
 
 
 class GstreamerCameraModule(Module):
     """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps."""
 
-    default_config = Config
     config: Config
 
     video: Out[Image]
 
-    def __init__(  # type: ignore[no-untyped-def]
-        self,
-        host: str = "localhost",
-        port: int = 5000,
-        timestamp_offset: float = 0.0,
-        reconnect_interval: float = 5.0,
-        *args,
-        **kwargs,
-    ) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize the GStreamer TCP camera module.
 
         Args:
@@ -74,10 +69,10 @@ class GstreamerCameraModule(Module):
             timestamp_offset: Offset to add to timestamps (useful for clock synchronization)
             reconnect_interval: Seconds to wait before attempting reconnection
         """
-        self.host = host
-        self.port = port
-        self.timestamp_offset = timestamp_offset
-        self.reconnect_interval = reconnect_interval
+        super().__init__(**kwargs)
+        self.host = self.config.host
+        self.port = self.config.port
+        self.reconnect_interval = self.config.reconnect_interval
 
         self.pipeline = None
         self.appsink = None
@@ -88,7 +83,6 @@ class GstreamerCameraModule(Module):
         self.frame_count = 0
         self.last_log_time = time.time()
         self.reconnect_timer_id = None
-        super().__init__(**kwargs)
 
     @rpc
     def start(self) -> None:
@@ -119,7 +113,7 @@ class GstreamerCameraModule(Module):
 
         # Only join the thread if we're not calling from within it
         if self.main_loop_thread and self.main_loop_thread != threading.current_thread():
-            self.main_loop_thread.join(timeout=2.0)
+            self.main_loop_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 
@@ -257,7 +251,7 @@ class GstreamerCameraModule(Module):
         if buffer.pts != Gst.CLOCK_TIME_NONE:
             # Convert nanoseconds to seconds and add offset
             # This is the absolute time from when the frame was captured
-            timestamp = (buffer.pts / 1e9) + self.timestamp_offset
+            timestamp = (buffer.pts / 1e9) + self.config.timestamp_offset
 
             # Skip frames with invalid timestamps (before year 2000)
             # This filters out initial gray frames with relative timestamps

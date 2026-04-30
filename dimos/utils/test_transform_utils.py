@@ -16,7 +16,10 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation as R
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils import transform_utils
 
 

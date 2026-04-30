@@ -13,13 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.agent import agent
-from dimos.agents.skills.demo_robot import demo_robot
-from dimos.agents.skills.google_maps_skill_container import google_maps_skill
-from dimos.core.blueprints import autoconnect
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.skills.demo_robot import DemoRobot
+from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
+from dimos.core.coordination.blueprints import autoconnect
 
 demo_google_maps_skill = autoconnect(
-    demo_robot(),
-    google_maps_skill(),
-    agent(),
+    DemoRobot.blueprint(),
+    GoogleMapsSkillContainer.blueprint(),
+    McpServer.blueprint(),
+    McpClient.blueprint(),
 )

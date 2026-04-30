@@ -21,10 +21,13 @@ from reactivex.observable import Observable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
-from dimos.msgs.sensor_msgs import CameraInfo, Image
-from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
 
@@ -86,7 +89,7 @@ class PersonTracker(Module):
                 buffer_size=2.0,
             ).pipe(
                 ops.map(
-                    lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)  # type: ignore[misc, arg-type]
+                    lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)  # type: ignore[arg-type, misc]
                 )
             )
         )
@@ -121,8 +124,3 @@ class PersonTracker(Module):
         pose_in_world = tf_world_to_target.to_pose(ts=detections2D.ts)
 
         self.target.publish(pose_in_world)
-
-
-person_tracker_module = PersonTracker.blueprint
-
-__all__ = ["PersonTracker", "person_tracker_module"]

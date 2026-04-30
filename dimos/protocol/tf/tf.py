@@ -16,31 +16,27 @@
 
 from abc import abstractmethod
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import field
 from functools import reduce
-from typing import TypeVar
 
 from dimos.memory.timeseries.inmemory import InMemoryStore
-from dimos.msgs.geometry_msgs import PoseStamped, Transform
-from dimos.msgs.tf2_msgs import TFMessage
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
-from dimos.protocol.service.lcmservice import Service  # type: ignore[attr-defined]
-
-CONFIG = TypeVar("CONFIG")
+from dimos.protocol.service.spec import BaseConfig, Service
 
 
 # generic configuration for transform service
-@dataclass
-class TFConfig:
+class TFConfig(BaseConfig):
     buffer_size: float = 10.0  # seconds
     rate_limit: float = 10.0  # Hz
 
 
 # generic specification for transform service
-class TFSpec(Service[TFConfig]):
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(**kwargs)
+class TFSpec(Service):
+    config: TFConfig
 
     @abstractmethod
     def publish(self, *args: Transform) -> None: ...
@@ -65,10 +61,6 @@ class TFSpec(Service[TFConfig]):
     def receive_tfmessage(self, msg: TFMessage) -> None:
         for transform in msg.transforms:
             self.receive_transform(transform)
-
-
-MsgT = TypeVar("MsgT")
-TopicT = TypeVar("TopicT")
 
 
 class TBuffer(InMemoryStore[Transform]):
@@ -244,7 +236,6 @@ class MultiTBuffer:
         return "\n".join(lines)
 
 
-@dataclass
 class PubSubTFConfig(TFConfig):
     topic: Topic | None = None  # Required field but needs default for dataclass inheritance
     pubsub: type[PubSub] | PubSub | None = None  # type: ignore[type-arg]
@@ -252,7 +243,7 @@ class PubSubTFConfig(TFConfig):
 
 
 class PubSubTF(MultiTBuffer, TFSpec):
-    default_config: type[PubSubTFConfig] = PubSubTFConfig
+    config: PubSubTFConfig
 
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         TFSpec.__init__(self, **kwargs)
@@ -267,7 +258,7 @@ class PubSubTF(MultiTBuffer, TFSpec):
         else:
             raise ValueError("PubSub configuration is missing")
 
-        if self.config.autostart:  # type: ignore[attr-defined]
+        if self.config.autostart:
             self.start()
 
     def start(self, sub: bool = True) -> None:
@@ -330,7 +321,6 @@ class PubSubTF(MultiTBuffer, TFSpec):
         self.receive_tfmessage(msg)
 
 
-@dataclass
 class LCMPubsubConfig(PubSubTFConfig):
     topic: Topic = field(default_factory=lambda: Topic("/tf", TFMessage))
     pubsub: type[PubSub] | PubSub | None = LCM  # type: ignore[type-arg]
@@ -338,7 +328,7 @@ class LCMPubsubConfig(PubSubTFConfig):
 
 
 class LCMTF(PubSubTF):
-    default_config: type[LCMPubsubConfig] = LCMPubsubConfig
+    config: LCMPubsubConfig
 
 
 TF = LCMTF

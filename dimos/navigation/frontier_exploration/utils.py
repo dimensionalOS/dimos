@@ -19,8 +19,8 @@ Utility functions for frontier exploration visualization and testing.
 import numpy as np
 from PIL import Image, ImageDraw
 
-from dimos.msgs.geometry_msgs import Vector3
-from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 
 
 def costmap_to_pil_image(costmap: OccupancyGrid, scale_factor: int = 2) -> Image.Image:
@@ -51,7 +51,7 @@ def costmap_to_pil_image(costmap: OccupancyGrid, scale_factor: int = 2) -> Image
                 img_array[i, j] = [205, 205, 205]
 
     # Flip vertically to match ROS convention (origin at bottom-left)
-    img_array = np.flipud(img_array)  # type: ignore[assignment]
+    img_array = np.flipud(img_array)
 
     # Create PIL image
     img = Image.fromarray(img_array, "RGB")

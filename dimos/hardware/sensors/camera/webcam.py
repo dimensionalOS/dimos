@@ -23,8 +23,8 @@ from reactivex import create
 from reactivex.observable import Observable
 
 from dimos.hardware.sensors.camera.spec import CameraConfig, CameraHardware
-from dimos.msgs.sensor_msgs import CameraInfo, Image
-from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.reactive import backpressure
 
 
@@ -39,8 +39,8 @@ class WebcamConfig(CameraConfig):
     stereo_slice: Literal["left", "right"] | None = None  # For stereo cameras
 
 
-class Webcam(CameraHardware[WebcamConfig]):
-    default_config = WebcamConfig
+class Webcam(CameraHardware):
+    config: WebcamConfig
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)

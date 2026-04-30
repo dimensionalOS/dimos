@@ -157,15 +157,13 @@ class ManipulationInterface:
             return task
         return None
 
-    # === Perception stream methods ===
-
     def _setup_perception_subscription(self) -> None:
         """
         Set up subscription to perception stream if available.
         """
         if self.perception_stream:
             # Subscribe to the stream and update latest_objects
-            self.stream_subscription = self.perception_stream.get_stream().subscribe(  # type: ignore[no-untyped-call]
+            self.stream_subscription = self.perception_stream.get_stream().subscribe(
                 on_next=self._update_latest_objects,
                 on_error=lambda e: logger.error(f"Error in perception stream: {e}"),
             )
@@ -238,8 +236,6 @@ class ManipulationInterface:
         if self.stream_subscription:
             self.stream_subscription.dispose()
             self.stream_subscription = None
-
-    # === Utility methods ===
 
     def clear(self) -> None:
         """

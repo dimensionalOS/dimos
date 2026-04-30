@@ -18,7 +18,8 @@ import time
 
 from dimos_lcm.sensor_msgs.Imu import Imu as LCMImu
 
-from dimos.msgs.geometry_msgs import Quaternion, Vector3
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.types.timestamped import Timestamped
 
 
@@ -42,7 +43,7 @@ class Imu(Timestamped):
         frame_id: str = "imu_link",
         ts: float | None = None,
     ) -> None:
-        self.ts = ts if ts is not None else time.time()  # type: ignore[assignment]
+        self.ts = ts if ts is not None else time.time()
         self.frame_id = frame_id
         self.angular_velocity = angular_velocity or Vector3(0.0, 0.0, 0.0)
         self.linear_acceleration = linear_acceleration or Vector3(0.0, 0.0, 0.0)

@@ -19,8 +19,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.trigonometry import angle_diff
 
 
@@ -45,7 +46,7 @@ class PController:
     _max_angular_accel: float = 2.0
     _rotation_threshold: float = 90 * (math.pi / 180)
 
-    def __init__(self, global_config: GlobalConfig, speed: float, control_frequency: float):
+    def __init__(self, global_config: GlobalConfig, speed: float, control_frequency: float) -> None:
         self._global_config = global_config
         self._speed = speed
         self._control_frequency = control_frequency
@@ -103,12 +104,12 @@ class PController:
         return velocity
 
     def _angular_twist(self, angular_velocity: float) -> Twist:
-        # In simulation, add a small forward velocity to help the locomotion
-        # policy execute rotation (some policies don't handle pure in-place rotation).
-        linear_x = 0.18 if self._global_config.simulation else 0.0
+        # In simulation, we need stroger values
+        if self._global_config.simulation and abs(angular_velocity) < 0.8:
+            angular_velocity = 0.8 * np.sign(angular_velocity)
 
         return Twist(
-            linear=Vector3(linear_x, 0.0, 0.0),
+            linear=Vector3(0.0, 0.0, 0.0),
             angular=Vector3(0.0, 0.0, angular_velocity),
         )
 
@@ -119,7 +120,7 @@ class PdController(PController):
     _prev_yaw_error: float
     _prev_angular_velocity: float
 
-    def __init__(self, global_config: GlobalConfig, speed: float, control_frequency: float):
+    def __init__(self, global_config: GlobalConfig, speed: float, control_frequency: float) -> None:
         super().__init__(global_config, speed, control_frequency)
 
         self._prev_yaw_error = 0.0

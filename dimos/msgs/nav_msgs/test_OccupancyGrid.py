@@ -23,9 +23,9 @@ import pytest
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.pointclouds.occupancy import general_occupancy
-from dimos.msgs.geometry_msgs import Pose
-from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
 
 

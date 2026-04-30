@@ -16,17 +16,17 @@ import time
 
 import pytest
 
+from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.reactive import backpressure
-from dimos.utils.testing import TimedSensorReplay
 
 
 @pytest.mark.tool
 def test_replay_all() -> None:
-    lidar_store = TimedSensorReplay("unitree/lidar", autocast=pointcloud2_from_webrtc_lidar)
-    odom_store = TimedSensorReplay("unitree/odom", autocast=Odometry.from_msg)
-    video_store = TimedSensorReplay("unitree/video")
+    lidar_store = LegacyPickleStore("unitree/lidar", autocast=pointcloud2_from_webrtc_lidar)
+    odom_store = LegacyPickleStore("unitree/odom", autocast=Odometry.from_msg)
+    video_store = LegacyPickleStore("unitree/video")
 
     backpressure(odom_store.stream()).subscribe(print)
     backpressure(lidar_store.stream()).subscribe(print)

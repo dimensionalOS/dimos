@@ -39,10 +39,6 @@ class TemporalState:
 
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
-    # ------------------------------------------------------------------
-    # Snapshot
-    # ------------------------------------------------------------------
-
     def snapshot(self) -> TemporalState:
         """Return a deep-copy snapshot (safe to read outside the lock)."""
         with self._lock:
@@ -64,10 +60,6 @@ class TemporalState:
                 "next_summary_at_s": self.next_summary_at_s,
                 "last_present": copy.deepcopy(self.last_present),
             }
-
-    # ------------------------------------------------------------------
-    # Mutators
-    # ------------------------------------------------------------------
 
     def update_from_window(
         self,

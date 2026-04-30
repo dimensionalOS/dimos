@@ -54,11 +54,6 @@ def _open_shm_with_retry(name: str) -> SharedMemory:
     raise FileNotFoundError(f"SHM not found after {tries} retries: {name}") from last
 
 
-# ---------------------------
-# 1) Abstract interface
-# ---------------------------
-
-
 class FrameChannel(ABC):
     """Single-slot 'freshest frame' IPC channel with a tiny control block.
     - Double-buffered to avoid torn reads.
@@ -76,7 +71,7 @@ class FrameChannel(ABC):
 
     @property
     @abstractmethod
-    def dtype(self) -> np.dtype: ...  # type: ignore[type-arg]
+    def dtype(self) -> np.dtype: ...
 
     @abstractmethod
     def publish(self, frame, length: int | None = None) -> None:  # type: ignore[no-untyped-def]
@@ -125,11 +120,6 @@ def _safe_unlink(name: str) -> None:
         pass
 
 
-# ---------------------------
-# 2) CPU shared-memory backend
-# ---------------------------
-
-
 class CpuShmChannel(FrameChannel):
     def __init__(  # type: ignore[no-untyped-def]
         self,
@@ -165,7 +155,7 @@ class CpuShmChannel(FrameChannel):
             self._shm_ctrl, own_c = _create_or_open(ctrl_name, 24)
             self._is_owner = own_d and own_c
 
-        self._ctrl = np.ndarray((3,), dtype=np.int64, buffer=self._shm_ctrl.buf)  # type: ignore[var-annotated]
+        self._ctrl = np.ndarray((3,), dtype=np.int64, buffer=self._shm_ctrl.buf)
         if self._is_owner:
             self._ctrl[:] = 0  # initialize only once
 
@@ -208,7 +198,7 @@ class CpuShmChannel(FrameChannel):
         assert frame.shape == self._shape and frame.dtype == self._dtype
         active = int(self._ctrl[2])
         inactive = 1 - active
-        view = np.ndarray(  # type: ignore[var-annotated]
+        view = np.ndarray(
             self._shape,
             dtype=self._dtype,
             buffer=self._shm_data.buf,
@@ -230,7 +220,7 @@ class CpuShmChannel(FrameChannel):
             seq1 = int(self._ctrl[0])
             idx = int(self._ctrl[2])
             ts = int(self._ctrl[1])
-            view = np.ndarray(  # type: ignore[var-annotated]
+            view = np.ndarray(
                 self._shape, dtype=self._dtype, buffer=self._shm_data.buf, offset=idx * self._nbytes
             )
             if seq1 == int(self._ctrl[0]):
@@ -300,11 +290,6 @@ class CpuShmChannel(FrameChannel):
             pass
 
 
-# ---------------------------
-# 3) Factories
-# ---------------------------
-
-
 class CPU_IPC_Factory:
     """Creates/attaches CPU shared-memory channels."""
 
@@ -316,11 +301,6 @@ class CPU_IPC_Factory:
     def attach(desc: dict) -> CpuShmChannel:  # type: ignore[type-arg]
         assert desc.get("kind") == "cpu", "Descriptor kind mismatch"
         return CpuShmChannel.attach(desc)  # type: ignore[arg-type, no-any-return]
-
-
-# ---------------------------
-# 4) Runtime selector
-# ---------------------------
 
 
 def make_frame_channel(  # type: ignore[no-untyped-def]

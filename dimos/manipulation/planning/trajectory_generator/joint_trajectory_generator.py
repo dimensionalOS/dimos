@@ -32,7 +32,8 @@ Trapezoidal Profile:
 
 import math
 
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
 class JointTrajectoryGenerator:

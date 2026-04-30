@@ -8,6 +8,13 @@ NC='\033[0m'
 ROOT=$(git rev-parse --show-toplevel)
 cd $ROOT
 
+# Glob patterns (matched against directory name) to ignore
+IGNORE_GLOBS=(
+    ".lfs"
+    "*-wal"
+    "*-shm"
+)
+
 new_data=()
 
 # Enable nullglob to make globs expand to nothing when not matching
@@ -19,8 +26,15 @@ for dir_path in data/*; do
     # Extract directory name
     dir_name=$(basename "$dir_path")
 
-    # Skip .lfs directory if it exists
-    [ "$dir_name" = ".lfs" ] && continue
+    # Skip ignored directories
+    skip=0
+    for pat in "${IGNORE_GLOBS[@]}"; do
+        if [[ "$dir_name" == $pat ]]; then
+            skip=1
+            break
+        fi
+    done
+    [ "$skip" = "1" ] && continue
 
     # Define compressed file path
     compressed_file="data/.lfs/${dir_name}.tar.gz"

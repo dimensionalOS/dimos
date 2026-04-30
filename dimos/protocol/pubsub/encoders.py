@@ -20,8 +20,7 @@ from abc import ABC, abstractmethod
 import pickle
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
 
-from dimos.msgs import DimosMsg
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.protocol import DimosMsg
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -114,17 +113,3 @@ class LCMEncoderMixin(PubSubEncoderMixin[LCMTopicProto, DimosMsg, bytes]):
         if topic.lcm_type is None:
             raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no lcm_type")
         return topic.lcm_type.lcm_decode(msg)
-
-
-class JpegEncoderMixin(PubSubEncoderMixin[LCMTopicProto, Image, bytes]):
-    """Encoder mixin for DimosMsg using JPEG encoding (for images)."""
-
-    def encode(self, msg: Image, _: LCMTopicProto) -> bytes:
-        return msg.lcm_jpeg_encode()
-
-    def decode(self, msg: bytes, topic: LCMTopicProto) -> Image:
-        if topic.topic == "LCM_SELF_TEST":
-            raise DecodingError("Ignoring LCM_SELF_TEST topic")
-        if topic.lcm_type is None:
-            raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no lcm_type")
-        return cast("type[Image]", topic.lcm_type).lcm_jpeg_decode(msg)

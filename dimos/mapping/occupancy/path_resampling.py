@@ -16,10 +16,13 @@
 import math
 
 import numpy as np
-from scipy.ndimage import uniform_filter1d  # type: ignore[import-untyped]
+from scipy.ndimage import uniform_filter1d
 
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Vector3
-from dimos.msgs.nav_msgs import Path
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 

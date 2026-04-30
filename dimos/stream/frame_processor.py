@@ -93,10 +93,10 @@ class FrameProcessor:
 
     def compute_optical_flow(
         self,
-        acc: tuple[np.ndarray, np.ndarray, float | None],  # type: ignore[type-arg]
-        current_frame: np.ndarray,  # type: ignore[type-arg]
+        acc: tuple[np.ndarray, np.ndarray, float | None],
+        current_frame: np.ndarray,
         compute_relevancy: bool = True,
-    ) -> tuple[np.ndarray, np.ndarray, float | None]:  # type: ignore[type-arg]
+    ) -> tuple[np.ndarray, np.ndarray, float | None]:
         """Computes optical flow between consecutive frames.
 
         Uses the Farneback algorithm to compute dense optical flow between the
@@ -153,8 +153,6 @@ class FrameProcessor:
         hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)  # type: ignore[call-overload]
         rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
         return rgb
-
-    # ==============================
 
     def process_stream_edge_detection(self, frame_stream):  # type: ignore[no-untyped-def]
         return frame_stream.pipe(

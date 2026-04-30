@@ -15,41 +15,44 @@
 import asyncio
 import os
 import time
+from typing import Any
 
 import pytest
 from reactivex import operators as ops
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import Transform
-from dimos.msgs.sensor_msgs import Image
+from dimos.memory.timeseries.legacy import LegacyPickleStore
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger()
 
 
+class VideoReplayConfig(ModuleConfig):
+    video_path: str
+
+
 class VideoReplayModule(Module):
-    """Module that replays video data from TimedSensorReplay."""
+    """Module that replays video data from LegacyPickleStore."""
+
+    config: VideoReplayConfig
 
     video_out: Out[Image]
-
-    def __init__(self, video_path: str) -> None:
-        super().__init__()
-        self.video_path = video_path
-        self._subscription = None
+    _subscription = None
 
     @rpc
     def start(self) -> None:
         """Start replaying video data."""
-        # Use TimedSensorReplay to replay video frames
-        video_replay = TimedSensorReplay(self.video_path, autocast=Image.from_numpy)
+        # Use LegacyPickleStore to replay video frames
+        video_replay = LegacyPickleStore(self.config.video_path, autocast=Image.from_numpy)
 
         # Subscribe to the replay stream and publish to LCM
         self._subscription = (
@@ -75,7 +78,7 @@ class VideoReplayModule(Module):
 class OdometryReplayModule(Module):
     """Module that replays odometry data and publishes to the tf system."""
 
-    def __init__(self, odom_path: str) -> None:
+    def __init__(self, odom_path: str, **kwargs: Any) -> None:
         super().__init__()
         self.odom_path = odom_path
         self._subscription = None
@@ -87,8 +90,8 @@ class OdometryReplayModule(Module):
     @rpc
     def start(self) -> None:
         """Start replaying odometry data."""
-        # Use TimedSensorReplay to replay odometry
-        odom_replay = TimedSensorReplay(self.odom_path, autocast=Odometry.from_msg)
+        # Use LegacyPickleStore to replay odometry
+        odom_replay = LegacyPickleStore(self.odom_path, autocast=Odometry.from_msg)
 
         # Subscribe to the replay stream and publish to tf
         self._subscription = (
@@ -125,7 +128,7 @@ def dimos():
 @pytest.mark.skipif_in_ci
 @pytest.mark.asyncio
 async def test_spatial_memory_module_with_replay(dimos, tmp_path):
-    """Test SpatialMemory module with TimedSensorReplay inputs."""
+    """Test SpatialMemory module with LegacyPickleStore inputs."""
     # Get test data paths
     data_path = get_data("unitree_office_walk")
     video_path = os.path.join(data_path, "video")
@@ -133,11 +136,11 @@ async def test_spatial_memory_module_with_replay(dimos, tmp_path):
 
     # Deploy modules
     # Video replay module
-    video_module = dimos.deploy(VideoReplayModule, video_path)
+    video_module = dimos.deploy(VideoReplayModule, video_path=video_path)
     video_module.video_out.transport = LCMTransport("/test_video", Image)
 
     # Odometry replay module (publishes to tf system directly)
-    odom_module = dimos.deploy(OdometryReplayModule, odom_path)
+    odom_module = dimos.deploy(OdometryReplayModule, odom_path=odom_path)
 
     # Spatial memory module
     spatial_memory = dimos.deploy(

@@ -25,12 +25,14 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseArray
+from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.msgs.geometry_msgs.PoseArray import PoseArray
+from dimos.perception.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import quaternion_to_euler
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 logger = setup_logger()
 
@@ -40,12 +42,8 @@ class GraspingModule(Module):
 
     grasps: Out[PoseArray]
 
-    rpc_calls: list[str] = [
-        "ObjectSceneRegistrationModule.get_object_pointcloud_by_name",
-        "ObjectSceneRegistrationModule.get_object_pointcloud_by_object_id",
-        "ObjectSceneRegistrationModule.get_full_scene_pointcloud",
-        "GraspGenModule.generate_grasps",
-    ]
+    _scene_registration: ObjectSceneRegistrationSpec
+    _grasp_gen: GraspGenSpec
 
     @rpc
     def start(self) -> None:
@@ -85,10 +83,9 @@ class GraspingModule(Module):
         if filter_collisions:
             scene_pc = self._get_scene_pointcloud(exclude_object_id=object_id)
 
-        # Call GraspGenModule RPC (running in Docker)
+        # Call GraspGenModule (running in Docker)
         try:
-            generate = self.get_rpc_calls("GraspGenModule.generate_grasps")
-            result = generate(pc, scene_pc)
+            result = self._grasp_gen.generate_grasps(pc, scene_pc)
         except Exception as e:
             msg = f"Grasp generation failed: {e}"
             logger.error(msg)
@@ -111,15 +108,9 @@ class GraspingModule(Module):
         """Fetch object pointcloud from perception."""
         try:
             if object_id is not None:
-                get_pc = self.get_rpc_calls(
-                    "ObjectSceneRegistrationModule.get_object_pointcloud_by_object_id"
-                )
-                return get_pc(object_id)  # type: ignore[no-any-return]
+                return self._scene_registration.get_object_pointcloud_by_object_id(object_id)
 
-            get_pc = self.get_rpc_calls(
-                "ObjectSceneRegistrationModule.get_object_pointcloud_by_name"
-            )
-            return get_pc(object_name)  # type: ignore[no-any-return]
+            return self._scene_registration.get_object_pointcloud_by_name(object_name)
         except Exception as e:
             logger.error(f"Failed to get object pointcloud: {e}")
             return None
@@ -127,10 +118,9 @@ class GraspingModule(Module):
     def _get_scene_pointcloud(self, exclude_object_id: str | None = None) -> PointCloud2 | None:
         """Fetch scene pointcloud from perception for collision filtering."""
         try:
-            get_scene = self.get_rpc_calls(
-                "ObjectSceneRegistrationModule.get_full_scene_pointcloud"
+            return self._scene_registration.get_full_scene_pointcloud(
+                exclude_object_id=exclude_object_id
             )
-            return get_scene(exclude_object_id=exclude_object_id)  # type: ignore[no-any-return]
         except Exception as e:
             logger.debug(f"Could not get scene pointcloud: {e}")
             return None
@@ -145,7 +135,3 @@ class GraspingModule(Module):
             f"Best grasp: pos=({pos.x:.4f}, {pos.y:.4f}, {pos.z:.4f}), "
             f"rpy=({rpy.x:.1f}, {rpy.y:.1f}, {rpy.z:.1f}) degrees"
         )
-
-
-grasping_module = GraspingModule.blueprint
-__all__ = ["GraspingModule", "grasping_module"]

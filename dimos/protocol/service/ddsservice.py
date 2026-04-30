@@ -14,9 +14,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 try:
     from cyclonedds.domain import DomainParticipant
@@ -26,7 +25,7 @@ except ImportError:
     DDS_AVAILABLE = False
     DomainParticipant = None  # type: ignore[assignment, misc]
 
-from dimos.protocol.service.spec import Service
+from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -38,19 +37,15 @@ _participants: dict[int, DomainParticipant] = {}
 _participants_lock = threading.Lock()
 
 
-@dataclass
-class DDSConfig:
+class DDSConfig(BaseConfig):
     """Configuration for DDS service."""
 
     domain_id: int = 0
     qos: Qos | None = None
 
 
-class DDSService(Service[DDSConfig]):
-    default_config = DDSConfig
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+class DDSService(Service):
+    config: DDSConfig
 
     def start(self) -> None:
         """Start the DDS service."""

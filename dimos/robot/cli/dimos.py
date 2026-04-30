@@ -14,23 +14,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from contextlib import suppress
 from datetime import datetime, timezone
 import inspect
 import json
 import os
+from pathlib import Path
 import sys
 import time
-from typing import Any, get_args, get_origin
+import types
+from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 
 import click
 from dotenv import load_dotenv
+from pydantic import BaseModel
+from pydantic_core import PydanticUndefined
 import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
+from dimos.constants import CONFIG_DIR, LOG_DIR
+from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 
 logger = setup_logger()
 
@@ -108,31 +119,108 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 
 
+def arg_help(
+    config: type[BaseModel],
+    blueprint: Blueprint,
+    indent: str = "    ",
+    module: str = "",
+    _atom: BlueprintAtom | None = None,
+) -> str:
+    output = ""
+    for k, info in config.model_fields.items():
+        if k == "g":
+            continue
+        t = info.annotation
+        if isinstance(t, types.GenericAlias):
+            # Can't be specified on CLI
+            continue
+
+        # TODO(PY314): if isinstance(t, Union):
+        if get_origin(t) in {Union, types.UnionType}:
+            with suppress(StopIteration):
+                t = next(u for u in get_args(t) if issubclass(u, BaseModel))
+
+        if inspect.isclass(t) and issubclass(t, BaseModel):
+            output += f"{indent}{module}{k}:\n"
+            # Find blueprint atom
+            bp = next(bp for bp in blueprint.blueprints if bp.module.name == k)
+            output += arg_help(
+                t, blueprint, indent=indent + "  ", module=module + k + ".", _atom=bp
+            )
+        else:
+            assert _atom is not None
+            # Use __name__ to avoid "<class 'int'>" style output on basic types.
+            display_type = t.__name__ if isinstance(t, type) else t
+            required = "[Required] " if info.is_required() and k not in _atom.kwargs else ""
+            d = _atom.kwargs.get(k, info.default)
+            default = f" (default: {d})" if d is not PydanticUndefined else ""
+            output += f"{indent}* {required}{module}{k}: {display_type}{default}\n"
+    return output
+
+
+def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -> dict[str, Any]:
+    try:
+        kwargs = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        kwargs = {}
+
+    for k, v in os.environ.items():
+        parts = k.lower().split("__")
+        if parts[0] not in config.model_fields:
+            continue
+        d = kwargs
+        for p in parts[:-1]:
+            d = d.setdefault(p, {})
+        d[parts[-1]] = v
+
+    for arg in args:
+        k, _, v = arg.partition("=")
+        parts = k.split(".")
+        d = kwargs
+        for p in parts[:-1]:
+            d = d.setdefault(p, {})
+        d[parts[-1]] = v
+
+    # We don't need this config, but this atleast validates the user input first.
+    # This will help catch misspellings and similar mistakes.
+    config(**kwargs)
+
+    return kwargs  # type: ignore[no-any-return]
+
+
 @main.command()
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    blueprint_args: list[str] = typer.Option((), "--option", "-o"),
+    config_path: Path = typer.Option(
+        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+    ),
+    show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
     logger.info("Starting DimOS")
 
-    from dimos.core.blueprints import autoconnect
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.core.coordination.process_lifecycle import (
+        DIMOS_RUN_ID_ENV,
+        spawn_watchdog,
+    )
     from dimos.core.run_registry import (
-        LOG_BASE_DIR,
         RunEntry,
         check_port_conflicts,
         cleanup_stale,
         generate_run_id,
     )
-    from dimos.robot.get_all_blueprints import get_by_name, get_module_by_name
+    from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
-    global_config.update(**cli_config_overrides)
 
     # Clean stale registry entries
     stale = cleanup_stale()
@@ -151,35 +239,45 @@ def run(
 
     blueprint_name = "-".join(robot_types)
     run_id = generate_run_id(blueprint_name)
-    log_dir = LOG_BASE_DIR / run_id
+    log_dir = LOG_DIR / run_id
+
+    # Tag every descendant with the run id so the watchdog and stale-run
+    # cleanup can identify them via os.environ after main dies.
+    os.environ[DIMOS_RUN_ID_ENV] = run_id
 
     # Route structured logs (main.jsonl) to the per-run directory.
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
     set_run_log_dir(log_dir)
 
-    blueprint = autoconnect(*map(get_by_name, robot_types))
+    blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
 
     if disable:
-        disabled_classes = tuple(get_module_by_name(name).blueprints[0].module for name in disable)
+        disabled_classes = tuple(
+            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
+        )
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
-    coordinator = blueprint.build(cli_config_overrides=cli_config_overrides)
+    if show_help:
+        print("Blueprint arguments:")
+        print(arg_help(blueprint.config(), blueprint))
+        return
+
+    blueprint_config = blueprint.config()
+    kwargs = load_config_args(blueprint_config, blueprint_args, config_path)
+    if cli_config_overrides:
+        kwargs["g"] = cli_config_overrides
+
+    coordinator = ModuleCoordinator.build(blueprint, kwargs)
 
     if daemon:
-        from dimos.core.daemon import (
-            daemonize,
-            install_signal_handlers,
-        )
-
         # Health check before daemonizing — catch early crashes
         if not coordinator.health_check():
             typer.echo("Error: health check failed — a worker process died.", err=True)
             coordinator.stop()
             raise typer.Exit(1)
 
-        n_workers = coordinator.n_workers
         n_modules = coordinator.n_modules
-        typer.echo(f"✓ All modules started ({n_modules} modules, {n_workers} workers)")
+        typer.echo(f"✓ All modules started ({n_modules} modules)")
         typer.echo("✓ Health check passed")
         typer.echo("✓ DimOS running in background\n")
         typer.echo(f"  Run ID:    {run_id}")
@@ -191,6 +289,7 @@ def run(
 
         daemonize(log_dir)
 
+        rpyc_port = coordinator.start_rpyc_service()  # After daemonize().
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -199,12 +298,15 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
+        spawn_watchdog(run_id, log_dir=log_dir)
         install_signal_handlers(entry, coordinator)
         coordinator.loop()
     else:
+        rpyc_port = coordinator.start_rpyc_service()
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -213,9 +315,15 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
+        spawn_watchdog(run_id, log_dir=log_dir)
+        # Foreground: only SIGTERM goes through the handler. SIGINT stays at
+        # default so Ctrl+C raises KeyboardInterrupt and the try/finally below
+        # runs with a visible traceback.
+        install_signal_handlers(entry, coordinator, sigint=False)
         try:
             coordinator.loop()
         finally:

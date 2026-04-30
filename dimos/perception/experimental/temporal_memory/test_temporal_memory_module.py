@@ -20,28 +20,30 @@ import json
 import os
 import threading
 import time
-from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock, create_autospec, patch
 
 from dotenv import load_dotenv
 import numpy as np
 import pytest
 from reactivex import operators as ops
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import Image
-from dimos.perception.experimental.temporal_memory import (
+from dimos.models.vl.base import VlModel
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
+from dimos.perception.experimental.temporal_memory.frame_window_accumulator import (
     Frame,
     FrameWindowAccumulator,
-    TemporalMemory,
-    TemporalMemoryConfig,
-    TemporalState,
 )
-from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
+from dimos.perception.experimental.temporal_memory.temporal_memory import (
+    TemporalMemory,
+)
+from dimos.perception.experimental.temporal_memory.temporal_state import TemporalState
 from dimos.perception.experimental.temporal_memory.temporal_utils.graph_utils import (
     extract_time_window,
 )
@@ -61,11 +63,6 @@ logger = setup_logger()
 def _make_image(value: int = 128, shape: tuple[int, ...] = (64, 64, 3)) -> Image:
     data = np.full(shape, value, dtype=np.uint8)
     return Image.from_numpy(data)
-
-
-# ======================================================================
-# 1. FrameWindowAccumulator tests
-# ======================================================================
 
 
 class TestFrameWindowAccumulator:
@@ -122,11 +119,6 @@ class TestFrameWindowAccumulator:
         assert acc.buffer_size == 1
         acc.clear()
         assert acc.buffer_size == 0
-
-
-# ======================================================================
-# 2. TemporalState tests
-# ======================================================================
 
 
 class TestTemporalState:
@@ -225,11 +217,6 @@ class TestTemporalState:
         assert "E2" in ids
 
 
-# ======================================================================
-# 3. extract_time_window (regex-only) tests
-# ======================================================================
-
-
 class TestExtractTimeWindow:
     def test_keyword_patterns(self) -> None:
         assert extract_time_window("just now") == 60
@@ -245,11 +232,6 @@ class TestExtractTimeWindow:
     def test_no_time_reference(self) -> None:
         assert extract_time_window("what entities are visible?") is None
         assert extract_time_window("is there a person?") is None
-
-
-# ======================================================================
-# 4. EntityGraphDB tests
-# ======================================================================
 
 
 class TestEntityGraphDB:
@@ -314,11 +296,6 @@ class TestEntityGraphDB:
         assert "semantic_relations" not in stats
 
 
-# ======================================================================
-# 5. Persistence test (new_memory flag)
-# ======================================================================
-
-
 class TestPersistence:
     def test_new_memory_clears_db(self, tmp_path: Path) -> None:
         db_dir = tmp_path / "memory" / "temporal"
@@ -337,8 +314,9 @@ class TestPersistence:
             return_value=None,
         ):
             tm = TemporalMemory(
-                vlm=MagicMock(),
-                config=TemporalMemoryConfig(db_dir=str(db_dir), new_memory=True),
+                vlm=create_autospec(VlModel, spec_set=True, instance=True),
+                db_dir=str(db_dir),
+                new_memory=True,
             )
             # DB should be empty since we cleared it
             stats = tm._graph_db.get_stats()
@@ -361,17 +339,13 @@ class TestPersistence:
             return_value=None,
         ):
             tm = TemporalMemory(
-                vlm=MagicMock(),
-                config=TemporalMemoryConfig(db_dir=str(db_dir), new_memory=False),
+                vlm=create_autospec(VlModel, spec_set=True, instance=True),
+                db_dir=str(db_dir),
+                new_memory=False,
             )
             stats = tm._graph_db.get_stats()
             assert stats["entities"] == 1
             tm.stop()
-
-
-# ======================================================================
-# 6. Per-run JSONL logging test
-# ======================================================================
 
 
 class TestJSONLLogging:
@@ -386,8 +360,8 @@ class TestJSONLLogging:
             return_value=log_dir,
         ):
             tm = TemporalMemory(
-                vlm=MagicMock(),
-                config=TemporalMemoryConfig(db_dir=str(db_dir)),
+                vlm=create_autospec(VlModel, spec_set=True, instance=True),
+                db_dir=str(db_dir),
             )
 
         jsonl_path = log_dir / "temporal_memory" / "temporal_memory.jsonl"
@@ -412,11 +386,6 @@ class TestJSONLLogging:
         tm.stop()
 
 
-# ======================================================================
-# 7. Rerun visualization test
-# ======================================================================
-
-
 class TestEntityMarkers:
     def test_publish_entity_markers(self, tmp_path: Path) -> None:
         db_dir = tmp_path / "db"
@@ -427,8 +396,9 @@ class TestEntityMarkers:
             return_value=None,
         ):
             tm = TemporalMemory(
-                vlm=MagicMock(),
-                config=TemporalMemoryConfig(db_dir=str(db_dir), visualize=True),
+                vlm=create_autospec(VlModel, spec_set=True, instance=True),
+                db_dir=str(db_dir),
+                visualize=True,
             )
 
         # Populate DB with world positions
@@ -478,16 +448,11 @@ class TestEntityMarkers:
         assert isinstance(archetype, rr.Points3D)
 
 
-# ======================================================================
-# 8. WindowAnalyzer mock tests
-# ======================================================================
-
-
 class TestWindowAnalyzer:
     def test_analyze_window_calls_vlm(self) -> None:
         from dimos.perception.experimental.temporal_memory.window_analyzer import WindowAnalyzer
 
-        mock_vlm = MagicMock()
+        mock_vlm = create_autospec(VlModel, spec_set=True, instance=True)
         mock_vlm.query.return_value = json.dumps(
             {
                 "window": {"start_s": 0.0, "end_s": 2.0},
@@ -513,7 +478,7 @@ class TestWindowAnalyzer:
     def test_analyze_window_vlm_error(self) -> None:
         from dimos.perception.experimental.temporal_memory.window_analyzer import WindowAnalyzer
 
-        mock_vlm = MagicMock()
+        mock_vlm = create_autospec(VlModel, spec_set=True, instance=True)
         mock_vlm.query.side_effect = RuntimeError("VLM error")
 
         analyzer = WindowAnalyzer(mock_vlm)
@@ -527,7 +492,7 @@ class TestWindowAnalyzer:
     def test_update_summary(self) -> None:
         from dimos.perception.experimental.temporal_memory.window_analyzer import WindowAnalyzer
 
-        mock_vlm = MagicMock()
+        mock_vlm = create_autospec(VlModel, spec_set=True, instance=True)
         mock_vlm.query.return_value = "Updated summary text"
 
         analyzer = WindowAnalyzer(mock_vlm)
@@ -540,7 +505,7 @@ class TestWindowAnalyzer:
     def test_answer_query(self) -> None:
         from dimos.perception.experimental.temporal_memory.window_analyzer import WindowAnalyzer
 
-        mock_vlm = MagicMock()
+        mock_vlm = create_autospec(VlModel, spec_set=True, instance=True)
         mock_vlm.query.return_value = "The answer is 42"
 
         analyzer = WindowAnalyzer(mock_vlm)
@@ -551,25 +516,20 @@ class TestWindowAnalyzer:
         assert result.answer == "The answer is 42"
 
 
-# ======================================================================
-# 9. Integration test with ModuleCoordinator
-# ======================================================================
-
-
 class VideoReplayModule(Module):
     """Module that replays synthetic video data for tests."""
 
     video_out: Out[Image]
 
-    def __init__(self, num_frames: int = 5) -> None:
-        super().__init__()
+    def __init__(self, num_frames: int = 5, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.num_frames = num_frames
 
     @rpc
     def start(self) -> None:
         import reactivex
 
-        def emit_frames(observer, scheduler):  # type: ignore[no-untyped-def]
+        def emit_frames(observer, scheduler):
             for i in range(self.num_frames):
                 img = _make_image(value=min(50 + i * 30, 255))  # Varying brightness
                 img.ts = time.time()
@@ -577,7 +537,7 @@ class VideoReplayModule(Module):
                 time.sleep(0.5)
             observer.on_completed()
 
-        self._disposables.add(
+        self.register_disposable(
             reactivex.create(emit_frames)
             .pipe(
                 ops.observe_on(reactivex.scheduler.NewThreadScheduler()),
@@ -635,14 +595,12 @@ class TestTemporalMemoryIntegration:
             tm = dimos_cluster.deploy(
                 TemporalMemory,
                 vlm=vlm,
-                config=TemporalMemoryConfig(
-                    fps=1.0,
-                    window_s=2.0,
-                    stride_s=2.0,
-                    summary_interval_s=10.0,
-                    max_frames_per_window=3,
-                    db_dir=str(db_dir),
-                ),
+                fps=1.0,
+                window_s=2.0,
+                stride_s=2.0,
+                summary_interval_s=10.0,
+                max_frames_per_window=3,
+                db_dir=str(db_dir),
             )
         yield tm
         try:

@@ -18,12 +18,12 @@
 
 from typing import Any
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.drone.camera_module import DroneCameraModule
 from dimos.robot.drone.connection_module import DroneConnectionModule
-from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 
 def _static_drone_body(rr: Any) -> list[Any]:
@@ -50,7 +50,7 @@ def _drone_rerun_blueprint() -> Any:
                 name="3D",
                 background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
                 line_grid=rrb.LineGrid3D(
-                    plane=rr.components.Plane3D.XY.with_distance(0.2),
+                    plane=rr.components.Plane3D.XY.with_distance(0.5),
                 ),
             ),
             column_shares=[1, 2],
@@ -68,13 +68,13 @@ _rerun_config = {
 
 # Conditional visualization
 if global_config.viewer == "foxglove":
-    from dimos.robot.foxglove_bridge import foxglove_bridge
+    from dimos.robot.foxglove_bridge import FoxgloveBridge
 
-    _vis = foxglove_bridge()
+    _vis = FoxgloveBridge.blueprint()
 elif global_config.viewer.startswith("rerun"):
-    from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
+    from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
 
-    _vis = rerun_bridge(viewer_mode=_resolve_viewer_mode(), **_rerun_config)
+    _vis = RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode(), **_rerun_config)
 else:
     _vis = autoconnect()
 
@@ -92,7 +92,7 @@ drone_basic = autoconnect(
         outdoor=False,
     ),
     DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
-    websocket_vis(),
+    WebsocketVisModule.blueprint(),
 )
 
 __all__ = [

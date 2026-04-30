@@ -24,8 +24,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.perception.detection.reid.type import IDSystem
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -38,8 +38,7 @@ class Config(ModuleConfig):
 
 
 class ReidModule(Module):
-    default_config = Config
-
+    config: Config
     detections: In[Detection2DArray]
     image: In[Image]
     annotations: Out[ImageAnnotations]
@@ -48,9 +47,9 @@ class ReidModule(Module):
         super().__init__(**kwargs)
         if idsystem is None:
             try:
-                from dimos.models.embedding import TorchReIDModel
+                from dimos.models.embedding.treid import TorchReIDModel
 
-                idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)  # type: ignore[arg-type]
+                idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)
             except Exception as e:
                 raise RuntimeError(
                     "TorchReIDModel not available. Please install with: pip install dimos[torchreid]"
@@ -67,7 +66,7 @@ class ReidModule(Module):
                 ),
                 match_tolerance=0.0,
                 buffer_size=2.0,
-            ).pipe(ops.map(lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)))  # type: ignore[misc, arg-type]
+            ).pipe(ops.map(lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)))  # type: ignore[arg-type, misc]
         )
 
     @rpc

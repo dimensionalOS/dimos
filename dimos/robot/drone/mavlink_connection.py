@@ -20,10 +20,13 @@ import logging
 import time
 from typing import Any
 
-from pymavlink import mavutil  # type: ignore[import-not-found, import-untyped]
+from pymavlink import mavutil  # type: ignore[import-untyped]
 from reactivex import Subject
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Twist, Vector3
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(level=logging.INFO)
@@ -1027,12 +1030,12 @@ class FakeMavlinkConnection(MavlinkConnection):
         # Create fake mavlink object
         class FakeMavlink:
             def __init__(self) -> None:
+                from dimos.memory.timeseries.legacy import LegacyPickleStore
                 from dimos.utils.data import get_data
-                from dimos.utils.testing import TimedSensorReplay
 
                 get_data("drone")
 
-                self.replay: Any = TimedSensorReplay("drone/mavlink")
+                self.replay: Any = LegacyPickleStore("drone/mavlink")
                 self.messages: list[dict[str, Any]] = []
                 # The stream() method returns an Observable that emits messages with timing
                 self.replay.stream().subscribe(self.messages.append)

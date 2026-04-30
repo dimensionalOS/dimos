@@ -17,23 +17,20 @@
 Available subclasses:
     - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track), task name routing
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
-    - VisualizingTeleopModule: Adds Rerun visualization (inherits press-and-hold engage)
 """
 
-from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import Field
+
+from dimos.core.core import rpc
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.teleop.quest.quest_teleop_module import Hand, QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
-from dimos.teleop.utils.teleop_visualization import (
-    visualize_buttons,
-    visualize_pose,
-)
 
 
-@dataclass
 class TwistTeleopConfig(QuestTeleopConfig):
     """Configuration for TwistTeleopModule."""
 
@@ -55,11 +52,18 @@ class TwistTeleopModule(QuestTeleopModule):
         - buttons: Buttons (inherited)
     """
 
-    default_config = TwistTeleopConfig
     config: TwistTeleopConfig
 
     left_twist: Out[TwistStamped]
     right_twist: Out[TwistStamped]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Convert PoseStamped to TwistStamped, apply scaling, and publish."""
@@ -75,7 +79,6 @@ class TwistTeleopModule(QuestTeleopModule):
             self.right_twist.publish(twist)
 
 
-@dataclass
 class ArmTeleopConfig(QuestTeleopConfig):
     """Configuration for ArmTeleopModule.
 
@@ -85,7 +88,7 @@ class ArmTeleopConfig(QuestTeleopConfig):
             hand's commands to the correct TeleopIKTask.
     """
 
-    task_names: dict[str, str] = field(default_factory=dict)
+    task_names: dict[str, str] = Field(default_factory=dict)
 
 
 class ArmTeleopModule(QuestTeleopModule):
@@ -104,11 +107,18 @@ class ArmTeleopModule(QuestTeleopModule):
         - buttons: Buttons (inherited)
     """
 
-    default_config = ArmTeleopConfig
     config: ArmTeleopConfig
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         self._task_names: dict[Hand, str] = {
             Hand[k.upper()]: v for k, v in self.config.task_names.items()
@@ -138,53 +148,3 @@ class ArmTeleopModule(QuestTeleopModule):
             right=right.trigger if right is not None else 0.0,
         )
         self.buttons.publish(buttons)
-
-
-class VisualizingTeleopModule(ArmTeleopModule):
-    """Quest teleop with Rerun visualization.
-
-    Adds visualization of controller poses and trigger values to Rerun.
-    Useful for debugging and development.
-
-    Outputs:
-        - left_controller_output: PoseStamped (inherited)
-        - right_controller_output: PoseStamped (inherited)
-        - buttons: Buttons (inherited)
-    """
-
-    def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
-        """Get output pose and visualize in Rerun."""
-        output_pose = super()._get_output_pose(hand)
-
-        if output_pose is not None:
-            current_pose = self._current_poses.get(hand)
-            controller = self._controllers.get(hand)
-            if current_pose is not None:
-                label = "left" if hand == Hand.LEFT else "right"
-                visualize_pose(current_pose, label)
-
-                if controller:
-                    visualize_buttons(
-                        label,
-                        primary=controller.primary,
-                        secondary=controller.secondary,
-                        grip=controller.grip,
-                        trigger=controller.trigger,
-                    )
-        return output_pose
-
-
-# Module blueprints for easy instantiation
-twist_teleop_module = TwistTeleopModule.blueprint
-arm_teleop_module = ArmTeleopModule.blueprint
-visualizing_teleop_module = VisualizingTeleopModule.blueprint
-
-__all__ = [
-    "ArmTeleopConfig",
-    "ArmTeleopModule",
-    "TwistTeleopModule",
-    "VisualizingTeleopModule",
-    "arm_teleop_module",
-    "twist_teleop_module",
-    "visualizing_teleop_module",
-]

@@ -100,33 +100,17 @@ Use the helper script:
 
 ## CI/CD Pipeline
 
-The workflow in [`.github/workflows/docker.yml`](/.github/workflows/docker.yml) handles:
+Images are built by [`.github/workflows/docker-build.yml`](/.github/workflows/docker-build.yml#L4) on merges to `main`/`dev` (when Docker files change) and weekly for base image security patches.
 
-1. **Change detection** - Only rebuilds images when relevant files change
-2. **Parallel builds** - ROS and non-ROS tracks build independently
-3. **Cascade rebuilds** - Changes to base images trigger downstream rebuilds
-4. **Test execution** - Tests run in the freshly built images
+Tests and type checking run in [`.github/workflows/ci.yml`](/.github/workflows/ci.yml) using pre-built images.
 
-### Trigger Paths
+### Build Trigger Paths
 
 | Image    | Triggers on changes to                               |
 |----------|------------------------------------------------------|
 | `ros`    | `docker/ros/**`, workflow files                      |
-| `python` | `docker/python/**`, `pyproject.toml`, workflow files |
+| `python` | `docker/python/**`, workflow files                   |
 | `dev`    | `docker/dev/**`                                      |
-
-### Test Jobs
-
-After images build, tests run in parallel:
-
-| Job                     | Image   | Command                   |
-|-------------------------|---------|---------------------------|
-| `run-tests`             | dev     | `pytest`                  |
-| `run-ros-tests`         | ros-dev | `pytest && pytest -m ros` |
-| `run-heavy-tests`       | dev     | `pytest -m heavy`         |
-| `run-lcm-tests`         | dev     | `pytest -m lcm`           |
-| `run-integration-tests` | dev     | `pytest -m integration`   |
-| `run-mypy`              | ros-dev | `mypy dimos`              |
 
 ## Dockerfile Structure
 

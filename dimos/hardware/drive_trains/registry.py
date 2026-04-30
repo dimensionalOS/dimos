@@ -30,25 +30,28 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import importlib
-import logging
-import pkgutil
+import os
 from typing import TYPE_CHECKING, Any
+
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.hardware.drive_trains.spec import TwistBaseAdapter
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class TwistBaseAdapterRegistry:
     """Registry for twist base adapters with auto-discovery."""
 
     def __init__(self) -> None:
-        self._adapters: dict[str, type[TwistBaseAdapter]] = {}
+        self._adapters: dict[str, type[TwistBaseAdapter] | Callable[..., TwistBaseAdapter]] = {}
 
-    def register(self, name: str, cls: type[TwistBaseAdapter]) -> None:
-        """Register an adapter class."""
+    def register(
+        self, name: str, cls: type[TwistBaseAdapter] | Callable[..., TwistBaseAdapter]
+    ) -> None:
         self._adapters[name.lower()] = cls
 
     def create(self, name: str, **kwargs: Any) -> TwistBaseAdapter:
@@ -81,15 +84,17 @@ class TwistBaseAdapterRegistry:
         """
         import dimos.hardware.drive_trains as pkg
 
-        for _, name, ispkg in pkgutil.iter_modules(pkg.__path__):
-            if not ispkg:
+        pkg_dir = pkg.__path__[0]
+        for entry in sorted(os.listdir(pkg_dir)):
+            entry_path = os.path.join(pkg_dir, entry)
+            if not os.path.isdir(entry_path) or entry.startswith(("_", ".")):
                 continue
             try:
-                module = importlib.import_module(f"dimos.hardware.drive_trains.{name}.adapter")
+                module = importlib.import_module(f"dimos.hardware.drive_trains.{entry}.adapter")
                 if hasattr(module, "register"):
                     module.register(self)
             except ImportError as e:
-                logger.warning(f"Skipping twist base adapter {name}: {e}")
+                logger.warning(f"Skipping twist base adapter {entry}: {e}")
 
 
 twist_base_adapter_registry = TwistBaseAdapterRegistry()

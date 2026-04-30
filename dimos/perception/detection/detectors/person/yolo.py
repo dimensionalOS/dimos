@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ultralytics import YOLO  # type: ignore[attr-defined, import-not-found]
+from ultralytics import YOLO  # type: ignore[attr-defined]
 
-from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.detectors.types import Detector
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.detectors.base import Detector
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger

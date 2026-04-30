@@ -12,20 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from __future__ import annotations
+
 from functools import cached_property
+from typing import overload
 
 from PIL import Image as PILImage
 import torch
 import torch.nn.functional as functional
-from transformers import CLIPModel as HFCLIPModel, CLIPProcessor  # type: ignore[import-untyped]
+from transformers import CLIPModel as HFCLIPModel, CLIPProcessor
 
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 
 
-@dataclass
 class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):
     model_name: str = "openai/clip-vit-base-patch32"
     dtype: torch.dtype = torch.float32
@@ -34,7 +35,6 @@ class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):
 class CLIPModel(EmbeddingModel, HuggingFaceModel):
     """CLIP embedding model for vision-language re-identification."""
 
-    default_config = CLIPModelConfig
     config: CLIPModelConfig
     _model_class = HFCLIPModel
 
@@ -47,6 +47,10 @@ class CLIPModel(EmbeddingModel, HuggingFaceModel):
     def _processor(self) -> CLIPProcessor:
         return CLIPProcessor.from_pretrained(self.config.model_name)
 
+    @overload
+    def embed(self, image: Image, /) -> Embedding: ...
+    @overload
+    def embed(self, *images: Image) -> list[Embedding]: ...
     def embed(self, *images: Image) -> Embedding | list[Embedding]:
         """Embed one or more images.
 
@@ -71,15 +75,19 @@ class CLIPModel(EmbeddingModel, HuggingFaceModel):
 
         return embeddings[0] if len(images) == 1 else embeddings
 
+    @overload
+    def embed_text(self, text: str, /) -> Embedding: ...
+    @overload
+    def embed_text(self, *texts: str) -> list[Embedding]: ...
     def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
         """Embed one or more text strings.
 
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
         """
         with torch.inference_mode():
-            inputs = self._processor(text=list(texts), return_tensors="pt", padding=True).to(
-                self.config.device
-            )
+            inputs = self._processor(
+                text=list(texts), return_tensors="pt", padding=True, truncation=True
+            ).to(self.config.device)
             text_features = self._model.get_text_features(**inputs)
 
             if self.config.normalize:

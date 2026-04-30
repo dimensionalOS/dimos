@@ -25,7 +25,7 @@ from dimos.utils.data import LfsPath
 
 @pytest.mark.slow
 def test_pull_file() -> None:
-    repo_root = data._get_repo_root()
+    repo_root = data.get_project_root()
     test_file_name = "cafe.jpg"
     test_file_compressed = data._get_lfs_dir() / (test_file_name + ".tar.gz")
     test_file_decompressed = data.get_data_dir() / test_file_name
@@ -81,7 +81,7 @@ def test_pull_file() -> None:
 
 @pytest.mark.slow
 def test_pull_dir() -> None:
-    repo_root = data._get_repo_root()
+    repo_root = data.get_project_root()
     test_dir_name = "ab_lidar_frames"
     test_dir_compressed = data._get_lfs_dir() / (test_dir_name + ".tar.gz")
     test_dir_decompressed = data.get_data_dir() / test_dir_name
@@ -130,11 +130,6 @@ def test_pull_dir() -> None:
         with file.open("rb") as f:
             sha256 = hashlib.sha256(f.read()).hexdigest()
             assert sha256 == expected_hash
-
-
-# ============================================================================
-# LfsPath Tests
-# ============================================================================
 
 
 def test_lfs_path_lazy_creation() -> None:

@@ -28,7 +28,7 @@ import time
 from typing import Any
 import webbrowser
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
@@ -45,15 +45,20 @@ _COMMAND_CENTER_DIR = (
     FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
 )
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
+from dimos.core.global_config import global_config
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.mapping.models import LatLon
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
-from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
-from dimos.msgs.nav_msgs import OccupancyGrid, Path
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
 
 from .optimized_costmap import OptimizedCostmapEncoder
@@ -62,6 +67,10 @@ logger = setup_logger()
 
 _browser_open_lock = threading.Lock()
 _browser_opened = False
+
+
+class WebsocketConfig(ModuleConfig):
+    port: int = 7779
 
 
 class WebsocketVisModule(Module):
@@ -83,6 +92,8 @@ class WebsocketVisModule(Module):
         - click_goal: Goal position from user clicks
     """
 
+    config: WebsocketConfig
+
     # LCM inputs
     odom: In[PoseStamped]
     gps_location: In[LatLon]
@@ -97,12 +108,7 @@ class WebsocketVisModule(Module):
     cmd_vel: Out[Twist]
     movecmd_stamped: Out[TwistStamped]
 
-    def __init__(
-        self,
-        port: int = 7779,
-        cfg: GlobalConfig = global_config,
-        **kwargs: Any,
-    ) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize the WebSocket visualization module.
 
         Args:
@@ -110,9 +116,6 @@ class WebsocketVisModule(Module):
             cfg: Optional global config for viewer settings
         """
         super().__init__(**kwargs)
-        self._global_config = cfg
-
-        self.port = port
         self._uvicorn_server_thread: threading.Thread | None = None
         self.sio: socketio.AsyncServer | None = None
         self.app = None
@@ -127,7 +130,7 @@ class WebsocketVisModule(Module):
         # Track GPS goal points for visualization
         self.gps_goal_points: list[dict[str, float]] = []
         logger.info(
-            f"WebSocket visualization module initialized on port {port}, GPS goal tracking enabled"
+            f"WebSocket visualization module initialized on port {self.config.port}, GPS goal tracking enabled"
         )
 
     def _start_broadcast_loop(self) -> None:
@@ -157,8 +160,8 @@ class WebsocketVisModule(Module):
 
         # Auto-open browser only for rerun-web (dashboard with Rerun iframe + command center)
         # For rerun and foxglove, users access the command center manually if needed
-        if self._global_config.viewer == "rerun-web":
-            url = f"http://localhost:{self.port}/"
+        if self.config.g.viewer == "rerun-web":
+            url = f"http://localhost:{self.config.port}/"
             logger.info(f"Dimensional Command Center: {url}")
 
             global _browser_opened
@@ -172,25 +175,25 @@ class WebsocketVisModule(Module):
 
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 
         try:
             unsub = self.gps_location.subscribe(self._on_gps_location)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 
         try:
             unsub = self.path.subscribe(self._on_path)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 
         try:
             unsub = self.global_costmap.subscribe(self._on_global_costmap)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 
@@ -214,10 +217,10 @@ class WebsocketVisModule(Module):
             self._broadcast_loop.call_soon_threadsafe(self._broadcast_loop.stop)
 
         if self._broadcast_thread and self._broadcast_thread.is_alive():
-            self._broadcast_thread.join(timeout=1.0)
+            self._broadcast_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         if self._uvicorn_server_thread and self._uvicorn_server_thread.is_alive():
-            self._uvicorn_server_thread.join(timeout=2.0)
+            self._uvicorn_server_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 
@@ -234,7 +237,7 @@ class WebsocketVisModule(Module):
         async def serve_index(request):  # type: ignore[no-untyped-def]
             """Serve appropriate HTML based on viewer mode."""
             # If running native Rerun, redirect to standalone command center
-            if self._global_config.viewer != "rerun-web":
+            if self.config.g.viewer != "rerun-web":
                 return RedirectResponse(url="/command-center")
 
             # Otherwise serve full dashboard with Rerun iframe
@@ -354,8 +357,8 @@ class WebsocketVisModule(Module):
     def _run_uvicorn_server(self) -> None:
         config = uvicorn.Config(
             self.app,  # type: ignore[arg-type]
-            host="0.0.0.0",
-            port=self.port,
+            host=global_config.listen_host,
+            port=self.config.port,
             log_level="error",  # Reduce verbosity
         )
         self._uvicorn_server = uvicorn.Server(config)
@@ -401,8 +404,3 @@ class WebsocketVisModule(Module):
     def _emit(self, event: str, data: Any) -> None:
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             asyncio.run_coroutine_threadsafe(self.sio.emit(event, data), self._broadcast_loop)
-
-
-websocket_vis = WebsocketVisModule.blueprint
-
-__all__ = ["WebsocketVisModule", "websocket_vis"]

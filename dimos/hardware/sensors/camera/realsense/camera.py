@@ -15,19 +15,20 @@
 from __future__ import annotations
 
 import atexit
-from dataclasses import dataclass, field
 import threading
 import time
 from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
+from pydantic import Field
 import reactivex as rx
-from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
+from scipy.spatial.transform import Rotation
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
@@ -35,8 +36,10 @@ from dimos.hardware.sensors.camera.spec import (
     DepthCameraConfig,
     DepthCameraHardware,
 )
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import CameraInfo
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.foxglove_bridge import FoxgloveBridge
@@ -44,7 +47,7 @@ from dimos.spec import perception
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
-    import pyrealsense2 as rs  # type: ignore[import-untyped,import-not-found]
+    import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
 
 
 def default_base_transform() -> Transform:
@@ -55,14 +58,13 @@ def default_base_transform() -> Transform:
     )
 
 
-@dataclass
 class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
     fps: int = 15
     camera_name: str = "camera"
     base_frame_id: str = "base_link"
-    base_transform: Transform | None = field(default_factory=default_base_transform)
+    base_transform: Transform | None = Field(default_factory=default_base_transform)
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_pointcloud: bool = False
@@ -72,14 +74,12 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
 
 
 class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
+    config: RealSenseCameraConfig
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
-
-    config: RealSenseCameraConfig
-    default_config = RealSenseCameraConfig
 
     @property
     def _camera_link(self) -> str:
@@ -119,7 +119,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
     @rpc
     def start(self) -> None:
-        import pyrealsense2 as rs  # type: ignore[import-untyped,import-not-found]
+        import pyrealsense2 as rs
 
         self._pipeline = rs.pipeline()
         config = rs.config()
@@ -162,7 +162,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
         if self.config.enable_pointcloud and self.config.enable_depth:
             interval_sec = 1.0 / self.config.pointcloud_fps
-            self._disposables.add(
+            self.register_disposable(
                 backpressure(rx.interval(interval_sec)).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
                     on_error=lambda e: print(f"Pointcloud error: {e}"),
@@ -170,7 +170,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
 
         interval_sec = 1.0 / self.config.camera_info_fps
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(interval_sec).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
                 on_error=lambda e: print(f"CameraInfo error: {e}"),
@@ -187,7 +187,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self.depth_camera_info.publish(self._depth_camera_info)
 
     def _build_camera_info(self) -> None:
-        import pyrealsense2 as rs  # type: ignore[import-untyped,import-not-found]
+        import pyrealsense2 as rs
 
         if self._profile is None:
             return
@@ -214,7 +214,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 )
 
     def _intrinsics_to_camera_info(self, intrinsics: rs.intrinsics, frame_id: str) -> CameraInfo:
-        import pyrealsense2 as rs  # type: ignore[import-untyped,import-not-found]
+        import pyrealsense2 as rs
 
         fx, fy = intrinsics.fx, intrinsics.fy
         cx, cy = intrinsics.ppx, intrinsics.ppy
@@ -243,7 +243,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
         )
 
     def _get_extrinsics(self) -> None:
-        import pyrealsense2 as rs  # type: ignore[import-untyped,import-not-found]
+        import pyrealsense2 as rs
 
         if self._profile is None or not self.config.enable_depth:
             return
@@ -419,7 +419,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
         # Now join the thread (should exit quickly since pipeline is stopped)
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             if self._thread.is_alive():
                 # Force thread termination by clearing reference
                 self._thread = None
@@ -445,10 +445,10 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
 
 def main() -> None:
-    dimos = ModuleCoordinator(n=2)
+    dimos = ModuleCoordinator()
     dimos.start()
 
-    camera = dimos.deploy(RealSenseCamera, enable_pointcloud=True, pointcloud_fps=5.0)  # type: ignore[type-var]
+    camera = dimos.deploy(RealSenseCamera, enable_pointcloud=True, pointcloud_fps=5.0)
     foxglove_bridge = FoxgloveBridge()
     foxglove_bridge.start()
 
@@ -479,8 +479,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-realsense_camera = RealSenseCamera.blueprint
-
-__all__ = ["RealSenseCamera", "RealSenseCameraConfig", "realsense_camera"]

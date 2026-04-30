@@ -19,8 +19,11 @@ Available subclasses:
     - SimplePhoneTeleop: Filters to ground robot axes and outputs cmd_vel: Out[Twist]
 """
 
+from dimos.core.core import rpc
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.teleop.phone.phone_teleop_module import PhoneTeleopModule
 
 
@@ -34,6 +37,14 @@ class SimplePhoneTeleop(PhoneTeleopModule):
 
     cmd_vel: Out[Twist]
 
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
     def _publish_msg(self, output_msg: TwistStamped) -> None:
         self.cmd_vel.publish(
             Twist(
@@ -41,11 +52,3 @@ class SimplePhoneTeleop(PhoneTeleopModule):
                 angular=Vector3(x=0.0, y=0.0, z=output_msg.linear.z),
             )
         )
-
-
-simple_phone_teleop_module = SimplePhoneTeleop.blueprint
-
-__all__ = [
-    "SimplePhoneTeleop",
-    "simple_phone_teleop_module",
-]

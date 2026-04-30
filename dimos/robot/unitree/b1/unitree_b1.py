@@ -23,12 +23,13 @@ Uses standard Twist interface for velocity commands.
 import logging
 import os
 
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.resource import Resource
 from dimos.core.transport import LCMTransport, ROSTransport
-from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.std_msgs import Int32
+from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.robot import Robot
 from dimos.robot.unitree.b1.connection import (
@@ -79,7 +80,7 @@ class UnitreeB1(Robot, Resource):
         self.capabilities = [RobotCapability.LOCOMOTION]
         self.connection = None
         self.joystick = None
-        self._dimos = ModuleCoordinator(n=2)
+        self._dimos = ModuleCoordinator()
 
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
@@ -92,9 +93,9 @@ class UnitreeB1(Robot, Resource):
 
         logger.info("Deploying connection module...")
         if self.test_mode:
-            self.connection = self._dimos.deploy(MockB1ConnectionModule, self.ip, self.port)  # type: ignore[assignment]
+            self.connection = self._dimos.deploy(MockB1ConnectionModule, ip=self.ip, port=self.port)  # type: ignore[assignment]
         else:
-            self.connection = self._dimos.deploy(B1ConnectionModule, self.ip, self.port)  # type: ignore[assignment]
+            self.connection = self._dimos.deploy(B1ConnectionModule, ip=self.ip, port=self.port)  # type: ignore[assignment]
 
         # Configure LCM transports for connection (matching G1 pattern)
         self.connection.cmd_vel.transport = LCMTransport("/cmd_vel", TwistStamped)  # type: ignore[attr-defined]

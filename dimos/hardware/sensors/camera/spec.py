@@ -13,29 +13,28 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Generic, Protocol, TypeVar
 
 from reactivex.observable import Observable
 
-from dimos.msgs.geometry_msgs import Quaternion, Transform
-from dimos.msgs.sensor_msgs import CameraInfo
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
+from dimos.protocol.service.spec import BaseConfig, Configurable
 
 OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
 
 
-class CameraConfig(Protocol):
+class CameraConfig(BaseConfig):
     frame_id_prefix: str | None
     width: int
     height: int
     fps: int | float
 
 
-CameraConfigT = TypeVar("CameraConfigT", bound=CameraConfig)
+class CameraHardware(ABC, Configurable):
+    config: CameraConfig
 
-
-class CameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
     @abstractmethod
     def image_stream(self) -> Observable[Image]:
         pass
@@ -61,8 +60,6 @@ class DepthCameraConfig(CameraConfig):
 
 class DepthCameraHardware(ABC):
     """Abstract class for depth camera modules (RealSense, ZED, etc.)."""
-
-    config: DepthCameraConfig
 
     @abstractmethod
     def get_color_camera_info(self) -> CameraInfo | None:

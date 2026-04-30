@@ -24,10 +24,15 @@ from dimos_lcm.geometry_msgs import Pose
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.vision_msgs import Detection3D as ROSDetection3D, Detection3DArray
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection3D import Detection3D as ROSDetection3D
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.detection3d.base import Detection3D
 
@@ -64,24 +69,20 @@ class Object(Detection3D):
         Args:
             other: Another Object instance with newer detection data.
         """
-        # Accumulate pointclouds if transforms are available
-        if other.camera_transform is not None:
-            # Transform new pointcloud to world frame and add to existing
-            # transformed_pc = other.pointcloud.transform(other.camera_transform)
-            # self.pointcloud = self.pointcloud + transformed_pc
-
-            # Recompute center from accumulated pointcloud
-            self.pointcloud = other.pointcloud
-            pc_center = other.pointcloud.center
-            self.center = Vector3(pc_center.x, pc_center.y, pc_center.z)
+        # Accumulate pointclouds (both are already in world frame) for visualization,
+        # but use the latest single-detection geometry for obstacle sizing.
+        # Recomputing size from accumulated clouds inflates obstacles unrealistically.
+        if other.camera_transform is not None and self.camera_transform is not None:
+            self.pointcloud = self.pointcloud + other.pointcloud
         else:
-            # No transform available, just replace
             self.pointcloud = other.pointcloud
-            self.center = other.center
 
-        self.camera_transform = other.camera_transform
+        # Always use the latest detection's geometry (not accumulated cloud OBB)
+        self.center = other.center
         self.size = other.size
         self.pose = other.pose
+
+        self.camera_transform = other.camera_transform
         self.track_id = other.track_id
         self.mask = other.mask
         self.name = other.name
@@ -105,7 +106,7 @@ class Object(Detection3D):
 
     def to_detection3d_msg(self) -> ROSDetection3D:
         """Convert to ROS Detection3D message."""
-        obb = self.get_oriented_bounding_box()  # type: ignore[no-untyped-call]
+        obb = self.get_oriented_bounding_box()
         orientation = Quaternion.from_rotation_matrix(obb.R)
 
         msg = ROSDetection3D()
@@ -155,6 +156,9 @@ class Object(Detection3D):
         statistical_std_ratio: float = 0.5,
         voxel_downsample: float = 0.005,
         mask_erode_pixels: int = 3,
+        max_distance: float = 0.0,
+        use_aabb: bool = False,
+        max_obstacle_width: float = 0.0,
     ) -> list[Object]:
         """Create 3D Objects from 2D detections and RGBD images.
 
@@ -174,6 +178,12 @@ class Object(Detection3D):
             voxel_downsample: Voxel size (meters) for downsampling before filtering. Set <= 0 to skip.
             mask_erode_pixels: Number of pixels to erode the mask by to remove
                               noisy depth edge points. Set to 0 to disable.
+            max_distance: Maximum distance from origin (meters) for object center.
+                Objects beyond this are discarded as background. 0 disables the filter.
+            use_aabb: Use axis-aligned bounding box instead of oriented bounding box.
+                Produces upright obstacles with identity orientation.
+            max_obstacle_width: Clamp X/Y size to this value (meters). Useful for
+                manipulation where obstacles must fit within the gripper. 0 disables.
 
         Returns:
             List of Object instances with pointclouds
@@ -207,7 +217,7 @@ class Object(Detection3D):
             if mask_erode_pixels > 0:
                 mask_uint8 = mask.astype(np.uint8)
                 if mask_uint8.max() == 1:
-                    mask_uint8 = mask_uint8 * 255  # type: ignore[assignment]
+                    mask_uint8 = mask_uint8 * 255
                 kernel_size = 2 * mask_erode_pixels + 1
                 erode_kernel = cv2.getStructuringElement(
                     cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
@@ -253,17 +263,36 @@ class Object(Detection3D):
             else:
                 frame_id = depth_image.frame_id
 
-            # Compute center from pointcloud
-            obb = pc.pointcloud.get_oriented_bounding_box()
-            center = Vector3(obb.center[0], obb.center[1], obb.center[2])
-            size = Vector3(obb.extent[0], obb.extent[1], obb.extent[2])
-            orientation = Quaternion.from_rotation_matrix(obb.R)
+            # Compute bounding box: AABB for stable upright obstacles, OBB for tighter fit
+            if use_aabb:
+                aabb = pc.pointcloud.get_axis_aligned_bounding_box()
+                aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
+                aabb_extent = aabb.max_bound - aabb.min_bound
+                center = Vector3(aabb_center[0], aabb_center[1], aabb_center[2])
+                sx, sy, sz = float(aabb_extent[0]), float(aabb_extent[1]), float(aabb_extent[2])
+                orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+            else:
+                obb = pc.pointcloud.get_oriented_bounding_box()
+                center = Vector3(obb.center[0], obb.center[1], obb.center[2])
+                sx, sy, sz = float(obb.extent[0]), float(obb.extent[1]), float(obb.extent[2])
+                orientation = Quaternion.from_rotation_matrix(obb.R)
+
+            if max_obstacle_width > 0:
+                sx = min(sx, max_obstacle_width)
+                sy = min(sy, max_obstacle_width)
+            size = Vector3(sx, sy, sz)
             pose = PoseStamped(
                 ts=det.ts,
                 frame_id=frame_id,
                 position=center,
                 orientation=orientation,
             )
+
+            # Skip objects too far from origin (background detections)
+            if max_distance > 0:
+                dist = (center.x**2 + center.y**2 + center.z**2) ** 0.5
+                if dist > max_distance:
+                    continue
 
             objects.append(
                 cls(

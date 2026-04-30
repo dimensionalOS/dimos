@@ -15,7 +15,7 @@
 from datetime import datetime
 import time
 
-from dimos.msgs.std_msgs import Header
+from dimos.msgs.std_msgs.Header import Header
 
 
 def test_header_initialization_methods() -> None:

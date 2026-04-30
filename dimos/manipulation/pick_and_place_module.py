@@ -22,7 +22,6 @@ Extends ManipulationModule with perception integration and long-horizon skills:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
 from pathlib import Path
 import time
@@ -31,23 +30,25 @@ from typing import TYPE_CHECKING, Any
 from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
-from dimos.core.docker_runner import DockerModule as DockerRunner
-from dimos.core.stream import In  # noqa: TC001
+from dimos.core.docker_module import DockerModuleProxy as DockerRunner
+from dimos.core.stream import In
 from dimos.manipulation.grasping.graspgen_module import GraspGenModule
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.detection.type.detection3d.object import (
-    Object as DetObject,  # noqa: TC001
+    Object as DetObject,
 )
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import PoseArray
-    from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.msgs.geometry_msgs.PoseArray import PoseArray
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 logger = setup_logger()
 
@@ -55,8 +56,19 @@ logger = setup_logger()
 _GRASPGEN_VIZ_CONTAINER_DIR = "/output/graspgen"
 _GRASPGEN_VIZ_CONTAINER_PATH = f"{_GRASPGEN_VIZ_CONTAINER_DIR}/visualization.json"
 
+# Beyond this XY distance from the base, the arm cannot reach both high and far,
+# so pre-grasp/pre-place offsets are reduced.
+_FAR_REACH_XY_THRESHOLD = 0.7
 
-@dataclass
+# Beyond this XY distance, the occlusion inset is increased so the grasp
+# targets closer to the true center rather than the front surface.
+_FAR_OCCLUSION_XY_THRESHOLD = 0.8
+
+# Objects taller than this are grasped in the upper third to avoid
+# plunging deep and colliding with the object body.
+_TALL_OBJECT_MIN_HEIGHT = 0.06
+
+
 class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     """Configuration for PickAndPlaceModule (adds GraspGen settings)."""
 
@@ -68,8 +80,8 @@ class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     graspgen_grasp_threshold: float = -1.0
     graspgen_filter_collisions: bool = False
     graspgen_save_visualization_data: bool = False
-    graspgen_visualization_output_path: Path = field(
-        default_factory=lambda: Path.home() / ".dimos" / "graspgen" / "visualization.json"
+    graspgen_visualization_output_path: Path = (
+        Path.home() / ".dimos" / "graspgen" / "visualization.json"
     )
 
 
@@ -82,31 +94,24 @@ class PickAndPlaceModule(ManipulationModule):
     - @skill: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
     """
 
-    default_config = PickAndPlaceModuleConfig
-
-    # Type annotation for the config attribute (mypy uses this)
     config: PickAndPlaceModuleConfig
 
     # Input: Objects from perception (for obstacle integration)
     objects: In[list[DetObject]]
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         # GraspGen Docker runner (lazy initialized on first generate_grasps call)
         self._graspgen: DockerRunner | None = None
 
-        # Last pick position: stored during pick so place_back() can return the object
-        self._last_pick_position: Vector3 | None = None
+        # Last pick pose: stored during pick so place_back() can return the object
+        self._last_pick_pose: Pose | None = None
 
         # Snapshotted detections from the last scan_objects/refresh call.
         # The live detection cache is volatile (labels change every frame),
         # so pick/place use this stable snapshot instead.
         self._detection_snapshot: list[DetObject] = []
-
-    # =========================================================================
-    # Lifecycle (perception integration)
-    # =========================================================================
 
     @rpc
     def start(self) -> None:
@@ -115,7 +120,7 @@ class PickAndPlaceModule(ManipulationModule):
 
         # Subscribe to objects port for perception obstacle integration
         if self.objects is not None:
-            self.objects.observable().subscribe(self._on_objects)  # type: ignore[no-untyped-call]
+            self.objects.observable().subscribe(self._on_objects)
             logger.info("Subscribed to objects port (async)")
 
         # Start obstacle monitor for perception integration
@@ -131,10 +136,6 @@ class PickAndPlaceModule(ManipulationModule):
                 self._world_monitor.on_objects(objects)
         except Exception as e:
             logger.error(f"Exception in _on_objects: {e}")
-
-    # =========================================================================
-    # Perception RPC Methods
-    # =========================================================================
 
     @rpc
     def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, Any]]:
@@ -183,10 +184,6 @@ class PickAndPlaceModule(ManipulationModule):
         if self._world_monitor is None:
             return []
         return self._world_monitor.list_added_obstacles()
-
-    # =========================================================================
-    # GraspGen
-    # =========================================================================
 
     def _get_graspgen(self) -> DockerRunner:
         """Get or create GraspGen Docker module (lazy init, thread-safe)."""
@@ -252,10 +249,6 @@ class PickAndPlaceModule(ManipulationModule):
             logger.error(f"Grasp generation failed: {e}")
             return None
 
-    # =========================================================================
-    # Pick/Place Helpers
-    # =========================================================================
-
     def _compute_pre_grasp_pose(self, grasp_pose: Pose, offset: float = 0.10) -> Pose:
         """Compute a pre-grasp pose offset along the approach direction (local -Z).
 
@@ -289,9 +282,22 @@ class PickAndPlaceModule(ManipulationModule):
             logger.warning("No detection snapshot — call scan_objects() first")
             return None
 
+        # First pass: match by object_id (supports both full and truncated IDs)
+        if object_id:
+            matches = [
+                det
+                for det in self._detection_snapshot
+                if det.object_id == object_id or det.object_id.startswith(object_id)
+            ]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                ids = [det.object_id for det in matches]
+                logger.warning(f"Ambiguous object_id prefix '{object_id}' matches {ids}")
+                return None
+
+        # Second pass: match by name
         for det in self._detection_snapshot:
-            if object_id and det.object_id == object_id:
-                return det
             if object_name.lower() in det.name.lower() or det.name.lower() in object_name.lower():
                 return det
 
@@ -299,33 +305,109 @@ class PickAndPlaceModule(ManipulationModule):
         logger.warning(f"Object '{object_name}' not found in snapshot. Available: {available}")
         return None
 
+    @staticmethod
+    def _occlusion_offset(
+        center: Vector3, size: Vector3, inset: float = 0.02
+    ) -> tuple[float, float]:
+        """Offset a detected object center toward the robot to compensate for single-viewpoint occlusion.
+
+        Returns adjusted (x, y) shifted toward the nearest visible surface + inset.
+        """
+        xy_dist = (center.x**2 + center.y**2) ** 0.5
+        if xy_dist > 1e-3:
+            dx, dy = -center.x / xy_dist, -center.y / xy_dist
+            half_depth = max(size.x, size.y) / 2.0
+            offset = half_depth - inset
+            return center.x + dx * offset, center.y + dy * offset
+        return center.x, center.y
+
+    @staticmethod
+    def _grasp_orientation(gx: float, gy: float, xy_dist: float) -> Quaternion:
+        """Compute grasp orientation that tilts toward the object for far reaches.
+
+        Close objects (< 0.6m): top-down (pitch = 180°)
+        Far objects (> 1.0m): tilted 45° toward object
+        In between: linear interpolation
+        """
+        near = 0.6
+        far = 1.0
+        max_tilt = math.pi / 4  # 45° from vertical
+
+        if xy_dist <= near:
+            tilt = 0.0
+        elif xy_dist >= far:
+            tilt = max_tilt
+        else:
+            tilt = max_tilt * (xy_dist - near) / (far - near)
+
+        # Yaw to face the object direction
+        yaw = math.atan2(gy, gx)
+        pitch = math.pi - tilt
+        return Quaternion.from_euler(Vector3(0.0, pitch, yaw))
+
     def _generate_grasps_for_pick(
         self, object_name: str, object_id: str | None = None
     ) -> list[Pose] | None:
-        """Generate grasp poses for an object.
+        """Generate a grasp pose for an object.
 
-        Computes a top-down approach grasp from the object's detected position.
+        Near objects (< 0.6m XY): apply occlusion offset to compensate for
+        single-viewpoint depth underestimation.
+        Far objects (>= 0.6m XY): use raw detected center — depth error
+        already pushes the center too deep, offset would overshoot.
+
+        Uses distance-adaptive pitch tilt for all distances.
 
         Args:
             object_name: Name of the object
             object_id: Optional object ID
 
         Returns:
-            List of grasp poses (best first), or None if object not found
+            List with one grasp pose, or None if object not found
         """
         det = self._find_object_in_detections(object_name, object_id)
         if det is None:
             logger.warning(f"Object '{object_name}' not found in detections")
             return None
 
-        c = det.center
-        grasp_pose = Pose(Vector3(c.x, c.y, c.z), Quaternion.from_euler(Vector3(0.0, math.pi, 0.0)))
-        logger.info(f"Heuristic grasp for '{object_name}' at ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
-        return [grasp_pose]
+        cx, cy, cz = det.center.x, det.center.y, det.center.z
+        xy_dist = (cx**2 + cy**2) ** 0.5
 
-    # =========================================================================
-    # Perception Skills
-    # =========================================================================
+        # Distance-adaptive occlusion offset:
+        # Near (< 0.8m): small inset — grasp shifted well toward robot (front surface)
+        # Far (>= 0.8m): larger inset — less toward-robot shift (grasp closer to true center)
+        inset = 0.01 if xy_dist < _FAR_OCCLUSION_XY_THRESHOLD else 0.05
+        gx, gy = self._occlusion_offset(det.center, det.size, inset=inset)
+
+        # For tall objects, grasp in the upper third instead of center
+        # to avoid plunging deep and colliding with the object.
+        obj_height = det.size.z
+        if obj_height > _TALL_OBJECT_MIN_HEIGHT:
+            gz = cz + obj_height * 0.2  # shift up ~20% from center (upper third)
+        else:
+            gz = cz
+
+        grasp_dist = (gx**2 + gy**2) ** 0.5
+        orientation = self._grasp_orientation(gx, gy, grasp_dist)
+        pose = Pose(Vector3(gx, gy, gz), orientation)
+
+        logger.info(
+            f"Heuristic grasp for '{object_name}': center=({cx:.3f}, {cy:.3f}, {cz:.3f}), "
+            f"grasp=({gx:.3f}, {gy:.3f}, {gz:.3f}), xy_dist={xy_dist:.2f}m, "
+            f"inset={inset:.2f}m, "
+            f"size=({det.size.x:.3f}, {det.size.y:.3f}, {det.size.z:.3f})"
+        )
+        return [pose]
+
+    def _resolve_object_position(self, object_name: str) -> tuple[float, float, float] | None:
+        """Resolve an object name to its detected center position.
+
+        Returns (x, y, z) or None if object not found in detections.
+        No occlusion offset — used for drop_on where we want the true center.
+        """
+        det = self._find_object_in_detections(object_name)
+        if det is None:
+            return None
+        return det.center.x, det.center.y, det.center.z
 
     @skill
     def get_scene_info(self, robot_name: str | None = None) -> str:
@@ -386,16 +468,52 @@ class PickAndPlaceModule(ManipulationModule):
         return "\n".join(lines)
 
     @skill
-    def scan_objects(self, min_duration: float = 1.0, robot_name: str | None = None) -> str:
-        """Scan the scene and list detected objects with their 3D positions.
+    def look(self, robot_name: str | None = None) -> str:
+        """Quick check of what objects are visible from the current camera position.
 
-        Refreshes perception obstacles from the latest sensor data and returns
-        a formatted list of all detected objects.
+        Does NOT move the arm. Returns objects currently detected in the camera view.
 
         Args:
-            min_duration: Minimum time in seconds to wait for stable detections.
             robot_name: Robot context (only needed for multi-arm setups).
         """
+        obstacles = self.refresh_obstacles(0.0)
+
+        detections = self._detection_snapshot
+        if not detections:
+            return "No objects visible from current position"
+
+        lines = [f"Currently see {len(detections)} object(s):"]
+        for det in detections:
+            c = det.center
+            lines.append(
+                f"  - {det.name} [id={det.object_id[:8]}]: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})"
+            )
+
+        if obstacles:
+            lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
+
+        return "\n".join(lines)
+
+    @skill
+    def scan_objects(
+        self,
+        min_duration: float = 0.0,
+        robot_name: str | None = None,
+    ) -> str:
+        """Scan for objects — moves to init position first for a clear camera view, \
+then refreshes perception obstacles.
+
+        Use this before pick/place operations or after a failed attempt.
+
+        Args:
+            min_duration: Minimum time an object must be seen to be included.
+            robot_name: Robot context (only needed for multi-arm setups).
+        """
+        # Go to init for a clear camera view
+        init_result = self.go_init(robot_name)
+        if init_result.startswith("Error:"):
+            return f"Failed to reach init position: {init_result}"
+
         obstacles = self.refresh_obstacles(min_duration)
 
         detections = self._detection_snapshot
@@ -405,16 +523,14 @@ class PickAndPlaceModule(ManipulationModule):
         lines = [f"Detected {len(detections)} object(s):"]
         for det in detections:
             c = det.center
-            lines.append(f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
+            lines.append(
+                f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f}) [{det.detections_count} views]"
+            )
 
         if obstacles:
             lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
 
         return "\n".join(lines)
-
-    # =========================================================================
-    # Long-Horizon Skills — Pick and Place
-    # =========================================================================
 
     @skill
     def pick(
@@ -445,27 +561,36 @@ class PickAndPlaceModule(ManipulationModule):
         if not grasp_poses:
             return f"Error: No grasp poses found for '{object_name}'. Object may not be detected."
 
+        # Lift if EE is low before approaching
+        err = self._lift_if_low(rname)
+        if err:
+            return err
+
         # 2. Try each grasp candidate
         max_attempts = min(len(grasp_poses), 5)
         for i, grasp_pose in enumerate(grasp_poses[:max_attempts]):
-            pre_grasp_pose = self._compute_pre_grasp_pose(grasp_pose, pre_grasp_offset)
+            # Reduce pre-grasp height for far objects (arm can't reach high + far)
+            gp = grasp_pose.position
+            xy_dist = (gp.x**2 + gp.y**2) ** 0.5
+            offset = pre_grasp_offset if xy_dist < _FAR_REACH_XY_THRESHOLD else 0.05
+            pre_grasp_pose = self._compute_pre_grasp_pose(grasp_pose, offset)
 
             logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
             if not self.plan_to_pose(pre_grasp_pose, rname):
                 logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
                 continue  # Try next candidate
 
-            # Open gripper before approach
+            # 3. Open gripper before approach
             logger.info("Opening gripper...")
             self._set_gripper_position(0.85, rname)
             time.sleep(0.5)
 
-            # 3. Preview + execute approach
+            # 4. Execute approach to pre-grasp
             err = self._preview_execute_wait(rname)
             if err:
                 return err
 
-            # 4. Move to grasp pose
+            # 5. Move to grasp pose
             logger.info("Moving to grasp position...")
             if not self.plan_to_pose(grasp_pose, rname):
                 return "Error: Grasp pose planning failed"
@@ -473,12 +598,12 @@ class PickAndPlaceModule(ManipulationModule):
             if err:
                 return err
 
-            # 5. Close gripper
+            # 6. Close gripper
             logger.info("Closing gripper...")
             self._set_gripper_position(0.0, rname)
             time.sleep(1.5)  # Wait for gripper to close
 
-            # 6. Retract to pre-grasp
+            # 7. Retract to pre-grasp
             logger.info("Retracting with object...")
             if not self.plan_to_pose(pre_grasp_pose, rname):
                 return "Error: Retract planning failed"
@@ -486,8 +611,8 @@ class PickAndPlaceModule(ManipulationModule):
             if err:
                 return err
 
-            # Store pick position so place_back() can return the object
-            self._last_pick_position = grasp_pose.position
+            # Store pick pose so place_back() can return with same orientation
+            self._last_pick_pose = grasp_pose
 
             return f"Pick complete — grasped '{object_name}' successfully"
 
@@ -512,15 +637,37 @@ class PickAndPlaceModule(ManipulationModule):
             z: Target Z position in meters.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
+        xy_dist = (x**2 + y**2) ** 0.5
+        orientation = self._grasp_orientation(x, y, xy_dist)
+        return self._place_with_orientation(x, y, z, orientation, robot_name)
+
+    def _place_with_orientation(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        orientation: Quaternion,
+        robot_name: str | None = None,
+    ) -> str:
+        """Internal place with explicit orientation."""
         robot = self._get_robot(robot_name)
         if robot is None:
             return "Error: Robot not found"
         rname, _, config, _ = robot
         pre_place_offset = config.pre_grasp_offset
 
-        # Compute place pose (top-down approach)
-        place_pose = Pose(Vector3(x, y, z), Quaternion.from_euler(Vector3(0.0, math.pi, 0.0)))
+        # Reduce pre-place height for far targets
+        xy_dist = (x**2 + y**2) ** 0.5
+        if xy_dist >= _FAR_REACH_XY_THRESHOLD:
+            pre_place_offset = 0.05
+
+        place_pose = Pose(Vector3(x, y, z), orientation)
         pre_place_pose = self._compute_pre_grasp_pose(place_pose, pre_place_offset)
+
+        # Lift if EE is low before approaching
+        err = self._lift_if_low(rname)
+        if err:
+            return err
 
         # 1. Move to pre-place
         logger.info(f"Planning approach to place position ({x:.3f}, {y:.3f}, {z:.3f})...")
@@ -563,12 +710,40 @@ class PickAndPlaceModule(ManipulationModule):
         Args:
             robot_name: Robot to use (only needed for multi-arm setups).
         """
-        if self._last_pick_position is None:
+        if self._last_pick_pose is None:
             return "Error: No previous pick position stored — run pick() first"
 
-        p = self._last_pick_position
+        p = self._last_pick_pose.position
+        o = self._last_pick_pose.orientation
         logger.info(f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})...")
-        return self.place(p.x, p.y, p.z, robot_name)
+        return self._place_with_orientation(p.x, p.y, p.z, o, robot_name)
+
+    @skill
+    def drop_on(
+        self,
+        target_object_name: str,
+        z_offset: float = 0.1,
+        robot_name: str | None = None,
+    ) -> str:
+        """Drop a held object on top of a detected object.
+
+        Resolves the target object's position with occlusion correction and
+        places the held object above it.
+
+        Args:
+            target_object_name: Name of the target object to drop onto (e.g. "cup", "bowl").
+            z_offset: Height above the target object's center to release (meters).
+            robot_name: Robot to use (only needed for multi-arm setups).
+        """
+        pos = self._resolve_object_position(target_object_name)
+        if pos is None:
+            return f"Error: Target object '{target_object_name}' not found in detections"
+        x, y, z = pos
+        z += z_offset
+        logger.info(
+            f"Dropping on '{target_object_name}' at corrected position ({x:.3f}, {y:.3f}, {z:.3f})"
+        )
+        return self.place(x, y, z, robot_name)
 
     @skill
     def pick_and_place(
@@ -604,10 +779,6 @@ class PickAndPlaceModule(ManipulationModule):
         # Place phase
         return self.place(place_x, place_y, place_z, robot_name)
 
-    # =========================================================================
-    # Lifecycle
-    # =========================================================================
-
     @rpc
     def stop(self) -> None:
         """Stop the pick-and-place module (cleanup GraspGen + delegate to base)."""
@@ -620,7 +791,3 @@ class PickAndPlaceModule(ManipulationModule):
                 self._graspgen = None
 
         super().stop()
-
-
-# Expose blueprint for declarative composition
-pick_and_place_module = PickAndPlaceModule.blueprint

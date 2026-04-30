@@ -1,4 +1,17 @@
-from dataclasses import dataclass
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from functools import cached_property
 import os
 from typing import Any
@@ -7,20 +20,18 @@ import numpy as np
 from openai import OpenAI
 
 from dimos.models.vl.base import VlModel, VlModelConfig
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-@dataclass
 class OpenAIVlModelConfig(VlModelConfig):
     model_name: str = "gpt-4o-mini"
     api_key: str | None = None
 
 
 class OpenAIVlModel(VlModel):
-    default_config = OpenAIVlModelConfig
     config: OpenAIVlModelConfig
 
     @cached_property
@@ -33,7 +44,13 @@ class OpenAIVlModel(VlModel):
 
         return OpenAI(api_key=api_key)
 
-    def query(self, image: Image | np.ndarray, query: str, response_format: dict | None = None, **kwargs) -> str:  # type: ignore[override, type-arg, no-untyped-def]
+    def query(
+        self,
+        image: Image | np.ndarray,
+        query: str,
+        response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> str:
         if isinstance(image, np.ndarray):
             import warnings
 
@@ -71,11 +88,15 @@ class OpenAIVlModel(VlModel):
 
         response = self._client.chat.completions.create(**api_kwargs)
 
-        return response.choices[0].message.content  # type: ignore[return-value,no-any-return]
+        return response.choices[0].message.content  # type: ignore[no-any-return]
 
     def query_batch(
-        self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
-    ) -> list[str]:  # type: ignore[override]
+        self,
+        images: list[Image],
+        query: str,
+        response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[str]:
         """Query VLM with multiple images using a single API call."""
         if not images:
             return []
@@ -83,7 +104,9 @@ class OpenAIVlModel(VlModel):
         content: list[dict[str, Any]] = [
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"},
+                "image_url": {
+                    "url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"
+                },
             }
             for img in images
         ]
@@ -103,4 +126,3 @@ class OpenAIVlModel(VlModel):
         """Release the OpenAI client."""
         if "_client" in self.__dict__:
             del self.__dict__["_client"]
-

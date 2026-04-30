@@ -1,4 +1,17 @@
-from dataclasses import dataclass
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from functools import cached_property
 import os
 from typing import Any
@@ -7,10 +20,9 @@ import numpy as np
 from openai import OpenAI
 
 from dimos.models.vl.base import VlModel, VlModelConfig
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 
 
-@dataclass
 class QwenVlModelConfig(VlModelConfig):
     """Configuration for Qwen VL model."""
 
@@ -19,7 +31,6 @@ class QwenVlModelConfig(VlModelConfig):
 
 
 class QwenVlModel(VlModel):
-    default_config = QwenVlModelConfig
     config: QwenVlModelConfig
 
     @cached_property
@@ -35,7 +46,7 @@ class QwenVlModel(VlModel):
             api_key=api_key,
         )
 
-    def query(self, image: Image | np.ndarray, query: str) -> str:  # type: ignore[override, type-arg]
+    def query(self, image: Image | np.ndarray, query: str) -> str:  # type: ignore[override]
         if isinstance(image, np.ndarray):
             import warnings
 
@@ -71,17 +82,23 @@ class QwenVlModel(VlModel):
         return response.choices[0].message.content  # type: ignore[return-value]
 
     def query_batch(
-        self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
-    ) -> list[str]:  # type: ignore[override]
+        self,
+        images: list[Image],
+        query: str,
+        response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[str]:
         """Query VLM with multiple images using a single API call."""
         if not images:
             return []
 
         content: list[dict[str, Any]] = [
-                {
-                    "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"},
-                }
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"
+                },
+            }
             for img in images
         ]
         content.append({"type": "text", "text": query})

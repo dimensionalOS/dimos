@@ -29,7 +29,7 @@ from dimos_lcm.geometry_msgs import (
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs import Header
+from dimos.msgs.std_msgs.Header import Header
 from dimos.types.timestamped import Timestamped
 
 

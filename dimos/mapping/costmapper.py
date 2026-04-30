@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 import time
 
+from pydantic import Field
 from reactivex import operators as ops
 
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.pointclouds.occupancy import (
@@ -26,29 +26,22 @@ from dimos.mapping.pointclouds.occupancy import (
     HeightCostConfig,
     OccupancyConfig,
 )
-from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-@dataclass
 class Config(ModuleConfig):
     algo: str = "height_cost"
-    config: OccupancyConfig = field(default_factory=HeightCostConfig)
+    config: OccupancyConfig = Field(default_factory=HeightCostConfig)
 
 
 class CostMapper(Module):
-    default_config = Config
     config: Config
-
     global_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
-
-    def __init__(self, cfg: GlobalConfig = global_config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._global_config = cfg
 
     @rpc
     def start(self) -> None:
@@ -66,7 +59,7 @@ class CostMapper(Module):
             elapsed_ms = (time.perf_counter() - start) * 1000
             return grid, elapsed_ms, rx_monotonic
 
-        self._disposables.add(
+        self.register_disposable(
             self.global_map.observable()  # type: ignore[no-untyped-call]
             .pipe(ops.map(_calculate_and_time))
             .subscribe(lambda result: _publish_costmap(result[0], result[1], result[2]))
@@ -80,6 +73,3 @@ class CostMapper(Module):
     def _calculate_costmap(self, msg: PointCloud2) -> OccupancyGrid:
         fn = OCCUPANCY_ALGOS[self.config.algo]
         return fn(msg, **asdict(self.config.config))
-
-
-cost_mapper = CostMapper.blueprint

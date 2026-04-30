@@ -22,13 +22,9 @@ import os
 from pathlib import Path
 import pickle
 import re
-import time
 from typing import Any, cast
 
-import reactivex as rx
-from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.observable import Observable
-from reactivex.scheduler import TimeoutScheduler
 
 from dimos.memory.timeseries.base import T, TimeSeriesStore
 from dimos.utils.data import get_data, get_data_dir
@@ -232,8 +228,6 @@ class LegacyPickleStore(TimeSeriesStore[T]):
                 return (ts, data)
         return None
 
-    # === Backward-compatible API (TimedSensorReplay/SensorReplay) ===
-
     @property
     def files(self) -> list[Path]:
         """Return list of pickle files (backward compatibility with SensorReplay)."""
@@ -325,82 +319,11 @@ class LegacyPickleStore(TimeSeriesStore[T]):
 
         Uses stored timestamps from pickle files for timing (not data.ts).
         """
+        from dimos.utils.testing.replay import timed_playback
 
-        def subscribe(
-            observer: rx.abc.ObserverBase[T],
-            scheduler: rx.abc.SchedulerBase | None = None,
-        ) -> rx.abc.DisposableBase:
-            sched = scheduler or TimeoutScheduler()
-            disp = CompositeDisposable()
-            is_disposed = False
-
-            iterator = self.iterate_ts(
+        return timed_playback(
+            lambda: self.iterate_ts(
                 seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
-            )
-
-            try:
-                first_ts, first_data = next(iterator)
-            except StopIteration:
-                observer.on_completed()
-                return Disposable()
-
-            start_local_time = time.time()
-            start_replay_time = first_ts
-
-            observer.on_next(first_data)
-
-            try:
-                next_message: tuple[float, T] | None = next(iterator)
-            except StopIteration:
-                observer.on_completed()
-                return disp
-
-            prev_ts = first_ts
-
-            def schedule_emission(message: tuple[float, T]) -> None:
-                nonlocal next_message, is_disposed, start_local_time, start_replay_time, prev_ts
-
-                if is_disposed:
-                    return
-
-                ts, data = message
-
-                # Detect loop restart: timestamp jumped backwards
-                if ts < prev_ts:
-                    start_local_time = time.time()
-                    start_replay_time = ts
-                prev_ts = ts
-
-                try:
-                    next_message = next(iterator)
-                except StopIteration:
-                    next_message = None
-
-                target_time = start_local_time + (ts - start_replay_time) / speed
-                delay = max(0.0, target_time - time.time())
-
-                def emit(
-                    _scheduler: rx.abc.SchedulerBase, _state: object
-                ) -> rx.abc.DisposableBase | None:
-                    if is_disposed:
-                        return None
-                    observer.on_next(data)
-                    if next_message is not None:
-                        schedule_emission(next_message)
-                    else:
-                        observer.on_completed()
-                    return None
-
-                sched.schedule_relative(delay, emit)
-
-            if next_message is not None:
-                schedule_emission(next_message)
-
-            def dispose() -> None:
-                nonlocal is_disposed
-                is_disposed = True
-                disp.dispose()
-
-            return Disposable(dispose)
-
-        return rx.create(subscribe)
+            ),
+            speed=speed,
+        )

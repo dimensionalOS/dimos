@@ -14,13 +14,9 @@ The `CartesianMotionController` provides closed-loop Cartesian pose tracking by:
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  TargetSetter (Interactive CLI)                             │
-│  - User inputs target positions                             │
-│  - Preserves orientation when left blank                    │
-└───────────────────────┬─────────────────────────────────────┘
-                        │ PoseStamped (/target_pose)
-                        ▼
+  PoseStamped (/target_pose)
+           │
+           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  CartesianMotionController                                  │
 │  - Computes FK (current pose)                               │
@@ -33,8 +29,8 @@ The `CartesianMotionController` provides closed-loop Cartesian pose tracking by:
            │ JointCommand                   │ PoseStamped
            │                                │ (current_pose)
            ▼                                ▼
-┌─────────────────────────────────┐  (back to TargetSetter
-│  Hardware Driver (xArm, etc.)   │   for orientation preservation)
+┌─────────────────────────────────┐    (feedback to caller)
+│  Hardware Driver (xArm, etc.)   │
 │  - 100Hz control loop           │
 │  - Sends commands to robot      │
 │  - Publishes JointState         │
@@ -154,78 +150,10 @@ controller.set_target_pose(
 controller.target_pose.publish(target)
 ```
 
-### Using the TargetSetter Tool
+### Sending Target Poses
 
-The `TargetSetter` is an interactive CLI tool that makes it easy to manually send target poses to the controller. It provides a user-friendly interface for testing and teleoperation.
+Target poses can be published to the controller's `/target_pose` topic via LCM transport. The controller will track the target using its PID loop.
 
-**Key Features:**
-- **Interactive terminal UI** - prompts for x, y, z coordinates
-- **Orientation preservation** - automatically uses current orientation when left blank
-- **Live feedback** - subscribes to controller's current pose
-- **Simple workflow** - just enter coordinates and press Enter
-
-**Setup:**
-
-```python
-# Terminal 1: Start the controller (as shown in Basic Example above)
-arm_driver = XArmDriver(config=XArmDriverConfig(ip_address="192.168.1.235"))
-controller = CartesianMotionController(arm_driver=arm_driver)
-
-# Set up LCM transports for target_pose and current_pose
-from dimos.core.transport import LCMTransport
-controller.target_pose.connection = LCMTransport("/target_pose", PoseStamped)
-controller.current_pose.connection = LCMTransport("/xarm/current_pose", PoseStamped)
-
-arm_driver.start()
-controller.start()
-
-# Terminal 2: Run the target setter
-python -m dimos.manipulation.control.target_setter
-```
-
-**Usage Example:**
-
-```
-================================================================================
-Interactive Target Setter
-================================================================================
-Mode: WORLD FRAME (absolute coordinates)
-
-Enter target coordinates (Ctrl+C to quit)
-================================================================================
-
---------------------------------------------------------------------------------
-
-Enter target position (in meters):
-  x (m): 0.3
-  y (m): 0.0
-  z (m): 0.5
-
-Enter orientation (in degrees, leave blank to preserve current orientation):
-  roll (°):
-  pitch (°):
-  yaw (°):
-
-✓ Published target (preserving current orientation):
-  Position: x=0.3000m, y=0.0000m, z=0.5000m
-  Orientation: roll=0.0°, pitch=0.0°, yaw=0.0°
-```
-
-**How It Works:**
-
-1. **TargetSetter** subscribes to `/xarm/current_pose` from the controller
-2. User enters target position (x, y, z) in meters
-3. User can optionally enter orientation (roll, pitch, yaw) in degrees
-4. If orientation is left blank (0, 0, 0), TargetSetter uses the current orientation from the controller
-5. TargetSetter publishes the target pose to `/target_pose` topic
-6. **CartesianMotionController** receives the target and tracks it
-
-**Benefits:**
-
-- **No orientation math** - just move positions without worrying about quaternions
-- **Safe testing** - manually verify each move before sending
-- **Quick iteration** - test different positions interactively
-- **Educational** - see the controller respond in real-time
 
 ## Configuration
 
@@ -349,7 +277,7 @@ def is_converged() -> bool
 |-------|------|-------------|
 | `joint_position_command` | `JointCommand` | Target joint angles (to driver) |
 | `cartesian_velocity` | `Twist` | Debug: Cartesian velocity commands |
-| `current_pose` | `PoseStamped` | Current TCP pose (for TargetSetter and other tools) |
+| `current_pose` | `PoseStamped` | Current TCP pose (for feedback and monitoring) |
 
 ## Control Algorithm
 
@@ -461,7 +389,6 @@ config = CartesianMotionControllerConfig(
 dimos/manipulation/control/
 ├── __init__.py                          # Module exports
 ├── cartesian_motion_controller.py       # Main controller
-├── target_setter.py                     # Interactive target pose publisher
 ├── example_cartesian_control.py         # Usage example
 └── README.md                            # This file
 ```

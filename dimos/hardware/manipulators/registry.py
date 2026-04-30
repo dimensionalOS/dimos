@@ -32,14 +32,14 @@ Usage:
 from __future__ import annotations
 
 import importlib
-import logging
-import pkgutil
 from typing import TYPE_CHECKING, Any
+
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class AdapterRegistry:
@@ -78,19 +78,25 @@ class AdapterRegistry:
     def discover(self) -> None:
         """Discover and register adapters from subpackages.
 
+        Scans for subdirectories containing an adapter.py module.
         Can be called multiple times to pick up newly added adapters.
         """
-        import dimos.hardware.manipulators as pkg
+        from pathlib import Path
 
-        for _, name, ispkg in pkgutil.iter_modules(pkg.__path__):
-            if not ispkg:
+        pkg_dir = Path(__file__).parent
+        for child in sorted(pkg_dir.iterdir()):
+            if not child.is_dir() or child.name.startswith(("_", ".")):
+                continue
+            if not (child / "adapter.py").exists():
                 continue
             try:
-                module = importlib.import_module(f"dimos.hardware.manipulators.{name}.adapter")
+                module = importlib.import_module(
+                    f"dimos.hardware.manipulators.{child.name}.adapter"
+                )
                 if hasattr(module, "register"):
                     module.register(self)
             except ImportError as e:
-                logger.debug(f"Skipping adapter {name}: {e}")
+                logger.debug(f"Skipping adapter {child.name}: {e}")
 
 
 adapter_registry = AdapterRegistry()

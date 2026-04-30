@@ -14,9 +14,12 @@
 
 
 import numpy as np
-from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
+from scipy.spatial.transform import Rotation as R
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 def normalize_angle(angle: float) -> float:
@@ -24,7 +27,7 @@ def normalize_angle(angle: float) -> float:
     return np.arctan2(np.sin(angle), np.cos(angle))  # type: ignore[no-any-return]
 
 
-def pose_to_matrix(pose: Pose) -> np.ndarray:  # type: ignore[type-arg]
+def pose_to_matrix(pose: Pose) -> np.ndarray:
     """
     Convert pose to 4x4 homogeneous transform matrix.
 
@@ -57,7 +60,7 @@ def pose_to_matrix(pose: Pose) -> np.ndarray:  # type: ignore[type-arg]
     return T
 
 
-def matrix_to_pose(T: np.ndarray) -> Pose:  # type: ignore[type-arg]
+def matrix_to_pose(T: np.ndarray) -> Pose:
     """
     Convert 4x4 transformation matrix to Pose object.
 
@@ -80,7 +83,7 @@ def matrix_to_pose(T: np.ndarray) -> Pose:  # type: ignore[type-arg]
     return Pose(pos, orientation)
 
 
-def apply_transform(pose: Pose, transform: np.ndarray | Transform) -> Pose:  # type: ignore[type-arg]
+def apply_transform(pose: Pose, transform: np.ndarray | Transform) -> Pose:
     """
     Apply a transformation matrix to a pose.
 
@@ -222,7 +225,7 @@ def yaw_towards_point(position: Vector3, target_point: Vector3 = None) -> float:
     return np.arctan2(direction_y, direction_x)  # type: ignore[no-any-return]
 
 
-def create_transform_from_6dof(translation: Vector3, euler_angles: Vector3) -> np.ndarray:  # type: ignore[type-arg]
+def create_transform_from_6dof(translation: Vector3, euler_angles: Vector3) -> np.ndarray:
     """
     Create a 4x4 transformation matrix from 6DOF parameters.
 
@@ -247,7 +250,7 @@ def create_transform_from_6dof(translation: Vector3, euler_angles: Vector3) -> n
     return T
 
 
-def invert_transform(T: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
+def invert_transform(T: np.ndarray) -> np.ndarray:
     """
     Invert a 4x4 transformation matrix efficiently.
 
@@ -271,7 +274,7 @@ def invert_transform(T: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
     return T_inv
 
 
-def compose_transforms(*transforms: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
+def compose_transforms(*transforms: np.ndarray) -> np.ndarray:
     """
     Compose multiple transformation matrices.
 
