@@ -29,7 +29,7 @@ from dimos.memory2.codecs.jpeg import JpegCodec
 from dimos.memory2.codecs.lcm import LcmCodec
 from dimos.memory2.codecs.pickle import PickleCodec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.testing.replay import TimedSensorReplay
 
 if TYPE_CHECKING:
@@ -107,14 +107,21 @@ def _lz4_lcm_case() -> Case:
 
 
 def _jpeg_eq(original: Any, decoded: Any) -> bool:
-    """JPEG is lossy — check shape, frame_id, and pixel closeness."""
+    """JPEG is lossy and normalizes to RGB — check shape, frame_id, RGB tag, and color closeness.
+
+    Compares against ``original.to_rgb()`` because the codec normalizes everything to RGB on
+    the wire (so a BGR-tagged input comes back RGB-tagged with channels swapped accordingly).
+    """
     import numpy as np
 
     if decoded.data.shape != original.data.shape:
         return False
     if decoded.frame_id != original.frame_id:
         return False
-    return bool(np.mean(np.abs(decoded.data.astype(float) - original.data.astype(float))) < 5)
+    if decoded.format != ImageFormat.RGB:
+        return False
+    expected = original.to_rgb().data
+    return bool(np.mean(np.abs(decoded.data.astype(float) - expected.astype(float))) < 5)
 
 
 def _jpeg_case() -> Case | None:

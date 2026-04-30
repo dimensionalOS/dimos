@@ -22,32 +22,38 @@ if [ ! -d "data/" ]; then
 fi
 
 # Track if any compression was performed
-compressed_dirs=()
+compressed_entries=()
 
-# Iterate through all directories in data/
-for dir_path in data/*; do
-    # Skip if no directories found (glob didn't match)
-    [ ! "$dir_path" ] && continue
+# Iterate through every entry in data/ (files and directories — tar handles both).
+for entry_path in data/*; do
+    # Skip if glob didn't match anything
+    [ ! "$entry_path" ] && continue
 
     # Extract directory name
-    dir_name=$(basename "$dir_path")
+    entry_name=$(basename "$entry_path")
 
     # Skip .lfs directory if it exists
-    [ "$dir_name" = ".lfs" ] && continue
+    [ "$entry_name" = ".lfs" ] && continue
+
+    # Skip SQLite ephemeral sidecar files (WAL / shared memory / rollback journal).
+    # These are runtime-only and would otherwise produce useless tarballs in LFS.
+    case "$entry_name" in
+        *-wal|*-shm|*-journal) continue ;;
+    esac
 
     # Define compressed file path
-    compressed_file="data/.lfs/${dir_name}.tar.gz"
+    compressed_file="data/.lfs/${entry_name}.tar.gz"
 
     # Check if compressed file already exists
     if [ -f "$compressed_file" ]; then
         continue
     fi
 
-    echo -e "  ${YELLOW}Compressing${NC} $dir_path -> $compressed_file"
+    echo -e "  ${YELLOW}Compressing${NC} $entry_path -> $compressed_file"
 
     # Show directory size before compression
-    dir_size=$(du -sh "$dir_path" | cut -f1)
-    echo -e "    Data size: ${YELLOW}$dir_size${NC}"
+    entry_size=$(du -sh "$entry_path" | cut -f1)
+    echo -e "    Data size: ${YELLOW}$entry_size${NC}"
 
     # Create compressed archive with progress bar
     # Use tar with gzip compression, excluding hidden files and common temp files
@@ -59,13 +65,13 @@ for dir_path in data/*; do
         --checkpoint=1000 \
         --checkpoint-action=dot \
         -C "data/" \
-        "$dir_name"
+        "$entry_name"
 
     if [ $? -eq 0 ]; then
         # Show compressed file size
         compressed_size=$(du -sh "$compressed_file" | cut -f1)
-        echo -e "  ${GREEN}✓${NC} Successfully compressed $dir_name (${GREEN}$dir_size${NC} → ${GREEN}$compressed_size${NC})"
-        compressed_dirs+=("$dir_name")
+        echo -e "  ${GREEN}✓${NC} Successfully compressed $entry_name (${GREEN}$entry_size${NC} → ${GREEN}$compressed_size${NC})"
+        compressed_entries+=("$entry_name")
 
         # Add the compressed file to git LFS tracking
         git add -f "$compressed_file"
@@ -73,19 +79,19 @@ for dir_path in data/*; do
         echo -e "  ${GREEN}✓${NC} git-add $compressed_file"
 
     else
-        echo -e "  ${RED}✗${NC} Failed to compress $dir_name"
+        echo -e "  ${RED}✗${NC} Failed to compress $entry_name"
         exit 1
     fi
 done
 
-if [ ${#compressed_dirs[@]} -gt 0 ]; then
+if [ ${#compressed_entries[@]} -gt 0 ]; then
     # Create commit message with compressed directory names
-    if [ ${#compressed_dirs[@]} -eq 1 ]; then
-        commit_msg="Auto-compress test data: ${compressed_dirs[0]}"
+    if [ ${#compressed_entries[@]} -eq 1 ]; then
+        commit_msg="Auto-compress test data: ${compressed_entries[0]}"
     else
         # Join array elements with commas
-        dirs_list=$(IFS=', '; echo "${compressed_dirs[*]}")
-        commit_msg="Auto-compress test data: ${dirs_list}"
+        entries_list=$(IFS=', '; echo "${compressed_entries[*]}")
+        commit_msg="Auto-compress test data: ${entries_list}"
     fi
 
     #git commit -m "$commit_msg"
