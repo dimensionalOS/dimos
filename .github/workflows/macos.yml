@@ -88,7 +88,7 @@ jobs:
           sudo route add -net 224.0.0.0/4 -interface lo0 || true
           sudo sysctl -w kern.ipc.maxsockbuf=6291456
           sudo sysctl -w net.inet.udp.recvspace=2097152
-          sudo sysctl -w net.inet.udp.maxdgram=65535
+          sudo sysctl -w net.inet.udp.maxdgram=16777216
 
       - name: Run tests
         env:
