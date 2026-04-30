@@ -276,6 +276,7 @@ class ControlCoordinator(Module):
 
         return whole_body_adapter_registry.create(
             component.adapter_type,
+            hardware_id=component.hardware_id,
             network_interface=addr if addr is not None else "",
             **component.adapter_kwargs,
         )
