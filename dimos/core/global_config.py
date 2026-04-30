@@ -32,7 +32,7 @@ class GlobalConfig(BaseSettings):
     xarm7_ip: str | None = None
     xarm6_ip: str | None = None
     can_port: str | None = None
-    simulation: bool = False
+    simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_bigoffice"
     new_memory: bool = False
@@ -56,6 +56,8 @@ class GlobalConfig(BaseSettings):
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
     listen_host: str = "127.0.0.1"
+    dimsim_scene: str = "apt"
+    dimsim_port: int = 8090
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -75,7 +77,7 @@ class GlobalConfig(BaseSettings):
         if self.replay:
             return "replay"
         if self.simulation:
-            return "mujoco"
+            return self.simulation
         return "webrtc"
 
     @property

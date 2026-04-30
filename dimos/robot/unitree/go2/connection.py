@@ -87,17 +87,14 @@ def _camera_info_static() -> CameraInfo:
     fx, fy, cx, cy = (819.553492, 820.646595, 625.284099, 336.808987)
     width, height = (1280, 720)
 
-    return CameraInfo(
-        frame_id="camera_optical",
-        height=height,
+    return CameraInfo.from_intrinsics(
+        fx=fx,
+        fy=fy,
+        cx=cx,
+        cy=cy,
         width=width,
-        distortion_model="plumb_bob",
-        D=[0.0, 0.0, 0.0, 0.0, 0.0],
-        K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
-        R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        P=[fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
-        binning_x=0,
-        binning_y=0,
+        height=height,
+        frame_id="camera_optical",
     )
 
 
@@ -126,6 +123,10 @@ def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
         return MujocoConnection(cfg)
+    elif connection_type == "dimsim":
+        from dimos.robot.unitree.dimsim_connection import DimSimConnection
+
+        return DimSimConnection(cfg)
     else:
         assert ip is not None, "IP address must be provided"
         return UnitreeWebRTCConnection(ip)

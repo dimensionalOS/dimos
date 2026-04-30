@@ -21,6 +21,7 @@ import time
 class DimosCliCall:
     process: subprocess.Popen[bytes] | None
     demo_args: list[str] | None = None
+    simulator: str = "mujoco"
 
     def __init__(self) -> None:
         self.process = None
@@ -34,7 +35,7 @@ class DimosCliCall:
             args = ["run", *args]
 
         self.process = subprocess.Popen(
-            ["dimos", "--simulation", *args],
+            ["dimos", "--simulation", self.simulator, *args],
             start_new_session=True,
         )
 
