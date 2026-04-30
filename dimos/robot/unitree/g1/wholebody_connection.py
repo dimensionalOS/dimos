@@ -347,8 +347,12 @@ class G1WholeBodyConnection(Module):
         msc.SetTimeout(5.0)
         msc.Init()
 
+        # MotionSwitcher.CheckMode() returns (status, dict) while a sport
+        # mode is active and (status, None) once nothing is active. Use a
+        # null-tolerant check so the loop exits cleanly after the release
+        # rather than crashing on `None["name"]`.
         _status, result = msc.CheckMode()
-        while result["name"]:
+        while result and result.get("name"):
             msc.ReleaseMode()
             _status, result = msc.CheckMode()
             time.sleep(1)

@@ -46,7 +46,10 @@ if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
 
 
-def build_unitree_g1_coordinator(release_sport_mode: bool = True) -> Blueprint:
+def build_unitree_g1_coordinator(
+    release_sport_mode: bool = True,
+    network_interface: str = "",
+) -> Blueprint:
     """Build the G1 wholebody coordinator blueprint.
 
     Args:
@@ -55,12 +58,19 @@ def build_unitree_g1_coordinator(release_sport_mode: bool = True) -> Blueprint:
             ``MotionSwitcherClient`` to exit Unitree's sport mode before taking
             low-level control). Tests against ``MockG1LowStatePublisher`` should
             pass ``False`` since there's no MotionSwitcher endpoint to talk to.
+        network_interface: NIC name (e.g. ``"enp60s0"``) to bind cyclonedds to.
+            Empty string lets cyclonedds pick the default interface — silently
+            picks the wrong NIC on a multi-interface host (wifi + ethernet
+            both up) and stalls discovery. Set this when LowState never arrives.
     """
     g1_joints = make_humanoid_joints("g1")
 
     return (
         autoconnect(
-            G1WholeBodyConnection.blueprint(release_sport_mode=release_sport_mode),
+            G1WholeBodyConnection.blueprint(
+                release_sport_mode=release_sport_mode,
+                network_interface=network_interface,
+            ),
             ControlCoordinator.blueprint(
                 hardware=[
                     HardwareComponent(
