@@ -321,6 +321,15 @@ If multiple modules match the spec, use `.remappings()` to resolve. Source: `dim
 5. Update the system prompt — add to the `# AVAILABLE SKILLS` section.
 6. Expose as `my_container = MySkillContainer.blueprint` and include in the agentic blueprint.
 
+> **Package convention.** `dimos/agents/skills/` (and every other subpackage
+> under `dimos/`) is a **PEP 420 namespace package** — there is intentionally
+> no `__init__.py`. The only `__init__.py` in the entire `dimos/` tree is the
+> top-level `dimos/__init__.py`, which exists solely as a lazy re-export shim
+> for `Dimos`. Do not add `__init__.py` files when adding skills, modules, or
+> subpackages: doing so converts a namespace package into a regular package
+> and changes import resolution for tools (pytest collection, mypy, the
+> `all_blueprints.py` regen, etc.) that walk the tree.
+
 ---
 
 ## Testing
@@ -389,3 +398,177 @@ CI asserts the file is current — if it's stale, CI fails.
 - CLI / dimos run: `docs/development/dimos_run.md`
 - LFS data: `docs/development/large_file_management.md`
 - Agent system: `docs/agents/`
+
+---
+
+## Agent Pipeline (Cursor + Codex)
+
+This section describes the automated "request → code → verify → PR → review →
+auto-merge" pipeline. It is **additive** to the rules above; nothing here
+overrides anything stated earlier.
+
+### Single source of truth
+
+```bash
+bash scripts/verify.sh
+```
+
+Both local agents and CI invoke this exact script. It runs:
+
+1. `uv sync --all-extras --no-extra dds` (and `--no-extra cuda` on macOS).
+2. `uv run pytest -q` — fast suite (excludes `slow`, `tool`, `mujoco` markers).
+3. `uv run mypy dimos/` — strict type check.
+
+The slow tier (`./bin/pytest-slow`) is owned by full CI and is intentionally
+*not* part of `verify.sh`; the agent loop optimizes for fast feedback. PRs
+that land must still pass the full slow CI before auto-merge.
+
+### Roles
+
+| Actor | Responsibility | How it is triggered |
+|-------|----------------|---------------------|
+| **Cursor local agent** | Plan, edit code, run `verify.sh`, push, open PR, enable auto-merge, monitor CI | User types `/ship <one-liner>` in Cursor chat |
+| **Codex GitHub App** | Comment-only review on every PR (P0/P1 focus) | Auto on `pull_request: opened` |
+| **Human (you)** | Review the PR, approve, do GitHub web one-time setup, run hardware regression | Manual |
+
+The agent must NOT:
+- push directly to `main` or `dev`,
+- force-push any reachable remote branch,
+- click GitHub web UI settings on the user's behalf,
+- silence `verify.sh` or comment out tests to make CI green,
+- commit anything that looks like a token / SSH key / password.
+
+### `/ship` command flow
+
+`.cursor/commands/ship.md` defines the canonical 11-step flow. Summary:
+
+1. Branch off `origin/dev` with a `feat/`, `fix/`, `chore/`, etc. prefix.
+2. Implement the change.
+3. Run `bash scripts/verify.sh` locally — must pass.
+4. Commit with conventional title.
+5. Push to `origin`.
+6. Open PR targeting `dev` via `gh api repos/dimensionalOS/dimos/pulls -X POST` (REST is more reliable than `gh pr create` immediately after push).
+7. Enable auto-merge with squash strategy.
+8. Wait for CI green and Codex review.
+9. Auto-merge fires.
+10. Delete local + remote branch.
+11. Report back to the user.
+
+---
+
+## Codex Review Guidelines (P0 / P1 / P2 / P3)
+
+> This section is read by the Codex GitHub App on every PR. It defines what
+> Codex should treat as blocking, recommended-fix, optional, or noise for the
+> dimos repository. Generic Codex defaults are not specific enough for a
+> robotics codebase that drives real hardware.
+
+### Severity levels
+
+| Level | Meaning | What Codex does |
+|-------|---------|-----------------|
+| **P0** | Could damage hardware, break a deployment, or compromise the repo | Write **BLOCK** in the review; require fix before merge |
+| **P1** | Likely to regress functionality, break tests, or violate strict mypy / pre-commit | Flag with "recommend fix" |
+| **P2** | Code quality (readability, duplication, naming) | Optional comment, do not block |
+| **P3** | Typos, comment spelling, personal style preference | **Do not flag** |
+
+### P0 checklist (any hit → BLOCK)
+
+1. **Secrets in the diff** — anything resembling an API key, OAuth token, SSH
+   private key, password, or hardcoded private IP that addresses a real
+   robot dock.
+2. **Direct push / force push to protected branches** — commits on the PR
+   branch that bypass `dev` (e.g. base = `main` instead of `dev`), or any
+   `--force` push history.
+3. **Robot motion without bounds** — calls into `SportClient`, `LowCmd`,
+   `Twist`, drone MAVLink velocity setpoints, or xArm joint commands that
+   pass user/LLM-derived velocity, joint, or torque values **without
+   `clamp`/`saturate`** to a documented physical limit.
+4. **Memory / concurrency hazards** in C/C++ extensions or pybind code —
+   use-after-free, dangling pointers, data race on a non-atomic shared
+   variable, missing mutex on a callback-driven module stream.
+5. **`verify.sh` neutered** — diff comments out a step in `scripts/verify.sh`,
+   replaces a real check with `exit 0`, or removes `--strict` / `-q` flags
+   in a way that hides failures.
+6. **Mypy strict mode disabled** — adding `# type: ignore` on a public API,
+   `--no-strict`, broad `Any` returns from a typed function, or a new
+   `[mypy.overrides] ignore_errors = true` block without justification in
+   the PR description.
+7. **`@skill` invariants violated** — a method tagged with both `@rpc` and
+   `@skill` (the decorator stacks are mutually exclusive per
+   `dimos/agents/annotation.py`), or a `@skill` whose docstring is removed,
+   whose params lack type annotations, or whose return type stops being
+   `str`. These cause silent agent regressions, not loud crashes.
+
+### P1 checklist (flag, do not auto-block)
+
+1. **Critical `GlobalConfig` defaults changed** — `mcp_port`, `n_workers`,
+   default `viewer`, `simulation`, `replay` flags. Flag and ask the PR to
+   document why.
+2. **Transport / topic renames** — LCM channel names, ROS2 topic strings,
+   DDS topics referenced by string literals across modules; rename in one
+   place, miss the other → silent disconnect.
+3. **System prompt changes** — `dimos/agents/system_prompt.py`,
+   `dimos/robot/unitree/g1/system_prompt.py`. Affects every LLM tool call;
+   ask for an explicit before/after diff in the PR description.
+4. **`all_blueprints.py` not regenerated** — any change adding/renaming a
+   blueprint must be accompanied by `pytest dimos/robot/test_all_blueprints_generation.py`
+   re-run. CI asserts this; if the diff touches blueprints but the
+   `all_blueprints.py` diff is empty, flag.
+5. **Tests skipped** — a new `@pytest.mark.skip`, `xfail`, or marker added
+   to an existing test without a linked issue in the PR description.
+6. **Pre-commit hook disabled** — `--no-verify` in any committed script,
+   `.pre-commit-config.yaml` removing `ruff` / license header / LFS check.
+7. **Inline imports added inside hot paths** — workspace rule says imports
+   at top of file unless circular dependency; flag and ask for the
+   circular-dep evidence.
+8. **Hardcoded ports / URLs** — code style rule says use `GlobalConfig`
+   constants. New `localhost:9990` or `192.168.123.161` literals → flag.
+9. **`requests` vs `urllib`** — workspace rule says use `requests`. New
+   `import urllib` for HTTP → flag.
+
+### P2 / P3 — do not flag
+
+**P2 (optional, low priority):**
+- Repeated code that would benefit from a helper but works correctly.
+- Naming that is consistent within the touched file but not the whole repo.
+- Suggestions to convert a `for`-loop to a comprehension when the loop is
+  more readable in context.
+
+**P3 (do not flag at all):**
+- English / Chinese typos in comments and markdown.
+- Trailing-whitespace, tab-vs-space (ruff handles it).
+- Personal style preferences not encoded in `pyproject.toml` ruff config.
+- Existing code outside the diff (do not expand the review surface).
+
+### Review output format
+
+When Codex posts a review, prefer this structure so a human can scan it
+quickly:
+
+```
+## P0 (BLOCKING)
+- <file:line> one sentence: why this can hurt hardware / repo
+
+## P1 (recommend fix)
+- <file:line> one sentence + suggested fix direction
+
+## P2 (optional)
+- <file:line> one sentence
+
+## Risk assessment
+- Hardware regression needed?  (yes / no / unsure)
+- Touches `@skill` / system_prompt / GlobalConfig?  (yes / no)
+- Touches transport / topic strings?  (yes / no)
+```
+
+### Triggering Codex actions beyond review
+
+Comment on the PR:
+- `@codex review` — re-run review explicitly (default behavior is automatic).
+- `@codex review for security regressions` — re-review with a security focus.
+- `@codex fix the CI failures` — Codex opens a follow-up branch with a fix.
+- `@codex add unit test for <function>` — Codex writes tests on a new branch.
+
+Do **not** use bare `@codex` (without `review`); it triggers a full cloud
+task and consumes more quota than necessary for plain code review.

@@ -1,0 +1,96 @@
+# agent-pipeline.yml
+#
+# Lightweight smoke check that runs on every PR to give the Cursor agent
+# (and human reviewers) a fast second-opinion CI signal.
+#
+# This workflow is intentionally NOT a replacement for `ci.yml` (Linux
+# self-hosted, ROS container) or `macos.yml` (macOS self-hosted, arm64).
+# Those remain the authoritative gates. This workflow:
+#   * runs on `ubuntu-latest` (free, fast, ~2 min wall clock with cache),
+#   * never blocks on hardware-only or platform-only failures,
+#   * uses the same `bash scripts/verify.sh`-style steps as the local agent.
+#
+# If you need to add this job to required-status-checks for branch
+# protection, the job name is `verify-fast`.
+
+name: agent-pipeline
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - '**.md'
+      - 'docker/**'
+      - '.github/workflows/docker-build.yml'
+      - '.github/workflows/_docker-build-template.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-fast:
+    if: github.event.pull_request.draft == false
+    name: verify-fast (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          lfs: false
+
+      - name: Install system dependencies
+        # Mirrors macos.yml `brew install portaudio libjpeg-turbo` on the
+        # apt side. Without these, `pyaudio` (pulled in by
+        # `unitree-webrtc-connect-leshy`) fails with `portaudio.h: No such
+        # file or directory` during `uv sync`.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            portaudio19-dev \
+            libjpeg-turbo8-dev \
+            libturbojpeg0-dev
+
+      - name: Install uv (with cache)
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install minimal deps (no dds, no unitree-dds, no cuda, no docker)
+        # Mirrors macos.yml extras subset; ubuntu-latest cannot build cuda /
+        # cyclonedds extras and we do not need them for static checks.
+        run: |
+          uv sync \
+            --all-extras \
+            --no-extra dds \
+            --no-extra unitree-dds \
+            --no-extra cuda \
+            --no-extra docker \
+            --frozen
+
+      - name: Ruff (lint)
+        run: |
+          uv run ruff check dimos/ || true
+          uv run ruff format --check dimos/ || true
+        # Ruff issues are surfaced via annotations but do not block this
+        # smoke job; main `ci.yml` is the authoritative formatter gate.
+
+      - name: pytest --collect-only (catch import errors fast)
+        run: |
+          uv run pytest --collect-only -q -m 'not (tool or mujoco or slow)' dimos/ \
+            > /tmp/pytest-collect.txt 2>&1
+          tail -20 /tmp/pytest-collect.txt
+        # If imports break, this fails in seconds rather than 10 min into
+        # the full suite.
+
+      - name: mypy (strict, dimos/ only)
+        run: |
+          uv run mypy dimos/
+
+      - name: Smoke verify.sh syntax
+        run: |
+          bash -n scripts/verify.sh
+          echo "scripts/verify.sh syntax OK"
