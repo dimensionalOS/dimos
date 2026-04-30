@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from langchain_core.messages import HumanMessage
-import pytest
 
 from dimos.agents.skills.gps_nav_skill import GpsNavSkillContainer
 from dimos.core.core import rpc
@@ -40,7 +39,6 @@ class MockedGpsNavSkill(GpsNavSkillContainer):
     _max_valid_distance = 50000
 
 
-@pytest.mark.slow
 def test_set_gps_travel_points(agent_setup) -> None:
     history = agent_setup(
         blueprints=[
@@ -59,7 +57,6 @@ def test_set_gps_travel_points(agent_setup) -> None:
     assert "success" in history[-1].content.lower()
 
 
-@pytest.mark.slow
 def test_set_gps_travel_points_multiple(agent_setup) -> None:
     history = agent_setup(
         blueprints=[

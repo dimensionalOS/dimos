@@ -116,7 +116,6 @@ def _adapter() -> McpAdapter:
     return McpAdapter()
 
 
-@pytest.mark.slow
 class TestMCPLifecycle:
     """MCP server lifecycle: start -> respond -> stop -> dead."""
 
@@ -179,7 +178,6 @@ class TestMCPLifecycle:
         assert "echo" in modules["StressTestModule"]
 
 
-@pytest.mark.slow
 class TestMCPCLICommands:
     """Test dimos mcp CLI commands against real MCP server."""
 
@@ -214,7 +212,6 @@ class TestMCPCLICommands:
         assert "echo" in data["modules"]["StressTestModule"]
 
 
-@pytest.mark.slow
 class TestMCPErrorHandling:
     """Test MCP error handling and edge cases."""
 
@@ -291,7 +288,6 @@ class TestMCPErrorHandling:
         assert "invalid JSON" in result.output
 
 
-@pytest.mark.slow
 class TestAgentSend:
     """Test dimos agent-send CLI and MCP method."""
 
@@ -313,7 +309,6 @@ class TestAgentSend:
         assert "hello from CLI" in result.output
 
 
-@pytest.mark.slow
 class TestDaemonMCPRecovery:
     """Test MCP recovery after daemon crashes and restarts."""
 
@@ -362,7 +357,6 @@ class TestDaemonMCPRecovery:
         assert len(list_runs(alive_only=False)) == 0
 
 
-@pytest.mark.slow
 class TestMCPRapidRestart:
     """Test rapid stop/start cycles."""
 
@@ -382,7 +376,6 @@ class TestMCPRapidRestart:
             assert _adapter().wait_for_down(timeout=10), f"MCP failed to stop on cycle {cycle}"
 
 
-@pytest.mark.slow
 class TestMCPNoServer:
     """Tests that require NO MCP server running."""
 

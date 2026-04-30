@@ -239,54 +239,6 @@ cuda = [
     "xformers>=0.0.20; platform_machine == 'x86_64'",
 ]
 
-dev = [
-    "ruff==0.14.3",
-    "mypy==1.19.0",
-    "pre_commit==4.2.0",
-    "pytest==8.3.5",
-    "pytest-asyncio==0.26.0",
-    "pytest-mock==3.15.0",
-    "pytest-env==1.1.5",
-    "pytest-timeout==2.4.0",
-    "coverage>=7.0",
-    "requests-mock==1.12.1",
-    "terminaltexteffects==0.12.2",
-    "watchdog>=3.0.0",
-
-    # docs
-    "md-babel-py==1.1.3",
-
-    # LSP
-    "python-lsp-server[all]==1.14.0",
-    "python-lsp-ruff==2.3.0",
-
-    # Types
-    "lxml-stubs>=0.5.1,<1",
-    "pandas-stubs>=2.3.2.250926,<3",
-    "scipy-stubs>=1.15.0",
-    "types-PySocks>=1.7.1.20251001,<2",
-    "types-PyYAML>=6.0.12.20250915,<7",
-    "types-colorama>=0.4.15.20250801,<1",
-    "types-defusedxml>=0.7.0.20250822,<1",
-    "types-gevent>=25.4.0.20250915,<26",
-    "types-greenlet>=3.2.0.20250915,<4",
-    "types-jmespath>=1.0.2.20250809,<2",
-    "types-requests>=2.32.4.20260107,<3",
-    "types-jsonschema>=4.25.1.20251009,<5",
-    "types-networkx>=3.5.0.20251001,<4",
-    "types-protobuf>=6.32.1.20250918,<7",
-    "types-psutil>=7.2.2.20260130,<8",
-    "types-psycopg2>=2.9.21.20251012",
-    "types-pytz>=2025.2.0.20250809,<2026",
-    "types-simplejson>=3.20.0.20250822,<4",
-    "types-tabulate>=0.9.0.20241207,<1",
-    "types-tensorflow>=2.18.0.20251008,<3",
-    "types-tqdm>=4.67.0.20250809,<5",
-
-    # Tools
-    "py-spy",
-]
-
 psql = [
     "psycopg2-binary>=2.9.11"
 ]
@@ -339,6 +291,111 @@ docker = [
 
 base = [
     "dimos[agents,web,perception,visualization]",
+]
+
+[dependency-groups]
+# Test/lint/type-check tooling + lightweight extras for the ubuntu-latest
+# CI runner. Excludes heavy ML/audio libraries (torch, transformers,
+# openai-whisper, ultralytics, moondream, drake, bitsandbytes,
+# sentence_transformers, edgetam-dimos, open_clip_torch, torchreid,
+# mujoco, cupy, etc.) which either require LFS-backed model files or
+# significant disk space. Tests that need those libraries are marked
+# `slow` and run on the self-hosted runner via the `tests-self-hosted`
+# group.
+tests = [
+    # Test runner
+    "pytest==8.3.5",
+    "pytest-asyncio==0.26.0",
+    "pytest-mock==3.15.0",
+    "pytest-env==1.1.5",
+    "pytest-timeout==2.4.0",
+    "coverage>=7.0",
+    "requests-mock==1.12.1",
+
+    # Lint / format / type-check
+    "ruff==0.14.3",
+    "mypy==1.19.0",
+    "pre_commit==4.2.0",
+
+    # Misc dev tools
+    "watchdog>=3.0.0",
+    "md-babel-py==1.1.1",
+    "py-spy",
+
+    # LSP
+    "python-lsp-server[all]==1.14.0",
+    "python-lsp-ruff==2.3.0",
+
+    # Type stubs
+    "lxml-stubs>=0.5.1,<1",
+    "pandas-stubs>=2.3.2.250926,<3",
+    "scipy-stubs>=1.15.0",
+    "types-PySocks>=1.7.1.20251001,<2",
+    "types-PyYAML>=6.0.12.20250915,<7",
+    "types-colorama>=0.4.15.20250801,<1",
+    "types-defusedxml>=0.7.0.20250822,<1",
+    "types-gevent>=25.4.0.20250915,<26",
+    "types-greenlet>=3.2.0.20250915,<4",
+    "types-jmespath>=1.0.2.20250809,<2",
+    "types-requests>=2.32.4.20260107,<3",
+    "types-jsonschema>=4.25.1.20251009,<5",
+    "types-networkx>=3.5.0.20251001,<4",
+    "types-protobuf>=6.32.1.20250918,<7",
+    "types-psutil>=7.2.2.20260130,<8",
+    "types-psycopg2>=2.9.21.20251012",
+    "types-pytz>=2025.2.0.20250809,<2026",
+    "types-simplejson>=3.20.0.20250822,<4",
+    "types-tabulate>=0.9.0.20241207,<1",
+    "types-tensorflow>=2.18.0.20251008,<3",
+    "types-tqdm>=4.67.0.20250809,<5",
+
+    # Lightweight project extras safe for ubuntu-latest
+    "dimos[web,visualization,drone,cpu,psql]",
+
+    # Minimum heavy deps required for test collection to succeed.
+    # These modules are imported unconditionally by production code that
+    # tests transitively reach during pytest collection (even if the
+    # tests themselves are marked `slow` and skipped):
+    #   - torch:   `dimos.perception.detection.type.detection2d.seg`
+    #              (collected via perception/detection/conftest.py)
+    #   - langchain (+ core): `dimos.agents.vlm_agent`
+    #              (collected via blueprints/smart/*_test.py)
+    #   - unitree-webrtc-connect-leshy: `dimos.robot.unitree.connection`
+    #              (collected via test_moment.py, test_actors.py)
+    "torch",
+    "langchain==1.2.3",
+    "langchain-core==1.2.3",
+    "unitree-webrtc-connect-leshy>=2.0.7",
+    "googlemaps>=4.10.0",
+    "mujoco>=3.3.4",
+    "transformers[torch]==4.49.0",
+    "ultralytics>=8.3.70",
+    "hydra-core>=1.3.0",
+    "open_clip_torch==3.2.0",
+    "openai",
+    "moondream",
+    "torchreid==0.2.5",
+    "gdown==5.2.0",
+    "tensorboard==2.20.0",
+    "xacro",
+    "pygame>=2.6.1",
+]
+
+# Full CI test group for the self-hosted runner. Inherits `tests` and adds
+# the heavy ML/perception/sim extras needed for slow-marked tests (LFS,
+# GPU, ROS-dependent integration tests, simulation).
+tests-self-hosted = [
+    {include-group = "tests"},
+    "dimos[agents,perception,manipulation,sim,unitree,misc]",
+]
+
+[tool.uv]
+# `unitree-dds` is a superset of `unitree` (adds DDS bridge libs that need
+# system cyclonedds). Mark them conflicting so uv's universal resolver
+# doesn't try to satisfy both at once when `unitree` is requested.
+conflicts = [
+    [{ extra = "unitree" }, { extra = "unitree-dds" }],
+    [{ extra = "dds" }, { extra = "unitree-dds" }],
 ]
 
 [tool.ruff]
@@ -450,7 +507,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "-s -v -r a -p no:warnings -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or slow or mujoco)'"
+addopts = "-v -r a -p no:warnings -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or slow or mujoco)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

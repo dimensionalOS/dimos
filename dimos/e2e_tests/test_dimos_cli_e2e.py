@@ -17,7 +17,6 @@ import pytest
 
 @pytest.mark.skipif_in_ci
 @pytest.mark.skipif_no_openai
-@pytest.mark.slow
 def test_dimos_skills(lcm_spy, start_blueprint, human_input) -> None:
     lcm_spy.save_topic("/agent")
     lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")

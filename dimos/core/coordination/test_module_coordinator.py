@@ -160,7 +160,6 @@ class Mod2(Module):
     def stop(self) -> None: ...
 
 
-@pytest.mark.slow
 def test_build_happy_path() -> None:
     blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint())
 
@@ -269,7 +268,6 @@ def test_that_remapping_can_resolve_conflicts() -> None:
     _verify_no_name_conflicts(blueprint_set_remapped)
 
 
-@pytest.mark.slow
 def test_remapping() -> None:
     """Test that remapping streams works correctly."""
 
@@ -345,7 +343,6 @@ def test_future_annotations_autoconnect() -> None:
         coordinator.stop()
 
 
-@pytest.mark.slow
 def test_module_ref_direct() -> None:
     coordinator = ModuleCoordinator.build(
         autoconnect(
@@ -364,7 +361,6 @@ def test_module_ref_direct() -> None:
         coordinator.stop()
 
 
-@pytest.mark.slow
 def test_module_ref_spec() -> None:
     coordinator = ModuleCoordinator.build(
         autoconnect(
@@ -383,7 +379,6 @@ def test_module_ref_spec() -> None:
         coordinator.stop()
 
 
-@pytest.mark.slow
 def test_disabled_modules_are_skipped_during_build() -> None:
     blueprint_set = autoconnect(
         ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint()
@@ -400,7 +395,6 @@ def test_disabled_modules_are_skipped_during_build() -> None:
         coordinator.stop()
 
 
-@pytest.mark.slow
 def test_disabled_module_ref_gets_noop_proxy() -> None:
     blueprint_set = autoconnect(
         Calculator1.blueprint(),
@@ -420,7 +414,6 @@ def test_disabled_module_ref_gets_noop_proxy() -> None:
         coordinator.stop()
 
 
-@pytest.mark.slow
 def test_module_ref_remap_ambiguous() -> None:
     coordinator = ModuleCoordinator.build(
         autoconnect(
@@ -444,7 +437,6 @@ def test_module_ref_remap_ambiguous() -> None:
         coordinator.stop()
 
 
-@pytest.mark.slow
 def test_load_blueprint_basic(dynamic_coordinator) -> None:
     """load_blueprint deploys, wires and starts modules the same way build() does."""
     bp = autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint())
@@ -468,7 +460,6 @@ def test_load_blueprint_basic(dynamic_coordinator) -> None:
     assert b.what_is_as_name() == "A, Module A"
 
 
-@pytest.mark.slow
 def test_load_blueprint_twice(dynamic_coordinator) -> None:
     """Two sequential load_blueprint calls share transports for matching streams."""
     dynamic_coordinator.load_blueprint(ModuleA.blueprint())
@@ -488,7 +479,6 @@ def test_load_blueprint_twice(dynamic_coordinator) -> None:
     assert b.data3.transport.topic == c.data3.transport.topic
 
 
-@pytest.mark.slow
 def test_load_module_convenience(dynamic_coordinator) -> None:
     """load_module is a shorthand for load_blueprint(cls.blueprint())."""
     dynamic_coordinator.load_module(ModuleA)
@@ -496,7 +486,6 @@ def test_load_module_convenience(dynamic_coordinator) -> None:
     assert dynamic_coordinator.get_instance(ModuleA).data1.transport is not None
 
 
-@pytest.mark.slow
 def test_load_blueprint_module_ref_to_existing(dynamic_coordinator) -> None:
     """A module loaded in a second blueprint can reference one from the first."""
     dynamic_coordinator.load_blueprint(Calculator1.blueprint())
@@ -522,7 +511,6 @@ def test_load_blueprint_conflict_with_existing() -> None:
         _verify_no_conflicts_with_existing(bp, registry)
 
 
-@pytest.mark.slow
 def test_load_blueprint_duplicate_module_raises(dynamic_coordinator) -> None:
     """Loading a module that is already deployed raises ValueError."""
     dynamic_coordinator.load_blueprint(ModuleA.blueprint())
@@ -564,7 +552,6 @@ def dynamic_coordinator():
     mc.stop()
 
 
-@pytest.mark.slow
 def test_optional_module_ref_with_provider(build_coordinator) -> None:
     """An optional ref resolves normally when a provider is present."""
     coordinator = build_coordinator(
@@ -579,7 +566,6 @@ def test_optional_module_ref_with_provider(build_coordinator) -> None:
     assert mod.calc.compute1(2, 3) == 5
 
 
-@pytest.mark.slow
 def test_optional_module_ref_without_provider(build_coordinator) -> None:
     """An optional ref is silently skipped when no provider is in the blueprint."""
     coordinator = build_coordinator(ModWithOptionalRef.blueprint())
@@ -588,7 +574,6 @@ def test_optional_module_ref_without_provider(build_coordinator) -> None:
     assert mod is not None
 
 
-@pytest.mark.slow
 def test_load_blueprint_auto_scales_empty_pool(dynamic_coordinator) -> None:
     """A coordinator with 0 initial workers auto-adds workers on load_blueprint."""
     dynamic_coordinator.load_blueprint(ModuleA.blueprint())
@@ -606,7 +591,6 @@ def test_check_requirements_failure(mocker) -> None:
         _check_requirements(bp)
 
 
-@pytest.mark.slow
 def test_restart_module_basic(dynamic_coordinator) -> None:
     """restart_module replaces the deployed proxy with a fresh one."""
     dynamic_coordinator.load_module(ModuleA)
@@ -621,7 +605,6 @@ def test_restart_module_basic(dynamic_coordinator) -> None:
     assert new_proxy.get_name() == "A, Module A"
 
 
-@pytest.mark.slow
 def test_restart_module_preserves_stream_wiring(dynamic_coordinator) -> None:
     """Streams stay on the same transport after restart so consumers keep receiving data."""
     dynamic_coordinator.load_blueprint(autoconnect(ModuleA.blueprint(), ModuleC.blueprint()))
@@ -643,7 +626,6 @@ def test_restart_module_preserves_stream_wiring(dynamic_coordinator) -> None:
     assert c_after.data3.transport.topic == topic_before
 
 
-@pytest.mark.slow
 def test_restart_module_rewires_module_refs(dynamic_coordinator) -> None:
     """After restart, modules that reference the restarted class see the new proxy."""
     dynamic_coordinator.load_blueprint(autoconnect(ModuleA.blueprint(), ModuleB.blueprint()))
@@ -657,7 +639,6 @@ def test_restart_module_rewires_module_refs(dynamic_coordinator) -> None:
     assert b.what_is_as_name() == "A, Module A"
 
 
-@pytest.mark.slow
 def test_restart_consumer_rewires_outbound_refs(dynamic_coordinator) -> None:
     """Restarting a consumer re-injects its refs to existing target modules."""
     dynamic_coordinator.load_blueprint(autoconnect(ModuleA.blueprint(), ModuleB.blueprint()))
@@ -670,7 +651,6 @@ def test_restart_consumer_rewires_outbound_refs(dynamic_coordinator) -> None:
     assert b_after.what_is_as_name() == "A, Module A"
 
 
-@pytest.mark.slow
 def test_restart_module_shuts_down_empty_worker(dynamic_coordinator) -> None:
     """Restart shuts down the old worker (when empty) and spawns a new one."""
 
@@ -688,7 +668,6 @@ def test_restart_module_shuts_down_empty_worker(dynamic_coordinator) -> None:
     assert new_worker_ids.isdisjoint(old_worker_ids)
 
 
-@pytest.mark.slow
 def test_restart_module_calls_importlib_reload(dynamic_coordinator, mocker) -> None:
     """reload_source=True invokes importlib.reload on the module's source file."""
     dynamic_coordinator.load_module(ModuleA)
@@ -722,7 +701,6 @@ def _mock_reload_producing_new_class(original_class):
     return side_effect, new_class
 
 
-@pytest.mark.slow
 def test_get_instance_after_reload_restart(dynamic_coordinator, mocker) -> None:
     """get_instance with the original class still works after a reload restart."""
     dynamic_coordinator.load_module(ModuleA)
@@ -738,7 +716,6 @@ def test_get_instance_after_reload_restart(dynamic_coordinator, mocker) -> None:
     assert dynamic_coordinator.get_instance(ModuleA) is new_proxy
 
 
-@pytest.mark.slow
 def test_double_restart_with_reload(dynamic_coordinator, mocker) -> None:
     """A second restart via the original class works after a reload restart."""
     dynamic_coordinator.load_module(ModuleA)
@@ -761,7 +738,6 @@ def test_double_restart_with_reload(dynamic_coordinator, mocker) -> None:
     assert dynamic_coordinator.get_instance(ModuleA) is proxy2
 
 
-@pytest.mark.slow
 def test_unload_after_reload_restart(dynamic_coordinator, mocker) -> None:
     """unload_module with the original class works after a reload restart."""
     dynamic_coordinator.load_module(ModuleA)
@@ -777,7 +753,6 @@ def test_unload_after_reload_restart(dynamic_coordinator, mocker) -> None:
     assert dynamic_coordinator.get_instance(ModuleA) is None
 
 
-@pytest.mark.slow
 def test_restart_preserves_remapped_streams(dynamic_coordinator) -> None:
     """Restart reconnects streams that were remapped during initial load."""
     bp = autoconnect(
@@ -805,7 +780,6 @@ def test_start_rpyc_service(dynamic_coordinator) -> None:
     assert port > 0
 
 
-@pytest.mark.slow
 def test_list_module_names(dynamic_coordinator) -> None:
     assert dynamic_coordinator.list_module_names() == []
     dynamic_coordinator.load_module(ModuleA)
@@ -813,7 +787,6 @@ def test_list_module_names(dynamic_coordinator) -> None:
     assert set(dynamic_coordinator.list_module_names()) == {"ModuleA", "ModuleC"}
 
 
-@pytest.mark.slow
 def test_get_module_endpoint(dynamic_coordinator) -> None:
     dynamic_coordinator.load_module(ModuleA)
     host, port, module_id = dynamic_coordinator.get_module_endpoint("ModuleA")

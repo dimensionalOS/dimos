@@ -230,7 +230,6 @@ def test_multiple_messages(
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-@pytest.mark.asyncio
 async def test_async_iterator(
     pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
 ) -> None:

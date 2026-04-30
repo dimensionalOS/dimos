@@ -14,7 +14,68 @@ permissions:
   packages: read
 
 jobs:
-  ci-complete:
+  tests:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.12
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libturbojpeg0-dev portaudio19-dev build-essential \
+            libgl1 libgl1-mesa-dri python3-dev cyclonedds-dev
+          sudo rm -f /usr/bin/git-lfs
+
+      - name: Configure LCM networking
+        run: |
+          sudo ip link set lo multicast on
+          sudo ip route add 224.0.0.0/4 dev lo || true
+          sudo sysctl -w net.core.rmem_max=67108864
+          sudo sysctl -w net.core.rmem_default=67108864
+
+      - name: Install Python dependencies
+        run: uv sync --only-group tests --frozen
+
+      - name: Build C++ extensions
+        run: |
+          source .venv/bin/activate
+          uv pip install pybind11
+          python setup.py build_ext --inplace
+
+      - name: Remove pydrake stubs
+        run: |
+          find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
+
+      - name: Run tests
+        run: |
+          source .venv/bin/activate
+          _DIMOS_COV=1 coverage run -m pytest --durations=0 && coverage html && coverage report
+
+      - name: Run mypy
+        if: ${{ !cancelled() }}
+        run: |
+          source .venv/bin/activate
+          mypy dimos
+
+      - name: Upload coverage report
+        if: github.event_name == 'push' && !cancelled()
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-report
+          path: htmlcov/
+
+  slow-tests:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     timeout-minutes: 60
     runs-on: [self-hosted, Linux]
@@ -36,35 +97,34 @@ jobs:
           git clean -ffdx -e .venv
 
       - name: Install Python dependencies
-        run: uv sync --all-extras --no-extra dds --no-extra unitree-dds --frozen
+        run: uv sync --only-group tests-self-hosted --frozen
 
       - name: Remove pydrake stubs
         run: |
           find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
 
       - name: Run tests
-        if: github.event_name != 'push'
         run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && pytest --durations=0 -m 'not (tool or mujoco)'"
-
-      - name: Run tests with coverage
-        if: github.event_name == 'push'
-        run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && _DIMOS_COV=1 coverage run -m pytest --durations=0 -m 'not (tool or mujoco)' && coverage combine && coverage html && coverage report"
+          /entrypoint.sh bash -c "source .venv/bin/activate && pytest --durations=0 -m '(slow or skipif_no_ros) and not (tool or mujoco)'"
 
       - name: Run mypy
         if: ${{ !cancelled() }}
         run: |
           /entrypoint.sh bash -c "source .venv/bin/activate && MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
 
-      - name: Upload coverage report
-        if: github.event_name == 'push' && !cancelled()
-        uses: actions/upload-artifact@v5
-        with:
-          name: coverage-report
-          path: htmlcov/
-
       - name: Check disk space
         if: failure()
         run: |
           df -h
+
+  ci-gate:
+    if: always()
+    needs: [tests, slow-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ needs.tests.result }}" != "success" ]] || \
+             [[ "${{ needs.slow-tests.result }}" != "success" ]]; then
+            exit 1
+          fi

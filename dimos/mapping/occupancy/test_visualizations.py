@@ -21,6 +21,8 @@ import pytest
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.utils.data import get_data
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.mark.parametrize("palette", ["rainbow", "turbo"])
 def test_visualize_occupancy_grid(occupancy_gradient, palette) -> None:

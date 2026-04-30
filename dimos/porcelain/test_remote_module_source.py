@@ -41,7 +41,6 @@ def test_connect_attribute_access(client):
     assert module._module_closed is False
 
 
-@pytest.mark.slow
 def test_connect_restart_invalidates_cache(client):
     source = client._source
     m_before = source.get_rpyc_module("StressTestModule")
@@ -51,7 +50,6 @@ def test_connect_restart_invalidates_cache(client):
     assert client.skills.ping() == "pong"
 
 
-@pytest.mark.slow
 def test_connect_run_by_name_adds_module(running_app, client):
     client.run("mcp-server")
     assert "McpServer" in client._source.list_module_names()

@@ -204,7 +204,6 @@ class TestROS1Deserialization:
 
 
 class TestTCPBridge:
-    @pytest.mark.slow
     def test_handshake_and_data_flow(self):
         """Mock Unity connects, sends a PointCloud2, verifies bridge publishes it."""
         port = _find_free_port()
@@ -277,7 +276,6 @@ class TestRerunConfig:
         assert UnityBridgeModule.rerun_suppress_camera_info(None) is None
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not _is_linux_x86, reason="Unity binary requires Linux x86_64")
 @pytest.mark.skipif(not _has_display, reason="Unity requires DISPLAY (X11)")
 class TestLiveUnity:

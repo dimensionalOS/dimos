@@ -30,7 +30,6 @@ class Adder(Module):
         return str(x + y)
 
 
-@pytest.mark.slow
 def test_can_call_tool(agent_setup):
     history = agent_setup(
         blueprints=[Adder.blueprint()],
@@ -63,7 +62,6 @@ class UserRegistration(Module):
         return "User name registered successfully."
 
 
-@pytest.mark.slow
 def test_can_call_again_on_error(agent_setup):
     history = agent_setup(
         blueprints=[UserRegistration.blueprint()],
@@ -113,7 +111,6 @@ class NavigationSkill(Module):
         return f"Going to the {description}."
 
 
-@pytest.mark.slow
 def test_multiple_tool_calls_with_multiple_messages(agent_setup):
     history = agent_setup(
         blueprints=[MultipleTools.blueprint(), NavigationSkill.blueprint()],
@@ -167,7 +164,6 @@ def test_multiple_tool_calls_with_multiple_messages(agent_setup):
     assert len(go_to_location_calls) == 2
 
 
-@pytest.mark.slow
 def test_prompt(agent_setup):
     history = agent_setup(
         blueprints=[],

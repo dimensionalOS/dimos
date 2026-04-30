@@ -168,8 +168,8 @@ class SpyLCMTransport(LCMTransport):
         return wrapped_unsubscribe
 
 
-@pytest.mark.parametrize("subscriber_class", [ClassicSubscriber, RXPYSubscriber])
 @pytest.mark.slow
+@pytest.mark.parametrize("subscriber_class", [ClassicSubscriber, RXPYSubscriber])
 def test_subscription(dimos, subscriber_class) -> None:
     robot = dimos.deploy(MockRobotClient)
 

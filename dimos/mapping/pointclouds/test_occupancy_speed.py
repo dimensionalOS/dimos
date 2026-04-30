@@ -24,6 +24,8 @@ from dimos.utils.cli.plot import bar
 from dimos.utils.data import get_data, get_data_dir
 from dimos.utils.testing.replay import TimedSensorReplay
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.mark.tool
 def test_build_map():

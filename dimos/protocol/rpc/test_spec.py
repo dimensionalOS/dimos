@@ -294,7 +294,6 @@ def test_exception_handling_callback(rpc_context, impl_name: str) -> None:
             unsub_server()
 
 
-@pytest.mark.slow
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
 def test_timeout(rpc_context, impl_name: str) -> None:
     """Test that RPC calls properly timeout."""

@@ -16,9 +16,13 @@
 import itertools
 from typing import cast
 
+import pytest
+
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import RawLidarMsg, pointcloud2_from_webrtc_lidar
 from dimos.utils.testing.replay import SensorReplay
+
+pytestmark = pytest.mark.slow
 
 
 def test_init() -> None:
