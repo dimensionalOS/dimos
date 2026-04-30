@@ -84,11 +84,15 @@ jobs:
 
       - name: Configure LCM networking
         run: |
-          # Same as dimos autoconf for macOS (skipped when CI=1)
+          # Same as dimos autoconf for macOS (skipped when CI=1).
+          # `|| true` on each line: macOS may cap one bound while permitting
+          # others, and we don't want a partial fail to skip the whole test
+          # step. The system_configurator inside dimos applies the same
+          # values when CI=0 — keep these in sync.
           sudo route add -net 224.0.0.0/4 -interface lo0 || true
-          sudo sysctl -w kern.ipc.maxsockbuf=6291456
-          sudo sysctl -w net.inet.udp.recvspace=2097152
-          sudo sysctl -w net.inet.udp.maxdgram=16777216
+          sudo sysctl -w kern.ipc.maxsockbuf=16777216 || true
+          sudo sysctl -w net.inet.udp.recvspace=16777216 || true
+          sudo sysctl -w net.inet.udp.maxdgram=16777216 || true
 
       - name: Run tests
         env:
