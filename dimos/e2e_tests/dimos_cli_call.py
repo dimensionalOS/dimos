@@ -38,6 +38,18 @@ class DimosCliCall:
             start_new_session=True,
         )
 
+    def _kill_group(self, sig: int) -> None:
+        """Send *sig* to the process group, falling back to the process itself.
+
+        On macOS with ``start_new_session=True`` the child runs in its own
+        session and ``os.killpg`` can raise ``PermissionError``.  In that case
+        we fall back to signalling just the lead process.
+        """
+        try:
+            os.killpg(self.process.pid, sig)
+        except PermissionError:
+            os.kill(self.process.pid, sig)
+
     def stop(self) -> None:
         if self.process is None:
             return
@@ -45,7 +57,7 @@ class DimosCliCall:
         try:
             # Send SIGTERM to the entire process group so child processes
             # (e.g. the mujoco viewer subprocess) are also terminated.
-            os.killpg(self.process.pid, signal.SIGTERM)
+            self._kill_group(signal.SIGTERM)
 
             # Record the time when we sent the kill signal
             shutdown_start = time.time()
@@ -62,7 +74,7 @@ class DimosCliCall:
                 )
             except subprocess.TimeoutExpired:
                 # If we reach here, the process didn't terminate in 30 seconds
-                os.killpg(self.process.pid, signal.SIGKILL)
+                self._kill_group(signal.SIGKILL)
                 self.process.wait()  # Clean up
                 raise AssertionError(
                     "Process did not shut down within 30 seconds after receiving SIGTERM"
@@ -72,7 +84,7 @@ class DimosCliCall:
             # Clean up if something goes wrong
             if self.process.poll() is None:  # Process still running
                 try:
-                    os.killpg(self.process.pid, signal.SIGKILL)
+                    self._kill_group(signal.SIGKILL)
                 except ProcessLookupError:
                     pass
                 self.process.wait()
