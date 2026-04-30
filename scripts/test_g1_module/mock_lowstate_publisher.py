@@ -49,8 +49,8 @@ class MockG1LowStatePublisher:
     Args:
         rate_hz: Publish rate (Hz).
         mode_machine: Value to put in LowState.mode_machine. MUST be non-zero
-            so UnitreeG1LowLevelAdapter.connect() completes (it captures the
-            first non-None mode_machine and exits the wait loop).
+            so G1WholeBodyConnection.start() completes (it captures the first
+            non-None mode_machine from rt/lowstate and exits the wait loop).
         network_interface: DDS NIC, default 0.
     """
 
