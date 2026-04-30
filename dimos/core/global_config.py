@@ -43,6 +43,8 @@ class GlobalConfig(BaseSettings):
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
+    rerun_host: str | None = None
+    rerun_websocket_server_port: int = 3030
     n_workers: int = 2
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None
