@@ -61,6 +61,8 @@ class GlobalConfig(BaseSettings):
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
     listen_host: str = "127.0.0.1"
+    rerun_host: str | None = None
+    rerun_websocket_server_port: int = 3030
 
     model_config = SettingsConfigDict(
         env_file=".env",

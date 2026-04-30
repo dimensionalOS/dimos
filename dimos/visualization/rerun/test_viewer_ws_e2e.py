@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 import websockets.asyncio.client as ws_client
 
+from dimos.core.global_config import global_config
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 _E2E_PORT = 13032
@@ -34,11 +35,16 @@ _E2E_PORT = 13032
 
 @pytest.fixture()
 def server(wait_for_server: Any) -> RerunWebSocketServer:
-    module = RerunWebSocketServer(port=_E2E_PORT)
-    module.start()
-    wait_for_server(_E2E_PORT)
-    yield module  # type: ignore[misc]
-    module.stop()
+    original_port = global_config.rerun_websocket_server_port
+    global_config.update(rerun_websocket_server_port=_E2E_PORT)
+    try:
+        module = RerunWebSocketServer()
+        module.start()
+        wait_for_server(_E2E_PORT)
+        yield module  # type: ignore[misc]
+        module.stop()
+    finally:
+        global_config.update(rerun_websocket_server_port=original_port)
 
 
 def _send_messages(port: int, messages: list[dict[str, Any]], *, delay: float = 0.05) -> None:

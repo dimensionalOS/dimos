@@ -28,11 +28,6 @@ from dimos.visualization.rerun.constants import RERUN_GRPC_PORT
 
 logger = setup_logger()
 
-DEFAULT_GRPC_CONFIG: dict[str, Any] = {
-    "connect_url": "rerun+http://127.0.0.1:9877/proxy",
-    "server_memory_limit": "25%",
-}
-
 
 def rerun_init(
     app_id: str = "dimos",
@@ -49,30 +44,36 @@ def rerun_init(
     """
     rr.init(app_id, **kwargs)  # type: ignore[arg-type]
 
-    if not start_grpc:
-        return None
+    server_uri: str | None = None
+    if start_grpc:
+        if (
+            not isinstance(grpc_config, dict)
+            or not isinstance(grpc_config.get("connect_url"), str)
+            or not isinstance(grpc_config.get("server_memory_limit"), str)
+        ):
+            raise Exception(
+                "when start_grpc=True, grpc_config needs to be a dict with connect_url and server_memory_limit as strings"
+            )
 
-    config = {**DEFAULT_GRPC_CONFIG, **(grpc_config or {})}
-    connect_url: str = config["connect_url"]
-    server_memory_limit: str = config["server_memory_limit"]
+        connect_url = grpc_config["connect_url"]
+        server_memory_limit = grpc_config["server_memory_limit"]
+        parsed = urlparse(connect_url.replace("rerun+", "", 1))
+        grpc_port = parsed.port or RERUN_GRPC_PORT
 
-    parsed = urlparse(connect_url.replace("rerun+", "", 1))
-    grpc_port = parsed.port or RERUN_GRPC_PORT
+        port_in_use = False
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            port_in_use = sock.connect_ex(("127.0.0.1", grpc_port)) == 0
 
-    port_in_use = False
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        port_in_use = sock.connect_ex(("127.0.0.1", grpc_port)) == 0
-
-    if port_in_use:
-        logger.info(f"gRPC port {grpc_port} already in use, connecting to existing server")
-        rr.connect_grpc(url=connect_url)
-        server_uri = connect_url
-    else:
-        server_uri = rr.serve_grpc(
-            grpc_port=grpc_port,
-            server_memory_limit=server_memory_limit,
-        )
-        logger.info(f"Rerun gRPC server ready at {server_uri}")
+        if port_in_use:
+            logger.info(f"gRPC port {grpc_port} already in use, connecting to existing server")
+            rr.connect_grpc(url=connect_url)
+            server_uri = connect_url
+        else:
+            server_uri = rr.serve_grpc(
+                grpc_port=grpc_port,
+                server_memory_limit=server_memory_limit,
+            )
+            logger.info(f"Rerun gRPC server ready at {server_uri}")
 
     # the important part of this function (consolidate them )
     register_colormap_annotation("turbo")
