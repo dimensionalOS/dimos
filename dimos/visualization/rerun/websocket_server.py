@@ -81,8 +81,14 @@ class RerunWebSocketServer(Module):
         super().__init__(**kwargs)
         self._stop_event: asyncio.Event | None = None
         self._server_ready = threading.Event()
-        self.host = self.config.g.rerun_host or self.config.g.listen_host
-        self.port = self.config.g.rerun_websocket_server_port
+
+    @property
+    def host(self) -> str:
+        return self.config.g.rerun_host or self.config.g.listen_host
+
+    @property
+    def port(self) -> int:
+        return self.config.g.rerun_websocket_server_port
 
     @rpc
     def start(self) -> None:

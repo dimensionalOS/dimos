@@ -208,7 +208,10 @@ class RerunBridgeModule(Module):
         super().__init__(**kwargs)
         self._last_log = {}
         self._override_cache: dict[str, Callable[[Any], RerunData | None]] = {}
-        self.host = self.config.g.rerun_host or self.config.g.listen_host
+
+    @property
+    def host(self) -> str:
+        return self.config.g.rerun_host or self.config.g.listen_host
 
     def _visual_override_for_entity_path(
         self, entity_path: str
