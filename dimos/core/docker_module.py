@@ -30,7 +30,7 @@ from dimos.core.module import ModuleBase, ModuleConfig
 from dimos.core.rpc_client import ModuleProxyProtocol, RpcCall
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
-from dimos.visualization.rerun.constants import RERUN_GRPC_PORT, RERUN_WEB_PORT
+from dimos.visualization.rerun.constants import RERUN_GRPC_PORT, RERUN_WEB_VIEWER_PORT
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -351,7 +351,7 @@ class DockerModuleProxy(ModuleProxyProtocol):
         if cfg.docker_network is None and cfg.docker_network_mode == "host":
             return
         # Non-host network: map Rerun ports + any custom ports
-        for port in (RERUN_GRPC_PORT, RERUN_WEB_PORT):
+        for port in (RERUN_GRPC_PORT, RERUN_WEB_VIEWER_PORT):
             cmd.extend(["-p", f"{port}:{port}/tcp"])
         for host_port, container_port, proto in cfg.docker_ports:
             cmd.extend(["-p", f"{host_port}:{container_port}/{proto or 'tcp'}"])
