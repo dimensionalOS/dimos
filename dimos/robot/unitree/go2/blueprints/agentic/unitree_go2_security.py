@@ -18,7 +18,7 @@ from typing import Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitree_go2_agentic
-from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
 def _convert_camera_info(camera_info: Any) -> Any:
@@ -85,7 +85,7 @@ rerun_config = {
 
 unitree_go2_security = autoconnect(
     unitree_go2_agentic,
-    RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode(), **rerun_config),
+    RerunBridgeModule.blueprint(**rerun_config),
 )
 
 __all__ = ["unitree_go2_security"]
