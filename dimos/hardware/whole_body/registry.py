@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import importlib
 import logging
-import pkgutil
+import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -61,21 +61,28 @@ class WholeBodyAdapterRegistry:
     def discover(self) -> None:
         """Discover and register adapters from subpackages.
 
-        Mirrors ``dimos.hardware.drive_trains.registry``'s one-level walk:
-        each direct subpackage of ``dimos.hardware.whole_body`` is expected
+        Mirrors ``dimos.hardware.drive_trains.registry``'s walk pattern: raw
+        filesystem listing + ``os.path.isdir`` check. We do NOT use
+        ``pkgutil.iter_modules`` because dimos uses PEP 420 namespace packages
+        (no ``__init__.py``) and ``iter_modules`` doesn't reliably enumerate
+        subpackage directories under namespace packages.
+
+        Each direct subpackage of ``dimos.hardware.whole_body`` is expected
         to expose ``adapter.py`` with a ``register(registry)`` function.
         """
         import dimos.hardware.whole_body as pkg
 
-        for _, name, ispkg in pkgutil.iter_modules(pkg.__path__):
-            if not ispkg:
+        pkg_dir = pkg.__path__[0]
+        for entry in sorted(os.listdir(pkg_dir)):
+            entry_path = os.path.join(pkg_dir, entry)
+            if not os.path.isdir(entry_path) or entry.startswith(("_", ".")):
                 continue
             try:
-                mod = importlib.import_module(f"dimos.hardware.whole_body.{name}.adapter")
+                mod = importlib.import_module(f"dimos.hardware.whole_body.{entry}.adapter")
                 if hasattr(mod, "register"):
                     mod.register(self)
             except ImportError as e:
-                logger.warning(f"Skipping whole-body adapter {name}: {e}")
+                logger.warning(f"Skipping whole-body adapter {entry}: {e}")
 
 
 whole_body_adapter_registry = WholeBodyAdapterRegistry()
