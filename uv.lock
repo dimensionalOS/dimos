@@ -1732,6 +1732,7 @@ agents = [
     { name = "openai" },
     { name = "openai-whisper" },
     { name = "sounddevice" },
+    { name = "tiktoken" },
 ]
 base = [
     { name = "anthropic" },
@@ -1759,6 +1760,7 @@ base = [
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "sse-starlette" },
+    { name = "tiktoken" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "uvicorn" },
@@ -1924,6 +1926,7 @@ unitree = [
     { name = "sounddevice" },
     { name = "soundfile" },
     { name = "sse-starlette" },
+    { name = "tiktoken" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect-leshy" },
@@ -2107,6 +2110,7 @@ requires-dist = [
     { name = "terminaltexteffects", specifier = "==0.12.2" },
     { name = "terminaltexteffects", marker = "extra == 'dev'", specifier = "==0.12.2" },
     { name = "textual", specifier = "==3.7.1" },
+    { name = "tiktoken", marker = "extra == 'agents'", specifier = ">=0.8.0" },
     { name = "tiktoken", marker = "extra == 'misc'", specifier = ">=0.8.0" },
     { name = "timm", marker = "extra == 'misc'", specifier = ">=1.0.15" },
     { name = "toolz", specifier = ">=1.1.0" },

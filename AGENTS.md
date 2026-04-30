@@ -321,6 +321,71 @@ If multiple modules match the spec, use `.remappings()` to resolve. Source: `dim
 5. Update the system prompt — add to the `# AVAILABLE SKILLS` section.
 6. Expose as `my_container = MySkillContainer.blueprint` and include in the agentic blueprint.
 
+### Context Memory
+
+Under default langchain wiring, `McpClient`'s conversation history grows unbounded. Once the prompt exceeds the model's context window, the state graph raises `context_length_exceeded` deep inside the worker thread's `_thread_loop` — the thread silently dies, `agent_idle` stays at `False`, and every subsequently enqueued message sits in the queue unprocessed.
+
+The fix is a paged, multi-fidelity memory layer in `dimos/agents/memory/`. `MemoryEngine` wraps history as a `PageTable` of `Page` objects, each renderable at four fidelity levels. Before every turn, `MemoryEngine.assemble()` runs a two-phase greedy selector that returns a `list[BaseMessage]` fitting inside the model's effective input budget. Degradations, evictions, and turn-level exceptions are published as `FaultEvent`s on an observability stream.
+
+#### Fidelity levels
+
+| Level | What it contains | When it's used |
+|-------|------------------|----------------|
+| `FULL` | Original `BaseMessage` content verbatim — text plus full-resolution image data URIs. | Pinned pages: system prompt, `BOOTSTRAP` pages, and the last `pin_recent_evidence` `EVIDENCE` pages. |
+| `COMPRESSED` | Text: first two sentences + `...`. Images: 96×96 JPEG thumbnail at quality 30, priced at `detail="low"` (85 tokens). | First degradation step for text and images. |
+| `STRUCTURED` | Text: `{"role": ..., "summary": "<=80 chars", "tokens": N}` JSON. Images: `[image artefact uuid=<uuid> src=... dims=... size=...]` bracket form. | Second degradation step — preserves routing metadata and the artefact UUID for rehydration. |
+| `POINTER` | `[page <uuid>]` for text, `[artefact uuid=<uuid>]` for images. | Cheapest fallback. The selector drops here before declaring physical insufficiency. |
+
+#### Pin policy
+
+`PageTable` manages three pinning rules automatically; the selector is forbidden from degrading pinned pages.
+
+- The system prompt (if any) is pinned at `FULL` and never degraded.
+- Pages ingested with `page_type_hint=PageType.BOOTSTRAP` are pinned at `FULL`.
+- The most recent `pin_recent_evidence` `EVIDENCE` pages (default 3) are hard-pinned at `FULL` on every `assemble()` call. This is the "recent images stay crisp" invariant — regression-guarded by `test_history_compaction_keeps_recent_images_at_full_under_pressure` in `dimos/agents/mcp/test_mcp_client_history_compaction.py`.
+
+#### McpClient knobs
+
+New fields on `McpClientConfig` (`dimos/agents/mcp/mcp_client.py`):
+
+| Field | Default | What it controls |
+|-------|---------|------------------|
+| `token_budget: int \| None` | `None` | When `None`, resolved from `model` via `resolve_budget(model_name=...)`. Override only for testing or non-standard deployments. |
+| `pin_recent_evidence: int` | `3` | Number of most-recent `EVIDENCE` pages hard-pinned at `FULL` per turn. |
+| `output_reserve_tokens: int` | `4096` | Tokens reserved in the input budget for the model's output. |
+
+#### Fault observability
+
+`McpClient` publishes `FaultEvent`s on its new `faults: Out[FaultEvent]` stream. Subscribers can log, alert, or drive autoscaling off this stream without coupling to the memory internals.
+
+| `FaultKind` | Meaning |
+|-------------|---------|
+| `PAGE_EVICTED` | A page was evicted from the assembled prompt. |
+| `PAGE_DEGRADED` | A page was rendered at a lower fidelity than `FULL` to fit the budget. |
+| `REFETCH_FAULT` | The LLM called `get_artefact` to rehydrate a previously degraded `EVIDENCE` page. |
+| `PHYSICAL_INSUFFICIENCY` | Either the pinned pages alone exceed the effective input budget (even at `POINTER` for every non-pinned page), OR `_thread_loop` caught a per-turn exception from `_process_message`. Inspect `details["exception"]` to distinguish — present on the thread-recovery path, absent on the budget path. |
+| `PIN_REBALANCE` | The auto-pin set (e.g. the "last 3 `EVIDENCE`" window) shifted because a new `EVIDENCE` page was ingested. |
+
+#### The `get_artefact` tool
+
+`MemoryEngine` auto-registers a `get_artefact` tool on `McpClient` during `on_system_modules`, alongside the MCP skills. When the LLM encounters a degraded `EVIDENCE` page in its context — either `[artefact uuid=X]` or `[image artefact uuid=X ...]` — it calls `get_artefact(uuid=X)` to mark the page for `FULL` rehydration on the next `assemble()`. The system prompt is explicitly unchanged: the tool is self-describing via its `args_schema` and description.
+
+#### Thread recovery
+
+`McpClient._thread_loop` wraps each call to `_process_message` in `try/except Exception`. On exception it calls `self._engine.emit_physical_insufficiency(exception=exc)` — which emits a `PHYSICAL_INSUFFICIENCY` fault with `details["exception"] = repr(exc)` — and continues draining the queue. This is the direct fix for the original "thread dies silently" bug and is regression-guarded by `test_thread_loop_recovers_from_process_message_exception` in `dimos/agents/mcp/test_mcp_client_history_compaction.py`.
+
+#### Where the code lives
+
+- `dimos/agents/memory/pages.py` — `Page`, `FidelityLevel`, `PageType`, `Representation`.
+- `dimos/agents/memory/page_table.py` — `PageTable` with pin management.
+- `dimos/agents/memory/ingestion.py` — `ingest_message()` (splits multimodal `HumanMessage`s into `list[Page]`).
+- `dimos/agents/memory/selector.py` — `assemble_prompt()` (two-phase greedy selector).
+- `dimos/agents/memory/engine.py` — `MemoryEngine` (public façade).
+- `dimos/agents/memory/budget.py` — `ModelBudget`, `resolve_budget()`.
+- `dimos/agents/memory/tokens.py` — `TiktokenCounter`, `HeuristicCounter`.
+- `dimos/agents/memory/faults.py` — `FaultObserver`, `FaultKind`, `FaultEvent`.
+- `dimos/agents/memory/artefact_tool.py` — `build_get_artefact_tool()`.
+
 ---
 
 ## Testing
