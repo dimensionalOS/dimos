@@ -201,7 +201,23 @@ class G1WholeBodyConnection(Module):
             self._publish_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._publish_thread = None
 
-        # Drop SDK references so the underlying DDS participants can be GC'd.
+        # Close DDS endpoints explicitly before dropping refs — relying on GC
+        # leaves the cyclonedds participant in a state where in-flight callbacks
+        # race with cleanup and segfault on process exit. Verified against
+        # unitree_sdk2py/core/channel.py (Close exists at lines 267 + 288);
+        # mirrors the Go2 SDK adapter's pattern in
+        # dimos/hardware/drive_trains/unitree_go2/adapter.py.
+        if self._subscriber is not None:
+            try:
+                self._subscriber.Close()
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"ChannelSubscriber Close raised: {e}")
+        if self._publisher is not None:
+            try:
+                self._publisher.Close()
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"ChannelPublisher Close raised: {e}")
+
         self._publisher = None
         self._subscriber = None
         self._low_cmd = None
