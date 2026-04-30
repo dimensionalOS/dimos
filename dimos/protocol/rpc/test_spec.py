@@ -296,6 +296,7 @@ def test_exception_handling_callback(rpc_context, impl_name: str) -> None:
 
 @pytest.mark.slow
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
+@pytest.mark.skipif_macos_bug
 def test_timeout(rpc_context, impl_name: str) -> None:
     """Test that RPC calls properly timeout."""
     with rpc_context() as (server, client):
@@ -329,6 +330,7 @@ def test_nonexistent_service(rpc_context, impl_name: str) -> None:
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
+@pytest.mark.skipif_macos_bug
 def test_multiple_services(rpc_context, impl_name: str) -> None:
     """Test serving multiple RPC functions simultaneously."""
     with rpc_context() as (server, client):
@@ -355,6 +357,7 @@ def test_multiple_services(rpc_context, impl_name: str) -> None:
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
+@pytest.mark.skipif_macos_bug
 def test_concurrent_calls(rpc_context, impl_name: str) -> None:
     """Test making multiple concurrent RPC calls."""
     # Skip for SharedMemory - double-buffered architecture can't handle concurrent bursts
