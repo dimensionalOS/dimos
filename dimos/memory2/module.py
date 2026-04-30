@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import inspect
-import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
@@ -37,13 +36,14 @@ from dimos.models.embedding.base import EmbeddingModel
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
     from dimos.core.stream import In, Out
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 T = TypeVar("T")
 TIn = TypeVar("TIn")

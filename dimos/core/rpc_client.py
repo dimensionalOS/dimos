@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -160,6 +161,50 @@ class RPCClient:
             result.owner = MethodCallProxy(self.actor_instance)
 
         return result
+
+
+class AsyncSpecProxy:
+    """Wraps an RPCClient (or compatible proxy) so methods declared `async def`
+    on the consumer's Spec are exposed as awaitables on the proxy.
+
+    A consumer that types `ref: SomeSpec` where `SomeSpec` declares `async def
+    foo` will see `self.ref.foo(x)` return an awaitable. The underlying RPC call
+    is still synchronous over the wire.  The caller's event loop stays unblocked
+    while the response round-trips.
+
+    It's picklable so `set_module_ref`` can ship it across to the worker process.
+    """
+
+    def __init__(self, inner: Any, async_methods: frozenset[str]) -> None:
+        # Use object.__setattr__ for clarity; we don't override __setattr__
+        # but this mirrors how DisabledModuleProxy guards its internals.
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "_async_methods", async_methods)
+
+    def __getattr__(self, name: str) -> Any:
+        inner = object.__getattribute__(self, "_inner")
+        attr = getattr(inner, name)
+        async_methods = object.__getattribute__(self, "_async_methods")
+        if name not in async_methods or not callable(attr):
+            return attr
+
+        def async_call(*args: Any, **kwargs: Any) -> Any:
+            async def _run() -> Any:
+                running = asyncio.get_running_loop()
+                return await running.run_in_executor(None, lambda: attr(*args, **kwargs))
+
+            return _run()
+
+        return async_call
+
+    def __reduce__(self) -> Any:
+        return (
+            AsyncSpecProxy,
+            (
+                object.__getattribute__(self, "_inner"),
+                object.__getattribute__(self, "_async_methods"),
+            ),
+        )
 
 
 if TYPE_CHECKING:

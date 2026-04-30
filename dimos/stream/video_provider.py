@@ -21,7 +21,6 @@ frame rate control, and thread safety.
 
 # Standard library imports
 from abc import ABC, abstractmethod
-import logging
 import os
 from threading import Lock
 import time
@@ -35,11 +34,10 @@ from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
 # Local imports
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import get_scheduler
 
-# Note: Logging configuration should ideally be in the application initialization,
-# not in a module. Keeping it for now but with a more restricted scope.
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 # Specific exception classes

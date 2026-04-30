@@ -32,13 +32,14 @@ Usage:
 from __future__ import annotations
 
 import importlib
-import logging
 from typing import TYPE_CHECKING, Any
+
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class AdapterRegistry:
