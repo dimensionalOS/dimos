@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-
 from pydantic import Field
 import requests
 
 from dimos.skills.skills import AbstractSkill
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class GenericRestSkill(AbstractSkill):
