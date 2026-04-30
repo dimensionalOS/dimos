@@ -42,6 +42,7 @@ from dimos.navigation.nav_stack.modules.pgo.pgo import PGO
 from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
 from dimos.navigation.nav_stack.modules.tare_planner.tare_planner import TarePlanner
 from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
+from dimos.navigation.nav_stack.modules.nav_record.nav_record import NavRecord
 from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import TerrainMapExt
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.spec.utils import Spec
@@ -68,6 +69,8 @@ def create_nav_stack(
     pgo: dict[str, Any] | None = None,
     movement_manager: dict[str, Any] | None = None,
     tare_planner: dict[str, Any] | None = None,
+    record: bool = False,
+    nav_record: dict[str, Any] | None = None,
 ) -> Blueprint:
     """Compose a SmartNav autoconnect Blueprint with the given options.
 
@@ -104,6 +107,8 @@ def create_nav_stack(
         far_planner, pgo, movement_manager, tare_planner:
         Per-module config override dicts. Merged on top
         of the SmartNav defaults.
+        record: Add NavRecord module to record all nav streams to SQLite.
+        nav_record: Config override dict for NavRecord (e.g. ``{"db_path": "..."}``).
 
     Returns:
         An autoconnected Blueprint with the selected modules wired together.
@@ -224,6 +229,8 @@ def create_nav_stack(
         )
     if use_tare:
         modules.append(TarePlanner.blueprint(**(tare_planner or {})))
+    if record:
+        modules.append(NavRecord.blueprint(**(nav_record or {})))
 
     remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
         # PathFollower cmd_vel → MovementManager nav input (avoid collision with mux output)
@@ -237,6 +244,7 @@ def create_nav_stack(
         # Planner owns way_point — disconnect MovementManager's click relay.
         (MovementManager, "way_point", "_mgr_way_point_unused"),
         (PGO, "global_map", "global_map_pgo"),
+        *([(NavRecord, "global_map", "global_map_pgo")] if record else []),
     ]
 
     return autoconnect(*modules).remappings(remappings)

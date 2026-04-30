@@ -60,6 +60,7 @@ class TestCrossWallPlanning:
                         "is_static_env": True,
                         "converge_dist": 1.5,
                     },
+                    record=True,
                 ),
                 vis_module(
                     viewer_backend=global_config.viewer,
