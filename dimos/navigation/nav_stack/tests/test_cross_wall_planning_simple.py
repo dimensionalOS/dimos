@@ -29,6 +29,7 @@ import pytest
 pytest.importorskip("gtsam")
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack
 from dimos.navigation.nav_stack.tests.conftest import (
     CROSS_WALL_LOCAL_PLANNER,
@@ -78,6 +79,7 @@ class TestCrossWallPlanningSimple:
                         "stuck_shrink_factor": 0.5,
                     },
                 ),
+                MovementManager.blueprint(),
             )
             .remappings(
                 [

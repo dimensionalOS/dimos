@@ -28,6 +28,7 @@ pytest.importorskip("gtsam")
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.navigation.nav_stack.tests.conftest import (
     CROSS_WALL_LOCAL_PLANNER,
@@ -67,6 +68,7 @@ class TestCrossWallPlanning:
                     },
                     record=True,
                 ),
+                MovementManager.blueprint(),
                 vis_module(
                     viewer_backend=global_config.viewer,
                     rerun_config=nav_stack_rerun_config(
