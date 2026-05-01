@@ -172,9 +172,8 @@ class TransportWholeBodyAdapter:
 
     def _on_motor_states(self, msg: JointState) -> None:
         # JointState.position / .velocity / .effort -> MotorState.q / .dq / .tau.
-        # Ignore msg.name — order is implicit (set by the producing Module's
-        # G1_JOINT_NAMES which mirrors make_humanoid_joints("g1")).
-        n = min(len(msg.position), self._dof)
+
+        n = min(len(msg.position), len(msg.velocity), len(msg.effort), self._dof)
         states = [
             MotorState(q=msg.position[i], dq=msg.velocity[i], tau=msg.effort[i]) for i in range(n)
         ]
