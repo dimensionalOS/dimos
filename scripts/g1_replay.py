@@ -172,18 +172,27 @@ def main() -> None:
             return
 
         # ---------------- Ramp ----------------
-        logger.info(f"ramping current → trajectory[0] over {args.ramp:.2f}s")
-        ramp_period = 1.0 / 100.0  # 100 Hz during ramp
-        ramp_start = time.perf_counter()
+        # ramp <= 0 means "skip ramp" — publish trajectory[0] once and proceed.
+        # Snaps to the recorded start pose under PD; only safe when the robot
+        # already sits there (e.g. dry-run had us close, or replay loop resume).
         target_q = positions[0]
-        while True:
-            elapsed = time.perf_counter() - ramp_start
-            a = min(elapsed / args.ramp, 1.0)
-            interp = [start_q[i] + a * (target_q[i] - start_q[i]) for i in range(NUM_DOF)]
-            cmd_pub.publish(make_joint_state(interp))
-            if a >= 1.0:
-                break
-            time.sleep(ramp_period)
+        if args.ramp <= 0:
+            logger.warning(
+                f"--ramp={args.ramp} ≤ 0; snapping directly to trajectory[0] (no interpolation)"
+            )
+            cmd_pub.publish(make_joint_state(target_q))
+        else:
+            logger.info(f"ramping current → trajectory[0] over {args.ramp:.2f}s")
+            ramp_period = 1.0 / 100.0  # 100 Hz during ramp
+            ramp_start = time.perf_counter()
+            while True:
+                elapsed = time.perf_counter() - ramp_start
+                a = min(elapsed / args.ramp, 1.0)
+                interp = [start_q[i] + a * (target_q[i] - start_q[i]) for i in range(NUM_DOF)]
+                cmd_pub.publish(make_joint_state(interp))
+                if a >= 1.0:
+                    break
+                time.sleep(ramp_period)
 
         # ---------------- Replay ----------------
         passes = 0
