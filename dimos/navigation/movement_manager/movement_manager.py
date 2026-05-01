@@ -115,7 +115,7 @@ class MovementManager(Module):
                 if elapsed < self.config.tele_cooldown_sec:
                     return
                 self._teleop_active = False
-        self.cmd_vel.publish(msg)
+            self.cmd_vel.publish(msg)
 
     def _on_teleop(self, msg: Twist) -> None:
         with self._lock:

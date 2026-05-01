@@ -99,7 +99,9 @@ class RerunWebSocketServer(Module):
 
     @rpc
     def stop(self) -> None:
-        self._server_ready.wait()
+        if not self._server_ready.is_set():
+            super().stop()
+            return
         if self._loop is not None and not self._loop.is_closed() and self._stop_event is not None:
             self._loop.call_soon_threadsafe(self._stop_event.set)
         super().stop()
