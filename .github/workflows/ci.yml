@@ -12,6 +12,7 @@ on:
 permissions:
   contents: read
   packages: read
+  id-token: write
 
 jobs:
   ci-complete:
