@@ -282,6 +282,7 @@ def run(
     kwargs = load_config_args(blueprint_config, blueprint_args, config_path)
     if cli_config_overrides:
         kwargs["g"] = cli_config_overrides
+
     coordinator = ModuleCoordinator.build(blueprint, kwargs)
 
     if daemon:
