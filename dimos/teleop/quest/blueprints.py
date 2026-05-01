@@ -18,6 +18,7 @@
 from dimos.control.blueprints.teleop import (
     coordinator_teleop_dual,
     coordinator_teleop_piper,
+    coordinator_teleop_sim_xarm7,
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
 )
@@ -45,6 +46,23 @@ teleop_quest_rerun = autoconnect(
 teleop_quest_xarm7 = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_xarm7,
+).transports(
+    {
+        ("right_controller_output", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+    }
+)
+
+
+# Single XArm7 teleop in MuJoCo sim: right controller -> simulated xarm7.
+# No real hardware required — coordinator drives a ShmMujocoAdapter backed by
+# MujocoSimModule (bundled in coordinator_teleop_sim_xarm7).
+# Usage: dimos run teleop-quest-xarm7-sim
+teleop_quest_xarm7_sim = autoconnect(
+    ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
+    coordinator_teleop_sim_xarm7,
 ).transports(
     {
         ("right_controller_output", PoseStamped): LCMTransport(
@@ -106,4 +124,5 @@ __all__ = [
     "teleop_quest_rerun",
     "teleop_quest_xarm6",
     "teleop_quest_xarm7",
+    "teleop_quest_xarm7_sim",
 ]
