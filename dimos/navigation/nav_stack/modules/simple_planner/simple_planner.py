@@ -312,7 +312,7 @@ class SimplePlannerConfig(ModuleConfig):
     # Shrinking too aggressively risks clipping obstacles, so we bottom
     # out at ``stuck_min_inflation``.
     stuck_shrink_factor: float = 0.5
-    stuck_min_inflation: float = 0.2
+    stuck_min_inflation: float = 0.05
     # When the robot is within this distance (m) of the current
     # intermediate waypoint, proactively advance the waypoint along the
     # cached path so the local planner never stops on it. Should be

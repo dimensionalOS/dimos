@@ -33,6 +33,9 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
@@ -209,22 +212,22 @@ class TestPathFollowerRosbag:
             else 0.0
         )
 
-        print(f"\n{'=' * 60}")
-        print("PATH FOLLOWER DEVIATION SCORE")
-        print(f"  Our cmd_vel:        {len(our_cmds)}")
-        print(f"  Reference:          {len(ref_cmd)}")
-        print(f"  Count ratio:        {len(our_cmds) / len(ref_cmd):.3f}")
-        print(f"  Our non-zero:       {len(our_nonzero)}")
-        print(f"  Ref non-zero:       {len(ref_nonzero)}")
-        print(f"  Our mean speed:     {our_mean_speed:.3f} m/s")
-        print(f"  Ref mean speed:     {ref_mean_speed:.3f} m/s")
-        print(f"  Speed ratio (all):  {speed_ratio:.3f}")
-        print(f"  Steady-state ratio: {steady_ratio:.3f}  (>0.5 m/s only)")
+        logger.info(f"\n{'=' * 60}")
+        logger.info("PATH FOLLOWER DEVIATION SCORE")
+        logger.info(f"  Our cmd_vel:        {len(our_cmds)}")
+        logger.info(f"  Reference:          {len(ref_cmd)}")
+        logger.info(f"  Count ratio:        {len(our_cmds) / len(ref_cmd):.3f}")
+        logger.info(f"  Our non-zero:       {len(our_nonzero)}")
+        logger.info(f"  Ref non-zero:       {len(ref_nonzero)}")
+        logger.info(f"  Our mean speed:     {our_mean_speed:.3f} m/s")
+        logger.info(f"  Ref mean speed:     {ref_mean_speed:.3f} m/s")
+        logger.info(f"  Speed ratio (all):  {speed_ratio:.3f}")
+        logger.info(f"  Steady-state ratio: {steady_ratio:.3f}  (>0.5 m/s only)")
         if len(our_speeds) > 0:
-            print(f"  Our max speed:      {our_speeds.max():.3f} m/s")
+            logger.info(f"  Our max speed:      {our_speeds.max():.3f} m/s")
         if len(ref_speeds) > 0:
-            print(f"  Ref max speed:      {ref_speeds.max():.3f} m/s")
-        print(f"{'=' * 60}\n")
+            logger.info(f"  Ref max speed:      {ref_speeds.max():.3f} m/s")
+        logger.info(f"{'=' * 60}\n")
 
         assert len(our_cmds) > 0, "PathFollower produced no cmd_vel"
         assert len(our_nonzero) > 0, "All cmd_vel are zero"

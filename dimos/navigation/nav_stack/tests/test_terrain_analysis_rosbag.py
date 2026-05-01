@@ -29,6 +29,9 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
@@ -138,15 +141,15 @@ class TestTerrainAnalysisRosbag:
         ref_mean_pts = float(np.mean(ref_point_counts)) if ref_point_counts else 0.0
         pts_ratio = our_mean_pts / ref_mean_pts if ref_mean_pts > 0 else 0.0
 
-        print(f"\n{'=' * 60}")
-        print("TERRAIN ANALYSIS DEVIATION SCORE")
-        print(f"  Our terrain maps:   {our_count}")
-        print(f"  Reference:          {ref_count}")
-        print(f"  Count ratio:        {count_ratio:.3f}")
-        print(f"  Our mean pts/frame: {our_mean_pts:.0f}")
-        print(f"  Ref mean pts/frame: {ref_mean_pts:.0f}")
-        print(f"  Point count ratio:  {pts_ratio:.3f}")
-        print(f"{'=' * 60}\n")
+        logger.info(f"\n{'=' * 60}")
+        logger.info("TERRAIN ANALYSIS DEVIATION SCORE")
+        logger.info(f"  Our terrain maps:   {our_count}")
+        logger.info(f"  Reference:          {ref_count}")
+        logger.info(f"  Count ratio:        {count_ratio:.3f}")
+        logger.info(f"  Our mean pts/frame: {our_mean_pts:.0f}")
+        logger.info(f"  Ref mean pts/frame: {ref_mean_pts:.0f}")
+        logger.info(f"  Point count ratio:  {pts_ratio:.3f}")
+        logger.info(f"{'=' * 60}\n")
 
         assert our_count > 0, "TerrainAnalysis produced no terrain maps"
         assert our_mean_pts > 0, "Terrain maps have zero points"

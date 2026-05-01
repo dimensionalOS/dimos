@@ -29,6 +29,9 @@ import numpy as np
 import pytest
 
 from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
@@ -278,20 +281,20 @@ class TestLocalPlannerRosbag:
         # Compute deviation score
         score = _compute_path_deviation(path_collector.messages, ref_paths)
 
-        print(f"\n{'=' * 60}")
-        print("LOCAL PLANNER DEVIATION SCORE")
-        print(f"  Our paths:          {len(path_collector.messages)}")
-        print(f"  Reference paths:    {len(ref_paths)}")
-        print(f"  Count ratio:        {score['count_ratio']:.3f}")
-        print(f"  Multi-pose ratio:   {score['multi_pose_ratio']:.3f}")
-        print(f"  Mean endpoint err:  {score['mean_endpoint_error_m']:.3f} m")
-        print(f"  Max endpoint err:   {score['max_endpoint_error_m']:.3f} m")
-        print(f"  Mean length ratio:  {score['mean_length_ratio']:.3f}")
-        print(f"{'=' * 60}\n")
+        logger.info(f"\n{'=' * 60}")
+        logger.info("LOCAL PLANNER DEVIATION SCORE")
+        logger.info(f"  Our paths:          {len(path_collector.messages)}")
+        logger.info(f"  Reference paths:    {len(ref_paths)}")
+        logger.info(f"  Count ratio:        {score['count_ratio']:.3f}")
+        logger.info(f"  Multi-pose ratio:   {score['multi_pose_ratio']:.3f}")
+        logger.info(f"  Mean endpoint err:  {score['mean_endpoint_error_m']:.3f} m")
+        logger.info(f"  Max endpoint err:   {score['max_endpoint_error_m']:.3f} m")
+        logger.info(f"  Mean length ratio:  {score['mean_length_ratio']:.3f}")
+        logger.info(f"{'=' * 60}\n")
 
         # Assertions
         assert len(path_collector.messages) > 0, "LocalPlanner produced no paths"
         assert score["multi_pose_ratio"] > 0, "No multi-pose paths produced"
-        assert score["mean_endpoint_error_m"] < 10.0, (
-            f"Mean endpoint error {score['mean_endpoint_error_m']:.2f}m exceeds 10m threshold"
+        assert score["mean_endpoint_error_m"] < 2.0, (
+            f"Mean endpoint error {score['mean_endpoint_error_m']:.2f}m exceeds 2m threshold"
         )

@@ -29,6 +29,9 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
@@ -260,20 +263,20 @@ class TestFarPlannerRosbag:
         # Compute deviation score
         score = _compute_waypoint_deviation(our_wps, ref_wp)
 
-        # Print score for visibility
-        print(f"\n{'=' * 60}")
-        print("FAR PLANNER DEVIATION SCORE")
-        print(f"  Our waypoints:     {len(our_wps)}")
-        print(f"  Reference:         {len(ref_wp)}")
-        print(f"  Count ratio:       {score['count_ratio']:.3f}")
-        print(f"  Mean error:        {score['mean_error_m']:.3f} m")
-        print(f"  Max error:         {score['max_error_m']:.3f} m")
-        print(f"  Mean X diff:       {score['mean_x_diff']:.3f} m")
-        print(f"  Mean Y diff:       {score['mean_y_diff']:.3f} m")
-        print(f"{'=' * 60}\n")
+        # Log score for visibility
+        logger.info(f"\n{'=' * 60}")
+        logger.info("FAR PLANNER DEVIATION SCORE")
+        logger.info(f"  Our waypoints:     {len(our_wps)}")
+        logger.info(f"  Reference:         {len(ref_wp)}")
+        logger.info(f"  Count ratio:       {score['count_ratio']:.3f}")
+        logger.info(f"  Mean error:        {score['mean_error_m']:.3f} m")
+        logger.info(f"  Max error:         {score['max_error_m']:.3f} m")
+        logger.info(f"  Mean X diff:       {score['mean_x_diff']:.3f} m")
+        logger.info(f"  Mean Y diff:       {score['mean_y_diff']:.3f} m")
+        logger.info(f"{'=' * 60}\n")
 
         # Assertions — generous thresholds, the point is to measure
         assert len(our_wps) > 0, "FAR planner produced no waypoints"
-        assert score["mean_error_m"] < 10.0, (
-            f"Mean waypoint error {score['mean_error_m']:.2f}m exceeds 10m threshold"
+        assert score["mean_error_m"] < 5.0, (
+            f"Mean waypoint error {score['mean_error_m']:.2f}m exceeds 5m threshold"
         )

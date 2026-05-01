@@ -33,6 +33,9 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -139,9 +142,7 @@ class LcmCollector:
                 self.messages.append(msg)
                 self.timestamps.append(time.monotonic())
             except Exception as exc:
-                import sys
-
-                print(f"LcmCollector decode error on {self.topic}: {exc}", file=sys.stderr)
+                logger.error(f"LcmCollector decode error on {self.topic}: {exc}")
 
         self._sub = lc.subscribe(self.topic, handler)
 
