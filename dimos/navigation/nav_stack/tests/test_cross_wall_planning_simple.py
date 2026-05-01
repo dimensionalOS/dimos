@@ -52,7 +52,7 @@ MAX_ALLOWED_Z = 2.0
 class TestCrossWallPlanningSimple:
     """E2E: cross-wall routing with SimplePlanner (A* on 2D costmap)."""
 
-    def test_cross_wall_sequence_simple(self, display_env):
+    def test_cross_wall_sequence_simple(self):
         blueprint = (
             autoconnect(
                 UnityBridgeModule.blueprint(
