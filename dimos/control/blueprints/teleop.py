@@ -62,7 +62,7 @@ _xarm7_sim_cfg = _catalog_xarm7(
     name="arm", adapter_type="sim_mujoco", address=str(XARM7_SIM_PATH), add_gripper=True
 )
 _xarm6_sim_cfg = _catalog_xarm6(
-    name="arm", adapter_type="sim_mujoco", address=str(XARM6_SIM_PATH), add_gripper=False
+    name="arm", adapter_type="sim_mujoco", address=str(XARM6_SIM_PATH), add_gripper=True
 )
 _piper_cfg = _catalog_piper(
     name="arm", adapter_type="piper", address=global_config.can_port or "can0"
@@ -234,6 +234,9 @@ coordinator_teleop_sim_xarm6 = autoconnect(
                 model_path=XARM6_FK_MODEL,
                 ee_joint_id=_xarm6_sim_cfg.dof,
                 hand="right",
+                gripper_joint=make_gripper_joints("arm")[0],
+                gripper_open_pos=0.85,
+                gripper_closed_pos=0.0,
             ),
         ],
     ),
@@ -266,6 +269,9 @@ coordinator_teleop_sim_piper = autoconnect(
                 model_path=PIPER_FK_MODEL,
                 ee_joint_id=_piper_sim_cfg.dof,
                 hand="left",
+                gripper_joint=make_gripper_joints("arm")[0],
+                gripper_open_pos=0.0,
+                gripper_closed_pos=0.035,
             ),
         ],
     ),
