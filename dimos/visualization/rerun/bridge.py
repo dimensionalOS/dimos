@@ -252,7 +252,7 @@ class RerunBridgeModule(Module):
 
         # compose all converters
         def composed(msg: Any) -> RerunData | None:
-            return pipe(msg, *matches, final_convert)
+            return cast("RerunData | None", pipe(msg, *matches, final_convert))
 
         self._override_cache[entity_path] = composed
         return composed

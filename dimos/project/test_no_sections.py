@@ -50,11 +50,8 @@ IGNORED_DIRS = {
     "build",
     ".egg-info",
     ".tox",
-    ".ignore.enhance",
     # third-party vendored code
     "gtsam",
-    # hidden/personal directories
-    ".hidden",
 }
 
 # Lines that match section patterns but are actually programmatic / intentional.
@@ -80,8 +77,7 @@ def _is_ignored_dir(dirpath: str) -> bool:
     parts = dirpath.split(os.sep)
     if IGNORED_DIRS.intersection(parts):
         return True
-    # Skip any directory that looks like a Python virtualenv (.venv, .venv2, venv, etc.)
-    return any(p.lstrip(".").startswith("venv") for p in parts)
+    return any(p.startswith(".") and p not in (".", "..") for p in parts)
 
 
 def _is_whitelisted(rel_path: str, line: str) -> bool:
@@ -96,10 +92,8 @@ def find_section_markers() -> list[tuple[str, int, str]]:
     violations: list[tuple[str, int, str]] = []
 
     for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
-        # Prune ignored directories in-place (also skip any venv-like dir)
-        dirnames[:] = [
-            d for d in dirnames if d not in IGNORED_DIRS and not d.lstrip(".").startswith("venv")
-        ]
+        # Prune ignored directories in-place
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS and not d.startswith(".")]
 
         if _is_ignored_dir(dirpath):
             continue
