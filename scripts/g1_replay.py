@@ -62,7 +62,12 @@ import time
 from dimos.control.components import make_humanoid_joints
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+
+# LFS-bundled default trajectory. get_data() auto-pulls from
+# data/.lfs/g1_wholebody_replay.json.tar.gz and decompresses on first use.
+_DEFAULT_TRAJECTORY_NAME = "g1_wholebody_replay.json"
 
 NUM_DOF = 29
 CANONICAL_JOINTS = make_humanoid_joints("g1")
@@ -101,8 +106,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--file",
-        default="data/g1_wholebody_replay.json",
-        help="trajectory JSON path (LFS-bundled default unpacks from data/.lfs/g1_wholebody_replay.json.tar.gz)",
+        default=None,
+        help=f"trajectory JSON path (defaults to LFS-bundled {_DEFAULT_TRAJECTORY_NAME})",
     )
     p.add_argument(
         "--ramp",
@@ -116,7 +121,8 @@ def main() -> None:
     )
     args = p.parse_args()
 
-    rel_ts, positions = load_trajectory(Path(args.file))
+    traj_path = Path(args.file) if args.file else get_data(_DEFAULT_TRAJECTORY_NAME)
+    rel_ts, positions = load_trajectory(traj_path)
     native_rate = len(rel_ts) / rel_ts[-1] if rel_ts[-1] > 0 else 0.0
     logger.info(
         f"loaded {len(rel_ts)} samples, duration={rel_ts[-1]:.2f}s, native_rate={native_rate:.1f}Hz"
