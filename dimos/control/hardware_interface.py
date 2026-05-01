@@ -421,11 +421,21 @@ class ConnectedWholeBody(ConnectedHardware):
         return self._wb_adapter.write_motor_commands(commands)
 
     def _initialize_last_commanded(self) -> None:
-        """Initialize last_commanded with current motor positions."""
-        motor_states = self._wb_adapter.read_motor_states()
-        for i, name in enumerate(self._joint_names):
-            self._last_commanded[name] = motor_states[i].q
-        self._initialized = True
+        """Initialize last_commanded from current motor positions."""
+        is_ready = getattr(self._wb_adapter, "has_motor_states", lambda: True)
+        for _ in range(10):
+            if is_ready():
+                motor_states = self._wb_adapter.read_motor_states()
+                for i, name in enumerate(self._joint_names):
+                    self._last_commanded[name] = motor_states[i].q
+                self._initialized = True
+                return
+            time.sleep(0.1)
+
+        raise RuntimeError(
+            f"WholeBody {self._component.hardware_id} did not receive motor_states "
+            f"within 1s — refusing to initialize last_commanded with adapter defaults"
+        )
 
 
 __all__ = [

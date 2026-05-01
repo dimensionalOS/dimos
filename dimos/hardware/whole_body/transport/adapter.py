@@ -127,6 +127,11 @@ class TransportWholeBodyAdapter:
                 return [MotorState() for _ in range(self._dof)]
             return list(self._latest_motor_states)
 
+    def has_motor_states(self) -> bool:
+        """True once the first motor_states frame has been received."""
+        with self._lock:
+            return self._latest_motor_states is not None
+
     def read_imu(self) -> IMUState:
         """Return latest cached IMU state. Returns defaults if no frame yet."""
         with self._lock:
