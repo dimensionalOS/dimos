@@ -40,6 +40,7 @@ WHITELIST = [
         "dimos/hardware/sensors/camera/gstreamer/gstreamer_sender.py",
         'logger = logging.getLogger("gstreamer_tcp_sender")',
     ),
+    ("dimos/core/test_async_module_main.py", 'target = logging.getLogger("dimos/core/module.py")'),
 ]
 
 
