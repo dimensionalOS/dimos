@@ -26,6 +26,8 @@ from langchain_core.tools import StructuredTool
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 
+from dimos.agents.memory.engine import MemoryEngine
+from dimos.agents.memory.faults import FaultEvent
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -44,6 +46,10 @@ class McpClientConfig(ModuleConfig):
     model: str = "gpt-4o"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
+    # Memory engine knobs. See ``dimos.agents.memory.MemoryEngine``.
+    token_budget: int | None = None
+    pin_recent_evidence: int = 3
+    output_reserve_tokens: int = 4096
 
 
 class McpClient(Module):
@@ -51,12 +57,13 @@ class McpClient(Module):
     agent: Out[BaseMessage]
     human_input: In[str]
     agent_idle: Out[bool]
+    faults: Out["FaultEvent"]
 
     _lock: RLock
     _state_graph: CompiledStateGraph[Any, Any, Any, Any] | None
     _message_queue: Queue[BaseMessage]
     _tool_registry: dict[str, dict[str, Any]]
-    _history: list[BaseMessage]
+    _engine: MemoryEngine
     _thread: Thread
     _stop_event: Event
     _http_client: httpx.Client
@@ -68,7 +75,19 @@ class McpClient(Module):
         self._state_graph = None
         self._message_queue = Queue()
         self._tool_registry = {}
-        self._history = []
+        # Memory engine owns context state. SystemMessage is NOT ingested
+        # here — create_agent(system_prompt=...) handles that path; the
+        # engine budgets for the system prompt via ModelBudget.system_overhead.
+        # Future edits must keep system_overhead large enough to cover the
+        # configured SYSTEM_PROMPT + tool schemas or the selector will
+        # under-budget the content window.
+        self._engine = MemoryEngine(
+            model_name=self.config.model,
+            token_budget=self.config.token_budget,
+            pin_recent_evidence=self.config.pin_recent_evidence,
+            output_reserve_tokens=self.config.output_reserve_tokens,
+            faults_out=self.faults,
+        )
         self._thread = Thread(
             target=self._thread_loop,
             name=f"{self.__class__.__name__}-thread",
@@ -151,7 +170,7 @@ class McpClient(Module):
                 if item.get("type") != "text":
                     uuid_ = str(uuid.uuid4())
                     text += f"Tool call started with UUID: {uuid_}. You will be updated with the result soon."
-                    _append_image_to_history(self, name, uuid_, item)
+                    _queue_image_artefact_message(self, name, uuid_, item)
 
             return text
 
@@ -174,6 +193,7 @@ class McpClient(Module):
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
         tools = self._fetch_tools()
+        tools.append(self._engine.get_artefact_tool())  # memory rehydration tool
 
         model: str | Any = self.config.model
         if self.config.model_fixture is not None:
@@ -271,30 +291,55 @@ class McpClient(Module):
             with self._lock:
                 if not self._state_graph:
                     raise ValueError("No state graph initialized")
-                self._process_message(self._state_graph, message)
+                try:
+                    self._process_message(self._state_graph, message)
+                except Exception as exc:
+                    self._engine.emit_physical_insufficiency(exception=exc)
+                    logger.exception(
+                        "mcp_client turn failed; continuing to drain queue"
+                    )
 
     def _process_message(
-        self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
+        self,
+        state_graph: CompiledStateGraph[Any, Any, Any, Any],
+        message: BaseMessage,
     ) -> None:
         self.agent_idle.publish(False)
-        self._history.append(message)
+        # Ingest the inbound message into the memory engine; this becomes
+        # a Page (or several, for multimodal) and drives the next
+        # assemble. Edge case: under a physically-insufficient budget
+        # the fresh input itself may be degraded. The engine emits a
+        # PHYSICAL_INSUFFICIENCY fault in that case.
+        self._engine.ingest(message)
         pretty_print_langchain_message(message)
         self.agent.publish(message)
 
-        for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
-            for node_output in update.values():
-                for msg in node_output.get("messages", []):
-                    self._history.append(msg)
-                    pretty_print_langchain_message(msg)
-                    self.agent.publish(msg)
+        assembled = self._engine.assemble()
+        try:
+            for update in state_graph.stream(
+                {"messages": assembled.messages}, stream_mode="updates"
+            ):
+                for node_output in update.values():
+                    for msg in node_output.get("messages", []):
+                        self._engine.ingest(msg)
+                        pretty_print_langchain_message(msg)
+                        self.agent.publish(msg)
+        finally:
+            if self._message_queue.empty():
+                self.agent_idle.publish(True)
 
-        if self._message_queue.empty():
-            self.agent_idle.publish(True)
 
-
-def _append_image_to_history(
+def _queue_image_artefact_message(
     mcp_client: McpClient, func_name: str, uuid_: str, result: Any
 ) -> None:
+    """Queue a HumanMessage containing an image artefact returned by a
+    non-text tool result.
+
+    Ingestion splits this multimodal message into a CONVERSATION page
+    (with the preamble text) plus one EVIDENCE page per image artefact
+    automatically — see ``dimos.agents.memory.ingestion``. The caller
+    doesn't need to set a page type hint.
+    """
     mcp_client.add_message(
         HumanMessage(
             content=[
