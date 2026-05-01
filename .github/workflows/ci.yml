@@ -45,7 +45,7 @@ jobs:
 
       - name: Run tests
         run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && _DIMOS_COV=1 coverage run -m pytest --durations=0 -m 'not (tool or mujoco)' && coverage combine && coverage xml"
+          /entrypoint.sh bash -c "source .venv/bin/activate && _DIMOS_COV=1 coverage run -m pytest --junitxml=junit.xml --durations=0 -m 'not (tool or mujoco)' && coverage combine && coverage xml"
 
       - name: Run mypy
         if: ${{ !cancelled() }}
