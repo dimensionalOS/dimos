@@ -29,7 +29,6 @@ from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector impo
 from dimos.navigation.nav_stack.modules.movement_manager.movement_manager import MovementManager
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.navigation.smart_nav.modules.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
 unitree_go2 = autoconnect(

@@ -43,7 +43,7 @@ pytestmark = [pytest.mark.slow]
 
 
 class TestCrossWallPlanning:
-    def test_cross_wall_sequence(self, display_env):
+    def test_cross_wall_sequence(self):
         blueprint = (
             autoconnect(
                 UnityBridgeModule.blueprint(
