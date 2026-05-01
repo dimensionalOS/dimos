@@ -45,9 +45,10 @@ Usage:
     # Terminal 1:
     ROBOT_INTERFACE=enp194s0 dimos run unitree-g1-coordinator
     # Terminal 2:
-    python scripts/g1_replay.py --file /tmp/g1_traj.json
-    python scripts/g1_replay.py --file /tmp/g1_traj.json --loop
-    python scripts/g1_replay.py --file /tmp/g1_traj.json --dry-run
+    python scripts/g1_replay.py                                           # default LFS bundle
+    python scripts/g1_replay.py --loop
+    python scripts/g1_replay.py --dry-run
+    python scripts/g1_replay.py --file <other.json>                       # any 29-DOF JSON
 """
 
 from __future__ import annotations
@@ -98,7 +99,11 @@ def make_joint_state(positions: list[float]) -> JointState:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--file", default="/tmp/g1_traj.json", help="trajectory JSON path")
+    p.add_argument(
+        "--file",
+        default="data/g1_wholebody_replay.json",
+        help="trajectory JSON path (LFS-bundled default unpacks from data/.lfs/g1_wholebody_replay.json.tar.gz)",
+    )
     p.add_argument(
         "--ramp",
         type=float,
