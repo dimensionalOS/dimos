@@ -187,7 +187,7 @@ class TestPathFollowerRosbag:
         )
         speed_ratio = our_mean_speed / ref_mean_speed if ref_mean_speed > 0 else 0.0
 
-        # Apples-to-apples: compare only non-zero speeds (factors out joy-gated zeros)
+        # Speed comparison at multiple levels
         ref_speeds = (
             np.sqrt(ref_nonzero[:, 1] ** 2 + ref_nonzero[:, 2] ** 2)
             if len(ref_nonzero) > 0
@@ -198,9 +198,14 @@ class TestPathFollowerRosbag:
             if our_nonzero
             else np.array([])
         )
-        filtered_ratio = (
-            float(our_speeds.mean() / ref_speeds.mean())
-            if len(ref_speeds) > 0 and len(our_speeds) > 0
+
+        # Steady-state comparison: filter to speeds > 0.5 m/s (fully in autonomy,
+        # past acceleration ramp, not in joy-gated zero phase)
+        ref_steady = ref_speeds[ref_speeds > 0.5] if len(ref_speeds) > 0 else np.array([])
+        our_steady = our_speeds[our_speeds > 0.5] if len(our_speeds) > 0 else np.array([])
+        steady_ratio = (
+            float(our_steady.mean() / ref_steady.mean())
+            if len(ref_steady) > 0 and len(our_steady) > 0
             else 0.0
         )
 
@@ -214,10 +219,16 @@ class TestPathFollowerRosbag:
         print(f"  Our mean speed:     {our_mean_speed:.3f} m/s")
         print(f"  Ref mean speed:     {ref_mean_speed:.3f} m/s")
         print(f"  Speed ratio (all):  {speed_ratio:.3f}")
-        print(f"  Speed ratio (nonzero-only): {filtered_ratio:.3f}")
-        print(f"  Our max speed:      {our_speeds.max():.3f} m/s" if len(our_speeds) > 0 else "")
-        print(f"  Ref max speed:      {ref_speeds.max():.3f} m/s" if len(ref_speeds) > 0 else "")
+        print(f"  Steady-state ratio: {steady_ratio:.3f}  (>0.5 m/s only)")
+        if len(our_speeds) > 0:
+            print(f"  Our max speed:      {our_speeds.max():.3f} m/s")
+        if len(ref_speeds) > 0:
+            print(f"  Ref max speed:      {ref_speeds.max():.3f} m/s")
         print(f"{'=' * 60}\n")
 
         assert len(our_cmds) > 0, "PathFollower produced no cmd_vel"
         assert len(our_nonzero) > 0, "All cmd_vel are zero"
+        # Steady-state speeds should be within 15% of reference
+        assert 0.8 < steady_ratio < 1.2, (
+            f"Steady-state speed ratio {steady_ratio:.3f} outside [0.8, 1.2] tolerance"
+        )
