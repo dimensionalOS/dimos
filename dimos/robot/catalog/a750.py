@@ -78,7 +78,7 @@ def a750(
         "joint_names": [f"joint{i}" for i in range(1, 7)],
         "base_link": "base_link",
         "home_joints": [0.0, 0.0, -math.radians(90), 0.0, 0.0, 0.0],
-        "base_pose": [0, 0, 0, 0, 0, 0, 1],
+        "base_pose": [0, 0, 0, 0, 0, 0, 1],  # base_pose is where the robot sits in the world
         "package_paths": {
             "a750_description": LfsPath("a750_description"),
             "a750_gazebo": LfsPath("a750_description"),
