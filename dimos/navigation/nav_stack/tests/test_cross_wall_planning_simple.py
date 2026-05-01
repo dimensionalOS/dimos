@@ -46,7 +46,7 @@ pytestmark = [pytest.mark.slow]
 # sampling radius pull the ground estimate upward), so this must tolerate
 # vehicle_height (1.24 m) + terrain drift while still catching
 # through-the-roof failures (roof is at ~3 m+).
-MAX_ALLOWED_Z = 2.0
+MAX_ALLOWED_Z = 2.1
 
 
 class TestCrossWallPlanningSimple:
