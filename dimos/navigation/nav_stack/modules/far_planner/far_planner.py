@@ -34,7 +34,7 @@ class FarPlannerConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/far_planner_native"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-far-planner/v0.4.0 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-far-planner/v0.5.0 --no-write-lock-file"
     )
 
     # C++ binary uses snake_case CLI args.

@@ -41,6 +41,11 @@ from dimos.visualization.vis_module import vis_module
 
 pytestmark = [pytest.mark.slow]
 
+# Z-ceiling guard: if the robot's z exceeds this, it went through the
+# ceiling/roof — the planner is "cheating" by driving over walls.
+# Same threshold as the SimplePlanner test.
+MAX_ALLOWED_Z = 2.1
+
 
 class TestCrossWallPlanning:
     def test_cross_wall_sequence(self):
@@ -86,4 +91,4 @@ class TestCrossWallPlanning:
             .global_config(n_workers=8, robot_model="unitree_g1", simulation=True)
         )
 
-        run_cross_wall_test(blueprint, label="far")
+        run_cross_wall_test(blueprint, label="far", max_z=MAX_ALLOWED_Z)
