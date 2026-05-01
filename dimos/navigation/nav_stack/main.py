@@ -60,6 +60,7 @@ def create_nav_stack(
     max_speed: float | None = None,
     terrain_voxel_size: float = 0.2,
     replan_rate: float = 0.5,
+    record: bool = False,
     terrain_analysis: dict[str, Any] | None = None,
     terrain_map_ext: dict[str, Any] | None = None,
     local_planner: dict[str, Any] | None = None,
@@ -69,7 +70,6 @@ def create_nav_stack(
     pgo: dict[str, Any] | None = None,
     movement_manager: dict[str, Any] | None = None,
     tare_planner: dict[str, Any] | None = None,
-    record: bool = False,
     nav_record: dict[str, Any] | None = None,
 ) -> Blueprint:
     """Compose a SmartNav autoconnect Blueprint with the given options.

@@ -40,7 +40,12 @@ from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
 pytestmark = [pytest.mark.slow]
 
 TERRAIN_ANALYSIS_BIN = (
-    Path(__file__).parent.parent / "modules" / "terrain_analysis" / "result" / "bin" / "terrain_analysis"
+    Path(__file__).parent.parent
+    / "modules"
+    / "terrain_analysis"
+    / "result"
+    / "bin"
+    / "terrain_analysis"
 )
 
 SCAN_LCM = "/rbta_scan#sensor_msgs.PointCloud2"
@@ -71,15 +76,24 @@ class TestTerrainAnalysisRosbag:
         runner = NativeProcessRunner(
             binary_path=str(TERRAIN_ANALYSIS_BIN),
             args=[
-                "--registered_scan", SCAN_LCM,
-                "--odometry", ODOM_LCM,
-                "--terrain_map", TERRAIN_OUT_LCM,
-                "--sensorRange", "20.0",
-                "--scanVoxelSize", "0.05",
-                "--terrainVoxelSize", "0.2",
-                "--obstacleHeightThre", "0.1",
-                "--groundHeightThre", "0.05",
-                "--vehicleHeight", "1.5",
+                "--registered_scan",
+                SCAN_LCM,
+                "--odometry",
+                ODOM_LCM,
+                "--terrain_map",
+                TERRAIN_OUT_LCM,
+                "--sensorRange",
+                "20.0",
+                "--scanVoxelSize",
+                "0.05",
+                "--terrainVoxelSize",
+                "0.2",
+                "--obstacleHeightThre",
+                "0.1",
+                "--groundHeightThre",
+                "0.05",
+                "--vehicleHeight",
+                "1.5",
             ],
         )
 
@@ -88,10 +102,14 @@ class TestTerrainAnalysisRosbag:
             assert runner.is_running, "TerrainAnalysis binary failed to start"
             time.sleep(1.0)
 
-            feed_at_original_timing(lc, window, topic_map={
-                "odom": ODOM_LCM,
-                "scan": SCAN_LCM,
-            })
+            feed_at_original_timing(
+                lc,
+                window,
+                topic_map={
+                    "odom": ODOM_LCM,
+                    "scan": SCAN_LCM,
+                },
+            )
 
             time.sleep(2.0)
 
