@@ -37,12 +37,12 @@ from dimos.core.module import ModuleBase
 from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanner
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
 from dimos.navigation.nav_stack.modules.movement_manager.movement_manager import MovementManager
+from dimos.navigation.nav_stack.modules.nav_record.nav_record import NavRecord
 from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
 from dimos.navigation.nav_stack.modules.pgo.pgo import PGO
 from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
 from dimos.navigation.nav_stack.modules.tare_planner.tare_planner import TarePlanner
 from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
-from dimos.navigation.nav_stack.modules.nav_record.nav_record import NavRecord
 from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import TerrainMapExt
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.spec.utils import Spec

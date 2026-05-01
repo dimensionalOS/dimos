@@ -359,7 +359,7 @@ class RerunBridgeModule(Module):
                 open_browser=open_web,
                 web_port=self.config.web_port,
             )
-        
+
         # TODO: `spawned` is supposed to be false when run on the G1 (because viewer doesn't have a display) somehow it returns true
         if self.config.rerun_open == "none" or (self.config.rerun_open == "native" and not spawned):
             self._log_connect_hints(grpc_port)

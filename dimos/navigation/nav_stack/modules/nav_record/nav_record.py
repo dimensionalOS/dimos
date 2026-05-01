@@ -24,6 +24,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos_lcm.std_msgs import Bool as LcmBool  # type: ignore[import-untyped]
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int8 import Int8
 
@@ -56,7 +57,7 @@ class NavRecord(Recorder):
     goal_path: In[NavPath]
     way_point: In[PointStamped]
     goal: In[PointStamped]
-    stop_movement: In[Bool]
+    stop_movement: In[LcmBool]
 
     # LocalPlanner details
     effective_cmd_vel: In[Twist]

@@ -43,7 +43,7 @@ class LocalPlannerConfig(NativeModuleConfig):
     executable: str = "result/bin/local_planner"
     # build_command: str | None = "nix build --no-write-lock-file"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-local-planner/v0.5.0 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-local-planner/v0.6.0 --no-write-lock-file"
     )
 
     # C++ binary uses camelCase CLI args.
