@@ -407,6 +407,7 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
                 protocol_config={
                     "allow_all_attrs": True,
                     "allow_public_attrs": True,
+                    "allow_pickle": True,
                 },
             )
             state.rpyc_thread = threading.Thread(target=state.rpyc_server.start, daemon=True)

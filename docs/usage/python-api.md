@@ -41,6 +41,26 @@ app.run("keyboard-teleop")  # This will say `KeyboardTeleop is already deployed`
 app.stop()
 ```
 
+## Peeking streams
+
+`peek_stream(name, timeout)` pulls the next message from any running
+module's stream. Useful for quick inspection without writing a
+subscriber:
+
+```python
+# Grab the image.
+img = app.peek_stream("color_image", 1.0)
+
+# Display it in a window.
+import cv2, numpy as np
+cv2.imshow("color_image", np.array(img.data))
+cv2.waitKey(0)
+```
+
+Note, `np.array` is used to turn it into a real numpy array. `img.data` is a
+proxy object. That works in most cases, but `cv2.imshow` checks the actual
+class, so it needs a real numpy array.
+
 ## Remote mode
 
 Start a daemon first (via CLI or another script), then connect to it:
