@@ -21,14 +21,14 @@ This configurator creates a symlink so mjpython can find the library.
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 import platform
 import sys
 
 from dimos.protocol.service.system_configurator.base import SystemConfigurator
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class LibPythonConfiguratorMacOS(SystemConfigurator):

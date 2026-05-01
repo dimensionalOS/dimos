@@ -24,17 +24,17 @@ so the tick loop treats them uniformly.
 
 from __future__ import annotations
 
-import logging
 import time
 from typing import TYPE_CHECKING
 
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.control.components import HardwareComponent, HardwareId, JointName, JointState
     from dimos.hardware.drive_trains.spec import TwistBaseAdapter
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class ConnectedHardware:

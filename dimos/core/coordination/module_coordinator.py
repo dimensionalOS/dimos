@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping, MutableMapping
 import importlib
+import inspect
 import shutil
 import sys
 import threading
@@ -30,7 +31,7 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
 from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
-from dimos.spec.utils import spec_annotation_compliance, spec_structural_compliance
+from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
@@ -767,7 +768,7 @@ def _connect_module_refs(
 ) -> None:
     from dimos.core.coordination.blueprints import DisabledModuleProxy
     from dimos.core.module import is_module_type
-    from dimos.spec.utils import is_spec
+    from dimos.core.rpc_client import AsyncSpecProxy
 
     mod_and_mod_ref_to_proxy = {
         (module, name): replacement
@@ -775,11 +776,16 @@ def _connect_module_refs(
         if is_spec(replacement) or is_module_type(replacement)
     }
 
+    # Track the consumer's declared spec for each ref so we can wrap the proxy
+    # below if the spec contains async-declared methods.
+    declared_spec: dict[tuple[type[ModuleBase], str], Any] = {}
+
     disabled_ref_proxies: dict[tuple[type[ModuleBase], str], DisabledModuleProxy] = {}
     disabled_set = set(blueprint.disabled_modules_tuple)
 
     for bp in blueprint.active_blueprints:
         for module_ref in bp.module_refs:
+            declared_spec[bp.module, module_ref.name] = module_ref.spec
             spec = mod_and_mod_ref_to_proxy.get((bp.module, module_ref.name), module_ref.spec)
 
             if is_module_type(spec):
@@ -798,7 +804,10 @@ def _connect_module_refs(
 
     for (base_module, ref_name), target_module in mod_and_mod_ref_to_proxy.items():
         base_instance = module_coordinator.get_instance(base_module)
-        target_instance = module_coordinator.get_instance(target_module)  # type: ignore[arg-type]
+        target_instance: Any = module_coordinator.get_instance(target_module)  # type: ignore[arg-type]
+        async_methods = _async_methods_of_spec(declared_spec.get((base_module, ref_name)))
+        if async_methods:
+            target_instance = AsyncSpecProxy(target_instance, async_methods)
         setattr(base_instance, ref_name, target_instance)
         base_instance.set_module_ref(ref_name, target_instance)
         module_coordinator._resolved_module_refs[base_module, ref_name] = cast(
@@ -809,6 +818,21 @@ def _connect_module_refs(
         base_instance = module_coordinator.get_instance(base_module)
         setattr(base_instance, ref_name, proxy)
         base_instance.set_module_ref(ref_name, cast("Any", proxy))
+
+
+def _async_methods_of_spec(spec: Any) -> frozenset[str]:
+    if not is_spec(spec):
+        return frozenset()
+    names: set[str] = set()
+    for cls in spec.__mro__:
+        if cls is object:
+            continue
+        for attr_name, value in vars(cls).items():
+            if attr_name.startswith("_"):
+                continue
+            if inspect.iscoroutinefunction(value):
+                names.add(attr_name)
+    return frozenset(names)
 
 
 def _log_blueprint_graph(blueprint: Blueprint, module_coordinator: ModuleCoordinator) -> None:

@@ -20,6 +20,7 @@ from dimos.core.stream import In
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.memory2.module import Recorder, RecorderConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
@@ -46,6 +47,7 @@ class Go2MemoryConfig(RecorderConfig):
 class Go2Memory(Recorder):
     color_image: In[Image]
     lidar: In[PointCloud2]
+    odom: In[PoseStamped]
     config: Go2MemoryConfig
 
 
