@@ -127,6 +127,9 @@ class A750Adapter:
 
     def read_joint_positions(self) -> list[float]:
         """Read current joint positions in radians."""
+        if not self._connected:
+            raise RuntimeError("Not connected")
+
         state = self._robot.get_current_state()
         return [
             state.joint1.pos_rad,
@@ -139,6 +142,9 @@ class A750Adapter:
 
     def read_joint_velocities(self) -> list[float]:
         """Read current joint velocities in radians/second."""
+        if not self._connected:
+            raise RuntimeError("Not connected")
+
         state = self._robot.get_current_state()
         return [
             state.joint1.vel_rads,
@@ -151,6 +157,9 @@ class A750Adapter:
 
     def read_joint_efforts(self) -> list[float]:
         """Read current joint efforts in Nm."""
+        if not self._connected:
+            raise RuntimeError("Not connected")
+
         state = self._robot.get_current_state()
         return [
             state.joint1.torque_nm,
@@ -183,6 +192,9 @@ class A750Adapter:
         """Command joint positions."""
         assert len(positions) == self._dof
 
+        if not self._enabled:
+            return False
+
         self._robot.command_joint_positions(positions, velocity)
         return True
 
@@ -198,11 +210,17 @@ class A750Adapter:
 
     def write_enable(self, enable: bool) -> bool:
         """Enable or disable servos."""
-        self._trace("write_enable", enable=enable)
         if not self._connected:
             return False
 
-        self._robot.start_control_loop()
+        if self._enabled == enable:
+            return True
+
+        if enable:
+            self._robot.start_control_loop()
+        else:
+            self._robot.stop_control_loop()
+
         self._enabled = enable
 
         return True
