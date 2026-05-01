@@ -83,11 +83,6 @@ unitree_g1_nav_onboard = (
                 "replan_rate": 5.0,
                 "replan_cooldown": 2.0,
             },
-            far_planner={
-                "sensor_range": 15.0,
-                "is_static_env": False,
-                "converge_dist": 1.5,
-            },
         ),
         G1HighLevelDdsSdk.blueprint(),
         vis_module(

@@ -441,6 +441,11 @@ class PGO(Module):
         self._latest_time = 0.0
         self._has_odom = False
         self._last_global_map_time = 0.0
+        self._lock = threading.Lock()
+        # Protects _pgo mutations (add_key_pose, search_for_loops,
+        # smooth_and_update, build_global_map) against concurrent access
+        # from _on_scan and _publish_loop threads.
+        self._pgo_lock = threading.Lock()
 
     def _seed_initial_tf(self, ts: float) -> None:
         """Publish an identity ``map → odom`` so consumers querying
@@ -451,11 +456,6 @@ class PGO(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._lock = threading.Lock()
-        # Protects _pgo mutations (add_key_pose, search_for_loops,
-        # smooth_and_update, build_global_map) against concurrent access
-        # from _on_scan and _publish_loop threads.
-        self._pgo_lock = threading.Lock()
         self._pgo = _SimplePGO(self.config)
         self._seed_initial_tf(time.time())
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odom)))
@@ -525,16 +525,16 @@ class PGO(Module):
 
         while self._running:
             t0 = time.monotonic()
-            now = time.time()
 
-            if now - self._last_global_map_time > interval and pgo.num_key_poses > 0:
+            if t0 - self._last_global_map_time > interval and pgo.num_key_poses > 0:
                 with self._pgo_lock:
                     cloud_np = pgo.build_global_map(self.config.global_map_voxel_size)
                 if len(cloud_np) > 0:
+                    now = time.time()
                     self.global_map.publish(
                         PointCloud2.from_numpy(cloud_np, frame_id=FRAME_MAP, timestamp=now)
                     )
-                self._last_global_map_time = now
+                self._last_global_map_time = t0
 
             elapsed = time.monotonic() - t0
             sleep_time = max(0.1, interval - elapsed)
