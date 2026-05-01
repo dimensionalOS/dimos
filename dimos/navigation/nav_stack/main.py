@@ -34,9 +34,9 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import ModuleBase
+from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanner
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
-from dimos.navigation.nav_stack.modules.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.modules.nav_record.nav_record import NavRecord
 from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
 from dimos.navigation.nav_stack.modules.pgo.pgo import PGO

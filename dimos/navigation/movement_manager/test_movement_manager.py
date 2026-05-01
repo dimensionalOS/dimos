@@ -23,7 +23,7 @@ import pytest
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.navigation.nav_stack.modules.movement_manager.movement_manager import (
+from dimos.navigation.movement_manager.movement_manager import (
     MovementManager,
 )
 
