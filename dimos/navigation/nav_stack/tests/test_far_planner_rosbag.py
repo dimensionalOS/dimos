@@ -40,7 +40,12 @@ from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
 pytestmark = [pytest.mark.slow]
 
 FAR_PLANNER_BIN = (
-    Path(__file__).parent.parent / "modules" / "far_planner" / "result" / "bin" / "far_planner_native"
+    Path(__file__).parent.parent
+    / "modules"
+    / "far_planner"
+    / "result"
+    / "bin"
+    / "far_planner_native"
 )
 
 # LCM topics
@@ -60,29 +65,105 @@ NAV_BOUNDARY_LCM = "/rbfp_nb#nav_msgs.LineSegments3D"
 
 def _far_planner_args() -> list[str]:
     return [
-        "--terrain_map_ext", TERRAIN_EXT_LCM,
-        "--terrain_map", TERRAIN_LCM,
-        "--registered_scan", SCAN_LCM,
-        "--odometry", ODOM_LCM,
-        "--goal", GOAL_LCM,
-        "--stop_movement", STOP_LCM,
-        "--way_point", WAYPOINT_OUT_LCM,
-        "--goal_path", GOAL_PATH_LCM,
-        "--graph_nodes", GRAPH_NODES_LCM,
-        "--graph_edges", GRAPH_EDGES_LCM,
-        "--contour_polygons", CONTOUR_LCM,
-        "--nav_boundary", NAV_BOUNDARY_LCM,
-        "--update_rate", "5.0",
-        "--robot_dim", "0.5",
-        "--voxel_dim", "0.1",
-        "--sensor_range", "15.0",
-        "--terrain_range", "7.5",
-        "--vehicle_height", "0.75",
-        "--is_static_env", "true",
-        "--is_attempt_autoswitch", "true",
-        "--world_frame", "map",
-        "--converge_dist", "1.5",
-        "--goal_adjust_radius", "10.0",
+        "--terrain_map_ext",
+        TERRAIN_EXT_LCM,
+        "--terrain_map",
+        TERRAIN_LCM,
+        "--registered_scan",
+        SCAN_LCM,
+        "--odometry",
+        ODOM_LCM,
+        "--goal",
+        GOAL_LCM,
+        "--stop_movement",
+        STOP_LCM,
+        "--way_point",
+        WAYPOINT_OUT_LCM,
+        "--goal_path",
+        GOAL_PATH_LCM,
+        "--graph_nodes",
+        GRAPH_NODES_LCM,
+        "--graph_edges",
+        GRAPH_EDGES_LCM,
+        "--contour_polygons",
+        CONTOUR_LCM,
+        "--nav_boundary",
+        NAV_BOUNDARY_LCM,
+        # Exact OG nav stack runtime params (from params.txt dump)
+        "--update_rate",
+        "5.0",
+        "--robot_dim",
+        "0.5",
+        "--voxel_dim",
+        "0.1",
+        "--sensor_range",
+        "15.0",
+        "--terrain_range",
+        "7.5",
+        "--local_planner_range",
+        "2.5",
+        "--vehicle_height",
+        "0.6",
+        "--is_static_env",
+        "false",
+        "--is_viewpoint_extend",
+        "true",
+        "--is_attempt_autoswitch",
+        "true",
+        "--is_debug_output",
+        "false",
+        "--is_multi_layer",
+        "false",
+        "--world_frame",
+        "map",
+        "--converge_dist",
+        "0.4",
+        "--goal_adjust_radius",
+        "1.0",
+        "--free_counter_thred",
+        "7",
+        "--reach_goal_vote_size",
+        "3",
+        "--path_momentum_thred",
+        "3",
+        "--floor_height",
+        "1.5",
+        "--cell_length",
+        "1.5",
+        "--map_grid_max_length",
+        "300.0",
+        "--map_grad_max_height",
+        "15.0",
+        "--connect_votes_size",
+        "10",
+        "--clear_dumper_thred",
+        "4",
+        "--node_finalize_thred",
+        "6",
+        "--filter_pool_size",
+        "12",
+        "--resize_ratio",
+        "3.0",
+        "--filter_count_value",
+        "6",
+        "--angle_noise",
+        "15.0",
+        "--accept_max_align_angle",
+        "4.0",
+        "--new_intensity_thred",
+        "2.0",
+        "--dynamic_obs_decay_time",
+        "2.0",
+        "--new_points_decay_time",
+        "1.0",
+        "--dyobs_update_thred",
+        "4",
+        "--new_point_counter",
+        "5",
+        "--obs_inflate_size",
+        "1",
+        "--visualize_ratio",
+        "0.4",
     ]
 
 
@@ -94,8 +175,13 @@ def _compute_waypoint_deviation(
     Returns dict with: mean_error_m, max_error_m, count_ratio, mean_x_diff, mean_y_diff.
     """
     if len(our_wps) == 0 or len(ref_wp) == 0:
-        return {"mean_error_m": float("inf"), "max_error_m": float("inf"),
-                "count_ratio": 0.0, "mean_x_diff": float("inf"), "mean_y_diff": float("inf")}
+        return {
+            "mean_error_m": float("inf"),
+            "max_error_m": float("inf"),
+            "count_ratio": 0.0,
+            "mean_x_diff": float("inf"),
+            "mean_y_diff": float("inf"),
+        }
 
     our_arr = np.array(our_wps)
     ref_xy = ref_wp[:, 1:3]  # x, y columns
@@ -146,13 +232,17 @@ class TestFarPlannerRosbag:
             time.sleep(1.5)
 
             # Feed at original timing (1:1 with rosbag)
-            feed_at_original_timing(lc, window, topic_map={
-                "odom": ODOM_LCM,
-                "scan": SCAN_LCM,
-                "terrain": TERRAIN_LCM,
-                "terrain_ext": TERRAIN_EXT_LCM,
-                "goal": GOAL_LCM,
-            })
+            feed_at_original_timing(
+                lc,
+                window,
+                topic_map={
+                    "odom": ODOM_LCM,
+                    "scan": SCAN_LCM,
+                    "terrain": TERRAIN_LCM,
+                    "terrain_ext": TERRAIN_EXT_LCM,
+                    "goal": GOAL_LCM,
+                },
+            )
 
             # Wait for final processing
             time.sleep(3.0)
