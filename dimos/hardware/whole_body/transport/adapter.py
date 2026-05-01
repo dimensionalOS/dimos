@@ -161,11 +161,20 @@ class TransportWholeBodyAdapter:
 
     def _on_motor_states(self, msg: JointState) -> None:
         # JointState.position / .velocity / .effort -> MotorState.q / .dq / .tau.
-        # Bound by the shortest array so a malformed publisher (e.g. empty
-        # velocity) can't IndexError-kill the LCM dispatcher thread.
-        n = min(len(msg.position), len(msg.velocity), len(msg.effort), self._dof)
+        # Drop the frame if any array is shorter than _dof — keeps the last
+        # valid cached frame and guarantees _latest_motor_states is either
+        # None (no frame yet) or exactly _dof entries. Downstream callers
+        # iterate range(_dof) and index by joint, so a short list would
+        # IndexError; padding with zeros would silently substitute fake data.
+        if (
+            len(msg.position) < self._dof
+            or len(msg.velocity) < self._dof
+            or len(msg.effort) < self._dof
+        ):
+            return
         states = [
-            MotorState(q=msg.position[i], dq=msg.velocity[i], tau=msg.effort[i]) for i in range(n)
+            MotorState(q=msg.position[i], dq=msg.velocity[i], tau=msg.effort[i])
+            for i in range(self._dof)
         ]
         with self._lock:
             self._latest_motor_states = states
