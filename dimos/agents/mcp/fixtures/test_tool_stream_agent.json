@@ -1,0 +1,33 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "start_streaming",
+          "args": {
+            "count": 3
+          },
+          "id": "call_toolstream_001",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I've started the streaming process. You'll receive 3 updates shortly.",
+      "tool_calls": []
+    },
+    {
+      "content": "Received the first streaming update: Update 1 of 3.",
+      "tool_calls": []
+    },
+    {
+      "content": "Received the second streaming update: Update 2 of 3.",
+      "tool_calls": []
+    },
+    {
+      "content": "Received the third and final streaming update: Update 3 of 3. All updates complete.",
+      "tool_calls": []
+    }
+  ]
+}
