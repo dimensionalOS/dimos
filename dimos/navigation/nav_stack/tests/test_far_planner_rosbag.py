@@ -164,6 +164,8 @@ def _far_planner_args() -> list[str]:
         "1",
         "--visualize_ratio",
         "0.4",
+        "--wp_churn_dist",
+        "0",  # Disable churn reduction for rosbag comparison
     ]
 
 
