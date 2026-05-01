@@ -1,8 +1,21 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import json
-import logging
 from typing import Any
 import warnings
 
@@ -15,8 +28,10 @@ from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import retry
 from dimos.utils.llm_utils import extract_json
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
+
 
 class Captioner(ABC):
     """Interface for models that can generate image captions."""
@@ -47,8 +62,10 @@ class Captioner(ABC):
         """
         return [self.caption(img) for img in images]
 
+
 # Type alias for VLM detection format: [label, x1, y1, x2, y2]
 VlmDetection = tuple[str, float, float, float, float]
+
 
 def vlm_detection_to_detection2d(
     vlm_detection: VlmDetection | list[str | float],
@@ -103,8 +120,10 @@ def vlm_detection_to_detection2d(
         image=image,
     )
 
+
 # Type alias for VLM point format: [label, x, y]
 VlmPoint = tuple[str, float, float]
+
 
 def vlm_point_to_detection2d_point(
     vlm_point: VlmPoint | list[str | float],
@@ -152,11 +171,13 @@ def vlm_point_to_detection2d_point(
         track_id=track_id,
     )
 
+
 class VlModelConfig(BaseConfig):
     """Configuration for VlModel."""
 
     auto_resize: tuple[int, int] | None = None
     """Optional (width, height) tuple. If set, images are resized to fit."""
+
 
 class VlModel(Captioner, Resource, Configurable):
     """Vision-language model that can answer questions about images.

@@ -68,7 +68,7 @@
 
         fastlio2_native = pkgs.stdenv.mkDerivation {
           pname = "fastlio2_native";
-          version = "0.1.0";
+          version = "0.2.0";
 
           src = ./.;
 

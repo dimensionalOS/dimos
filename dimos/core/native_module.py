@@ -164,6 +164,7 @@ class NativeModule(Module):
 
     @rpc
     def start(self) -> None:
+        super().start()
         if self._process is not None and self._process.poll() is None:
             logger.warning(
                 "Native process already running",

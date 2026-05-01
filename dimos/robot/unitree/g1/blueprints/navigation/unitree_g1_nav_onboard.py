@@ -45,8 +45,8 @@ import os
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.navigation.smart_nav.main import smart_nav, smart_nav_rerun_config
-from dimos.robot.unitree.g1.config import G1
+from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
+from dimos.robot.unitree.g1.config import G1, G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 from dimos.robot.unitree.g1.g1_rerun import (
     g1_odometry_tf_override,
@@ -63,13 +63,17 @@ unitree_g1_nav_onboard = (
             map_freq=1.0,
             config="lio_autonomy.yaml",
         ),
-        smart_nav(
+        create_nav_stack(
             use_simple_planner=True,
             vehicle_height=G1.height_clearance,
             max_speed=0.5,
             terrain_analysis={
                 "obstacle_height_threshold": 0.01,
                 "ground_height_threshold": 0.01,
+            },
+            local_planner={
+                "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
+                "publish_free_paths": False,
             },
             simple_planner={
                 "cell_size": 0.3,
@@ -88,7 +92,7 @@ unitree_g1_nav_onboard = (
         G1HighLevelDdsSdk.blueprint(),
         vis_module(
             viewer_backend=global_config.viewer,
-            rerun_config=smart_nav_rerun_config(
+            rerun_config=nav_stack_rerun_config(
                 {
                     "visual_override": {"world/odometry": g1_odometry_tf_override},
                     "static": {"world/tf/robot": g1_static_robot},

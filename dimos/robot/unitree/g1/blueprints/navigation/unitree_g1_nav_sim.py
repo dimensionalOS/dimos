@@ -42,7 +42,8 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.navigation.smart_nav.main import smart_nav, smart_nav_rerun_config
+from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
+from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
 from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.visualization.vis_module import vis_module
@@ -75,8 +76,8 @@ unitree_g1_nav_sim = (
             unity_scene="home_building_1",
             vehicle_height=vehicle_height,
         ),
-        smart_nav(
-            use_simple_planner=True,
+        create_nav_stack(
+            use_simple_planner=False,
             vehicle_height=vehicle_height,
             terrain_analysis={
                 "obstacle_height_threshold": 0.1,
@@ -85,6 +86,7 @@ unitree_g1_nav_sim = (
                 "min_relative_z": -1.5,
             },
             local_planner={
+                "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
                 "max_speed": 2.0,
                 "autonomy_speed": 2.0,
                 "obstacle_height_threshold": 0.1,
@@ -104,7 +106,7 @@ unitree_g1_nav_sim = (
         ),
         vis_module(
             viewer_backend=global_config.viewer,
-            rerun_config=smart_nav_rerun_config(
+            rerun_config=nav_stack_rerun_config(
                 {
                     "blueprint": _rerun_blueprint,
                     "visual_override": {

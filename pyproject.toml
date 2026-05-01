@@ -63,7 +63,6 @@ dependencies = [
     "annotation-protocol>=1.4.0",
     "lazy_loader",
     "plum-dispatch==2.5.7",
-    "xxhash>=3.0.0",
     # Logging
     "structlog>=25.5.0,<26",
     "colorlog==6.9.0",
@@ -89,7 +88,6 @@ dependencies = [
     "psutil>=7.0.0",
     "sqlite-vec>=0.1.6",
     "lz4>=4.4.5",
-    "open3d-unofficial-arm>=0.19.0.post9",
     "rpyc>=6.0.0",
 ]
 
@@ -198,6 +196,12 @@ perception = [
 unitree = [
     "dimos[base]",
     "unitree-webrtc-connect-leshy>=2.0.7"
+]
+
+unitree-dds = [
+    "dimos[unitree]",
+    "unitree-sdk2py-dimos>=1.0.2",
+    "cyclonedds>=0.10.5",
 ]
 
 manipulation = [
@@ -432,6 +436,7 @@ module = [
     "torchreid",
     "turbojpeg",
     "ultralytics.*",
+    "unitree_sdk2py.*",
     "unitree_webrtc_connect.*",
     "xarm.*",
     "ament_index_python.*",
@@ -474,6 +479,6 @@ ignore = [
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
-    "dimos/navigation/smart_nav/modules/*/main.cpp",
-    "dimos/navigation/smart_nav/common/*.hpp",
+    "dimos/navigation/nav_stack/modules/*/main.cpp",
+    "dimos/navigation/nav_stack/common/*.hpp",
 ]

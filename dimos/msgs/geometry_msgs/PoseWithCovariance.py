@@ -61,10 +61,16 @@ class PoseWithCovariance(LCMPoseWithCovariance):  # type: ignore[misc]
             self.covariance = np.array(covariance, dtype=float).reshape(36)
 
     @dispatch  # type: ignore[no-redef]
+    def __init__(self, pose_with_cov: PoseWithCovariance) -> None:
+        """Initialize from another PoseWithCovariance (copy constructor)."""
+        self.pose = Pose(pose_with_cov.pose)
+        self.covariance = np.array(pose_with_cov.covariance).copy()
+
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, lcm_pose_with_cov: LCMPoseWithCovariance) -> None:
-        """Initialize from an LCM PoseWithCovariance (including copy construction)."""
+        """Initialize from an LCM PoseWithCovariance."""
         self.pose = Pose(lcm_pose_with_cov.pose)
-        self.covariance = np.array(lcm_pose_with_cov.covariance).copy()
+        self.covariance = np.array(lcm_pose_with_cov.covariance)
 
     @dispatch  # type: ignore[no-redef]
     def __init__(self, pose_dict: dict[str, PoseConvertable | list[float] | np.ndarray]) -> None:

@@ -50,7 +50,7 @@ from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
     RERUN_GRPC_PORT,
     RERUN_OPEN_DEFAULT,
-    RERUN_WEB_PORT,
+    RERUN_WEB_VIEWER_PORT,
     RerunOpenOption,
 )
 from dimos.visualization.rerun.init import rerun_init
@@ -133,6 +133,7 @@ def _hex_to_rgba(hex_color: str) -> int:
 
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
     """Add a Graph tab alongside the existing viewer layout without changing it."""
+
     root = bp.root_container
     return rrb.Blueprint(
         rrb.Tabs(
@@ -147,6 +148,7 @@ def _with_graph_tab(bp: Blueprint) -> Blueprint:
 
 def _default_blueprint() -> Blueprint:
     """Default blueprint with black background and raised grid."""
+
     return rrb.Blueprint(
         rrb.Spatial3DView(
             origin="world",
@@ -167,11 +169,11 @@ class Config(ModuleConfig):
 
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
-    connect_url: str = "rerun+http://127.0.0.1:9877/proxy"
+    connect_url: str | None = None
     memory_limit: str = "25%"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
-    web_port: int = RERUN_WEB_PORT
+    web_port: int = RERUN_WEB_VIEWER_PORT
     blueprint: BlueprintFactory | None = _default_blueprint
 
 
@@ -206,6 +208,10 @@ class RerunBridgeModule(Module):
         super().__init__(**kwargs)
         self._last_log = {}
         self._override_cache: dict[str, Callable[[Any], RerunData | None]] = {}
+
+    @property
+    def host(self) -> str:
+        return self.config.g.rerun_host or self.config.g.listen_host
 
     def _visual_override_for_entity_path(
         self, entity_path: str
@@ -244,11 +250,8 @@ class RerunBridgeModule(Module):
                 return msg.to_rerun()
             return None
 
-        def composed(msg: Any) -> RerunData | None:
-            return cast("RerunData | None", pipe(msg, *matches, final_convert))
-
-        self._override_cache[entity_path] = composed
-        return composed
+        # compose all converters
+        return lambda msg: pipe(msg, *matches, final_convert)
 
     def _get_entity_path(self, topic: Any) -> str:
         if self.config.topic_to_entity:
@@ -259,6 +262,8 @@ class RerunBridgeModule(Module):
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:
+        """Handle incoming message - log to rerun."""
+
         entity_path: str = self._get_entity_path(topic)
 
         # Throttle entities with a max_hz limit
@@ -291,25 +296,21 @@ class RerunBridgeModule(Module):
             entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
         }
 
-        rerun_init("dimos")
+        connect_url = self.config.connect_url
+        if connect_url is None:
+            connect_url = f"rerun+http://{self.host}:{RERUN_GRPC_PORT}/proxy"
 
-        parsed = urlparse(self.config.connect_url.replace("rerun+", "", 1))
+        server_uri = rerun_init(
+            start_grpc=True,
+            grpc_config={
+                "connect_url": connect_url,
+                "server_memory_limit": self.config.memory_limit,
+            },
+        )
+        assert server_uri is not None  # start_grpc=True guarantees a URI
+
+        parsed = urlparse(connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
-
-        port_in_use = False
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            port_in_use = sock.connect_ex(("127.0.0.1", grpc_port)) == 0
-
-        if port_in_use:
-            logger.info(f"gRPC port {grpc_port} already in use, connecting to existing server")
-            rr.connect_grpc(url=self.config.connect_url)
-            server_uri = self.config.connect_url
-        else:
-            server_uri = rr.serve_grpc(
-                grpc_port=grpc_port,
-                server_memory_limit=self.config.memory_limit,
-            )
-            logger.info(f"Rerun gRPC server ready at {server_uri}")
 
         if self.config.rerun_open not in get_args(RerunOpenOption):
             logger.warning(
@@ -359,6 +360,7 @@ class RerunBridgeModule(Module):
                 web_port=self.config.web_port,
             )
 
+        # TODO: `spawned` is supposed to be false when run on the G1 (because viewer doesn't have a display) somehow it returns true
         if self.config.rerun_open == "none" or (self.config.rerun_open == "native" and not spawned):
             self._log_connect_hints(grpc_port)
 
@@ -381,22 +383,26 @@ class RerunBridgeModule(Module):
     def _log_connect_hints(self, grpc_port: int) -> None:
         """Log CLI commands for connecting a viewer to this bridge."""
         local_ips = get_local_ips()
+        local_grpc = f"rerun+http://{self.host}:{grpc_port}/proxy"
+        local_ws = f"ws://{self.host}:{self.config.g.rerun_websocket_server_port}/ws"
         hostname = socket.gethostname()
-        connect_url = f"rerun+http://127.0.0.1:{grpc_port}/proxy"
 
+        columns = 60
         lines = [
             "",
-            "=" * 60,
+            "=" * columns,
             "Rerun gRPC server running (no viewer opened)",
             "",
             "Connect a viewer:",
-            f"  dimos-viewer --connect {connect_url}",
+            f"  dimos-viewer --connect {local_grpc} --ws-url {local_ws}",
         ]
         for ip, iface in local_ips:
-            lines.append(f"  dimos-viewer --connect rerun+http://{ip}:{grpc_port}/proxy  # {iface}")
+            remote_grpc = f"rerun+http://{ip}:{grpc_port}/proxy"
+            remote_ws = f"ws://{ip}:{self.config.g.rerun_websocket_server_port}/ws"
+            lines.append(f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws}  # {iface}")
         lines.append("")
         lines.append(f"  hostname: {hostname}")
-        lines.append("=" * 60)
+        lines.append("=" * columns)
         lines.append("")
 
         logger.info("\n".join(lines))
@@ -421,6 +427,7 @@ class RerunBridgeModule(Module):
             dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
             module_names: List of module class names (to distinguish modules from channels).
         """
+
         try:
             result = subprocess.run(
                 ["dot", "-Tplain"], input=dot_code, text=True, capture_output=True, timeout=30

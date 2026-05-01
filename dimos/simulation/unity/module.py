@@ -75,10 +75,6 @@ PI = math.pi
 # LFS data asset name for the Unity sim binary
 _LFS_ASSET = "unity_sim_x86"
 
-# Google Drive folder containing VLA Challenge environment zips
-_GDRIVE_FOLDER_ID = "1UD5v6cSfcwIMWmsq9WSk7blJut4kgb-1"
-_DEFAULT_SCENE = "office_1"
-
 # Read timeout for the Unity TCP connection (seconds).  If Unity stops
 # sending data for longer than this the bridge treats it as a hung
 # connection and drops it.
@@ -150,61 +146,6 @@ def _validate_platform() -> None:
         )
 
 
-def _download_unity_scene(scene: str, dest_dir: Path) -> Path:
-    """Download a Unity environment zip from Google Drive and extract it.
-
-    Returns the path to the Model.x86_64 binary.
-    """
-    import zipfile
-
-    try:
-        import gdown  # type: ignore[import-untyped]
-    except ImportError:
-        raise RuntimeError(
-            "Unity sim binary not found and 'gdown' is not installed for auto-download. "
-            "Install it with: pip install gdown\n"
-            "Or manually download from: "
-            f"https://drive.google.com/drive/folders/{_GDRIVE_FOLDER_ID}"
-        ) from None
-
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = dest_dir / f"{scene}.zip"
-
-    if not zip_path.exists():
-        print("\n" + "=" * 70, flush=True)
-        print(f"  DOWNLOADING UNITY SIMULATOR — scene: '{scene}'", flush=True)
-        print("  Source: Google Drive (VLA Challenge environments)", flush=True)
-        print(f"  Destination: {dest_dir}", flush=True)
-        print("  This is a one-time download.", flush=True)
-        print("=" * 70 + "\n", flush=True)
-        gdown.download_folder(id=_GDRIVE_FOLDER_ID, output=str(dest_dir), quiet=False)
-        for candidate in dest_dir.rglob(f"{scene}.zip"):
-            zip_path = candidate
-            break
-
-    if not zip_path.exists():
-        raise FileNotFoundError(
-            f"Failed to download scene '{scene}'. "
-            f"Check https://drive.google.com/drive/folders/{_GDRIVE_FOLDER_ID}"
-        )
-
-    extract_dir = dest_dir / scene
-    if not extract_dir.exists():
-        logger.info(f"Extracting {zip_path}...")
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(dest_dir)
-
-    binary = extract_dir / "environment" / "Model.x86_64"
-    if not binary.exists():
-        raise FileNotFoundError(
-            f"Extracted scene but Model.x86_64 not found at {binary}. "
-            f"Expected structure: {scene}/environment/Model.x86_64"
-        )
-
-    binary.chmod(binary.stat().st_mode | 0o111)
-    return binary
-
-
 # Config
 
 
@@ -217,18 +158,11 @@ class UnityBridgeConfig(ModuleConfig):
     """
 
     # Path to the Unity x86_64 binary. Leave empty to auto-resolve
-    # from LFS data or auto-download from Google Drive.
+    # from LFS data (unity_sim_x86/environment/Model.x86_64).
     unity_binary: str = ""
 
-    # Scene name for auto-download (e.g. "office_1", "hotel_room_1").
-    # Only used when unity_binary is not found and auto_download is True.
-    unity_scene: str = _DEFAULT_SCENE
-
-    # Directory to download/cache Unity scenes.
-    unity_cache_dir: str = "~/.cache/dimos/unity_envs"
-
-    # Auto-download the scene from Google Drive if binary is missing.
-    auto_download: bool = True
+    # Scene name — used when building the blueprint to identify the environment.
+    unity_scene: str = "office_1"
 
     # Max seconds to wait for Unity to connect after launch.
     unity_connect_timeout: float = 30.0
@@ -475,14 +409,6 @@ class UnityBridgeModule(Module):
             logger.warning(f"LFS asset '{_LFS_ASSET}' extracted but Model.x86_64 not found")
         except Exception as e:
             logger.warning(f"Failed to resolve Unity binary from LFS: {e}")
-
-        # Auto-download from Google Drive (VLA Challenge scenes)
-        if cfg.auto_download:
-            try:
-                cache = Path(cfg.unity_cache_dir).expanduser()
-                return _download_unity_scene(cfg.unity_scene, cache)
-            except Exception as e:
-                logger.warning(f"Auto-download failed: {e}")
 
         return None
 

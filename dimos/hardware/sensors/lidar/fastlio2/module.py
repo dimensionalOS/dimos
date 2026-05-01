@@ -38,6 +38,7 @@ import time
 from typing import TYPE_CHECKING, Annotated
 
 from pydantic.experimental.pipeline import validate_as
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -60,44 +61,37 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.smart_nav.frames import FRAME_BODY, FRAME_ODOM
+from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM
 from dimos.spec import mapping, perception
+from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
 
 _CONFIG_DIR = Path(__file__).parent / "config"
 _logger = setup_logger()
 
 
-def _get_local_ips() -> list[str]:
-    """Return all IPv4 addresses assigned to local interfaces."""
-    ips: list[str] = []
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            addr = str(info[4][0])
-            if addr not in ips:
-                ips.append(addr)
-    except socket.gaierror:
-        pass
-    # Also grab addresses via DGRAM trick for interfaces without DNS
-    try:
-        import subprocess
+def _odom_to_body_tf(msg: Odometry) -> Transform:
+    return Transform(
+        frame_id=FRAME_ODOM,
+        child_frame_id=FRAME_BODY,
+        translation=Vector3(
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z,
+        ),
+        rotation=Quaternion(
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z,
+            msg.pose.orientation.w,
+        ),
+        ts=msg.ts or time.time(),
+    )
 
-        out = subprocess.check_output(
-            ["ip", "-4", "-o", "addr", "show"],
-            timeout=5,
-            stderr=subprocess.DEVNULL,
-        ).decode()
-        for line in out.splitlines():
-            # e.g. "2: eth0    inet 192.168.123.5/24 ..."
-            parts = line.split()
-            for i, p in enumerate(parts):
-                if p == "inet" and i + 1 < len(parts):
-                    addr = parts[i + 1].split("/")[0]
-                    if addr not in ips:
-                        ips.append(addr)
-    except Exception:
-        pass
-    return ips
+
+def _get_local_ips() -> list[str]:
+    """Return all non-loopback IPv4 addresses on this machine."""
+    return [ip for ip, _iface in get_local_ips()]
 
 
 def _find_candidate_ips(lidar_ip: str, local_ips: list[str]) -> list[str]:
@@ -114,8 +108,6 @@ def _find_candidate_ips(lidar_ip: str, local_ips: list[str]) -> list[str]:
 
 
 class FastLio2Config(NativeModuleConfig):
-    """Config for the FAST-LIO2 + Livox Mid-360 native module."""
-
     cwd: str | None = "cpp"
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build .#fastlio2_native"
@@ -197,57 +189,28 @@ class FastLio2Config(NativeModuleConfig):
 
 
 class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.GlobalPointcloud):
-    """FAST-LIO2 SLAM module with integrated Livox Mid-360 driver.
-
-    Ports:
-        lidar (Out[PointCloud2]): World-frame registered point cloud.
-        odometry (Out[Odometry]): Pose with covariance at LiDAR scan rate.
-        global_map (Out[PointCloud2]): Global voxel map (optional, enable via map_freq > 0).
-    """
-
     config: FastLio2Config
 
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
     global_map: Out[PointCloud2]
 
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._validate_network()
-
     @rpc
     def start(self) -> None:
+        self._validate_network()
         super().start()
-        # Subscribe to our own odometry output so we can mirror each
-        # pose update into the TF tree as an odom→body transform.
-        self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry)
-
-    def _on_odom_for_tf(self, msg: Odometry) -> None:
-        """Publish the SLAM pose as an ``odom → body`` TF transform."""
-        self.tf.publish(
-            Transform(
-                frame_id=FRAME_ODOM,
-                child_frame_id=FRAME_BODY,
-                translation=Vector3(
-                    msg.pose.position.x,
-                    msg.pose.position.y,
-                    msg.pose.position.z,
-                ),
-                rotation=Quaternion(
-                    msg.pose.orientation.x,
-                    msg.pose.orientation.y,
-                    msg.pose.orientation.z,
-                    msg.pose.orientation.w,
-                ),
-                ts=msg.ts or time.time(),
-            )
+        self.register_disposable(
+            Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
         )
 
+    def _on_odom_for_tf(self, msg: Odometry) -> None:
+        self.tf.publish(_odom_to_body_tf(msg))
+
+    @rpc
     def stop(self) -> None:
         super().stop()
 
     def _validate_network(self) -> None:
-        """Pre-flight check: verify host_ip is reachable and suggest alternatives."""
         host_ip = self.config.host_ip
         lidar_ip = self.config.lidar_ip
         local_ips = _get_local_ips()
