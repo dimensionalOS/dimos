@@ -65,6 +65,8 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from dimos.hardware.whole_body.spec import WholeBodyAdapter
+
 logger = setup_logger()
 
 
@@ -214,7 +216,7 @@ class ControlCoordinator(Module):
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
         """Connect and add a single hardware adapter."""
-        adapter: ManipulatorAdapter | TwistBaseAdapter | object
+        adapter: ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter
         if component.hardware_type == HardwareType.WHOLE_BODY:
             adapter = self._create_whole_body_adapter(component)
         elif component.hardware_type == HardwareType.BASE:
@@ -258,7 +260,7 @@ class ControlCoordinator(Module):
             **component.adapter_kwargs,
         )
 
-    def _create_whole_body_adapter(self, component: HardwareComponent) -> object:
+    def _create_whole_body_adapter(self, component: HardwareComponent) -> "WholeBodyAdapter":
         """Create a whole-body adapter from component config.
 
         ``component.address`` carries the DDS network interface — int (CAN port)
@@ -363,7 +365,7 @@ class ControlCoordinator(Module):
     @rpc
     def add_hardware(
         self,
-        adapter: ManipulatorAdapter | TwistBaseAdapter | object,
+        adapter: "ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter",
         component: HardwareComponent,
     ) -> bool:
         """Register a hardware adapter with the coordinator."""

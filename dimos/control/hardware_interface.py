@@ -33,7 +33,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.control.components import HardwareComponent, HardwareId, JointName, JointState
     from dimos.hardware.drive_trains.spec import TwistBaseAdapter
-    from dimos.hardware.whole_body.spec import WholeBodyAdapter
+    from dimos.hardware.whole_body.spec import MotorCommand, WholeBodyAdapter
 
 logger = setup_logger()
 
@@ -416,7 +416,7 @@ class ConnectedWholeBody(ConnectedHardware):
         ]
         return self._wb_adapter.write_motor_commands(motor_cmds)
 
-    def write_motor_commands(self, commands: list) -> bool:
+    def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
         """Direct pass-through to adapter for full MotorCommand control."""
         return self._wb_adapter.write_motor_commands(commands)
 

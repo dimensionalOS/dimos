@@ -95,11 +95,8 @@ class MotorCommandArray:
         return cls.decode(data)
 
     @classmethod
-    def decode(cls, data: bytes) -> "MotorCommandArray":
-        if hasattr(data, "read"):
-            buf = data  # type: ignore[assignment]
-        else:
-            buf = BytesIO(data)
+    def decode(cls, data: bytes | BytesIO) -> "MotorCommandArray":
+        buf: BytesIO = data if isinstance(data, BytesIO) else BytesIO(data)
         if buf.read(8) != cls._get_packed_fingerprint():
             raise ValueError("Decode error")
         return cls._decode_one(buf)
@@ -117,7 +114,7 @@ class MotorCommandArray:
         return self
 
     @classmethod
-    def _get_hash_recursive(cls, parents: list) -> int:
+    def _get_hash_recursive(cls, parents: list[type]) -> int:
         if cls in parents:
             return 0
         # Distinct fingerprint from JointCommand (0x8A3D2E1C5F4B6A9D)
@@ -134,7 +131,7 @@ class MotorCommandArray:
         return cls._packed_fingerprint
 
     def get_hash(self) -> int:
-        return struct.unpack(">Q", MotorCommandArray._get_packed_fingerprint())[0]
+        return int(struct.unpack(">Q", MotorCommandArray._get_packed_fingerprint())[0])
 
     def __str__(self) -> str:
         return f"MotorCommandArray(timestamp={self.timestamp:.6f}, num_joints={self.num_joints})"

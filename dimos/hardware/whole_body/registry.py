@@ -26,6 +26,7 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import importlib
 import logging
 import os
@@ -41,10 +42,13 @@ class WholeBodyAdapterRegistry:
     """Registry for whole-body motor adapters with auto-discovery."""
 
     def __init__(self) -> None:
-        self._adapters: dict[str, type[WholeBodyAdapter]] = {}
+        # Factory may be a class or any other callable (e.g. functools.partial
+        # binding transport_cls). Store as Callable so `register("transport_lcm",
+        # partial(TransportWholeBodyAdapter, ...))` typechecks.
+        self._adapters: dict[str, Callable[..., WholeBodyAdapter]] = {}
 
-    def register(self, name: str, cls: type[WholeBodyAdapter]) -> None:
-        """Register an adapter class."""
+    def register(self, name: str, cls: Callable[..., WholeBodyAdapter]) -> None:
+        """Register an adapter factory (class or callable)."""
         self._adapters[name.lower()] = cls
 
     def create(self, name: str, **kwargs: Any) -> WholeBodyAdapter:
