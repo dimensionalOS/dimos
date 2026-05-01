@@ -53,7 +53,9 @@ class LocalModuleSource(ModuleSource):
 
             host, port, module_id = self._coordinator.get_module_endpoint(name)
 
-            conn = rpyc.connect(host, port, config={"sync_request_timeout": 30})
+            conn = rpyc.connect(
+                host, port, config={"sync_request_timeout": 30, "allow_pickle": True}
+            )
             module = conn.root.get_module(module_id)
             self._cache[name] = (conn, module)
             return module

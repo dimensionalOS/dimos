@@ -33,9 +33,12 @@ repos:
       - id: trailing-whitespace
         language: python
         types: [text]
+        exclude: \.patch$
       - id: end-of-file-fixer
+        exclude: \.patch$
       - id: mixed-line-ending
         args: [--fix=lf]
+        exclude: \.patch$
       - id: check-json
       - id: check-toml
       - id: check-yaml

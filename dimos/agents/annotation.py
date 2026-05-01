@@ -13,12 +13,14 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
+
+from dimos.core.core import rpc
 
 F = TypeVar("F", bound=Callable[..., Any])
 
 
 def skill(func: F) -> F:
-    func.__rpc__ = True  # type: ignore[attr-defined]
-    func.__skill__ = True  # type: ignore[attr-defined]
-    return func
+    wrapped = rpc(func)
+    wrapped.__skill__ = True  # type: ignore[attr-defined]
+    return cast("F", wrapped)
