@@ -171,7 +171,6 @@ def main() -> None:
             logger.info("--dry-run set — exiting before publish phase")
             return
 
-        # ---------------- Ramp ----------------
         # ramp <= 0 means "skip ramp" — publish trajectory[0] once and proceed.
         # Snaps to the recorded start pose under PD; only safe when the robot
         # already sits there (e.g. dry-run had us close, or replay loop resume).
@@ -194,7 +193,6 @@ def main() -> None:
                     break
                 time.sleep(ramp_period)
 
-        # ---------------- Replay ----------------
         passes = 0
         while True:
             passes += 1

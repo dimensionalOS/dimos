@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 wholebody Module (Arch B).
+"""G1 wholebody Module.
 
-Owns the G1 low-level DDS connection directly — no separate adapter file.
-Sits in its own worker; the coordinator never imports unitree_sdk2py and
-talks to this Module exclusively through LCM streams.
+Owns the G1 low-level DDS connection directly.
 
 Stream interface:
   - motor_states:  Out[JointState]         29 motors, q/dq/tau in position/velocity/effort
@@ -111,10 +109,6 @@ class G1WholeBodyConnection(Module):
 
         self._stop_event = threading.Event()
         self._publish_thread: Thread | None = None
-
-    # =========================================================================
-    # Lifecycle
-    # =========================================================================
 
     @rpc
     def start(self) -> None:
@@ -228,10 +222,6 @@ class G1WholeBodyConnection(Module):
         logger.info("G1WholeBodyConnection disconnected")
         super().stop()
 
-    # =========================================================================
-    # Publish loop (state out)
-    # =========================================================================
-
     def _publish_loop(self) -> None:
         period = 1.0 / float(self.config.publish_rate_hz)
         next_tick = time.perf_counter()
@@ -290,10 +280,6 @@ class G1WholeBodyConnection(Module):
             else:
                 next_tick = time.perf_counter()
 
-    # =========================================================================
-    # Motor command in (MotorCommandArray → LowCmd → DDS rt/lowcmd)
-    # =========================================================================
-
     def _on_motor_command(self, msg: MotorCommandArray) -> None:
         if msg.num_joints != _NUM_MOTORS:
             logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
@@ -322,20 +308,12 @@ class G1WholeBodyConnection(Module):
             self._low_cmd.crc = self._crc.Crc(self._low_cmd)
             self._publisher.Write(self._low_cmd)
 
-    # =========================================================================
-    # DDS subscriber callback (LowState in)
-    # =========================================================================
-
     def _on_low_state(self, msg: Any) -> None:
         """rt/lowstate callback — captures mode_machine and the latest snapshot."""
         with self._lock:
             self._low_state = msg
             if self._mode_machine is None:
                 self._mode_machine = msg.mode_machine
-
-    # =========================================================================
-    # Sport-mode release (real hardware only — gated by release_sport_mode)
-    # =========================================================================
 
     def _release_sport_mode(self) -> None:
         """Loop ReleaseMode until MotionSwitcher reports no active controller."""

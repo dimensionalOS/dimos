@@ -72,8 +72,6 @@ class WholeBodyAdapter(Protocol):
     - Force: N
     """
 
-    # --- Connection ---
-
     def connect(self) -> bool:
         """Connect to hardware. Returns True on success."""
         ...
@@ -86,8 +84,6 @@ class WholeBodyAdapter(Protocol):
         """Check if connected."""
         ...
 
-    # --- State Reading ---
-
     def read_motor_states(self) -> list[MotorState]:
         """Read motor states for all joints."""
         ...
@@ -95,8 +91,6 @@ class WholeBodyAdapter(Protocol):
     def read_imu(self) -> IMUState:
         """Read IMU state."""
         ...
-
-    # --- Control ---
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
         """Write motor commands for all joints. Returns success."""

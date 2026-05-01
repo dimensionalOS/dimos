@@ -72,10 +72,6 @@ class TransportWholeBodyAdapter:
         self._imu_unsub: Any = None
         self._connected = False
 
-    # ------------------------------------------------------------------
-    # Connection
-    # ------------------------------------------------------------------
-
     def connect(self) -> bool:
         ms_topic = f"/{self._prefix}/motor_states"
         imu_topic = f"/{self._prefix}/imu"
@@ -124,10 +120,6 @@ class TransportWholeBodyAdapter:
     def is_connected(self) -> bool:
         return self._connected
 
-    # ------------------------------------------------------------------
-    # State reading (latest-frame cached, non-blocking)
-    # ------------------------------------------------------------------
-
     def read_motor_states(self) -> list[MotorState]:
         """Return latest cached motor states. Returns defaults if no frame yet."""
         with self._lock:
@@ -141,10 +133,6 @@ class TransportWholeBodyAdapter:
             if self._latest_imu is None:
                 return IMUState()
             return self._latest_imu
-
-    # ------------------------------------------------------------------
-    # Control
-    # ------------------------------------------------------------------
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
         """Publish a MotorCommandArray to /{hardware_id}/motor_command.
@@ -166,13 +154,10 @@ class TransportWholeBodyAdapter:
         self._motor_command_transport.publish(msg)
         return True
 
-    # ------------------------------------------------------------------
-    # Subscriber callbacks (LCM dispatcher thread)
-    # ------------------------------------------------------------------
-
     def _on_motor_states(self, msg: JointState) -> None:
         # JointState.position / .velocity / .effort -> MotorState.q / .dq / .tau.
-
+        # Bound by the shortest array so a malformed publisher (e.g. empty
+        # velocity) can't IndexError-kill the LCM dispatcher thread.
         n = min(len(msg.position), len(msg.velocity), len(msg.effort), self._dof)
         states = [
             MotorState(q=msg.position[i], dq=msg.velocity[i], tau=msg.effort[i]) for i in range(n)
