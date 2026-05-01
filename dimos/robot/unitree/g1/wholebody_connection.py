@@ -42,7 +42,6 @@ Motor ordering (29 joints):
 
 from __future__ import annotations
 
-import logging
 import threading
 from threading import Thread
 import time
@@ -62,8 +61,9 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 _NUM_MOTORS = 29
 _NUM_MOTOR_SLOTS = 35  # G1 hg LowCmd has 35 slots; only 29 are used

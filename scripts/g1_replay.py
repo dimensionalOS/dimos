@@ -54,7 +54,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 from pathlib import Path
 import threading
 import time
@@ -62,13 +61,13 @@ import time
 from dimos.control.components import make_humanoid_joints
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.logging_config import setup_logger
 
 NUM_DOF = 29
 CANONICAL_JOINTS = make_humanoid_joints("g1")
 assert len(CANONICAL_JOINTS) == NUM_DOF
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("g1_replay")
+logger = setup_logger()
 
 
 def load_trajectory(path: Path) -> tuple[list[float], list[list[float]]]:

@@ -54,6 +54,7 @@ from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -64,8 +65,6 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from dimos.hardware.whole_body.spec import WholeBodyAdapter
 
 logger = setup_logger()
 
@@ -260,7 +259,7 @@ class ControlCoordinator(Module):
             **component.adapter_kwargs,
         )
 
-    def _create_whole_body_adapter(self, component: HardwareComponent) -> "WholeBodyAdapter":
+    def _create_whole_body_adapter(self, component: HardwareComponent) -> WholeBodyAdapter:
         """Create a whole-body adapter from component config.
 
         ``component.address`` carries the DDS network interface — int (CAN port)
@@ -365,12 +364,10 @@ class ControlCoordinator(Module):
     @rpc
     def add_hardware(
         self,
-        adapter: "ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter",
+        adapter: ManipulatorAdapter | TwistBaseAdapter | WholeBodyAdapter,
         component: HardwareComponent,
     ) -> bool:
         """Register a hardware adapter with the coordinator."""
-        from dimos.hardware.whole_body.spec import WholeBodyAdapter
-
         is_base = component.hardware_type == HardwareType.BASE
         is_whole_body = component.hardware_type == HardwareType.WHOLE_BODY
 

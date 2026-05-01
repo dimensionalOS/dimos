@@ -28,14 +28,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import importlib
-import logging
 import os
 from typing import TYPE_CHECKING, Any
+
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.hardware.whole_body.spec import WholeBodyAdapter
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class WholeBodyAdapterRegistry:
