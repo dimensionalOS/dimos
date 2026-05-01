@@ -61,7 +61,6 @@ class A750Adapter:
 
     def connect(self) -> bool:
         """Connect to the A-750 serial device."""
-        self._trace("connect")
         try:
             import a750_control
         except ImportError as exc:
@@ -84,7 +83,6 @@ class A750Adapter:
 
     def disconnect(self) -> None:
         """Disconnect from hardware."""
-        self._trace("disconnect")
         if self._robot is not None:
             self._robot.disconnect()
         self._connected = False
