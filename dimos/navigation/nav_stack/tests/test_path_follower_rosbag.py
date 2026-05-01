@@ -187,6 +187,23 @@ class TestPathFollowerRosbag:
         )
         speed_ratio = our_mean_speed / ref_mean_speed if ref_mean_speed > 0 else 0.0
 
+        # Apples-to-apples: compare only non-zero speeds (factors out joy-gated zeros)
+        ref_speeds = (
+            np.sqrt(ref_nonzero[:, 1] ** 2 + ref_nonzero[:, 2] ** 2)
+            if len(ref_nonzero) > 0
+            else np.array([])
+        )
+        our_speeds = (
+            np.array([np.sqrt(lx**2 + ly**2) for lx, ly, _ in our_nonzero])
+            if our_nonzero
+            else np.array([])
+        )
+        filtered_ratio = (
+            float(our_speeds.mean() / ref_speeds.mean())
+            if len(ref_speeds) > 0 and len(our_speeds) > 0
+            else 0.0
+        )
+
         print(f"\n{'=' * 60}")
         print("PATH FOLLOWER DEVIATION SCORE")
         print(f"  Our cmd_vel:        {len(our_cmds)}")
@@ -196,7 +213,11 @@ class TestPathFollowerRosbag:
         print(f"  Ref non-zero:       {len(ref_nonzero)}")
         print(f"  Our mean speed:     {our_mean_speed:.3f} m/s")
         print(f"  Ref mean speed:     {ref_mean_speed:.3f} m/s")
-        print(f"  Speed ratio:        {speed_ratio:.3f}")
+        print(f"  Speed ratio (all):  {speed_ratio:.3f}")
+        print(f"  Speed ratio (nonzero-only): {filtered_ratio:.3f}")
+        print(f"  Our max speed:      {our_speeds.max():.3f} m/s" if len(our_speeds) > 0 else "")
+        print(f"  Ref max speed:      {ref_speeds.max():.3f} m/s" if len(ref_speeds) > 0 else "")
         print(f"{'=' * 60}\n")
 
         assert len(our_cmds) > 0, "PathFollower produced no cmd_vel"
+        assert len(our_nonzero) > 0, "All cmd_vel are zero"
