@@ -291,7 +291,6 @@ class ModuleCoordinator(Resource):
         blueprint_args = blueprint_args or {}
         if "g" in blueprint_args:
             global_config.update(**blueprint_args.pop("g"))
-        print("GLOAL CONFIG", global_config)
 
         _run_configurators(blueprint)
         _check_requirements(blueprint)
