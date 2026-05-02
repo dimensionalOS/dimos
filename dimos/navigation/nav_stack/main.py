@@ -36,7 +36,6 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanner
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
-from dimos.navigation.nav_stack.modules.nav_record.nav_record import NavRecord
 from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
 from dimos.navigation.nav_stack.modules.pgo.pgo import PGO
 from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
@@ -111,25 +110,11 @@ def create_nav_stack(
     Returns:
         An autoconnected Blueprint with the selected modules wired together.
     """
-    terrain_analysis_config = {**(terrain_analysis or {})}
     far_planner_config = {**(far_planner or {})}
-    local_planner_config = {**(local_planner or {})}
 
     # Propagate vehicle_height to far_planner config
     if vehicle_height is not None:
         far_planner_config.setdefault("vehicle_height", vehicle_height)
-    terrain_analysis_threshold = terrain_analysis_config.get("obstacle_height_threshold", 0.1)
-    local_planner_threshold = local_planner_config.get("obstacle_height_threshold", 0.1)
-    if terrain_analysis_threshold < local_planner_threshold:
-        logger.warning(
-            "terrain_analysis obstacle_height_threshold (%.3f) < "
-            "local_planner obstacle_height_threshold (%.3f). "
-            "Terrain analysis will pass through points that local_planner "
-            "treats as hard obstacles, causing phantom obstacle blocking.",
-            terrain_analysis_threshold,
-            local_planner_threshold,
-        )
-
     modules: list[Blueprint] = [
         TerrainAnalysis.blueprint(
             **{
@@ -231,8 +216,16 @@ def create_nav_stack(
         )
     if use_tare:
         modules.append(TarePlanner.blueprint(**(tare_planner or {})))
+    record_remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = []
     if record:
+        # Lazy import: NavRecord pulls in dimos.memory2 → transformers/sklearn,
+        # which fails on linux-aarch64 (e.g. G1 onboard) with "cannot allocate
+        # memory in static TLS block" when sklearn's bundled libgomp is loaded
+        # lazily into a worker process. Only load it when recording is enabled.
+        from dimos.navigation.nav_stack.modules.nav_record.nav_record import NavRecord
+
         modules.append(NavRecord.blueprint(**(nav_record or {})))
+        record_remappings.append((NavRecord, "global_map", "global_map_pgo"))
 
     remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
         # PathFollower cmd_vel needs renaming to avoid collision when
@@ -245,7 +238,7 @@ def create_nav_stack(
         *([] if use_simple_planner else [(FarPlanner, "odometry", "corrected_odometry")]),
         (TerrainAnalysis, "odometry", "corrected_odometry"),
         (PGO, "global_map", "global_map_pgo"),
-        *([(NavRecord, "global_map", "global_map_pgo")] if record else []),
+        *record_remappings,
     ]
 
     return autoconnect(*modules).remappings(remappings)
