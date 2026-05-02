@@ -379,14 +379,20 @@ class ConnectedWholeBody(ConnectedHardware):
             for i, name in enumerate(self._joint_names)
         }
 
-    def write_command(self, commands: dict[str, float], _mode: ControlMode) -> bool:
+    def write_command(self, commands: dict[str, float], mode: ControlMode) -> bool:
         """Write position commands — converts to MotorCommand with PD gains.
 
-        Returns False (skip this tick) until the first motor_states frame
-        arrives so we don't seed last_commanded with adapter defaults and
-        publish a 0-rad snap on the first write.
+        Only POSITION / SERVO_POSITION are supported; other modes are warned
+        and dropped (matches ConnectedHardware's warn-and-skip pattern).
         """
         from dimos.hardware.whole_body.spec import MotorCommand
+
+        if mode not in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
+            logger.warning(
+                f"WholeBody {self.hardware_id} only supports POSITION/SERVO_POSITION; "
+                f"got {mode.name} — skipping"
+            )
+            return False
 
         if not self._initialized and not self._try_initialize_last_commanded():
             return False
