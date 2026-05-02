@@ -382,17 +382,14 @@ class ConnectedWholeBody(ConnectedHardware):
     def write_command(self, commands: dict[str, float], _mode: ControlMode) -> bool:
         """Write position commands — converts to MotorCommand with PD gains.
 
-        Args:
-            commands: {joint_name: target_position} - can be partial
-            _mode: Control mode (uses position PD regardless)
-
-        Returns:
-            True if command was sent successfully
+        Returns False (skip this tick) until the first motor_states frame
+        arrives so we don't seed last_commanded with adapter defaults and
+        publish a 0-rad snap on the first write.
         """
         from dimos.hardware.whole_body.spec import MotorCommand
 
-        if not self._initialized:
-            self._initialize_last_commanded()
+        if not self._initialized and not self._try_initialize_last_commanded():
+            return False
 
         for joint_name, value in commands.items():
             if joint_name in self._joint_names:
@@ -420,22 +417,15 @@ class ConnectedWholeBody(ConnectedHardware):
         """Direct pass-through to adapter for full MotorCommand control."""
         return self._wb_adapter.write_motor_commands(commands)
 
-    def _initialize_last_commanded(self) -> None:
-        """Initialize last_commanded from current motor positions."""
-        is_ready = getattr(self._wb_adapter, "has_motor_states", lambda: True)
-        for _ in range(10):
-            if is_ready():
-                motor_states = self._wb_adapter.read_motor_states()
-                for i, name in enumerate(self._joint_names):
-                    self._last_commanded[name] = motor_states[i].q
-                self._initialized = True
-                return
-            time.sleep(0.1)
-
-        raise RuntimeError(
-            f"WholeBody {self._component.hardware_id} did not receive motor_states "
-            f"within 1s — refusing to initialize last_commanded with adapter defaults"
-        )
+    def _try_initialize_last_commanded(self) -> bool:
+        """Non-blocking init. Returns True once motor_states is cached."""
+        if not self._wb_adapter.has_motor_states():
+            return False
+        states = self._wb_adapter.read_motor_states()
+        for i, name in enumerate(self._joint_names):
+            self._last_commanded[name] = states[i].q
+        self._initialized = True
+        return True
 
 
 __all__ = [
