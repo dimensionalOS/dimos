@@ -34,7 +34,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -50,6 +49,11 @@ _MIN_KEYFRAMES_FOR_LOOP_SEARCH = 10
 
 
 class PGOConfig(ModuleConfig):
+    # TF frame names
+    world_frame: str = "map"
+    odom_frame: str = "odom"
+    body_frame: str = "body"
+
     # Keyframe detection
     key_pose_delta_trans: float = 0.5
     key_pose_delta_deg: float = 10.0
@@ -393,12 +397,18 @@ def process_scan(
     )
 
 
-def build_corrected_odometry(r: np.ndarray, t: np.ndarray, ts: float) -> Odometry:
+def build_corrected_odometry(
+    r: np.ndarray,
+    t: np.ndarray,
+    ts: float,
+    world_frame: str = "map",
+    body_frame: str = "body",
+) -> Odometry:
     q = Rotation.from_matrix(r).as_quat()  # [x,y,z,w]
     return Odometry(
         ts=ts,
-        frame_id=FRAME_MAP,
-        child_frame_id=FRAME_BODY,
+        frame_id=world_frame,
+        child_frame_id=body_frame,
         pose=Pose(
             position=[float(t[0]), float(t[1]), float(t[2])],
             orientation=[float(q[0]), float(q[1]), float(q[2]), float(q[3])],
@@ -406,11 +416,17 @@ def build_corrected_odometry(r: np.ndarray, t: np.ndarray, ts: float) -> Odometr
     )
 
 
-def build_map_odom_tf(r_offset: np.ndarray, t_offset: np.ndarray, ts: float) -> Transform:
+def build_map_odom_tf(
+    r_offset: np.ndarray,
+    t_offset: np.ndarray,
+    ts: float,
+    world_frame: str = "map",
+    odom_frame: str = "odom",
+) -> Transform:
     q = Rotation.from_matrix(r_offset).as_quat()  # [x,y,z,w]
     return Transform(
-        frame_id=FRAME_MAP,
-        child_frame_id=FRAME_ODOM,
+        frame_id=world_frame,
+        child_frame_id=odom_frame,
         translation=Vector3(float(t_offset[0]), float(t_offset[1]), float(t_offset[2])),
         rotation=Quaternion(float(q[0]), float(q[1]), float(q[2]), float(q[3])),
         ts=ts,
@@ -532,7 +548,9 @@ class PGO(Module):
                 if len(cloud_np) > 0:
                     now = time.time()
                     self.global_map.publish(
-                        PointCloud2.from_numpy(cloud_np, frame_id=FRAME_MAP, timestamp=now)
+                        PointCloud2.from_numpy(
+                            cloud_np, frame_id=self.config.world_frame, timestamp=now
+                        )
                     )
                 self._last_global_map_time = t0
 

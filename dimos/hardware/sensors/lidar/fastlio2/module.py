@@ -61,7 +61,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM
 from dimos.spec import mapping, perception
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
@@ -72,8 +71,8 @@ _logger = setup_logger()
 
 def _odom_to_body_tf(msg: Odometry) -> Transform:
     return Transform(
-        frame_id=FRAME_ODOM,
-        child_frame_id=FRAME_BODY,
+        frame_id="odom",
+        child_frame_id="body",
         translation=Vector3(
             msg.pose.position.x,
             msg.pose.position.y,
@@ -123,8 +122,8 @@ class FastLio2Config(NativeModuleConfig):
     # Frame IDs for output messages.  "odom" reflects that FastLio2 provides
     # locally-smooth, continuous odometry (no loop-closure jumps).  PGO
     # publishes the map→odom correction via TF.
-    frame_id: str = FRAME_ODOM
-    child_frame_id: str = FRAME_BODY
+    frame_id: str = "odom"
+    child_frame_id: str = "body"
 
     # FAST-LIO internal processing rates
     msr_freq: float = 50.0

@@ -27,10 +27,10 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_MAP
 
 
 class TerrainMapExtConfig(ModuleConfig):
+    world_frame: str = "map"
     voxel_size: float = 0.4  # meters per voxel (coarser than local)
     decay_time: float = 8.0  # seconds before points expire
     publish_rate: float = 2.0  # Hz
@@ -160,7 +160,7 @@ class TerrainMapExt(Module):
             if pts:
                 arr = np.array(pts, dtype=np.float32)
                 self.terrain_map_ext.publish(
-                    PointCloud2.from_numpy(arr, frame_id=FRAME_MAP, timestamp=now)
+                    PointCloud2.from_numpy(arr, frame_id=self.config.world_frame, timestamp=now)
                 )
 
             elapsed = time.monotonic() - t0
