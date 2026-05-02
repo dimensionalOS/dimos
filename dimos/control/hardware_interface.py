@@ -33,6 +33,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.control.components import HardwareComponent, HardwareId, JointName, JointState
     from dimos.hardware.drive_trains.spec import TwistBaseAdapter
+    from dimos.hardware.whole_body.spec import MotorCommand, WholeBodyAdapter
 
 logger = setup_logger()
 
@@ -54,15 +55,6 @@ class ConnectedHardware:
         adapter: ManipulatorAdapter,
         component: HardwareComponent,
     ) -> None:
-        """Initialize hardware interface.
-
-        Args:
-            adapter: ManipulatorAdapter instance (XArmAdapter, PiperAdapter, etc.)
-            component: Hardware component with joints config
-        """
-        if not isinstance(adapter, ManipulatorAdapter):
-            raise TypeError("adapter must implement ManipulatorAdapter")
-
         self._adapter = adapter
         self._component = component
         self._arm_joint_names: list[JointName] = list(component.joints)
@@ -248,11 +240,6 @@ class ConnectedTwistBase(ConnectedHardware):
         adapter: TwistBaseAdapter,
         component: HardwareComponent,
     ) -> None:
-        from dimos.hardware.drive_trains.spec import TwistBaseAdapter as TwistBaseAdapterProto
-
-        if not isinstance(adapter, TwistBaseAdapterProto):
-            raise TypeError("adapter must implement TwistBaseAdapter")
-
         self._twist_adapter = adapter
         self._component = component
         self._joint_names = component.joints
@@ -319,7 +306,117 @@ class ConnectedTwistBase(ConnectedHardware):
         return self._twist_adapter.write_velocities(ordered)
 
 
+_DEFAULT_KP: float = 40.0
+_DEFAULT_KD: float = 3.0
+
+
+class ConnectedWholeBody(ConnectedHardware):
+    """Runtime wrapper for a whole-body motor platform connected to the coordinator.
+
+    Wraps a WholeBodyAdapter for joint-level motor control (any DOF count).
+
+    Key differences from ConnectedHardware:
+    - Reads joint state from MotorState (q, dq, tau)
+    - write_command converts position commands to MotorCommand with PD gains
+    - write_motor_commands provides direct pass-through to adapter
+    """
+
+    _wb_adapter: WholeBodyAdapter
+
+    def __init__(
+        self,
+        adapter: WholeBodyAdapter,
+        component: HardwareComponent,
+    ) -> None:
+        self._wb_adapter = adapter
+        self._component = component
+        self._joint_names = component.joints
+
+        self._last_commanded: dict[str, float] = {}
+        self._initialized = False
+        self._warned_unknown_joints: set[str] = set()
+        self._current_mode: ControlMode | None = None
+
+    @property
+    def adapter(self) -> WholeBodyAdapter:  # type: ignore[override]
+        """The underlying whole-body adapter."""
+        return self._wb_adapter
+
+    def disconnect(self) -> None:
+        """Disconnect the underlying adapter."""
+        self._wb_adapter.disconnect()
+
+    def read_state(self) -> dict[JointName, JointState]:
+        """Read motor states as {joint_name: JointState}."""
+        from dimos.control.components import JointState
+
+        motor_states = self._wb_adapter.read_motor_states()
+        return {
+            name: JointState(
+                position=motor_states[i].q,
+                velocity=motor_states[i].dq,
+                effort=motor_states[i].tau,
+            )
+            for i, name in enumerate(self._joint_names)
+        }
+
+    def write_command(self, commands: dict[str, float], mode: ControlMode) -> bool:
+        """Write position commands — converts to MotorCommand with PD gains.
+
+        Only POSITION / SERVO_POSITION are supported; other modes are warned
+        and dropped (matches ConnectedHardware's warn-and-skip pattern).
+        """
+        from dimos.hardware.whole_body.spec import MotorCommand
+
+        if mode not in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
+            logger.warning(
+                f"WholeBody {self.hardware_id} only supports POSITION/SERVO_POSITION; "
+                f"got {mode.name} — skipping"
+            )
+            return False
+
+        if not self._initialized and not self._try_initialize_last_commanded():
+            return False
+
+        for joint_name, value in commands.items():
+            if joint_name in self._joint_names:
+                self._last_commanded[joint_name] = value
+            elif joint_name not in self._warned_unknown_joints:
+                logger.warning(
+                    f"WholeBody {self.hardware_id} received command for unknown joint "
+                    f"{joint_name}. Valid joints: {self._joint_names}"
+                )
+                self._warned_unknown_joints.add(joint_name)
+
+        motor_cmds = [
+            MotorCommand(
+                q=self._last_commanded[name],
+                dq=0.0,
+                kp=_DEFAULT_KP,
+                kd=_DEFAULT_KD,
+                tau=0.0,
+            )
+            for name in self._joint_names
+        ]
+        return self._wb_adapter.write_motor_commands(motor_cmds)
+
+    def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
+        """Direct pass-through to adapter for full MotorCommand control."""
+        return self._wb_adapter.write_motor_commands(commands)
+
+    def _try_initialize_last_commanded(self) -> bool:
+        """Non-blocking init. Returns True once motor_states is cached."""
+        if not self._wb_adapter.has_motor_states():
+            return False
+        states = self._wb_adapter.read_motor_states()
+        for i, name in enumerate(self._joint_names):
+            self._last_commanded[name] = states[i].q
+        self._initialized = True
+        return True
+
+
 __all__ = [
     "ConnectedHardware",
     "ConnectedTwistBase",
+    "ConnectedWholeBody",
 ]
