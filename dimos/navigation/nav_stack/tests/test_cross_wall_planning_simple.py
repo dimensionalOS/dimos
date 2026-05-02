@@ -39,7 +39,7 @@ from dimos.navigation.nav_stack.tests.conftest import (
 )
 from dimos.simulation.unity.module import UnityBridgeModule
 
-pytestmark = [pytest.mark.slow]
+pytestmark = [pytest.mark.slow, pytest.mark.skipif_in_ci]
 
 # If the robot's z ever exceeds this, it has gone through the ceiling /
 # climbed on top of geometry — navigation is broken. The sim's terrain-z

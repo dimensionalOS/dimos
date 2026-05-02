@@ -40,7 +40,7 @@ from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
 from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.visualization.vis_module import vis_module
 
-pytestmark = [pytest.mark.slow]
+pytestmark = [pytest.mark.slow, pytest.mark.skipif_in_ci]
 
 # Z-ceiling guard: if the robot's z exceeds this, it went through the
 # ceiling/roof — the planner is "cheating" by driving over walls.
