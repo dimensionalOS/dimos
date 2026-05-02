@@ -43,10 +43,15 @@ from __future__ import annotations
 import threading
 from threading import Thread
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 from reactivex.disposable import Disposable
+
+if TYPE_CHECKING:
+    from unitree_sdk2py.core.channel import ChannelPublisher, ChannelSubscriber
+    from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_, LowState_
+    from unitree_sdk2py.utils.crc import CRC
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import make_humanoid_joints
@@ -94,11 +99,11 @@ class G1WholeBodyConnection(Module):
         super().__init__(**kwargs)
 
         # DDS / SDK objects — populated in start(), torn down in stop().
-        self._publisher: Any = None
-        self._subscriber: Any = None
-        self._low_cmd: Any = None
-        self._low_state: Any = None
-        self._crc: Any = None
+        self._publisher: ChannelPublisher | None = None
+        self._subscriber: ChannelSubscriber | None = None
+        self._low_cmd: LowCmd_ | None = None
+        self._low_state: LowState_ | None = None
+        self._crc: CRC | None = None
 
         # mode_machine must be read from first LowState and echoed back in every LowCmd.
         self._mode_machine: int | None = None
