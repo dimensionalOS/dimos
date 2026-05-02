@@ -12,30 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 wholebody Module.
+"""G1 low-level DDS Module: rt/lowstate (sub) + rt/lowcmd (pub), unitree_hg IDL.
 
-Owns the G1 low-level DDS connection directly.
-
-Stream interface:
-  - motor_states:  Out[JointState]         29 motors, q/dq/tau in position/velocity/effort
-  - imu:           Out[Imu]                quaternion + gyro + accel
-  - motor_command: In[MotorCommandArray]   29-DOF q/dq/kp/kd/tau
-
-Hardware protocol:
-  - DDS topics: rt/lowstate (subscribe) + rt/lowcmd (publish)
-  - IDL: unitree_hg (G1 specific; Go2 uses unitree_go)
-  - mode_machine: read from first LowState, echoed back in every LowCmd
-  - CRC: computed on every LowCmd via unitree_sdk2py.utils.crc.CRC
-  - Sport-mode release: gated by release_sport_mode config (set False for sim/mock)
-
-mode_machine never appears on the published JointState — it stays internal.
-
-Motor ordering (29 joints):
-  0-5:   left leg  (hip pitch/roll/yaw, knee, ankle pitch/roll)
-  6-11:  right leg
-  12-14: waist (yaw, roll, pitch — roll/pitch may be invalid on some variants)
-  15-21: left arm  (shoulder pitch/roll/yaw, elbow, wrist roll/pitch/yaw)
-  22-28: right arm
+Streams: motor_states (Out[JointState]), imu (Out[Imu]),
+motor_command (In[MotorCommandArray]). 29 motors, ordering from
+make_humanoid_joints("g1") (left leg → right leg → waist → left arm → right arm).
 """
 
 from __future__ import annotations
@@ -98,20 +79,15 @@ class G1WholeBodyConnection(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
-        # DDS / SDK objects — populated in start(), torn down in stop().
         self._publisher: ChannelPublisher | None = None
         self._subscriber: ChannelSubscriber | None = None
         self._low_cmd: LowCmd_ | None = None
         self._low_state: LowState_ | None = None
         self._crc: CRC | None = None
-
-        # mode_machine must be read from first LowState and echoed back in every LowCmd.
+        # mode_machine: read from first LowState, echoed back in every LowCmd.
         self._mode_machine: int | None = None
-
-        # Guards _low_cmd, _low_state, _mode_machine across the DDS callback thread,
-        # the publish loop thread, and the motor_command (LCM) callback thread.
+        # Guards _low_cmd / _low_state / _mode_machine across DDS, publish, and LCM threads.
         self._lock = threading.Lock()
-
         self._stop_event = threading.Event()
         self._publish_thread: Thread | None = None
 
@@ -119,14 +95,7 @@ class G1WholeBodyConnection(Module):
     def start(self) -> None:
         super().start()
 
-        # Lazy SDK imports so the Module module file imports cleanly outside the
-        # nix env / [unitree-dds] extra. Connect path:
-        #   1. ChannelFactoryInitialize(0[, nic])
-        #   2. publisher rt/lowcmd, subscriber rt/lowstate
-        #   3. LowCmd buffer initialised with safe defaults (POS_STOP, kp=0)
-        #   4. CRC computer
-        #   5. (optional) MotionSwitcher release sport mode
-        #   6. wait up to _MODE_MACHINE_WAIT_S for first LowState
+        # Lazy SDK imports — file must import cleanly outside the [unitree-dds] extra.
         from unitree_sdk2py.core.channel import (
             ChannelFactoryInitialize,
             ChannelPublisher,
@@ -144,8 +113,7 @@ class G1WholeBodyConnection(Module):
             else:
                 ChannelFactoryInitialize(0)
         except Exception as e:
-            # Idempotent: if the factory was already initialised in this process
-            # (e.g. by a sibling DDS publisher in the same worker), continue.
+            # Idempotent — already initialised by a sibling participant is fine.
             logger.debug(f"ChannelFactoryInitialize raised (likely already init'd): {e}")
 
         self._publisher = ChannelPublisher("rt/lowcmd", LowCmd_)
@@ -154,8 +122,7 @@ class G1WholeBodyConnection(Module):
         self._subscriber = ChannelSubscriber("rt/lowstate", LowState_)
         self._subscriber.Init(self._on_low_state, 10)
 
-        # LowCmd safe defaults — POS_STOP/VEL_STOP sentinels with zero gains so a
-        # robot doesn't twitch on the first publish if commands haven't started.
+        # POS_STOP/VEL_STOP + zero gains so the robot can't twitch pre-command.
         self._low_cmd = unitree_hg_msg_dds__LowCmd_()
         self._low_cmd.mode_pr = 0  # PR (pitch/roll) mode
         for i in range(_NUM_MOTOR_SLOTS):
@@ -200,12 +167,8 @@ class G1WholeBodyConnection(Module):
             self._publish_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._publish_thread = None
 
-        # Close DDS endpoints explicitly before dropping refs — relying on GC
-        # leaves the cyclonedds participant in a state where in-flight callbacks
-        # race with cleanup and segfault on process exit. Verified against
-        # unitree_sdk2py/core/channel.py (Close exists at lines 267 + 288);
-        # mirrors the Go2 SDK adapter's pattern in
-        # dimos/hardware/drive_trains/unitree_go2/adapter.py.
+        # Close DDS endpoints explicitly — GC-based cleanup races with in-flight
+        # callbacks and segfaults on process exit (mirrors the Go2 adapter).
         if self._subscriber is not None:
             try:
                 self._subscriber.Close()
@@ -267,7 +230,7 @@ class G1WholeBodyConnection(Module):
                 )
             )
 
-            # Unitree IMU quaternion is (w, x, y, z); dimos Quaternion is (x, y, z, w).
+            # Unitree quat is (w,x,y,z); dimos Quaternion is (x,y,z,w).
             self.imu.publish(
                 Imu(
                     ts=now,
@@ -330,10 +293,7 @@ class G1WholeBodyConnection(Module):
         msc.SetTimeout(5.0)
         msc.Init()
 
-        # MotionSwitcher.CheckMode() returns (status, dict) while a sport
-        # mode is active and (status, None) once nothing is active. Use a
-        # null-tolerant check so the loop exits cleanly after the release
-        # rather than crashing on `None["name"]`.
+        # CheckMode returns (status, None) once nothing is active — null-tolerant.
         _status, result = msc.CheckMode()
         while result and result.get("name"):
             msc.ReleaseMode()

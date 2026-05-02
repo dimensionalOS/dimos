@@ -13,19 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unitree G1 ControlCoordinator — G1WholeBodyConnection + coordinator via LCM transport adapter.
+"""G1 ControlCoordinator: G1WholeBodyConnection Module + servo task via LCM bridge.
 
-Pattern mirrors `unitree_go2_coordinator.py`. The Module owns the DDS connection
-in its own worker; the coordinator constructs a `TransportWholeBodyAdapter`
-(registered as ``transport_lcm``) that pub/subs the same LCM topics the Module
-publishes to / subscribes from.
-
-A single ``servo_g1`` task converts incoming JointState commands on
-``/g1/joint_command`` into per-joint position commands routed to the
-WHOLE_BODY hardware (PD gains baked into ``ConnectedWholeBody``).
-
-Usage:
-    ROBOT_INTERFACE=enp60s0 dimos run unitree-g1-coordinator
+Mirrors `unitree_go2_coordinator.py`. Run with `ROBOT_INTERFACE=<nic> dimos run unitree-g1-coordinator`.
 """
 
 from __future__ import annotations
@@ -43,8 +33,7 @@ from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
 _g1_joints = make_humanoid_joints("g1")
 
-# ROBOT_INTERFACE pins cyclonedds to a specific NIC — required on multi-NIC hosts
-# where the default pick stalls discovery (no LowState ever arrives).
+# ROBOT_INTERFACE pins cyclonedds to a NIC; required on multi-NIC hosts.
 unitree_g1_coordinator = (
     autoconnect(
         G1WholeBodyConnection.blueprint(
@@ -71,12 +60,8 @@ unitree_g1_coordinator = (
             ],
         ),
     )
-    # No remappings needed: G1WholeBodyConnection's stream names (motor_states,
-    # imu, motor_command) don't collide with any ControlCoordinator stream
-    # names (joint_state, joint_command, cartesian_command, twist_command,
-    # buttons). Compare unitree_go2_coordinator, which DOES need to remap
-    # GO2Connection.cmd_vel because it collides with the coordinator's
-    # twist_command path bound to /cmd_vel.
+    # No remappings: Module stream names (motor_states/imu/motor_command) don't
+    # collide with ControlCoordinator's (joint_state/joint_command/...).
     .transports(
         {
             ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),

@@ -64,17 +64,7 @@ class WholeBodyAdapterRegistry:
         return sorted(self._adapters.keys())
 
     def discover(self) -> None:
-        """Discover and register adapters from subpackages.
-
-        Mirrors ``dimos.hardware.drive_trains.registry``'s walk pattern: raw
-        filesystem listing + ``os.path.isdir`` check. We do NOT use
-        ``pkgutil.iter_modules`` because dimos uses PEP 420 namespace packages
-        (no ``__init__.py``) and ``iter_modules`` doesn't reliably enumerate
-        subpackage directories under namespace packages.
-
-        Each direct subpackage of ``dimos.hardware.whole_body`` is expected
-        to expose ``adapter.py`` with a ``register(registry)`` function.
-        """
+        """Discover and register adapters from subpackages."""
         import dimos.hardware.whole_body as pkg
 
         pkg_dir = pkg.__path__[0]

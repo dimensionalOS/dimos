@@ -12,21 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""WholeBodyAdapter protocol for joint-level motor control.
-
-Lightweight protocol for robots that expose per-motor
-position/velocity/torque control (as opposed to TwistBaseAdapter which
-only exposes velocity commands).
-
-Supports any number of motors — quadrupeds (12 DOF), humanoids (29 DOF), etc.
-"""
+"""WholeBodyAdapter protocol for joint-level (q/dq/kp/kd/tau) motor control."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-# Sentinel values from Unitree SDK — used to signal "no command" for a DOF.
+# Unitree SDK sentinels meaning "no command" for that DOF.
 POS_STOP: float = 2.146e9
 VEL_STOP: float = 16000.0
 
@@ -63,38 +56,14 @@ class IMUState:
 
 @runtime_checkable
 class WholeBodyAdapter(Protocol):
-    """Protocol for joint-level whole-body motor IO.
+    """Joint-level whole-body motor IO. SI units (rad, rad/s, Nm)."""
 
-    Implement this per vendor SDK.  All methods use SI units:
-    - Position: radians
-    - Velocity: rad/s
-    - Torque: Nm
-    - Force: N
-    """
-
-    def connect(self) -> bool:
-        """Connect to hardware. Returns True on success."""
-        ...
-
-    def disconnect(self) -> None:
-        """Disconnect from hardware."""
-        ...
-
-    def is_connected(self) -> bool:
-        """Check if connected."""
-        ...
-
-    def read_motor_states(self) -> list[MotorState]:
-        """Read motor states for all joints."""
-        ...
-
-    def read_imu(self) -> IMUState:
-        """Read IMU state."""
-        ...
-
-    def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
-        """Write motor commands for all joints. Returns success."""
-        ...
+    def connect(self) -> bool: ...
+    def disconnect(self) -> None: ...
+    def is_connected(self) -> bool: ...
+    def read_motor_states(self) -> list[MotorState]: ...
+    def read_imu(self) -> IMUState: ...
+    def write_motor_commands(self, commands: list[MotorCommand]) -> bool: ...
 
 
 __all__ = [

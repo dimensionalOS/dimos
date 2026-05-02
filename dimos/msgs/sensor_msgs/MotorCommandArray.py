@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LCM type for low-level motor command arrays.
-
-Hand-rolled struct.pack serialization, modeled on JointCommand.py.
-Carries the full per-motor PD+feedforward command tuple needed for
-low-level joint control: q, dq, kp, kd, tau.
-"""
+"""LCM type for low-level motor commands: q, dq, kp, kd, tau per motor."""
 
 from io import BytesIO
 import struct
@@ -25,12 +20,7 @@ import time
 
 
 class MotorCommandArray:
-    """Low-level motor command array.
-
-    Variable-length per-motor commands with target position, target velocity,
-    PD gains (kp, kd), and feedforward torque. Joint order is implicit —
-    callers must agree on a fixed ordering (e.g., G1's 29-motor sequence).
-    """
+    """Per-motor q/dq/kp/kd/tau. Joint order is implicit (caller-defined)."""
 
     msg_name = "sensor_msgs.MotorCommandArray"
 

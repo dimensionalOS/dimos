@@ -13,42 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Replay a recorded 29-DOF G1 joint trajectory through the coordinator.
+"""Replay a 29-DOF G1 joint trajectory through unitree-g1-coordinator.
 
-Publishes JointState to /g1/joint_command. Flow:
-
-    g1_replay.py
-        | JointState (29 names + 29 positions)
-        v  /g1/joint_command  (LCM)
-    ControlCoordinator (servo_g1 task, tick_rate=500)
-        |  per-joint position commands → MotorCommand with built-in PD gains
-        v  TransportWholeBodyAdapter
-        |  MotorCommandArray
-        v  /g1/motor_command  (LCM)
-    G1WholeBodyConnection
-        v  DDS to robot
-
-Joint name remapping: the trajectory file (recorded on the playback branch) uses
-``g1_LeftHipPitch`` style names, but this branch's coordinator expects
-``g1/left_hip_pitch``. Both lists share the same positional ordering — defined
-once in ``_HUMANOID_29DOF_JOINTS`` — so we ignore the file's joint_names entirely
-and zip its position arrays onto the canonical list from
-``make_humanoid_joints("g1")``.
-
-Trajectory file format:
-    {
-        "joint_names": [...29 names...],   # ignored — only used for length check
-        "samples": [{"ts": float, "position": [...29 floats...]}, ...]
-    }
-
-Usage:
-    # Terminal 1:
-    ROBOT_INTERFACE=enp194s0 dimos run unitree-g1-coordinator
-    # Terminal 2:
-    python scripts/g1_replay.py                                           # default LFS bundle
-    python scripts/g1_replay.py --loop
-    python scripts/g1_replay.py --dry-run
-    python scripts/g1_replay.py --file <other.json>                       # any 29-DOF JSON
+Publishes JointState to /g1/joint_command. Trajectory file: positional 29-DOF
+(joint_names ignored, zipped onto make_humanoid_joints("g1")).
 """
 
 from __future__ import annotations
@@ -65,8 +33,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
-# LFS-bundled default trajectory. get_data() auto-pulls from
-# data/.lfs/g1_wholebody_replay.json.tar.gz and decompresses on first use.
+# get_data() auto-pulls + decompresses data/.lfs/<name>.tar.gz on first use.
 _DEFAULT_TRAJECTORY_NAME = "g1_wholebody_replay.json"
 
 NUM_DOF = 29
@@ -147,8 +114,7 @@ def main() -> None:
         state_event.set()
 
     state_sub: LCMTransport[JointState] = LCMTransport("/coordinator/joint_state", JointState)
-    # LCMTransport.subscribe() actually returns an unsub callable but its
-    # signature claims None — match the pattern in scripts/test_g1_module.
+    # subscribe() returns an unsub callable; signature claims None (see transport.py).
     state_unsub = state_sub.subscribe(on_state)  # type: ignore[func-returns-value]
     cmd_pub: LCMTransport[JointState] = LCMTransport("/g1/joint_command", JointState)
 
@@ -171,9 +137,7 @@ def main() -> None:
             logger.info("--dry-run set — exiting before publish phase")
             return
 
-        # ramp <= 0 means "skip ramp" — publish trajectory[0] once and proceed.
-        # Snaps to the recorded start pose under PD; only safe when the robot
-        # already sits there (e.g. dry-run had us close, or replay loop resume).
+        # ramp <= 0: snap to trajectory[0] (only safe when robot already there).
         target_q = positions[0]
         if args.ramp <= 0:
             logger.warning(

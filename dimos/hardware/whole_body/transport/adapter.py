@@ -12,19 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Transport-based whole-body adapter — connects coordinator to a Module via pub/sub.
+"""Transport-based whole-body adapter: bridges coordinator ↔ Module via pub/sub.
 
-One generic adapter for every humanoid/quadruped that publishes the same
-JointState/Imu/MotorCommandArray topic interface. Per-robot logic stays in
-the Module, not here.
-
-Topics derived from ``hardware_id``:
-  - subscribes /{hardware_id}/motor_states  (JointState)
-  - subscribes /{hardware_id}/imu           (Imu)
-  - publishes  /{hardware_id}/motor_command (MotorCommandArray)
-
-The ``network_interface`` kwarg is accepted (the coordinator forwards
-``component.address``) and ignored — LCM transport doesn't use a NIC.
+Subscribes /{hardware_id}/motor_states + /{hardware_id}/imu, publishes
+/{hardware_id}/motor_command. ``network_interface`` is accepted but ignored.
 """
 
 from __future__ import annotations
@@ -121,7 +112,6 @@ class TransportWholeBodyAdapter:
         return self._connected
 
     def read_motor_states(self) -> list[MotorState]:
-        """Return latest cached motor states. Returns defaults if no frame yet."""
         with self._lock:
             if self._latest_motor_states is None:
                 return [MotorState() for _ in range(self._dof)]
@@ -133,18 +123,12 @@ class TransportWholeBodyAdapter:
             return self._latest_motor_states is not None
 
     def read_imu(self) -> IMUState:
-        """Return latest cached IMU state. Returns defaults if no frame yet."""
         with self._lock:
             if self._latest_imu is None:
                 return IMUState()
             return self._latest_imu
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
-        """Publish a MotorCommandArray to /{hardware_id}/motor_command.
-
-        Per-joint q/dq/kp/kd/tau survive the wire — that's the whole point
-        of being at the low-level layer.
-        """
         if self._motor_command_transport is None:
             logger.warning("write_motor_commands called before connect()")
             return False
@@ -160,12 +144,7 @@ class TransportWholeBodyAdapter:
         return True
 
     def _on_motor_states(self, msg: JointState) -> None:
-        # JointState.position / .velocity / .effort -> MotorState.q / .dq / .tau.
-        # Drop the frame if any array is shorter than _dof — keeps the last
-        # valid cached frame and guarantees _latest_motor_states is either
-        # None (no frame yet) or exactly _dof entries. Downstream callers
-        # iterate range(_dof) and index by joint, so a short list would
-        # IndexError; padding with zeros would silently substitute fake data.
+        # Drop short frames; downstream code indexes range(_dof) directly.
         if (
             len(msg.position) < self._dof
             or len(msg.velocity) < self._dof
@@ -180,8 +159,7 @@ class TransportWholeBodyAdapter:
             self._latest_motor_states = states
 
     def _on_imu(self, msg: Imu) -> None:
-        # dimos Imu.orientation Quaternion is (x, y, z, w);
-        # IMUState.quaternion is (w, x, y, z) — translate.
+        # dimos Imu Quaternion is (x,y,z,w); IMUState.quaternion is (w,x,y,z).
         with self._lock:
             self._latest_imu = IMUState(
                 quaternion=(
@@ -200,7 +178,7 @@ class TransportWholeBodyAdapter:
                     msg.linear_acceleration.y,
                     msg.linear_acceleration.z,
                 ),
-                rpy=(0.0, 0.0, 0.0),  # dimos Imu doesn't carry rpy; downstream typically ignores
+                rpy=(0.0, 0.0, 0.0),
             )
 
 
