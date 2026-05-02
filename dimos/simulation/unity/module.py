@@ -80,8 +80,6 @@ _LFS_ASSET = "unity_sim_x86"
 # connection and drops it.
 _BRIDGE_READ_TIMEOUT = 30.0
 
-# TCP protocol helpers
-
 
 def _recvall(sock: socket.socket, size: int) -> bytes:
     buf = bytearray(size)
@@ -121,9 +119,6 @@ def _write_tcp_command(sock: socket.socket, command: str, params: dict[str, Any]
     )
 
 
-# Platform validation
-
-
 def _validate_platform() -> None:
     """Raise if the current platform can't run the Unity x86_64 binary."""
     supported_systems = {"Linux"}
@@ -144,9 +139,6 @@ def _validate_platform() -> None:
             f"Unity simulator requires x86_64 but running on {arch}. "
             f"ARM64 Linux is not supported. Use an x86_64 machine or emulation layer."
         )
-
-
-# Config
 
 
 class UnityBridgeConfig(ModuleConfig):
@@ -203,7 +195,6 @@ class UnityBridgeConfig(ModuleConfig):
     # Set to 0.0 for no drift.
     odom_drift_rate: float = 0.0
 
-    # ─── Terrain inclination fitting (port from ROS vehicleSimulator) ─────
     # Enable RANSAC-style terrain plane fit to produce vehicle roll/pitch.
     # Disabled by default — robot stays level when off.
     terrain_inclination_enabled: bool = False
@@ -224,7 +215,6 @@ class UnityBridgeConfig(ModuleConfig):
     # Exponential smoothing rate for roll/pitch updates.
     inclination_smooth_rate: float = 0.2
 
-    # ─── Sensor offset in kinematics (port from ROS vehicleSimulator) ─────
     # Offset of the sensor origin from the vehicle center (m).
     sensor_offset_x: float = 0.0
     sensor_offset_y: float = 0.0
@@ -244,8 +234,6 @@ _CAM_FX = (_CAM_WIDTH / 2.0) / math.tan(_CAM_HFOV_RAD / 2.0)
 _CAM_FY = _CAM_FX
 _CAM_CX = _CAM_WIDTH / 2.0
 _CAM_CY = _CAM_HEIGHT / 2.0
-
-# Module
 
 
 class UnityBridgeModule(Module):

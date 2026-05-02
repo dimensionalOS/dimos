@@ -251,9 +251,6 @@ def create_nav_stack(
     return autoconnect(*modules).remappings(remappings)
 
 
-# ─── Rerun visual overrides (robot-agnostic) ─────────────────────────────────
-
-
 def nav_stack_rerun_config(
     user_config: dict[str, Any] | None = None,
     *,
@@ -560,9 +557,6 @@ def _static_floor(rr: Any) -> list[Any]:
             vertex_colors=[floor_color_rgba] * 4,
         )
     ]
-
-
-# ─── Debug overrides (elevated paths for top-down debugging) ─────────────────
 
 
 def _waypoint_override_debug(msg: Any) -> Any:
