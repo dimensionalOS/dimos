@@ -365,7 +365,7 @@ class RerunBridgeModule(Module):
             )
 
         # TODO: `spawned` is supposed to be false when run on the G1 (because viewer doesn't have a display) somehow it returns true
-        if self.config.rerun_open == "none" or (self.config.rerun_open == "native" and not spawned):
+        if self.config.rerun_open == "none" or (self.config.rerun_open == "native" and not spawned) or self.host == "0.0.0.0":
             self._log_connect_hints(grpc_port)
 
         if self.config.blueprint:
