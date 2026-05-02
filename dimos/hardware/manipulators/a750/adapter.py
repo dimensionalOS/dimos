@@ -255,14 +255,19 @@ class A750Adapter:
 
     def read_gripper_position(self) -> float | None:
         """Read gripper finger position as offset from center in meters."""
-        state = self._robot.get_current_state()
+        if not self._connected:
+            return None
 
+        state = self._robot.get_current_state()
         return state.gripper.pos_m
 
     def write_gripper_position(self, position: float) -> bool:
         """Command gripper position."""
+        if not self._enabled:
+            return False
+
         self._robot.command_gripper_position(position)
-        return self._connected
+        return True
 
     def read_force_torque(self) -> list[float] | None:
         """Read F/T sensor data if supported."""
