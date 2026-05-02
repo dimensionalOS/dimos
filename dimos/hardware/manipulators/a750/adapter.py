@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import math
-import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -28,6 +27,9 @@ from dimos.hardware.manipulators.spec import (
     JointLimits,
     ManipulatorInfo,
 )
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 GRIPPER_MAX_OPENING_M = 0.06
 
@@ -65,7 +67,7 @@ class A750Adapter:
             import a750_control
         except ImportError as exc:
             self._set_error(1, "a750_control is not installed in this Python environment")
-            print(f"ERROR: {self._error_message}: {exc}", file=sys.stderr)
+            logger.error(f"{self._error_message}: {exc}")
             return False
 
         try:
@@ -73,12 +75,13 @@ class A750Adapter:
             self._robot.connect()
             self._connected = True
         except Exception as exc:
+            logger.error(f"Failed to connect to A-750: {exc}")
             self._connected = False
             self._set_error(2, str(exc))
             return False
 
         self._set_error(0, "")
-        print(f"Connected to A-750 at {self._device_path}")
+        logger.info(f"Connected to A-750 at {self._device_path}")
         return self._connected
 
     def disconnect(self) -> None:
@@ -267,19 +270,17 @@ class A750Adapter:
         return None
 
     def _set_error(self, code: int, message: str) -> None:
-        self._trace("_set_error", code=code, message=message)
         self._error_code = code
         self._error_message = message
 
     def _trace(self, method: str, **kwargs: object) -> None:
         details = ", ".join(f"{key}={value!r}" for key, value in kwargs.items())
         suffix = f"({details})" if details else "()"
-        print(f"A750Adapter.{method}{suffix}", flush=True)
+        logger.info(f"A750Adapter.{method}{suffix}")
 
 
 def register(registry: AdapterRegistry) -> None:
     """Register this adapter with the registry."""
-    print("A750Adapter.register()", flush=True)
     registry.register("a750", A750Adapter)
 
 
