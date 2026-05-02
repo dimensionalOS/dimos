@@ -16,7 +16,6 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
-import logging
 import os
 from types import TracebackType
 from typing import Any
@@ -24,9 +23,11 @@ from typing import Any
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from dimos.utils.logging_config import setup_logger
+
 from .tensorzero_embedded import TensorZeroEmbeddedGateway
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class UnifiedGatewayClient:

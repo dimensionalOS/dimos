@@ -18,7 +18,6 @@ import logging
 import multiprocessing
 from multiprocessing.connection import Connection
 import os
-import signal
 import sys
 import threading
 import traceback
@@ -338,15 +337,12 @@ class _WorkerState:
 
 def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
     apply_library_config()
-    # Ignore SIGINT so the coordinator can orchestrate shutdown via the pipe.
-    # Without this, workers race with the coordinator: they start tearing down
-    # modules locally while the coordinator tries to send stop() RPCs, causing
-    # BrokenPipeErrors.
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
     state = _WorkerState(instances={}, worker_id=worker_id)
 
     try:
         _worker_loop(conn, state)
+    except KeyboardInterrupt:
+        logger.info("Worker got KeyboardInterrupt.", worker_id=worker_id)
     except Exception as e:
         logger.error(f"Worker process error: {e}", exc_info=True)
     finally:
@@ -364,6 +360,12 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
                     module=type(instance).__name__,
                     worker_id=worker_id,
                     module_id=module_id,
+                )
+            except KeyboardInterrupt:
+                logger.warning(
+                    "KeyboardInterrupt during worker stop",
+                    module=type(instance).__name__,
+                    worker_id=worker_id,
                 )
             except Exception:
                 logger.error("Error during worker shutdown", exc_info=True)
@@ -407,6 +409,7 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
                 protocol_config={
                     "allow_all_attrs": True,
                     "allow_public_attrs": True,
+                    "allow_pickle": True,
                 },
             )
             state.rpyc_thread = threading.Thread(target=state.rpyc_server.start, daemon=True)
@@ -431,7 +434,7 @@ def _worker_loop(conn: Connection, state: _WorkerState) -> None:
             if not conn.poll(timeout=0.1):
                 continue
             request = conn.recv()
-        except EOFError:
+        except (EOFError, KeyboardInterrupt):
             break
 
         try:

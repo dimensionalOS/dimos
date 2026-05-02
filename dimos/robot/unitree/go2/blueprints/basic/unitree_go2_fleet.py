@@ -22,13 +22,15 @@ Usage:
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
-from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import _with_vis
+from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import with_vis
 from dimos.robot.unitree.go2.fleet_connection import Go2FleetConnection
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 unitree_go2_fleet = (
     autoconnect(
-        _with_vis,
+        with_vis,
         Go2FleetConnection.blueprint(),
+        WebsocketVisModule.blueprint(),
     )
     .global_config(n_workers=4, robot_model="unitree_go2")
     .configurators(ClockSyncConfigurator())

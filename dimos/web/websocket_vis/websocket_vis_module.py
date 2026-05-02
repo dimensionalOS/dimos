@@ -105,7 +105,7 @@ class WebsocketVisModule(Module):
     gps_goal: Out[LatLon]
     explore_cmd: Out[Bool]
     stop_explore_cmd: Out[Bool]
-    tele_cmd_vel: Out[Twist]
+    cmd_vel: Out[Twist]
     movecmd_stamped: Out[TwistStamped]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -158,11 +158,9 @@ class WebsocketVisModule(Module):
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
 
-        # Auto-open the dashboard tab only when the user explicitly asked for a
-        # web-based viewer (rerun_open == "web" or "both"). `rerun_web` alone
-        # only means "serve the viewer"; it should not trigger a browser popup
-        # when the user chose the native viewer.
-        if self.config.g.viewer == "rerun" and self.config.g.rerun_open in ("web", "both"):
+        # Auto-open browser only for rerun-web (dashboard with Rerun iframe + command center)
+        # For rerun and foxglove, users access the command center manually if needed
+        if self.config.g.viewer == "rerun-web":
             url = f"http://localhost:{self.config.port}/"
             logger.info(f"Dimensional Command Center: {url}")
 
@@ -238,13 +236,11 @@ class WebsocketVisModule(Module):
 
         async def serve_index(request):  # type: ignore[no-untyped-def]
             """Serve appropriate HTML based on viewer mode."""
-            # Serve the full dashboard (with Rerun iframe) only when the rerun
-            # web server is enabled; otherwise redirect to the standalone
-            # command center.
-            if not (
-                self.config.g.viewer == "rerun" and self.config.g.rerun_open in ("web", "both")
-            ):
+            # If running native Rerun, redirect to standalone command center
+            if self.config.g.viewer != "rerun-web":
                 return RedirectResponse(url="/command-center")
+
+            # Otherwise serve full dashboard with Rerun iframe
             return FileResponse(_DASHBOARD_HTML, media_type="text/html")
 
         async def serve_command_center(request):  # type: ignore[no-untyped-def]
@@ -337,14 +333,14 @@ class WebsocketVisModule(Module):
         @self.sio.event  # type: ignore[untyped-decorator]
         async def move_command(sid: str, data: dict[str, Any]) -> None:
             # Publish Twist if transport is configured
-            if self.tele_cmd_vel and self.tele_cmd_vel.transport:
+            if self.cmd_vel and self.cmd_vel.transport:
                 twist = Twist(
                     linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
                     angular=Vector3(
                         data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]
                     ),
                 )
-                self.tele_cmd_vel.publish(twist)
+                self.cmd_vel.publish(twist)
 
             # Publish TwistStamped if transport is configured
             if self.movecmd_stamped and self.movecmd_stamped.transport:
