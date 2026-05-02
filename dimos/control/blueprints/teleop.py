@@ -182,10 +182,7 @@ coordinator_teleop_xarm7 = ControlCoordinator.blueprint(
     }
 )
 
-# XArm7 TeleopIK in MuJoCo sim. Bundles MujocoSimModule, which owns the
-# physics engine and exposes joint state/commands via SHM. The coordinator's
-# sim_mujoco adapter attaches to the same SHM keyed by XARM7_SIM_PATH.
-# Has no real-hardware dependency — runs anywhere MuJoCo is installed.
+# XArm7 TeleopIK in MuJoCo sim
 coordinator_teleop_sim_xarm7 = autoconnect(
     ControlCoordinator.blueprint(
         tick_rate=100.0,
@@ -220,7 +217,7 @@ coordinator_teleop_sim_xarm7 = autoconnect(
     }
 )
 
-# XArm6 TeleopIK in MuJoCo sim. Mirrors coordinator_teleop_sim_xarm7.
+# XArm6 TeleopIK in MuJoCo sim
 coordinator_teleop_sim_xarm6 = autoconnect(
     ControlCoordinator.blueprint(
         tick_rate=100.0,
@@ -255,7 +252,7 @@ coordinator_teleop_sim_xarm6 = autoconnect(
     }
 )
 
-# Piper TeleopIK in MuJoCo sim. Mirrors coordinator_teleop_sim_xarm7.
+# Piper TeleopIK in MuJoCo sim
 coordinator_teleop_sim_piper = autoconnect(
     ControlCoordinator.blueprint(
         tick_rate=100.0,

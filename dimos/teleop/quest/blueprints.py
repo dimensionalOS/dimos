@@ -58,10 +58,7 @@ teleop_quest_xarm7 = autoconnect(
 )
 
 
-# Single XArm7 teleop in MuJoCo sim: right controller -> simulated xarm7.
-# No real hardware required — coordinator drives a ShmMujocoAdapter backed by
-# MujocoSimModule (bundled in coordinator_teleop_sim_xarm7).
-# Usage: dimos run teleop-quest-xarm7-sim
+# Single XArm7 teleop in MuJoCo sim
 teleop_quest_xarm7_sim = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_sim_xarm7,
@@ -89,8 +86,7 @@ teleop_quest_piper = autoconnect(
 )
 
 
-# Single Piper teleop in MuJoCo sim: left controller -> simulated piper arm.
-# Usage: dimos run teleop-quest-piper-sim
+# Single Piper teleop in MuJoCo sim
 teleop_quest_piper_sim = autoconnect(
     ArmTeleopModule.blueprint(task_names={"left": "teleop_piper"}),
     coordinator_teleop_sim_piper,
@@ -118,8 +114,7 @@ teleop_quest_xarm6 = autoconnect(
 )
 
 
-# Single XArm6 teleop in MuJoCo sim: right controller -> simulated xarm6.
-# Usage: dimos run teleop-quest-xarm6-sim
+# Single XArm6 teleop in MuJoCo sim
 teleop_quest_xarm6_sim = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_sim_xarm6,
