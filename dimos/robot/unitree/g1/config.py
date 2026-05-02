@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 from dimos.msgs.geometry_msgs.Pose import Pose

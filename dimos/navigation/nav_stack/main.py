@@ -110,16 +110,11 @@ def create_nav_stack(
     Returns:
         An autoconnected Blueprint with the selected modules wired together.
     """
-    terrain_analysis_config = {**(terrain_analysis or {})}
     far_planner_config = {**(far_planner or {})}
-    local_planner_config = {**(local_planner or {})}
 
     # Propagate vehicle_height to far_planner config
     if vehicle_height is not None:
         far_planner_config.setdefault("vehicle_height", vehicle_height)
-    terrain_analysis_threshold = terrain_analysis_config.get("obstacle_height_threshold", 0.1)
-    local_planner_threshold = local_planner_config.get("obstacle_height_threshold", 0.1)
-
     modules: list[Blueprint] = [
         TerrainAnalysis.blueprint(
             **{
