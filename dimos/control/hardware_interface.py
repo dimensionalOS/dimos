@@ -55,15 +55,6 @@ class ConnectedHardware:
         adapter: ManipulatorAdapter,
         component: HardwareComponent,
     ) -> None:
-        """Initialize hardware interface.
-
-        Args:
-            adapter: ManipulatorAdapter instance (XArmAdapter, PiperAdapter, etc.)
-            component: Hardware component with joints config
-        """
-        if not isinstance(adapter, ManipulatorAdapter):
-            raise TypeError("adapter must implement ManipulatorAdapter")
-
         self._adapter = adapter
         self._component = component
         self._arm_joint_names: list[JointName] = list(component.joints)
@@ -249,11 +240,6 @@ class ConnectedTwistBase(ConnectedHardware):
         adapter: TwistBaseAdapter,
         component: HardwareComponent,
     ) -> None:
-        from dimos.hardware.drive_trains.spec import TwistBaseAdapter as TwistBaseAdapterProto
-
-        if not isinstance(adapter, TwistBaseAdapterProto):
-            raise TypeError("adapter must implement TwistBaseAdapter")
-
         self._twist_adapter = adapter
         self._component = component
         self._joint_names = component.joints
@@ -342,11 +328,6 @@ class ConnectedWholeBody(ConnectedHardware):
         adapter: WholeBodyAdapter,
         component: HardwareComponent,
     ) -> None:
-        from dimos.hardware.whole_body.spec import WholeBodyAdapter as WholeBodyAdapterProto
-
-        if not isinstance(adapter, WholeBodyAdapterProto):
-            raise TypeError("adapter must implement WholeBodyAdapter")
-
         self._wb_adapter = adapter
         self._component = component
         self._joint_names = component.joints
