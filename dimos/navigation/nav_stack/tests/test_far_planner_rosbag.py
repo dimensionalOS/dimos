@@ -221,12 +221,14 @@ class TestFarPlannerRosbag:
         ref_wp = window.way_point
         assert len(ref_wp) > 0, "No reference waypoints in fixture"
 
-        lc = lcmlib.LCM()
+        lcm = lcmlib.LCM()
         wp_collector = LcmCollector(topic=WAYPOINT_OUT_LCM, msg_type=PointStamped)
-        wp_collector.start(lc)
+        wp_collector.start(lcm)
 
         stop_event = threading.Event()
-        handle_thread = threading.Thread(target=lcm_handle_loop, args=(lc, stop_event), daemon=True)
+        handle_thread = threading.Thread(
+            target=lcm_handle_loop, args=(lcm, stop_event), daemon=True
+        )
         handle_thread.start()
 
         runner = NativeProcessRunner(binary_path=str(FAR_PLANNER_BIN), args=_far_planner_args())
@@ -238,7 +240,7 @@ class TestFarPlannerRosbag:
 
             # Feed at original timing (1:1 with rosbag)
             feed_at_original_timing(
-                lc,
+                lcm,
                 window,
                 topic_map={
                     "odom": ODOM_LCM,
@@ -256,7 +258,7 @@ class TestFarPlannerRosbag:
             runner.stop()
             stop_event.set()
             handle_thread.join(timeout=2.0)
-            wp_collector.stop(lc)
+            wp_collector.stop(lcm)
 
         our_wps = [(msg.x, msg.y) for msg in wp_collector.messages]
 

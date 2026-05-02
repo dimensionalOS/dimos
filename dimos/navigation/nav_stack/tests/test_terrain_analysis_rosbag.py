@@ -68,12 +68,14 @@ class TestTerrainAnalysisRosbag:
         ref_tmaps = window.terrain_maps
         assert len(ref_tmaps) > 0, "No reference terrain maps in fixture"
 
-        lc = lcmlib.LCM()
+        lcm = lcmlib.LCM()
         terrain_collector = LcmCollector(topic=TERRAIN_OUT_LCM, msg_type=PointCloud2)
-        terrain_collector.start(lc)
+        terrain_collector.start(lcm)
 
         stop_event = threading.Event()
-        handle_thread = threading.Thread(target=lcm_handle_loop, args=(lc, stop_event), daemon=True)
+        handle_thread = threading.Thread(
+            target=lcm_handle_loop, args=(lcm, stop_event), daemon=True
+        )
         handle_thread.start()
 
         runner = NativeProcessRunner(
@@ -106,7 +108,7 @@ class TestTerrainAnalysisRosbag:
             time.sleep(1.0)
 
             feed_at_original_timing(
-                lc,
+                lcm,
                 window,
                 topic_map={
                     "odom": ODOM_LCM,
@@ -120,7 +122,7 @@ class TestTerrainAnalysisRosbag:
             runner.stop()
             stop_event.set()
             handle_thread.join(timeout=2.0)
-            terrain_collector.stop(lc)
+            terrain_collector.stop(lcm)
 
         # Compare terrain map output
         our_count = len(terrain_collector.messages)

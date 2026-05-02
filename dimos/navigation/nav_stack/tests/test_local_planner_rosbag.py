@@ -243,12 +243,14 @@ class TestLocalPlannerRosbag:
         ref_paths = window.path_endpoints
         assert len(ref_paths) > 0, "No reference path data in fixture"
 
-        lc = lcmlib.LCM()
+        lcm = lcmlib.LCM()
         path_collector = LcmCollector(topic=PATH_LCM, msg_type=NavPath)
-        path_collector.start(lc)
+        path_collector.start(lcm)
 
         stop_event = threading.Event()
-        handle_thread = threading.Thread(target=lcm_handle_loop, args=(lc, stop_event), daemon=True)
+        handle_thread = threading.Thread(
+            target=lcm_handle_loop, args=(lcm, stop_event), daemon=True
+        )
         handle_thread.start()
 
         runner = NativeProcessRunner(binary_path=str(LOCAL_PLANNER_BIN), args=_local_planner_args())
@@ -260,7 +262,7 @@ class TestLocalPlannerRosbag:
 
             # Feed at original timing
             feed_at_original_timing(
-                lc,
+                lcm,
                 window,
                 topic_map={
                     "odom": ODOM_LCM,
@@ -276,7 +278,7 @@ class TestLocalPlannerRosbag:
             runner.stop()
             stop_event.set()
             handle_thread.join(timeout=2.0)
-            path_collector.stop(lc)
+            path_collector.stop(lcm)
 
         # Compute deviation score
         score = _compute_path_deviation(path_collector.messages, ref_paths)

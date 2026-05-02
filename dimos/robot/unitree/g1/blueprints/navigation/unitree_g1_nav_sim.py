@@ -81,28 +81,23 @@ unitree_g1_nav_sim = (
             use_simple_planner=False,
             vehicle_height=vehicle_height,
             terrain_analysis={
-                "obstacle_height_threshold": 0.1,
                 "ground_height_threshold": 0.05,
-                "max_relative_z": 0.3,
                 "min_relative_z": -1.5,
             },
             local_planner={
                 "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
+                # Sim uses higher speeds than the real robot defaults
                 "max_speed": 2.0,
                 "autonomy_speed": 2.0,
-                "obstacle_height_threshold": 0.1,
-                "max_relative_z": 0.3,
                 "min_relative_z": -1.5,
                 "freeze_ang": 180.0,
-                "two_way_drive": False,
             },
             path_follower={
+                # Sim uses higher speeds than the real robot defaults
                 "max_speed": 2.0,
                 "autonomy_speed": 2.0,
                 "max_acceleration": 4.0,
-                "slow_down_distance_threshold": 0.5,
-                "omni_dir_goal_threshold": 0.5,
-                "two_way_drive": False,
+                "max_yaw_rate": 80.0,
             },
         ),
         MovementManager.blueprint(),

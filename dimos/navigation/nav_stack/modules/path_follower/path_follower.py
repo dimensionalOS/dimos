@@ -62,11 +62,10 @@ class PathFollowerConfig(NativeModuleConfig):
     # Look-ahead distance for the pure pursuit controller (m).
     look_ahead_distance: float = 0.5
     # Maximum velocity the follower will command (m/s).
-    max_speed: float = 2.0
+    max_speed: float = 0.75
     # Maximum yaw rate for turning (deg/s).  The C++ binary converts to
-    # rad/s internally (``maxYawRate * PI / 180``).  Reference omniDir.yaml
-    # uses 80.0; default in C++ is 45.0.
-    max_yaw_rate: float = 80.0
+    # rad/s internally (``maxYawRate * PI / 180``).
+    max_yaw_rate: float = 40.0
 
     # Distance from goal at which the follower considers it reached (m).
     goal_tolerance: float = 0.3
@@ -75,23 +74,23 @@ class PathFollowerConfig(NativeModuleConfig):
     vehicle_config: str = "omniDir"
     # Omni-directional mode: distance threshold (m) below which the robot strafes
     # instead of turning.  Set to 0 to disable omni mode (robot turns to face heading).
-    omni_dir_goal_threshold: float | None = None
+    omni_dir_goal_threshold: float = 0.5
     # Omni-directional heading tolerance (rad).
-    omni_dir_diff_threshold: float | None = None
+    omni_dir_diff_threshold: float = 1.5
 
     # Enable fully autonomous path-following mode.
     autonomy_mode: bool | None = None
     # Velocity cap during autonomous navigation (m/s).
-    autonomy_speed: float | None = None
+    autonomy_speed: float = 0.75
 
     # Allow driving in reverse (two-way drive).  Set to False to force the
     # robot to turn and face the goal before driving forward.
-    two_way_drive: bool | None = None
+    two_way_drive: bool = False
 
     # Maximum linear acceleration (m/s²).
-    max_acceleration: float | None = None
+    max_acceleration: float = 1.5
     # Distance threshold below which the follower begins slowing down (m).
-    slow_down_distance_threshold: float | None = None
+    slow_down_distance_threshold: float = 0.875
 
 
 class PathFollower(NativeModule):

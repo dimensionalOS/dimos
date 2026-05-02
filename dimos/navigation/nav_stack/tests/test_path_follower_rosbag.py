@@ -123,12 +123,14 @@ class TestPathFollowerRosbag:
         ref_cmd = window.cmd_vel
         assert len(ref_cmd) > 0, "No reference cmd_vel in fixture"
 
-        lc = lcmlib.LCM()
+        lcm = lcmlib.LCM()
         cmd_collector = LcmCollector(topic=CMD_VEL_LCM, msg_type=Twist)
-        cmd_collector.start(lc)
+        cmd_collector.start(lcm)
 
         stop_event = threading.Event()
-        handle_thread = threading.Thread(target=lcm_handle_loop, args=(lc, stop_event), daemon=True)
+        handle_thread = threading.Thread(
+            target=lcm_handle_loop, args=(lcm, stop_event), daemon=True
+        )
         handle_thread.start()
 
         runner = NativeProcessRunner(
@@ -156,7 +158,7 @@ class TestPathFollowerRosbag:
             # Feed path + odom from the rosbag at original timing.
             # PathFollower subscribes to /path (LocalPlanner output) and /odometry.
             feed_at_original_timing(
-                lc,
+                lcm,
                 window,
                 topic_map={
                     "odom": ODOM_LCM,
@@ -171,7 +173,7 @@ class TestPathFollowerRosbag:
             runner.stop()
             stop_event.set()
             handle_thread.join(timeout=2.0)
-            cmd_collector.stop(lc)
+            cmd_collector.stop(lcm)
 
         our_cmds = [(msg.linear.x, msg.linear.y, msg.angular.z) for msg in cmd_collector.messages]
 
