@@ -119,15 +119,6 @@ def create_nav_stack(
         far_planner_config.setdefault("vehicle_height", vehicle_height)
     terrain_analysis_threshold = terrain_analysis_config.get("obstacle_height_threshold", 0.1)
     local_planner_threshold = local_planner_config.get("obstacle_height_threshold", 0.1)
-    if terrain_analysis_threshold < local_planner_threshold:
-        logger.warning(
-            "terrain_analysis obstacle_height_threshold (%.3f) < "
-            "local_planner obstacle_height_threshold (%.3f). "
-            "Terrain analysis will pass through points that local_planner "
-            "treats as hard obstacles, causing phantom obstacle blocking.",
-            terrain_analysis_threshold,
-            local_planner_threshold,
-        )
 
     modules: list[Blueprint] = [
         TerrainAnalysis.blueprint(
