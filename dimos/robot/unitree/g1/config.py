@@ -37,6 +37,6 @@ G1 = RobotConfig(
     width_clearance=0.6,
     internal_odom_offsets={
         # Mid-360 lidar: 1.2 m above ground, mounted upside-down (180° around X).
-        "mid360_link": Pose(0.0, 0.0, 1.2, *Quaternion.from_euler(Vector3(math.pi, 0, 0.0))),
+        "mid360_link": Pose(0.0, 0.0, 1.2, *Quaternion.from_euler(Vector3(0, 0, 0))),
     },
 )
