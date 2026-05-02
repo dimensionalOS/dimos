@@ -36,7 +36,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanner
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
-from dimos.navigation.nav_stack.modules.movement_manager.movement_manager import MovementManager
+from dimos.navigation.nav_stack.modules.nav_record.nav_record import NavRecord
 from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
 from dimos.navigation.nav_stack.modules.pgo.pgo import PGO
 from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
@@ -59,6 +59,7 @@ def create_nav_stack(
     max_speed: float | None = None,
     terrain_voxel_size: float = 0.2,
     replan_rate: float = 0.5,
+    record: bool = False,
     terrain_analysis: dict[str, Any] | None = None,
     terrain_map_ext: dict[str, Any] | None = None,
     local_planner: dict[str, Any] | None = None,
@@ -66,8 +67,8 @@ def create_nav_stack(
     far_planner: dict[str, Any] | None = None,
     simple_planner: dict[str, Any] | None = None,
     pgo: dict[str, Any] | None = None,
-    movement_manager: dict[str, Any] | None = None,
     tare_planner: dict[str, Any] | None = None,
+    nav_record: dict[str, Any] | None = None,
 ) -> Blueprint:
     """Compose a SmartNav autoconnect Blueprint with the given options.
 
@@ -104,12 +105,19 @@ def create_nav_stack(
         far_planner, pgo, movement_manager, tare_planner:
         Per-module config override dicts. Merged on top
         of the SmartNav defaults.
+        record: Add NavRecord module to record all nav streams to SQLite.
+        nav_record: Config override dict for NavRecord (e.g. ``{"db_path": "..."}``).
 
     Returns:
         An autoconnected Blueprint with the selected modules wired together.
     """
     terrain_analysis_config = {**(terrain_analysis or {})}
+    far_planner_config = {**(far_planner or {})}
     local_planner_config = {**(local_planner or {})}
+
+    # Propagate vehicle_height to far_planner config
+    if vehicle_height is not None:
+        far_planner_config.setdefault("vehicle_height", vehicle_height)
     terrain_analysis_threshold = terrain_analysis_config.get("obstacle_height_threshold", 0.1)
     local_planner_threshold = local_planner_config.get("obstacle_height_threshold", 0.1)
     if terrain_analysis_threshold < local_planner_threshold:
@@ -204,10 +212,9 @@ def create_nav_stack(
                 )
             ]
             if use_simple_planner
-            else [FarPlanner.blueprint(**(far_planner or {}))]
+            else [FarPlanner.blueprint(**far_planner_config)]
         ),
         PGO.blueprint(**(pgo or {})),
-        MovementManager.blueprint(**(movement_manager or {})),
     ]
     if use_terrain_map_ext:
         modules.append(
@@ -224,19 +231,21 @@ def create_nav_stack(
         )
     if use_tare:
         modules.append(TarePlanner.blueprint(**(tare_planner or {})))
+    if record:
+        modules.append(NavRecord.blueprint(**(nav_record or {})))
 
     remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
-        # PathFollower cmd_vel → MovementManager nav input (avoid collision with mux output)
+        # PathFollower cmd_vel needs renaming to avoid collision when
+        # MovementManager is added by the caller (it muxes nav_cmd_vel + tele_cmd_vel → cmd_vel).
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
         # NativeModule planners still receive corrected odometry via the
         # stream (C++ binaries subscribe to LCM topics directly).
-        # Python modules (SimplePlanner, MovementManager) query the TF tree
+        # Python modules (SimplePlanner) query the TF tree
         # instead (map→body via the PGO map→odom + FastLio2 odom→body chain).
         *([] if use_simple_planner else [(FarPlanner, "odometry", "corrected_odometry")]),
         (TerrainAnalysis, "odometry", "corrected_odometry"),
-        # Planner owns way_point — disconnect MovementManager's click relay.
-        (MovementManager, "way_point", "_mgr_way_point_unused"),
         (PGO, "global_map", "global_map_pgo"),
+        *([(NavRecord, "global_map", "global_map_pgo")] if record else []),
     ]
 
     return autoconnect(*modules).remappings(remappings)

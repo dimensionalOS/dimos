@@ -32,6 +32,13 @@
             hash = "sha256-NGscO/vLiQ17yQJtdPyFzhhMGE89AJ9kTL5cSun/bpU=";
           };
 
+          # Two macOS-only socket bugs in sdk_core/base/network/unix/network_util.cpp:
+          #   - SO_RCVBUF=200MB exceeds kern.ipc.maxsockbuf (32MB) and aborts init.
+          #   - bind("255.255.255.255", 56000) fails with EADDRNOTAVAIL.
+          # Both work on Linux; the patch is benign there (broadcasts arrive on
+          # INADDR_ANY sockets and a smaller control-socket buffer is fine).
+          patches = [ ./livox-sdk2-darwin.patch ];
+
           nativeBuildInputs = [ pkgs.cmake ];
 
           cmakeFlags = [

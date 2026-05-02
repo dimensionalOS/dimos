@@ -14,21 +14,18 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from openai import pydantic_function_tool
 from pydantic import BaseModel
 
 from dimos.types.constants import Colors
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# Configure logging for the module
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger = setup_logger()
 
 
 class SkillLibrary:

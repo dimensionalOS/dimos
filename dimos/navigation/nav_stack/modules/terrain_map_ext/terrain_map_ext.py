@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 import threading
 import time
 from typing import Any
@@ -60,15 +61,18 @@ class TerrainMapExt(Module):
         self._thread: threading.Thread | None = None
         self._robot_x = 0.0
         self._robot_y = 0.0
-
-    @rpc
-    def start(self) -> None:
-        super().start()
         self._lock = threading.Lock()
         # Voxel storage: key=(ix,iy,iz) -> (x, y, z, intensity, timestamp)
         self._voxels: dict[tuple[int, int, int], tuple[float, float, float, float, float]] = {}
         # Reverse index: (ix,iy) -> set of iz values present in _voxels
-        self._column_index: dict[tuple[int, int], set[int]] = {}
+        self._column_index: defaultdict[tuple[int, int], set[int]] = defaultdict(set)
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        # Reset state on start
+        self._voxels.clear()
+        self._column_index.clear()
         self.register_disposable(Disposable(self.terrain_map.subscribe(self._on_terrain)))
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odom)))
         self._running = True

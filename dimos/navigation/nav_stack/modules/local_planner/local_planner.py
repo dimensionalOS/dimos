@@ -43,7 +43,7 @@ class LocalPlannerConfig(NativeModuleConfig):
     executable: str = "result/bin/local_planner"
     # build_command: str | None = "nix build --no-write-lock-file"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-local-planner/v0.5.0 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-local-planner/v0.6.0 --no-write-lock-file"
     )
 
     # C++ binary uses camelCase CLI args.
@@ -95,6 +95,7 @@ class LocalPlannerConfig(NativeModuleConfig):
         "joy_to_check_obstacle_delay": "joyToCheckObstacleDelay",
         "omni_dir_goal_thre": "omniDirGoalThre",
         "publish_free_paths": "publishFreePaths",
+        "max_momentum_penalty": "maxMomentumPenalty",
     }
 
     # Path data directory. When empty, the C++ binary falls back to its
@@ -203,6 +204,11 @@ class LocalPlannerConfig(NativeModuleConfig):
 
     # Publish free_paths visualization cloud. Disable to save CPU.
     publish_free_paths: bool | None = None
+
+    # Momentum penalty: biases path selection toward continuing current motion.
+    # 0.0 = disabled (default). Higher values penalize direction changes at speed.
+    # Penalty = (angleDiff/180)² × (speed/maxSpeed) × max_momentum_penalty.
+    max_momentum_penalty: float | None = None
 
 
 class LocalPlanner(NativeModule):

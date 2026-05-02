@@ -22,15 +22,12 @@ shared `follow_points` fixture in dimos/e2e_tests/conftest.py (which uses
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 import math
-import os
 from pathlib import Path
 import threading
 import time
 
 import lcm as lcmlib
-import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -57,18 +54,6 @@ CROSS_WALL_WAYPOINTS: list[tuple[str, float, float, float, float, float]] = [
 
 # Seconds for nav stack to build terrain + visibility graph before goals fly.
 WARMUP_SEC = 15.0
-
-
-@pytest.fixture
-def display_env() -> Iterator[None]:
-    """Set DISPLAY for the test, restore the prior value on teardown."""
-    prior = os.environ.get("DISPLAY")
-    os.environ.setdefault("DISPLAY", ":1")
-    yield
-    if prior is None:
-        os.environ.pop("DISPLAY", None)
-    else:
-        os.environ["DISPLAY"] = prior
 
 
 def _distance(x1: float, y1: float, x2: float, y2: float) -> float:

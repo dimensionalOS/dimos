@@ -251,7 +251,11 @@ class RerunBridgeModule(Module):
             return None
 
         # compose all converters
-        return lambda msg: pipe(msg, *matches, final_convert)
+        def composed(msg: Any) -> RerunData | None:
+            return cast("RerunData | None", pipe(msg, *matches, final_convert))
+
+        self._override_cache[entity_path] = composed
+        return composed
 
     def _get_entity_path(self, topic: Any) -> str:
         if self.config.topic_to_entity:
@@ -359,7 +363,7 @@ class RerunBridgeModule(Module):
                 open_browser=open_web,
                 web_port=self.config.web_port,
             )
-        
+
         # TODO: `spawned` is supposed to be false when run on the G1 (because viewer doesn't have a display) somehow it returns true
         if self.config.rerun_open == "none" or (self.config.rerun_open == "native" and not spawned):
             self._log_connect_hints(grpc_port)
@@ -485,3 +489,32 @@ class RerunBridgeModule(Module):
     def stop(self) -> None:
         self._override_cache.clear()
         super().stop()
+
+
+def run_bridge(
+    memory_limit: str = "25%",
+    rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT,
+    rerun_web: bool = RERUN_ENABLE_WEB,
+) -> None:
+    """Start a RerunBridgeModule with default LCM config and block until interrupted."""
+    import signal
+    import sys
+
+    from dimos.protocol.service.lcmservice import autoconf
+
+    autoconf(check_only=True)
+
+    bridge = RerunBridgeModule(
+        memory_limit=memory_limit,
+        rerun_open=rerun_open,
+        rerun_web=rerun_web,
+        pubsubs=[LCM()],
+    )
+    bridge.start()
+
+    def _shutdown(*_: object) -> None:
+        bridge.stop()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.pause()

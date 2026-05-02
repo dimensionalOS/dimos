@@ -45,6 +45,7 @@ import os
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
+from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.unitree.g1.config import G1, G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
@@ -83,12 +84,8 @@ unitree_g1_nav_onboard = (
                 "replan_rate": 5.0,
                 "replan_cooldown": 2.0,
             },
-            far_planner={
-                "sensor_range": 15.0,
-                "is_static_env": False,
-                "converge_dist": 1.5,
-            },
         ),
+        MovementManager.blueprint(),
         G1HighLevelDdsSdk.blueprint(),
         vis_module(
             viewer_backend=global_config.viewer,
@@ -106,6 +103,8 @@ unitree_g1_nav_onboard = (
             # FastLio2 outputs "lidar"; SmartNav modules expect "registered_scan"
             (FastLio2, "lidar", "registered_scan"),
             (FastLio2, "global_map", "global_map_fastlio"),
+            # Planner owns way_point — disconnect MovementManager's click relay
+            (MovementManager, "way_point", "_mgr_way_point_unused"),
         ]
     )
     .global_config(n_workers=12, robot_model="unitree_g1")

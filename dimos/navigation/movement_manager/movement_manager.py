@@ -34,6 +34,12 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+# Sanity bounds for click-to-goal coordinates; rejects obviously-bogus
+# clicks (e.g. UI sending world-space coords from a stale frame). The map
+# is at most ~kilometre-scale and z is mostly ground-relative.
+MAX_CLICK_HORIZONTAL_M = 500.0
+MAX_CLICK_VERTICAL_M = 50.0
+
 
 class MovementManagerConfig(ModuleConfig):
     tele_cooldown_sec: float = 1.0
@@ -77,7 +83,11 @@ class MovementManager(Module):
         if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
             logger.warning("Ignored invalid click", x=msg.x, y=msg.y, z=msg.z)
             return
-        if abs(msg.x) > 500 or abs(msg.y) > 500 or abs(msg.z) > 50:
+        if (
+            abs(msg.x) > MAX_CLICK_HORIZONTAL_M
+            or abs(msg.y) > MAX_CLICK_HORIZONTAL_M
+            or abs(msg.z) > MAX_CLICK_VERTICAL_M
+        ):
             logger.warning("Ignored out-of-range click", x=msg.x, y=msg.y, z=msg.z)
             return
 
@@ -105,7 +115,7 @@ class MovementManager(Module):
                 if elapsed < self.config.tele_cooldown_sec:
                     return
                 self._teleop_active = False
-        self.cmd_vel.publish(msg)
+            self.cmd_vel.publish(msg)
 
     def _on_teleop(self, msg: Twist) -> None:
         with self._lock:

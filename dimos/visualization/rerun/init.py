@@ -38,7 +38,8 @@ def rerun_init(
 ) -> str | None:
     """
     Use this inside modules for direct visualization (see docs/usage/visualization.md)
-    This exits to consolidate visualization settings across modules
+
+    This exists to consolidate visualization settings across modules
     Note only the rerun bridge module should have start_grpc=True
     """
     rr.init(app_id, **kwargs)  # type: ignore[arg-type]

@@ -80,23 +80,17 @@ class Costmap:
 
     def _rebuild_blocked(self) -> None:
         """Build the inflated obstacle set from the raw height map."""
-        blocked: set[tuple[int, int]] = set()
-        # Inflation: the number of cells that lie within inflation_radius.
-        r_cells = math.ceil(self.inflation_radius / self.cell_size)
-        for (ix, iy), h in list(self._heights.items()):
-            if h < self.obstacle_height:
-                continue
-            if r_cells == 0:
-                blocked.add((ix, iy))
-                continue
-            # Circle inflation (squared comparison to avoid sqrt per cell)
-            max_sq = (self.inflation_radius / self.cell_size) ** 2
-            for dx in range(-r_cells, r_cells + 1):
-                for dy in range(-r_cells, r_cells + 1):
-                    if dx * dx + dy * dy <= max_sq:
-                        blocked.add((ix + dx, iy + dy))
-        self._blocked = blocked
+        self._blocked = _inflate_obstacles(
+            self._heights, self.obstacle_height, self.inflation_radius, self.cell_size
+        )
         self._blocked_dirty = False
+
+    @property
+    def heights(self) -> dict[tuple[int, int], float]:
+        return self._heights
+
+    def mark_dirty(self) -> None:
+        self._blocked_dirty = True
 
     def blocked_cells(self) -> set[tuple[int, int]]:
         if self._blocked_dirty:
@@ -196,16 +190,18 @@ def plan_on_costmap(
     return [cm.cell_to_world(ix, iy) for (ix, iy) in path_cells]
 
 
-def _blocked_at_inflation(cm: Costmap, inflation_radius: float) -> set[tuple[int, int]]:
-    if inflation_radius < 0.0:
-        raise ValueError(f"inflation_radius must be non-negative, got {inflation_radius}")
-    cell = cm.cell_size
-    threshold = cm.obstacle_height
-    r_cells = math.ceil(inflation_radius / cell)
-    max_sq = (inflation_radius / cell) ** 2 if r_cells else 0.0
+def _inflate_obstacles(
+    heights: dict[tuple[int, int], float],
+    obstacle_height: float,
+    inflation_radius: float,
+    cell_size: float,
+) -> set[tuple[int, int]]:
+    """Build the set of blocked cells by inflating obstacle cells within a radius."""
+    r_cells = math.ceil(inflation_radius / cell_size)
+    max_sq = (inflation_radius / cell_size) ** 2 if r_cells else 0.0
     blocked: set[tuple[int, int]] = set()
-    for (ix, iy), h in list(cm._heights.items()):
-        if h < threshold:
+    for (ix, iy), h in list(heights.items()):
+        if h < obstacle_height:
             continue
         if r_cells == 0:
             blocked.add((ix, iy))
@@ -215,6 +211,12 @@ def _blocked_at_inflation(cm: Costmap, inflation_radius: float) -> set[tuple[int
                 if dx * dx + dy * dy <= max_sq:
                     blocked.add((ix + dx, iy + dy))
     return blocked
+
+
+def _blocked_at_inflation(cm: Costmap, inflation_radius: float) -> set[tuple[int, int]]:
+    if inflation_radius < 0.0:
+        raise ValueError(f"inflation_radius must be non-negative, got {inflation_radius}")
+    return _inflate_obstacles(cm.heights, cm.obstacle_height, inflation_radius, cm.cell_size)
 
 
 def astar(
@@ -310,7 +312,7 @@ class SimplePlannerConfig(ModuleConfig):
     # Shrinking too aggressively risks clipping obstacles, so we bottom
     # out at ``stuck_min_inflation``.
     stuck_shrink_factor: float = 0.5
-    stuck_min_inflation: float = 0.2
+    stuck_min_inflation: float = 0.05
     # When the robot is within this distance (m) of the current
     # intermediate waypoint, proactively advance the waypoint along the
     # cached path so the local planner never stops on it. Should be
@@ -362,16 +364,18 @@ class SimplePlanner(Module):
         # detect when the robot is about to reach it and advance early.
         self._current_wp: tuple[float, float] | None = None
         self._current_wp_is_goal = False
-
-    @rpc
-    def start(self) -> None:
-        super().start()
+        self._last_tf_warn = 0.0
         self._lock = threading.Lock()
+        self._costmap_lock = threading.Lock()
         self._costmap = Costmap(
             cell_size=self.config.cell_size,
             obstacle_height=self.config.obstacle_height_threshold,
             inflation_radius=self.config.inflation_radius,
         )
+
+    @rpc
+    def start(self) -> None:
+        super().start()
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
         self.register_disposable(
             Disposable(self.terrain_map_ext.subscribe(self._on_terrain_map_ext))
@@ -412,7 +416,7 @@ class SimplePlanner(Module):
         tf = resolve_tf_chain(self.tf, list(self._TF_POSE_QUERIES))
         if tf is None:
             now = time.monotonic()
-            if now - getattr(self, "_last_tf_warn", 0.0) > 5.0:
+            if now - self._last_tf_warn > 5.0:
                 self._last_tf_warn = now
                 buffers = list(self.tf.buffers.keys()) if hasattr(self.tf, "buffers") else []
                 logger.warning(
@@ -497,12 +501,12 @@ class SimplePlanner(Module):
         for i in range(len(unique_keys)):
             key = (int(unique_keys[i, 0]), int(unique_keys[i, 1]))
             h = float(max_h[i])
-            prev = cm._heights.get(key, float("-inf"))
+            prev = cm.heights.get(key, float("-inf"))
             if h > prev:
-                cm._heights[key] = h
+                cm.heights[key] = h
                 dirty = True
         if dirty:
-            cm._blocked_dirty = True
+            cm.mark_dirty()
 
     def _fresh_costmap(self) -> Costmap:
         return Costmap(
@@ -524,12 +528,8 @@ class SimplePlanner(Module):
             return
         new_cm = self._fresh_costmap()
         self._classify_points(points, new_cm)
-        # Hot-swap in one assignment so the planning loop sees either
-        # the old or the new map but never a partial one.
-        # Note: a concurrent _on_terrain_map may still be writing into the
-        # old costmap when we swap; those writes are silently lost. This is
-        # acceptable — the next terrain_map_ext rebuild will pick them up.
-        self._costmap = new_cm
+        with self._costmap_lock:
+            self._costmap = new_cm
 
     def _on_terrain_map(self, msg: PointCloud2) -> None:
         """Layer fresh local terrain on top of the current costmap.
@@ -543,7 +543,8 @@ class SimplePlanner(Module):
         points, _ = msg.as_numpy()
         if points is None or len(points) == 0:
             return
-        self._classify_points(points, self._costmap)
+        with self._costmap_lock:
+            self._classify_points(points, self._costmap)
 
     def _planning_loop(self) -> None:
         rate = self.config.replan_rate
@@ -568,7 +569,8 @@ class SimplePlanner(Module):
         if now - self._last_costmap_pub < 0.5:
             return
         self._last_costmap_pub = now
-        cm = self._costmap
+        with self._costmap_lock:
+            cm = self._costmap
         blocked = cm.blocked_cells()
         if not blocked:
             pts = np.zeros((0, 3), dtype=np.float32)
@@ -756,7 +758,9 @@ class SimplePlanner(Module):
         # 1 Hz diagnostic: cells in costmap, path length, chosen waypoint
         if now - self._last_diag_print >= 1.0:
             self._last_diag_print = now
-            blocked = len(self._costmap.blocked_cells())
+            with self._costmap_lock:
+                cm = self._costmap
+            blocked = len(cm.blocked_cells())
             logger.info(
                 "Replan",
                 path_cells=len(path_world),
@@ -776,8 +780,10 @@ class SimplePlanner(Module):
         inflation_override: float | None = None,
     ) -> list[tuple[float, float]] | None:
         """Run A* in world coordinates. Returns [(x, y), ...] or None."""
+        with self._costmap_lock:
+            costmap = self._costmap
         return plan_on_costmap(
-            self._costmap,
+            costmap,
             rx,
             ry,
             gx,

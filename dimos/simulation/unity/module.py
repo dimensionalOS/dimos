@@ -42,6 +42,7 @@ import subprocess
 import threading
 import time
 from typing import Any
+
 import cv2
 import numpy as np
 from pydantic import Field
@@ -143,7 +144,6 @@ def _validate_platform() -> None:
             f"Unity simulator requires x86_64 but running on {arch}. "
             f"ARM64 Linux is not supported. Use an x86_64 machine or emulation layer."
         )
-
 
 
 # Config

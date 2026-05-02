@@ -141,6 +141,48 @@ class Dimos:
                 raise RuntimeError("No modules are running")
             return SkillsProxy(self._source)
 
+    def peek_stream(self, name: str, timeout: float = 1.0) -> Any:
+        """Fetch the next message from a named stream on any running module.
+
+        Blocks up to `timeout` seconds for the next emission. Returns
+        None if no value arrives in time.
+
+        Args:
+            name: Stream attribute name (e.g. "color_image").
+            timeout: Max seconds to wait. Capped internally at 25s to stay
+                under the rpyc sync request timeout.
+        """
+        effective_timeout = min(timeout, 25.0)
+
+        with self._lock:
+            source = self._source
+            if source is None:
+                raise RuntimeError("No modules are running")
+
+        stream = None
+        for module_name in source.list_module_names():
+            try:
+                module = source.get_rpyc_module(module_name)
+                if name in module.outputs:
+                    stream = module.outputs[name]
+                    break
+                if name in module.inputs:
+                    stream = module.inputs[name]
+                    break
+            except Exception:
+                continue
+
+        if stream is None:
+            raise LookupError(
+                f"No running module exposes a stream named {name!r}. "
+                f"Running modules: {source.list_module_names()}"
+            )
+
+        try:
+            return stream.get_next(effective_timeout)
+        except Exception:
+            return None
+
     def stop(self) -> None:
         """Stop all modules and clean up resources.
 

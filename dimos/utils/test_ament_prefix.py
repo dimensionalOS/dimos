@@ -28,6 +28,15 @@ _needs_ament = pytest.mark.skipif(
     not ament_prefix._has_ament, reason="ament_index_python not installed"
 )
 
+try:
+    import xacro as _xacro_mod  # noqa: F401
+
+    _has_xacro = True
+except ModuleNotFoundError:
+    _has_xacro = False
+
+_needs_xacro = pytest.mark.skipif(not _has_xacro, reason="xacro not installed")
+
 
 @pytest.fixture(autouse=True)
 def _isolate_ament_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -129,6 +138,7 @@ def test_ament_index_resolves(tmp_path: Path) -> None:
     assert Path(resolved).resolve() == pkg_dir.resolve()
 
 
+@_needs_xacro
 def test_process_xacro_with_simple_file(tmp_path: Path) -> None:
     """Test process_xacro works with a minimal xacro file (no $(find))."""
     xacro_file = tmp_path / "test.urdf.xacro"

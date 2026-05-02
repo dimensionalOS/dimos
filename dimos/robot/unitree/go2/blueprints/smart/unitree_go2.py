@@ -20,15 +20,15 @@ from dimos.core.stream import In
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.memory2.module import Recorder, RecorderConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
-from dimos.navigation.nav_stack.modules.movement_manager.movement_manager import MovementManager
+from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.navigation.smart_nav.modules.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
 unitree_go2 = autoconnect(
@@ -49,6 +49,7 @@ class Go2MemoryConfig(RecorderConfig):
 class Go2Memory(Recorder):
     color_image: In[Image]
     lidar: In[PointCloud2]
+    odom: In[PoseStamped]
     config: Go2MemoryConfig
 
 
