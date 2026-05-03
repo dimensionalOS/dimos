@@ -249,6 +249,11 @@ def run(
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
     set_run_log_dir(log_dir)
 
+    started_at = datetime.now(timezone.utc).isoformat()
+    os.environ["DIMOS_RUN_ID"] = run_id
+    os.environ["DIMOS_BLUEPRINT"] = blueprint_name
+    os.environ["DIMOS_STARTED_AT"] = started_at
+
     blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
 
     if disable:
