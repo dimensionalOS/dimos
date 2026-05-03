@@ -68,17 +68,28 @@ SMARTNAV_MODULE="dimos.robot.deeprobotics.m20.blueprints.nav.m20_smartnav_native
 SMARTNAV_LOG="/tmp/smartnav_native.log"
 M20_SLAM_BACKEND="${M20_SLAM_BACKEND:-fastlio2}"
 M20_FASTLIO2_IMU="${M20_FASTLIO2_IMU:-airy}"
+M20_LIDAR_SOURCE="${M20_LIDAR_SOURCE:-front}"
 M20_NAV_ENABLED="${M20_NAV_ENABLED:-1}"
+M20_NAV_USE_PGO="${M20_NAV_USE_PGO:-1}"
+M20_NAV_USE_PGO_CORRECTED_ODOMETRY="${M20_NAV_USE_PGO_CORRECTED_ODOMETRY:-${M20_NAV_USE_PGO}}"
 M20_NAV_MAX_SPEED="${M20_NAV_MAX_SPEED:-0.20}"
 M20_NAV_AUTONOMY_SPEED="${M20_NAV_AUTONOMY_SPEED:-${M20_NAV_MAX_SPEED}}"
 M20_NAV_MAX_ACCEL="${M20_NAV_MAX_ACCEL:-0.30}"
 M20_NAV_MAX_YAW_RATE="${M20_NAV_MAX_YAW_RATE:-40.0}"
-M20_NAV_MAX_COMMAND_DURATION="${M20_NAV_MAX_COMMAND_DURATION:-30.0}"
+M20_NAV_MAX_COMMAND_DURATION="${M20_NAV_MAX_COMMAND_DURATION:-180.0}"
 M20_NAV_OMNI_DIR_GOAL_THRESHOLD="${M20_NAV_OMNI_DIR_GOAL_THRESHOLD:-2.0}"
 M20_NAV_OMNI_DIR_DIFF_THRESHOLD="${M20_NAV_OMNI_DIR_DIFF_THRESHOLD:-3.2}"
+M20_NAV_YAW_RATE_GAIN="${M20_NAV_YAW_RATE_GAIN:-1.5}"
+M20_NAV_STOP_YAW_RATE_GAIN="${M20_NAV_STOP_YAW_RATE_GAIN:-1.5}"
+M20_NAV_DIR_DIFF_THRESHOLD="${M20_NAV_DIR_DIFF_THRESHOLD:-0.4}"
 M20_NAV_GOAL_REACHED_THRESHOLD="${M20_NAV_GOAL_REACHED_THRESHOLD:-0.30}"
+M20_NAV_STOP_DISTANCE_THRESHOLD="${M20_NAV_STOP_DISTANCE_THRESHOLD:-${M20_NAV_GOAL_REACHED_THRESHOLD}}"
+M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD="${M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD:-0.875}"
 M20_NAV_GOAL_BEHIND_RANGE="${M20_NAV_GOAL_BEHIND_RANGE:-0.30}"
 M20_NAV_FREEZE_ANG="${M20_NAV_FREEZE_ANG:-180.0}"
+M20_NAV_ROBOT_EXCLUSION_RADIUS="${M20_NAV_ROBOT_EXCLUSION_RADIUS:-0.0}"
+M20_TERRAIN_NO_DECAY_DISTANCE="${M20_TERRAIN_NO_DECAY_DISTANCE:-0.0}"
+M20_TERRAIN_VOXEL_SIZE="${M20_TERRAIN_VOXEL_SIZE:-1.0}"
 M20_RERUN_REGISTERED_SCAN_HZ="${M20_RERUN_REGISTERED_SCAN_HZ:-0.2}"
 M20_RERUN_REGISTERED_SCAN_MAX_POINTS="${M20_RERUN_REGISTERED_SCAN_MAX_POINTS:-2000}"
 M20_RERUN_DEBUG_CLOUD_HZ="${M20_RERUN_DEBUG_CLOUD_HZ:-1.0}"
@@ -114,7 +125,14 @@ remote_ssh() {
 
 remote_sudo() {
     if [ -n "${SUDO_PASS}" ]; then
-        remote_ssh "echo '${SUDO_PASS}' | sudo -S $*" 2>&1 | grep -v '^\[sudo\]' || true
+        local pw64
+        local output
+        local rc
+        pw64="$(printf '%s' "${SUDO_PASS}" | base64 | tr -d '\n')"
+        output="$(remote_ssh "echo ${pw64} | base64 -d | sudo -S $*" 2>&1)"
+        rc=$?
+        printf '%s\n' "${output}" | grep -v '^\[sudo\]' || true
+        return ${rc}
     else
         remote_ssh "sudo $*"
     fi
@@ -167,6 +185,8 @@ case "${CMD}" in
             mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/terrain_analysis/result/bin
             mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/local_planner/result/bin
             mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/path_follower/result/bin
+            mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/far_planner/result/bin
+            mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/tare_planner/result/bin
 
             link_newest() {
                 # \$1 = store glob (directory pattern), \$2 = bin name, \$3 = dest symlink
@@ -175,20 +195,38 @@ case "${CMD}" in
                     ln -sfn \"\${store%/}/bin/\$2\" \"\$3\"
             }
 
+            link_current_or_newest() {
+                # \$1 = module gcroot name, \$2 = store glob fallback, \$3 = bin name, \$4 = dest symlink
+                local root=\"/nix/var/nix/gcroots/custom/\$1-current\"
+                local store=\"\"
+                if [ -e \"\$root\" ]; then
+                    store=\$(readlink -f \"\$root\")
+                    if [ -f \"\$store/bin/\$3\" ]; then
+                        ln -sfn \"\$store/bin/\$3\" \"\$4\"
+                        return
+                    fi
+                fi
+                link_newest \"\$2\" \"\$3\" \"\$4\"
+            }
+
             link_newest '/nix/store/*-drdds_lidar_bridge-*/' drdds_lidar_bridge \
                 ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/drdds_lidar_bridge
             # airy_imu_bridge ships from the same flake as drdds_lidar_bridge,
             # so both resolve from the same store path.
             link_newest '/nix/store/*-drdds_lidar_bridge-*/' airy_imu_bridge \
                 ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/airy_imu_bridge
-            link_newest '/nix/store/*-smartnav-arise-slam-*/' arise_slam \
+            link_current_or_newest arise_slam '/nix/store/*-smartnav-arise-slam-*/' arise_slam \
                 ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/arise_slam/result/bin/arise_slam
-            link_newest '/nix/store/*-smartnav-terrain-analysis-*/' terrain_analysis \
+            link_current_or_newest terrain_analysis '/nix/store/*-smartnav-terrain-analysis-*/' terrain_analysis \
                 ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/terrain_analysis/result/bin/terrain_analysis
-            link_newest '/nix/store/*-smartnav-local-planner-*/' local_planner \
+            link_current_or_newest local_planner '/nix/store/*-smartnav-local-planner-*/' local_planner \
                 ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/local_planner/result/bin/local_planner
-            link_newest '/nix/store/*-smartnav-path-follower-*/' path_follower \
+            link_current_or_newest path_follower '/nix/store/*-smartnav-path-follower-*/' path_follower \
                 ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/path_follower/result/bin/path_follower
+            link_current_or_newest far_planner '/nix/store/*-far_planner_native-*/' far_planner \
+                ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/far_planner/result/bin/far_planner
+            link_current_or_newest tare_planner '/nix/store/*-smartnav-tare-planner-*/' tare_planner \
+                ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/tare_planner/result/bin/tare_planner
 
             # nav_cmd_pub (built via cmake, not nix — needs /usr/local/lib/libdrdds.so)
             # Build dir lives in the synced source tree so it survives reboots (ext4).
@@ -459,7 +497,7 @@ PROVISION_EOF
         ;;
 
     install-binaries)
-        echo "=== Building + installing drdds_recv on NOS ==="
+        echo "=== Building + installing M20 native bridge binaries on NOS ==="
         # Verify source synced.
         SRC_DIR="${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp"
         if ! remote_ssh "test -f ${SRC_DIR}/drdds_recv.cpp"; then
@@ -487,9 +525,9 @@ PROVISION_EOF
         # Build under a fresh build dir owned by the user. CMakeLists is at
         # ../, so we configure once and rebuild as needed. We build:
         #   - drdds_recv (the runtime daemon, installed to /opt)
-        #   - nav_cmd_pub (smartnav binary, picked up via deploy.sh sync's
-        #     symlink at result/bin/nav_cmd_pub)
-        echo "  cmake configure (idempotent) + build drdds_recv + nav_cmd_pub..."
+        #   - nav_cmd_pub (smartnav binary)
+        #   - drdds_lidar_bridge + airy_imu_bridge (smartnav sensor binaries)
+        echo "  cmake configure (idempotent) + build native bridge targets..."
         remote_ssh "
             set -e
             cd ${SRC_DIR}
@@ -498,8 +536,13 @@ PROVISION_EOF
             if [ ! -f Makefile ] && [ ! -f build.ninja ]; then
                 cmake .. >/tmp/drdds_recv_cmake.log 2>&1
             fi
-            make drdds_recv nav_cmd_pub -j2 2>&1 | tail -20
-            ls -la drdds_recv nav_cmd_pub
+            make drdds_lidar_bridge airy_imu_bridge drdds_recv nav_cmd_pub -j2 2>&1 | tail -30
+            mkdir -p ../result/bin
+            for bin in drdds_lidar_bridge airy_imu_bridge nav_cmd_pub; do
+                ln -sfn ${SRC_DIR}/build/\${bin} ${SRC_DIR}/result/bin/\${bin}
+            done
+            ls -la drdds_lidar_bridge airy_imu_bridge drdds_recv nav_cmd_pub
+            ls -la ../result/bin/drdds_lidar_bridge ../result/bin/airy_imu_bridge ../result/bin/nav_cmd_pub
         "
         echo "  installing drdds_recv to /opt/drdds_bridge/lib/drdds_bridge/..."
         remote_sudo "mkdir -p /opt/drdds_bridge/lib/drdds_bridge"
@@ -681,7 +724,7 @@ PROVISION_EOF
         ;;
 
     start)
-        echo "=== Starting smartnav (backend=${M20_SLAM_BACKEND}, imu=${M20_FASTLIO2_IMU}, nav=${M20_NAV_ENABLED}, viewer=${VIEWER}, speed=${M20_NAV_MAX_SPEED}, yaw=${M20_NAV_MAX_YAW_RATE}, omni_threshold=${M20_NAV_OMNI_DIR_GOAL_THRESHOLD}, omni_diff=${M20_NAV_OMNI_DIR_DIFF_THRESHOLD}, goal_reached=${M20_NAV_GOAL_REACHED_THRESHOLD}, goal_behind=${M20_NAV_GOAL_BEHIND_RANGE}, freeze_ang=${M20_NAV_FREEZE_ANG}, rerun_registered_scan_hz=${M20_RERUN_REGISTERED_SCAN_HZ}, rerun_debug_cloud_hz=${M20_RERUN_DEBUG_CLOUD_HZ}, slam_cores=${M20_SLAM_CORES}, fastlio_cores=${M20_FASTLIO_CORES}, drdds_lidar_cores=${M20_DRDDS_LIDAR_CORES}, airy_imu_cores=${M20_AIRY_IMU_CORES}, rerun_cores=${M20_RERUN_CORES:-none}) ==="
+        echo "=== Starting smartnav (backend=${M20_SLAM_BACKEND}, imu=${M20_FASTLIO2_IMU}, lidar_source=${M20_LIDAR_SOURCE}, nav=${M20_NAV_ENABLED}, pgo=${M20_NAV_USE_PGO}, pgo_corrected_odom=${M20_NAV_USE_PGO_CORRECTED_ODOMETRY}, viewer=${VIEWER}, speed=${M20_NAV_MAX_SPEED}, yaw=${M20_NAV_MAX_YAW_RATE}, yaw_gain=${M20_NAV_YAW_RATE_GAIN}, stop_yaw_gain=${M20_NAV_STOP_YAW_RATE_GAIN}, dir_diff=${M20_NAV_DIR_DIFF_THRESHOLD}, stop_dist=${M20_NAV_STOP_DISTANCE_THRESHOLD}, slow_down=${M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD}, omni_threshold=${M20_NAV_OMNI_DIR_GOAL_THRESHOLD}, omni_diff=${M20_NAV_OMNI_DIR_DIFF_THRESHOLD}, goal_reached=${M20_NAV_GOAL_REACHED_THRESHOLD}, goal_behind=${M20_NAV_GOAL_BEHIND_RANGE}, freeze_ang=${M20_NAV_FREEZE_ANG}, robot_exclusion=${M20_NAV_ROBOT_EXCLUSION_RADIUS}, terrain_no_decay=${M20_TERRAIN_NO_DECAY_DISTANCE}, terrain_voxel=${M20_TERRAIN_VOXEL_SIZE}, rerun_registered_scan_hz=${M20_RERUN_REGISTERED_SCAN_HZ}, rerun_debug_cloud_hz=${M20_RERUN_DEBUG_CLOUD_HZ}, slam_cores=${M20_SLAM_CORES}, fastlio_cores=${M20_FASTLIO_CORES}, drdds_lidar_cores=${M20_DRDDS_LIDAR_CORES}, airy_imu_cores=${M20_AIRY_IMU_CORES}, rerun_cores=${M20_RERUN_CORES:-none}) ==="
         ssh -n ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "bash -lc '
             # Clear old log first so the readiness poll only sees this boot.
             : > ${SMARTNAV_LOG}
@@ -689,11 +732,14 @@ PROVISION_EOF
             setsid -f env \
                 M20_SLAM_BACKEND=${M20_SLAM_BACKEND} \
                 M20_FASTLIO2_IMU=${M20_FASTLIO2_IMU} \
+                M20_LIDAR_SOURCE=${M20_LIDAR_SOURCE} \
                 M20_SLAM_CORES=${M20_SLAM_CORES} \
                 M20_FASTLIO_CORES=${M20_FASTLIO_CORES} \
                 M20_DRDDS_LIDAR_CORES=${M20_DRDDS_LIDAR_CORES} \
                 M20_AIRY_IMU_CORES=${M20_AIRY_IMU_CORES} \
                 M20_NAV_ENABLED=${M20_NAV_ENABLED} \
+                M20_NAV_USE_PGO=${M20_NAV_USE_PGO} \
+                M20_NAV_USE_PGO_CORRECTED_ODOMETRY=${M20_NAV_USE_PGO_CORRECTED_ODOMETRY} \
                 M20_NAV_MAX_SPEED=${M20_NAV_MAX_SPEED} \
                 M20_NAV_AUTONOMY_SPEED=${M20_NAV_AUTONOMY_SPEED} \
                 M20_NAV_MAX_ACCEL=${M20_NAV_MAX_ACCEL} \
@@ -701,9 +747,17 @@ PROVISION_EOF
                 M20_NAV_MAX_COMMAND_DURATION=${M20_NAV_MAX_COMMAND_DURATION} \
                 M20_NAV_OMNI_DIR_GOAL_THRESHOLD=${M20_NAV_OMNI_DIR_GOAL_THRESHOLD} \
                 M20_NAV_OMNI_DIR_DIFF_THRESHOLD=${M20_NAV_OMNI_DIR_DIFF_THRESHOLD} \
+                M20_NAV_YAW_RATE_GAIN=${M20_NAV_YAW_RATE_GAIN} \
+                M20_NAV_STOP_YAW_RATE_GAIN=${M20_NAV_STOP_YAW_RATE_GAIN} \
+                M20_NAV_DIR_DIFF_THRESHOLD=${M20_NAV_DIR_DIFF_THRESHOLD} \
+                M20_NAV_STOP_DISTANCE_THRESHOLD=${M20_NAV_STOP_DISTANCE_THRESHOLD} \
+                M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD=${M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD} \
                 M20_NAV_GOAL_REACHED_THRESHOLD=${M20_NAV_GOAL_REACHED_THRESHOLD} \
                 M20_NAV_GOAL_BEHIND_RANGE=${M20_NAV_GOAL_BEHIND_RANGE} \
                 M20_NAV_FREEZE_ANG=${M20_NAV_FREEZE_ANG} \
+                M20_NAV_ROBOT_EXCLUSION_RADIUS=${M20_NAV_ROBOT_EXCLUSION_RADIUS} \
+                M20_TERRAIN_NO_DECAY_DISTANCE=${M20_TERRAIN_NO_DECAY_DISTANCE} \
+                M20_TERRAIN_VOXEL_SIZE=${M20_TERRAIN_VOXEL_SIZE} \
                 M20_RERUN_REGISTERED_SCAN_HZ=${M20_RERUN_REGISTERED_SCAN_HZ} \
                 M20_RERUN_REGISTERED_SCAN_MAX_POINTS=${M20_RERUN_REGISTERED_SCAN_MAX_POINTS} \
                 M20_RERUN_DEBUG_CLOUD_HZ=${M20_RERUN_DEBUG_CLOUD_HZ} \

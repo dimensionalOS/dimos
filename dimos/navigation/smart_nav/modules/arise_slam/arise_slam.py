@@ -36,7 +36,7 @@ class AriseSLAMConfig(NativeModuleConfig):
     cwd: str | None = "."
     executable: str = "result/bin/arise_slam"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-arise-slam/v0.1.0 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-arise-slam/v0.2.0 --no-write-lock-file"
     )
 
     # C++ binary uses camelCase CLI args.

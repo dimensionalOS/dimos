@@ -38,11 +38,19 @@ class TestPathFollowerConfig:
         config = PathFollowerConfig(
             look_ahead_distance=1.0,
             max_speed=1.0,
+            yaw_rate_gain=1.5,
+            stop_yaw_rate_gain=1.5,
+            direction_difference_threshold=0.4,
+            stop_distance_threshold=0.4,
         )
         args = config.to_cli_args()
         # Field names are remapped to the C++ binary's camelCase names.
         assert "--lookAheadDis" in args
         assert "--maxSpeed" in args
+        assert "--yawRateGain" in args
+        assert "--stopYawRateGain" in args
+        assert "--dirDiffThre" in args
+        assert "--stopDisThre" in args
 
 
 class TestPathFollowerModule:

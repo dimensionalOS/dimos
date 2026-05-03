@@ -5,7 +5,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    mod.url = "github:dimensionalOS/dimos-module-path-follower/v0.1.1";
+    mod.url = "github:dimensionalOS/dimos-module-path-follower/v0.2.0";
   };
 
   outputs = { self, nixpkgs, mod, ... }:

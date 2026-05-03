@@ -123,6 +123,17 @@ class Costmap:
             self._rebuild_blocked()
         return self._blocked
 
+    def copy(self) -> Costmap:
+        snapshot = Costmap(
+            cell_size=self.cell_size,
+            obstacle_height=self.obstacle_height,
+            inflation_radius=self.inflation_radius,
+        )
+        snapshot._heights = dict(self._heights)
+        snapshot._blocked = set(self._blocked)
+        snapshot._blocked_dirty = self._blocked_dirty
+        return snapshot
+
 
 # 8-connected grid neighbourhood: every cell in the 3×3 block around the
 # current cell except the cell itself. Diagonals are included (and carry a
@@ -238,6 +249,10 @@ class SimplePlannerConfig(ModuleConfig):
     # Look-ahead distance along the planned path to emit as the next
     # waypoint for the local planner.
     lookahead_distance: float = 2.0
+    # Distance from goal at which this global planner considers the
+    # goal complete and publishes a hold waypoint instead of continuing
+    # to feed the target to the local controller.
+    goal_reached_threshold: float = 0.3
     # Replan + publish rate (Hz) — how often the planning loop wakes up.
     replan_rate: float = 5.0
     # Minimum seconds between successive A* searches. Waypoints are
@@ -251,6 +266,10 @@ class SimplePlannerConfig(ModuleConfig):
     # plane. G1's historic default is 1.3 m; shorter robots must override
     # this or floor returns will be classified as obstacles.
     ground_offset_below_robot: float = 1.3
+    # Ignore obstacle points inside this radius around the current robot pose.
+    # This is a global-planner self-filter; the local planner still handles
+    # immediate collision avoidance from fresh terrain.
+    robot_exclusion_radius: float = 0.0
 
     # ── No-progress detection + escalation ──────────────────────────────
     # Consider the robot "stuck" if its distance-to-goal hasn't decreased
@@ -306,6 +325,7 @@ class SimplePlanner(Module[SimplePlannerConfig]):
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
         self._lock = threading.Lock()
+        self._costmap_lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
         self._costmap = Costmap(
@@ -340,13 +360,14 @@ class SimplePlanner(Module[SimplePlannerConfig]):
 
     def __getstate__(self) -> dict[str, Any]:
         state = super().__getstate__()
-        for k in ("_lock", "_thread", "_costmap"):
+        for k in ("_lock", "_costmap_lock", "_thread", "_costmap"):
             state.pop(k, None)
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         super().__setstate__(state)
         self._lock = threading.Lock()
+        self._costmap_lock = threading.Lock()
         self._thread = None
         self._costmap = Costmap(
             cell_size=self.config.cell_size,
@@ -411,32 +432,93 @@ class SimplePlanner(Module[SimplePlannerConfig]):
     def _on_stop_movement(self, msg: Bool) -> None:
         if not msg.data:
             return
+        hold_pose: tuple[float, float, float] | None = None
         with self._lock:
             self._goal_x = None
             self._goal_y = None
             self._goal_z = 0.0
             self._cached_path = None
             self._last_plan_time = 0.0
+            if getattr(self, "_has_odom", False):
+                hold_pose = (
+                    getattr(self, "_robot_x", 0.0),
+                    getattr(self, "_robot_y", 0.0),
+                    getattr(self, "_robot_z", 0.0),
+                )
+        if hold_pose is not None:
+            self._publish_hold_pose(*hold_pose, now=time.time())
         print("[simple_planner] stop_movement received: cleared active goal", flush=True)
 
-    def _classify_points(self, points: np.ndarray, cm: Costmap) -> None:
-        """Add points (Nx3) to ``cm`` using z-relative-to-ground as height.
+    def _publish_hold_pose(self, rx: float, ry: float, rz: float, now: float) -> None:
+        self.way_point.publish(PointStamped(ts=now, frame_id="map", x=rx, y=ry, z=rz))
+        self.goal_path.publish(
+            Path(
+                ts=now,
+                frame_id="map",
+                poses=[
+                    PoseStamped(
+                        ts=now,
+                        frame_id="map",
+                        position=[rx, ry, rz],
+                        orientation=[0.0, 0.0, 0.0, 1.0],
+                    )
+                ],
+            )
+        )
 
-        The dimos PointCloud2 wrapper drops the intensity field, so we
-        can't read elevation-above-ground directly. Instead we classify
-        by the point's absolute z relative to the robot's configured
-        standing ground plane. TerrainAnalysis only publishes
-        ground/low-height obstacle voxels, so
-        z-relative-to-ground is a good elevation proxy.
+    def _classify_points(
+        self,
+        points: np.ndarray,
+        cm: Costmap,
+        intensities: np.ndarray | None = None,
+    ) -> None:
+        """Add points (Nx3) to ``cm`` using terrain intensity when available.
+
+        TerrainAnalysis writes elevation-above-ground into the PointCloud2
+        intensity field. That is the authoritative obstacle height; the
+        z-relative fallback is only for older clouds that lack intensity.
         """
         with self._lock:
-            rz = self._robot_z if self._has_odom else 0.0
+            rx = getattr(self, "_robot_x", 0.0)
+            ry = getattr(self, "_robot_y", 0.0)
+            has_odom = getattr(self, "_has_odom", False)
+            rz = getattr(self, "_robot_z", 0.0) if has_odom else 0.0
+
+        exclusion_radius = getattr(self.config, "robot_exclusion_radius", 0.0)
+        exclusion_radius_sq = exclusion_radius * exclusion_radius
+
+        def is_robot_excluded(p: np.ndarray) -> bool:
+            return bool(
+                has_odom
+                and exclusion_radius > 0.0
+                and (float(p[0]) - rx) ** 2 + (float(p[1]) - ry) ** 2 <= exclusion_radius_sq
+            )
+
+        if intensities is not None and len(intensities) == len(points):
+            for p, intensity in zip(points, intensities, strict=True):
+                if is_robot_excluded(p):
+                    continue
+                h = float(intensity)
+                if not math.isfinite(h) or h <= 0.0:
+                    continue
+                cm.update(float(p[0]), float(p[1]), h)
+            return
+
         ground_z = rz - self.config.ground_offset_below_robot
         for p in points:
+            if is_robot_excluded(p):
+                continue
             h = float(p[2]) - ground_z
             if h <= 0.0:
                 continue
             cm.update(float(p[0]), float(p[1]), h)
+
+    def _costmap_snapshot(self) -> Costmap:
+        costmap_lock = getattr(self, "_costmap_lock", None)
+        if costmap_lock is None:
+            return self._costmap.copy()
+        with costmap_lock:
+            return self._costmap.copy()
 
     def _fresh_costmap(self) -> Costmap:
         return Costmap(
@@ -453,14 +535,15 @@ class SimplePlanner(Module[SimplePlannerConfig]):
         state. Resetting here prevents stale obstacles from piling up
         forever.
         """
-        points, _ = msg.as_numpy()
-        if points is None or len(points) == 0:
+        points = msg.points_f32()
+        if len(points) == 0:
             return
         new_cm = self._fresh_costmap()
-        self._classify_points(points, new_cm)
+        self._classify_points(points, new_cm, msg.intensity_f32())
         # Hot-swap in one assignment so the planning loop sees either
         # the old or the new map but never a partial one.
-        self._costmap = new_cm
+        with self._costmap_lock:
+            self._costmap = new_cm
 
     def _on_terrain_map(self, msg: PointCloud2) -> None:
         """Layer fresh local terrain on top of the current costmap.
@@ -471,10 +554,11 @@ class SimplePlanner(Module[SimplePlannerConfig]):
         these additions are wiped on the next ``terrain_map_ext``
         rebuild.
         """
-        points, _ = msg.as_numpy()
-        if points is None or len(points) == 0:
+        points = msg.points_f32()
+        if len(points) == 0:
             return
-        self._classify_points(points, self._costmap)
+        with self._costmap_lock:
+            self._classify_points(points, self._costmap, msg.intensity_f32())
 
     # ── Planning loop ──────────────────────────────────────────────────────
 
@@ -501,7 +585,7 @@ class SimplePlanner(Module[SimplePlannerConfig]):
         if now - self._last_costmap_pub < 0.5:
             return
         self._last_costmap_pub = now
-        cm = self._costmap
+        cm = self._costmap_snapshot()
         blocked = cm.blocked_cells()
         if not blocked:
             pts = np.zeros((0, 3), dtype=np.float32)
@@ -544,6 +628,22 @@ class SimplePlanner(Module[SimplePlannerConfig]):
         mono_now = time.monotonic()
         goal_dist = math.hypot(gx - rx, gy - ry)
         now = time.time()
+
+        if goal_dist <= self.config.goal_reached_threshold:
+            with self._lock:
+                self._goal_x = None
+                self._goal_y = None
+                self._goal_z = 0.0
+                self._cached_path = None
+                self._last_plan_time = 0.0
+            self._publish_hold_pose(rx, ry, rz, now)
+            print(
+                f"[simple_planner] goal reached "
+                f"(dist={goal_dist:.2f}m <= {self.config.goal_reached_threshold:.2f}m); "
+                "holding position.",
+                flush=True,
+            )
+            return
 
         # ── Cooldown: if it's too soon for a fresh A*, just refresh
         # the waypoint from the cached path using the current pose ────
@@ -655,7 +755,7 @@ class SimplePlanner(Module[SimplePlannerConfig]):
         # 1 Hz diagnostic: cells in costmap, path length, chosen waypoint
         if now - self._last_diag_print >= 1.0:
             self._last_diag_print = now
-            blocked = len(self._costmap.blocked_cells())
+            blocked = len(self._costmap_snapshot().blocked_cells())
             print(
                 f"[simple_planner] path={len(path_world)} cells  "
                 f"blocked_cells={blocked}  robot=({rx:.2f},{ry:.2f})  "
@@ -678,7 +778,7 @@ class SimplePlanner(Module[SimplePlannerConfig]):
         override radius before searching (without mutating the live
         costmap that other callers may be reading).
         """
-        cm = self._costmap
+        cm = self._costmap_snapshot()
         if inflation_override is not None and inflation_override != cm.inflation_radius:
             # Build a view of blocked cells with a different inflation.
             # Cheap: we only change the inflation field and rebuild.

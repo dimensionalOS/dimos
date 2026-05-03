@@ -1,18 +1,14 @@
 {
-  description = "Wrapper flake for dimensionalOS/dimos-module-arise-slam with M20 NOS kernel 5.10 unpackPhase workaround";
+  description = "Wrapper flake for dimensionalOS/dimos-module-tare-planner with M20 NOS kernel 5.10 unpackPhase workaround";
 
   # See sibling local_planner/flake.nix for full workaround rationale.
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    mod.url = "github:dimensionalOS/dimos-module-arise-slam/v0.2.0";
-    gtsam-src = {
-      url = "github:borglab/gtsam/e0b21bd54f0a3ebac12d605019833c3577b31b22";
-      flake = false;
-    };
+    mod.url = "github:dimensionalOS/dimos-module-tare-planner/v0.1.0";
   };
 
-  outputs = { self, nixpkgs, mod, gtsam-src, ... }:
+  outputs = { self, nixpkgs, mod, ... }:
     let
       system = "aarch64-linux";
       pkgs = import nixpkgs { inherit system; };
@@ -35,42 +31,45 @@
         drv.overrideAttrs (old: (kernel510Hooks old) // {
           cmakeFlags = (old.cmakeFlags or []) ++ extraCmakeFlags;
         });
-      kernel510WrapGtsam = drv:
-        drv.overrideAttrs (old: (kernel510Hooks old) // {
-          # Upstream arise_slam uses pkgs.fetchFromGitHub for GTSAM's moving
-          # develop branch. On NOS that fixed-output source derivation hits
-          # the same fchmodat2 chmod failure, so use a flake input source.
-          src = gtsam-src;
-          # Arise links only libgtsam and includes stable GTSAM headers. The
-          # upstream wrapper enables gtsam_unstable for iSAM2, but iSAM2 is in
-          # the stable library; disabling unstable avoids a large extra build
-          # on the robot.
-          cmakeFlags =
-            builtins.filter (f: f != "-DGTSAM_BUILD_UNSTABLE=ON") (old.cmakeFlags or [])
-            ++ [ "-DGTSAM_BUILD_UNSTABLE=OFF" ];
-        });
-      kernel510Wrap = kernel510WrapWithCmakeFlags [];
       nameOf = drv: drv.pname or drv.name or "";
       needsKernel510Wrap = drv:
         builtins.any
           (needle: builtins.match ".*${needle}.*" (nameOf drv) != null)
-          [ "gtsam" "lcm" "sophus" ];
+          [ "lcm" "pcl" ];
       patchInput = drv:
         if !(builtins.isAttrs drv && drv ? overrideAttrs && needsKernel510Wrap drv)
         then drv
-        else if builtins.match ".*sophus.*" (nameOf drv) != null
-        then kernel510WrapWithCmakeFlags [
-          "-DBUILD_SOPHUS_TESTS=OFF"
-          "-DBUILD_SOPHUS_EXAMPLES=OFF"
-        ] drv
         else if builtins.match ".*lcm.*" (nameOf drv) != null
         then kernel510WrapWithCmakeFlags [
           "-DLCM_ENABLE_TESTS=OFF"
           "-DLCM_INSTALL_EXAMPLES=OFF"
         ] drv
-        else if builtins.match ".*gtsam.*" (nameOf drv) != null
-        then kernel510WrapGtsam drv
-        else kernel510Wrap drv;
+        else kernel510WrapWithCmakeFlags [
+          "-DWITH_OPENNI=OFF"
+          "-DWITH_OPENNI2=OFF"
+          "-DWITH_VTK=OFF"
+          "-DBUILD_2d=OFF"
+          "-DBUILD_apps=OFF"
+          "-DBUILD_benchmarks=OFF"
+          "-DBUILD_cuda=OFF"
+          "-DBUILD_examples=OFF"
+          "-DBUILD_features=OFF"
+          "-DBUILD_gpu=OFF"
+          "-DBUILD_io=OFF"
+          "-DBUILD_keypoints=OFF"
+          "-DBUILD_ml=OFF"
+          "-DBUILD_outofcore=OFF"
+          "-DBUILD_people=OFF"
+          "-DBUILD_recognition=OFF"
+          "-DBUILD_registration=OFF"
+          "-DBUILD_segmentation=OFF"
+          "-DBUILD_simulation=OFF"
+          "-DBUILD_stereo=OFF"
+          "-DBUILD_surface=OFF"
+          "-DBUILD_tools=OFF"
+          "-DBUILD_tracking=OFF"
+          "-DBUILD_visualization=OFF"
+        ] drv;
     in {
       packages.${system}.default = base.overrideAttrs (old: {
         buildInputs = builtins.map patchInput (old.buildInputs or []);
@@ -82,6 +81,10 @@
         fixupPhase = ''
           /usr/bin/find $out -type f -executable -exec /usr/bin/chmod 0755 {} \;
           /usr/bin/find $out -type d -exec /usr/bin/chmod 0755 {} \;
+        '';
+        postPatch = ''
+          ${old.postPatch or ""}
+          /usr/bin/sed -i '/#include <pcl\/segmentation\/extract_clusters.h>/d' main.cpp
         '';
       });
     };

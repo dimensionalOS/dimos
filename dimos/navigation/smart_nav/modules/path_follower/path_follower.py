@@ -38,7 +38,7 @@ class PathFollowerConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/path_follower"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-path-follower/v0.1.1 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-path-follower/v0.2.0 --no-write-lock-file"
     )
 
     # C++ binary uses camelCase CLI args.
@@ -46,6 +46,8 @@ class PathFollowerConfig(NativeModuleConfig):
         "look_ahead_distance": "lookAheadDis",
         "max_speed": "maxSpeed",
         "max_yaw_rate": "maxYawRate",
+        "yaw_rate_gain": "yawRateGain",
+        "stop_yaw_rate_gain": "stopYawRateGain",
         "goal_tolerance": "goalTolerance",
         "vehicle_config": "vehicleConfig",
         "autonomy_mode": "autonomyMode",
@@ -54,6 +56,8 @@ class PathFollowerConfig(NativeModuleConfig):
         "slow_down_distance_threshold": "slowDwnDisThre",
         "omni_dir_goal_threshold": "omniDirGoalThre",
         "omni_dir_diff_threshold": "omniDirDiffThre",
+        "direction_difference_threshold": "dirDiffThre",
+        "stop_distance_threshold": "stopDisThre",
         "two_way_drive": "twoWayDrive",
     }
 
@@ -65,6 +69,10 @@ class PathFollowerConfig(NativeModuleConfig):
     # rad/s internally (``maxYawRate * PI / 180``).  Reference omniDir.yaml
     # uses 80.0; default in C++ is 45.0.
     max_yaw_rate: float = 80.0
+    # Proportional yaw gains used by the native path follower.  Upstream C++
+    # defaults are aggressive; hardware-specific blueprints should override.
+    yaw_rate_gain: float | None = None
+    stop_yaw_rate_gain: float | None = None
 
     # Distance from goal at which the follower considers it reached (m).
     goal_tolerance: float = 0.3
@@ -76,6 +84,10 @@ class PathFollowerConfig(NativeModuleConfig):
     omni_dir_goal_threshold: float | None = None
     # Omni-directional heading tolerance (rad).
     omni_dir_diff_threshold: float | None = None
+    # Heading error tolerance before linear motion is allowed (rad).
+    direction_difference_threshold: float | None = None
+    # Distance under which the follower stops driving translationally (m).
+    stop_distance_threshold: float | None = None
 
     # Enable fully autonomous path-following mode.
     autonomy_mode: bool | None = None

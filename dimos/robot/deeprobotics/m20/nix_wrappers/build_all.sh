@@ -23,14 +23,18 @@ fi
 
 mkdir -p /nix/var/nix/gcroots/custom
 
-for mod in local_planner arise_slam terrain_analysis path_follower; do
+for mod in local_planner arise_slam terrain_analysis path_follower far_planner tare_planner; do
     echo "=== Building $mod ==="
-    cd "$WRAPPER_DIR/$mod"
+    BUILD_DIR="/tmp/m20-nix-wrapper-${mod}"
+    rm -rf "$BUILD_DIR"
+    cp -R "$WRAPPER_DIR/$mod" "$BUILD_DIR"
+    cd "$BUILD_DIR"
     time "$NIX_BIN" \
         --extra-experimental-features 'nix-command flakes' \
         --option sandbox false \
-        build . \
-        --no-write-lock-file
+        build "path:$BUILD_DIR" \
+        --no-write-lock-file \
+        -o "$WRAPPER_DIR/$mod/result"
 
     BIN_DIR="${DIMOS_ROOT}/dimos/navigation/smart_nav/modules/${mod}/result/bin"
     mkdir -p "$BIN_DIR"
@@ -42,6 +46,6 @@ done
 
 echo
 echo "=== Done. Bindings: ==="
-for mod in local_planner arise_slam terrain_analysis path_follower; do
+for mod in local_planner arise_slam terrain_analysis path_follower far_planner tare_planner; do
     readlink "${DIMOS_ROOT}/dimos/navigation/smart_nav/modules/${mod}/result/bin/${mod}"
 done

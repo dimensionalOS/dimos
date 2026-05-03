@@ -59,6 +59,8 @@ def smart_nav(
     use_terrain_map_ext: bool = True,
     use_simple_planner: bool = False,
     direct_click_waypoint: bool = False,
+    use_pgo: bool = True,
+    use_pgo_corrected_odometry: bool | None = None,
     vehicle_height: float | None = None,
     terrain_analysis: dict[str, Any] | None = None,
     terrain_map_ext: dict[str, Any] | None = None,
@@ -105,6 +107,10 @@ def smart_nav(
             way_point input and disconnect the global planner click inputs.
             This is useful for controlled local click-to-goal bring-up when
             global A* planning is not yet reliable on a robot.
+        use_pgo: Include the PGO module.
+        use_pgo_corrected_odometry: Feed PGO-corrected odometry to
+            global-scale planners. Defaults to use_pgo. Set False to keep
+            planners on raw odometry while still publishing PGO for debugging.
         vehicle_height: Ignore terrain points above this height (m). Threaded
             into TerrainAnalysis's `vehicle_height` config. Defaults to 1.2m.
         terrain_analysis, terrain_map_ext, local_planner, path_follower,
@@ -119,6 +125,10 @@ def smart_nav(
     local_planner_config = {**(local_planner or {})}
     terrain_analysis_threshold = terrain_analysis_config.get("obstacle_height_threshold", 0.2)
     local_planner_threshold = local_planner_config.get("obstacle_height_threshold", 0.2)
+    if use_pgo_corrected_odometry is None:
+        use_pgo_corrected_odometry = use_pgo
+    if use_pgo_corrected_odometry and not use_pgo:
+        raise ValueError("use_pgo_corrected_odometry=True requires use_pgo=True")
     if terrain_analysis_threshold < local_planner_threshold:
         logger.warning(
             "terrain_analysis obstacle_height_threshold (%.3f) < "
@@ -199,15 +209,17 @@ def smart_nav(
             if use_simple_planner
             else [FarPlanner.blueprint(**{"sensor_range": 15.0, **(far_planner or {})})]
         ),
-        PGO.blueprint(**(pgo or {})),
         ClickToGoal.blueprint(**(click_to_goal or {})),
         CmdVelMux.blueprint(**(cmd_vel_mux or {})),
     ]
+    if use_pgo:
+        modules.append(PGO.blueprint(**(pgo or {})))
     if use_terrain_map_ext:
         modules.append(
             TerrainMapExt.blueprint(
                 **{
                     "voxel_size": 0.3,
+                    "obstacle_height_threshold": local_planner_threshold,
                     # Walls are static — keep them around long enough that
                     # a global planner (SimplePlanner / FarPlanner) doesn't
                     # see freshly-empty cells behind the robot and route
@@ -228,18 +240,24 @@ def smart_nav(
     remappings = [
         # PathFollower cmd_vel → CmdVelMux nav input (avoid collision with mux output)
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
-        # Global-scale planners use PGO-corrected odometry (per CMU ICRA 2022):
-        # loop-closure adjustments go to high-level planners; local modules
-        # care only about the local environment and work in the odom frame.
-        (
-            SimplePlanner if use_simple_planner else FarPlanner,
-            "odometry",
-            "corrected_odometry",
-        ),
-        (ClickToGoal, "odometry", "corrected_odometry"),
-        (TerrainAnalysis, "odometry", "corrected_odometry"),
-        (PGO, "global_map", "global_map_pgo"),
     ]
+    if use_pgo_corrected_odometry:
+        remappings.extend(
+            [
+                # Global-scale planners use PGO-corrected odometry (per CMU ICRA 2022):
+                # loop-closure adjustments go to high-level planners; local modules
+                # care only about the local environment and work in the odom frame.
+                (
+                    SimplePlanner if use_simple_planner else FarPlanner,
+                    "odometry",
+                    "corrected_odometry",
+                ),
+                (ClickToGoal, "odometry", "corrected_odometry"),
+                (TerrainAnalysis, "odometry", "corrected_odometry"),
+            ]
+        )
+    if use_pgo:
+        remappings.append((PGO, "global_map", "global_map_pgo"))
     if direct_click_waypoint:
         remappings.extend(
             [

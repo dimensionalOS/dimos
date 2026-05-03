@@ -37,6 +37,7 @@ SLAM backend is selected by the `M20_SLAM_BACKEND` env var:
         the click-to-goal unblocker tracked by bead di-857dn
 """
 
+import math
 import os
 
 from dimos.core.blueprints import autoconnect
@@ -64,6 +65,7 @@ from dimos.visualization.vis_module import vis_module
 # M20 physical dimensions
 M20_HEIGHT_CLEARANCE = 0.57  # 570mm standing height
 M20_LIDAR_HEIGHT = 0.47  # lidar at 47cm in agile stance
+
 
 # CPU affinity for the latency-critical native sensor/SLAM path.
 # NOS boots with `isolcpus=4,5,6,7` so cores 4-7 are reserved (no default
@@ -117,11 +119,13 @@ _AIRY_IMU_CPU_AFFINITY = _cpu_affinity_from_env(
 _M20_BODY_CROP_DEFAULT = "-0.454,0.454,-0.354,0.354,-0.740,0.220"
 _M20_BODY_CROP = os.environ.get("M20_BODY_CROP", _M20_BODY_CROP_DEFAULT).strip()
 
+_LIDAR_SOURCE = os.environ.get("M20_LIDAR_SOURCE", "front").strip().lower()
+if _LIDAR_SOURCE not in {"front", "rear"}:
+    raise ValueError(f"M20_LIDAR_SOURCE must be 'front' or 'rear' (got {_LIDAR_SOURCE!r})")
+
 _SLAM_BACKEND = os.environ.get("M20_SLAM_BACKEND", "arise").strip().lower()
 if _SLAM_BACKEND not in {"arise", "fastlio2"}:
-    raise ValueError(
-        f"M20_SLAM_BACKEND must be 'arise' or 'fastlio2' (got {_SLAM_BACKEND!r})"
-    )
+    raise ValueError(f"M20_SLAM_BACKEND must be 'arise' or 'fastlio2' (got {_SLAM_BACKEND!r})")
 
 # Which IMU feeds FAST-LIO2:
 #   yesense (legacy): DeepRobotics body IMU on /IMU via DrddsLidarBridge SHM.
@@ -135,9 +139,7 @@ if _SLAM_BACKEND not in {"arise", "fastlio2"}:
 #       clean test replacing yesense.
 _FASTLIO2_IMU = os.environ.get("M20_FASTLIO2_IMU", "airy").strip().lower()
 if _FASTLIO2_IMU not in {"yesense", "airy"}:
-    raise ValueError(
-        f"M20_FASTLIO2_IMU must be 'yesense' or 'airy' (got {_FASTLIO2_IMU!r})"
-    )
+    raise ValueError(f"M20_FASTLIO2_IMU must be 'yesense' or 'airy' (got {_FASTLIO2_IMU!r})")
 
 if _SLAM_BACKEND == "fastlio2":
     # FAST-LIO2 via the Velodyne PointCloud2 path (aphexcx/FAST-LIO-NON-ROS
@@ -160,9 +162,10 @@ else:
 
 _extra_imu_modules: tuple = ()
 if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy":
-    # rsdriver in send_separately:true mode publishes FRONT Airy alone on
-    # /LIDAR/POINTS (in base_link frame, its extrinsic applied). Pair with
-    # the front Airy IMU rotated into base_link — both streams in the same
+    # rsdriver in send_separately:true mode publishes the front Airy alone on
+    # /LIDAR/POINTS and rear Airy alone on /LIDAR/POINTS2 (in base_link frame,
+    # with each extrinsic applied). Pair the selected lidar with the same
+    # housing's Airy IMU rotated into base_link — both streams are in the same
     # frame, so velodyne.yaml's identity extrinsic is honest.
     #
     # M20_AIRY_LEVER_ARM_BASE_M="x,y,z" overrides the C++ default lever
@@ -176,7 +179,7 @@ if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy":
     _extra_imu_modules = (
         AiryImuBridge.blueprint(
             build_command=None,
-            which="front",
+            which=_LIDAR_SOURCE,
             frame="base_link",
             lever_arm_base_m=_lever_arm_env or None,
             cpu_affinity=_AIRY_IMU_CPU_AFFINITY,
@@ -189,6 +192,11 @@ if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy":
 # could inject conflicting cmd_vel and make it impossible to isolate
 # SLAM issues from planner issues.
 _NAV_ENABLED = os.environ.get("M20_NAV_ENABLED", "1").strip() != "0"
+_NAV_USE_PGO = os.environ.get("M20_NAV_USE_PGO", "1").strip() != "0"
+_NAV_USE_PGO_CORRECTED_ODOMETRY = (
+    os.environ.get("M20_NAV_USE_PGO_CORRECTED_ODOMETRY", "1" if _NAV_USE_PGO else "0").strip()
+    != "0"
+)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -204,23 +212,46 @@ _NAV_MAX_SPEED = _env_float("M20_NAV_MAX_SPEED", 0.20)
 _NAV_AUTONOMY_SPEED = _env_float("M20_NAV_AUTONOMY_SPEED", _NAV_MAX_SPEED)
 _NAV_MAX_ACCEL = _env_float("M20_NAV_MAX_ACCEL", 0.30)
 _NAV_MAX_YAW_RATE = _env_float("M20_NAV_MAX_YAW_RATE", 40.0)
-_NAV_MAX_COMMAND_DURATION = _env_float("M20_NAV_MAX_COMMAND_DURATION", 30.0)
+_NAV_MAX_COMMAND_DURATION = _env_float("M20_NAV_MAX_COMMAND_DURATION", 180.0)
 _NAV_OMNI_DIR_GOAL_THRESHOLD = _env_float("M20_NAV_OMNI_DIR_GOAL_THRESHOLD", 2.0)
 _NAV_OMNI_DIR_DIFF_THRESHOLD = _env_float("M20_NAV_OMNI_DIR_DIFF_THRESHOLD", 3.2)
+_NAV_YAW_RATE_GAIN = _env_float("M20_NAV_YAW_RATE_GAIN", 1.5)
+_NAV_STOP_YAW_RATE_GAIN = _env_float("M20_NAV_STOP_YAW_RATE_GAIN", 1.5)
+_NAV_DIR_DIFF_THRESHOLD = _env_float("M20_NAV_DIR_DIFF_THRESHOLD", 0.4)
 _NAV_GOAL_REACHED_THRESHOLD = _env_float("M20_NAV_GOAL_REACHED_THRESHOLD", 0.30)
+_NAV_STOP_DISTANCE_THRESHOLD = _env_float(
+    "M20_NAV_STOP_DISTANCE_THRESHOLD",
+    _NAV_GOAL_REACHED_THRESHOLD,
+)
+_NAV_SLOW_DOWN_DISTANCE_THRESHOLD = _env_float("M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD", 0.875)
 _NAV_GOAL_BEHIND_RANGE = _env_float("M20_NAV_GOAL_BEHIND_RANGE", 0.30)
 _NAV_FREEZE_ANG = _env_float("M20_NAV_FREEZE_ANG", 180.0)
+_NAV_ROBOT_EXCLUSION_RADIUS = _env_float("M20_NAV_ROBOT_EXCLUSION_RADIUS", 0.0)
+# TerrainAnalysis' upstream noDecayDis keeps points within the robot-local
+# radius forever. On M20 that preserves stale near-body artifacts from gait
+# motion and turns them into phantom local obstacles. Let near-robot terrain
+# decay normally by default; override only for experiments.
+_TERRAIN_NO_DECAY_DISTANCE = _env_float("M20_TERRAIN_NO_DECAY_DISTANCE", 0.0)
+_TERRAIN_VOXEL_SIZE = _env_float("M20_TERRAIN_VOXEL_SIZE", 1.0)
+if _TERRAIN_VOXEL_SIZE <= 0.0:
+    raise ValueError("M20_TERRAIN_VOXEL_SIZE must be positive")
+_TERRAIN_VOXEL_HALF_WIDTH = math.ceil(10.0 / _TERRAIN_VOXEL_SIZE)
 
 _nav_modules: tuple = ()
 if _NAV_ENABLED:
     _nav_modules = (
         smart_nav(
             use_simple_planner=True,
+            use_pgo=_NAV_USE_PGO,
+            use_pgo_corrected_odometry=_NAV_USE_PGO_CORRECTED_ODOMETRY,
             vehicle_height=M20_HEIGHT_CLEARANCE,
             terrain_analysis={
                 "build_command": None,
+                "terrain_voxel_size": _TERRAIN_VOXEL_SIZE,
+                "terrain_voxel_half_width": _TERRAIN_VOXEL_HALF_WIDTH,
                 "obstacle_height_threshold": 0.01,
                 "ground_height_threshold": 0.01,
+                "no_decay_distance": _TERRAIN_NO_DECAY_DISTANCE,
             },
             local_planner={
                 "build_command": None,
@@ -237,8 +268,13 @@ if _NAV_ENABLED:
                 "autonomy_speed": _NAV_AUTONOMY_SPEED,
                 "max_acceleration": _NAV_MAX_ACCEL,
                 "max_yaw_rate": _NAV_MAX_YAW_RATE,
+                "yaw_rate_gain": _NAV_YAW_RATE_GAIN,
+                "stop_yaw_rate_gain": _NAV_STOP_YAW_RATE_GAIN,
                 "omni_dir_goal_threshold": _NAV_OMNI_DIR_GOAL_THRESHOLD,
                 "omni_dir_diff_threshold": _NAV_OMNI_DIR_DIFF_THRESHOLD,
+                "direction_difference_threshold": _NAV_DIR_DIFF_THRESHOLD,
+                "stop_distance_threshold": _NAV_STOP_DISTANCE_THRESHOLD,
+                "slow_down_distance_threshold": _NAV_SLOW_DOWN_DISTANCE_THRESHOLD,
                 "two_way_drive": False,
             },
             simple_planner={
@@ -246,9 +282,14 @@ if _NAV_ENABLED:
                 "obstacle_height_threshold": 0.20,
                 "inflation_radius": 0.4,
                 "ground_offset_below_robot": M20_HEIGHT_CLEARANCE,
+                "robot_exclusion_radius": _NAV_ROBOT_EXCLUSION_RADIUS,
+                "goal_reached_threshold": _NAV_GOAL_REACHED_THRESHOLD,
                 "lookahead_distance": 2.0,
                 "replan_rate": 5.0,
                 "replan_cooldown": 2.0,
+            },
+            terrain_map_ext={
+                "robot_exclusion_radius": _NAV_ROBOT_EXCLUSION_RADIUS,
             },
             cmd_vel_mux={
                 "max_nav_command_duration_sec": _NAV_MAX_COMMAND_DURATION,
@@ -266,6 +307,7 @@ m20_smartnav_native = (
         DrddsLidarBridge.blueprint(
             build_command=None,
             body_crop=_M20_BODY_CROP or None,
+            lidar_source=_LIDAR_SOURCE,
             cpu_affinity=_DRDDS_LIDAR_CPU_AFFINITY,
         ),
         *_extra_imu_modules,
@@ -305,8 +347,8 @@ m20_smartnav_native = (
             *(
                 [
                     (DrddsLidarBridge, "imu", "yesense_imu"),
-                    (AiryImuBridge, "imu", "airy_imu_front"),
-                    (FastLio2, "imu", "airy_imu_front"),
+                    (AiryImuBridge, "imu", f"airy_imu_{_LIDAR_SOURCE}"),
+                    (FastLio2, "imu", f"airy_imu_{_LIDAR_SOURCE}"),
                 ]
                 if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy"
                 else []

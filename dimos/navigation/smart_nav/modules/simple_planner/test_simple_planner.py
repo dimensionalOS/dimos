@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.smart_nav.modules.simple_planner.simple_planner import (
     Costmap,
     SimplePlanner,
@@ -94,6 +95,17 @@ class TestCostmap:
     def test_invalid_inflation(self) -> None:
         with pytest.raises(ValueError):
             Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=-0.1)
+
+    def test_copy_is_independent_snapshot(self) -> None:
+        cm = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=1.0)
+        cm.update(0.0, 0.0, 1.0)
+        snapshot = cm.copy()
+
+        cm.update(5.0, 0.0, 1.0)
+
+        assert snapshot.world_to_cell(0.0, 0.0) in snapshot.blocked_cells()
+        assert snapshot.world_to_cell(5.0, 0.0) not in snapshot.blocked_cells()
+        assert cm.world_to_cell(5.0, 0.0) in cm.blocked_cells()
 
 
 # ─── A* ──────────────────────────────────────────────────────────────────
@@ -204,6 +216,88 @@ class TestSimplePlannerPlan:
         assert abs(path[0][1] - 0.25) < 1e-6
         assert abs(path[-1][0] - 2.25) < 1e-6
         assert abs(path[-1][1] - 0.25) < 1e-6
+
+    def test_stop_movement_publishes_hold_waypoint(self) -> None:
+        class _Out:
+            def __init__(self) -> None:
+                self.messages: list[Any] = []
+
+            def publish(self, msg: Any) -> None:
+                self.messages.append(msg)
+
+        p = SimplePlanner.__new__(SimplePlanner)
+        p._lock = threading.Lock()
+        p._goal_x = 5.0
+        p._goal_y = -3.0
+        p._goal_z = 0.0
+        p._cached_path = [(0.0, 0.0), (5.0, -3.0)]
+        p._last_plan_time = 123.0
+        p._has_odom = True
+        p._robot_x = 1.25
+        p._robot_y = -0.75
+        p._robot_z = 0.1
+        p.way_point = _Out()
+        p.goal_path = _Out()
+
+        p._on_stop_movement(Bool(data=True))
+
+        assert p._goal_x is None
+        assert p._goal_y is None
+        assert p._cached_path is None
+        assert p._last_plan_time == 0.0
+        assert len(p.way_point.messages) == 1
+        waypoint = p.way_point.messages[0]
+        assert isinstance(waypoint, PointStamped)
+        assert waypoint.x == 1.25
+        assert waypoint.y == -0.75
+        assert waypoint.z == 0.1
+        assert len(p.goal_path.messages) == 1
+        goal_path = p.goal_path.messages[0]
+        assert isinstance(goal_path, Path)
+        assert len(goal_path.poses) == 1
+        assert goal_path.poses[0].position.x == 1.25
+
+    def test_replan_clears_goal_and_holds_when_goal_reached(self) -> None:
+        class _Out:
+            def __init__(self) -> None:
+                self.messages: list[Any] = []
+
+            def publish(self, msg: Any) -> None:
+                self.messages.append(msg)
+
+        class _C:
+            goal_reached_threshold = 0.3
+
+        p = SimplePlanner.__new__(SimplePlanner)
+        p.config = _C()  # type: ignore[assignment]
+        p._lock = threading.Lock()
+        p._costmap_lock = threading.Lock()
+        p._costmap = Costmap(cell_size=0.3, obstacle_height=0.2, inflation_radius=0.4)
+        p._has_odom = True
+        p._robot_x = 1.0
+        p._robot_y = 2.0
+        p._robot_z = 0.1
+        p._goal_x = 1.08
+        p._goal_y = 2.02
+        p._goal_z = 0.1
+        p._cached_path = [(1.0, 2.0), (1.08, 2.02)]
+        p._last_plan_time = 12.0
+        p.way_point = _Out()
+        p.goal_path = _Out()
+
+        p._replan_once()
+
+        assert p._goal_x is None
+        assert p._goal_y is None
+        assert p._cached_path is None
+        assert p._last_plan_time == 0.0
+        assert len(p.way_point.messages) == 1
+        waypoint = p.way_point.messages[0]
+        assert waypoint.x == 1.0
+        assert waypoint.y == 2.0
+        assert waypoint.z == 0.1
+        assert len(p.goal_path.messages) == 1
+        assert len(p.goal_path.messages[0].poses) == 1
 
     def test_plan_routes_around_obstacle(self) -> None:
         p = self._make_planner(cell_size=0.5)
@@ -340,6 +434,74 @@ class TestSimplePlannerPlan:
         obstacle_cell = cm.world_to_cell(0.3, 0.0)
         assert ground_cell not in cm.blocked_cells()
         assert obstacle_cell in cm.blocked_cells()
+
+    def test_classify_points_uses_intensity_before_z_fallback(self) -> None:
+        p = SimplePlanner.__new__(SimplePlanner)
+        p._lock = threading.Lock()
+        p._robot_z = 0.0
+        p._has_odom = True
+
+        class _C:
+            ground_offset_below_robot = 0.57
+
+        p.config = _C()  # type: ignore[assignment]
+        cm = Costmap(cell_size=0.3, obstacle_height=0.2, inflation_radius=0.0)
+
+        points = np.array(
+            [
+                # This z would be above the fallback obstacle threshold on M20,
+                # but TerrainAnalysis intensity says it is clear floor.
+                [0.0, 0.0, 0.10],
+                [0.3, 0.0, -0.45],
+            ],
+            dtype=np.float32,
+        )
+        intensities = np.array([0.0, 0.31], dtype=np.float32)
+        p._classify_points(points, cm, intensities)
+
+        clear_cell = cm.world_to_cell(0.0, 0.0)
+        obstacle_cell = cm.world_to_cell(0.3, 0.0)
+        assert clear_cell not in cm.blocked_cells()
+        assert obstacle_cell in cm.blocked_cells()
+
+    def test_classify_points_falls_back_to_z_when_intensity_missing(self) -> None:
+        p = SimplePlanner.__new__(SimplePlanner)
+        p._lock = threading.Lock()
+        p._robot_z = 0.0
+        p._has_odom = True
+
+        class _C:
+            ground_offset_below_robot = 0.57
+
+        p.config = _C()  # type: ignore[assignment]
+        cm = Costmap(cell_size=0.3, obstacle_height=0.2, inflation_radius=0.0)
+
+        points = np.array([[0.0, 0.0, 0.10]], dtype=np.float32)
+        p._classify_points(points, cm, None)
+
+        assert cm.world_to_cell(0.0, 0.0) in cm.blocked_cells()
+
+    def test_classify_points_skips_robot_exclusion_radius(self) -> None:
+        p = SimplePlanner.__new__(SimplePlanner)
+        p._lock = threading.Lock()
+        p._robot_x = 0.0
+        p._robot_y = 0.0
+        p._robot_z = 0.0
+        p._has_odom = True
+
+        class _C:
+            ground_offset_below_robot = 0.57
+            robot_exclusion_radius = 1.0
+
+        p.config = _C()  # type: ignore[assignment]
+        cm = Costmap(cell_size=0.3, obstacle_height=0.2, inflation_radius=0.0)
+        points = np.array([[0.6, 0.0, 0.10], [1.5, 0.0, 0.10]], dtype=np.float32)
+        intensities = np.array([0.5, 0.5], dtype=np.float32)
+
+        p._classify_points(points, cm, intensities)
+
+        assert cm.world_to_cell(0.6, 0.0) not in cm.blocked_cells()
+        assert cm.world_to_cell(1.5, 0.0) in cm.blocked_cells()
 
 
 class TestSimplePlannerGoalCallbacks:

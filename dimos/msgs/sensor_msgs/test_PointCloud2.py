@@ -14,11 +14,66 @@
 # limitations under the License.
 
 
+from dimos_lcm.sensor_msgs.PointCloud2 import PointCloud2 as LCMPointCloud2
+from dimos_lcm.sensor_msgs.PointField import PointField
+from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.utils.testing.replay import SensorReplay
+
+
+def _field(name: str, offset: int) -> PointField:
+    field = PointField()
+    field.name = name
+    field.offset = offset
+    field.datatype = PointField.FLOAT32
+    field.count = 1
+    return field
+
+
+def _lcm_xyz_intensity(points: np.ndarray, intensity: np.ndarray) -> LCMPointCloud2:
+    msg = LCMPointCloud2()
+    msg.header = Header()
+    msg.header.frame_id = "map"
+    msg.header.stamp.sec = 123
+    msg.header.stamp.nsec = 456_000_000
+    msg.height = 1
+    msg.width = len(points)
+    msg.fields = [_field("x", 0), _field("y", 4), _field("z", 8), _field("intensity", 12)]
+    msg.fields_length = len(msg.fields)
+    msg.is_bigendian = False
+    msg.point_step = 16
+    msg.row_step = msg.point_step * msg.width
+    msg.data = np.column_stack([points.astype(np.float32), intensity.astype(np.float32)]).tobytes()
+    msg.data_length = len(msg.data)
+    msg.is_dense = True
+    return msg
+
+
+def test_lcm_decode_preserves_intensity_field() -> None:
+    points = np.array([[0.0, 0.0, -0.45], [1.0, 0.0, 0.10]], dtype=np.float32)
+    intensity = np.array([0.0, 0.31], dtype=np.float32)
+
+    decoded = PointCloud2.lcm_decode(_lcm_xyz_intensity(points, intensity).lcm_encode())
+
+    np.testing.assert_allclose(decoded.points_f32(), points)
+    np.testing.assert_allclose(decoded.intensity_f32(), intensity)
+
+
+def test_from_numpy_intensity_roundtrips_through_lcm() -> None:
+    points = np.array([[0.0, 0.0, -0.45], [1.0, 0.0, 0.10]], dtype=np.float32)
+    intensity = np.array([0.0, 0.31], dtype=np.float32)
+
+    decoded = PointCloud2.lcm_decode(
+        PointCloud2.from_numpy(
+            points, frame_id="map", timestamp=123.456, intensity=intensity
+        ).lcm_encode()
+    )
+
+    np.testing.assert_allclose(decoded.points_f32(), points)
+    np.testing.assert_allclose(decoded.intensity_f32(), intensity)
 
 
 def test_lcm_encode_decode() -> None:

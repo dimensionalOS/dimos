@@ -4359,3 +4359,893 @@ This is specifically meant to prevent another `/goal#PoseStamped` vs
 `/goal#PointStamped` class of bug. The test now asserts that
 `M20RerunLCM.subscribe_all()` subscribes exactly to the table's typed channels,
 with no hidden second allowlist.
+
+## Finding #55 — Near-robot costmap blobs were stale TerrainAnalysis points, not live lidar crop leakage
+
+Date: 2026-04-29
+
+During click-to-goal testing, Rerun showed red `costmap_cloud` blobs next to the
+robot on clear floor. This initially looked like another body-crop failure, but
+live stream sampling showed a different source.
+
+Pipeline evidence before the fix:
+
+```
+raw_points:      20s sample, avg_high_z>-0.20 within 1.2m = 0.000
+registered_scan: 20s sample, avg_high_z>-0.20 within 1.2m = 0.000
+terrain_map:     20s sample, avg_near_obs_i>0.2 within 1.2m ~= 6/frame
+```
+
+The bad `terrain_map` points were stable in robot frame, for example:
+
+```
+x=0.478 y=-0.641 z=0.066 intensity=0.500
+x=0.382 y= 0.935 z=0.050 intensity=0.504
+```
+
+So current lidar and current FAST-LIO registered scans were clean, while
+TerrainAnalysis kept publishing old near-body obstacle-height points. The
+upstream TerrainAnalysis logic explains this: points are retained if either
+they are younger than `decayTime` or their current distance is below
+`noDecayDis`. Our SmartNav default had `noDecayDis=1.5`, which makes stale
+near-robot artifacts effectively immortal as the robot moves around them.
+
+Fix:
+
+- Add M20 env knob `M20_TERRAIN_NO_DECAY_DISTANCE`.
+- Default it to `0.0` for M20, so near-robot TerrainAnalysis points decay
+  normally instead of being protected forever.
+- Leave `M20_NAV_ROBOT_EXCLUSION_RADIUS` available for diagnostics, but turn
+  it off by default (`0.0`) because the root-cause fix makes the planner-side
+  exclusion unnecessary.
+
+Validation after restart with both `noDecayDis=0.0` and planner exclusion off:
+
+```
+raw_points:      avg_high_z>-0.20 within 1.2m = 0.000
+registered_scan: avg_high_z>-0.20 within 1.2m = 0.000
+terrain_map:     avg_obs_near within 1.2m = 0.000, max_near_intensity=0.059
+terrain_map_ext: avg_obs_near within 1.2m = 0.000, max_near_intensity=0.026
+```
+
+This means the close red blobs were TerrainAnalysis retention artifacts. The
+body crop still matters for FAST-LIO and map quality, but it was not the active
+source of these close costmap obstacles in the April 29 test.
+
+## Finding #56 — Click-to-goal reached two live office goals with clean local costmap
+
+Date: 2026-04-29
+
+After the `noDecayDis=0.0` TerrainAnalysis fix, we reran live click-to-goal
+with the M20 Rerun viewer connected through a foreground SSH tunnel and a
+foreground `viewer_lcm_ws_bridge.py`.
+
+Observed stack events:
+
+```
+[simple_planner] clicked_point received
+[simple_planner] Goal received: (1.23, -0.03, 0.01)
+[click_to_goal] Goal: (1.2, -0.0, 0.0)
+...
+[simple_planner] clicked_point received
+[simple_planner] Goal received: (1.69, -2.22, 0.01)
+[click_to_goal] Goal: (1.7, -2.2, 0.0)
+```
+
+First goal:
+
+```
+goal=(1.23, -0.03)
+final robot ~= (1.17, -0.01)
+error ~= 0.06-0.07 m
+```
+
+Second goal final snapshot:
+
+```
+odom=(1.551, -2.093, yaw=-2.689)
+waypoint=(1.692, -2.224)
+distance_to_waypoint=0.192 m
+terrain_map near obstacles within 1.2m: 0
+costmap_cloud blocked cells within 1.2m: 0
+```
+
+This validates end-to-end click transport, SimplePlanner routing,
+LocalPlanner/PathFollower command output, AOS `/NAV_CMD` actuation, FAST-LIO
+pose updates during navigation, and the local costmap cleanup from Finding #55.
+
+Remaining issue found during the test: `deploy.sh viewer` reported success but
+its detached SSH tunnel / bridge / viewer processes died immediately with empty
+logs. Running the tunnel, bridge, and `dimos-viewer` in foreground sessions kept
+the viewer stable. This should be fixed separately because it affects test
+ergonomics, not robot navigation.
+
+## Finding #57 — Front/rear lidar A/B switch landed; rear mode smoke-tested
+
+Date: 2026-04-30
+
+We confirmed the current validated FAST-LIO2 path was still effectively
+front-lidar-only: `drdds_recv` receives both `/LIDAR/POINTS` and
+`/LIDAR/POINTS2`, but `DrddsLidarBridge` consumed only
+`/drdds_bridge_lidar` and published that as `raw_points`.
+
+Change landed:
+
+- Add `M20_LIDAR_SOURCE=front|rear`, default `front`.
+- Pass `lidar_source` through `m20_smartnav_native.py` into
+  `DrddsLidarBridge`.
+- In `drdds_lidar_bridge`, select the SHM reader from:
+  - `front` -> `/drdds_bridge_lidar` (`/LIDAR/POINTS`)
+  - `rear` -> `/drdds_bridge_lidar2` (`/LIDAR/POINTS2`)
+- Reject invalid source strings in both Python and C++.
+- When FAST-LIO2 uses Airy IMU, pair rear lidar with rear Airy IMU:
+  `M20_LIDAR_SOURCE=rear` routes FAST-LIO2 to `airy_imu_rear`.
+
+Deploy-path fix found during the work:
+
+- The Mac and NOS both had no `nix` executable on PATH, so source sync alone
+  could update Python but leave `result/bin/drdds_lidar_bridge` pointing at an
+  old Nix-store binary.
+- `deploy.sh install-binaries` now builds `drdds_lidar_bridge`,
+  `airy_imu_bridge`, `drdds_recv`, and `nav_cmd_pub` with the NOS CMake path
+  and links the smartnav runtime binaries from `result/bin`.
+- `remote_sudo` now base64-encodes `SUDO_PASS` before sending it to the NOS,
+  so quote-like passwords work and sudo failures are not silently masked.
+
+Validation:
+
+```
+uv run pytest --confcutdir=dimos/robot/deeprobotics/m20/blueprints/nav \
+  dimos/robot/deeprobotics/m20/blueprints/nav/test_m20_smartnav_native.py -q
+# 19 passed
+
+uv run ruff check \
+  dimos/robot/deeprobotics/m20/blueprints/nav/test_m20_smartnav_native.py \
+  dimos/robot/deeprobotics/m20/blueprints/nav/m20_smartnav_native.py \
+  dimos/robot/deeprobotics/m20/drdds_bridge/module.py
+# All checks passed
+
+bash -n dimos/robot/deeprobotics/m20/deploy.sh
+git diff --check
+```
+
+NOS build/deploy:
+
+```
+make drdds_lidar_bridge airy_imu_bridge drdds_recv nav_cmd_pub -j2
+# all targets built
+
+result/bin/drdds_lidar_bridge -> cpp/build/drdds_lidar_bridge
+result/bin/airy_imu_bridge    -> cpp/build/airy_imu_bridge
+result/bin/nav_cmd_pub        -> cpp/build/nav_cmd_pub
+```
+
+Live sensor validation after restarting `rsdriver` and `yesense`:
+
+```
+services (4 active): OK
+vendor nav conflicts: OK (inactive/disabled)
+lidar_front:     OK (matched=2, +100 msgs/5s)
+lidar_rear:      OK (matched=1, +100 msgs/5s)
+imu_yesense:     OK (matched=1, +2000 msgs/5s)
+imu_airy_front:  OK (matched=3, +4000 msgs/5s)
+imu_airy_rear:   OK (matched=3, +4000 msgs/5s)
+send_separately: OK (true)
+ts_first_point:  OK (false x2)
+```
+
+Rear-mode smoke test:
+
+```
+M20_LIDAR_SOURCE=rear M20_NAV_ENABLED=0 deploy.sh restart --host m20-770-gogo
+
+drdds_lidar_bridge ... --lidar_source rear
+fastlio2_native ... --imu /airy_imu_rear#sensor_msgs.Imu
+```
+
+Then the robot was restored to the known front/default nav-enabled stack:
+
+```
+M20_LIDAR_SOURCE=front M20_NAV_ENABLED=1 deploy.sh restart --host m20-770-gogo
+
+drdds_lidar_bridge ... --lidar_source front
+fastlio2_native ... --imu /airy_imu_front#sensor_msgs.Imu
+nav_cmd_pub matched=1
+```
+
+This is an A/B switch, not dual-lidar fusion yet. The next experiment is to run
+front vs rear stationary, yaw-in-place, and short click-to-goal tests under the
+same conditions. Dual fusion should come after that, once rear frame,
+timestamp, and FAST-LIO behavior are verified rather than assuming simple cloud
+concatenation is safe.
+
+## Finding #58 - PGO/corrected-odom lag was real; remaining click-to-goal issue is costmap/arrival behavior
+
+Date: 2026-04-30
+
+After reverting to the known front-lidar stack for a demo/test run, the robot
+started reaching clicked goals but sometimes moved faster than earlier runs,
+overshot, and oscillated around the target. The user also observed that the
+viewer pose appeared to lag physical yaw by seconds, so we instrumented the
+navigation path to separate display lag, FAST-LIO lag, and planner/controller
+behavior.
+
+New diagnostic:
+
+- Added `monitor_nav_convergence.py` to sample odometry age, corrected-odometry
+  age, IMU age, current goal, command, path length, and distance-to-goal during
+  live click-to-goal runs.
+
+PGO-enabled low-speed run:
+
+```
+M20_LIDAR_SOURCE=front M20_NAV_ENABLED=1 \
+M20_NAV_MAX_SPEED=0.08 M20_NAV_AUTONOMY_SPEED=0.08 M20_NAV_MAX_YAW_RATE=20.0 \
+deploy.sh restart --host m20-770-gogo
+```
+
+Before the click, the robot-side monitor saw reasonable receive ages:
+
+```
+odom age:          median ~0.077s, max ~0.206s, ~18Hz
+corrected odom:   median ~0.151s, max ~0.291s, ~8.5Hz
+IMU age:          median ~0.004s, max ~0.149s, ~200Hz
+```
+
+After motion started, ages grew into multi-second backlog:
+
+```
+post-goal odom age:          >1s by ~74.5s, >3s by ~83.7s, >5s by ~91.4s
+post-goal corrected-odom age: >3s by ~82.3s, >8s by ~89.1s, >12s by ~93.0s
+```
+
+This means the delayed viewer pose was not purely a viewer artifact.
+`corrected_odometry`/PGO was stale enough to affect planner-visible pose. At the
+same time, the Airy IMU bridge itself stayed healthy in logs:
+
+```
+200.0 Hz over 5s ... pkt_vs_wall=-0.001s cal=OK
+```
+
+So the stronger diagnosis is not "FAST-LIO died"; it is that Python PGO /
+corrected-odometry and Python subscribers were falling behind under navigation
+load, while the raw IMU bridge remained healthy.
+
+Mitigation landed:
+
+- `smart_nav()` now accepts `use_pgo` and `use_pgo_corrected_odometry`.
+- `m20_smartnav_native.py` reads `M20_NAV_USE_PGO` and
+  `M20_NAV_USE_PGO_CORRECTED_ODOMETRY`.
+- `deploy.sh` forwards those env vars and prints them in the startup banner.
+- Defaults preserve old behavior, so this is an explicit M20 runtime bypass.
+
+Validation:
+
+```
+.venv/bin/python -m py_compile \
+  dimos/robot/deeprobotics/m20/scripts/monitor_nav_convergence.py \
+  dimos/navigation/smart_nav/main.py \
+  dimos/robot/deeprobotics/m20/blueprints/nav/m20_smartnav_native.py
+
+.venv/bin/python -c '... smart_nav(use_simple_planner=True, use_pgo=False) ...'
+# smart_nav PGO bypass smoke OK
+
+env M20_NAV_USE_PGO=0 M20_SLAM_BACKEND=fastlio2 M20_FASTLIO2_IMU=airy \
+  .venv/bin/python -c '... import m20_smartnav_native ...'
+# m20 PGO disabled smoke OK
+```
+
+The targeted pytest command did not run because repo `dimos/conftest.py`
+autouse setup tried to run `sudo route add -net 224.0.0.0/4 -interface lo0`
+without a TTY/password:
+
+```
+uv run pytest dimos/navigation/smart_nav/test_main.py \
+  dimos/robot/deeprobotics/m20/blueprints/nav/test_m20_smartnav_native.py -q
+```
+
+PGO-disabled low-speed live run:
+
+```
+M20_LIDAR_SOURCE=front M20_NAV_ENABLED=1 M20_NAV_USE_PGO=0 \
+M20_NAV_MAX_SPEED=0.08 M20_NAV_AUTONOMY_SPEED=0.08 M20_NAV_MAX_YAW_RATE=20.0 \
+deploy.sh restart --host m20-770-gogo
+```
+
+The user clicked a goal around `(1.28, -0.60)`. With PGO disabled, raw odom and
+IMU receive ages stayed much healthier during motion instead of running away
+into multi-second backlog. The robot drove toward the goal and reduced
+distance-to-goal from ~1.43m to a best observed ~0.26m.
+
+The remaining failure mode was different: the controller entered the arrival
+tolerance, emitted zero command / path length 1, then reacquired a path and
+drove back around the goal:
+
+```
+79.0s goal=0.31m min=0.30m path=31 cmd=(+0.05,-0.03,-0.35)
+80.0s goal=0.27m min=0.26m path=1  cmd=(+0.00,+0.00,+0.00)
+81.1s goal=0.36m min=0.26m path=36 cmd=(-0.04,-0.01,-0.35)
+84.0s goal=0.68m min=0.26m path=73 cmd=(-0.07,-0.02,-0.35)
+```
+
+Conclusion: PGO/corrected-odometry lag was a real issue and the explicit bypass
+helped. The residual oscillation is now more likely planner/costmap/arrival
+behavior than raw FAST-LIO odometry lag.
+
+Costmap evidence from the same phase:
+
+The user observed red `costmap_cloud` blobs near the robot while it was on clear
+floor. Unlike Finding #55, the new symptom appeared during/after motion and
+should be treated as a fresh source-attribution problem rather than assumed to
+be solved by `noDecayDis=0.0`.
+
+Planner logs during the PGO-disabled run corroborated that the local costmap was
+filling around the robot as it moved:
+
+```
+clicked_point received
+Goal received: (1.28, -0.60, 0.02)
+path=6 blocked_cells=138 robot=(-0.01,0.02) goal=(1.28,-0.60)
+stuck 5s (dist=1.33m, ref=1.43m) -> inflation 0.40 -> 0.20
+path=5 blocked_cells=199 robot=(0.09,-0.01)
+Replan error: dictionary changed size during iteration
+path=4 blocked_cells=321 robot=(0.39,-0.37)
+path=4 blocked_cells=369 robot=(0.60,-0.79)
+path=2 blocked_cells=466 robot=(1.07,-0.44)
+stuck 5s (dist=0.55m, ref=0.49m) -> inflation 0.20 -> 0.10
+path=3 blocked_cells=509 robot=(1.04,-0.11)
+path=4 blocked_cells=554 robot=(1.10,0.04)
+Replan error: dictionary changed size during iteration
+stuck 5s (dist=0.48m, ref=0.55m) -> inflation 0.10 -> 0.05
+path=3 blocked_cells=557 robot=(0.86,-0.47)
+```
+
+Startup also continued to warn about a threshold mismatch:
+
+```
+terrain_analysis obstacle_height_threshold (0.010) <
+local_planner obstacle_height_threshold (0.200)
+
+Terrain analysis will pass through points that local_planner treats as hard
+obstacles, causing phantom obstacle blocking.
+```
+
+Important interpretation:
+
+- `costmap_cloud` is inflated blocked-cell centers, not raw obstacle source
+  points. A small number of bad terrain/costmap source points can appear as a
+  large red blob cluster in the viewer.
+- `robot_exclusion_radius` remains default-off (`0.0`). Do not turn it into the
+  default fix until the source monitor proves the near-robot points are
+  self/body artifacts rather than terrain-threshold, map persistence, or
+  planner inflation artifacts.
+- `Replan error: dictionary changed size during iteration` is a real
+  `SimplePlanner` race: a costmap callback can mutate `self._costmap` while the
+  planner thread is iterating. That can skip replans exactly when the robot is
+  navigating through a changing local map.
+
+Next debugging step:
+
+Add a costmap source-attribution monitor that subscribes to at least
+`/odometry`, `/terrain_map`, `/terrain_map_ext`, `/costmap_cloud`,
+`/obstacle_cloud`, and ideally `/registered_scan`, then reports body-frame
+counts within 0.5m / 0.8m / 1.2m. The goal is to distinguish:
+
+1. raw or registered lidar points near the body,
+2. terrain-analysis obstacle-height points,
+3. persistent `terrain_map_ext` points,
+4. inflated planner cells in `costmap_cloud`.
+
+After that, fix the `SimplePlanner` costmap mutation race with a lock or
+snapshot. Only then decide whether a small near-body exclusion radius is a
+justified self-filter or just masking another upstream classification bug.
+
+## Finding #59: Costmap source attribution traced near-red blobs to stale `terrain_map_ext` obstacle voxels
+
+Date: 2026-04-29
+
+Goal for this pass:
+
+- Keep PGO disabled and front lidar only, so the click-to-goal test isolates
+  planner/costmap behavior from corrected-odom lag and rear-lidar variables.
+- Verify whether the new SimplePlanner arrival hold actually stops the robot
+  once odometry enters the goal tolerance.
+- Attribute red near-robot `costmap_cloud` blobs to raw scan, fresh
+  `terrain_map`, persistent `terrain_map_ext`, local planner
+  `obstacle_cloud`, or planner inflation.
+
+Code changes made before the clean test:
+
+- Fixed the `SimplePlanner` costmap mutation race from Finding #58 by adding a
+  `Costmap.copy()` snapshot path plus a `_costmap_lock`; terrain callbacks now
+  update/swap the live costmap under the lock, while planning, diagnostics, and
+  `costmap_cloud` use snapshots.
+- Added `SimplePlannerConfig.goal_reached_threshold` and an arrival hold: if
+  robot odometry is within the threshold, the planner clears the active goal,
+  clears the cached path, publishes a one-pose hold path/waypoint at the
+  current robot pose, and stops feeding the original target to the local
+  controller.
+- Added `monitor_costmap_sources.py`, a source-attribution LCM monitor for
+  `/registered_scan`, `/terrain_map`, `/terrain_map_ext`, `/costmap_cloud`,
+  `/obstacle_cloud`, and `/odometry`.
+
+Validation before live testing:
+
+```
+.venv/bin/python -m py_compile \
+  dimos/robot/deeprobotics/m20/scripts/monitor_costmap_sources.py \
+  dimos/navigation/smart_nav/modules/simple_planner/simple_planner.py \
+  dimos/robot/deeprobotics/m20/blueprints/nav/m20_smartnav_native.py
+
+uv run pytest --confcutdir=dimos/navigation/smart_nav/modules/simple_planner \
+  dimos/navigation/smart_nav/modules/simple_planner/test_simple_planner.py -q
+# 44 passed
+
+uv run pytest --confcutdir=dimos/robot/deeprobotics/m20/blueprints/nav \
+  dimos/robot/deeprobotics/m20/blueprints/nav/test_m20_smartnav_native.py -q
+# 21 passed
+
+uv run ruff check <touched planner/blueprint/monitor files>
+# All checks passed
+```
+
+Clean live run command:
+
+```
+M20_LIDAR_SOURCE=front M20_NAV_ENABLED=1 M20_NAV_USE_PGO=0 \
+M20_NAV_MAX_SPEED=0.08 M20_NAV_AUTONOMY_SPEED=0.08 M20_NAV_MAX_YAW_RATE=20.0 \
+deploy.sh restart --host m20-770-gogo
+```
+
+The user clicked a goal at approximately `(-1.27, -0.13)`. The robot did move
+toward it, but the route was not clean. Planner logs show repeated path
+reacquisition and stuck escalation while the robot looped around the target:
+
+```
+clicked_point received
+Goal received: (-1.27, -0.13, 0.02)
+path=6 cells  blocked_cells=159  robot=(0.01,-0.01)
+...
+stuck 5s (dist=0.52m, ref=0.70m) -> shrinking inflation 0.05m -> 0.03m
+...
+stuck 5s (dist=0.84m, ref=0.62m) -> shrinking inflation 0.00m -> 0.00m
+...
+path=2 cells  blocked_cells=761  robot=(-1.55,0.18)
+goal reached (dist=0.20m <= 0.30m); holding position.
+nav_cmd_pub #2151 x=0.000 y=0.000 yaw=0.000 matched=1
+```
+
+Interpretation:
+
+- The arrival hold patch worked. After the planner logged `goal reached`, all
+  subsequent sampled `nav_cmd_pub` commands were zero until we stopped the run.
+- The remaining bad behavior happened before arrival: the robot spent roughly
+  150 seconds looping near the goal, while blocked-cell count climbed and
+  stuck logic shrank inflation all the way to zero.
+
+Costmap source attribution from `/tmp/m20_costmap_sources_arrival_patch.csv`:
+
+```
+registered_scan: 314 sampled rows, obs_1p2m max=0, min point distance=0.408m
+terrain_map:     313 sampled rows, obs_1p2m nonzero in 1 row
+terrain_map_ext: 226 sampled rows, obs_1p2m nonzero in 55 rows
+costmap_cloud:   211 sampled rows, near_1p2m nonzero in 89 rows, min=0.498m
+```
+
+Representative rows:
+
+```
+terrain_map_ext  t=55.45s obs_1p2m=1 nearest_obs=0.66m
+terrain_map_ext  t=56.66s obs_1p2m=1 nearest_obs=0.79m
+terrain_map_ext  t=57.25s obs_1p2m=1 nearest_obs=0.86m
+costmap_cloud    t=55.65s near_1p2m=5 min_dist=0.50m
+costmap_cloud    t=56.29s near_1p2m=5 min_dist=0.54m
+```
+
+All of those near obstacle source points repeatedly referenced the same world
+coordinate neighborhood around `(-0.177, -0.377, 0.129)` with intensity
+`~0.57`. That is important: the near-red blobs were not raw registered scan
+returns right next to the robot. They were inflated blocked cells generated
+from one or a few persistent `terrain_map_ext` obstacle voxels as the robot
+moved near them.
+
+Root cause in `TerrainMapExt`:
+
+`TerrainMapExt` was a mark-only 3D voxel accumulator. It stored every
+TerrainAnalysis voxel by `(ix, iy, iz)` and expired it only by time/range. But
+`SimplePlanner` later collapses `terrain_map_ext` into a 2D XY costmap. That
+means a stale high-intensity voxel in one Z bucket can keep blocking the entire
+XY column even after fresh terrain observations in the same XY column show low
+height / clear floor.
+
+Patch made after the run:
+
+- Added `TerrainMapExtConfig.obstacle_height_threshold`.
+- On every incoming `terrain_map`, collect obstacle columns and clear columns
+  by XY voxel. If a column has fresh low-height observations and no fresh
+  obstacle-height observations, delete stale obstacle-height voxels in that XY
+  column before storing the new points.
+- Wired SmartNav to pass `local_planner_threshold` into `TerrainMapExt`, so
+  the persistent-map clearing threshold matches the rest of the navigation
+  stack.
+- Extended `monitor_costmap_sources.py` to include odometry columns in the CSV
+  for future goal-distance analysis.
+
+Validation after the patch:
+
+```
+uv run pytest --confcutdir=dimos/navigation/smart_nav/modules/terrain_map_ext \
+  dimos/navigation/smart_nav/modules/terrain_map_ext/test_terrain_map_ext.py -q
+# 5 passed
+
+uv run pytest --confcutdir=dimos/navigation/smart_nav \
+  dimos/navigation/smart_nav/test_main.py -q
+# 6 passed
+
+uv run pytest --confcutdir=dimos/navigation/smart_nav/modules/simple_planner \
+  dimos/navigation/smart_nav/modules/simple_planner/test_simple_planner.py -q
+# 44 passed
+
+uv run pytest --confcutdir=dimos/robot/deeprobotics/m20/blueprints/nav \
+  dimos/robot/deeprobotics/m20/blueprints/nav/test_m20_smartnav_native.py -q
+# 21 passed
+
+.venv/bin/python -m py_compile \
+  dimos/robot/deeprobotics/m20/scripts/monitor_costmap_sources.py \
+  dimos/navigation/smart_nav/modules/terrain_map_ext/terrain_map_ext.py \
+  dimos/navigation/smart_nav/main.py
+
+uv run ruff check <touched files>
+# All checks passed
+```
+
+Next test:
+
+Restart the same PGO-disabled, front-lidar-only stack and ask the user for one
+clean click. Success criteria:
+
+1. `terrain_map_ext obs_1p2m` should not keep recurring around stale world
+   coordinates after fresh clear terrain is observed.
+2. `costmap_cloud near_1p2m` should drop sharply compared with this run,
+   especially for the red blobs next to the robot on clear floor.
+3. `SimplePlanner` should either reach the goal and hold much sooner, or if it
+   still loops, the remaining evidence should point to local-planner/path
+   follower dynamics rather than stale persistent obstacle columns.
+
+## Finding #60: Path-follower native defaults caused arrival hunting; hallway costmap points must not be overfit away
+
+Date: 2026-04-29
+
+This pass continued the front-lidar / FAST-LIO2 / PGO-disabled click-to-goal
+bring-up:
+
+```
+M20_LIDAR_SOURCE=front M20_NAV_ENABLED=1 M20_NAV_USE_PGO=0 \
+M20_NAV_MAX_SPEED=0.08 M20_NAV_AUTONOMY_SPEED=0.08 \
+M20_NAV_MAX_YAW_RATE=20.0 M20_TERRAIN_VOXEL_SIZE=0.5 \
+deploy.sh restart --host m20-770-gogo
+```
+
+Important deployment lesson:
+
+- `deploy.sh restart` does not sync Python source to NOS. Source changes only
+  become live after `deploy.sh sync`. The terrain voxel/gain tests below were
+  run only after explicit sync and command-line verification.
+
+The live `path_follower` command line after sync included the new M20-specific
+flags:
+
+```
+--maxSpeed 0.08 --maxYawRate 20.0
+--yawRateGain 1.5 --stopYawRateGain 1.5
+--omniDirGoalThre 2.0 --omniDirDiffThre 3.2
+--dirDiffThre 0.4 --stopDisThre 0.4
+--maxAccel 0.3 --slowDwnDisThre 0.875
+```
+
+Root cause fixed before live testing:
+
+- The DimOS `PathFollowerConfig` wrapper did not expose several C++ native
+  knobs, so the M20 was unknowingly using upstream path-follower defaults:
+  `yawRateGain=7.5`, `stopYawRateGain=7.5`, `dirDiffThre=0.1`, and
+  `stopDisThre=0.2`.
+- Those defaults are much more aggressive than the checked-in M20 tuning file
+  (`yawRateGain=1.5`, `stopYawRateGain=1.5`, `dirDiffThre=0.4`) and explain
+  the saturated yaw sign flips seen during prior close-goal convergence.
+
+Patch:
+
+- Added wrapper fields and CLI remaps for:
+  `yawRate_gain -> yawRateGain`, `stop_yaw_rate_gain -> stopYawRateGain`,
+  `direction_difference_threshold -> dirDiffThre`,
+  `stop_distance_threshold -> stopDisThre`.
+- Wired M20 env/defaults:
+  `M20_NAV_YAW_RATE_GAIN=1.5`,
+  `M20_NAV_STOP_YAW_RATE_GAIN=1.5`,
+  `M20_NAV_DIR_DIFF_THRESHOLD=0.4`,
+  `M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD=0.875`.
+- Added deploy forwarding/banner output for those env vars.
+
+Live result after the gain patch:
+
+- Goal 1 `(1.51, -0.14)`: reached by odometry at `dist=0.29m <= 0.30m`;
+  `nav_cmd_pub` went to zero.
+- Goal 2 `(-1.61, 0.95)`: reached at `dist=0.29m`; there were early stuck
+  escalations, but arrival held cleanly.
+- Goal 3 `(1.62, 0.01)`: reached at `dist=0.28m`.
+- Goal 4 `(3.01, -1.57)`: reached at `dist=0.29m`. The user later clarified
+  that this goal was in a narrow hallway, so the nearby red `costmap_cloud`
+  cells during this run are likely legitimate wall/hallway proximity, not
+  clear-floor false positives.
+
+Costmap-source monitor evidence from `/tmp/m20_costmap_sources_gain_patch_final.csv`:
+
+```
+goal4 hallway window:
+  terrain_map     obs_1p2m rows=60, min nearest obs=0.76m
+  terrain_map_ext obs_1p2m rows=42, min nearest obs=0.65m
+  costmap_cloud   obs_1p2m rows=41, min nearest blocked cell=0.28m
+```
+
+Because that click was intentionally in a narrow hallway, these numbers should
+not be used as proof that the terrain classifier is hallucinating clear-floor
+obstacles. They are still useful as a stress case for how planner inflation
+behaves in tight spaces.
+
+Remaining real issue found by the fifth close goal:
+
+- Goal 5 `(3.11, -1.86)` was near the previous stop pose. The robot sat around
+  `dist=0.34-0.35m`, repeatedly shrinking inflation:
+
+```
+stuck 5s (dist=0.40m, ref=0.45m) -> shrinking inflation 0.40m -> 0.20m
+...
+stuck 5s (dist=0.35m, ref=0.34m) -> shrinking inflation 0.03m -> 0.01m
+```
+
+- This exposed a controller/planner dead band: `PathFollower stopDisThre=0.4m`
+  can stop translational motion while `SimplePlanner goal_reached_threshold`
+  still requires `<=0.30m` before clearing the goal.
+- Patch after the run: make `M20_NAV_STOP_DISTANCE_THRESHOLD` default to
+  `M20_NAV_GOAL_REACHED_THRESHOLD` (`0.30m`) unless explicitly overridden.
+  This preserves an override path but removes the default dead band.
+
+Validation:
+
+```
+uv run pytest --confcutdir=dimos/navigation/smart_nav/modules/path_follower \
+  dimos/navigation/smart_nav/modules/path_follower/test_path_follower.py -q
+# 3 passed, 2 skipped (native binary not built locally)
+
+uv run pytest --confcutdir=dimos/robot/deeprobotics/m20/blueprints/nav \
+  dimos/robot/deeprobotics/m20/blueprints/nav/test_m20_smartnav_native.py -q
+# 26 passed
+
+uv run pytest --confcutdir=dimos/navigation/smart_nav/modules/terrain_map_ext \
+  dimos/navigation/smart_nav/modules/terrain_map_ext/test_terrain_map_ext.py -q
+# 5 passed
+
+bash -n dimos/robot/deeprobotics/m20/deploy.sh
+uv run ruff check <touched path_follower / M20 blueprint files>
+# All checks passed
+```
+
+Next:
+
+1. Sync the new `stopDisThre == goal_reached_threshold` default to NOS and run
+   the same close-goal test near the current pose. Success is `goal reached`
+   without repeated inflation shrinking at `0.34-0.35m`.
+2. Keep the hallway/red-cell case separate from clear-floor phantom obstacle
+   debugging. For future red blobs, classify the physical context first:
+   narrow hallway/wall proximity vs. clear open floor.
+3. Continue terrain-source attribution only for open-floor false positives.
+   The intermittent rest spikes around body-frame `(x=0.5-0.8m, y=0.1-0.6m)`
+   still deserve investigation, but the hallway run should not be overfit away.
+
+### Finding #61 — Odom-backed click-to-goal pass after `stopDisThre=0.30`; nav-mode arming is still a test precondition
+
+After syncing the `M20_NAV_STOP_DISTANCE_THRESHOLD` default change to NOS, we
+restarted the front-lidar FAST-LIO2 stack with:
+
+```
+M20_LIDAR_SOURCE=front M20_NAV_ENABLED=1 M20_NAV_USE_PGO=0
+M20_NAV_MAX_SPEED=0.08 M20_NAV_AUTONOMY_SPEED=0.08
+M20_NAV_MAX_YAW_RATE=20.0 M20_TERRAIN_VOXEL_SIZE=0.5
+```
+
+The live startup command line confirmed the intended controller settings:
+
+```
+path_follower ... --maxSpeed 0.08 --autonomySpeed 0.08
+  --maxYawRate 20.0 --yawRateGain 1.5 --stopYawRateGain 1.5
+  --dirDiffThre 0.4 --stopDisThre 0.3 --slowDwnDisThre 0.875
+local_planner ... --goalReachedThreshold 0.3
+terrain_analysis ... --terrainVoxelSize 0.5 --noDecayDis 0.0
+```
+
+Viewer/click plumbing for this run used foreground processes because the
+background `deploy.sh viewer` path can open briefly and then die when the SSH
+port-forwards disappear silently:
+
+```
+ssh -vv -N -o ExitOnForwardFailure=yes -o ProxyJump=user@m20-770-gogo \
+  -L 9877:10.21.31.106:9877 \
+  -L 7779:10.21.31.106:7779 \
+  -L 3030:10.21.31.106:3030 user@10.21.31.106
+
+.venv/bin/python dimos/robot/deeprobotics/m20/scripts/viewer_lcm_ws_bridge.py \
+  --ws-url ws://127.0.0.1:3030/ws
+
+.venv/bin/dimos-viewer --connect rerun+http://127.0.0.1:9877/proxy \
+  --renderer metal
+```
+
+Click received:
+
+```
+[viewer_lcm_ws_bridge] forwarded click x=+2.246 y=+0.724 z=+0.006 frame='/world/floor'
+[simple_planner] Goal received: (2.25, 0.72, 0.01)
+[click_to_goal] Goal: (2.2, 0.7, 0.0)
+```
+
+Important arming observation:
+
+- The planner and `/NAV_CMD` publisher were already alive and matched, and
+  `nav_cmd_pub` was publishing nonzero commands (`x≈0.078`) by `03:08:21`.
+- Odom stayed near the start pose for about 15s while SimplePlanner repeatedly
+  logged `stuck 5s`, with distance still `2.43m`.
+- The user then switched the robot into navigation mode from the handheld
+  controller, after which the same active goal immediately started moving the
+  robot.
+
+This distinguishes two failure modes:
+
+1. If `clicked_point` is absent, the viewer/bridge path is broken.
+2. If `clicked_point` is present and `/NAV_CMD matched=1` with nonzero commands
+   but odom is stationary, the M20 is not armed for navigation command
+   execution. That is not a planner failure.
+
+Odom-backed result after the controller mode switch:
+
+```
+goal=(2.246, 0.724)
+49s  odom=(-0.06,+0.03,yaw=0.2deg)
+60s  odom=(+1.32,+0.06,yaw=6.6deg)
+65s  odom=(+2.17,+0.28,yaw=26.3deg)
+70s  odom=(+2.27,+0.67,yaw=88.6deg)
+75s  odom=(+2.22,+0.70,yaw=103.3deg)  dist≈0.035m
+240s odom=(+2.25,+0.70,yaw=103.5deg)  stable hold
+
+[simple_planner] goal reached (dist=0.28m <= 0.30m); holding position.
+nav_cmd_pub -> x=0.000 y=0.000 yaw=0.000 after arrival
+```
+
+This is the first clean odometry-verified end-to-end click-to-goal pass with
+the close-goal dead band removed.
+
+Costmap-source monitor for the same run:
+
+```
+csv=/tmp/m20_costmap_sources_foreground_viewer_click.csv
+registered_scan: received=1772 processed=433 hz=7.2
+terrain_map:     received=1772 processed=431 hz=7.2
+terrain_map_ext: received=474  processed=310 hz=2.0
+costmap_cloud:   received=66   processed=66  hz=0.0
+obstacle_cloud:  received=0    processed=0   hz=0.0
+```
+
+Costmap interpretation:
+
+- Before/early motion, `costmap_cloud` had a few near cells around
+  `0.49-0.53m` and `terrain_map_ext` had occasional near-ish points around
+  `0.77-0.82m`.
+- During successful approach, the nearest `costmap_cloud` obstacle moved away
+  from the body; by `61s+`, `costmap_cloud near1.2=0 obs1.2=0`.
+- At the final hold, `costmap_cloud` remained clear within `1.2m`
+  (`nearest≈1.47m`), while `terrain_map_ext` still contained non-obstacle
+  near-body points (`min_d≈0.16m`, `obs1.2=0`).
+
+So the red blob issue is still real as a separate open-floor investigation, but
+it did not block this successful click-to-goal run.
+
+Next:
+
+1. Add a reliable navigation-mode arming check or re-send path before live
+   click tests. Current evidence shows one-time startup intent is not enough if
+   the controller/user mode changes after stack launch.
+2. Fix `deploy.sh viewer` reliability separately: background tunnel/viewer
+   processes are exiting silently; foreground tunnel + foreground bridge/viewer
+   is stable.
+3. Run the next click after explicitly confirming the robot is in navigation
+   mode, then compare odom convergence and `costmap_cloud` near-body cells.
+
+### Finding #62 — Follow-up multi-goal click test: moderate goals pass; hallway goal zigzags but progresses
+
+After Finding #61, we kept the same front-lidar FAST-LIO2 stack running
+(`M20_NAV_USE_PGO=0`, raw FAST-LIO odometry) and tested additional clicks.
+
+Odom lag check:
+
+- The costmap monitor reported `/odometry` ages mostly `0.00-0.10s`, with
+  occasional samples around `0.14s`.
+- That does not support a multi-second FAST-LIO odom lag hypothesis.
+- The multi-second delay visible in the viewer is therefore more likely
+  Rerun/viewer/tunnel/render backlog than upstream odometry latency.
+- PGO was still disabled for this run, so the planner/controller were using
+  raw FAST-LIO odometry rather than delayed/corrected PGO pose.
+
+Moderate-goal results:
+
+```
+Goal (1.91, -0.54):
+  simple_planner goal reached (dist=0.29m <= 0.30m)
+  nav_cmd_pub -> zero after arrival
+
+Goal (0.36, 1.69):
+  simple_planner goal reached (dist=0.28m <= 0.30m)
+  nav_cmd_pub -> zero after arrival
+
+Goal (0.40, -0.67):
+  simple_planner goal reached (dist=0.25m <= 0.30m)
+  nav_cmd_pub -> zero after arrival
+```
+
+Those runs confirm that the `stopDisThre=0.30` change removes the previous
+0.34-0.35m close-goal dead band.
+
+Hallway stress goal:
+
+```
+clicked_point=(-0.595, 5.402)
+simple_planner Goal received: (-0.59, 5.40, 0.00)
+```
+
+The user later clarified this click was intentionally placed in a narrow
+hallway. The robot made substantial progress before we stopped the stack for
+safety after noticing the far click had occurred outside the active monitor
+window:
+
+```
+robot=(+0.53,-0.58) goal=(-0.59,+5.40) waypoint=(-0.15,+1.35)
+robot=(-0.05,+0.08) waypoint=(-0.45,+2.25)
+robot=(-0.49,+0.65) waypoint=(-0.45,+2.85)
+robot=(-0.04,+1.78) waypoint=(-0.45,+3.75)
+robot=(-0.56,+2.34) waypoint=(-0.45,+4.35)
+robot=(-0.17,+3.33) waypoint=(-0.45,+5.55)
+robot=(-0.68,+4.08) waypoint=(-0.59,+5.40)
+```
+
+The user observed that she did fairly well but zigzagged. The logs support
+that interpretation: `nav_cmd_pub` alternated yaw signs and lateral/forward
+components while SimplePlanner repeatedly replanned through a tight corridor.
+This looks like planner/path-follower behavior under narrow inflated free
+space, not odom lag.
+
+Costmap notes from the hallway/far-goal segment:
+
+- As she entered the tight space, `costmap_cloud` near-body blocked cells rose
+  sharply; examples include `near1.2=29, min_d=0.16m` and later
+  `near1.2=34, min_d=0.11m`.
+- `terrain_map` and `terrain_map_ext` also reported near obstacles in that
+  segment, so these should not be treated as clear-floor hallucinations.
+- This remains a useful hallway stress case for smoothing/local-planner
+  behavior, but it should be separated from the open-floor red-blob bug.
+
+Safety/cleanup:
+
+- Stopped the stack at `03:18:55`.
+- `nav_cmd_pub`, `path_follower`, `fastlio2_native`, `drdds_lidar_bridge`, and
+  `airy_imu_bridge` all exited cleanly; no matching nav/SLAM processes remained
+  on NOS afterward.
+- Local foreground viewer/tunnel/bridge helper processes were also cleaned up.
+
+Next:
+
+1. For hallway tests, use a dedicated monitor window and treat zigzag as a
+   local-planner/path-follower tuning problem: inflation decay, lookahead,
+   yaw-rate gain, and waypoint smoothing are the likely knobs.
+2. For open-floor false positives, run separate stationary/short-goal tests in
+   clear floor and only classify red blobs as bugs when `terrain_map` /
+   `terrain_map_ext` source evidence is inconsistent with the physical scene.
+3. Consider a click-distance guard or confirmation in the viewer bridge during
+   live bringup so accidental far clicks cannot create long autonomous runs.

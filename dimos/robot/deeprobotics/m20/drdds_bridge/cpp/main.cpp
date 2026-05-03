@@ -10,6 +10,7 @@
 // can run natively via nix (no Docker container needed).
 //
 // Usage: ./drdds_lidar_bridge --lidar <topic> --imu <topic>
+//        [--lidar_source front|rear]
 //        [--body_crop xmin,xmax,ymin,ymax,zmin,zmax]  (base_link AABB, in meters)
 //
 // Body crop: drops points whose (x,y,z) in base_link fall inside the AABB.
@@ -26,6 +27,7 @@
 #include <cstdio>
 #include <cstring>
 #include <semaphore.h>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -47,6 +49,8 @@ static std::atomic<bool> g_running{true};
 static lcm::LCM* g_lcm = nullptr;
 static std::string g_lidar_topic;
 static std::string g_imu_topic;
+static std::string g_lidar_source;
+static std::string g_lidar_shm_name;
 
 // Body-frame AABB for robot self-filtering. Drops points that fall inside
 // the box (x in [xmin,xmax], y in [ymin,ymax], z in [zmin,zmax]) before
@@ -94,11 +98,11 @@ static void set_rsairy_fields(sensor_msgs::PointCloud2& pc) {
 }
 
 // ---------------------------------------------------------------------------
-// Lidar: read SHM, remap rings, relativize time, publish LCM PointCloud2
+// Lidar: read selected SHM stream, relativize time, publish LCM PointCloud2
 // ---------------------------------------------------------------------------
 
 static void lidar_loop() {
-    drdds_bridge::ShmReader reader(drdds_bridge::SHM_LIDAR_NAME);
+    drdds_bridge::ShmReader reader(g_lidar_shm_name);
 
     // Open notification semaphore (created by drdds_recv)
     sem_t* notify_sem = sem_open(drdds_bridge::SHM_NOTIFY_NAME, O_CREAT, 0666, 0);
@@ -115,7 +119,8 @@ static void lidar_loop() {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 continue;
             }
-            fprintf(stderr, "[drdds_bridge] Lidar SHM connected\n");
+            fprintf(stderr, "[drdds_bridge] Lidar SHM connected (source=%s, shm=%s)\n",
+                    g_lidar_source.c_str(), g_lidar_shm_name.c_str());
         }
 
         auto* slot = reader.poll();
@@ -339,7 +344,19 @@ int main(int argc, char** argv) {
 
     if (g_lidar_topic.empty() && g_imu_topic.empty()) {
         fprintf(stderr, "Usage: %s --lidar <topic> --imu <topic>"
+                        " [--lidar_source front|rear]"
                         " [--body_crop xmin,xmax,ymin,ymax,zmin,zmax]\n", argv[0]);
+        return 1;
+    }
+
+    g_lidar_source = mod.arg("lidar_source", "front");
+    if (g_lidar_source == "front") {
+        g_lidar_shm_name = drdds_bridge::SHM_LIDAR_NAME;
+    } else if (g_lidar_source == "rear") {
+        g_lidar_shm_name = drdds_bridge::SHM_LIDAR2_NAME;
+    } else {
+        fprintf(stderr, "[drdds_bridge] --lidar_source must be 'front' or 'rear', got '%s'\n",
+                g_lidar_source.c_str());
         return 1;
     }
 
@@ -370,8 +387,9 @@ int main(int argc, char** argv) {
     }
     g_lcm = &lcm;
 
-    fprintf(stderr, "[drdds_bridge] Starting (lidar=%s, imu=%s)\n",
-            g_lidar_topic.c_str(), g_imu_topic.c_str());
+    fprintf(stderr, "[drdds_bridge] Starting (lidar=%s, imu=%s, lidar_source=%s, lidar_shm=%s)\n",
+            g_lidar_topic.c_str(), g_imu_topic.c_str(),
+            g_lidar_source.c_str(), g_lidar_shm_name.c_str());
 
     std::thread lidar_thread, imu_thread;
     if (!g_lidar_topic.empty()) lidar_thread = std::thread(lidar_loop);

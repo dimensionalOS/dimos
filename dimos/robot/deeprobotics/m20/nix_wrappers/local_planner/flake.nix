@@ -13,7 +13,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    mod.url = "github:dimensionalOS/dimos-module-local-planner/v0.1.1";
+    mod.url = "github:dimensionalOS/dimos-module-local-planner/v0.6.0";
   };
 
   outputs = { self, nixpkgs, mod, ... }:

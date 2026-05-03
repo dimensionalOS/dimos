@@ -58,15 +58,17 @@ class DrddsLidarBridgeConfig(NativeModuleConfig):
     # URDF collision geometries + leg-swing padding) the recommended value is
     # "-0.454,0.454,-0.354,0.354,-0.740,0.220". See FASTLIO2_LOG Finding #34.
     body_crop: str | None = None
+    # Which rsdriver lidar SHM stream to consume. In send_separately:true mode,
+    # "front" is /LIDAR/POINTS and "rear" is /LIDAR/POINTS2.
+    lidar_source: str = "front"
 
 
-class DrddsLidarBridge(
-    NativeModule[DrddsLidarBridgeConfig], perception.Lidar, perception.IMU
-):
+class DrddsLidarBridge(NativeModule[DrddsLidarBridgeConfig], perception.Lidar, perception.IMU):
     """M20 lidar + IMU bridge from drdds POSIX SHM to LCM.
 
     Reads from shared memory segments created by drdds_recv on the NOS host:
-    - /drdds_bridge_lidar: merged dual RSAIRY 192-ch point clouds
+    - /drdds_bridge_lidar: /LIDAR/POINTS (front in send_separately:true)
+    - /drdds_bridge_lidar2: /LIDAR/POINTS2 (rear in send_separately:true)
     - /drdds_bridge_imu: Yesense IMU at ~200Hz
 
     In the C++ hot path it re-stamps the PointCloud2 header with

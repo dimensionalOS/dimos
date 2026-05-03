@@ -31,10 +31,12 @@ and overrides `unpackPhase`/`fixupPhase` to use host coreutils
 
 | Module | Upstream | Purpose |
 |---|---|---|
-| `local_planner/` | `dimensionalOS/dimos-module-local-planner/v0.1.1` | Smart-nav local path planner |
-| `arise_slam/` | `dimensionalOS/dimos-module-arise-slam/v0.1.0` | Legacy SLAM backend (parallel to FAST-LIO2) |
+| `local_planner/` | `dimensionalOS/dimos-module-local-planner/v0.6.0` | Smart-nav local path planner |
+| `arise_slam/` | `dimensionalOS/dimos-module-arise-slam/v0.2.0` | Legacy SLAM backend (parallel to FAST-LIO2) |
 | `terrain_analysis/` | `dimensionalOS/dimos-module-terrain-analysis/v0.1.1` | Ground/obstacle classifier for the costmap |
-| `path_follower/` | `dimensionalOS/dimos-module-path-follower/v0.1.1` | Pure-pursuit controller |
+| `path_follower/` | `dimensionalOS/dimos-module-path-follower/v0.2.0` | Pure-pursuit controller |
+| `far_planner/` | `dimensionalOS/dimos-module-far-planner/v0.5.0` | Visibility-graph global planner |
+| `tare_planner/` | `dimensionalOS/dimos-module-tare-planner/v0.1.0` | Frontier exploration planner |
 
 ## Usage
 
@@ -46,7 +48,7 @@ cd dimos/robot/deeprobotics/m20/nix_wrappers/local_planner
 nix --extra-experimental-features 'nix-command flakes' \
   build . --option sandbox false --no-write-lock-file
 
-# Or use the helper script to build all four + relink + pin GC roots:
+# Or use the helper script to build all six + relink + pin GC roots:
 ./build_all.sh
 ```
 
@@ -61,7 +63,7 @@ root. After building, pin each result to survive future GC:
 
 ```bash
 mkdir -p /nix/var/nix/gcroots/custom
-for mod in local_planner arise_slam terrain_analysis path_follower; do
+for mod in local_planner arise_slam terrain_analysis path_follower far_planner tare_planner; do
   path=$(readlink -f dimos/robot/deeprobotics/m20/nix_wrappers/$mod/result)
   ln -sfn "$path" "/nix/var/nix/gcroots/custom/$mod-current"
 done

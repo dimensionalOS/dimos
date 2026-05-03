@@ -3,7 +3,7 @@
 # unpackPhase/fixupPhase workaround. Usage:
 #   ./wrap_build.sh <upstream-ref> <out-name>
 # Example:
-#   ./wrap_build.sh "github:dimensionalOS/dimos-module-local-planner/v0.1.1" local_planner
+#   ./wrap_build.sh "github:dimensionalOS/dimos-module-local-planner/v0.6.0" local_planner
 set -e
 UPSTREAM="$1"
 NAME="$2"
