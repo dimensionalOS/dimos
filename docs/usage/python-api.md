@@ -9,7 +9,7 @@ The `Dimos` class is the main entry point for using DimOS from Python. There are
 
 (Remember to source `.env`.)
 
-```python
+```python session=dimos_local
 from dimos import Dimos
 
 app = Dimos(n_workers=8)
@@ -47,7 +47,7 @@ KeyboardTeleop KeyboardTeleop
 module's stream. Useful for quick inspection without writing a
 subscriber:
 
-```python
+```python skip
 # Grab the image.
 img = app.peek_stream("color_image", 1.0)
 

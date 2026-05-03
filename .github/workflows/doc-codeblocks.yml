@@ -54,7 +54,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          uv sync --all-extras --no-extra dds --frozen
+          uv sync --all-extras --no-extra dds --no-extra unitree-dds --frozen
           uv pip install matplotlib httpx
 
       - name: Remove pydrake stubs

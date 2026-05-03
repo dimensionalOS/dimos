@@ -232,6 +232,10 @@ Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are
 - From inside the loop (another async `@rpc`, a `handle_*`, or a `process_observable` callback), it returns the coroutine so the caller can `await` it.
 
 ```python
+from dimos.core.core import rpc
+from dimos.core.module import Module
+
+
 class NameModule(Module):
     @rpc
     async def say_hello(self, name: str) -> str:
@@ -247,6 +251,12 @@ Async and sync `@rpc` methods are interchangeable for cross-module linking. Both
 When the consumer types a module ref using a Spec that declares `async def`, the proxy automatically exposes those methods as awaitables: `await self._name_module.say_hello(name)`.
 
 ```python
+from typing import Protocol
+
+from dimos.core.module import Module
+from dimos.spec.utils import Spec
+
+
 class NameSpec(Spec, Protocol):
     async def say_hello(self, name: str) -> str: ...
     async def set_my_name(self, new_name: str) -> None: ...
@@ -263,6 +273,11 @@ class StartModule(Module):
 `NameModule` is async. But if you need to call it from a sync module, you just need to create a `SyncNameSpec`:
 
 ```python
+from typing import Protocol
+
+from dimos.spec.utils import Spec
+
+
 class SyncNameSpec(Spec, Protocol):
     def say_hello(self, name: str) -> str: ...
     def set_my_name(self, new_name: str) -> None: ...
@@ -277,28 +292,35 @@ The reverse is also true: you can call a sync module from async code.
 When you need to start a long-running async task from `start()` (e.g., a timer loop), use `self.spawn(coro)` instead of `asyncio.run_coroutine_threadsafe(coro, self._loop)`. The helper wires up a done-callback that surfaces unhandled exceptions to the module logger. bare `run_coroutine_threadsafe` silently stores the exception on the returned Future, where it disappears unless the user remembers to read `.result()`.
 
 ```python
-@rpc
-def start(self) -> None:
-    super().start()
-    self._timer_future = self.spawn(self._timer_loop())
+import asyncio
 
-async def _timer_loop(self) -> None:
-    while True:
-        await asyncio.sleep(1.0)
-        ...
+from dimos.core.core import rpc
+from dimos.core.module import Module
 
-@rpc
-def stop(self) -> None:
-    if self._timer_future is not None:
-        self._timer_future.cancel()
-    super().stop()
+
+class TimerExample(Module):
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self._timer_future = self.spawn(self._timer_loop())
+
+    async def _timer_loop(self) -> None:
+        while True:
+            await asyncio.sleep(1.0)
+            ...
+
+    @rpc
+    def stop(self) -> None:
+        if self._timer_future is not None:
+            self._timer_future.cancel()
+        super().stop()
 ```
 
 ### `process_observable`: async subscriptions to arbitrary observables
 
 Sometimes you have rxpy observables which you need to run inside `self._loop`. You can do this with `self.process_observable(observable, async_handler)` .
 
-```python
+```python skip
 @rpc
 def start(self) -> None:
     super().start()
@@ -314,6 +336,21 @@ async def _on_fast_foo(self, v: int) -> None:
 When a module owns a resource that needs construction at startup *and* explicit cleanup at shutdown, define `async def main(self)` as an **async generator with exactly one `yield`**. Code before `yield` runs at `start()`, code after `yield` runs at `stop()`.
 
 ```python
+from collections.abc import AsyncIterator
+from typing import Any
+
+from dimos.core.module import Module
+
+
+def create(name: str) -> Any:
+    del name
+    class _Model:
+        def stop(self) -> None:
+            pass
+
+    return _Model()
+
+
 class PersonFollowSkillContainer(Module):
     async def main(self) -> AsyncIterator[None]:
         # setup

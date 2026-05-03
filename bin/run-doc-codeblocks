@@ -20,6 +20,10 @@ Usage: bin/run-doc-codeblocks [options] [path ...]
   --all-langs   Run all block languages (requires local native tools; see codeblocks.md).
   --no-cache    Re-execute all blocks instead of reusing md-babel cache.
 
+On macOS this script does nothing and exits 0 (md-babel is intended for Linux/CI).
+To run md-babel on a Mac anyway, set RUN_DOC_CODEBLOCKS_FORCE=1 or invoke
+"uv run md-babel-py" yourself (see docs/agents/docs/codeblocks.md).
+
 With no paths: runs on ./docs (recursive) and ./README.md when present.
 
 Examples:
@@ -61,6 +65,14 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Doc code blocks are executed in Linux CI; this script is a no-op on macOS so
+# local development does not require GPU/CUDA stacks. Override with
+# RUN_DOC_CODEBLOCKS_FORCE=1 to run md-babel here, or call md-babel-py directly.
+if [[ "$(uname -s)" == "Darwin" && -z "${RUN_DOC_CODEBLOCKS_FORCE:-}" ]]; then
+  echo "run-doc-codeblocks: skipping on macOS (set RUN_DOC_CODEBLOCKS_FORCE=1 to run)." >&2
+  exit 0
+fi
 
 resolve_md_babel() {
   # Prefer project env so md-babel-py version matches pyproject (needs >= 1.1.4 for --execution-timeout).
