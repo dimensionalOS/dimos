@@ -229,6 +229,7 @@ class ResourceSpyApp(App[None]):
             self._last_msg_time = time.monotonic()
         if self._log_file:
             self._log_file.write(json.dumps({"ts": time.time(), **msg}) + "\n")
+            self._log_file.flush()
 
     def _refresh(self) -> None:
         with self._lock:
