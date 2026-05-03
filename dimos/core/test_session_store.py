@@ -104,7 +104,7 @@ class TestRestoreSession:
     def test_returns_empty_on_corrupt_session(self, tmp_path) -> None:
         bp_dir = tmp_path / "sessions" / "demo-agent"
         bp_dir.mkdir(parents=True)
-        (bp_dir / "20260503-120000-demo-agent.json").write_text("not json")
+        (bp_dir / "20260503-120000.json").write_text("not json")
         history, parent = restore_session(
             blueprint="demo-agent",
             restore_session_id="20260503-120000-demo-agent",
