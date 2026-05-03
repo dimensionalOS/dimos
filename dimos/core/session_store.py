@@ -109,7 +109,8 @@ def restore_session(
     try:
         history, metadata = load_session(session_id)
         return history, str(metadata["run_id"])
-    except FileNotFoundError:
+    except Exception:
+        logger.warning("Failed to restore session, starting fresh.", session_id=session_id)
         return [], None
 
 
