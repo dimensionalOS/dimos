@@ -24,25 +24,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
-import os
 import re
 from pathlib import Path
 
 from langchain_core.messages import messages_from_dict, messages_to_dict
 from langchain_core.messages.base import BaseMessage
 
+from dimos.constants import STATE_DIR
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-
-def _get_sessions_dir() -> Path:
-    xdg = os.environ.get("XDG_STATE_HOME")
-    base = Path(xdg) / "dimos" if xdg else Path.home() / ".local" / "state" / "dimos"
-    return base / "sessions"
-
-
-SESSIONS_DIR = _get_sessions_dir()
 
 # run_id format: "20260502-143022-<blueprint>"
 _RUN_ID_RE = re.compile(r"^(\d{8}-\d{6})-(.*)")
@@ -58,7 +49,7 @@ def _parse_run_id(run_id: str) -> tuple[str, str]:
 
 def _session_path(run_id: str) -> Path:
     timestamp, blueprint = _parse_run_id(run_id)
-    return SESSIONS_DIR / blueprint / f"{timestamp}.json"
+    return STATE_DIR / "sessions" / blueprint / f"{timestamp}.json"
 
 
 def save_session(
@@ -124,7 +115,7 @@ def restore_session(
 
 def find_latest_session(blueprint: str) -> str | None:
     """Return the run_id of the most recent saved session for a blueprint, or None."""
-    bp_dir = SESSIONS_DIR / blueprint
+    bp_dir = STATE_DIR / "sessions" / blueprint
     if not bp_dir.exists():
         return None
     files = sorted(bp_dir.glob("*.json"))
@@ -134,6 +125,7 @@ def find_latest_session(blueprint: str) -> str | None:
         data = json.loads(files[-1].read_text())
         return str(data["run_id"])
     except Exception:
+        logger.warning("Failed to read latest session file.", path=str(files[-1]))
         return None
 
 
