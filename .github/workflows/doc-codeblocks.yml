@@ -48,6 +48,16 @@ jobs:
           git config --global --add safe.directory '*'
           git clean -ffdx -e .venv
 
+      # Docs decode JPEG from SQLite via PyTurboJPEG; it needs the system lib (see docs/installation/ubuntu.md).
+      # macOS dev machines often have libjpeg-turbo from Homebrew; the ros-dev container does not by default.
+      # Examples also use get_data() which resolves Git LFS blobs under tests/data.
+      - name: Install TurboJPEG and pull Git LFS for doc examples
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y git-lfs libturbojpeg
+          git lfs install
+          git lfs pull
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -61,5 +71,6 @@ jobs:
         run: |
           find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
 
+      # Match ci.yml: wrap commands in /entrypoint.sh so ROS setup.bash runs (same shell env as pytest).
       - name: Execute documentation code blocks
-        run: ./bin/run-doc-codeblocks --ci --no-cache
+        run: /entrypoint.sh bash -c "./bin/run-doc-codeblocks --ci --no-cache"
