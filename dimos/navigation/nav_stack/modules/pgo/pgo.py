@@ -19,12 +19,13 @@ import threading
 import time
 from typing import Any
 
-import gtsam  # type: ignore[import-untyped]
+import gtsam
 import numpy as np
 from reactivex.disposable import Disposable
 from scipy.spatial import KDTree
 from scipy.spatial.transform import Rotation
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -37,15 +38,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-# Below this many ICP point-to-point correspondences, the alignment is
-# under-constrained — bail out with infinite cost rather than reporting a
-# spurious match.
-_MIN_ICP_INLIERS = 10
-
-# Loop-closure detection needs enough keyframes to have a meaningful
-# distance-vs-time history. Below this, skip the search entirely.
-_MIN_KEYFRAMES_FOR_LOOP_SEARCH = 10
 
 
 class PGOConfig(ModuleConfig):
@@ -62,6 +54,9 @@ class PGOConfig(ModuleConfig):
     loop_time_thresh: float = 60.0
     loop_score_thresh: float = 0.3
     loop_submap_half_range: int = 5
+    min_icp_inliers: int = 10
+    min_keyframes_for_loop_search: int = 10
+    loop_closure_extra_iterations: int = 4
     submap_resolution: float = 0.1
     min_loop_detect_duration: float = 5.0
 
@@ -93,6 +88,7 @@ def _icp(
     max_iter: int = 50,
     max_dist: float = 10.0,
     tol: float = 1e-6,
+    min_inliers: int = 10,
 ) -> tuple[np.ndarray, float]:
     if len(source) == 0 or len(target) == 0:
         return np.eye(4), float("inf")
@@ -105,7 +101,7 @@ def _icp(
         dists, idxs = tree.query(src)
         mask = np.asarray(dists < max_dist)
         idxs = np.asarray(idxs)
-        if int(mask.sum()) < _MIN_ICP_INLIERS:
+        if int(mask.sum()) < min_inliers:
             return T, float("inf")
 
         p = src[mask]
@@ -233,7 +229,7 @@ class _SimplePGO:
         return _voxel_downsample(cloud, self._cfg.submap_resolution)
 
     def search_for_loops(self) -> None:
-        if len(self._key_poses) < _MIN_KEYFRAMES_FOR_LOOP_SEARCH:
+        if len(self._key_poses) < self._cfg.min_keyframes_for_loop_search:
             return
 
         # Rate limit
@@ -272,6 +268,7 @@ class _SimplePGO:
             target,
             max_iter=self._cfg.max_icp_iterations,
             max_dist=self._cfg.max_icp_correspondence_dist,
+            min_inliers=self._cfg.min_icp_inliers,
         )
         if fitness > self._cfg.loop_score_thresh:
             return
@@ -321,7 +318,7 @@ class _SimplePGO:
         self._isam2.update(self._graph, self._values)
         self._isam2.update()
         if has_loop:
-            for _ in range(4):
+            for _ in range(self.config.loop_closure_extra_iterations):
                 self._isam2.update()
         self._graph = gtsam.NonlinearFactorGraph()
         self._values = gtsam.Values()
@@ -482,7 +479,7 @@ class PGO(Module):
     def stop(self) -> None:
         self._running = False
         if self._thread:
-            self._thread.join(timeout=3.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
     def _on_odom(self, msg: Odometry) -> None:
@@ -523,11 +520,7 @@ class PGO(Module):
         self.corrected_odometry.publish(build_corrected_odometry(r, t, ts))
 
     def _publish_map_odom_tf(self, r_offset: np.ndarray, t_offset: np.ndarray, ts: float) -> None:
-        """Publish the ``map → odom`` correction transform to the TF tree.
-
-        Composed with FastLio2's ``odom → body``, this gives any
-        consumer ``map → body`` via BFS chain lookup.
-        """
+        """Publish the map → odom correction transform."""
         self.tf.publish(build_map_odom_tf(r_offset, t_offset, ts))
 
     def _publish_loop(self) -> None:
