@@ -20,6 +20,7 @@ import base64
 from collections.abc import Callable
 import functools
 import json
+import math
 import os
 from pathlib import Path
 import pickle
@@ -101,8 +102,6 @@ class MujocoConnection:
 
         Uses pinhole camera model: f = height / (2 * tan(fovy / 2))
         """
-        import math
-
         fovy = math.radians(VIDEO_CAMERA_FOV)
         f = VIDEO_HEIGHT / (2 * math.tan(fovy / 2))
         cx = VIDEO_WIDTH / 2.0
