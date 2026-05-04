@@ -58,6 +58,7 @@ def _rerun_blueprint() -> Any:
             rrb.Spatial3DView(
                 origin="world",
                 name="3D",
+                # start in a top-down view and full-screened
                 eye_controls=rrb.EyeControls3D(
                     position=(0.0, 0.0, 20.0),
                     look_target=(0.0, 0.0, 0.0),
