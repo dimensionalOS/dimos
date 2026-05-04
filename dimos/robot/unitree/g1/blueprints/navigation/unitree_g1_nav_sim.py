@@ -114,6 +114,17 @@ unitree_g1_nav_sim = (
                         "world/color_image": UnityBridgeModule.rerun_static_pinhole,
                         "world/tf/robot": g1_static_robot,
                     },
+                    # Rate-limit heavy point cloud topics to prevent
+                    # rerun viewer backpressure crashes.
+                    "max_hz": {
+                        "world/registered_scan": 2.0,
+                        "world/terrain_map": 2.0,
+                        "world/terrain_map_ext": 1.0,
+                        "world/global_map_pgo": 1.0,
+                        "world/costmap_cloud": 2.0,
+                        "world/obstacle_cloud": 2.0,
+                        "world/free_paths": 2.0,
+                    },
                 }
             ),
         ),
