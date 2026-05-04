@@ -29,7 +29,7 @@ _needs_ament = pytest.mark.skipif(
 )
 
 try:
-    import xacro as _xacro_mod  # noqa: F401
+    import xacro as _xacro_module  # noqa: F401
 
     _has_xacro = True
 except ModuleNotFoundError:

@@ -18,8 +18,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import field
+import signal
 import socket
 import subprocess
+import sys
 import time
 from typing import (
     Any,
@@ -44,6 +46,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
+from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import (
@@ -501,11 +504,6 @@ def run_bridge(
     rerun_web: bool = RERUN_ENABLE_WEB,
 ) -> None:
     """Start a RerunBridgeModule with default LCM config and block until interrupted."""
-    import signal
-    import sys
-
-    from dimos.protocol.service.lcmservice import autoconf
-
     autoconf(check_only=True)
 
     bridge = RerunBridgeModule(

@@ -41,7 +41,6 @@ from dimos.msgs.std_msgs.Int8 import Int8
 class LocalPlannerConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/local_planner"
-    # build_command: str | None = "nix build --no-write-lock-file"
     build_command: str | None = (
         "nix build github:dimensionalOS/dimos-module-local-planner/v0.6.0 --no-write-lock-file"
     )
