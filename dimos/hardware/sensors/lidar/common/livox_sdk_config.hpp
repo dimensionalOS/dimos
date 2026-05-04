@@ -59,7 +59,7 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
         perror("memfd_create");
         return {-1, ""};
     }
-#else
+#elif defined(__APPLE__) && defined(__MACH__)
     // mkstemp replaces the 6 X's in place — e.g. livox_sdk_config.aB3xY9.
     // Honor $TMPDIR when set (sandboxed macOS apps and CI runners point
     // it at a per-process scratch dir); fall back to /tmp.
@@ -76,6 +76,8 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
     }
     // Drop the directory entry — the inode stays alive via the fd.
     unlink(tmpl);
+#else
+#error "livox_sdk_config: unsupported platform (need Linux memfd_create or Apple mkstemp)"
 #endif
 
     FILE* fp = fdopen(fd, "w");
