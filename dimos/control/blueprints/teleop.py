@@ -20,8 +20,12 @@ Usage:
     dimos run coordinator-combined-xarm6       # Servo + velocity (XArm6)
     dimos run coordinator-cartesian-ik-mock    # Cartesian IK (mock)
     dimos run coordinator-cartesian-ik-piper   # Cartesian IK (Piper)
+    dimos run coordinator-teleop-xarm6         # TeleopIK (XArm6)
+    dimos run coordinator-teleop-sim-xarm6     # TeleopIK (XArm6 in MuJoCo sim)
     dimos run coordinator-teleop-xarm7         # TeleopIK (XArm7)
+    dimos run coordinator-teleop-sim-xarm7     # TeleopIK (XArm7 in MuJoCo sim)
     dimos run coordinator-teleop-piper         # TeleopIK (Piper)
+    dimos run coordinator-teleop-sim-piper     # TeleopIK (Piper in MuJoCo sim)
     dimos run coordinator-teleop-dual          # TeleopIK dual arm
 """
 
@@ -29,17 +33,21 @@ from __future__ import annotations
 
 from dimos.control.components import make_gripper_joints
 from dimos.control.coordinator import ControlCoordinator
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.catalog.piper import PIPER_FK_MODEL, piper as _catalog_piper
+from dimos.robot.catalog.piper import PIPER_FK_MODEL, PIPER_SIM_PATH, piper as _catalog_piper
 from dimos.robot.catalog.ufactory import (
     XARM6_FK_MODEL,
+    XARM6_SIM_PATH,
     XARM7_FK_MODEL,
+    XARM7_SIM_PATH,
     xarm6 as _catalog_xarm6,
     xarm7 as _catalog_xarm7,
 )
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.teleop.quest.quest_types import Buttons
 
 # -- Shared configs -----------------------------------------------------------
@@ -50,9 +58,16 @@ _xarm6_cfg = _catalog_xarm6(
 _xarm7_cfg = _catalog_xarm7(
     name="arm", adapter_type="xarm", address=global_config.xarm7_ip, add_gripper=True
 )
+_xarm7_sim_cfg = _catalog_xarm7(
+    name="arm", adapter_type="sim_mujoco", address=str(XARM7_SIM_PATH), add_gripper=True
+)
+_xarm6_sim_cfg = _catalog_xarm6(
+    name="arm", adapter_type="sim_mujoco", address=str(XARM6_SIM_PATH), add_gripper=True
+)
 _piper_cfg = _catalog_piper(
     name="arm", adapter_type="piper", address=global_config.can_port or "can0"
 )
+_piper_sim_cfg = _catalog_piper(name="arm", adapter_type="sim_mujoco", address=str(PIPER_SIM_PATH))
 
 # -- Servo / velocity ---------------------------------------------------------
 
@@ -167,6 +182,111 @@ coordinator_teleop_xarm7 = ControlCoordinator.blueprint(
     }
 )
 
+# XArm7 TeleopIK in MuJoCo sim
+coordinator_teleop_sim_xarm7 = autoconnect(
+    ControlCoordinator.blueprint(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_xarm7_sim_cfg.to_hardware_component()],
+        tasks=[
+            _xarm7_sim_cfg.to_task_config(
+                task_type="teleop_ik",
+                task_name="teleop_xarm",
+                model_path=XARM7_FK_MODEL,
+                ee_joint_id=_xarm7_sim_cfg.dof,
+                hand="right",
+                gripper_joint=make_gripper_joints("arm")[0],
+                gripper_open_pos=0.85,
+                gripper_closed_pos=0.0,
+            ),
+        ],
+    ),
+    MujocoSimModule.blueprint(
+        address=str(XARM7_SIM_PATH),
+        headless=False,
+        dof=7,
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+    }
+)
+
+# XArm6 TeleopIK in MuJoCo sim
+coordinator_teleop_sim_xarm6 = autoconnect(
+    ControlCoordinator.blueprint(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_xarm6_sim_cfg.to_hardware_component()],
+        tasks=[
+            _xarm6_sim_cfg.to_task_config(
+                task_type="teleop_ik",
+                task_name="teleop_xarm",
+                model_path=XARM6_FK_MODEL,
+                ee_joint_id=_xarm6_sim_cfg.dof,
+                hand="right",
+                gripper_joint=make_gripper_joints("arm")[0],
+                gripper_open_pos=0.85,
+                gripper_closed_pos=0.0,
+            ),
+        ],
+    ),
+    MujocoSimModule.blueprint(
+        address=str(XARM6_SIM_PATH),
+        headless=False,
+        dof=6,
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+    }
+)
+
+# Piper TeleopIK in MuJoCo sim
+coordinator_teleop_sim_piper = autoconnect(
+    ControlCoordinator.blueprint(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_piper_sim_cfg.to_hardware_component()],
+        tasks=[
+            _piper_sim_cfg.to_task_config(
+                task_type="teleop_ik",
+                task_name="teleop_piper",
+                model_path=PIPER_FK_MODEL,
+                ee_joint_id=_piper_sim_cfg.dof,
+                hand="left",
+                gripper_joint=make_gripper_joints("arm")[0],
+                gripper_open_pos=0.0,
+                gripper_closed_pos=0.035,
+            ),
+        ],
+    ),
+    MujocoSimModule.blueprint(
+        address=str(PIPER_SIM_PATH),
+        headless=False,
+        dof=6,
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+    }
+)
+
 # Single Piper with TeleopIK
 coordinator_teleop_piper = ControlCoordinator.blueprint(
     hardware=[_piper_cfg.to_hardware_component()],
@@ -255,6 +375,9 @@ __all__ = [
     "coordinator_servo_xarm6",
     "coordinator_teleop_dual",
     "coordinator_teleop_piper",
+    "coordinator_teleop_sim_piper",
+    "coordinator_teleop_sim_xarm6",
+    "coordinator_teleop_sim_xarm7",
     "coordinator_teleop_xarm6",
     "coordinator_teleop_xarm7",
     "coordinator_velocity_xarm6",
