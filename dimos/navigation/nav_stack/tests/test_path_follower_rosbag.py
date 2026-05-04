@@ -33,9 +33,6 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
@@ -43,6 +40,9 @@ from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     lcm_handle_loop,
     load_rosbag_window,
 )
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 pytestmark = [pytest.mark.slow]
 

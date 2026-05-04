@@ -33,14 +33,14 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 DATA_DIR = Path(__file__).parent / "data"
 ROSBAG_FIXTURE_60S = DATA_DIR / "og_nav_60s.npz"
