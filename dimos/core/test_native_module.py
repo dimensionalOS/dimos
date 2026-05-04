@@ -184,7 +184,7 @@ def test_autoconnect(args_file):
         for _ in range(50):
             if Path(args_file).exists():
                 break
-            time.sleep(0.1)
+            time.sleep(_WATCHDOG_POLL_INTERVAL)
     finally:
         coordinator.stop()
 

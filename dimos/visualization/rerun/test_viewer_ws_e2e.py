@@ -81,7 +81,7 @@ class TestViewerProtocolE2E:
             ],
         )
 
-        done.wait(timeout=3.0)
+        done.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         unsub()
 
         assert len(received) == 1
@@ -126,7 +126,7 @@ class TestViewerProtocolE2E:
             delay=0.2,
         )
 
-        done.wait(timeout=3.0)
+        done.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         unsub()
 
         assert len(received) == 1, f"Expected exactly 1 click, got {len(received)}"
@@ -180,7 +180,7 @@ class TestViewerBinaryConnectMode:
         yield proc  # type: ignore[misc]
         proc.terminate()
         try:
-            proc.wait(timeout=3)
+            proc.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         except subprocess.TimeoutExpired:
             proc.kill()
 

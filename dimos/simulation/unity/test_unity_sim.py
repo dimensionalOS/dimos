@@ -34,6 +34,7 @@ import time
 import numpy as np
 import pytest
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.unity.module import (
@@ -240,7 +241,7 @@ class TestTCPBridge:
         finally:
             module._running.clear()
             sock.close()
-            module._unity_thread.join(timeout=3)
+            module._unity_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             module.stop()
 
         assert len(subscribers["registered_scan"]._messages) >= 1

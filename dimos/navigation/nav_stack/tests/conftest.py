@@ -196,7 +196,8 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
                     break
                 if elapsed >= timeout_sec:
                     break
-                time.sleep(0.1)
+                _POLL_INTERVAL = 0.1  # seconds
+                time.sleep(_POLL_INTERVAL)
 
             assert reached, (
                 f"{name}: robot did not reach ({gx}, {gy}) within {timeout_sec}s. "
