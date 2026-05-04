@@ -238,11 +238,13 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         parameter = data.get("parameter", {})
 
         try:
-            if api_id == 7101:  # SET_FSM_ID
+            API_SET_FSM_ID = 7101
+            API_SET_VELOCITY = 7105
+            if api_id == API_SET_FSM_ID:
                 fsm_id = parameter.get("data", 0)
                 code = self.loco_client.SetFsmId(fsm_id)
                 return {"code": code}
-            elif api_id == 7105:  # SET_VELOCITY
+            elif api_id == API_SET_VELOCITY:
                 velocity = parameter.get("velocity", [0, 0, 0])
                 dur = parameter.get("duration", 1.0)
                 code = self.loco_client.SetVelocity(velocity[0], velocity[1], velocity[2], dur)
@@ -311,17 +313,13 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
     def move_velocity(
         self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0
     ) -> str:
-        """Move the robot using direct velocity commands. Determine duration required based on user distance instructions.
-
-        Example call:
-            args = { "x": 0.5, "y": 0.0, "yaw": 0.0, "duration": 2.0 }
-            move_velocity(**args)
+        """Move the robot at the given velocity for ``duration`` seconds.
 
         Args:
             x: Forward velocity (m/s)
-            y: Left/right velocity (m/s)
+            y: Lateral velocity (m/s)
             yaw: Rotational velocity (rad/s)
-            duration: How long to move (seconds)
+            duration: Seconds to move
         """
         twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
         self.move(twist, duration=duration)

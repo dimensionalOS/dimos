@@ -77,14 +77,13 @@ def main(stdscr: Any) -> None:
 
     draw_ui(stdscr, "✓ Connected - Ready for commands")
 
-    # Movement parameters
-    linear_speed = 0.3  # m/s for forward/backward/strafe
-    angular_speed = 0.5  # rad/s for rotation
-    move_duration = 0.2  # Duration of each movement pulse
+    linear_speed = 0.3  # m/s
+    angular_speed = 0.5  # rad/s
+    move_duration = 0.2  # s
 
     try:
         last_cmd_time = 0.0
-        cmd_cooldown = 0.15  # Minimum time between commands
+        cmd_cooldown = 0.15  # s
 
         while True:
             key = stdscr.getch()

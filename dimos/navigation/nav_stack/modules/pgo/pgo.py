@@ -318,7 +318,7 @@ class _SimplePGO:
         self._isam2.update(self._graph, self._values)
         self._isam2.update()
         if has_loop:
-            for _ in range(self.config.loop_closure_extra_iterations):
+            for _ in range(self._cfg.loop_closure_extra_iterations):
                 self._isam2.update()
         self._graph = gtsam.NonlinearFactorGraph()
         self._values = gtsam.Values()

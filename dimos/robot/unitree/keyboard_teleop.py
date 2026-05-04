@@ -41,7 +41,7 @@ _WINDOW_WIDTH = 500
 _WINDOW_HEIGHT = 400
 _FONT_SIZE = 24
 _CONTROL_RATE_HZ = 50
-_BG_COLOR = (30, 30, 30)
+_BACKGROUND_COLOR = (30, 30, 30)
 _HELP_TEXT_COLOR = (150, 150, 150)
 _INDICATOR_RADIUS = 15
 
@@ -179,7 +179,7 @@ class KeyboardTeleop(Module):
         if self._screen is None or self._font is None or self._keys_held is None:
             raise RuntimeError("Not initialized correctly")
 
-        self._screen.fill(_BG_COLOR)
+        self._screen.fill(_BACKGROUND_COLOR)
 
         y_pos = 20
 

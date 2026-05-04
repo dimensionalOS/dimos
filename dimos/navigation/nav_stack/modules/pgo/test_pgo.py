@@ -25,7 +25,7 @@ pytest.importorskip("gtsam")
 from scipy.spatial.transform import Rotation
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.modules.pgo.pgo import PGO, PGOConfig, _icp, _SimplePGO
+from dimos.navigation.nav_stack.modules.pgo.pgo import PGOConfig, _icp, _SimplePGO
 
 
 def make_rotation(yaw_deg: float) -> np.ndarray:
@@ -436,22 +436,3 @@ class TestEdgeCases:
         # Loop search with single keyframe should not crash
         pgo.search_for_loops()
         assert len(pgo._history_pairs) == 0
-
-
-class TestPGOWrapper:
-    def test_pgo_module_has_correct_ports(self):
-        # Check class annotations for port definitions
-        annotations = PGO.__annotations__
-        assert "registered_scan" in annotations
-        assert "odometry" in annotations
-        assert "corrected_odometry" in annotations
-        assert "global_map" in annotations
-
-    def test_pgo_config_defaults(self):
-        # NativeModuleConfig is Pydantic; check model_fields for defaults
-        fields = PGOConfig.model_fields
-        assert fields["key_pose_delta_trans"].default == 0.5
-        assert fields["key_pose_delta_deg"].default == 10.0
-        assert fields["loop_search_radius"].default == 15.0
-        assert fields["loop_score_thresh"].default == 0.3
-        assert fields["global_map_voxel_size"].default == 0.15

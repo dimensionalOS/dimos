@@ -29,6 +29,7 @@ import time
 
 import lcm as lcmlib
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -100,14 +101,7 @@ CROSS_WALL_PATH_FOLLOWER = {
 
 
 def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None = None) -> None:
-    """Build the coordinator, drive the cross-wall waypoint sequence, tear down.
-
-    Args:
-        blueprint: A fully configured Blueprint (Unity sim + nav stack + remappings).
-        label: Short tag used in log lines so far/simple runs are distinguishable.
-        max_z: If set, asserts the robot's z never exceeds this (catches the
-            robot climbing geometry / passing through the ceiling).
-    """
+    """Build the coordinator, drive the cross-wall waypoint sequence, tear down."""
     _clear_precomputed_paths()
 
     coordinator = ModuleCoordinator.build(blueprint)
@@ -219,7 +213,7 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
 
     finally:
         lcm_stop.set()
-        lcm_thread.join(timeout=3)
+        lcm_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         assert not lcm_thread.is_alive(), "LCM loop thread didn't exit cleanly"
         lcm.unsubscribe(subscription)
         coordinator.stop()

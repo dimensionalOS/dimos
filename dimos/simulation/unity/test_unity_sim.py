@@ -33,7 +33,6 @@ import time
 
 import numpy as np
 import pytest
-import rerun as rr
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -77,11 +76,6 @@ class _MockTransport:
 
 
 def _wire(module) -> dict[str, _MockTransport]:
-    """Attach mock transports to every port so the module can publish/subscribe.
-
-    Out ports use the public ``transport`` setter; In ports (cmd_vel) lack a
-    public setter, so we assign ``_transport`` directly.
-    """
     subscribers = {}
     for name in (
         "odometry",
@@ -404,16 +398,6 @@ class TestSensorOffset:
         # Angular rates (from Odometry.twist) should include roll/pitch deltas; at zero tilt they're 0.
         assert last.twist.angular.x == pytest.approx(0.0, abs=1e-6)
         assert last.twist.angular.y == pytest.approx(0.0, abs=1e-6)
-
-
-class TestRerunConfig:
-    def test_static_pinhole_returns_list(self):
-        result = UnityBridgeModule.rerun_static_pinhole(rr)
-        assert isinstance(result, list)
-        assert len(result) == 2
-
-    def test_suppress_returns_none(self):
-        assert UnityBridgeModule.rerun_suppress_camera_info(None) is None
 
 
 @pytest.mark.slow

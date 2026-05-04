@@ -28,18 +28,12 @@ from dimos.msgs.std_msgs.Int8 import Int8
 
 
 class PathFollowerConfig(NativeModuleConfig):
-    """Config for the path follower native module.
-
-    Fields with ``None`` default are omitted from the CLI.
-    """
-
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/path_follower"
     build_command: str | None = (
         "nix build github:dimensionalOS/dimos-module-path-follower/v0.2.0 --no-write-lock-file"
     )
 
-    # C++ binary uses camelCase CLI args.
     cli_name_override: dict[str, str] = {
         "look_ahead_distance": "lookAheadDis",
         "max_speed": "maxSpeed",
@@ -55,38 +49,22 @@ class PathFollowerConfig(NativeModuleConfig):
         "two_way_drive": "twoWayDrive",
     }
 
-    # Look-ahead distance for the pure pursuit controller (m).
-    look_ahead_distance: float = 0.5
-    # Maximum velocity the follower will command (m/s).
-    max_speed: float = 0.75
-    # Maximum yaw rate for turning (deg/s).  The C++ binary converts to
-    # rad/s internally (``maxYawRate * PI / 180``).
-    max_yaw_rate: float = 40.0
+    look_ahead_distance: float = 0.5  # m
+    max_speed: float = 0.75  # m/s
+    max_yaw_rate: float = 40.0  # deg/s (C++ converts to rad/s internally)
 
-    # Distance from goal at which the follower considers it reached (m).
-    goal_tolerance: float = 0.3
+    goal_tolerance: float = 0.3  # m
 
-    # Vehicle kinematics model: "omniDir" for mecanum, "standard" for ackermann.
-    vehicle_config: str = "omniDir"
-    # Omni-directional mode: distance threshold (m) below which the robot strafes
-    # instead of turning.  Set to 0 to disable omni mode (robot turns to face heading).
-    omni_dir_goal_threshold: float = 0.5
-    # Omni-directional heading tolerance (rad).
-    omni_dir_diff_threshold: float = 1.5
+    vehicle_config: str = "omniDir"  # "omniDir" or "standard"
+    omni_dir_goal_threshold: float = 0.5  # m, set to 0 to disable omni mode
+    omni_dir_diff_threshold: float = 1.5  # rad
 
-    # Enable fully autonomous path-following mode.
     autonomy_mode: bool | None = None
-    # Velocity cap during autonomous navigation (m/s).
-    autonomy_speed: float = 0.75
+    autonomy_speed: float = 0.75  # m/s
 
-    # Allow driving in reverse (two-way drive).  Set to False to force the
-    # robot to turn and face the goal before driving forward.
     two_way_drive: bool = False
-
-    # Maximum linear acceleration (m/s²).
-    max_acceleration: float = 1.5
-    # Distance threshold below which the follower begins slowing down (m).
-    slow_down_distance_threshold: float = 0.875
+    max_acceleration: float = 1.5  # m/s^2
+    slow_down_distance_threshold: float = 0.875  # m
 
 
 class PathFollower(NativeModule):

@@ -195,28 +195,17 @@ class UnityBridgeConfig(ModuleConfig):
     # Set to 0.0 for no drift.
     odom_drift_rate: float = 0.0
 
-    # Enable RANSAC-style terrain plane fit to produce vehicle roll/pitch.
-    # Disabled by default — robot stays level when off.
     terrain_inclination_enabled: bool = False
-    # Radius around robot to collect terrain points for the plane fit (m).
-    terrain_fit_radius: float = 1.5
-    # Voxel downsample size for terrain points before fit (m).
-    terrain_fit_voxel_size: float = 0.05
-    # Max iterations for outlier rejection.
+    terrain_fit_radius: float = 1.5  # m
+    terrain_fit_voxel_size: float = 0.05  # m
     terrain_fit_max_iterations: int = 5
-    # Reject points farther than this from the current fit (m).
-    terrain_fit_outlier_threshold: float = 0.2
-    # Require at least this many inliers for a valid fit.
+    terrain_fit_outlier_threshold: float = 0.2  # m
     terrain_fit_min_inliers: int = 500
-    # Clamp terrain tilt to this absolute value (degrees).
-    terrain_max_incline_deg: float = 30.0
-    # Band (m) around current terrain_z to treat as ground for plane fit.
-    terrain_ground_band: float = 0.3
-    # Exponential smoothing rate for roll/pitch updates.
+    terrain_max_incline_deg: float = 30.0  # deg
+    terrain_ground_band: float = 0.3  # m
     inclination_smooth_rate: float = 0.2
 
-    # Offset of the sensor origin from the vehicle center (m).
-    sensor_offset_x: float = 0.0
+    sensor_offset_x: float = 0.0  # m
     sensor_offset_y: float = 0.0
 
 

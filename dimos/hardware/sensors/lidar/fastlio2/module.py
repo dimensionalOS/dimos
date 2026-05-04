@@ -69,25 +69,6 @@ _CONFIG_DIR = Path(__file__).parent / "config"
 _logger = setup_logger()
 
 
-def _odom_to_body_tf(msg: Odometry) -> Transform:
-    return Transform(
-        frame_id="odom",
-        child_frame_id="base_link",
-        translation=Vector3(
-            msg.pose.position.x,
-            msg.pose.position.y,
-            msg.pose.position.z,
-        ),
-        rotation=Quaternion(
-            msg.pose.orientation.x,
-            msg.pose.orientation.y,
-            msg.pose.orientation.z,
-            msg.pose.orientation.w,
-        ),
-        ts=msg.ts or time.time(),
-    )
-
-
 def _find_candidate_ips(lidar_ip: str, local_ips: list[str]) -> list[str]:
     """Suggest local IPs on the same subnet as the lidar."""
     candidates: list[str] = []
@@ -198,7 +179,24 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
         )
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
-        self.tf.publish(_odom_to_body_tf(msg))
+        self.tf.publish(
+            Transform(
+                frame_id="odom",
+                child_frame_id="base_link",
+                translation=Vector3(
+                    msg.pose.position.x,
+                    msg.pose.position.y,
+                    msg.pose.position.z,
+                ),
+                rotation=Quaternion(
+                    msg.pose.orientation.x,
+                    msg.pose.orientation.y,
+                    msg.pose.orientation.z,
+                    msg.pose.orientation.w,
+                ),
+                ts=msg.ts or time.time(),
+            )
+        )
 
     @rpc
     def stop(self) -> None:

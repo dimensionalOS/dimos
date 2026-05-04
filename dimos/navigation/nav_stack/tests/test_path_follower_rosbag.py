@@ -25,6 +25,7 @@ import lcm as lcmlib
 import numpy as np
 import pytest
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     LcmCollector,
@@ -38,6 +39,9 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 pytestmark = [pytest.mark.slow]
+
+_PROCESS_STARTUP_SEC = 1.0
+_POST_FEED_DRAIN_SEC = 2.0
 
 PATH_FOLLOWER_BIN = (
     Path(__file__).parent.parent / "modules" / "path_follower" / "result" / "bin" / "path_follower"
@@ -146,7 +150,7 @@ class TestPathFollowerRosbag:
         try:
             runner.start()
             assert runner.is_running, "PathFollower binary failed to start"
-            time.sleep(1.0)
+            time.sleep(_PROCESS_STARTUP_SEC)
 
             # Feed path + odom from the rosbag at original timing.
             # PathFollower subscribes to /path (LocalPlanner output) and /odometry.
@@ -160,12 +164,12 @@ class TestPathFollowerRosbag:
                 odom_subsample=1,
             )
 
-            time.sleep(2.0)
+            time.sleep(_POST_FEED_DRAIN_SEC)
 
         finally:
             runner.stop()
             stop_event.set()
-            handle_thread.join(timeout=2.0)
+            handle_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             cmd_collector.stop(lcm)
 
         our_cmds = [(msg.linear.x, msg.linear.y, msg.angular.z) for msg in cmd_collector.messages]

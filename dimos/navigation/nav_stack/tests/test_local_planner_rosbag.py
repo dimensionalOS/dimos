@@ -24,6 +24,7 @@ import lcm as lcmlib
 import numpy as np
 import pytest
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     LcmCollector,
@@ -37,6 +38,9 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 pytestmark = [pytest.mark.slow]
+
+_PROCESS_STARTUP_SEC = 2.0
+_POST_FEED_DRAIN_SEC = 2.0
 
 LOCAL_PLANNER_BIN = (
     Path(__file__).parent.parent / "modules" / "local_planner" / "result" / "bin" / "local_planner"
@@ -158,13 +162,7 @@ def _local_planner_args() -> list[str]:
 def _compute_path_deviation(
     our_paths: list[NavPath], ref_endpoints: np.ndarray
 ) -> dict[str, float]:
-    """Compute deviation score between our paths and reference.
-
-    ref_endpoints: (N, 5) — t, n_poses, last_x, last_y, arc_length
-
-    Returns: mean_endpoint_error_m, max_endpoint_error_m, mean_length_ratio,
-             count_ratio, multi_pose_ratio.
-    """
+    """Loss function: nearest-endpoint error + arc-length ratio vs reference."""
     if len(our_paths) == 0 or len(ref_endpoints) == 0:
         return {
             "mean_endpoint_error_m": float("inf"),
@@ -254,7 +252,7 @@ class TestLocalPlannerRosbag:
         try:
             runner.start()
             assert runner.is_running, "LocalPlanner binary failed to start"
-            time.sleep(2.0)
+            time.sleep(_PROCESS_STARTUP_SEC)
 
             # Feed at original timing
             feed_at_original_timing(
@@ -268,12 +266,12 @@ class TestLocalPlannerRosbag:
                 },
             )
 
-            time.sleep(2.0)
+            time.sleep(_POST_FEED_DRAIN_SEC)
 
         finally:
             runner.stop()
             stop_event.set()
-            handle_thread.join(timeout=2.0)
+            handle_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             path_collector.stop(lcm)
 
         # Compute deviation score

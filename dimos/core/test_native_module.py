@@ -77,7 +77,7 @@ class StubConsumer(Module):
     imu: In[Imu]
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
 
@@ -85,11 +85,16 @@ class StubProducer(Module):
     cmd_vel: Out[Twist]
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
 
-def test_process_crash_triggers_stop():
+_WATCHDOG_POLL_INTERVAL = 0.1  # seconds between watchdog checks
+_WATCHDOG_MAX_POLLS = 30  # max iterations waiting for watchdog
+_THREAD_DRAIN_DELAY = 0.5  # seconds for background threads to finish after stop
+
+
+def test_process_crash_triggers_stop() -> None:
     """When the native process dies unexpectedly, the watchdog calls stop()."""
     module = StubNativeModule(die_after=0.2)
     transport = LCMTransport("/pc", PointCloud2)
@@ -101,8 +106,8 @@ def test_process_crash_triggers_stop():
         pid = module._process.pid
 
         # Wait for the process to die and the watchdog to call stop()
-        for _ in range(30):
-            time.sleep(0.1)
+        for _ in range(_WATCHDOG_MAX_POLLS):
+            time.sleep(_WATCHDOG_POLL_INTERVAL)
             if module._process is None:
                 break
 
@@ -110,7 +115,7 @@ def test_process_crash_triggers_stop():
 
         # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
         # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
-        time.sleep(0.5)
+        time.sleep(_THREAD_DRAIN_DELAY)
     finally:
         module.stop()
         try:

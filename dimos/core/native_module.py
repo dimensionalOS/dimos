@@ -116,6 +116,7 @@ class NativeModuleConfig(ModuleConfig):
         }
 
     def to_cli_args(self) -> list[str]:
+        """Convert subclass config fields to CLI args (--name value)."""
         ignore_fields = {f for f in NativeModuleConfig.model_fields}
         args: list[str] = []
         for f in self.__class__.model_fields:

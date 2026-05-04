@@ -107,20 +107,13 @@ def make_odometry_msg(
 
 
 def make_pointcloud_msg(points: np.ndarray, ts: float, frame_id: str = "map") -> PointCloud2:
-    """Build a PointCloud2 message from an Nx3 numpy array."""
     return PointCloud2.from_numpy(points.astype(np.float32), frame_id=frame_id, timestamp=ts)
 
 
 def make_waypoint_msg(
     x: float, y: float, z: float, ts: float, frame_id: str = "map"
 ) -> PointStamped:
-    """Build a PointStamped message."""
     return PointStamped(ts=ts, frame_id=frame_id, x=x, y=y, z=z)
-
-
-def publish_lcm(lcm: lcmlib.LCM, topic: str, msg: Any) -> None:
-    """Encode and publish a DimOS message over LCM."""
-    lcm.publish(topic, msg.lcm_encode())
 
 
 @dataclass
@@ -265,4 +258,4 @@ def feed_at_original_timing(
         elapsed = time.monotonic() - real_start
         if target_dt > elapsed:
             time.sleep(target_dt - elapsed)
-        publish_lcm(lcm, topic, msg)
+        lcm.publish(topic, msg.lcm_encode())

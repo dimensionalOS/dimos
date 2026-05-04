@@ -13,28 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 nav sim — SimplePlanner + PGO loop closure + local obstacle avoidance.
-
-Full navigation stack with:
-- SimplePlanner grid-based A* global route planner
-- PGO pose graph optimization with loop closure detection (GTSAM iSAM2)
-- Local planner for reactive obstacle avoidance
-- Path follower for velocity control
-
-Odometry routing (per CMU ICRA 2022 Fig. 11):
-- Local path modules (LocalPlanner, PathFollower, SensorScanGen):
-  use raw odometry — they follow paths in the local odometry frame.
-- Global/terrain modules (SimplePlanner, MovementManager, TerrainAnalysis):
-  use PGO corrected_odometry — they need globally consistent positions
-  for terrain classification, costmap building, and goal coordinates.
-
-Data flow:
-    Click → MovementManager (corrected_odom) → goal → SimplePlanner (corrected_odom)
-    → way_point → LocalPlanner (raw odom) → path → PathFollower (raw odom)
-    → nav_cmd_vel → MovementManager → cmd_vel → UnityBridgeModule
-
-    registered_scan + odometry → PGO → corrected_odometry + global_map
-"""
+"""G1 nav sim blueprint: SimplePlanner + PGO + local obstacle avoidance."""
 
 from __future__ import annotations
 
@@ -44,7 +23,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
-from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
+from dimos.robot.unitree.g1.config import G1, G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
 from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.visualization.vis_module import vis_module
@@ -70,33 +49,29 @@ def _rerun_blueprint() -> Any:
     )
 
 
-vehicle_height = 1.24
+_SIM_NAV_SPEED = 2.0  # m/s, higher than real robot defaults
+
 unitree_g1_nav_sim = (
     autoconnect(
         UnityBridgeModule.blueprint(
             unity_binary="",
             unity_scene="home_building_1",
-            vehicle_height=vehicle_height,
+            vehicle_height=G1.height_clearance,
         ),
         create_nav_stack(
             use_simple_planner=False,
-            vehicle_height=vehicle_height,
+            vehicle_height=G1.height_clearance,
+            max_speed=_SIM_NAV_SPEED,
             terrain_analysis={
                 "ground_height_threshold": 0.05,
                 "min_relative_z": -1.5,
             },
             local_planner={
                 "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
-                # Sim uses higher speeds than the real robot defaults
-                "max_speed": 2.0,
-                "autonomy_speed": 2.0,
                 "min_relative_z": -1.5,
                 "freeze_ang": 180.0,
             },
             path_follower={
-                # Sim uses higher speeds than the real robot defaults
-                "max_speed": 2.0,
-                "autonomy_speed": 2.0,
                 "max_acceleration": 4.0,
                 "max_yaw_rate": 80.0,
             },

@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -74,7 +75,7 @@ class TerrainMapExt(Module):
     def stop(self) -> None:
         self._running = False
         if self._thread:
-            self._thread.join(timeout=3.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
     def _on_odom(self, msg: Odometry) -> None:

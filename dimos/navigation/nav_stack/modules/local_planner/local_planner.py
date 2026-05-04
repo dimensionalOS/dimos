@@ -93,125 +93,70 @@ class LocalPlannerConfig(NativeModuleConfig):
         "max_momentum_penalty": "maxMomentumPenalty",
     }
 
-    # Path data directory. When empty, the C++ binary falls back to its
-    # bundled `share/local_planner/paths` library (shipped in v0.4.0+).
     paths_dir: str = ""
 
-    # Vehicle length for collision checking (m).
-    vehicle_length: float = 0.5
-    # Vehicle width for collision checking (m).
-    vehicle_width: float = 0.5
-    # Sensor X offset from vehicle center (m).
-    sensor_offset_x: float | None = None
-    # Sensor Y offset from vehicle center (m).
-    sensor_offset_y: float | None = None
+    vehicle_length: float = 0.5  # m
+    vehicle_width: float = 0.5  # m
+    sensor_offset_x: float | None = None  # m
+    sensor_offset_y: float | None = None  # m
 
-    # Maximum velocity the planner will command (m/s).
-    max_speed: float = 0.75
-    # Velocity cap during autonomous navigation (m/s).
-    autonomy_speed: float = 0.75
+    max_speed: float = 0.75  # m/s
+    autonomy_speed: float = 0.75  # m/s
 
-    # Enable fully autonomous waypoint-following mode.
     autonomy_mode: bool | None = None
-    # Use terrain analysis cost map for obstacle avoidance.
     use_terrain_analysis: bool = True
-    # Check obstacles along paths.
     check_obstacle: bool = True
-    # Check rotation obstacles near the vehicle.
     check_rot_obstacle: bool | None = None
-    # Use terrain cost for path penalty scoring.
     use_cost: bool | None = None
 
-    # Points higher than this above ground are classified as obstacles (m).
-    obstacle_height_threshold: float = 0.1
-    # Ground height threshold for cost computation (m).
-    ground_height_threshold: float = 0.1
-    # Upper cost height threshold (m).
-    cost_height_thre1: float | None = None
-    # Lower cost height threshold (m).
-    cost_height_thre2: float | None = None
-    # Height-band filter: maximum z relative to robot (m).
-    max_relative_z: float = 0.3
-    # Height-band filter: minimum z relative to robot (m).
-    min_relative_z: float = -0.4
-    # Maximum range for obstacle consideration (m).
-    adjacent_range: float = 3.5
-    # Voxel size for laser cloud downsampling (m).
-    laser_voxel_size: float | None = None
-    # Voxel size for terrain cloud downsampling (m).
-    terrain_voxel_size: float | None = None
+    obstacle_height_threshold: float = 0.1  # m
+    ground_height_threshold: float = 0.1  # m
+    cost_height_thre1: float | None = None  # m
+    cost_height_thre2: float | None = None  # m
+    max_relative_z: float = 0.3  # m
+    min_relative_z: float = -0.4  # m
+    adjacent_range: float = 3.5  # m
+    laser_voxel_size: float | None = None  # m
+    terrain_voxel_size: float | None = None  # m
 
-    # Direction weight for path scoring.
     dir_weight: float = 0.02
-    # Direction threshold for candidate filtering (deg).
-    dir_thre: float = 90.0
-    # Use direction relative to vehicle instead of goal.
+    dir_thre: float = 90.0  # deg
     dir_to_vehicle: bool | None = None
-    # Path scale factor (shrinks candidate paths).
     path_scale: float = 0.875
-    # Minimum path scale before giving up.
     min_path_scale: float = 0.675
-    # Path scale decrement step.
     path_scale_step: float = 0.1
-    # Scale path range by joystick speed.
     path_scale_by_speed: bool | None = None
-    # Minimum path range before giving up (m).
-    min_path_range: float = 0.8
-    # Path range decrement step (m).
-    path_range_step: float = 0.6
-    # Scale path range by joystick speed.
+    min_path_range: float = 0.8  # m
+    path_range_step: float = 0.6  # m
     path_range_by_speed: bool | None = None
-    # Crop paths by goal distance.
     path_crop_by_goal: bool | None = None
-    # Min blocked points to mark a path as obstructed.
     point_per_path_thre: int = 2
-    # Threshold for slow-down by path count.
     slow_path_num_thre: int = 5
-    # Threshold for slow-down by group count.
     slow_group_num_thre: int = 1
-    # Omni-directional goal distance threshold (m).
-    omni_dir_goal_thre: float = 0.5
+    omni_dir_goal_thre: float = 0.5  # m
 
-    # Minimum clearance around goal position for path planning (m).
-    goal_clearance: float = 0.6
-    # Distance from goal at which the local planner considers it reached (m).
-    goal_reached_threshold: float = 0.3
-    # When goal is behind the robot and within this range, robot stops (m).
-    goal_behind_range: float = 0.8
-    # Goal yaw tolerance (rad).
-    goal_yaw_threshold: float = 0.15
-    # Freeze angle (deg): if goal direction exceeds this, robot freezes for
-    # freezeTime.  Set to 180 for omni-dir robots to disable freeze.
-    freeze_ang: float | None = None
-    # Freeze duration (s).
-    freeze_time: float | None = None
-    # Allow driving in reverse.  False = robot must turn to face goal first.
+    goal_clearance: float = 0.6  # m
+    goal_reached_threshold: float = 0.3  # m
+    goal_behind_range: float = 0.8  # m
+    goal_yaw_threshold: float = 0.15  # rad
+    # Set freeze_ang to 180 for omni-dir robots to disable freeze.
+    freeze_ang: float | None = None  # deg
+    freeze_time: float | None = None  # s
     two_way_drive: bool | None = None
-    # Goal x-coordinate in local frame (m). None = omit from CLI (binary default).
-    goal_x: float | None = None
-    # Goal y-coordinate in local frame (m). None = omit from CLI (binary default).
-    goal_y: float | None = None
+    goal_x: float | None = None  # m
+    goal_y: float | None = None  # m
 
-    # Delay before speed command overrides joystick (s).
-    joy_to_speed_delay: float | None = None
-    # Delay before obstacle check override from autonomy (s).
-    joy_to_check_obstacle_delay: float | None = None
+    joy_to_speed_delay: float | None = None  # s
+    joy_to_check_obstacle_delay: float | None = None  # s
 
-    # Publish free_paths visualization cloud. Disable to save CPU.
     publish_free_paths: bool | None = None
 
-    # Momentum penalty: biases path selection toward continuing current motion.
-    # 0.0 = disabled (default). Higher values penalize direction changes at speed.
-    # Penalty = (angleDiff/180)² × (speed/maxSpeed) × max_momentum_penalty.
+    # Penalty = (angleDiff/180)^2 * (speed/maxSpeed) * max_momentum_penalty
     max_momentum_penalty: float | None = None
 
 
 class LocalPlanner(NativeModule):
-    """Local path planner with obstacle avoidance.
-
-    Evaluates pre-computed path sets against the current obstacle map to pick
-    the best collision-free path toward the goal.
-    """
+    """Local path planner with obstacle avoidance."""
 
     config: LocalPlannerConfig
 

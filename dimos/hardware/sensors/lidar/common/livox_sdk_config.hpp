@@ -120,13 +120,13 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
     char path[64];
 #ifdef __linux__
     snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
-#else
-    // Darwin's /dev/fd/<fd> may share the underlying open file description
-    // (fdesc layer dup), so rewind before the SDK reads from the path.
-    // Linux's /proc/self/fd/<fd> creates a fresh open file description, so
-    // no rewind is needed there — leave the Linux flow untouched.
+#elif defined(__APPLE__) && defined(__MACH__)
+    // Darwin's /dev/fd/<fd> may share the underlying open file description,
+    // so rewind before the SDK reads from the path.
     lseek(fd, 0, SEEK_SET);
     snprintf(path, sizeof(path), "/dev/fd/%d", fd);
+#else
+    #error "Unsupported platform: expected Linux or macOS"
 #endif
     return {fd, path};
 }

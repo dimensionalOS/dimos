@@ -61,10 +61,9 @@ class NavRecord(Recorder):
     slow_down: In[Int8]
     goal_reached: In[Bool]
 
-    # Point clouds (high bandwidth — recorded if connected)
+    # Point clouds
     terrain_map: In[PointCloud2]
     global_map: In[PointCloud2]
 
-    # Raw inputs
     odometry: In[Odometry]
     registered_scan: In[PointCloud2]

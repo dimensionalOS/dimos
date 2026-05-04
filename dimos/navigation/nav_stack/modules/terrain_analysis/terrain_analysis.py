@@ -27,7 +27,6 @@ class TerrainAnalysisConfig(NativeModuleConfig):
     build_command: str | None = (
         "nix build github:dimensionalOS/dimos-module-terrain-analysis/v0.1.1 --no-write-lock-file"
     )
-    # C++ binary uses camelCase CLI args (with VFOV all-caps).
     cli_name_override: dict[str, str] = {
         "sensor_range": "sensorRange",
         "scan_voxel_size": "scanVoxelSize",
@@ -61,71 +60,41 @@ class TerrainAnalysisConfig(NativeModuleConfig):
         "distance_ratio_z": "disRatioZ",
     }
 
-    # Maximum range of lidar sensor used for terrain analysis (m).
-    sensor_range: float = 20.0
-    # Voxel size for downsampling the input registered scan (m).
-    scan_voxel_size: float = 0.05
-    # Terrain grid cell size (m).
-    terrain_voxel_size: float = 1.0
-    # Terrain grid radius in cells (full grid is 2*N+1 on a side).
-    terrain_voxel_half_width: int = 10
+    sensor_range: float = 20.0  # m
+    scan_voxel_size: float = 0.05  # m
+    terrain_voxel_size: float = 1.0  # m
+    terrain_voxel_half_width: int = 10  # cells (full grid = 2*N+1)
 
-    # Points higher than this above ground are classified as obstacles (m).
-    obstacle_height_threshold: float = 0.15
-    # Points lower than this are considered ground in cost-map mode (m).
-    ground_height_threshold: float = 0.1
-    # Ignore points above this height relative to the vehicle (m).
-    vehicle_height: float | None = None
-    # Height-band filter: minimum z relative to robot (m).
-    min_relative_z: float | None = None
-    # Height-band filter: maximum z relative to robot (m).
-    max_relative_z: float | None = None
+    obstacle_height_threshold: float = 0.15  # m
+    ground_height_threshold: float = 0.1  # m
+    vehicle_height: float | None = None  # m
+    min_relative_z: float | None = None  # m
+    max_relative_z: float | None = None  # m
 
-    # Use quantile-based sorting for ground height estimation.
     use_sorting: bool | None = None
-    # Quantile of z-values used to estimate ground height (0–1).
     quantile_z: float | None = None
 
-    # How long terrain points persist before expiring (s).
-    decay_time: float | None = None
-    # Radius around robot where points never decay (m).
-    no_decay_distance: float | None = None
-    # Dynamic clearing distance — points beyond this from new obs are removed (m).
-    clearing_distance: float | None = None
-    # Whether to actively clear dynamic obstacles.
+    decay_time: float | None = None  # s
+    no_decay_distance: float | None = None  # m
+    clearing_distance: float | None = None  # m
     clear_dynamic_obstacles: bool | None = None
-    # Treat unseen (no-data) voxels as obstacles.
     no_data_obstacle: bool | None = None
-    # Number of no-data blocks to skip before treating as obstacle.
     no_data_block_skip_count: int | None = None
-    # Minimum points per terrain block for valid classification.
     min_block_point_count: int | None = None
 
-    # Reprocess a voxel after this many new points accumulate.
     voxel_point_update_threshold: int | None = None
-    # Cull a voxel after this many seconds since last update (s).
-    voxel_time_update_threshold: float | None = None
+    voxel_time_update_threshold: float | None = None  # s
 
-    # Minimum distance from sensor for dynamic obstacle detection (m).
-    min_dynamic_obstacle_distance: float | None = None
-    # Absolute z-threshold for dynamic obstacle classification (m).
-    abs_dynamic_obstacle_relative_z_threshold: float | None = None
-    # Minimum vertical FOV angle for dynamic obstacle detection (deg).
-    min_dynamic_obstacle_vfov: float | None = None
-    # Maximum vertical FOV angle for dynamic obstacle detection (deg).
-    max_dynamic_obstacle_vfov: float | None = None
-    # Minimum number of points to qualify as a dynamic obstacle.
+    min_dynamic_obstacle_distance: float | None = None  # m
+    abs_dynamic_obstacle_relative_z_threshold: float | None = None  # m
+    min_dynamic_obstacle_vfov: float | None = None  # deg
+    max_dynamic_obstacle_vfov: float | None = None  # deg
     min_dynamic_obstacle_point_count: int | None = None
-    # Minimum out-of-FOV points before classifying as dynamic.
     min_out_of_fov_point_count: int | None = None
 
-    # Whether to consider terrain drops (negative slopes).
     consider_drop: bool | None = None
-    # Limit how much the estimated ground plane can lift between frames.
     limit_ground_lift: bool | None = None
-    # Maximum ground plane lift per frame (m).
-    max_ground_lift: float | None = None
-    # Distance-to-z ratio used for slope-based point filtering.
+    max_ground_lift: float | None = None  # m
     distance_ratio_z: float | None = None
 
 

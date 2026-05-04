@@ -25,6 +25,7 @@ from typing import Any
 import numpy as np
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -46,9 +47,7 @@ class Costmap:
         self.cell_size = float(cell_size)
         self.obstacle_height = float(obstacle_height)
         self.inflation_radius = float(inflation_radius)
-        # Raw heights observed per cell (max-ever). Keyed by (ix, iy).
         self._heights: dict[tuple[int, int], float] = {}
-        # Inflated blocked set (recomputed lazily).
         self._blocked: set[tuple[int, int]] = set()
         self._blocked_dirty = True
 
@@ -274,54 +273,28 @@ def astar(
 
 
 class SimplePlannerConfig(ModuleConfig):
-    # TF frame name for the world / map root.  Body frame name is fixed by
-    # REP-105 convention (base_link); odom frame isn't used by this planner.
     world_frame: str = "map"
     body_frame: str = "base_link"
 
-    # Costmap resolution in metres per cell.
-    cell_size: float = 0.3
-    # Points above this elevation (height above ground from terrain_map
-    # intensity) mark a cell as an obstacle.
-    obstacle_height_threshold: float = 0.15
-    # Circular inflation radius around each obstacle (metres). Generous
-    # by default: for a ~0.5 m diameter robot this keeps the A* path ~0.4 m
-    # off every wall. Stuck-detection (below) shrinks this when a
-    # doorway would otherwise be unpassable.
-    inflation_radius: float = 0.2
-    # Look-ahead distance along the planned path to emit as the next
-    # waypoint for the local planner.
-    lookahead_distance: float = 2.0
-    # Replan + publish rate (Hz) — how often the planning loop wakes up.
-    replan_rate: float = 5.0
-    # Minimum seconds between successive A* searches. Waypoints are
-    # still republished at replan_rate using the cached path, but A*
-    # only re-runs after this cooldown. This prevents path flicker
-    # between near-equivalent A* solutions.
-    replan_cooldown: float = 2.0
-    # Hard cap on A* node expansions per call.
+    cell_size: float = 0.3  # m per cell
+    obstacle_height_threshold: float = 0.15  # m above ground
+    inflation_radius: float = 0.2  # m, shrunk by stuck-detection
+    lookahead_distance: float = 2.0  # m
+    replan_rate: float = 5.0  # Hz
+    # A* only re-runs after this cooldown; waypoints republish from cache.
+    replan_cooldown: float = 2.0  # s
     max_expansions: int = 200_000
-    # Height offset below the robot z-position to estimate ground level (m).
-    # Points below this level are ignored; points above become obstacle
-    # candidates. Should match or slightly exceed the robot's standing height.
-    ground_offset_below_robot: float = 1.3
+    # Points below robot_z minus this offset are floor; above are obstacles.
+    ground_offset_below_robot: float = 1.3  # m
 
-    # Consider the robot "stuck" if its distance-to-goal hasn't decreased
-    # by at least ``progress_epsilon`` metres within ``stuck_seconds``.
-    stuck_seconds: float = 5.0
-    # Minimum improvement in goal-distance that counts as progress.
-    progress_epsilon: float = 0.25
-    # When stuck, progressively shrink the inflation_radius by this
-    # fraction each escalation step (e.g. 0.5 → half, then quarter, …).
-    # Shrinking too aggressively risks clipping obstacles, so we bottom
-    # out at ``stuck_min_inflation``.
+    # Stuck detection: if goal-distance doesn't improve by progress_epsilon
+    # within stuck_seconds, progressively shrink inflation_radius.
+    stuck_seconds: float = 5.0  # s
+    progress_epsilon: float = 0.25  # m
     stuck_shrink_factor: float = 0.5
-    stuck_min_inflation: float = 0.05
-    # When the robot is within this distance (m) of the current
-    # intermediate waypoint, proactively advance the waypoint along the
-    # cached path so the local planner never stops on it. Should be
-    # larger than LocalPlanner's goal_reached_threshold.
-    waypoint_advance_radius: float = 1.0
+    stuck_min_inflation: float = 0.05  # m
+    # Should be larger than LocalPlanner's goal_reached_threshold.
+    waypoint_advance_radius: float = 1.0  # m
 
 
 class SimplePlanner(Module):
@@ -392,7 +365,7 @@ class SimplePlanner(Module):
     def stop(self) -> None:
         self._running = False
         if self._thread is not None:
-            self._thread.join(timeout=3.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._thread = None
         super().stop()
 
