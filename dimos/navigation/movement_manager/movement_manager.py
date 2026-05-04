@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MovementManager: click-to-goal relay + teleop/nav velocity mux."""
+"""
+MovementManager: click-to-goal relay + teleop/nav velocity mux.
+
+NOTE: this should be majorly updated/reworked when mustafa's trajectory controller lands
+"""
 
 from __future__ import annotations
 
