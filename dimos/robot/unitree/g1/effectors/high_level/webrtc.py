@@ -75,12 +75,7 @@ class G1HighLevelWebRtcConfig(ModuleConfig):
 
 
 class G1HighLevelWebRtc(Module, HighLevelG1Spec):
-    """G1 high-level control module using WebRTC transport.
-
-    Wraps :class:`UnitreeWebRTCConnection` and exposes the
-    :class:`HighLevelG1Spec` interface plus LLM-callable skills for
-    arm gestures, movement modes, and velocity control.
-    """
+    """G1 high-level control module using WebRTC transport."""
 
     cmd_vel: In[Twist]
     config: G1HighLevelWebRtcConfig

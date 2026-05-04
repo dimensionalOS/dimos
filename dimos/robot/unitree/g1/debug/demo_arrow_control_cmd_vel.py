@@ -13,11 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Arrow key control for G1 robot via cmd_vel LCM topic.
-Use arrow keys and WASD for real-time robot control.
-Publishes Twist messages on /cmd_vel instead of calling .move() directly.
-"""
+"""Arrow key + WASD real-time control for G1, publishing Twist on /cmd_vel."""
 
 import curses
 import time

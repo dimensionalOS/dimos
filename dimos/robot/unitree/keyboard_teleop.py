@@ -47,14 +47,7 @@ _INDICATOR_RADIUS = 15
 
 
 class KeyboardTeleop(Module):
-    """Pygame-based keyboard control module.
-
-    Outputs standard Twist messages on /tele_cmd_vel for velocity control.
-
-    Speed constants can be tuned at the top of this file, or overridden
-    per-instance by passing linear_speed / angular_speed /
-    boost_multiplier / slow_multiplier to the constructor.
-    """
+    """Pygame-based keyboard control. Outputs Twist on /tele_cmd_vel; speeds tunable via constructor."""
 
     tele_cmd_vel: Out[Twist]  # Standard velocity commands
 

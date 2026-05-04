@@ -13,10 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Arrow key control for G1 robot.
-Use arrow keys and WASD for real-time robot control.
-"""
+"""Arrow key + WASD real-time control for G1 robot."""
 
 import curses
 import time
