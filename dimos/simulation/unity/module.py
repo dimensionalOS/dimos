@@ -269,6 +269,7 @@ class UnityBridgeModule(Module):
                 rrb.Spatial3DView(
                     origin="world",
                     name="3D",
+                    # starts in overhead view: useful for agentic debugging
                     eye_controls=rrb.EyeControls3D(
                         position=(0.0, 0.0, 20.0),
                         look_target=(0.0, 0.0, 0.0),
