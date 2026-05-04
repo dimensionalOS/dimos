@@ -113,7 +113,12 @@ class LCMEncoderMixin(PubSubEncoderMixin[LCMTopicProto, DimosMsg, bytes]):
     def decode(self, msg: bytes, topic: LCMTopicProto) -> DimosMsg:
         if topic.lcm_type is None:
             raise DecodingError(f"Cannot decode: topic {topic.topic!r} has no lcm_type")
-        return topic.lcm_type.lcm_decode(msg)
+        try:
+            return topic.lcm_type.lcm_decode(msg)
+        except AttributeError as exc:
+            if getattr(topic.lcm_type, "msg_name", "") == "foxglove_msgs.ImageAnnotations":
+                raise DecodingError("Skipping undecodable Foxglove ImageAnnotations") from exc
+            raise
 
 
 class JpegEncoderMixin(PubSubEncoderMixin[LCMTopicProto, Image, bytes]):

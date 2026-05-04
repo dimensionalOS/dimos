@@ -14,6 +14,8 @@
 # limitations under the License.
 
 
+import pickle
+
 import numpy as np
 
 from dimos.msgs.sensor_msgs import PointCloud2
@@ -153,3 +155,31 @@ def test_bounding_box_intersects() -> None:
         pass
 
     print("✓ All bounding box intersection tests passed!")
+
+
+def test_pickle_after_cached_open3d_bounding_boxes() -> None:
+    """Pickle should drop cached Open3D bounding boxes and preserve points."""
+    points = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 0.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    pc = PointCloud2.from_numpy(points, frame_id="world", timestamp=123.0)
+
+    _ = pc.axis_aligned_bounding_box
+    _ = pc.oriented_bounding_box
+
+    restored = pickle.loads(pickle.dumps(pc))
+    restored_points, _ = restored.as_numpy()
+
+    np.testing.assert_allclose(restored_points, points)
+    assert restored.frame_id == "world"
+    assert restored.ts == 123.0

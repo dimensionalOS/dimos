@@ -42,8 +42,8 @@ from dimos.manipulation.planning.spec import RobotModelConfig
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import JointState
 from dimos.perception.object_scene_registration import object_scene_registration_module
-from dimos.robot.foxglove_bridge import foxglove_bridge  # TODO: migrate to rerun
 from dimos.utils.data import get_data
+from dimos.visualization.rerun.bridge import rerun_bridge
 
 # =============================================================================
 # Pose Helpers
@@ -423,14 +423,16 @@ xarm_perception = (
             base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
         ),
         object_scene_registration_module(target_frame="world"),
-        foxglove_bridge(),  # TODO: migrate to rerun
+        rerun_bridge(
+            min_interval_sec=0.5,  # 2 Hz cap for Image/PointCloud2 streams to keep Rerun stable.
+        ),
     )
     .transports(
         {
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
-    .global_config(viewer="foxglove")
+    .global_config(viewer="rerun")
 )
 
 
