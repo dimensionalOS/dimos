@@ -262,11 +262,18 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
             if self.config.ai_standup:
                 fsm_id = self._get_fsm_id()
+                if fsm_id is None:
+                    logger.warning(
+                        "Could not read FSM ID; aborting stand_up to avoid unsafe state transition"
+                    )
+                    return False
                 if fsm_id == FsmState.ZERO_TORQUE:
                     logger.info("Robot in zero torque, enabling damp mode...")
                     self.loco_client.SetFsmId(FsmState.DAMP)
                     time.sleep(self._standup_step_delay / 3)
-                    fsm_id = self._get_fsm_id()
+                    # Default to DAMP if the re-query fails — we just commanded
+                    # the transition, so DAMP is the most likely current state.
+                    fsm_id = self._get_fsm_id() or FsmState.DAMP
                 if fsm_id != FsmState.AI_MODE:
                     logger.info("Starting AI mode...")
                     self.loco_client.SetFsmId(FsmState.AI_MODE)
