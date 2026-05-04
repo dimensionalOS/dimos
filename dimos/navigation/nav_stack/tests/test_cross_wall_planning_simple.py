@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""E2E integration test: cross-wall planning using SimplePlanner.
-
-Mirrors ``test_cross_wall_planning_far.py`` but swaps FarPlanner for
-SimplePlanner (grid A*). Same blueprint, same waypoint sequence, same
-success thresholds — apples-to-apples comparison plus a z-ceiling guard
-to catch the robot climbing geometry.
-"""
+"""E2E: SimplePlanner (grid A*) cross-wall planning — apples-to-apples mirror of test_cross_wall_planning_far.py."""
 
 from __future__ import annotations
 

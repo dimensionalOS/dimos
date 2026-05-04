@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rosbag accuracy test for the TerrainAnalysis native module.
-
-Feeds registered_scan + odometry at original timing and compares
-terrain_map output against the reference recording.
-"""
+"""Rosbag accuracy test: replays scan+odom at original timing, compares terrain_map to reference."""
 
 from __future__ import annotations
 

@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rosbag accuracy test for the LocalPlanner native module.
-
-Feeds identical inputs at original timing and compares path output
-against the OG ROS nav stack reference recording.
-"""
+"""Rosbag accuracy test: replays inputs at original timing and compares paths to ROS reference."""
 
 from __future__ import annotations
 

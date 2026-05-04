@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""E2E integration test: cross-wall planning through Unity sim (FAR planner).
-
-Verifies that the FAR planner routes through doorways instead of through walls.
-Uses the full navigation stack (same blueprint as unitree_g1_nav_sim).
-"""
+"""E2E: FAR planner routes through doorways (full stack via Unity sim, same blueprint as unitree_g1_nav_sim)."""
 
 from __future__ import annotations
 

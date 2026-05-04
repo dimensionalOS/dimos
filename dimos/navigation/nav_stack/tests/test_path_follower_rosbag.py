@@ -12,15 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rosbag accuracy test for the PathFollower native module.
-
-Feeds path + odometry at original timing and compares cmd_vel output
-against the OG ROS nav stack reference recording.
-
-The PathFollower is the simplest module to validate since it's a pure
-function of (path, odometry, slow_down) → cmd_vel. Given identical inputs
-and matching parameters, output should be near-exact.
-"""
+"""Rosbag accuracy test: PathFollower is a pure (path, odom, slow_down) -> cmd_vel function,
+so given identical inputs and matching parameters its output should be near-exact."""
 
 from __future__ import annotations
 

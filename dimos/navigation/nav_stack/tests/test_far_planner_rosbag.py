@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rosbag accuracy test for the FAR planner native module.
-
-Feeds identical inputs at original timing and compares waypoint output
-against the OG ROS nav stack reference recording.
-"""
+"""Rosbag accuracy test: replays inputs at original timing and compares waypoints to ROS reference."""
 
 from __future__ import annotations
 
