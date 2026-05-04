@@ -74,6 +74,8 @@ def event_loop():
 @pytest.fixture(scope="session", autouse=True)
 def _autoconf(request):
     """Run autoconf() before all tests with capture suspended so people see `sudo` commands."""
+    if os.environ.get("DIMOS_SKIP_AUTOCONF"):
+        return
 
     capman = request.config.pluginmanager.getplugin("capturemanager")
     capman.suspend_global_capture(in_=True)

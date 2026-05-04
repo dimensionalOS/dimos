@@ -33,6 +33,7 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.docker_runner import DockerModule as DockerRunner
 from dimos.core.stream import In  # noqa: TC001
+from dimos.manipulation.bt.trees import build_pick_tree, build_place_tree
 from dimos.manipulation.grasping.graspgen_module import GraspGenModule
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
@@ -72,6 +73,32 @@ class PickAndPlaceModuleConfig(ManipulationModuleConfig):
         default_factory=lambda: Path.home() / ".dimos" / "graspgen" / "visualization.json"
     )
 
+    # Behavior-tree orchestration settings
+    bt_enable_graspgen: bool = True
+    bt_tick_rate_hz: float = 20.0
+    bt_max_pick_attempts: int = 5
+    bt_max_rescan_attempts: int = 3
+    bt_scan_duration: float = 1.0
+    bt_execution_timeout: float | None = None
+
+    # Gripper/lift verification settings
+    bt_gripper_open_position: float = 0.85
+    bt_gripper_close_position: float = 0.0
+    bt_gripper_grasp_threshold: float = 0.005
+    bt_gripper_grasp_max_open_fraction: float = 0.5
+    bt_gripper_grasp_max_open_position: float | None = None
+    bt_gripper_grasp_open_reference: float | None = None
+    bt_gripper_grasp_min_closure: float | None = None
+    bt_gripper_settle_time: float = 1.5
+    bt_lift_height: float = 0.10
+
+    # Workspace filtering for generated grasps
+    bt_min_grasp_z: float = 0.05
+    bt_max_grasp_distance: float = 0.9
+    bt_max_approach_angle: float = 1.05
+    bt_heuristic_grasp_z_offsets: tuple[float, ...] = (0.08, 0.12, 0.16)
+    bt_min_heuristic_grasp_z: float = 0.05
+
 
 class PickAndPlaceModule(ManipulationModule):
     """Manipulation module with perception integration and pick-and-place skills.
@@ -83,6 +110,12 @@ class PickAndPlaceModule(ManipulationModule):
     """
 
     default_config = PickAndPlaceModuleConfig
+
+    rpc_calls: list[str] = [
+        "ObjectSceneRegistrationModule.get_object_pointcloud_by_name",
+        "ObjectSceneRegistrationModule.get_object_pointcloud_by_object_id",
+        "ObjectSceneRegistrationModule.get_full_scene_pointcloud",
+    ]
 
     # Type annotation for the config attribute (mypy uses this)
     config: PickAndPlaceModuleConfig
@@ -323,6 +356,74 @@ class PickAndPlaceModule(ManipulationModule):
         logger.info(f"Heuristic grasp for '{object_name}' at ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
         return [grasp_pose]
 
+    @staticmethod
+    def _read_bt_blackboard(key: str, fallback: str) -> str:
+        """Read a py_trees blackboard key, returning fallback if unavailable."""
+        import py_trees
+
+        try:
+            bb = py_trees.blackboard.Client(name="PickPlaceBTReader")
+            bb.register_key(key=key, access=py_trees.common.Access.READ)
+            value = getattr(bb, key)
+            return str(value) if value else fallback
+        except (AttributeError, KeyError):
+            return fallback
+
+    def _tick_bt_tree(self, root: Any) -> str:
+        """Tick a behavior tree until it succeeds, fails, or times out."""
+        import py_trees
+
+        bb = py_trees.blackboard.Client(name="PickPlaceBTReset")
+        defaults: dict[str, Any] = {
+            "detections": [],
+            "target_object": None,
+            "object_pointcloud": None,
+            "scene_pointcloud": None,
+            "grasp_candidates": [],
+            "grasp_index": 0,
+            "current_grasp": None,
+            "pre_grasp_pose": None,
+            "place_pose": None,
+            "pre_place_pose": None,
+            "lift_pose": None,
+            "has_object": False,
+            "grasp_source": "",
+            "error_message": "",
+            "result_message": "",
+        }
+        for key, value in defaults.items():
+            bb.register_key(key=key, access=py_trees.common.Access.WRITE)
+            setattr(bb, key, value)
+
+        tree = py_trees.trees.BehaviourTree(root=root)
+        tree.setup()
+
+        start = time.time()
+        period = 1.0 / self.config.bt_tick_rate_hz
+        while True:
+            tree.tick()
+
+            if root.status == py_trees.common.Status.SUCCESS:
+                return self._read_bt_blackboard(
+                    "result_message", "Operation completed successfully"
+                )
+
+            if root.status == py_trees.common.Status.FAILURE:
+                return self._read_bt_blackboard("error_message", "Error: Operation failed")
+
+            if (
+                self.config.bt_execution_timeout is not None
+                and time.time() - start > self.config.bt_execution_timeout
+            ):
+                root.stop(py_trees.common.Status.INVALID)
+                try:
+                    self.cancel()
+                except Exception:
+                    logger.warning("Failed to cancel timed-out BT operation", exc_info=True)
+                return "Error: Operation timed out"
+
+            time.sleep(period)
+
     # =========================================================================
     # Perception Skills
     # =========================================================================
@@ -433,65 +534,16 @@ class PickAndPlaceModule(ManipulationModule):
             object_id: Optional unique object ID from perception for precise identification.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
-        robot = self._get_robot(robot_name)
-        if robot is None:
+        if self._get_robot(robot_name) is None:
             return "Error: Robot not found"
-        rname, _, config, _ = robot
-        pre_grasp_offset = config.pre_grasp_offset
-
-        # 1. Generate grasps (uses already-cached detections — call scan_objects first)
-        logger.info(f"Generating grasp poses for '{object_name}'...")
-        grasp_poses = self._generate_grasps_for_pick(object_name, object_id)
-        if not grasp_poses:
-            return f"Error: No grasp poses found for '{object_name}'. Object may not be detected."
-
-        # 2. Try each grasp candidate
-        max_attempts = min(len(grasp_poses), 5)
-        for i, grasp_pose in enumerate(grasp_poses[:max_attempts]):
-            pre_grasp_pose = self._compute_pre_grasp_pose(grasp_pose, pre_grasp_offset)
-
-            logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
-            if not self.plan_to_pose(pre_grasp_pose, rname):
-                logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
-                continue  # Try next candidate
-
-            # Open gripper before approach
-            logger.info("Opening gripper...")
-            self._set_gripper_position(0.85, rname)
-            time.sleep(0.5)
-
-            # 3. Preview + execute approach
-            err = self._preview_execute_wait(rname)
-            if err:
-                return err
-
-            # 4. Move to grasp pose
-            logger.info("Moving to grasp position...")
-            if not self.plan_to_pose(grasp_pose, rname):
-                return "Error: Grasp pose planning failed"
-            err = self._preview_execute_wait(rname)
-            if err:
-                return err
-
-            # 5. Close gripper
-            logger.info("Closing gripper...")
-            self._set_gripper_position(0.0, rname)
-            time.sleep(1.5)  # Wait for gripper to close
-
-            # 6. Retract to pre-grasp
-            logger.info("Retracting with object...")
-            if not self.plan_to_pose(pre_grasp_pose, rname):
-                return "Error: Retract planning failed"
-            err = self._preview_execute_wait(rname)
-            if err:
-                return err
-
-            # Store pick position so place_back() can return the object
-            self._last_pick_position = grasp_pose.position
-
-            return f"Pick complete — grasped '{object_name}' successfully"
-
-        return f"Error: All {max_attempts} grasp attempts failed for '{object_name}'"
+        logger.info(f"Starting BT pick for '{object_name}'")
+        root = build_pick_tree(
+            module=self,
+            object_name=object_name,
+            object_id=object_id,
+            robot_name=robot_name,
+        )
+        return self._tick_bt_tree(root)
 
     @skill
     def place(
@@ -512,47 +564,11 @@ class PickAndPlaceModule(ManipulationModule):
             z: Target Z position in meters.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
-        robot = self._get_robot(robot_name)
-        if robot is None:
+        if self._get_robot(robot_name) is None:
             return "Error: Robot not found"
-        rname, _, config, _ = robot
-        pre_place_offset = config.pre_grasp_offset
-
-        # Compute place pose (top-down approach)
-        place_pose = Pose(Vector3(x, y, z), Quaternion.from_euler(Vector3(0.0, math.pi, 0.0)))
-        pre_place_pose = self._compute_pre_grasp_pose(place_pose, pre_place_offset)
-
-        # 1. Move to pre-place
-        logger.info(f"Planning approach to place position ({x:.3f}, {y:.3f}, {z:.3f})...")
-        if not self.plan_to_pose(pre_place_pose, rname):
-            return "Error: Pre-place approach planning failed"
-
-        err = self._preview_execute_wait(rname)
-        if err:
-            return err
-
-        # 2. Lower to place position
-        logger.info("Lowering to place position...")
-        if not self.plan_to_pose(place_pose, rname):
-            return "Error: Place pose planning failed"
-        err = self._preview_execute_wait(rname)
-        if err:
-            return err
-
-        # 3. Release
-        logger.info("Releasing object...")
-        self._set_gripper_position(0.85, rname)
-        time.sleep(1.0)
-
-        # 4. Retract
-        logger.info("Retracting...")
-        if not self.plan_to_pose(pre_place_pose, rname):
-            return "Error: Retract planning failed"
-        err = self._preview_execute_wait(rname)
-        if err:
-            return err
-
-        return f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})"
+        logger.info(f"Starting BT place at ({x:.3f}, {y:.3f}, {z:.3f})")
+        root = build_place_tree(module=self, x=x, y=y, z=z, robot_name=robot_name)
+        return self._tick_bt_tree(root)
 
     @skill
     def place_back(self, robot_name: str | None = None) -> str:

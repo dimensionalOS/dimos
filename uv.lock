@@ -1697,6 +1697,7 @@ dependencies = [
     { name = "plum-dispatch" },
     { name = "protobuf" },
     { name = "psutil" },
+    { name = "py-trees" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
@@ -2060,6 +2061,7 @@ requires-dist = [
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "psycopg2-binary", marker = "extra == 'psql'", specifier = ">=2.9.11" },
     { name = "py-spy", marker = "extra == 'dev'" },
+    { name = "py-trees", specifier = ">=2.2,<3" },
     { name = "pydantic" },
     { name = "pydantic", marker = "extra == 'docker'" },
     { name = "pydantic-settings", specifier = ">=2.11.0,<3" },
@@ -7041,6 +7043,18 @@ wheels = [
 ]
 
 [[package]]
+name = "py-trees"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydot" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/79/9c/b8c39a86ce887e3547b415e6bd61b70e1004af0a8ba1b44e75233a4406a2/py_trees-2.4.0.tar.gz", hash = "sha256:cd8738a80e7422aec2b133270b6aa92e3e83926ded2ba9b3614028dba99cdb41", size = 85359, upload-time = "2025-11-13T22:46:01.41Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7d/0a/2e0c30342586dabb0b4b7946393a7aeb725fca7b4549fb02e128a1a0fe87/py_trees-2.4.0-py3-none-any.whl", hash = "sha256:c26a2d23f70871ce093abd5f8425998529bfe7b97cc563316e9c3c9cec20c312", size = 114099, upload-time = "2025-11-13T22:45:58.884Z" },
+]
+
+[[package]]
 name = "pyarrow"
 version = "23.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7503,7 +7517,7 @@ name = "pydot"
 version = "4.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyparsing", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "pyparsing" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/35/b17cb89ff865484c6a20ef46bf9d95a5f07328292578de0b295f4a6beec2/pydot-4.0.1.tar.gz", hash = "sha256:c2148f681c4a33e08bf0e26a9e5f8e4099a82e0e2a068098f32ce86577364ad5", size = 162594, upload-time = "2025-06-17T20:09:56.454Z" }
 wheels = [
