@@ -386,13 +386,7 @@ class TestSensorOffset:
         module.stop()
         # Yaw should be ~π/2
         assert module._yaw == pytest.approx(math.pi / 2.0, abs=0.02)
-        # Sensor origin started at (0.5, 0) and travels on circle r=0.5
-        # → after quarter turn ends at about (0, 0.5).
-        # Vehicle center is therefore at sensor - rotated_offset = (0 - 0, 0.5 - 0.5) = (0, 0)?
-        # Actually the state IS the sensor origin (integrated via the offset term).
-        # Started at x=0,y=0 (sensor). After rotating π/2, sensor should still be at
-        # the same radius from where the center was.
-        # Simpler assertion: x and y should be nonzero (displacement happened).
+        # Displacement happened (sensor traversed a quarter-circle of radius 0.5).
         assert abs(module._x - 0.0) > 0.01 or abs(module._y - 0.0) > 0.01
 
     def test_yaw_rate_roll_published(self):
