@@ -91,8 +91,6 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
         super().__init__(*args, g=g, **kwargs)
         self._global_config = g
 
-    # lifecycle
-
     @rpc
     def start(self) -> None:
         super().start()
@@ -106,8 +104,6 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
         if self.connection is not None:
             self.connection.stop()
         super().stop()
-
-    # HighLevelG1Spec
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -135,8 +131,6 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
     def lie_down(self) -> bool:
         assert self.connection is not None
         return self.connection.liedown()
-
-    # skills (LLM-callable)
 
     @skill
     def move_velocity(
@@ -189,8 +183,6 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
 
         {_MODE_COMMANDS_DOC}
         """
-
-    # private helpers
 
     def _execute_g1_command(
         self,

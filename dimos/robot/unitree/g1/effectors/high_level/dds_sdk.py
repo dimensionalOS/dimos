@@ -98,7 +98,6 @@ class FsmState(IntEnum):
     SQUAT_STANDUP_TOGGLE = 706
 
 
-# Module
 class G1HighLevelDdsSdkConfig(ModuleConfig):
     ip: str | None = None
     network_interface: str = "eth0"
@@ -129,8 +128,6 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self._mode_selected = False
         self.motion_switcher: Any = None
         self.loco_client: Any = None
-
-    # lifecycle
 
     @rpc
     def start(self) -> None:
@@ -181,8 +178,6 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self._running = False
         logger.info("G1 DDS SDK connection stopped")
         super().stop()
-
-    # HighLevelG1Spec
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -305,8 +300,6 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
     def disconnect(self) -> None:
         self.stop()
 
-    # skills (LLM-callable)
-
     @skill
     def move_velocity(
         self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0
@@ -358,8 +351,6 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
         {_MODE_COMMANDS_DOC}
         """
-
-    # private helpers
 
     def _execute_g1_command(
         self,
