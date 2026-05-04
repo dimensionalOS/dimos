@@ -88,11 +88,6 @@ def _odom_to_body_tf(msg: Odometry) -> Transform:
     )
 
 
-def _get_local_ips() -> list[str]:
-    """Return all non-loopback IPv4 addresses on this machine."""
-    return [ip for ip, _iface in get_local_ips()]
-
-
 def _find_candidate_ips(lidar_ip: str, local_ips: list[str]) -> list[str]:
     """Suggest local IPs on the same subnet as the lidar."""
     candidates: list[str] = []
@@ -212,7 +207,7 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     def _validate_network(self) -> None:
         host_ip = self.config.host_ip
         lidar_ip = self.config.lidar_ip
-        local_ips = _get_local_ips()
+        local_ips = [ip for ip, _iface in get_local_ips()]
 
         _logger.info(
             "FastLio2 network check",
