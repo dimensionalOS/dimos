@@ -9,36 +9,35 @@ The `Dimos` class is the main entry point for using DimOS from Python. There are
 
 (Remember to source `.env`.)
 
-```python session=dimos_local
+```python skip session=dimos_local
 from dimos import Dimos
 
 app = Dimos(n_workers=8)
 
-# Run a blueprint by name (requires a full install with that blueprint and its deps).
-# app.run("unitree-go2-agentic")
+# Run a blueprint by name.
+app.run("unitree-go2-agentic")
 
-# After you have called run() with an agentic blueprint, skills are available, e.g.:
-# app.skills.relative_move(forward=2.0)
-# print(app.skills)
+# Call skills.
+app.skills.relative_move(forward=2.0)
 
-print("Dimos", type(app).__name__)
+# List all available skills.
+print(app.skills)
 
-# Add another module dynamically (example import only):
+# Access a module directly.
+app.ReplanningAStarPlanner
+
+# Access a private variable.
+print(app.ReplanningAStarPlanner._planner._safe_goal_clearance)
+
+# Add another module dynamically.
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+app.run(KeyboardTeleop)
 
-print("KeyboardTeleop", KeyboardTeleop.__name__)
+# Or start it by name. No need for importing.
+app.run("keyboard-teleop")  # This will say `KeyboardTeleop is already deployed`
 
-# Or start it by name after you have a coordinator running, e.g.:
-# app.run("keyboard-teleop")
-# app.stop()
-```
-
-<!--Result:-->
-```
-Dimos Dimos
-pygame 2.6.1 (SDL 2.28.4, Python 3.12.13)
-Hello from the pygame community. https://www.pygame.org/contribute.html
-KeyboardTeleop KeyboardTeleop
+# Stop everything.
+app.stop()
 ```
 
 ## Peeking streams

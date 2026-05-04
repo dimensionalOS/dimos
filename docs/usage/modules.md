@@ -22,6 +22,8 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
 to_svg(unitree_go2, "assets/go2_nav.svg")
 ```
+<!--Result:-->
+![output](assets/go2_nav.svg)
 
 ## Camera Module
 
@@ -83,7 +85,7 @@ time.sleep(0.5)
 camera.stop()
 ```
 
-<!--Error:-->
+<!--Result:-->
 ```
 Out color_image[Image] @ CameraModule
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)

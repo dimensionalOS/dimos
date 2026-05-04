@@ -29,8 +29,8 @@ connection = ConnectionModule.blueprint
 
 Now you can create the blueprint with:
 
-```python session=blueprint-ex1
-blueprint = connection(arg1=5, arg2="foo")
+```python skip session=blueprint-ex1
+blueprint = connection('arg1', 'arg2', kwarg='value')
 ```
 
 ## Linking blueprints
@@ -233,7 +233,7 @@ blueprint = ModuleA.blueprint().global_config(n_workers=8)
 ## Providing blueprint configuration to users
 
 `Blueprint.config()` can be used to get a `pydantic.BaseModel` that can be used to
-inspect or test configuration settings that can be passed to `ModuleCoordinator.build()`:
+inspect or test configuration settings that can be passed to `Blueprint.build()`:
 
 ```python session=blueprint-ex1
 # Validate config input
@@ -282,12 +282,6 @@ blueprint_args = load_config_args(base_blueprint.config(), cli_args, config_path
 # Test user input is valid
 config(**blueprint_args)
 # Then pass blueprint_args to ModuleCoordinator.build(...) (see coordinator docs)
-print("validated args for build:", blueprint_args)
-```
-
-<!--Result:-->
-```
-validated args for build: {'module1': {'arg1': '5'}}
 ```
 
 ## Calling the methods of other modules

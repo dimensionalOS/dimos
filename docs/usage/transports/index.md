@@ -110,56 +110,29 @@ ros = nav.transports(
 
 Each **stream** on a module can use a different transport. Set `.transport` on the stream **before starting** modules.
 
-```python ansi=false
+```python skip ansi=false
 import time
 
-import numpy as np
-import reactivex as rx
-from reactivex import operators as ops
-
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.Image import Image
-
-
-class SyntheticCamera(Module):
-    """Tiny publisher so this example runs without a webcam."""
-
-    color_image: Out[Image]
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-
-        def emit(_):
-            img = Image.from_numpy(
-                np.zeros((4, 4, 3), dtype=np.uint8),
-                frame_id="camera",
-                ts=time.time(),
-            )
-            self.color_image.publish(img)
-
-        self.register_disposable(rx.interval(0.3).pipe(ops.take(8)).subscribe(emit))
-
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.msgs.sensor_msgs import Image
+from dimos.core.module_coordinator import ModuleCoordinator
 
 class ImageListener(Module):
     image: In[Image]
 
-    @rpc
-    def start(self) -> None:
+    def start(self):
         super().start()
         self.image.subscribe(lambda img: print(f"Received: {img.shape}"))
-
 
 if __name__ == "__main__":
     # Start local cluster and deploy modules to separate processes
     dimos = ModuleCoordinator()
     dimos.start()
 
-    camera = dimos.deploy(SyntheticCamera)
+    camera = dimos.deploy(CameraModule, frequency=2.0)
     listener = dimos.deploy(ImageListener)
 
     # Choose a transport for the stream (example: LCM typed channel)
@@ -170,33 +143,8 @@ if __name__ == "__main__":
 
     dimos.start_all_modules()
 
-    time.sleep(2.5)
+    time.sleep(2)
     dimos.stop()
-```
-
-<!--Result:-->
-```
-16:20:36.838 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
-16:20:37.209 [inf][/coordination/python_worker.py] Deployed module. module=SyntheticCamera module_id=0 worker_id=0
-16:20:37.216 [inf][/coordination/python_worker.py] Deployed module. module=ImageListener module_id=1 worker_id=1
-16:20:39.723 [inf][dination/module_coordinator.py] Stopping module... module=ImageListener
-16:20:39.728 [inf][dination/module_coordinator.py] Module stopped. module=ImageListener
-16:20:39.729 [inf][dination/module_coordinator.py] Stopping module... module=SyntheticCamera
-16:20:39.780 [inf][dination/module_coordinator.py] Module stopped. module=SyntheticCamera
-16:20:39.781 [inf][ation/worker_manager_python.py] Shutting down all workers...
-Received: (4, 4, 3)
-Received: (4, 4, 3)
-Received: (4, 4, 3)
-Received: (4, 4, 3)
-Received: (4, 4, 3)
-Received: (4, 4, 3)
-Received: (4, 4, 3)
-Received: (4, 4, 3)
-16:20:39.782 [inf][/coordination/python_worker.py] Worker stopping module... module=ImageListener module_id=1 worker_id=1
-16:20:39.784 [inf][/coordination/python_worker.py] Worker module stopped. module=ImageListener module_id=1 worker_id=1
-16:20:39.820 [inf][/coordination/python_worker.py] Worker stopping module... module=SyntheticCamera module_id=0 worker_id=0
-16:20:39.821 [inf][/coordination/python_worker.py] Worker module stopped. module=SyntheticCamera module_id=0 worker_id=0
-16:20:39.843 [inf][ation/worker_manager_python.py] All workers shut down
 ```
 
 <!--Result:-->
@@ -371,6 +319,10 @@ print(f"Received: {received}")
 dds.stop()
 ```
 
+<!--Result:-->
+```
+Received: [SensorReading(value=22.5)]
+```
 ---
 
 ## A minimal transport: `Memory`

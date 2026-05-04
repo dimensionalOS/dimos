@@ -216,19 +216,13 @@ from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 
-# Example wiring (replace symbols with your blueprints):
-# my_mcp_blueprint = autoconnect(
-#     my_robot_stack,
-#     McpServer.blueprint(),
-#     McpClient.blueprint(),
-#     my_skill_containers,
-# )
-print(autoconnect.__name__, McpServer.__name__, McpClient.__name__)
-```
-
-<!--Result:-->
-```
-autoconnect McpServer McpClient
+# Example wiring (replace # -ed with your stack and skill):
+my_mcp_blueprint = autoconnect(
+    # my_robot_stack,
+    McpServer.blueprint(),
+    McpClient.blueprint(),
+    # my_skill_containers,
+)
 ```
 
 #### `dimos mcp list-tools`

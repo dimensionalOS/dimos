@@ -77,12 +77,6 @@ camera_demo = autoconnect(
     ),
 )
 
-print("Blueprint modules:", [b.module.__name__ for b in camera_demo.blueprints])
-```
-
-<!--Result:-->
-```
-Blueprint modules: ['CameraModule', 'RerunBridgeModule']
 ```
 
 Run the stack locally (this blocks until you stop the process):
