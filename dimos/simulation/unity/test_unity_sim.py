@@ -282,9 +282,6 @@ class TestKinematicSim:
         assert last_odom.x == pytest.approx(1.0, abs=0.01)
 
 
-# Terrain inclination & sensor offset (port from ROS vehicleSimulator)
-
-
 class TestTerrainFit:
     def _feed_terrain(self, module, points):
         cloud = PointCloud2.from_numpy(points.astype(np.float32), frame_id="map", timestamp=0.0)
@@ -413,9 +410,6 @@ class TestSensorOffset:
         # Angular rates (from Odometry.twist) should include roll/pitch deltas; at zero tilt they're 0.
         assert last.twist.angular.x == pytest.approx(0.0, abs=1e-6)
         assert last.twist.angular.y == pytest.approx(0.0, abs=1e-6)
-
-
-# Rerun Config — fast, runs everywhere
 
 
 class TestRerunConfig:

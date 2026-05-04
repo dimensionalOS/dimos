@@ -119,9 +119,6 @@ def publisher(server: RerunWebSocketServer) -> MockViewerPublisher:
         yield publisher  # type: ignore[misc]
 
 
-# ── Tests ────────────────────────────────────────────────────────────────
-
-
 def test_click_publishes_point_stamped(
     server: RerunWebSocketServer, publisher: MockViewerPublisher
 ) -> None:
