@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PathFollower NativeModule: C++ pure pursuit path tracking controller.
-
-Ported from pathFollower.cpp. Follows a given path using pure pursuit
-with PID yaw control, outputting velocity commands.
-"""
+"""PathFollower NativeModule: C++ pure pursuit path tracking controller."""
 
 from __future__ import annotations
 
@@ -94,16 +90,7 @@ class PathFollowerConfig(NativeModuleConfig):
 
 
 class PathFollower(NativeModule):
-    """Pure pursuit path follower with PID yaw control.
-
-    Takes a path from the local planner and the current vehicle state,
-    then computes velocity commands to follow the path.
-
-    Ports:
-        path (In[NavPath]): Local path to follow.
-        odometry (In[Odometry]): Vehicle state estimation.
-        cmd_vel (Out[Twist]): Velocity commands for the vehicle.
-    """
+    """Pure pursuit path follower with PID yaw control."""
 
     config: PathFollowerConfig
 

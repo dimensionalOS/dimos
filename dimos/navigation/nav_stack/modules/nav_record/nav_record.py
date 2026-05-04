@@ -35,11 +35,7 @@ class NavRecordConfig(RecorderConfig):
 
 
 class NavRecord(Recorder):
-    """Records nav stack outputs to SQLite via memory2.
-
-    All ports are auto-wired by name via autoconnect. Only streams
-    that are actually connected will be recorded.
-    """
+    """Records nav stack outputs to SQLite via memory2 (only connected streams are recorded)."""
 
     config: NavRecordConfig
 

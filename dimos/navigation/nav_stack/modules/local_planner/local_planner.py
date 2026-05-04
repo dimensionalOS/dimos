@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LocalPlanner NativeModule: C++ local path planner with obstacle avoidance.
-
-Ported from localPlanner.cpp. Uses pre-computed path sets and DWA-like
-evaluation to select collision-free paths toward goals.
-"""
+"""LocalPlanner NativeModule: C++ local path planner with obstacle avoidance."""
 
 from __future__ import annotations
 
@@ -213,18 +209,8 @@ class LocalPlannerConfig(NativeModuleConfig):
 class LocalPlanner(NativeModule):
     """Local path planner with obstacle avoidance.
 
-    Evaluates pre-computed path sets against current obstacle map to select
-    the best collision-free path toward the goal. Supports smart joystick,
-    waypoint, and manual control modes.
-
-    Ports:
-        registered_scan (In[PointCloud2]): Obstacle point cloud.
-        odometry (In[Odometry]): Vehicle state estimation.
-        terrain_map (In[PointCloud2]): Terrain cost map from TerrainAnalysis
-            (intensity = obstacle height). Used when useTerrainAnalysis is enabled.
-        joy_cmd (In[Twist]): Joystick/teleop velocity commands.
-        way_point (In[PointStamped]): Navigation goal waypoint.
-        path (Out[NavPath]): Selected local path for path follower.
+    Evaluates pre-computed path sets against the current obstacle map to pick
+    the best collision-free path toward the goal.
     """
 
     config: LocalPlannerConfig

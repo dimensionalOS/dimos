@@ -38,16 +38,7 @@ class TerrainMapExtConfig(ModuleConfig):
 
 
 class TerrainMapExt(Module):
-    """Extended terrain map with voxel eviction.
-
-    Subscribes to terrain_map (local) and accumulates into a persistent
-    map that covers a larger area with slower decay.
-
-    Ports:
-        terrain_map (In[PointCloud2]): Local terrain from TerrainAnalysis.
-        odometry (In[Odometry]): Vehicle pose for range culling.
-        terrain_map_ext (Out[PointCloud2]): Extended accumulated terrain.
-    """
+    """Extended terrain map: accumulates local terrain into a wider, slower-decaying map."""
 
     config: TerrainMapExtConfig
 
