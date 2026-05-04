@@ -43,44 +43,41 @@ pytestmark = [pytest.mark.slow, pytest.mark.skipif_in_ci]
 # through-the-roof failures (roof is at ~3 m+).
 MAX_ALLOWED_Z = 2.1
 
+# Tighten stuck-detection so doorways the wider inflation blocks get opened
+# within a few seconds of non-progress.
+_SIMPLE_PLANNER_TUNING = {
+    "cell_size": 0.3,
+    "obstacle_height_threshold": 0.15,
+    "inflation_radius": 0.7,
+    "lookahead_distance": 2.0,
+    "replan_rate": 5.0,
+    "stuck_seconds": 4.0,
+    "stuck_shrink_factor": 0.5,
+}
+
+_BLUEPRINT = (
+    autoconnect(
+        UnityBridgeModule.blueprint(
+            unity_binary="",
+            unity_scene="home_building_1",
+            vehicle_height=1.24,
+        ),
+        create_nav_stack(
+            use_simple_planner=True,
+            terrain_analysis=CROSS_WALL_TERRAIN_ANALYSIS,
+            local_planner=CROSS_WALL_LOCAL_PLANNER,
+            path_follower=CROSS_WALL_PATH_FOLLOWER,
+            simple_planner=_SIMPLE_PLANNER_TUNING,
+        ),
+        MovementManager.blueprint(),
+    )
+    .remappings([(UnityBridgeModule, "terrain_map", "terrain_map_ext")])
+    .global_config(n_workers=8, robot_model="unitree_g1", simulation=True)
+)
+
 
 class TestCrossWallPlanningSimple:
     """E2E: cross-wall routing with SimplePlanner (A* on 2D costmap)."""
 
     def test_cross_wall_sequence_simple(self):
-        blueprint = (
-            autoconnect(
-                UnityBridgeModule.blueprint(
-                    unity_binary="",
-                    unity_scene="home_building_1",
-                    vehicle_height=1.24,
-                ),
-                create_nav_stack(
-                    use_simple_planner=True,
-                    terrain_analysis=CROSS_WALL_TERRAIN_ANALYSIS,
-                    local_planner=CROSS_WALL_LOCAL_PLANNER,
-                    path_follower=CROSS_WALL_PATH_FOLLOWER,
-                    simple_planner={
-                        "cell_size": 0.3,
-                        "obstacle_height_threshold": 0.15,
-                        "inflation_radius": 0.7,
-                        "lookahead_distance": 2.0,
-                        "replan_rate": 5.0,
-                        # Tighten stuck-detection for the test so doorways
-                        # that the wider inflation blocks get opened up
-                        # within a few seconds of non-progress.
-                        "stuck_seconds": 4.0,
-                        "stuck_shrink_factor": 0.5,
-                    },
-                ),
-                MovementManager.blueprint(),
-            )
-            .remappings(
-                [
-                    (UnityBridgeModule, "terrain_map", "terrain_map_ext"),
-                ]
-            )
-            .global_config(n_workers=8, robot_model="unitree_g1", simulation=True)
-        )
-
-        run_cross_wall_test(blueprint, label="simple", max_z=MAX_ALLOWED_Z)
+        run_cross_wall_test(_BLUEPRINT, label="simple", max_z=MAX_ALLOWED_Z)
