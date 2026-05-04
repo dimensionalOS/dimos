@@ -72,7 +72,7 @@ _logger = setup_logger()
 def _odom_to_body_tf(msg: Odometry) -> Transform:
     return Transform(
         frame_id="odom",
-        child_frame_id="body",
+        child_frame_id="base_link",
         translation=Vector3(
             msg.pose.position.x,
             msg.pose.position.y,
@@ -118,7 +118,7 @@ class FastLio2Config(NativeModuleConfig):
     # locally-smooth, continuous odometry (no loop-closure jumps).  PGO
     # publishes the map→odom correction via TF.
     frame_id: str = "odom"
-    child_frame_id: str = "body"
+    child_frame_id: str = "base_link"
 
     # FAST-LIO internal processing rates
     msr_freq: float = 50.0

@@ -49,10 +49,9 @@ _MIN_KEYFRAMES_FOR_LOOP_SEARCH = 10
 
 
 class PGOConfig(ModuleConfig):
-    # TF frame names
+    # TF frame name for the world / map root.  odom and body frame names are
+    # fixed by REP-105 convention (odom, base_link) and aren't config knobs.
     world_frame: str = "map"
-    odom_frame: str = "odom"
-    body_frame: str = "body"
 
     # Keyframe detection
     key_pose_delta_trans: float = 0.5
@@ -401,13 +400,12 @@ def build_corrected_odometry(
     t: np.ndarray,
     ts: float,
     world_frame: str = "map",
-    body_frame: str = "body",
 ) -> Odometry:
     q = Rotation.from_matrix(r).as_quat()  # [x,y,z,w]
     return Odometry(
         ts=ts,
         frame_id=world_frame,
-        child_frame_id=body_frame,
+        child_frame_id="base_link",
         pose=Pose(
             position=[float(t[0]), float(t[1]), float(t[2])],
             orientation=[float(q[0]), float(q[1]), float(q[2]), float(q[3])],

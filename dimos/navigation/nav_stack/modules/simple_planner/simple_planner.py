@@ -274,10 +274,10 @@ def astar(
 
 
 class SimplePlannerConfig(ModuleConfig):
-    # TF frame names (REP-105 convention).
+    # TF frame name for the world / map root.  Body frame name is fixed by
+    # REP-105 convention (base_link); odom frame isn't used by this planner.
     world_frame: str = "map"
-    odom_frame: str = "odom"
-    body_frame: str = "body"
+    body_frame: str = "base_link"
 
     # Costmap resolution in metres per cell.
     cell_size: float = 0.3
@@ -402,7 +402,6 @@ class SimplePlanner(Module):
         The first successful lookup wins. ``sensor`` is used by the Unity sim bridge."""
         return [
             (self.config.world_frame, self.config.body_frame),
-            (self.config.odom_frame, self.config.body_frame),
             (self.config.world_frame, "sensor"),
         ]
 
