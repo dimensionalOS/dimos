@@ -115,11 +115,7 @@ class TestLoopClosure:
         step: float = 0.4,
         time_per_step: float = 1.0,
     ) -> None:
-        """Drive a square trajectory, returning to near the start.
-
-        Generates keyframes along a square path with consistent point clouds
-        at each pose. Calls search_for_loops() on each keyframe.
-        """
+        """Drive a square trajectory back to near start, calling search_for_loops on each keyframe."""
         t = 0.0
         positions = []
 
@@ -162,9 +158,6 @@ class TestLoopClosure:
         pgo = _SimplePGO(config)
         self._build_square_trajectory(pgo, side_length=20.0, step=0.4, time_per_step=1.0)
 
-        # The robot should have gone around a 20m square and come back near start
-        # With ~200 keyframes and loop_time_thresh=30, the start keyframes
-        # are far enough in time. Loop closure should be detected.
         assert len(pgo._history_pairs) > 0, (
             f"No loop closure detected with {len(pgo._key_poses)} keyframes. "
             f"Start position: {pgo._key_poses[0].t_global}, "
@@ -277,9 +270,6 @@ class TestLoopClosure:
         gt_start = ground_truth_positions[0]
         gt_end = ground_truth_positions[-1]
 
-        # The positions should be reasonably close to ground truth
-        # (exact correction depends on ICP quality, but optimization should help)
-        # At minimum, the system should have run without crashing
         assert len(pgo._key_poses) > 0
         assert len(pgo._key_poses) >= 10
 

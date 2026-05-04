@@ -334,10 +334,7 @@ def _sensor_scan_override(cloud: Any) -> Any:
 def _global_map_override(cloud: Any) -> Any:
     """Render accumulated global map with a blue→green gradient by z-height.
 
-    Cool half (deep blue → green, passing through teal) keeps the room map
-    visually separated from the terrain_map's warm half (yellow → red).
-    Shared across `world/global_map`, `world/global_map_pgo`, and
-    `world/global_map_fastlio` so every SLAM/PGO map uses the same palette.
+    Cool palette keeps the room map visually separated from terrain_map's warm half.
     """
     import numpy as np
     import rerun as rr
@@ -363,11 +360,8 @@ def _global_map_override(cloud: Any) -> Any:
 def _terrain_map_override(cloud: Any) -> Any:
     """Render terrain_map with a lavender → magenta gradient by z-height.
 
-    The terrain_analysis C++ module sets point intensity to the height
-    difference above the planar voxel ground. Low z → ground (pale lavender),
-    high z → obstacle (vivid magenta). Magenta/purple slice keeps terrain
-    visually distinct from both global_map (blue → green) and any
-    yellow/red elements.
+    Point intensity from terrain_analysis encodes height above the planar voxel
+    ground; low z = pale lavender (ground), high z = vivid magenta (obstacle).
     """
     import numpy as np
     import rerun as rr
@@ -391,13 +385,7 @@ def _terrain_map_override(cloud: Any) -> Any:
 
 
 def _costmap_cloud_override(cloud: Any) -> Any:
-    """Render SimplePlanner's costmap_cloud — the blocked grid cells
-    (with inflation) that A* actually treats as obstacles. Big red
-    boxes so they pop against the terrain clouds.
-
-    Lifted above ground so the costmap cells aren't buried under the
-    terrain/obstacle clouds that share the same z-range.
-    """
+    """Render SimplePlanner's costmap_cloud as red points lifted above terrain."""
     import numpy as np
     import rerun as rr
 
@@ -486,11 +474,7 @@ def _goal_path_override(path_msg: Any) -> Any:
 
 
 def _waypoint_override(msg: Any) -> Any:
-    """Render the current waypoint goal as a visible marker.
-
-    Orange + slightly smaller than the goal sphere so the final goal
-    stays the larger, dominant marker.
-    """
+    """Render the current waypoint as an orange marker (smaller than the goal sphere)."""
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):

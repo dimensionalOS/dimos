@@ -357,9 +357,7 @@ class SimplePlanner(Module):
         # Current inflation in use — shrunk on stuck escalation, reset
         # to config.inflation_radius on new goal.
         self._effective_inflation = self.config.inflation_radius
-        # Cached last-successful A* path and when we planned it, so
-        # waypoints can still be republished between replans (cooldown
-        # is enforced in the planning loop).
+        # Cached path so waypoints can be republished between replans.
         self._cached_path: list[tuple[float, float]] | None = None
         self._last_plan_time = 0.0
         # Costmap_cloud publish throttle — 2 Hz is plenty for rerun.
@@ -460,9 +458,8 @@ class SimplePlanner(Module):
             self._goal_x = float(msg.x)
             self._goal_y = float(msg.y)
             self._goal_z = float(msg.z)
-            # Fresh goal → fresh progress tracker + restore default
-            # inflation + drop cached path so the next tick plans
-            # immediately (no cooldown wait for a brand-new goal).
+            # Fresh goal: reset progress tracker, restore default inflation,
+            # drop cached path so the next tick plans without cooldown.
             self._ref_goal_dist = float("inf")
             self._last_progress_time = time.monotonic()
             self._effective_inflation = self.config.inflation_radius
@@ -541,11 +538,8 @@ class SimplePlanner(Module):
     def _on_terrain_map(self, msg: PointCloud2) -> None:
         """Layer fresh local terrain on top of the current costmap.
 
-        ``terrain_map`` arrives faster than ``terrain_map_ext`` and
-        carries the most recent local view, so dynamic obstacles appear
-        here first. We additively merge into the existing costmap;
-        these additions are wiped on the next ``terrain_map_ext``
-        rebuild.
+        ``terrain_map`` is faster than ``terrain_map_ext`` so dynamic obstacles
+        appear here first; additions are wiped on the next ``terrain_map_ext`` rebuild.
         """
         points, _ = msg.as_numpy()
         if points is None or len(points) == 0:
@@ -568,11 +562,7 @@ class SimplePlanner(Module):
                 time.sleep(sleep)
 
     def _publish_costmap_cloud(self, rz: float, now: float) -> None:
-        """Publish the blocked-cell centers as a PointCloud2 for rerun.
-
-        Throttled to ~2 Hz. Each cell becomes a 3D point at the cell
-        center, lifted slightly above the robot's z for visibility.
-        """
+        """Publish blocked-cell centers as a PointCloud2 for rerun (throttled to ~2 Hz)."""
         if now - self._last_costmap_pub < 0.5:
             return
         self._last_costmap_pub = now
@@ -813,14 +803,7 @@ class SimplePlanner(Module):
     def _lookahead(
         path: list[tuple[float, float]], rx: float, ry: float, distance: float
     ) -> tuple[float, float]:
-        """Pick a look-ahead point at least ``distance`` metres ahead of the
-        robot along the path.
-
-        First finds the path index closest to (rx, ry), then walks forward
-        until the cumulative distance from that closest point exceeds
-        ``distance``. Falls back to the final path node if nothing is far
-        enough. Path is ordered start → goal.
-        """
+        """Pick a look-ahead point at least ``distance`` metres ahead of the robot along ``path``."""
         if not path:
             return (rx, ry)
         # Closest path index to the robot

@@ -365,10 +365,9 @@ def process_scan(
     ts: float,
     unregister_input: bool,
 ) -> tuple[Odometry, Transform] | None:
-    """Add a keyframe (if it qualifies), run loop closure, and return the
-    messages to publish. Returns None if the cloud is empty.
+    """Add a keyframe, run loop closure, return messages to publish (None on empty cloud).
 
-    Caller is responsible for holding ``pgo``'s lock during this call.
+    Caller must hold ``pgo``'s lock during this call.
     """
     points, _ = cloud.as_numpy()
     if len(points) == 0:
