@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
+import warnings
 
 import cv2
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
@@ -244,10 +245,21 @@ class Image(Timestamped):
                 ts=self.ts,
             )
         if self.format == ImageFormat.RGBA:
-            return self.copy()  # RGBA contains RGB + alpha
+            warnings.warn("to_rgb() drops alpha channel from RGBA image", stacklevel=2)
+            return Image(
+                data=cv2.cvtColor(arr, cv2.COLOR_RGBA2RGB),
+                format=ImageFormat.RGB,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
         if self.format == ImageFormat.BGRA:
-            rgba = cv2.cvtColor(arr, cv2.COLOR_BGRA2RGBA)
-            return Image(data=rgba, format=ImageFormat.RGBA, frame_id=self.frame_id, ts=self.ts)
+            warnings.warn("to_rgb() drops alpha channel from BGRA image", stacklevel=2)
+            return Image(
+                data=cv2.cvtColor(arr, cv2.COLOR_BGRA2RGB),
+                format=ImageFormat.RGB,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH16):
             gray8 = (arr / 256).astype(np.uint8) if self.format != ImageFormat.GRAY else arr
             rgb = cv2.cvtColor(gray8, cv2.COLOR_GRAY2RGB)
@@ -266,6 +278,7 @@ class Image(Timestamped):
                 ts=self.ts,
             )
         if self.format == ImageFormat.RGBA:
+            warnings.warn("to_bgr() drops alpha channel from RGBA image", stacklevel=2)
             return Image(
                 data=cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR),
                 format=ImageFormat.BGR,
@@ -273,6 +286,7 @@ class Image(Timestamped):
                 ts=self.ts,
             )
         if self.format == ImageFormat.BGRA:
+            warnings.warn("to_bgr() drops alpha channel from BGRA image", stacklevel=2)
             return Image(
                 data=cv2.cvtColor(arr, cv2.COLOR_BGRA2BGR),
                 format=ImageFormat.BGR,
@@ -375,6 +389,17 @@ class Image(Timestamped):
         return Image(data=cropped_data, format=self.format, frame_id=self.frame_id, ts=self.ts)
 
     @property
+    def brightness(self) -> float:
+        """Return mean brightness in [0, 1].
+
+        Strides to ~256px on the long edge first — ~O(N/step²) cheaper than
+        reading every pixel, and the mean converges quickly (CLT).
+        """
+        max_val = 65535.0 if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16) else 255.0
+        step = max(1, max(self.data.shape[:2]) // 256)
+        return float(self.data[::step, ::step].mean() / max_val)
+
+    @property
     def sharpness(self) -> float:
         """Return sharpness score.
 
@@ -471,7 +496,7 @@ class Image(Timestamped):
         channels = 1 if self.data.ndim == 2 else self.data.shape[2]
         msg.step = self.width * self.dtype.itemsize * channels
 
-        view = memoryview(np.ascontiguousarray(self.data)).cast("B")
+        view = memoryview(np.ascontiguousarray(self.data)).cast("B")  # type: ignore[arg-type]
         msg.data_length = len(view)
         msg.data = view
 
@@ -509,7 +534,7 @@ class Image(Timestamped):
         Returns:
             LCM-encoded bytes with JPEG-compressed image data
         """
-        from turbojpeg import TurboJPEG
+        from turbojpeg import TJPF_RGB, TurboJPEG
 
         jpeg = TurboJPEG()
         msg = LCMImage()
@@ -528,11 +553,9 @@ class Image(Timestamped):
             msg.header.stamp.sec = int(now)
             msg.header.stamp.nsec = int((now - int(now)) * 1e9)
 
-        # Get image in BGR format for JPEG encoding
-        bgr_image = self.to_bgr().to_opencv()
-
-        # Encode as JPEG
-        jpeg_data = jpeg.encode(bgr_image, quality=quality)
+        # Canonicalize to RGB so JPEG bytes are deterministic regardless of input format.
+        rgb_array = self.to_rgb().data
+        jpeg_data = jpeg.encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)
 
         # Store JPEG data and metadata
         msg.height = self.height
@@ -556,7 +579,7 @@ class Image(Timestamped):
         Returns:
             Image instance
         """
-        from turbojpeg import TurboJPEG
+        from turbojpeg import TJPF_RGB, TurboJPEG
 
         jpeg = TurboJPEG()
         msg = LCMImage.lcm_decode(data)
@@ -564,12 +587,11 @@ class Image(Timestamped):
         if msg.encoding != "jpeg":
             raise ValueError(f"Expected JPEG encoding, got {msg.encoding}")
 
-        # Decode JPEG data
-        bgr_array = jpeg.decode(msg.data)
+        rgb_array = jpeg.decode(msg.data, pixel_format=TJPF_RGB)
 
         return cls(
-            data=bgr_array,
-            format=ImageFormat.BGR,
+            data=rgb_array,
+            format=ImageFormat.RGB,
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
             ts=(
                 msg.header.stamp.sec + msg.header.stamp.nsec / 1e9

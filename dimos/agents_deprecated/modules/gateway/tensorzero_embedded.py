@@ -15,11 +15,12 @@
 """TensorZero embedded gateway client with correct config format."""
 
 from collections.abc import AsyncIterator, Iterator
-import logging
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class TensorZeroEmbeddedGateway:

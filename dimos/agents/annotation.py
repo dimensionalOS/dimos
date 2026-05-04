@@ -13,12 +13,59 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from typing import Any, TypeVar
+import functools
+import inspect
+import threading
+from typing import Any, TypeVar, cast
+
+from dimos.core.core import rpc
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+_SKILL_CONTEXT = threading.local()
+
+
+def current_skill_context() -> dict[str, Any] | None:
+    """Return the per-call context for the currently executing `@skill`.
+
+    Returns a (possibly empty) dict inside a `@skill` call and `None` when no
+    skill is currently on the stack in this thread. The MCP server populates
+    `{"progress_token": <token>}` when the caller supplied
+    `params._meta.progressToken`. Otherwise the dict is empty. Downstream code
+    uses the `None` vs. `{}` distinction to tell "outside any skill" from
+    "inside a skill that didn't get a token."
+    """
+    return getattr(_SKILL_CONTEXT, "context", None)
+
 
 def skill(func: F) -> F:
-    func.__rpc__ = True  # type: ignore[attr-defined]
-    func.__skill__ = True  # type: ignore[attr-defined]
-    return func
+    if inspect.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def async_context_wrapper(*args: Any, **kwargs: Any) -> Any:
+            context = kwargs.pop("_mcp_context", None) or {}
+            previous = getattr(_SKILL_CONTEXT, "context", None)
+            _SKILL_CONTEXT.context = context
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                _SKILL_CONTEXT.context = previous
+
+        context_wrapper: Callable[..., Any] = async_context_wrapper
+    else:
+
+        @functools.wraps(func)
+        def sync_context_wrapper(*args: Any, **kwargs: Any) -> Any:
+            context = kwargs.pop("_mcp_context", None) or {}
+            previous = getattr(_SKILL_CONTEXT, "context", None)
+            _SKILL_CONTEXT.context = context
+            try:
+                return func(*args, **kwargs)
+            finally:
+                _SKILL_CONTEXT.context = previous
+
+        context_wrapper = sync_context_wrapper
+
+    wrapped = rpc(context_wrapper)
+    wrapped.__skill__ = True  # type: ignore[attr-defined]
+    return cast("F", wrapped)

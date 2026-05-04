@@ -68,7 +68,7 @@ class TestBasicIteration:
         assert list(stream) == []
 
     def test_fetch_materializes_to_list(self, make_stream):
-        result = make_stream(3).fetch()
+        result = make_stream(3).to_list()
         assert isinstance(result, list)
         assert len(result) == 3
 
@@ -85,27 +85,27 @@ class TestTemporalFilters:
 
     def test_after(self, make_stream):
         """.after(t) keeps observations with ts > t."""
-        result = make_stream(5).after(2.0).fetch()
+        result = make_stream(5).after(2.0).to_list()
         assert [o.ts for o in result] == [3.0, 4.0]
 
     def test_before(self, make_stream):
         """.before(t) keeps observations with ts < t."""
-        result = make_stream(5).before(2.0).fetch()
+        result = make_stream(5).before(2.0).to_list()
         assert [o.ts for o in result] == [0.0, 1.0]
 
     def test_time_range(self, make_stream):
         """.time_range(t1, t2) keeps t1 <= ts <= t2."""
-        result = make_stream(5).time_range(1.0, 3.0).fetch()
+        result = make_stream(5).time_range(1.0, 3.0).to_list()
         assert [o.ts for o in result] == [1.0, 2.0, 3.0]
 
     def test_at_with_tolerance(self, make_stream):
         """.at(t, tolerance) keeps observations within tolerance of t."""
-        result = make_stream(5).at(2.0, tolerance=0.5).fetch()
+        result = make_stream(5).at(2.0, tolerance=0.5).to_list()
         assert [o.ts for o in result] == [2.0]
 
     def test_chained_temporal_filters(self, make_stream):
         """Filters compose — each narrows the result."""
-        result = make_stream(10).after(2.0).before(7.0).fetch()
+        result = make_stream(10).after(2.0).before(7.0).to_list()
         assert [o.ts for o in result] == [3.0, 4.0, 5.0, 6.0]
 
 
@@ -118,7 +118,7 @@ class TestSpatialFilter:
         stream.append("close", ts=1.0, pose=(1, 1, 0))
         stream.append("far", ts=2.0, pose=(10, 10, 10))
 
-        result = stream.near((0, 0, 0), radius=2.0).fetch()
+        result = stream.near((0, 0, 0), radius=2.0).to_list()
         assert [o.data for o in result] == ["origin", "close"]
 
     def test_near_excludes_no_pose(self, memory_session):
@@ -126,7 +126,7 @@ class TestSpatialFilter:
         stream.append("no_pose", ts=0.0)
         stream.append("has_pose", ts=1.0, pose=(0, 0, 0))
 
-        result = stream.near((0, 0, 0), radius=10.0).fetch()
+        result = stream.near((0, 0, 0), radius=10.0).to_list()
         assert [o.data for o in result] == ["has_pose"]
 
 
@@ -139,7 +139,7 @@ class TestTagsFilter:
         stream.append("car", ts=1.0, tags={"type": "vehicle", "wheels": 4})
         stream.append("dog", ts=2.0, tags={"type": "animal", "legs": 4})
 
-        result = stream.tags(type="animal").fetch()
+        result = stream.tags(type="animal").to_list()
         assert [o.data for o in result] == ["cat", "dog"]
 
     def test_filter_multiple_tags(self, memory_session):
@@ -147,25 +147,25 @@ class TestTagsFilter:
         stream.append("a", ts=0.0, tags={"x": 1, "y": 2})
         stream.append("b", ts=1.0, tags={"x": 1, "y": 3})
 
-        result = stream.tags(x=1, y=2).fetch()
+        result = stream.tags(x=1, y=2).to_list()
         assert [o.data for o in result] == ["a"]
 
 
 class TestOrderLimitOffset:
     def test_limit(self, make_stream):
-        result = make_stream(10).limit(3).fetch()
+        result = make_stream(10).limit(3).to_list()
         assert len(result) == 3
 
     def test_offset(self, make_stream):
-        result = make_stream(5).offset(2).fetch()
+        result = make_stream(5).offset(2).to_list()
         assert [o.data for o in result] == [20, 30, 40]
 
     def test_limit_and_offset(self, make_stream):
-        result = make_stream(10).offset(2).limit(3).fetch()
+        result = make_stream(10).offset(2).limit(3).to_list()
         assert [o.data for o in result] == [20, 30, 40]
 
     def test_order_by_ts_desc(self, make_stream):
-        result = make_stream(5).order_by("ts", desc=True).fetch()
+        result = make_stream(5).order_by("ts", desc=True).to_list()
         assert [o.ts for o in result] == [4.0, 3.0, 2.0, 1.0, 0.0]
 
     def test_first(self, make_stream):
@@ -200,21 +200,21 @@ class TestFunctionalAPI:
 
     def test_filter_with_predicate(self, make_stream):
         """.filter() takes a predicate on the full Observation."""
-        result = make_stream(5).filter(lambda obs: obs.data > 20).fetch()
+        result = make_stream(5).filter(lambda obs: obs.data > 20).to_list()
         assert [o.data for o in result] == [30, 40]
 
     def test_filter_on_metadata(self, make_stream):
         """Predicates can access ts, tags, pose — not just data."""
-        result = make_stream(5).filter(lambda obs: obs.ts % 2 == 0).fetch()
+        result = make_stream(5).filter(lambda obs: obs.ts % 2 == 0).to_list()
         assert [o.ts for o in result] == [0.0, 2.0, 4.0]
 
     def test_map(self, make_stream):
         """.map() transforms each observation's data."""
-        result = make_stream(3).map(lambda obs: obs.derive(data=obs.data * 2)).fetch()
+        result = make_stream(3).map(lambda obs: obs.derive(data=obs.data * 2)).to_list()
         assert [o.data for o in result] == [0, 20, 40]
 
     def test_map_preserves_ts(self, make_stream):
-        result = make_stream(3).map(lambda obs: obs.derive(data=str(obs.data))).fetch()
+        result = make_stream(3).map(lambda obs: obs.derive(data=str(obs.data))).to_list()
         assert [o.ts for o in result] == [0.0, 1.0, 2.0]
         assert [o.data for o in result] == ["0", "10", "20"]
 
@@ -224,7 +224,7 @@ class TestTransformChaining:
 
     def test_single_transform(self, make_stream):
         xf = FnTransformer(lambda obs: obs.derive(data=obs.data + 1))
-        result = make_stream(3).transform(xf).fetch()
+        result = make_stream(3).transform(xf).to_list()
         assert [o.data for o in result] == [1, 11, 21]
 
     def test_chained_transforms(self, make_stream):
@@ -232,14 +232,14 @@ class TestTransformChaining:
         add_one = FnTransformer(lambda obs: obs.derive(data=obs.data + 1))
         double = FnTransformer(lambda obs: obs.derive(data=obs.data * 2))
 
-        result = make_stream(3).transform(add_one).transform(double).fetch()
+        result = make_stream(3).transform(add_one).transform(double).to_list()
         # (0+1)*2=2, (10+1)*2=22, (20+1)*2=42
         assert [o.data for o in result] == [2, 22, 42]
 
     def test_transform_can_skip(self, make_stream):
         """Returning None from a transformer skips that observation."""
         keep_even = FnTransformer(lambda obs: obs if obs.data % 20 == 0 else None)
-        result = make_stream(5).transform(keep_even).fetch()
+        result = make_stream(5).transform(keep_even).to_list()
         assert [o.data for o in result] == [0, 20, 40]
 
     def test_transform_filter_transform(self, memory_session):
@@ -256,7 +256,7 @@ class TestTransformChaining:
             stream.transform(add_ten)  # 11, 12, 13
             .near((0, 0, 0), 5.0)  # keeps pose at (0,0,0) and (1,0,0)
             .transform(double)  # 22, 26
-            .fetch()
+            .to_list()
         )
         assert [o.data for o in result] == [22, 26]
 
@@ -267,7 +267,7 @@ class TestTransformChaining:
             for obs in upstream:
                 yield obs.derive(data=obs.data * 2)
 
-        result = make_stream(3).transform(double_all).fetch()
+        result = make_stream(3).transform(double_all).to_list()
         assert [o.data for o in result] == [0, 20, 40]
 
     def test_generator_function_stateful(self, make_stream):
@@ -279,7 +279,7 @@ class TestTransformChaining:
                 total += obs.data
                 yield obs.derive(data=total)
 
-        result = make_stream(3).transform(running_sum).fetch()
+        result = make_stream(3).transform(running_sum).to_list()
         # 0, 0+10=10, 10+20=30
         assert [o.data for o in result] == [0, 10, 30]
 
@@ -297,7 +297,7 @@ class TestTransformChaining:
         stream.append(0.6, ts=2.2)
 
         xf = QualityWindow(quality_fn=lambda v: v, window=1.0)
-        result = stream.transform(xf).fetch()
+        result = stream.transform(xf).to_list()
         assert [o.data for o in result] == [0.9, 0.8, 0.6]
 
     def test_streaming_not_buffering(self, make_stream):
@@ -310,7 +310,7 @@ class TestTransformChaining:
                     calls.append(obs.data)
                     yield obs
 
-        result = make_stream(100).transform(CountingXf()).limit(3).fetch()
+        result = make_stream(100).transform(CountingXf()).limit(3).to_list()
         assert len(result) == 3
         # The transformer should have processed at most a few more than 3
         # (not all 100) due to lazy evaluation
@@ -341,7 +341,7 @@ class TestUnboundStream:
             stream.append(5)
             stream.append(10)
 
-            result = stream.chain(pipeline).fetch()
+            result = stream.chain(pipeline).to_list()
             assert [obs.data for obs in result] == [11, 21]
 
     def test_iteration_raises(self) -> None:
@@ -365,7 +365,7 @@ class TestUnboundStream:
                         yield obs.derive(data=obs.data * 2)
 
             pipeline = Stream().transform(Double())
-            result = stream.chain(pipeline).fetch()
+            result = stream.chain(pipeline).to_list()
             assert [obs.data for obs in result] == [20, 40, 60]
 
     def test_chain_multiple_transforms(self) -> None:
@@ -386,7 +386,7 @@ class TestUnboundStream:
                         yield obs.derive(data=obs.data + 10)
 
             pipeline = Stream().transform(Double()).transform(AddTen())
-            result = stream.chain(pipeline).fetch()
+            result = stream.chain(pipeline).to_list()
             assert result[0].data == 20  # (5 * 2) + 10
 
     def test_chain_preserves_filters(self) -> None:
@@ -399,7 +399,7 @@ class TestUnboundStream:
             stream.append(30, ts=3.0)
 
             pipeline = Stream().after(1.5)
-            result = stream.chain(pipeline).fetch()
+            result = stream.chain(pipeline).to_list()
             assert [obs.data for obs in result] == [20, 30]
 
     def test_chain_rejects_bound_stream(self) -> None:
@@ -690,7 +690,7 @@ class TestLiveMode:
         live = stream.live(buffer=Unbounded())
 
         with pytest.raises(TypeError, match="block forever"):
-            live.fetch()
+            live.to_list()
 
     def test_fetch_on_live_transform_without_limit_raises(self, memory_session):
         """fetch() on a live transform without limit() raises TypeError."""
@@ -699,7 +699,7 @@ class TestLiveMode:
         live_xf = stream.live(buffer=Unbounded()).transform(xf)
 
         with pytest.raises(TypeError, match="block forever"):
-            live_xf.fetch()
+            live_xf.to_list()
 
     def test_count_on_live_transform_raises(self, memory_session):
         """count() on a live transform stream raises TypeError."""

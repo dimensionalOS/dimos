@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
+from enum import Enum
 import sys
 from threading import Thread
 import time
@@ -32,6 +32,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.spec.perception import Camera, Pointcloud
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
@@ -41,10 +42,9 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.testing.replay import TimedSensorReplay, TimedSensorStorage
 
@@ -53,11 +53,17 @@ if sys.version_info < (3, 13):
 else:
     from typing import TypeVar
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
+
+
+class Go2Mode(str, Enum):
+    DEFAULT = "default"
+    RAGE = "rage"
 
 
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
+    mode: Go2Mode = Go2Mode.DEFAULT
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -73,6 +79,7 @@ class Go2ConnectionProtocol(Protocol):
     def liedown(self) -> bool: ...
     def balance_stand(self) -> bool: ...
     def set_obstacle_avoidance(self, enabled: bool = True) -> None: ...
+    def enable_rage_mode(self) -> bool: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
 
@@ -94,11 +101,26 @@ def _camera_info_static() -> CameraInfo:
     )
 
 
+# Static camera mount chain: base_link -> camera_link -> camera_optical.
+# TODO we need a standardized way to specify this for all cameras in dimos
+BASE_TO_OPTICAL: Transform = Transform(
+    translation=Vector3(0.3, 0.0, 0.0),
+    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+    frame_id="base_link",
+    child_frame_id="camera_link",
+) + Transform(
+    translation=Vector3(0.0, 0.0, 0.0),
+    rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
+    frame_id="camera_link",
+    child_frame_id="camera_optical",
+)
+
+
 def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
     connection_type = cfg.unitree_connection_type
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
-        dataset = cfg.replay_dir
+        dataset = cfg.replay_db
         return ReplayConnection(dataset=dataset)
     elif ip == "mujoco" or connection_type == "mujoco":
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
@@ -113,11 +135,10 @@ class ReplayConnection(UnitreeWebRTCConnection):
     # we don't want UnitreeWebRTCConnection to init
     def __init__(  # type: ignore[no-untyped-def]
         self,
-        dataset: str = "go2_sf_office",
+        dataset: str = "go2_china_office",
         **kwargs,
     ) -> None:
-        self.dir_name = dataset
-        get_data(self.dir_name)
+        self.dataset = dataset
         self.replay_config = {
             "loop": kwargs.get("loop", True),
             "seek": kwargs.get("seek"),
@@ -142,35 +163,22 @@ class ReplayConnection(UnitreeWebRTCConnection):
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
 
+    def enable_rage_mode(self) -> bool:
+        return True
+
     @simple_mcache
     def lidar_stream(self):  # type: ignore[no-untyped-def]
-        lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")  # type: ignore[var-annotated]
+        lidar_store = TimedSensorReplay(f"{self.dataset}/lidar")  # type: ignore[var-annotated]
         return lidar_store.stream(**self.replay_config)
 
     @simple_mcache
     def odom_stream(self):  # type: ignore[no-untyped-def]
-        odom_store = TimedSensorReplay(f"{self.dir_name}/odom")  # type: ignore[var-annotated]
+        odom_store = TimedSensorReplay(f"{self.dataset}/odom")  # type: ignore[var-annotated]
         return odom_store.stream(**self.replay_config)
 
-    # we don't have raw video stream in the data set
     @simple_mcache
     def video_stream(self):  # type: ignore[no-untyped-def]
-        # Legacy Unitree recordings can have RGB bytes that were tagged/assumed as BGR.
-        # Fix at replay-time by coercing everything to RGB before publishing/logging.
-        def _autocast_video(x):  # type: ignore[no-untyped-def]
-            # If the old recording tagged it as BGR, relabel to RGB (do NOT channel-swap again).
-            if isinstance(x, Image):
-                if x.format == ImageFormat.BGR:
-                    x.format = ImageFormat.RGB
-                if not x.frame_id:
-                    x.frame_id = "camera_optical"
-                return x
-
-            # Some recordings may store raw arrays or frame wrappers.
-            arr = x.to_ndarray(format="rgb24") if hasattr(x, "to_ndarray") else x
-            return Image.from_numpy(arr, format=ImageFormat.RGB, frame_id="camera_optical")
-
-        video_store = TimedSensorReplay(f"{self.dir_name}/video", autocast=_autocast_video)
+        video_store: TimedSensorReplay[Image] = TimedSensorReplay(f"{self.dataset}/color_image")
         return video_store.stream(**self.replay_config)
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -251,6 +259,10 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.standup()
         time.sleep(3)
         self.connection.balance_stand()
+
+        if self.config.mode == Go2Mode.RAGE:
+            self.connection.enable_rage_mode()
+
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
         # self.record("go2_bigoffice")
@@ -316,6 +328,22 @@ class GO2Connection(Module, Camera, Pointcloud):
     def liedown(self) -> bool:
         """Make the robot lie down."""
         return self.connection.liedown()
+
+    @rpc
+    def balance_stand(self) -> bool:
+        """Enter BalanceStand: neutral state for switching locomotion modes"""
+        return self.connection.balance_stand()
+
+    @rpc
+    def enable_rage_mode(self) -> bool:
+        """Enable Rage Mode (~2.5 m/s forward velocity envelope).
+        Ensures BalanceStand precondition regardless of current FSM state.
+        """
+        self.connection.balance_stand()
+        time.sleep(0.3)
+        result = self.connection.enable_rage_mode()
+        logger.info("Rage Mode enabled")
+        return result
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
