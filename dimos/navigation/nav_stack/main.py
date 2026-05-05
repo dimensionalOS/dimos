@@ -189,47 +189,46 @@ def nav_stack_rerun_config(
     resolved = dict(user_config or {})
     resolved.setdefault("blueprint", _default_rerun_blueprint)
     resolved.setdefault("pubsubs", [LCM()])
-    resolved.setdefault("visual_override", {})
+    resolved.setdefault("visual_colors", {})
     resolved.setdefault("static", {})
-    visual_override = dict(resolved["visual_override"])
-    visual_override.setdefault("world/sensor_scan", _sensor_scan_override)
-    visual_override.setdefault("world/terrain_map", _terrain_map_override)
-    visual_override.setdefault("world/terrain_map_ext", _terrain_map_override)
-    visual_override.setdefault("world/global_map", _global_map_override)
-    visual_override.setdefault("world/global_map_pgo", _global_map_override)
-    visual_override.setdefault("world/global_map_fastlio", _global_map_override)
-    visual_override.setdefault("world/registered_scan", _global_map_override)
-    visual_override.setdefault("world/explored_areas", _explored_areas_override)
-    visual_override.setdefault("world/preloaded_map", _preloaded_map_override)
-    visual_override.setdefault("world/trajectory", _trajectory_override)
-    visual_override.setdefault("world/path", _path_override)
+    visual_colors = dict(resolved["visual_colors"])
+    visual_colors.setdefault("world/sensor_scan", _sensor_scan_colors)
+    visual_colors.setdefault("world/terrain_map", _terrain_map_colors)
+    visual_colors.setdefault("world/terrain_map_ext", _terrain_map_colors)
+    visual_colors.setdefault("world/global_map", _global_map_colors)
+    visual_colors.setdefault("world/global_map_pgo", _global_map_colors)
+    visual_colors.setdefault("world/global_map_fastlio", _global_map_colors)
+    visual_colors.setdefault("world/registered_scan", _global_map_colors)
+    visual_colors.setdefault("world/explored_areas", _explored_areas_colors)
+    visual_colors.setdefault("world/preloaded_map", _preloaded_map_colors)
+    visual_colors.setdefault("world/trajectory", _trajectory_colors)
+    visual_colors.setdefault("world/path", _path_colors)
     if agentic_debug:
-        visual_override.setdefault("world/way_point", _waypoint_override_debug)
-        visual_override.setdefault("world/goal", _goal_override_debug)
-        visual_override.setdefault("world/goal_path", _goal_path_override_debug)
-        visual_override.setdefault("world/nav_boundary", _nav_boundary_override_debug)
+        visual_colors.setdefault("world/way_point", _waypoint_colors_debug)
+        visual_colors.setdefault("world/goal", _goal_colors_debug)
+        visual_colors.setdefault("world/goal_path", _goal_path_colors_debug)
+        visual_colors.setdefault("world/nav_boundary", _nav_boundary_colors_debug)
     else:
-        visual_override.setdefault("world/way_point", _waypoint_override)
-        visual_override.setdefault("world/goal", _goal_override)
-        visual_override.setdefault("world/goal_path", _goal_path_override)
-        visual_override.setdefault("world/nav_boundary", _nav_boundary_override)
-    visual_override.setdefault("world/obstacle_cloud", _obstacle_cloud_override)
-    visual_override.setdefault("world/costmap_cloud", _costmap_cloud_override)
-    visual_override.setdefault("world/free_paths", _free_paths_override)
-    resolved["visual_override"] = visual_override
+        visual_colors.setdefault("world/way_point", _waypoint_colors)
+        visual_colors.setdefault("world/goal", _goal_colors)
+        visual_colors.setdefault("world/goal_path", _goal_path_colors)
+        visual_colors.setdefault("world/nav_boundary", _nav_boundary_colors)
+    visual_colors.setdefault("world/obstacle_cloud", _obstacle_cloud_colors)
+    visual_colors.setdefault("world/costmap_cloud", _costmap_cloud_colors)
+    visual_colors.setdefault("world/free_paths", _free_paths_colors)
+    resolved["visual_colors"] = visual_colors
     static_entries = dict(resolved["static"])
     static_entries.setdefault("world/floor", _static_floor)
     resolved["static"] = static_entries
     return resolved
 
 
-# Z-offsets for Rerun visualization (metres above the data's actual z).
 # Small lifts prevent z-fighting with the terrain/floor plane.
 _VIS_LIFT = 0.3  # default lift for nav markers (goals, paths, boundaries)
-_VIS_LIFT_TRAJECTORY = 0.05  # trajectory breadcrumbs sit just above the floor
-_VIS_LIFT_COSTMAP = 0.2  # lift costmap cells clear of terrain/obstacle clouds
+_VIS_LIFT_TRAJECTORY = 0.05  # just above the floor
+_VIS_LIFT_COSTMAP = 0.2  # high enough to avoid terrain/obstacle clouds
 
-# Agentic debug mode lifts nav elements high above the scene so they're
+# lifts nav elements high above the scene so they're
 # visible from a top-down camera even when terrain occludes them.
 _AGENTIC_DEBUG_LIFT = 3.0
 _AGENTIC_DEBUG_PATH_LIFT = _AGENTIC_DEBUG_LIFT + 0.4  # path slightly above goal markers
@@ -244,13 +243,11 @@ def _default_rerun_blueprint() -> Any:
     )
 
 
-def _sensor_scan_override(cloud: Any) -> Any:
-    """Hide sensor_scan — it clutters the view with raw lidar returns."""
+def _sensor_scan_colors(cloud: Any) -> Any:
     return None
 
 
-def _global_map_override(cloud: Any) -> Any:
-    """Blue→green z-gradient for accumulated map."""
+def _global_map_colors(cloud: Any) -> Any:
     import numpy as np
     import rerun as rr
 
@@ -272,8 +269,7 @@ def _global_map_override(cloud: Any) -> Any:
     return rr.Points3D(positions=points[:, :3], colors=colors, radii=0.03)
 
 
-def _terrain_map_override(cloud: Any) -> Any:
-    """Lavender→magenta z-gradient for terrain."""
+def _terrain_map_colors(cloud: Any) -> Any:
     import numpy as np
     import rerun as rr
 
@@ -295,8 +291,7 @@ def _terrain_map_override(cloud: Any) -> Any:
     return rr.Points3D(positions=points[:, :3], colors=colors, radii=0.08)
 
 
-def _costmap_cloud_override(cloud: Any) -> Any:
-    """Render SimplePlanner's costmap_cloud as red points lifted above terrain."""
+def _costmap_cloud_colors(cloud: Any) -> Any:
     import numpy as np
     import rerun as rr
 
@@ -309,8 +304,7 @@ def _costmap_cloud_override(cloud: Any) -> Any:
     return rr.Points3D(positions=lifted, colors=colors, radii=0.12)
 
 
-def _obstacle_cloud_override(cloud: Any) -> Any:
-    """Obstacle cloud in vehicle frame (plasma colormap)."""
+def _obstacle_cloud_colors(cloud: Any) -> Any:
     import rerun as rr
 
     arch = cloud.to_rerun(colormap="plasma", size=0.06)
@@ -320,18 +314,15 @@ def _obstacle_cloud_override(cloud: Any) -> Any:
     ]
 
 
-def _explored_areas_override(cloud: Any) -> Any:
-    """Render PreloadedMapTracker's explored_areas — cumulative seen points."""
+def _explored_areas_colors(cloud: Any) -> Any:
     return cloud.to_rerun(colormap="magma", size=0.05)
 
 
-def _preloaded_map_override(cloud: Any) -> Any:
-    """Render PreloadedMapTracker's static pre-loaded reference map."""
+def _preloaded_map_colors(cloud: Any) -> Any:
     return cloud.to_rerun(colormap="greys", size=0.04)
 
 
-def _trajectory_override(cloud: Any) -> Any:
-    """Render robot trajectory breadcrumb as a connected line strip."""
+def _trajectory_colors(cloud: Any) -> Any:
     import rerun as rr
 
     points, _ = cloud.as_numpy()
@@ -344,8 +335,7 @@ def _trajectory_override(cloud: Any) -> Any:
     ]
 
 
-def _path_override(path_msg: Any) -> Any:
-    """Render path in vehicle frame by attaching to the sensor TF."""
+def _path_colors(path_msg: Any) -> Any:
     import rerun as rr
 
     if not path_msg.poses:
@@ -358,13 +348,11 @@ def _path_override(path_msg: Any) -> Any:
     ]
 
 
-def _nav_boundary_override(msg: Any) -> Any:
-    """Render navigation boundary as cyan edges."""
+def _nav_boundary_colors(msg: Any) -> Any:
     return msg.to_rerun(z_offset=_VIS_LIFT, color=(0, 220, 255, 200), radii=0.05)
 
 
-def _goal_path_override(path_msg: Any) -> Any:
-    """Render FAR planner's planned path: orange line + yellow node markers."""
+def _goal_path_colors(path_msg: Any) -> Any:
     import rerun as rr
 
     if not path_msg.poses or len(path_msg.poses) < 2:
@@ -379,8 +367,7 @@ def _goal_path_override(path_msg: Any) -> Any:
     ]
 
 
-def _waypoint_override(msg: Any) -> Any:
-    """Render the current waypoint as an orange marker (smaller than the goal sphere)."""
+def _waypoint_colors(msg: Any) -> Any:
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -393,8 +380,7 @@ def _waypoint_override(msg: Any) -> Any:
     )
 
 
-def _goal_override(msg: Any) -> Any:
-    """Render the current navigation goal as a purple sphere."""
+def _goal_colors(msg: Any) -> Any:
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -407,8 +393,7 @@ def _goal_override(msg: Any) -> Any:
     )
 
 
-def _free_paths_override(cloud: Any) -> Any:
-    """Render LocalPlanner free (collision-free) candidate paths in vehicle frame."""
+def _free_paths_colors(cloud: Any) -> Any:
     import rerun as rr
 
     return [
@@ -418,8 +403,6 @@ def _free_paths_override(cloud: Any) -> Any:
 
 
 def _static_floor(rr: Any) -> list[Any]:
-    """Dark ground plane at z=-0.2 to avoid z-fighting with lidar points."""
-
     half_size = 50.0
     z_below_ground = -0.2
     floor_color_rgba = [40, 40, 40, 120]  # dark grey, semi-transparent
@@ -437,8 +420,7 @@ def _static_floor(rr: Any) -> list[Any]:
     ]
 
 
-def _waypoint_override_debug(msg: Any) -> Any:
-    """Agentic debug: waypoint elevated above the scene."""
+def _waypoint_colors_debug(msg: Any) -> Any:
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -451,8 +433,7 @@ def _waypoint_override_debug(msg: Any) -> Any:
     )
 
 
-def _goal_override_debug(msg: Any) -> Any:
-    """Agentic debug: goal elevated above the scene."""
+def _goal_colors_debug(msg: Any) -> Any:
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -465,8 +446,7 @@ def _goal_override_debug(msg: Any) -> Any:
     )
 
 
-def _goal_path_override_debug(path_msg: Any) -> Any:
-    """Agentic debug: goal path elevated above the scene."""
+def _goal_path_colors_debug(path_msg: Any) -> Any:
     import rerun as rr
 
     if not path_msg.poses or len(path_msg.poses) < 2:
@@ -479,6 +459,5 @@ def _goal_path_override_debug(path_msg: Any) -> Any:
     ]
 
 
-def _nav_boundary_override_debug(msg: Any) -> Any:
-    """Agentic debug: nav boundary elevated above the scene."""
+def _nav_boundary_colors_debug(msg: Any) -> Any:
     return msg.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT, color=(0, 220, 255, 200), radii=0.05)
