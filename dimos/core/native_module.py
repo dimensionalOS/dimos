@@ -141,6 +141,8 @@ _NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=Nativ
 
 
 class NativeModule(Module):
+    """Module that wraps a native executable as a managed subprocess."""
+
     config: NativeModuleConfig
 
     _process: subprocess.Popen[bytes] | None = None
