@@ -308,14 +308,7 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
     def move_velocity(
         self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0
     ) -> str:
-        """Move the robot at the given velocity for ``duration`` seconds.
-
-        Args:
-            x: Forward velocity (m/s)
-            y: Lateral velocity (m/s)
-            yaw: Rotational velocity (rad/s)
-            duration: Seconds to move
-        """
+        """Move the robot at the given velocity for ``duration`` seconds."""
         twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
         self.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
