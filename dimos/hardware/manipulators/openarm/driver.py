@@ -253,12 +253,10 @@ class OpenArmBus:
     def enable_all(self) -> None:
         for m in self._motors:
             self._send_raw(m.send_id, _pack_control_command(_CMD_ENABLE))
-            time.sleep(0.002)  # 2ms inter-frame gap — gs_usb TX buffer is tiny
 
     def disable_all(self) -> None:
         for m in self._motors:
             self._send_raw(m.send_id, _pack_control_command(_CMD_DISABLE))
-            time.sleep(0.002)
 
     def write_ctrl_mode(self, send_id: int, mode: int = CTRL_MODE_MIT) -> None:
         self._send_raw(
@@ -273,14 +271,10 @@ class OpenArmBus:
         """One MIT frame per motor; commands[i] → self.motors[i] = (q, dq, kp, kd, tau)."""
         if len(commands) != len(self._motors):
             raise ValueError(f"expected {len(self._motors)} commands, got {len(commands)}")
-        for i, (motor, cmd) in enumerate(zip(self._motors, commands, strict=False)):
+        for motor, cmd in zip(self._motors, commands, strict=False):
             q, dq, kp, kd, tau = cmd
             data = pack_mit_frame(motor.motor_type, q, dq, kp, kd, tau)
             self._send_raw(motor.send_id, data)
-            # Tiny inter-frame gap to avoid TX buffer overflow on gs_usb.
-            # 7 frames × 0.5ms = 3.5ms total, well within a 10ms tick.
-            if i < len(self._motors) - 1:
-                time.sleep(0.0005)
 
     def get_state(self, send_id: int) -> MotorState | None:
         motor = next((m for m in self._motors if m.send_id == send_id), None)

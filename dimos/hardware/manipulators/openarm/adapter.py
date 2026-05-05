@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -158,7 +157,6 @@ class OpenArmAdapter:
         if self._auto_set_mit_mode:
             for m in self._motors:
                 self._bus.write_ctrl_mode(m.send_id, CTRL_MODE_MIT)
-                time.sleep(0.005)
         else:
             print(
                 f"OpenArm {self._side}@{self._address}: "
