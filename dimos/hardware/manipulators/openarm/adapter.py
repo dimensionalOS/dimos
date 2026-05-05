@@ -302,9 +302,14 @@ class OpenArmAdapter:
             return False
         velocity = max(0.0, min(1.0, velocity))
         # Gravity feedforward: compute tau needed to hold the arm at the
-        # current configuration. The PD gains handle the rest.
-        q_current = self.read_joint_positions()
-        tau_ff = self._compute_gravity_torques(q_current)
+        # current configuration. The PD gains handle the rest. Tolerate
+        # transient state-cache misses (e.g. startup, brief CAN gap) — fall
+        # back to commanded q with no feedforward instead of crashing.
+        try:
+            q_current = self.read_joint_positions()
+            tau_ff = self._compute_gravity_torques(q_current)
+        except RuntimeError:
+            tau_ff = [0.0] * self._dof
         commands = [
             (q, 0.0, kp * velocity, kd, tau)
             for q, kp, kd, tau in zip(positions, self._kp, self._kd, tau_ff, strict=False)
@@ -322,11 +327,19 @@ class OpenArmAdapter:
             return False
         if len(velocities) != self._dof:
             return False
+        # Seed anchor from current pose if we don't have a last-commanded one.
+        # If state isn't ready yet, can't safely anchor velocity tracking → bail.
         if self._last_cmd_q is None:
-            self._last_cmd_q = self.read_joint_positions()
+            try:
+                self._last_cmd_q = self.read_joint_positions()
+            except RuntimeError:
+                return False
         anchor = self._last_cmd_q
-        q_current = self.read_joint_positions()
-        tau_ff = self._compute_gravity_torques(q_current)
+        try:
+            q_current = self.read_joint_positions()
+            tau_ff = self._compute_gravity_torques(q_current)
+        except RuntimeError:
+            tau_ff = [0.0] * self._dof
         commands = [
             (q_anchor, dq, 0.0, kd, tau)
             for q_anchor, dq, kd, tau in zip(anchor, velocities, self._kd, tau_ff, strict=False)
