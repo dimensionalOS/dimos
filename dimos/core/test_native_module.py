@@ -125,7 +125,7 @@ def test_process_crash_triggers_stop() -> None:
 
 
 @pytest.mark.slow
-def test_manual(dimos_cluster, args_file):
+def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
     native_module = dimos_cluster.deploy(
         StubNativeModule,
         some_param=2.5,
