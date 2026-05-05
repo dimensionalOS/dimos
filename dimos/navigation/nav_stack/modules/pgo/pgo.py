@@ -19,7 +19,7 @@ import threading
 import time
 from typing import Any
 
-import gtsam
+import gtsam  # type: ignore[import-untyped]
 import numpy as np
 from reactivex.disposable import Disposable
 from scipy.spatial import KDTree
