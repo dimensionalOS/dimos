@@ -43,18 +43,18 @@ def _rerun_blueprint() -> Any:
     )
 
 
-_rerun_config = {
-    "blueprint": _rerun_blueprint,
-    "visual_override": {
-        "world/camera_info": UnityBridgeModule.rerun_suppress_camera_info,
-    },
-    "static": {
-        "world/color_image": UnityBridgeModule.rerun_static_pinhole,
-    },
-}
-
-
 unity_sim = autoconnect(
     UnityBridgeModule.blueprint(),
-    vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config={
+            "blueprint": _rerun_blueprint,
+            "visual_override": {
+                "world/camera_info": UnityBridgeModule.rerun_suppress_camera_info,
+            },
+            "static": {
+                "world/color_image": UnityBridgeModule.rerun_static_pinhole,
+            },
+        },
+    ),
 )
