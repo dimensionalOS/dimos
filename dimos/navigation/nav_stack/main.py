@@ -166,11 +166,12 @@ def create_nav_stack(
 
     remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
-        *([] if use_simple_planner else [(FarPlanner, "odometry", "corrected_odometry")]),
         (TerrainAnalysis, "odometry", "corrected_odometry"),
         (PGO, "global_map", "global_map_pgo"),
         *record_remappings,
     ]
+    if not use_simple_planner:
+        remappings.append((FarPlanner, "odometry", "corrected_odometry"))
 
     return autoconnect(*modules).remappings(remappings)
 
