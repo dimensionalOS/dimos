@@ -113,9 +113,6 @@ openarm_mock_planner_coordinator = autoconnect(
         enable_viz=True,
     ),
     ControlCoordinator.blueprint(
-        tick_rate=100.0,
-        publish_joint_state=True,
-        joint_state_frame_id="coordinator",
         hardware=[_mock_left.to_hardware_component(), _mock_right.to_hardware_component()],
         tasks=[
             _mock_left.to_task_config(),
@@ -136,9 +133,6 @@ openarm_planner_coordinator = autoconnect(
         enable_viz=True,
     ),
     ControlCoordinator.blueprint(
-        tick_rate=100.0,
-        publish_joint_state=True,
-        joint_state_frame_id="coordinator",
         hardware=[_left_hw.to_hardware_component(), _right_hw.to_hardware_component()],
         tasks=[
             _left_hw.to_task_config(),
@@ -161,9 +155,6 @@ _teleop_cfg = _openarm_single(name="arm")
 keyboard_teleop_openarm_mock = autoconnect(
     KeyboardTeleopModule.blueprint(model_path=OPENARM_V10_FK_MODEL, ee_joint_id=_teleop_cfg.dof),
     ControlCoordinator.blueprint(
-        tick_rate=100.0,
-        publish_joint_state=True,
-        joint_state_frame_id="coordinator",
         hardware=[_teleop_cfg.to_hardware_component()],
         tasks=[
             _teleop_cfg.to_task_config(
@@ -193,9 +184,6 @@ _teleop_hw_cfg = _openarm_single(name="arm", adapter_type="openarm", address=LEF
 keyboard_teleop_openarm = autoconnect(
     KeyboardTeleopModule.blueprint(model_path=OPENARM_V10_FK_MODEL, ee_joint_id=_teleop_hw_cfg.dof),
     ControlCoordinator.blueprint(
-        tick_rate=100.0,
-        publish_joint_state=True,
-        joint_state_frame_id="coordinator",
         hardware=[_teleop_hw_cfg.to_hardware_component()],
         tasks=[
             _teleop_hw_cfg.to_task_config(
