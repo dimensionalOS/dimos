@@ -370,6 +370,7 @@ class OpenArmAdapter:
         # after a fault is the recovery path.
         if self._bus is None:
             return False
+        self._enabled = False
         self._bus.disable_all()
         self._bus.enable_all()
         self._enabled = True
