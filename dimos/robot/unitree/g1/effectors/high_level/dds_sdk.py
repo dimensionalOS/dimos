@@ -109,11 +109,6 @@ class G1HighLevelDdsSdkConfig(ModuleConfig):
 
 
 class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
-    """G1 high-level control module using the native Unitree SDK2 over DDS.
-
-    Suitable for onboard control running directly on the robot.
-    """
-
     cmd_vel: In[Twist]
     config: G1HighLevelDdsSdkConfig
 

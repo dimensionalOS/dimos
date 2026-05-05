@@ -49,8 +49,6 @@ def _rerun_blueprint() -> Any:
     )
 
 
-_SIM_NAV_SPEED = 2.0  # m/s, higher than real robot defaults
-
 unitree_g1_nav_sim = (
     autoconnect(
         UnityBridgeModule.blueprint(
@@ -61,7 +59,7 @@ unitree_g1_nav_sim = (
         create_nav_stack(
             use_simple_planner=False,
             vehicle_height=G1.height_clearance,
-            max_speed=_SIM_NAV_SPEED,
+            max_speed=2.0,  # m/s, higher than real robot defaults
             terrain_analysis={
                 "ground_height_threshold": 0.05,
                 "min_relative_z": -1.5,
