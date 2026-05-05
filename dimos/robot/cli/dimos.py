@@ -668,21 +668,13 @@ def rerun_bridge_cmd(
     memory_limit: str = typer.Option(
         "25%", help="Memory limit for Rerun viewer (e.g., '4GB', '16GB', '25%')"
     ),
-    rerun_open: str = typer.Option(
-        "native", help="How to open Rerun: one of native, web, both, none"
-    ),
+    rerun_open: str = typer.Option("native", help="How to open Rerun: native, web, both, none"),
     rerun_web: bool = typer.Option(
         True, "--rerun-web/--no-rerun-web", help="Enable/Disable Rerun web server"
     ),
 ) -> None:
     """Launch the Rerun visualization bridge."""
     from dimos.visualization.rerun.bridge import run_bridge
-
-    valid = get_args(RerunOpenOption)
-    if rerun_open not in valid:
-        raise typer.BadParameter(
-            f"rerun_open must be one of {valid}, got {rerun_open!r}", param_hint="--rerun-open"
-        )
 
     run_bridge(
         memory_limit=memory_limit,
