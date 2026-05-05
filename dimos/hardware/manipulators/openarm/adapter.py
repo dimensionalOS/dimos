@@ -165,20 +165,6 @@ class OpenArmAdapter:
                 "auto_set_mit_mode disabled — relying on persisted register"
             )
 
-        # Enable motors and wait for at least one state reply from each.
-        self._bus.enable_all()
-        self._enabled = True
-        if not self._bus.wait_all_states(timeout=0.5):
-            print(
-                f"WARNING: OpenArm {self._side}@{self._address}: not all motors "
-                "reported state within 0.5s — proceeding anyway"
-            )
-        # Seed position anchor; leave None on failure (lazy-seeded later).
-        try:
-            self._last_cmd_q = self.read_joint_positions()
-        except RuntimeError:
-            self._last_cmd_q = None
-
         # Load Pinocchio model for gravity compensation
         if self._gravity_comp:
             try:

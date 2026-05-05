@@ -75,7 +75,6 @@ KD_MIN, KD_MAX = 0.0, 5.0
 _BROADCAST_ID = 0x7FF
 _CMD_ENABLE = 0xFC
 _CMD_DISABLE = 0xFD
-_CMD_SET_ZERO = 0xFE
 _RID_CTRL_MODE = 10
 CTRL_MODE_MIT = 1
 
@@ -251,13 +250,6 @@ class OpenArmBus:
             finally:
                 self._bus = None
 
-    def __enter__(self) -> OpenArmBus:
-        self.open()
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        self.close()
-
     def enable_all(self) -> None:
         for m in self._motors:
             self._send_raw(m.send_id, _pack_control_command(_CMD_ENABLE))
@@ -268,30 +260,11 @@ class OpenArmBus:
             self._send_raw(m.send_id, _pack_control_command(_CMD_DISABLE))
             time.sleep(0.002)
 
-    def set_zero(self, send_id: int) -> None:
-        """Set current physical position as the motor's zero. Destructive."""
-        self._send_raw(send_id, _pack_control_command(_CMD_SET_ZERO))
-
     def write_ctrl_mode(self, send_id: int, mode: int = CTRL_MODE_MIT) -> None:
         self._send_raw(
             _BROADCAST_ID,
             pack_write_param_frame(send_id, _RID_CTRL_MODE, mode),
         )
-
-    def send_mit(
-        self,
-        send_id: int,
-        q: float,
-        dq: float,
-        kp: float,
-        kd: float,
-        tau: float,
-    ) -> None:
-        motor = next((m for m in self._motors if m.send_id == send_id), None)
-        if motor is None:
-            raise KeyError(f"motor 0x{send_id:02X} not on bus {self._channel}")
-        data = pack_mit_frame(motor.motor_type, q, dq, kp, kd, tau)
-        self._send_raw(send_id, data)
 
     def send_mit_many(
         self,
@@ -309,10 +282,6 @@ class OpenArmBus:
             if i < len(self._motors) - 1:
                 time.sleep(0.0005)
 
-    @property
-    def motors(self) -> tuple[DamiaoMotor, ...]:
-        return tuple(self._motors)
-
     def get_state(self, send_id: int) -> MotorState | None:
         motor = next((m for m in self._motors if m.send_id == send_id), None)
         if motor is None:
@@ -323,15 +292,6 @@ class OpenArmBus:
     def get_states(self) -> list[MotorState | None]:
         with self._state_lock:
             return [self._states.get(m.effective_recv_id) for m in self._motors]
-
-    def wait_all_states(self, timeout: float = 0.5) -> bool:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            with self._state_lock:
-                if all(m.effective_recv_id in self._states for m in self._motors):
-                    return True
-            time.sleep(0.005)
-        return False
 
     def _send_raw(self, arbitration_id: int, data: bytes) -> None:
         if self._bus is None:
