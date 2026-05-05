@@ -89,9 +89,9 @@ class StubProducer(Module):
         super().start()
 
 
-_WATCHDOG_POLL_INTERVAL = 0.1  # seconds between watchdog checks
-_WATCHDOG_MAX_POLLS = 30  # max iterations waiting for watchdog
-_THREAD_DRAIN_DELAY = 0.5  # seconds for background threads to finish after stop
+_WATCHDOG_POLL_INTERVAL = 0.1
+_WATCHDOG_MAX_POLLS = 30
+_THREAD_DRAIN_DELAY = 0.5
 
 
 def test_process_crash_triggers_stop() -> None:
