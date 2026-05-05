@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rosbag accuracy test: replays inputs at original timing and compares waypoints to ROS reference.
-
-TODO: move rosbag tests next to their respective modules and import fixtures from here.
-"""
+"""Rosbag accuracy test: replays inputs at original timing and compares waypoints to ROS reference."""
 
 from __future__ import annotations
 
