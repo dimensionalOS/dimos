@@ -337,10 +337,12 @@ class OpenArmAdapter:
     def write_stop(self) -> bool:
         if self._bus is None:
             return False
+        # Without current positions we can't safely command "hold here" — sending
+        # any guessed q would torque the arm toward that pose. Bail out instead.
         try:
             q_now = self.read_joint_positions()
-        except Exception:
-            q_now = [0.0] * self._dof
+        except RuntimeError:
+            return False
         tau_ff = self._compute_gravity_torques(q_now)
         commands = [
             (q, 0.0, kp, kd, tau)
