@@ -22,9 +22,10 @@ import pytest
 import websockets.asyncio.client as ws_client
 
 _POLL_INTERVAL = 0.1  # seconds between connection attempts
+_SERVER_STARTUP_TIMEOUT = 5.0  # seconds to wait for server to accept connections
 
 
-def _wait_for_server(port: int, timeout: float = 5.0) -> None:
+def _wait_for_server(port: int, timeout: float = _SERVER_STARTUP_TIMEOUT) -> None:
     """Block until the WebSocket server on *port* accepts a connection."""
 
     async def _probe() -> None:

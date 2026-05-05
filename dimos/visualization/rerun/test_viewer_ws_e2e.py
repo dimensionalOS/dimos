@@ -177,7 +177,7 @@ class TestViewerBinaryConnectMode:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        yield proc  # type: ignore[misc]
+        yield proc
         proc.terminate()
         try:
             proc.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
