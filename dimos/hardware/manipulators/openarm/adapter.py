@@ -40,7 +40,6 @@ if TYPE_CHECKING:
 
 
 def _socketcan_iface_up(name: str) -> bool:
-    """Return True if SocketCAN interface is present and UP. Reads /sys directly."""
     try:
         flags_path = Path("/sys/class/net") / name / "flags"
         if not flags_path.exists():
@@ -81,17 +80,7 @@ _DEFAULT_KD = [1.5, 1.5, 1.0, 1.0, 0.8, 0.8, 0.8]
 
 
 class OpenArmAdapter:
-    """Adapter for one OpenArm (7 DOF) on a single SocketCAN bus.
-
-    Key kwargs:
-        address: SocketCAN channel, e.g. "can0"
-        side: "left" or "right" (picks URDF for gravity comp)
-        kp / kd: per-joint MIT gains (optional override)
-        gravity_comp: Pinocchio G(q) feedforward torque (default True)
-        auto_set_mit_mode: write CTRL_MODE=MIT on connect (idempotent, default True)
-        fd: CAN-FD (False for gs_usb adapters, which don't support FD)
-        interface: python-can backend; "virtual" for unit tests
-    """
+    """7-DOF OpenArm on one SocketCAN bus. side=left|right picks URDF + limits."""
 
     # Per-side URDFs for Pinocchio gravity model (LFS-backed)
     _URDF_LEFT = LfsPath("openarm_description/urdf/robot/openarm_v10_left.urdf")
@@ -184,8 +173,11 @@ class OpenArmAdapter:
                 f"WARNING: OpenArm {self._side}@{self._address}: not all motors "
                 "reported state within 0.5s — proceeding anyway"
             )
-        # Seed the position anchor from current hardware pose.
-        self._last_cmd_q = self.read_joint_positions()
+        # Seed position anchor; leave None on failure (lazy-seeded later).
+        try:
+            self._last_cmd_q = self.read_joint_positions()
+        except RuntimeError:
+            self._last_cmd_q = None
 
         # Load Pinocchio model for gravity compensation
         if self._gravity_comp:
@@ -260,18 +252,23 @@ class OpenArmAdapter:
         return self._control_mode
 
     def _states_or_raise(self) -> list[Any]:
+        # Raises on missing data so hardware_interface.py can retry (init)
         if self._bus is None:
             raise RuntimeError("OpenArmAdapter not connected")
-        return self._bus.get_states()
+        states = self._bus.get_states()
+        for i, s in enumerate(states):
+            if s is None:
+                raise RuntimeError(f"motor {i + 1} has no state yet")
+        return states
 
     def read_joint_positions(self) -> list[float]:
-        return [s.q if s is not None else 0.0 for s in self._states_or_raise()]
+        return [s.q for s in self._states_or_raise()]
 
     def read_joint_velocities(self) -> list[float]:
-        return [s.dq if s is not None else 0.0 for s in self._states_or_raise()]
+        return [s.dq for s in self._states_or_raise()]
 
     def read_joint_efforts(self) -> list[float]:
-        return [s.tau if s is not None else 0.0 for s in self._states_or_raise()]
+        return [s.tau for s in self._states_or_raise()]
 
     def read_state(self) -> dict[str, int]:
         if self._bus is None:
@@ -299,7 +296,7 @@ class OpenArmAdapter:
         return 0, ""
 
     def _compute_gravity_torques(self, q: list[float]) -> list[float]:
-        """Pinocchio G(q), clamped to motor torque limits. Zero if model not loaded."""
+        # Pinocchio G(q), clamped to motor torque limits.
         if self._pin_model is None or self._pin_data is None:
             return [0.0] * self._dof
         import pinocchio
