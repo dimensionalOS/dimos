@@ -299,21 +299,16 @@ class OpenArmBus:
             is_fd=self._fd,
             bitrate_switch=self._fd,
         )
-        # Retry on TX buffer full (ENOBUFS) — the gs_usb adapter has a
-        # tiny kernel-side TX queue. A short backoff lets the kernel drain
-        # one frame before we try again. Check errno on the underlying
-        # cause rather than string-matching the python-can message.
+        # Retry on TX buffer full (ENOBUFS) — gs_usb's kernel-side TX queue
+        # is small. python-can chains the OSError via `raise ... from`,
+        # so the original errno is on __cause__.
         for attempt in range(4):
             try:
                 self._bus.send(msg)
                 return
             except can.CanOperationError as e:
                 cause = e.__cause__ or e
-                is_enobufs = (
-                    getattr(cause, "errno", None) == errno.ENOBUFS
-                    or "105" in str(e)  # fallback if errno not exposed
-                )
-                if is_enobufs and attempt < 3:
+                if getattr(cause, "errno", None) == errno.ENOBUFS and attempt < 3:
                     time.sleep(0.001 * (attempt + 1))
                 else:
                     raise
