@@ -75,16 +75,21 @@ def write_ctrl_mode(bus: can.BusABC, send_id: int, fd: bool) -> bool:
         msg = bus.recv(0.2 - (time.monotonic() - t0))
         if msg is None:
             break
-        # Reply echoes 0x55 in byte 2 of the 0x7FF channel
-        if len(msg.data) >= 4 and msg.data[2] in (0x33, 0x55):
-            rid = msg.data[3]
-            if rid == RID_CTRL_MODE:
-                echoed = int(struct.unpack("<I", bytes(msg.data[4:8]))[0])
-                print(
-                    f"  0x{send_id:02X}: ack  CTRL_MODE={echoed} "
-                    f"({'MIT' if echoed == MIT_MODE else f'code {echoed}'})"
-                )
-                return echoed == MIT_MODE
+        # Reply on 0x7FF: [id_lo, id_hi, 0x33|0x55, rid, value[0..3]]
+        if msg.arbitration_id != 0x7FF or len(msg.data) < 8:
+            continue
+        if msg.data[2] not in (0x33, 0x55):
+            continue
+        if msg.data[0] != (send_id & 0xFF) or msg.data[1] != ((send_id >> 8) & 0xFF):
+            continue  # ack from a different motor
+        rid = msg.data[3]
+        if rid == RID_CTRL_MODE:
+            echoed = int(struct.unpack("<I", bytes(msg.data[4:8]))[0])
+            print(
+                f"  0x{send_id:02X}: ack  CTRL_MODE={echoed} "
+                f"({'MIT' if echoed == MIT_MODE else f'code {echoed}'})"
+            )
+            return echoed == MIT_MODE
     print(f"  0x{send_id:02X}: no ack on 0x7FF")
     return False
 
