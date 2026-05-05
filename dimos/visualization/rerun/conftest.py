@@ -21,8 +21,8 @@ import time
 import pytest
 import websockets.asyncio.client as ws_client
 
-_POLL_INTERVAL = 0.1  # seconds between connection attempts
-_SERVER_STARTUP_TIMEOUT = 5.0  # seconds to wait for server to accept connections
+_POLL_INTERVAL = 0.1
+_SERVER_STARTUP_TIMEOUT = 5.0
 
 
 def _wait_for_server(port: int, timeout: float = _SERVER_STARTUP_TIMEOUT) -> None:
