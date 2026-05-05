@@ -31,10 +31,6 @@ from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 unitree_go2_webrtc_keyboard_teleop = autoconnect(
     unitree_go2_coordinator,
     KeyboardTeleop.blueprint(),
-).remappings(
-    [
-        (KeyboardTeleop, "tele_cmd_vel", "cmd_vel"),
-    ]
 )
 
 __all__ = ["unitree_go2_webrtc_keyboard_teleop"]

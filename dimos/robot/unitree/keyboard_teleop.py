@@ -47,9 +47,9 @@ _INDICATOR_RADIUS = 15
 
 
 class KeyboardTeleop(Module):
-    """Pygame-based keyboard control. Outputs Twist on /tele_cmd_vel; speeds tunable via constructor."""
+    """Pygame-based keyboard control. Outputs Twist on cmd_vel."""
 
-    tele_cmd_vel: Out[Twist]  # Standard velocity commands
+    cmd_vel: Out[Twist]
 
     _stop_event: threading.Event
     _keys_held: set[int] | None = None
@@ -88,7 +88,7 @@ class KeyboardTeleop(Module):
         stop_twist = Twist()
         stop_twist.linear = Vector3(0, 0, 0)
         stop_twist.angular = Vector3(0, 0, 0)
-        self.tele_cmd_vel.publish(stop_twist)
+        self.cmd_vel.publish(stop_twist)
 
         self._stop_event.set()
 
@@ -121,7 +121,7 @@ class KeyboardTeleop(Module):
                         stop_twist = Twist()
                         stop_twist.linear = Vector3(0, 0, 0)
                         stop_twist.angular = Vector3(0, 0, 0)
-                        self.tele_cmd_vel.publish(stop_twist)
+                        self.cmd_vel.publish(stop_twist)
                         logger.warning("EMERGENCY STOP!")
                     elif event.key == pygame.K_ESCAPE:
                         # ESC quits
@@ -164,7 +164,7 @@ class KeyboardTeleop(Module):
             twist.linear.y *= speed_multiplier
             twist.angular.z *= speed_multiplier
 
-            self.tele_cmd_vel.publish(twist)
+            self.cmd_vel.publish(twist)
 
             self._update_display(twist)
 
