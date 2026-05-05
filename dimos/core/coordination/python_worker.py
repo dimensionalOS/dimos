@@ -426,8 +426,7 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
 def _worker_loop(conn: Connection, state: _WorkerState) -> None:
     while True:
         try:
-            _PIPE_POLL_INTERVAL = 0.1  # seconds
-            if not conn.poll(timeout=_PIPE_POLL_INTERVAL):
+            if not conn.poll(timeout=0.1):
                 continue
             request = conn.recv()
         except EOFError:
