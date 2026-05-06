@@ -120,5 +120,5 @@ if [[ ${#USER_PATHS[@]} -gt 0 ]]; then
   done
 else
   run_one_target ./docs
-  run_one_target README.md
+  [[ -f README.md ]] && run_one_target README.md
 fi

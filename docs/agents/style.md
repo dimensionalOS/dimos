@@ -42,7 +42,9 @@ Never add imports to `__init__.py` files. Re-exporting from `__init__.py` makes 
 # BAD — dimos/memory2/__init__.py
 from dimos.memory2.store import Store, SqliteStore
 from dimos.memory2.stream import Stream
+```
 
+```python
 # GOOD — import directly from the module
 from dimos.memory2.store.base import Store
 from dimos.memory2.stream import Stream
