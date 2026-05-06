@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -76,6 +77,7 @@ _V10_VEL_MAX = [16.754666, 16.754666, 5.445426, 5.445426, 20.943946, 20.943946, 
 # High kd causes high-frequency buzz/grinding from the gearbox.
 _DEFAULT_KP = [100.0, 100.0, 80.0, 80.0, 60.0, 60.0, 60.0]
 _DEFAULT_KD = [1.5, 1.5, 1.0, 1.0, 0.8, 0.8, 0.8]
+_STATE_MAX_AGE_S = 0.1
 
 
 class OpenArmAdapter:
@@ -155,8 +157,14 @@ class OpenArmAdapter:
         # (setting CTRL_MODE=MIT when it's already MIT is a no-op), so we
         # write unconditionally rather than query-then-write.
         if self._auto_set_mit_mode:
-            for m in self._motors:
-                self._bus.write_ctrl_mode(m.send_id, CTRL_MODE_MIT)
+            try:
+                for m in self._motors:
+                    self._bus.write_ctrl_mode(m.send_id, CTRL_MODE_MIT)
+            except Exception as e:
+                print(f"ERROR: failed to set MIT mode on {self._address}: {e}")
+                self._bus.close()
+                self._bus = None
+                return False
         else:
             print(
                 f"OpenArm {self._side}@{self._address}: "
@@ -236,13 +244,18 @@ class OpenArmAdapter:
         return self._control_mode
 
     def _states_or_raise(self) -> list[Any]:
-        # Raises on missing data so hardware_interface.py can retry (init)
+        # Raises on missing or stale data so hardware_interface.py can retry
+        # (init) or skip the tick (steady-state).
         if self._bus is None:
             raise RuntimeError("OpenArmAdapter not connected")
+        now = time.monotonic()
         states = self._bus.get_states()
         for i, s in enumerate(states):
             if s is None:
                 raise RuntimeError(f"motor {i + 1} has no state yet")
+            if now - s.timestamp > _STATE_MAX_AGE_S:
+                age_ms = (now - s.timestamp) * 1000
+                raise RuntimeError(f"motor {i + 1} state stale ({age_ms:.0f} ms)")
         return states
 
     def read_joint_positions(self) -> list[float]:
