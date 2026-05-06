@@ -119,7 +119,7 @@ misc = [
     "catkin_pkg",
     "lark",
     "tiktoken>=0.8.0",
-    "python-multipart==0.0.20",
+    "python-multipart>=0.0.27",
     "tensorzero==2025.7.5",
 
     # Developer Specific
@@ -137,7 +137,7 @@ misc = [
     # embedding models
     "open_clip_torch==3.2.0",
     "torchreid==0.2.5",
-    "gdown==5.2.0",
+    "gdown>=5.2.2",
     "tensorboard==2.20.0",
 
     # Mapping
@@ -158,9 +158,9 @@ visualization = [
 ]
 
 agents = [
-    "langchain==1.2.3",
+    "langchain>=1.2.3,<2",
     "langchain-chroma>=1,<2",
-    "langchain-core==1.2.3",
+    "langchain-core>=1.2.22,<2",
     "langchain-openai>=1,<2",
     "langchain-text-splitters>=1,<2",
     "langchain-huggingface>=1,<2",
@@ -179,6 +179,7 @@ web = [
     "fastapi>=0.115.6",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
+    "jinja2>=3.1.6",
     "ffmpeg-python",
     "soundfile",
 ]
@@ -188,7 +189,7 @@ perception = [
     "filterpy>=1.4.5",
     "Pillow",
     "lap>=0.5.12",
-    "transformers[torch]==4.49.0",
+    "transformers[torch]>=4.53.0,<4.54",
     "moondream",
     "omegaconf>=2.3.0",
     "hydra-core>=1.3.0",
@@ -447,6 +448,10 @@ follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = ["pydrake", "pydrake.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["transformers", "transformers.*"]
 follow_imports = "skip"
 
 [tool.pytest.ini_options]
