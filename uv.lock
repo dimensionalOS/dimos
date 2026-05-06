@@ -2025,7 +2025,7 @@ requires-dist = [
     { name = "lxml-stubs", marker = "extra == 'dev'", specifier = ">=0.5.1,<1" },
     { name = "lz4", specifier = ">=4.4.5" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
-    { name = "md-babel-py", marker = "extra == 'dev'", specifier = "==1.1.3" },
+    { name = "md-babel-py", marker = "extra == 'dev'", specifier = "==1.1.5" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.19.0" },
@@ -4818,11 +4818,11 @@ wheels = [
 
 [[package]]
 name = "md-babel-py"
-version = "1.1.3"
+version = "1.1.5"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/93/d5/abfe601ac4b3414eb9065d1ac789d93dec3ce4ad9b3fad6d953a6325d7dc/md_babel_py-1.1.3.tar.gz", hash = "sha256:8a6efbd2a2d1e8a1c5e963451cfeab01df9759964eba17b5e69466839ab2d3cd", size = 30631, upload-time = "2026-04-18T10:45:50.11Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b5/ed/388b9934c3909628e7a8a170ba28dd5aae90e030f33a7b195741ed3dfc4c/md_babel_py-1.1.5.tar.gz", hash = "sha256:41e99bea074e4d68905d42bb57f14ca00b414e592b69fdfa3ec19db47b5de5c9", size = 31279, upload-time = "2026-05-06T08:53:14.748Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b0/37/27dafbaa7d80ce0a31bb9c308f224f7ad5720012870e09d51e9684372daa/md_babel_py-1.1.3-py3-none-any.whl", hash = "sha256:bc432ad570e435e24f01a6f944d9a467d97ec1c374033337a96e0b555fb180e3", size = 25879, upload-time = "2026-04-18T10:45:48.968Z" },
+    { url = "https://files.pythonhosted.org/packages/53/52/5de9991c4cb87ea596988c1db51053b73a32763d96581751ae16cb46ef60/md_babel_py-1.1.5-py3-none-any.whl", hash = "sha256:9167f216d9875ae2d93aab33d0fc4cca80a94953b2f99e5dc2eab2fc896ba8e7", size = 26297, upload-time = "2026-05-06T08:53:13.181Z" },
 ]
 
 [[package]]
