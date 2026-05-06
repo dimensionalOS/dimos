@@ -15,7 +15,6 @@
 """Unitree WebRTC lidar message parsing utilities."""
 
 from collections.abc import Callable
-import logging
 from typing import TypedDict, TypeVar
 
 import numpy as np
@@ -25,8 +24,9 @@ from reactivex.observable import Observable
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.types.timestamped import Timestamped
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 # Backwards compatibility alias for pickled data
 LidarMessage = PointCloud2
