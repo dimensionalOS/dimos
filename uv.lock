@@ -52,7 +52,7 @@ overrides = [
 [[package]]
 name = "a750-control"
 version = "0.0.0"
-source = { git = "https://github.com/adob/a750_control.git?rev=6a933b2e72060a27c674c695184076781f7b1ea8#6a933b2e72060a27c674c695184076781f7b1ea8" }
+source = { git = "https://github.com/adob/a750_control.git?rev=7153e271317e22b4aa55ac1186c0f0e4903e8f39#7153e271317e22b4aa55ac1186c0f0e4903e8f39" }
 
 [[package]]
 name = "absl-py"
@@ -2351,7 +2351,7 @@ tests-self-hosted = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a750-control", marker = "extra == 'manipulation'", git = "https://github.com/adob/a750_control.git?rev=6a933b2e72060a27c674c695184076781f7b1ea8" },
+    { name = "a750-control", marker = "extra == 'manipulation'", git = "https://github.com/adob/a750_control.git?rev=7153e271317e22b4aa55ac1186c0f0e4903e8f39" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "anthropic", marker = "extra == 'agents'", specifier = ">=0.19.0" },
     { name = "bleak", specifier = ">=3.0.2" },
