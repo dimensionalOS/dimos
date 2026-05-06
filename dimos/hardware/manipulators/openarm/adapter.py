@@ -368,10 +368,14 @@ class OpenArmAdapter:
     def write_enable(self, enable: bool) -> bool:
         if self._bus is None:
             return False
-        if enable:
-            self._bus.enable_all()
-        else:
-            self._bus.disable_all()
+        self._enabled = False
+        try:
+            if enable:
+                self._bus.enable_all()
+            else:
+                self._bus.disable_all()
+        except Exception:
+            return False
         self._enabled = enable
         return True
 
@@ -384,8 +388,11 @@ class OpenArmAdapter:
         if self._bus is None:
             return False
         self._enabled = False
-        self._bus.disable_all()
-        self._bus.enable_all()
+        try:
+            self._bus.disable_all()
+            self._bus.enable_all()
+        except Exception:
+            return False
         self._enabled = True
         return True
 
