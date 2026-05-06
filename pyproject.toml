@@ -466,14 +466,20 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
+branch = true
 source = ["dimos"]
 parallel = true
 sigterm = true
 concurrency = ["multiprocessing", "thread"]
 
 [tool.coverage.report]
-show_missing = true
-skip_empty = true
+exclude_also = [
+  'if TYPE_CHECKING',
+  'assert False',
+  ': \.\.\.(\s*#.*)?$',
+  '^ +\.\.\.$',
+  'pytest.fail\('
+]
 
 [tool.largefiles]
 max_size_kb = 50
