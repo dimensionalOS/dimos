@@ -29,11 +29,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from pathlib import Path
 import time
+import threading
 from typing import Any, Generic, TypeVar, cast
 
 import reactivex as rx
 from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
-from reactivex.disposable import CompositeDisposable, Disposable
+from reactivex.disposable import Disposable, MultipleAssignmentDisposable
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
@@ -87,16 +88,10 @@ def timed_playback(
 ) -> Observable[T]:
     """Replay a ``(ts, data)`` iterator as an Observable at real-time speed.
 
-    Anchors on the first timestamp and schedules subsequent emissions with
-    ``scheduler.schedule_relative`` at ``anchor + (ts - first_ts) / speed``.
+    Anchors on the first timestamp and runs a single background thread that
+    sleeps between emissions.
     When ``detect_loop`` is set, a backwards-going timestamp re-anchors — use
     this when the source iterator loops.
-
-    ``source`` is a factory: called fresh on each subscription so the same
-    Observable can be re-subscribed without iterator collisions.
-
-    Pending timers are tracked on a CompositeDisposable and cancelled on
-    subscription dispose.
     """
 
     def subscribe(
@@ -104,68 +99,64 @@ def timed_playback(
         scheduler: SchedulerBase | None = None,
     ) -> DisposableBase:
         sched = scheduler or TimeoutScheduler()
-        disp = CompositeDisposable()
+        disp = MultipleAssignmentDisposable()
+        cancel_event = threading.Event()
         is_disposed = False
-        iterator = source()
 
-        try:
-            first_ts, first_data = next(iterator)
-        except StopIteration:
-            observer.on_completed()
-            return Disposable()
-
-        start_local_time = time.time()
-        start_replay_time = first_ts
-
-        observer.on_next(first_data)
-
-        try:
-            next_message: tuple[float, T] | None = next(iterator)
-        except StopIteration:
-            observer.on_completed()
-            return disp
-
-        prev_ts = first_ts
-
-        def schedule_emission(message: tuple[float, T]) -> None:
-            nonlocal next_message, start_local_time, start_replay_time, prev_ts
+        def loop_action(_scheduler: SchedulerBase, _state: object) -> None:
+            iterator = source()
+            try:
+                first_ts, first_data = next(iterator)
+            except StopIteration:
+                observer.on_completed()
+                return
 
             if is_disposed:
                 return
 
-            ts, data = message
+            start_local_time = time.time()
+            start_replay_time = first_ts
+            observer.on_next(first_data)
 
-            if detect_loop and ts < prev_ts:
-                start_local_time = time.time()
-                start_replay_time = ts
-            prev_ts = ts
+            prev_ts = first_ts
 
-            try:
-                next_message = next(iterator)
-            except StopIteration:
-                next_message = None
-
-            target_time = start_local_time + (ts - start_replay_time) / speed
-            delay = max(0.0, target_time - time.time())
-
-            def emit(_scheduler: SchedulerBase, _state: object) -> DisposableBase | None:
+            for ts, data in iterator:
                 if is_disposed:
-                    return None
+                    return
+
+                if detect_loop and ts < prev_ts:
+                    start_local_time = time.time()
+                    start_replay_time = ts
+                prev_ts = ts
+
+                target_time = start_local_time + (ts - start_replay_time) / speed
+                delay = target_time - time.time()
+
+                if delay < -0.2:
+                    # We fell significantly behind (e.g. queue blocking, computation heavy).
+                    # Re-anchor time to prevent a "death spiral" where we blast 100% CPU
+                    # to emit stale frames as fast as possible, which chokes queues.
+                    start_local_time = time.time()
+                    start_replay_time = ts
+                    delay = 0.0
+
+                if delay > 0:
+                    cancel_event.wait(delay)
+
+                if is_disposed:
+                    return
+
                 observer.on_next(data)
-                if next_message is not None:
-                    schedule_emission(next_message)
-                else:
-                    observer.on_completed()
-                return None
 
-            disp.add(sched.schedule_relative(delay, emit))
+            if not is_disposed:
+                observer.on_completed()
 
-        if next_message is not None:
-            schedule_emission(next_message)
+        disp.disposable = sched.schedule(loop_action)
 
         def dispose() -> None:
             nonlocal is_disposed
             is_disposed = True
+            cancel_event.set()
             disp.dispose()
 
         return Disposable(dispose)
