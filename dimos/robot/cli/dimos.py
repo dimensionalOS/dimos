@@ -631,6 +631,11 @@ def top(ctx: typer.Context) -> None:
     dtop_main()
 
 
+from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
+
+main.add_typer(go2tool_app, name="go2tool")
+
+
 topic_app = typer.Typer(help="Topic commands for pub/sub")
 main.add_typer(topic_app, name="topic")
 
