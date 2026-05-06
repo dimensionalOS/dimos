@@ -250,7 +250,7 @@ manipulation = [
     "piper-sdk",
     "pyrealsense2; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
-    "a750-control @ git+https://github.com/adob/a750_control.git@6a933b2e72060a27c674c695184076781f7b1ea8",
+    "a750-control @ git+https://github.com/adob/a750_control.git@7153e271317e22b4aa55ac1186c0f0e4903e8f39",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
