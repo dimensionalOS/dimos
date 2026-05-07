@@ -121,13 +121,10 @@ class MovementManager(Module):
 
     def _on_teleop(self, msg: Twist) -> None:
         with self._lock:
-            was_active = self._teleop_active
             self._teleop_active = True
             self._last_teleop_time = time.monotonic()
-
-        if not was_active:
-            self._cancel_goal()
-            logger.info("Teleop active")
+        
+        self._cancel_goal()
 
         scale = self.config.tele_cmd_vel_scaling
         scaled = Twist(
