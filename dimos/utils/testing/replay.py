@@ -102,52 +102,55 @@ def timed_playback(
         is_disposed = False
 
         def loop_action() -> None:
-            iterator = source()
             try:
-                first_ts, first_data = next(iterator)
-            except StopIteration:
-                observer.on_completed()
-                return
-
-            if is_disposed:
-                return
-
-            start_local_time = time.time()
-            start_replay_time = first_ts
-            observer.on_next(first_data)
-
-            prev_ts = first_ts
-
-            for ts, data in iterator:
-                if is_disposed:
+                iterator = source()
+                try:
+                    first_ts, first_data = next(iterator)
+                except StopIteration:
+                    observer.on_completed()
                     return
-
-                if detect_loop and ts < prev_ts:
-                    start_local_time = time.time()
-                    start_replay_time = ts
-                prev_ts = ts
-
-                target_time = start_local_time + (ts - start_replay_time) / speed
-                delay = target_time - time.time()
-
-                if delay < -0.2:
-                    # We fell significantly behind (e.g. queue blocking, computation heavy).
-                    # Re-anchor time to prevent a "death spiral" where we blast 100% CPU
-                    # to emit stale frames as fast as possible, which chokes queues.
-                    start_local_time = time.time()
-                    start_replay_time = ts
-                    delay = 0.0
-
-                if delay > 0:
-                    cancel_event.wait(delay)
 
                 if is_disposed:
                     return
 
-                observer.on_next(data)
+                start_local_time = time.time()
+                start_replay_time = first_ts
+                observer.on_next(first_data)
 
-            if not is_disposed:
-                observer.on_completed()
+                prev_ts = first_ts
+
+                for ts, data in iterator:
+                    if is_disposed:
+                        return
+
+                    if detect_loop and ts < prev_ts:
+                        start_local_time = time.time()
+                        start_replay_time = ts
+                    prev_ts = ts
+
+                    target_time = start_local_time + (ts - start_replay_time) / speed
+                    delay = target_time - time.time()
+
+                    if delay < -0.2:
+                        # We fell significantly behind (e.g. queue blocking, computation heavy).
+                        # Re-anchor time to prevent a "death spiral" where we blast 100% CPU
+                        # to emit stale frames as fast as possible, which chokes queues.
+                        start_local_time = time.time()
+                        start_replay_time = ts
+                        delay = 0.0
+
+                    if delay > 0:
+                        cancel_event.wait(delay)
+
+                    if is_disposed:
+                        return
+
+                    observer.on_next(data)
+
+                if not is_disposed:
+                    observer.on_completed()
+            except Exception as exc:
+                observer.on_error(exc)
 
         worker = threading.Thread(
             target=loop_action,
