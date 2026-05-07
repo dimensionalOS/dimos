@@ -30,6 +30,7 @@ from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanne
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
 from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
 from dimos.navigation.nav_stack.modules.pgo.pgo import PGO
+from dimos.navigation.nav_stack.modules.pgo_native.pgo_native import PGONative
 from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
 from dimos.navigation.nav_stack.modules.tare_planner.tare_planner import TarePlanner
 from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
@@ -46,6 +47,7 @@ def create_nav_stack(
     use_tare: bool = False,
     use_terrain_map_ext: bool = True,
     use_simple_planner: bool = False,
+    use_native_pgo: bool = False,
     vehicle_height: float | None = None,
     max_speed: float | None = None,
     terrain_voxel_size: float = 0.2,
@@ -58,6 +60,7 @@ def create_nav_stack(
     far_planner: dict[str, Any] | None = None,
     simple_planner: dict[str, Any] | None = None,
     pgo: dict[str, Any] | None = None,
+    pgo_native: dict[str, Any] | None = None,
     tare_planner: dict[str, Any] | None = None,
     nav_record: dict[str, Any] | None = None,
 ) -> Blueprint:
@@ -66,12 +69,23 @@ def create_nav_stack(
     Per-module config dicts (``terrain_analysis``, ``local_planner``, etc.)
     override defaults. ``vehicle_height`` and ``max_speed`` propagate to
     the relevant modules automatically.
+
+    Set ``use_native_pgo=True`` to use the C++ PGO NativeModule (GTSAM iSAM2
+    + PCL ICP) instead of the default Python PGO. Pass overrides via
+    ``pgo_native={...}``.
     """
     far_planner_config = {**(far_planner or {})}
 
     # Propagate vehicle_height to far_planner config
     if vehicle_height is not None:
         far_planner_config.setdefault("vehicle_height", vehicle_height)
+
+    pgo_module: Blueprint
+    if use_native_pgo:
+        pgo_module = PGONative.blueprint(**(pgo_native or {}))
+    else:
+        pgo_module = PGO.blueprint(**(pgo or {}))
+
     modules: list[Blueprint] = [
         TerrainAnalysis.blueprint(
             **{
@@ -132,7 +146,7 @@ def create_nav_stack(
                 **(path_follower or {}),
             }
         ),
-        PGO.blueprint(**(pgo or {})),
+        pgo_module,
     ]
     if use_simple_planner:
         sp_config: dict[str, Any] = {"replan_rate": replan_rate}
@@ -166,11 +180,12 @@ def create_nav_stack(
         modules.append(NavRecord.blueprint(**(nav_record or {})))
         record_remappings.append((NavRecord, "global_map", "global_map_pgo"))
 
+    pgo_class: type[ModuleBase] = PGONative if use_native_pgo else PGO
     remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
         (TerrainAnalysis, "odometry", "corrected_odometry"),
         (TerrainMapExt, "odometry", "corrected_odometry"),
-        (PGO, "global_map", "global_map_pgo"),
+        (pgo_class, "global_map", "global_map_pgo"),
         *record_remappings,
     ]
     if not use_simple_planner:
@@ -183,13 +198,21 @@ def nav_stack_rerun_config(
     user_config: dict[str, Any] | None = None,
     *,
     agentic_debug: bool = False,
+    vis_throttle: float = 1.0,
 ) -> dict[str, Any]:
     """Return a rerun config dict with nav stack visualization defaults.
 
     Caller entries win; this fills in missing keys. ``agentic_debug``
     lifts nav elements above the scene for top-down visibility.
+
+    ``vis_throttle`` scales all ``max_hz`` values — e.g. 0.5 halves every
+    rate limit, sending half as many frames to Rerun.
     """
     resolved = dict(user_config or {})
+    if vis_throttle != 1.0 and "max_hz" in resolved:
+        resolved["max_hz"] = {
+            entity: hz * vis_throttle for entity, hz in resolved["max_hz"].items()
+        }
     resolved.setdefault("blueprint", _default_rerun_blueprint)
     resolved.setdefault("pubsubs", [LCM()])
     resolved.setdefault("visual_override", {})
