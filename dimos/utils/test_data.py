@@ -15,7 +15,6 @@
 import hashlib
 import os
 from pathlib import Path
-import subprocess
 
 import pytest
 
@@ -25,7 +24,6 @@ from dimos.utils.data import LfsPath
 
 @pytest.mark.slow
 def test_pull_file() -> None:
-    repo_root = data.get_project_root()
     test_file_name = "cafe.jpg"
     test_file_compressed = data._get_lfs_dir() / (test_file_name + ".tar.gz")
     test_file_decompressed = data.get_data_dir() / test_file_name
@@ -34,29 +32,14 @@ def test_pull_file() -> None:
     if test_file_decompressed.exists():
         test_file_decompressed.unlink()
 
-    # delete lfs archive file if it exists
+    # delete cached archive if it exists
     if test_file_compressed.exists():
         test_file_compressed.unlink()
 
     assert not test_file_compressed.exists()
     assert not test_file_decompressed.exists()
 
-    # pull the lfs file reference from git
-    env = os.environ.copy()
-    env["GIT_LFS_SKIP_SMUDGE"] = "1"
-    subprocess.run(
-        ["git", "checkout", "HEAD", "--", test_file_compressed],
-        cwd=repo_root,
-        env=env,
-        check=True,
-        capture_output=True,
-    )
-
-    # ensure we have a pointer file from git (small ASCII text file)
-    assert test_file_compressed.exists()
-    assert test_file_compressed.stat().st_size < 200
-
-    # trigger a data file pull
+    # trigger a data file pull from S3
     assert data.get_data(test_file_name) == test_file_decompressed
 
     # validate data is received
@@ -81,7 +64,6 @@ def test_pull_file() -> None:
 
 @pytest.mark.slow
 def test_pull_dir() -> None:
-    repo_root = data.get_project_root()
     test_dir_name = "ab_lidar_frames"
     test_dir_compressed = data._get_lfs_dir() / (test_dir_name + ".tar.gz")
     test_dir_decompressed = data.get_data_dir() / test_dir_name
@@ -92,26 +74,14 @@ def test_pull_dir() -> None:
             item.unlink()
         test_dir_decompressed.rmdir()
 
-    # delete lfs archive file if it exists
+    # delete cached archive if it exists
     if test_dir_compressed.exists():
         test_dir_compressed.unlink()
 
-    # pull the lfs file reference from git
-    env = os.environ.copy()
-    env["GIT_LFS_SKIP_SMUDGE"] = "1"
-    subprocess.run(
-        ["git", "checkout", "HEAD", "--", test_dir_compressed],
-        cwd=repo_root,
-        env=env,
-        check=True,
-        capture_output=True,
-    )
+    assert not test_dir_compressed.exists()
+    assert not test_dir_decompressed.exists()
 
-    # ensure we have a pointer file from git (small ASCII text file)
-    assert test_dir_compressed.exists()
-    assert test_dir_compressed.stat().st_size < 200
-
-    # trigger a data file pull
+    # trigger a data file pull from S3
     assert data.get_data(test_dir_name) == test_dir_decompressed
     assert test_dir_compressed.stat().st_size > 200
 
@@ -302,6 +272,34 @@ def test_lfs_path_division_operator() -> None:
 
     # The result should be the resolved path with subpath appended
     assert "three_paths.png" in str(result)
+
+
+@pytest.mark.slow
+def test_missing_file_raises() -> None:
+    """A file that doesn't exist in S3 should raise FileNotFoundError."""
+    with pytest.raises(FileNotFoundError, match="not found in s3://"):
+        data.get_data("definitely_not_a_real_file_xyz_123")
+
+
+@pytest.mark.slow
+def test_get_data_idempotent() -> None:
+    """Calling get_data twice on the same file should not re-download."""
+    filename = "three_paths.png"
+    data_dir = data.get_data_dir()
+    file_path = data_dir / filename
+
+    # Ensure clean state, then prime the cache
+    if file_path.exists():
+        file_path.unlink()
+
+    first = data.get_data(filename)
+    assert first.exists()
+    first_mtime = first.stat().st_mtime
+
+    # Second call should hit the local-file fast path (no re-download)
+    second = data.get_data(filename)
+    assert second == first
+    assert second.stat().st_mtime == first_mtime
 
 
 @pytest.mark.slow

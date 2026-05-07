@@ -50,7 +50,7 @@ done
 if [ ${#new_data[@]} -gt 0 ]; then
    echo -e "${RED}✗${NC} New test data detected at /data:"
    echo -e "  ${GREEN}${new_data[@]}${NC}"
-   echo -e "\nEither delete or run ${GREEN}./bin/lfs_push${NC}"
-   echo -e "(lfs_push will compress the files into /data/.lfs/, upload to LFS, and add them to your commit)"
+   echo -e "\nEither delete or run ${GREEN}./bin/s3_push${NC}"
+   echo -e "(s3_push will compress the files into /data/.lfs/ and upload to S3)"
    exit 1
 fi

@@ -30,9 +30,8 @@ __pycache__
 
 .bash_history
 
-# Ignore all test data directories but allow compressed files
-/data/*
-!/data/.lfs/
+# Ignore all test data (archives are stored in S3, not git)
+/data/
 
 # node env (used by devcontainers cli)
 node_modules
@@ -43,9 +42,8 @@ package-lock.json
 dist/
 build/
 
-# Ignore data directory but keep .lfs subdirectory
-data/*
-!data/.lfs/
+# Ignore data directory (archives are stored in S3, not git)
+data/
 FastSAM-x.pt
 yolo11n.pt
 

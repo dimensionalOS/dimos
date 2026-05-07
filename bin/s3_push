@@ -1,0 +1,76 @@
+!/bin/bash
+# Compresses directories/files in data/* into data/.lfs/<name>.tar.gz
+# Uploads to S3 (replaces bin/lfs_push)
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+S3_BUCKET="${DIMOS_DATA_S3_BUCKET:-dimos-github-lfs}"
+S3_PREFIX="${DIMOS_DATA_S3_PREFIX:-.lfs/}"
+AWS_PROFILE="${AWS_PROFILE:-dimensional-aws}"
+
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+
+if [ ! -d "data/" ]; then
+    echo -e "${YELLOW}No data directory found, skipping.${NC}"
+    exit 0
+fi
+
+mkdir -p data/.lfs
+
+compressed_entries=()
+
+for entry_path in data/*; do
+    [ ! "$entry_path" ] && continue
+
+    entry_name=$(basename "$entry_path")
+
+    [ "$entry_name" = ".lfs" ] && continue
+
+    # Skip SQLite ephemeral sidecar files
+    case "$entry_name" in
+        *-wal|*-shm|*-journal) continue ;;
+    esac
+
+    compressed_file="data/.lfs/${entry_name}.tar.gz"
+
+    if [ -f "$compressed_file" ]; then
+        continue
+    fi
+
+    echo -e "  ${YELLOW}Compressing${NC} $entry_path -> $compressed_file"
+
+    entry_size=$(du -sh "$entry_path" | cut -f1)
+    echo -e "    Data size: ${YELLOW}$entry_size${NC}"
+
+    tar -czf "$compressed_file" \
+        --exclude='*.tmp' \
+        --exclude='*.temp' \
+        --exclude='.DS_Store' \
+        --exclude='Thumbs.db' \
+        --checkpoint=1000 \
+        --checkpoint-action=dot \
+        -C "data/" \
+        "$entry_name"
+
+    if [ $? -eq 0 ]; then
+        compressed_size=$(du -sh "$compressed_file" | cut -f1)
+        echo -e "  ${GREEN}✓${NC} Compressed $entry_name (${GREEN}$entry_size${NC} → ${GREEN}$compressed_size${NC})"
+        compressed_entries+=("$entry_name")
+    else
+        echo -e "  ${RED}✗${NC} Failed to compress $entry_name"
+        exit 1
+    fi
+done
+
+echo -e "\n${GREEN}Syncing data/.lfs/ to s3://${S3_BUCKET}/${S3_PREFIX}${NC}"
+aws s3 sync data/.lfs/ "s3://${S3_BUCKET}/${S3_PREFIX}" \
+    --profile "$AWS_PROFILE" \
+    --exclude ".gitkeep"
+
+echo -e "${GREEN}✓${NC} Upload complete"

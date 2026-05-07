@@ -89,6 +89,7 @@ dependencies = [
     "sqlite-vec>=0.1.6",
     "lz4>=4.4.5",
     "rpyc>=6.0.0",
+    "boto3>=1.34",
 ]
 
 
@@ -398,6 +399,9 @@ exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/c
 [[tool.mypy.overrides]]
 module = [
     "annotation_protocol",
+    "boto3",
+    "botocore",
+    "botocore.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",

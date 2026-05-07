@@ -16,15 +16,23 @@ from functools import cache
 import os
 from pathlib import Path
 import platform
-import subprocess
 import sys
 import tarfile
 import tempfile
+
+import boto3
+from botocore import UNSIGNED
+from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+S3_BUCKET = os.environ.get("DIMOS_DATA_S3_BUCKET", "dimos-github-lfs")
+S3_PREFIX = os.environ.get("DIMOS_DATA_S3_PREFIX", ".lfs/")
+S3_REGION = os.environ.get("DIMOS_DATA_S3_REGION", "us-east-2")
 
 
 def _get_user_data_dir() -> Path:
@@ -57,7 +65,7 @@ def get_project_root() -> Path:
     if (DIMOS_PROJECT_ROOT / ".git").exists():
         return DIMOS_PROJECT_ROOT
 
-    # Running as installed package - clone repo to data dir
+    # Running as installed package - use a local data directory
     try:
         data_dir = _get_user_data_dir()
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -72,36 +80,7 @@ def get_project_root() -> Path:
         data_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Using tmp data directory at '{data_dir}'")
 
-    repo_dir = data_dir / "repo"
-
-    # Clone if not already cloned
-    if not (repo_dir / ".git").exists():
-        try:
-            env = os.environ.copy()
-            env["GIT_LFS_SKIP_SMUDGE"] = "1"
-            subprocess.run(
-                [
-                    "git",
-                    "clone",
-                    "--depth",
-                    "1",
-                    "--branch",
-                    "main",
-                    "https://github.com/dimensionalOS/dimos.git",
-                    str(repo_dir),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"Failed to clone dimos repository: {e.stderr}\n"
-                f"Make sure you can access https://github.com/dimensionalOS/dimos.git"
-            )
-
-    return repo_dir
+    return data_dir
 
 
 @cache
@@ -116,61 +95,22 @@ def _get_lfs_dir() -> Path:
     return get_data_dir() / ".lfs"
 
 
-def _check_git_lfs_available() -> bool:
-    missing = []
-
-    # Check if git is available
+@cache
+def _get_s3_client():  # type: ignore[no-untyped-def]
+    """Get a boto3 S3 client, using instance profile / env credentials."""
     try:
-        subprocess.run(["git", "--version"], capture_output=True, check=True, text=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        missing.append("git")
-
-    # Check if git-lfs is available
-    try:
-        subprocess.run(["git-lfs", "version"], capture_output=True, check=True, text=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        missing.append("git-lfs")
-
-    if missing:
-        raise RuntimeError(
-            f"Missing required tools: {', '.join(missing)}.\n\n"
-            "Git LFS installation instructions: https://git-lfs.github.io/"
+        session = boto3.Session(region_name=S3_REGION)
+        client = session.client("s3")
+        # Quick check that credentials work
+        client.head_bucket(Bucket=S3_BUCKET)
+        return client
+    except ClientError:
+        # Fall back to unsigned access (public bucket)
+        return boto3.client(
+            "s3",
+            region_name=S3_REGION,
+            config=BotoConfig(signature_version=UNSIGNED),
         )
-
-    return True
-
-
-def _is_lfs_pointer_file(file_path: Path) -> bool:
-    try:
-        # LFS pointer files are small (typically < 200 bytes) and start with specific text
-        if file_path.stat().st_size > 1024:  # LFS pointers are much smaller
-            return False
-
-        with open(file_path, encoding="utf-8") as f:
-            first_line = f.readline().strip()
-            return first_line.startswith("version https://git-lfs.github.com/spec/")
-
-    except (UnicodeDecodeError, OSError):
-        return False
-
-
-def _lfs_pull(file_path: Path, repo_root: Path) -> None:
-    try:
-        relative_path = file_path.relative_to(repo_root)
-
-        env = os.environ.copy()
-        env["GIT_LFS_FORCE_PROGRESS"] = "1"
-
-        subprocess.run(
-            ["git", "lfs", "pull", "--include", str(relative_path)],
-            cwd=repo_root,
-            check=True,
-            env=env,
-        )
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to pull LFS file {file_path}: {e}")
-
-    return None
 
 
 def _decompress_archive(filename: str | Path) -> Path:
@@ -181,46 +121,40 @@ def _decompress_archive(filename: str | Path) -> Path:
     return target_dir / filename_path.name.replace(".tar.gz", "")
 
 
-def _pull_lfs_archive(filename: str | Path) -> Path:
-    # Check Git LFS availability first
-    _check_git_lfs_available()
+def _pull_s3_archive(filename: str | Path) -> Path:
+    """Download an archive from S3 into the local .lfs cache dir."""
+    lfs_dir = _get_lfs_dir()
+    lfs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Find repository root
-    repo_root = get_project_root()
+    archive_name = str(filename) + ".tar.gz"
+    local_path = lfs_dir / archive_name
+    s3_key = S3_PREFIX + archive_name
 
-    # Construct path to test data file
-    file_path = _get_lfs_dir() / (str(filename) + ".tar.gz")
+    if local_path.exists() and local_path.stat().st_size > 1024:
+        # Already downloaded (and not an LFS pointer stub)
+        return local_path
 
-    # Check if file exists
-    if not file_path.exists():
+    logger.info(f"Downloading s3://{S3_BUCKET}/{s3_key} -> {local_path}")
+    client = _get_s3_client()
+    try:
+        client.download_file(S3_BUCKET, s3_key, str(local_path))
+    except ClientError as e:
         raise FileNotFoundError(
-            f"Test file '{filename}' not found at {file_path}. "
-            f"Make sure the file is committed to Git LFS in the tests/data directory."
+            f"Data file '{archive_name}' not found in s3://{S3_BUCKET}/{S3_PREFIX}. "
+            f"Make sure it has been uploaded with bin/s3_push. ({e})"
         )
 
-    # If it's an LFS pointer file, ensure LFS is set up and pull the file
-    if _is_lfs_pointer_file(file_path):
-        _lfs_pull(file_path, repo_root)
-
-        # Verify the file was actually downloaded
-        if _is_lfs_pointer_file(file_path):
-            raise RuntimeError(
-                f"Failed to download LFS file '{filename}'. The file is still a pointer after attempting to pull."
-            )
-
-    return file_path
+    return local_path
 
 
 def get_data(name: str | Path) -> Path:
     """
-    Get the path to a test data, downloading from LFS if needed.
+    Get the path to test data, downloading from S3 if needed.
 
     This function will:
-    1. Check that Git LFS is available
-    2. Locate the file in the tests/data directory
-    3. Initialize Git LFS if needed
-    4. Download the file from LFS if it's a pointer file
-    5. Return the Path object to the actual file or dir
+    1. Check if the data is already available locally
+    2. If not, download the compressed archive from S3
+    3. Decompress and return the path
 
     Supports nested paths like "dataset/subdir/file.jpg" - will download and
     decompress "dataset" archive but return the full nested path.
@@ -233,8 +167,7 @@ def get_data(name: str | Path) -> Path:
         Path: Path object to the test file or dir
 
     Raises:
-        RuntimeError: If Git LFS is not available or LFS operations fail
-        FileNotFoundError: If the test file doesn't exist
+        FileNotFoundError: If the data file doesn't exist in S3
 
     Usage:
         # Simple file/dir
@@ -256,7 +189,7 @@ def get_data(name: str | Path) -> Path:
     nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
 
     # download and decompress the archive root
-    archive_path = _decompress_archive(_pull_lfs_archive(archive_name))
+    archive_path = _decompress_archive(_pull_s3_archive(archive_name))
 
     # return full path including nested components
     if nested_path:
@@ -266,12 +199,10 @@ def get_data(name: str | Path) -> Path:
 
 class LfsPath(type(Path())):  # type: ignore[misc]
     """
-    A Path subclass that lazily downloads LFS data when accessed.
-
-    This is useful for both lazy loading and differentiating between LFS paths and regular paths.
+    A Path subclass that lazily downloads data from S3 when accessed.
 
     This class wraps pathlib.Path and ensures that get_data() is called
-    before any meaningful filesystem operation, making LFS data lazy-loaded.
+    before any meaningful filesystem operation, making data lazy-loaded.
 
     Usage:
         path = LfsPath("sample_data")
@@ -295,7 +226,7 @@ class LfsPath(type(Path())):  # type: ignore[misc]
         return instance
 
     def _ensure_downloaded(self) -> Path:
-        """Ensure the LFS data is downloaded and return the resolved path."""
+        """Ensure the data is downloaded and return the resolved path."""
         cache: Path | None = object.__getattribute__(self, "_lfs_resolved_cache")
         if cache is None:
             filename = object.__getattribute__(self, "_lfs_filename")
@@ -324,7 +255,7 @@ class LfsPath(type(Path())):  # type: ignore[misc]
         return str(self._ensure_downloaded())
 
     def __fspath__(self) -> str:
-        """Return filesystem path, downloading from LFS if needed."""
+        """Return filesystem path, downloading from S3 if needed."""
         return str(self._ensure_downloaded())
 
     def __truediv__(self, other: object) -> "LfsPath":
