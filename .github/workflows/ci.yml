@@ -35,34 +35,8 @@ jobs:
           git config --global --add safe.directory '*'
           git clean -ffdx -e .venv
 
-      - name: Install Python dependencies
-        run: uv sync --all-extras --no-extra dds --no-extra unitree-dds --frozen
-
-      - name: Remove pydrake stubs
-        run: |
-          find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
-
-      - name: Run tests
-        if: github.event_name != 'push'
-        run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && pytest --durations=0 -m 'not (tool or mujoco)'"
-
-      - name: Run tests with coverage
-        if: github.event_name == 'push'
-        run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && _DIMOS_COV=1 coverage run -m pytest --durations=0 -m 'not (tool or mujoco)' && coverage combine && coverage html && coverage report"
-
-      - name: Run mypy
-        if: ${{ !cancelled() }}
-        run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
-
-      - name: Upload coverage report
-        if: github.event_name == 'push' && !cancelled()
-        uses: actions/upload-artifact@v5
-        with:
-          name: coverage-report
-          path: htmlcov/
+      - name: Verify
+        run: bash ./scripts/verify.sh
 
       - name: Check disk space
         if: failure()

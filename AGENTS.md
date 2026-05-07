@@ -379,6 +379,55 @@ CI asserts the file is current — if it's stale, CI fails.
 
 ---
 
+## Agent PR Pipeline
+
+### Definition of Done
+
+- Use `bash scripts/verify.sh` as the single local verification command.
+- Keep CI and local verification aligned; CI should end by invoking the same
+  checks as `scripts/verify.sh` or an equivalent wrapper.
+- Open PRs against `dev` unless a maintainer explicitly requests another base.
+- Fill the PR template with a concise description, test plan, risk notes, and
+  related issue or PR context.
+- Never commit secrets, `.env` files, private keys, local caches, or unrelated
+  generated data.
+
+### Mandatory Workflow Rules
+
+- Do not push directly to `main` or `dev`.
+- Do not force-push protected branches or open PR branches without explicit human
+  approval.
+- Do not weaken tests, type checks, CI, or `scripts/verify.sh` to make a change
+  pass.
+- In a dirty working tree, stage only files related to the current task.
+- If GitHub settings, branch protection, auto-merge, or Codex setup are needed,
+  report the human steps clearly instead of pretending they were completed.
+
+### PR Review Guidelines
+
+- **P0 BLOCK**: leaked credentials, destructive git operations, unsafe robot
+  motion/control paths, command injection, arbitrary code execution, or data loss.
+- **P1 MUST FIX**: unbounded robot control loops, backwards-incompatible public
+  API changes, skipped tests, stale generated blueprint registry, dependency
+  lockfile drift, broken CI, or changes that require hardware validation without
+  saying so in the PR.
+- **P2 SHOULD FIX**: missing focused tests for risky behavior, unclear skill
+  schemas/docstrings, duplicated logic that increases maintenance risk, or
+  incomplete error handling in shared infrastructure.
+- **P3 OPTIONAL**: typos, style nits, naming preferences, or cleanup unrelated to
+  runtime behavior. Do not block PRs on P3 items alone.
+
+### Roles
+
+- Cursor agent: implement scoped changes, run verification, prepare commits/PRs,
+  and report remaining manual setup.
+- Codex review app: provide a second review pass on PRs when enabled by the
+  repository owner.
+- Human maintainer: configure GitHub web settings, approve risky robot/hardware
+  behavior, and decide on merges when branch protection requires it.
+
+---
+
 ## Further Reading
 
 - Module system: `docs/usage/modules.md`

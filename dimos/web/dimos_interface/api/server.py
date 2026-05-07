@@ -255,9 +255,9 @@ class FastAPIServer(EdgeIO):
             stream_keys = list(self.streams.keys())
             text_stream_keys = list(self.text_streams.keys())
             return self.templates.TemplateResponse(
+                request,
                 "index_fastapi.html",
                 {
-                    "request": request,
                     "stream_keys": stream_keys,
                     "text_stream_keys": text_stream_keys,
                     "has_voice": self.audio_subject is not None,

@@ -413,6 +413,8 @@ module = [
     "plum.*",
     "portal",
     "psutil",
+    "pymavlink",
+    "pymavlink.*",
     "rpyc",
     "rpyc.*",
     "pycuda",
