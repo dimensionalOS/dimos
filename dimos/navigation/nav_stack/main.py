@@ -295,12 +295,15 @@ def _costmap_cloud_colors(cloud: Any) -> Any:
     import numpy as np
     import rerun as rr
 
-    points, _ = cloud.as_numpy()
+    points, embedded = cloud.as_numpy()
     if len(points) == 0:
         return None
     lifted = points[:, :3].copy()
     lifted[:, 2] += _VIS_LIFT_COSTMAP
-    colors = np.full((len(points), 3), [255, 40, 40], dtype=np.uint8)
+    if embedded is not None:
+        colors = (np.clip(embedded, 0.0, 1.0) * 255).astype(np.uint8)
+    else:
+        colors = np.full((len(points), 3), [255, 40, 40], dtype=np.uint8)
     return rr.Points3D(positions=lifted, colors=colors, radii=0.12)
 
 

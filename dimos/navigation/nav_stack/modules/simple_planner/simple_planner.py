@@ -23,6 +23,8 @@ import time
 from typing import Any
 
 import numpy as np
+import open3d as o3d  # type: ignore[import-untyped]
+import open3d.core as o3c  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -536,24 +538,40 @@ class SimplePlanner(Module):
                 time.sleep(sleep)
 
     def _publish_costmap_cloud(self, rz: float, now: float) -> None:
-        """Publish blocked-cell centers as a PointCloud2 for rerun (throttled to ~2 Hz)."""
+        """Publish blocked-cell centers as a colored PointCloud2 for rerun (throttled to ~2 Hz).
+
+        Per-point colors: red for true obstacles (cells whose recorded height
+        clears ``obstacle_height``), orange for inflation padding around them.
+        """
         if now - self._last_costmap_pub < 0.5:
             return
         self._last_costmap_pub = now
         with self._costmap_lock:
             cm = self._costmap
-        blocked = cm.blocked_cells()
+            heights = dict(cm.heights)
+            blocked = list(cm.blocked_cells())
+            obstacle_height = cm.obstacle_height
         if not blocked:
             pts = np.zeros((0, 3), dtype=np.float32)
+            colors = np.zeros((0, 3), dtype=np.float32)
         else:
             pts = np.empty((len(blocked), 3), dtype=np.float32)
-            for i, (ix, iy) in enumerate(blocked):
+            colors = np.empty((len(blocked), 3), dtype=np.float32)
+            z = rz - self.config.ground_offset_below_robot + 0.1
+            red = (1.0, 40.0 / 255.0, 40.0 / 255.0)
+            orange = (1.0, 165.0 / 255.0, 0.0)
+            for i, cell in enumerate(blocked):
+                ix, iy = cell
                 wx, wy = cm.cell_to_world(ix, iy)
                 pts[i, 0] = wx
                 pts[i, 1] = wy
-                pts[i, 2] = rz - self.config.ground_offset_below_robot + 0.1
+                pts[i, 2] = z
+                colors[i] = red if heights.get(cell, float("-inf")) >= obstacle_height else orange
+        pcd_t = o3d.t.geometry.PointCloud()
+        pcd_t.point["positions"] = o3c.Tensor(pts, dtype=o3c.float32)
+        pcd_t.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
         self.costmap_cloud.publish(
-            PointCloud2.from_numpy(pts, frame_id=self.config.world_frame, timestamp=now)
+            PointCloud2(pointcloud=pcd_t, ts=now, frame_id=self.config.world_frame)
         )
 
     def _publish_from_cached(self, rx: float, ry: float, gz: float, now: float) -> None:
