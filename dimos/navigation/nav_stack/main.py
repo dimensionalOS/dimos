@@ -192,34 +192,33 @@ def nav_stack_rerun_config(
     resolved = dict(user_config or {})
     resolved.setdefault("blueprint", _default_rerun_blueprint)
     resolved.setdefault("pubsubs", [LCM()])
-    resolved.setdefault("visual_colors", {})
+    resolved.setdefault("visual_override", {})
     resolved.setdefault("static", {})
-    visual_colors = dict(resolved["visual_colors"])
-    visual_colors.setdefault("world/sensor_scan", _sensor_scan_colors)
-    visual_colors.setdefault("world/terrain_map", _terrain_map_colors)
-    visual_colors.setdefault("world/terrain_map_ext", _terrain_map_colors)
-    visual_colors.setdefault("world/global_map", _global_map_colors)
-    visual_colors.setdefault("world/global_map_pgo", _global_map_colors)
-    visual_colors.setdefault("world/global_map_fastlio", _global_map_colors)
-    visual_colors.setdefault("world/registered_scan", _global_map_colors)
-    visual_colors.setdefault("world/explored_areas", _explored_areas_colors)
-    visual_colors.setdefault("world/preloaded_map", _preloaded_map_colors)
-    visual_colors.setdefault("world/trajectory", _trajectory_colors)
-    visual_colors.setdefault("world/path", _path_colors)
+    visual_override = dict(resolved["visual_override"])
+    visual_override.setdefault("world/sensor_scan", _sensor_scan_colors)
+    visual_override.setdefault("world/terrain_map", _terrain_map_colors)
+    visual_override.setdefault("world/terrain_map_ext", _terrain_map_colors)
+    visual_override.setdefault("world/global_map", _global_map_colors)
+    visual_override.setdefault("world/global_map_pgo", _global_map_colors)
+    visual_override.setdefault("world/global_map_fastlio", _global_map_colors)
+    visual_override.setdefault("world/registered_scan", _global_map_colors)
+    visual_override.setdefault("world/explored_areas", _explored_areas_colors)
+    visual_override.setdefault("world/preloaded_map", _preloaded_map_colors)
+    visual_override.setdefault("world/trajectory", _trajectory_colors)
+    visual_override.setdefault("world/path", _path_colors)
     if agentic_debug:
-        visual_colors.setdefault("world/way_point", _waypoint_colors_debug)
-        visual_colors.setdefault("world/goal", _goal_colors_debug)
-        visual_colors.setdefault("world/goal_path", _goal_path_colors_debug)
-        visual_colors.setdefault("world/nav_boundary", _nav_boundary_colors_debug)
+        visual_override.setdefault("world/way_point", _waypoint_colors_debug)
+        visual_override.setdefault("world/goal", _goal_colors_debug)
+        visual_override.setdefault("world/goal_path", _goal_path_colors_debug)
+        visual_override.setdefault("world/nav_boundary", _nav_boundary_colors_debug)
     else:
-        visual_colors.setdefault("world/way_point", _waypoint_colors)
-        visual_colors.setdefault("world/goal", _goal_colors)
-        visual_colors.setdefault("world/goal_path", _goal_path_colors)
-        visual_colors.setdefault("world/nav_boundary", _nav_boundary_colors)
-    visual_colors.setdefault("world/obstacle_cloud", _obstacle_cloud_colors)
-    visual_colors.setdefault("world/costmap_cloud", _costmap_cloud_colors)
-    visual_colors.setdefault("world/free_paths", _free_paths_colors)
-    resolved["visual_colors"] = visual_colors
+        visual_override.setdefault("world/way_point", _waypoint_colors)
+        visual_override.setdefault("world/goal", _goal_colors)
+        visual_override.setdefault("world/goal_path", _goal_path_colors)
+        visual_override.setdefault("world/nav_boundary", _nav_boundary_colors)
+    visual_override.setdefault("world/costmap_cloud", _costmap_cloud_colors)
+    visual_override.setdefault("world/free_paths", _free_paths_colors)
+    resolved["visual_override"] = visual_override
     static_entries = dict(resolved["static"])
     static_entries.setdefault("world/floor", _static_floor)
     resolved["static"] = static_entries
@@ -305,16 +304,6 @@ def _costmap_cloud_colors(cloud: Any) -> Any:
     lifted[:, 2] += _VIS_LIFT_COSTMAP
     colors = np.full((len(points), 3), [255, 40, 40], dtype=np.uint8)
     return rr.Points3D(positions=lifted, colors=colors, radii=0.12)
-
-
-def _obstacle_cloud_colors(cloud: Any) -> Any:
-    import rerun as rr
-
-    arch = cloud.to_rerun(colormap="plasma", size=0.06)
-    return [
-        ("world/obstacle_cloud", rr.Transform3D(parent_frame="tf#/sensor")),
-        ("world/obstacle_cloud", arch),
-    ]
 
 
 def _explored_areas_colors(cloud: Any) -> Any:
