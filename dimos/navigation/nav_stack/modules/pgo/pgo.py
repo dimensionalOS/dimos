@@ -550,5 +550,5 @@ class PGO(Module):
                 self._last_global_map_time = t0
 
             elapsed = time.monotonic() - t0
-            sleep_time = max(0.1, interval - elapsed)
+            sleep_time = max(DEFAULT_THREAD_JOIN_TIMEOUT, interval - elapsed)
             time.sleep(sleep_time)
