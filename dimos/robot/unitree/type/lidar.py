@@ -119,9 +119,7 @@ def repair_stale_ts(
             n_seen += 1
 
         if prev_good is not None and item.ts <= prev_good:
-            old = item.ts
             item.ts = prev_good + default_period
-            logger.warning("repair_stale_ts: stale stamp %.6f → %.6f", old, item.ts)
 
         prev_good = item.ts
 

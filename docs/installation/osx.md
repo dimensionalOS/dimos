@@ -31,7 +31,7 @@ export GIT_LFS_SKIP_SMUDGE=1
 git clone -b dev https://github.com/dimensionalOS/dimos.git
 cd dimos
 
-uv sync --all-extras --no-extra dds
+uv sync --extra all
 
 # type check
 uv run mypy dimos
