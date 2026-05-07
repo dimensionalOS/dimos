@@ -34,9 +34,8 @@ from typing import Any, Generic, TypeVar, cast
 
 import reactivex as rx
 from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
-from reactivex.disposable import Disposable, MultipleAssignmentDisposable
+from reactivex.disposable import Disposable
 from reactivex.observable import Observable
-from reactivex.scheduler import TimeoutScheduler
 
 from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.memory2.store.sqlite import SqliteStore
@@ -88,22 +87,21 @@ def timed_playback(
 ) -> Observable[T]:
     """Replay a ``(ts, data)`` iterator as an Observable at real-time speed.
 
-    Anchors on the first timestamp and runs a single background thread that
-    sleeps between emissions.
+    Anchors on the first timestamp and runs a dedicated worker thread that
+    sleeps between emissions. The thread is joined on dispose (unlike
+    ``TimeoutScheduler``) so test thread-leak checks do not see a stray worker.
     When ``detect_loop`` is set, a backwards-going timestamp re-anchors — use
     this when the source iterator loops.
     """
 
     def subscribe(
         observer: ObserverBase[T],
-        scheduler: SchedulerBase | None = None,
+        _scheduler: SchedulerBase | None = None,
     ) -> DisposableBase:
-        sched = scheduler or TimeoutScheduler()
-        disp = MultipleAssignmentDisposable()
         cancel_event = threading.Event()
         is_disposed = False
 
-        def loop_action(_scheduler: SchedulerBase, _state: object) -> None:
+        def loop_action() -> None:
             iterator = source()
             try:
                 first_ts, first_data = next(iterator)
@@ -151,13 +149,18 @@ def timed_playback(
             if not is_disposed:
                 observer.on_completed()
 
-        disp.disposable = sched.schedule(loop_action)
+        worker = threading.Thread(
+            target=loop_action,
+            name="timed_playback",
+            daemon=False,
+        )
+        worker.start()
 
         def dispose() -> None:
             nonlocal is_disposed
             is_disposed = True
             cancel_event.set()
-            disp.dispose()
+            worker.join(timeout=60.0)
 
         return Disposable(dispose)
 
