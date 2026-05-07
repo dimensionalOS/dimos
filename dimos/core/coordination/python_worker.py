@@ -338,8 +338,7 @@ class _WorkerState:
 
 def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
     apply_library_config()
-    # Let the coordinator orchestrate shutdown via the pipe.
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)  # coordinator handles shutdown
     state = _WorkerState(instances={}, worker_id=worker_id)
 
     try:
