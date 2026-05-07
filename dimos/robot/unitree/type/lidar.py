@@ -14,13 +14,19 @@
 
 """Unitree WebRTC lidar message parsing utilities."""
 
-import time
-from typing import TypedDict
+from collections.abc import Callable
+from typing import TypedDict, TypeVar
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
+from reactivex import operators as ops
+from reactivex.observable import Observable
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.types.timestamped import Timestamped
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # Backwards compatibility alias for pickled data
 LidarMessage = PointCloud2
@@ -55,10 +61,12 @@ def pointcloud2_from_webrtc_lidar(raw_message: RawLidarMsg, ts: float | None = N
 
     Args:
         raw_message: Raw lidar message from Unitree WebRTC API
-        ts: Optional timestamp override. If None, uses current time.
+        ts: Optional timestamp override. If None, uses the sensor stamp from
+            ``raw_message["data"]["stamp"]``.
 
-    Returns:
-        PointCloud2 message with the lidar points
+    The sensor stamp is authoritative when valid but Unitree's publisher
+    occasionally re-emits a stale value on fresh scans — see
+    :func:`repair_stale_ts` for the downstream repair.
     """
     data = raw_message["data"]
     points = data["data"]["points"]
@@ -68,7 +76,32 @@ def pointcloud2_from_webrtc_lidar(raw_message: RawLidarMsg, ts: float | None = N
 
     return PointCloud2(
         pointcloud=pointcloud,
-        # webrtc stamp is broken (e.g., "stamp": 1.758148e+09), use current time
-        ts=ts if ts is not None else time.time(),
+        ts=ts if ts is not None else data["stamp"],
         frame_id="world",
     )
+
+
+T = TypeVar("T", bound=Timestamped)
+
+
+def repair_stale_ts(default_period: float = 0.130) -> Callable[[Observable[T]], Observable[T]]:
+    """Repair Unitree's stale-stamp bug by forward-extrapolating non-monotonic stamps.
+
+    Unitree's WebRTC publisher occasionally emits the same stale ``stamp`` on
+    fresh scans (8 frames over 600s in the HK office recording, all sharing
+    one stamp predating recording start). This pipeable operator detects a
+    non-monotonic stamp and rewrites it to ``prev_good.ts + default_period``.
+    Zero latency — emits each item immediately. Successive bad frames each
+    advance by another ``default_period``.
+    """
+    prev_good: list[float | None] = [None]
+
+    def _repair(item: T) -> T:
+        if prev_good[0] is not None and item.ts <= prev_good[0]:
+            old = item.ts
+            item.ts = prev_good[0] + default_period
+            logger.warning("repair_stale_ts: stale stamp %.6f → %.6f", old, item.ts)
+        prev_good[0] = item.ts
+        return item
+
+    return ops.map(_repair)
