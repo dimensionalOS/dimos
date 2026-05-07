@@ -159,7 +159,7 @@ To set up your system dependencies, follow one of these guides:
 ```bash
 uv venv --python "3.12"
 source .venv/bin/activate
-uv pip install 'dimos[base,unitree]'
+uv pip install 'dimos[unitree]'
 
 # Replay a recorded quadruped session (no hardware needed)
 # NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
@@ -167,8 +167,11 @@ dimos --replay run unitree-go2
 ```
 
 ```bash
-# Install with simulation support
-uv pip install 'dimos[base,unitree,sim]'
+# Add perception (object detection, VLMs — heavy dependencies, needs to download GBs)
+uv pip install 'dimos[unitree,perception]'
+
+# Add simulation support
+uv pip install 'dimos[unitree,sim]'
 
 # Run quadruped in MuJoCo simulation
 dimos --simulation run unitree-go2
