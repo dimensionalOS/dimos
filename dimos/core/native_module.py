@@ -90,6 +90,8 @@ class LogFormat(enum.Enum):
 
 
 class NativeModuleConfig(ModuleConfig):
+    """Configuration for a native (C/C++) subprocess module."""
+
     executable: str
     build_command: str | None = None
     cwd: str | None = None
