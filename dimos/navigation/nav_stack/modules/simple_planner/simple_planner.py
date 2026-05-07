@@ -25,6 +25,7 @@ from typing import Any
 import numpy as np
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -32,7 +33,6 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -47,9 +47,7 @@ class Costmap:
         self.cell_size = float(cell_size)
         self.obstacle_height = float(obstacle_height)
         self.inflation_radius = float(inflation_radius)
-        # Raw heights observed per cell (max-ever). Keyed by (ix, iy).
         self._heights: dict[tuple[int, int], float] = {}
-        # Inflated blocked set (recomputed lazily).
         self._blocked: set[tuple[int, int]] = set()
         self._blocked_dirty = True
 
@@ -275,49 +273,28 @@ def astar(
 
 
 class SimplePlannerConfig(ModuleConfig):
-    # Costmap resolution in metres per cell.
-    cell_size: float = 0.3
-    # Points above this elevation (height above ground from terrain_map
-    # intensity) mark a cell as an obstacle.
-    obstacle_height_threshold: float = 0.15
-    # Circular inflation radius around each obstacle (metres). Generous
-    # by default: for a ~0.5 m diameter robot this keeps the A* path ~0.4 m
-    # off every wall. Stuck-detection (below) shrinks this when a
-    # doorway would otherwise be unpassable.
-    inflation_radius: float = 0.2
-    # Look-ahead distance along the planned path to emit as the next
-    # waypoint for the local planner.
-    lookahead_distance: float = 2.0
-    # Replan + publish rate (Hz) — how often the planning loop wakes up.
-    replan_rate: float = 5.0
-    # Minimum seconds between successive A* searches. Waypoints are
-    # still republished at replan_rate using the cached path, but A*
-    # only re-runs after this cooldown. This prevents path flicker
-    # between near-equivalent A* solutions.
-    replan_cooldown: float = 2.0
-    # Hard cap on A* node expansions per call.
-    max_expansions: int = 200_000
-    # Height offset below the robot z-position to estimate ground level (m).
-    # Points below this level are ignored; points above become obstacle
-    # candidates. Should match or slightly exceed the robot's standing height.
-    ground_offset_below_robot: float = 1.3
+    world_frame: str = "map"
+    body_frame: str = "base_link"
 
-    # Consider the robot "stuck" if its distance-to-goal hasn't decreased
-    # by at least ``progress_epsilon`` metres within ``stuck_seconds``.
-    stuck_seconds: float = 5.0
-    # Minimum improvement in goal-distance that counts as progress.
-    progress_epsilon: float = 0.25
-    # When stuck, progressively shrink the inflation_radius by this
-    # fraction each escalation step (e.g. 0.5 → half, then quarter, …).
-    # Shrinking too aggressively risks clipping obstacles, so we bottom
-    # out at ``stuck_min_inflation``.
+    cell_size: float = 0.3  # m per cell
+    obstacle_height_threshold: float = 0.15  # m above ground
+    inflation_radius: float = 0.2  # m, shrunk by stuck-detection
+    lookahead_distance: float = 2.0  # m
+    replan_rate: float = 5.0  # Hz
+    # A* only re-runs after this cooldown; waypoints republish from cache.
+    replan_cooldown: float = 2.0  # s
+    max_expansions: int = 200_000
+    # Points below robot_z minus this offset are floor; above are obstacles.
+    ground_offset_below_robot: float = 1.3  # m
+
+    # Stuck detection: if goal-distance doesn't improve by progress_epsilon
+    # within stuck_seconds, progressively shrink inflation_radius.
+    stuck_seconds: float = 5.0  # s
+    progress_epsilon: float = 0.25  # m
     stuck_shrink_factor: float = 0.5
-    stuck_min_inflation: float = 0.05
-    # When the robot is within this distance (m) of the current
-    # intermediate waypoint, proactively advance the waypoint along the
-    # cached path so the local planner never stops on it. Should be
-    # larger than LocalPlanner's goal_reached_threshold.
-    waypoint_advance_radius: float = 1.0
+    stuck_min_inflation: float = 0.05  # m
+    # Should be larger than LocalPlanner's goal_reached_threshold.
+    waypoint_advance_radius: float = 1.0  # m
 
 
 class SimplePlanner(Module):
@@ -353,9 +330,7 @@ class SimplePlanner(Module):
         # Current inflation in use — shrunk on stuck escalation, reset
         # to config.inflation_radius on new goal.
         self._effective_inflation = self.config.inflation_radius
-        # Cached last-successful A* path and when we planned it, so
-        # waypoints can still be republished between replans (cooldown
-        # is enforced in the planning loop).
+        # Cached path so waypoints can be republished between replans.
         self._cached_path: list[tuple[float, float]] | None = None
         self._last_plan_time = 0.0
         # Costmap_cloud publish throttle — 2 Hz is plenty for rerun.
@@ -390,18 +365,18 @@ class SimplePlanner(Module):
     def stop(self) -> None:
         self._running = False
         if self._thread is not None:
-            self._thread.join(timeout=3.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._thread = None
         super().stop()
 
-    # Ordered list of (parent, child) TF lookups to try for the robot pose.
-    # The first successful lookup wins.  ``body`` is the standard REP-105
-    # child frame; ``sensor`` is used by the Unity sim bridge.
-    _TF_POSE_QUERIES: list[tuple[str, str]] = [
-        (FRAME_MAP, FRAME_BODY),
-        (FRAME_ODOM, FRAME_BODY),
-        (FRAME_MAP, "sensor"),
-    ]
+    @property
+    def _tf_pose_queries(self) -> list[tuple[str, str]]:
+        """Ordered (parent, child) TF lookups for the robot pose.
+        The first successful lookup wins. ``sensor`` is used by the Unity sim bridge."""
+        return [
+            (self.config.world_frame, self.config.body_frame),
+            (self.config.world_frame, "sensor"),
+        ]
 
     def _query_pose(self) -> bool:
         """Update cached robot position from the TF tree.
@@ -413,7 +388,7 @@ class SimplePlanner(Module):
 
         Returns True if a pose was obtained from any chain.
         """
-        tf = resolve_tf_chain(self.tf, list(self._TF_POSE_QUERIES))
+        tf = resolve_tf_chain(self.tf, list(self._tf_pose_queries))
         if tf is None:
             now = time.monotonic()
             if now - self._last_tf_warn > 5.0:
@@ -421,7 +396,7 @@ class SimplePlanner(Module):
                 buffers = list(self.tf.buffers.keys()) if hasattr(self.tf, "buffers") else []
                 logger.warning(
                     "TF lookup failed — no robot pose available",
-                    tried=[(p, c) for p, c in self._TF_POSE_QUERIES],
+                    tried=[(p, c) for p, c in self._tf_pose_queries],
                     available_frames=buffers,
                 )
             return False
@@ -445,17 +420,18 @@ class SimplePlanner(Module):
             self._current_wp = None
             self._current_wp_is_goal = False
             now = time.time()
-            self.way_point.publish(PointStamped(ts=now, frame_id=FRAME_MAP, x=rx, y=ry, z=rz))
-            self.goal_path.publish(Path(ts=now, frame_id=FRAME_MAP, poses=[]))
+            self.way_point.publish(
+                PointStamped(ts=now, frame_id=self.config.world_frame, x=rx, y=ry, z=rz)
+            )
+            self.goal_path.publish(Path(ts=now, frame_id=self.config.world_frame, poses=[]))
             logger.info("Goal cleared — idle until new goal")
             return
         with self._lock:
             self._goal_x = float(msg.x)
             self._goal_y = float(msg.y)
             self._goal_z = float(msg.z)
-            # Fresh goal → fresh progress tracker + restore default
-            # inflation + drop cached path so the next tick plans
-            # immediately (no cooldown wait for a brand-new goal).
+            # Fresh goal: reset progress tracker, restore default inflation,
+            # drop cached path so the next tick plans without cooldown.
             self._ref_goal_dist = float("inf")
             self._last_progress_time = time.monotonic()
             self._effective_inflation = self.config.inflation_radius
@@ -534,11 +510,8 @@ class SimplePlanner(Module):
     def _on_terrain_map(self, msg: PointCloud2) -> None:
         """Layer fresh local terrain on top of the current costmap.
 
-        ``terrain_map`` arrives faster than ``terrain_map_ext`` and
-        carries the most recent local view, so dynamic obstacles appear
-        here first. We additively merge into the existing costmap;
-        these additions are wiped on the next ``terrain_map_ext``
-        rebuild.
+        ``terrain_map`` is faster than ``terrain_map_ext`` so dynamic obstacles
+        appear here first; additions are wiped on the next ``terrain_map_ext`` rebuild.
         """
         points, _ = msg.as_numpy()
         if points is None or len(points) == 0:
@@ -561,11 +534,7 @@ class SimplePlanner(Module):
                 time.sleep(sleep)
 
     def _publish_costmap_cloud(self, rz: float, now: float) -> None:
-        """Publish the blocked-cell centers as a PointCloud2 for rerun.
-
-        Throttled to ~2 Hz. Each cell becomes a 3D point at the cell
-        center, lifted slightly above the robot's z for visibility.
-        """
+        """Publish blocked-cell centers as a PointCloud2 for rerun (throttled to ~2 Hz)."""
         if now - self._last_costmap_pub < 0.5:
             return
         self._last_costmap_pub = now
@@ -581,7 +550,9 @@ class SimplePlanner(Module):
                 pts[i, 0] = wx
                 pts[i, 1] = wy
                 pts[i, 2] = rz - self.config.ground_offset_below_robot + 0.1
-        self.costmap_cloud.publish(PointCloud2.from_numpy(pts, frame_id=FRAME_MAP, timestamp=now))
+        self.costmap_cloud.publish(
+            PointCloud2.from_numpy(pts, frame_id=self.config.world_frame, timestamp=now)
+        )
 
     def _publish_from_cached(self, rx: float, ry: float, gz: float, now: float) -> None:
         """Republish a look-ahead waypoint from the cached path.
@@ -601,7 +572,9 @@ class SimplePlanner(Module):
         with self._lock:
             self._current_wp = (wx, wy)
             self._current_wp_is_goal = is_goal
-        self.way_point.publish(PointStamped(ts=now, frame_id=FRAME_MAP, x=wx, y=wy, z=gz))
+        self.way_point.publish(
+            PointStamped(ts=now, frame_id=self.config.world_frame, x=wx, y=wy, z=gz)
+        )
 
     def _maybe_advance_waypoint(self, rx: float, ry: float, gz: float) -> None:
         """If the robot is close to the current intermediate waypoint, advance it."""
@@ -623,7 +596,9 @@ class SimplePlanner(Module):
             self._current_wp = (wx, wy)
             self._current_wp_is_goal = new_is_goal
         now = time.time()
-        self.way_point.publish(PointStamped(ts=now, frame_id=FRAME_MAP, x=wx, y=wy, z=gz))
+        self.way_point.publish(
+            PointStamped(ts=now, frame_id=self.config.world_frame, x=wx, y=wy, z=gz)
+        )
 
     def _replan_once(self) -> None:
         # Refresh pose from the TF tree every tick.
@@ -706,21 +681,23 @@ class SimplePlanner(Module):
             with self._lock:
                 self._current_wp = None
                 self._current_wp_is_goal = False
-            self.way_point.publish(PointStamped(ts=now, frame_id=FRAME_MAP, x=rx, y=ry, z=rz))
+            self.way_point.publish(
+                PointStamped(ts=now, frame_id=self.config.world_frame, x=rx, y=ry, z=rz)
+            )
             self.goal_path.publish(
                 Path(
                     ts=now,
-                    frame_id=FRAME_MAP,
+                    frame_id=self.config.world_frame,
                     poses=[
                         PoseStamped(
                             ts=now,
-                            frame_id=FRAME_MAP,
+                            frame_id=self.config.world_frame,
                             position=[rx, ry, rz],
                             orientation=[0.0, 0.0, 0.0, 1.0],
                         ),
                         PoseStamped(
                             ts=now,
-                            frame_id=FRAME_MAP,
+                            frame_id=self.config.world_frame,
                             position=[gx, gy, gz],
                             orientation=[0.0, 0.0, 0.0, 1.0],
                         ),
@@ -739,12 +716,12 @@ class SimplePlanner(Module):
             poses.append(
                 PoseStamped(
                     ts=now,
-                    frame_id=FRAME_MAP,
+                    frame_id=self.config.world_frame,
                     position=[wx, wy, rz],
                     orientation=[0.0, 0.0, 0.0, 1.0],
                 )
             )
-        self.goal_path.publish(Path(ts=now, frame_id=FRAME_MAP, poses=poses))
+        self.goal_path.publish(Path(ts=now, frame_id=self.config.world_frame, poses=poses))
 
         # Pick look-ahead waypoint
         wx, wy = self._lookahead(path_world, rx, ry, self.config.lookahead_distance)
@@ -753,7 +730,9 @@ class SimplePlanner(Module):
         with self._lock:
             self._current_wp = (wx, wy)
             self._current_wp_is_goal = is_goal
-        self.way_point.publish(PointStamped(ts=now, frame_id=FRAME_MAP, x=wx, y=wy, z=gz))
+        self.way_point.publish(
+            PointStamped(ts=now, frame_id=self.config.world_frame, x=wx, y=wy, z=gz)
+        )
 
         # 1 Hz diagnostic: cells in costmap, path length, chosen waypoint
         if now - self._last_diag_print >= 1.0:
@@ -796,14 +775,7 @@ class SimplePlanner(Module):
     def _lookahead(
         path: list[tuple[float, float]], rx: float, ry: float, distance: float
     ) -> tuple[float, float]:
-        """Pick a look-ahead point at least ``distance`` metres ahead of the
-        robot along the path.
-
-        First finds the path index closest to (rx, ry), then walks forward
-        until the cumulative distance from that closest point exceeds
-        ``distance``. Falls back to the final path node if nothing is far
-        enough. Path is ordered start → goal.
-        """
+        """Pick a look-ahead point at least ``distance`` metres ahead of the robot along ``path``."""
         if not path:
             return (rx, ry)
         # Closest path index to the robot

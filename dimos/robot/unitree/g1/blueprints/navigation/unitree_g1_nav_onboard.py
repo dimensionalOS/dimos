@@ -13,30 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 nav onboard — FAR planner + PGO loop closure + local obstacle avoidance.
-
-Full navigation stack on real hardware with:
-- FAR visibility-graph global route planner
-- PGO pose graph optimization with loop closure detection (GTSAM iSAM2)
-- Local planner for reactive obstacle avoidance
-- Path follower for velocity control
-- FastLio2 SLAM from Livox Mid-360 lidar
-- G1HighLevelDdsSdk for robot velocity commands
-
-Odometry routing (per CMU ICRA 2022 Fig. 11):
-- Local path modules (LocalPlanner, PathFollower, SensorScanGen):
-  use raw odometry — they follow paths in the local odometry frame.
-- Global/terrain modules (FarPlanner, MovementManager, TerrainAnalysis):
-  use PGO corrected_odometry — they need globally consistent positions
-  for terrain classification, visibility graphs, and goal coordinates.
-
-Data flow:
-    Click → MovementManager (corrected_odom) → goal → FarPlanner (corrected_odom)
-    → way_point → LocalPlanner (raw odom) → path → PathFollower (raw odom)
-    → nav_cmd_vel → MovementManager → cmd_vel → G1HighLevelDdsSdk
-
-    registered_scan + odometry → PGO → corrected_odometry + global_map
-"""
+"""G1 nav onboard blueprint: FAR planner + PGO + local obstacle avoidance."""
 
 from __future__ import annotations
 
@@ -62,7 +39,7 @@ unitree_g1_nav_onboard = (
             lidar_ip=os.getenv("LIDAR_IP", "192.168.123.120"),
             mount=G1.internal_odom_offsets["mid360_link"],
             map_freq=1.0,
-            config="lio_autonomy.yaml",
+            config="default.yaml",
         ),
         create_nav_stack(
             use_simple_planner=True,

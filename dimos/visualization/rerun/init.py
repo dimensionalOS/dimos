@@ -34,7 +34,7 @@ def rerun_init(
     *,
     start_grpc: bool = False,
     grpc_config: dict[str, Any] | None = None,
-    **kwargs: object,
+    **kwargs: Any,
 ) -> str | None:
     """
     Use this inside modules for direct visualization (see docs/usage/visualization.md)

@@ -14,12 +14,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from dataclasses import dataclass, field
 import math
 import time
 
 import pytest
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -51,8 +53,7 @@ def _attach(module):
 
 
 @pytest.fixture()
-def manager_and_captured():
-    """Yield a MovementManager and a Captured collector for its outputs."""
+def manager_and_captured() -> Generator[tuple[MovementManager, Captured], None, None]:
     module = MovementManager(tele_cooldown_sec=0.1)
     captured, unsubs = _attach(module)
     try:
@@ -95,7 +96,7 @@ def test_nav_resumes_after_cooldown(manager_and_captured):
     manager, captured = manager_and_captured
     manager.config.tele_cooldown_sec = 0.05
     manager._on_teleop(_twist(lx=0.3))
-    time.sleep(0.1)
+    time.sleep(DEFAULT_THREAD_JOIN_TIMEOUT)
     cmd_count_before = len(captured.cmd_vel)
 
     manager._on_nav(_twist(lx=0.9))

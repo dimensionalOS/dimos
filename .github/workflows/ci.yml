@@ -12,6 +12,7 @@ on:
 permissions:
   contents: read
   packages: read
+  id-token: write
 
 jobs:
   ci-complete:
@@ -43,26 +44,27 @@ jobs:
           find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
 
       - name: Run tests
-        if: github.event_name != 'push'
         run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && pytest --durations=0 -m 'not (tool or mujoco)'"
-
-      - name: Run tests with coverage
-        if: github.event_name == 'push'
-        run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && _DIMOS_COV=1 coverage run -m pytest --durations=0 -m 'not (tool or mujoco)' && coverage combine && coverage html && coverage report"
+          /entrypoint.sh bash -c "source .venv/bin/activate && _DIMOS_COV=1 coverage run -m pytest --junitxml=junit.xml --durations=0 -m 'not (tool or mujoco)' && coverage combine && coverage xml"
 
       - name: Run mypy
         if: ${{ !cancelled() }}
         run: |
           /entrypoint.sh bash -c "source .venv/bin/activate && MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
 
-      - name: Upload coverage report
-        if: github.event_name == 'push' && !cancelled()
-        uses: actions/upload-artifact@v5
+      - name: Upload coverage
+        uses: codecov/codecov-action@v6
         with:
-          name: coverage-report
-          path: htmlcov/
+          disable_search: true
+          fail_ci_if_error: true
+          files: ./coverage.xml
+          use_oidc: true
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v6
+        with:
+          report_type: test_results
+          use_oidc: true
 
       - name: Check disk space
         if: failure()

@@ -75,12 +75,7 @@ class G1HighLevelWebRtcConfig(ModuleConfig):
 
 
 class G1HighLevelWebRtc(Module, HighLevelG1Spec):
-    """G1 high-level control module using WebRTC transport.
-
-    Wraps :class:`UnitreeWebRTCConnection` and exposes the
-    :class:`HighLevelG1Spec` interface plus LLM-callable skills for
-    arm gestures, movement modes, and velocity control.
-    """
+    """G1 high-level control module using WebRTC transport."""
 
     cmd_vel: In[Twist]
     config: G1HighLevelWebRtcConfig
@@ -90,8 +85,6 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
     def __init__(self, *args: Any, g: GlobalConfig = global_config, **kwargs: Any) -> None:
         super().__init__(*args, g=g, **kwargs)
         self._global_config = g
-
-    # lifecycle
 
     @rpc
     def start(self) -> None:
@@ -106,8 +99,6 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
         if self.connection is not None:
             self.connection.stop()
         super().stop()
-
-    # HighLevelG1Spec
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -135,8 +126,6 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
     def lie_down(self) -> bool:
         assert self.connection is not None
         return self.connection.liedown()
-
-    # skills (LLM-callable)
 
     @skill
     def move_velocity(
@@ -189,8 +178,6 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
 
         {_MODE_COMMANDS_DOC}
         """
-
-    # private helpers
 
     def _execute_g1_command(
         self,

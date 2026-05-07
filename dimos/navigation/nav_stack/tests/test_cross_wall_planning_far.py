@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""E2E integration test: cross-wall planning through Unity sim (FAR planner).
-
-Verifies that the FAR planner routes through doorways instead of through walls.
-Uses the full navigation stack (same blueprint as unitree_g1_nav_sim).
-"""
+"""E2E: FAR planner routes through doorways (full stack via Unity sim, same blueprint as unitree_g1_nav_sim)."""
 
 from __future__ import annotations
 
@@ -40,57 +36,54 @@ from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
 from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.visualization.vis_module import vis_module
 
-pytestmark = [pytest.mark.slow]
+pytestmark = [pytest.mark.slow, pytest.mark.skipif_in_ci]
 
 # Z-ceiling guard: if the robot's z exceeds this, it went through the
 # ceiling/roof — the planner is "cheating" by driving over walls.
 # Same threshold as the SimplePlanner test.
 MAX_ALLOWED_Z = 2.1
 
+_FAR_PLANNER_TUNING = {
+    "sensor_range": 15.0,
+    "is_static_env": True,
+    "converge_dist": 1.5,
+}
+
+_RERUN_CONFIG = nav_stack_rerun_config(
+    {
+        "blueprint": UnityBridgeModule.rerun_blueprint,
+        "visual_override": {
+            "world/camera_info": UnityBridgeModule.rerun_suppress_camera_info,
+        },
+        "static": {
+            "world/color_image": UnityBridgeModule.rerun_static_pinhole,
+            "world/tf/robot": g1_static_robot,
+        },
+    }
+)
+
+_BLUEPRINT = (
+    autoconnect(
+        UnityBridgeModule.blueprint(
+            unity_binary="",
+            unity_scene="home_building_1",
+            vehicle_height=1.24,
+        ),
+        create_nav_stack(
+            terrain_analysis=CROSS_WALL_TERRAIN_ANALYSIS,
+            local_planner=CROSS_WALL_LOCAL_PLANNER,
+            path_follower=CROSS_WALL_PATH_FOLLOWER,
+            far_planner=_FAR_PLANNER_TUNING,
+            record=True,
+        ),
+        MovementManager.blueprint(),
+        vis_module(viewer_backend=global_config.viewer, rerun_config=_RERUN_CONFIG),
+    )
+    .remappings([(UnityBridgeModule, "terrain_map", "terrain_map_ext")])
+    .global_config(n_workers=8, robot_model="unitree_g1", simulation=True)
+)
+
 
 class TestCrossWallPlanning:
     def test_cross_wall_sequence(self):
-        blueprint = (
-            autoconnect(
-                UnityBridgeModule.blueprint(
-                    unity_binary="",
-                    unity_scene="home_building_1",
-                    vehicle_height=1.24,
-                ),
-                create_nav_stack(
-                    terrain_analysis=CROSS_WALL_TERRAIN_ANALYSIS,
-                    local_planner=CROSS_WALL_LOCAL_PLANNER,
-                    path_follower=CROSS_WALL_PATH_FOLLOWER,
-                    far_planner={
-                        "sensor_range": 15.0,
-                        "is_static_env": True,
-                        "converge_dist": 1.5,
-                    },
-                    record=True,
-                ),
-                MovementManager.blueprint(),
-                vis_module(
-                    viewer_backend=global_config.viewer,
-                    rerun_config=nav_stack_rerun_config(
-                        {
-                            "blueprint": UnityBridgeModule.rerun_blueprint,
-                            "visual_override": {
-                                "world/camera_info": UnityBridgeModule.rerun_suppress_camera_info,
-                            },
-                            "static": {
-                                "world/color_image": UnityBridgeModule.rerun_static_pinhole,
-                                "world/tf/robot": g1_static_robot,
-                            },
-                        }
-                    ),
-                ),
-            )
-            .remappings(
-                [
-                    (UnityBridgeModule, "terrain_map", "terrain_map_ext"),
-                ]
-            )
-            .global_config(n_workers=8, robot_model="unitree_g1", simulation=True)
-        )
-
-        run_cross_wall_test(blueprint, label="far", max_z=MAX_ALLOWED_Z)
+        run_cross_wall_test(_BLUEPRINT, label="far", max_z=MAX_ALLOWED_Z)

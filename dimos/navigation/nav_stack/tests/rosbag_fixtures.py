@@ -33,14 +33,14 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 DATA_DIR = Path(__file__).parent / "data"
 ROSBAG_FIXTURE_60S = DATA_DIR / "og_nav_60s.npz"
@@ -107,20 +107,13 @@ def make_odometry_msg(
 
 
 def make_pointcloud_msg(points: np.ndarray, ts: float, frame_id: str = "map") -> PointCloud2:
-    """Build a PointCloud2 message from an Nx3 numpy array."""
     return PointCloud2.from_numpy(points.astype(np.float32), frame_id=frame_id, timestamp=ts)
 
 
 def make_waypoint_msg(
     x: float, y: float, z: float, ts: float, frame_id: str = "map"
 ) -> PointStamped:
-    """Build a PointStamped message."""
     return PointStamped(ts=ts, frame_id=frame_id, x=x, y=y, z=z)
-
-
-def publish_lcm(lc: lcmlib.LCM, topic: str, msg: Any) -> None:
-    """Encode and publish a DimOS message over LCM."""
-    lc.publish(topic, msg.lcm_encode())
 
 
 @dataclass
@@ -133,7 +126,7 @@ class LcmCollector:
     timestamps: list[float] = field(default_factory=list)
     _sub: Any = field(default=None, repr=False)
 
-    def start(self, lc: lcmlib.LCM) -> None:
+    def start(self, lcm: lcmlib.LCM) -> None:
         msg_cls = self.msg_type
 
         def handler(_channel: str, data: bytes) -> None:
@@ -144,18 +137,18 @@ class LcmCollector:
             except Exception as exc:
                 logger.error(f"LcmCollector decode error on {self.topic}: {exc}")
 
-        self._sub = lc.subscribe(self.topic, handler)
+        self._sub = lcm.subscribe(self.topic, handler)
 
-    def stop(self, lc: lcmlib.LCM) -> None:
+    def stop(self, lcm: lcmlib.LCM) -> None:
         if self._sub is not None:
-            lc.unsubscribe(self._sub)
+            lcm.unsubscribe(self._sub)
             self._sub = None
 
 
-def lcm_handle_loop(lc: lcmlib.LCM, stop_event: threading.Event, timeout_ms: int = 50) -> None:
+def lcm_handle_loop(lcm: lcmlib.LCM, stop_event: threading.Event, timeout_ms: int = 50) -> None:
     """Run LCM handle loop until stop_event is set."""
     while not stop_event.is_set():
-        lc.handle_timeout(timeout_ms)
+        lcm.handle_timeout(timeout_ms)
 
 
 @dataclass
@@ -190,7 +183,7 @@ class NativeProcessRunner:
 
 
 def feed_at_original_timing(
-    lc: lcmlib.LCM,
+    lcm: lcmlib.LCM,
     window: RosbagWindow,
     topic_map: dict[str, str],
     odom_subsample: int = 4,
@@ -198,7 +191,7 @@ def feed_at_original_timing(
     """Replay recorded data over LCM at the original inter-message timing.
 
     Args:
-        lc: LCM instance.
+        lcm: LCM instance.
         window: Loaded rosbag data.
         topic_map: Maps data key to LCM topic string. Keys:
             "odom", "scan", "terrain", "terrain_ext", "waypoint", "goal"
@@ -265,4 +258,4 @@ def feed_at_original_timing(
         elapsed = time.monotonic() - real_start
         if target_dt > elapsed:
             time.sleep(target_dt - elapsed)
-        publish_lcm(lc, topic, msg)
+        lcm.publish(topic, msg.lcm_encode())

@@ -75,10 +75,7 @@ def _sec_nsec(ts: float) -> list[int]:
 
 
 class GraphNodes3D(Timestamped):
-    """Visibility-graph node positions for debug visualization.
-
-    Wire format: ``nav_msgs/Path`` where each pose is a node.
-    """
+    """Visibility-graph node positions for debug visualization."""
 
     msg_name = "nav_msgs.GraphNodes3D"
     ts: float

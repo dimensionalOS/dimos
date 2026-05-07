@@ -35,11 +35,7 @@ class NavRecordConfig(RecorderConfig):
 
 
 class NavRecord(Recorder):
-    """Records nav stack outputs to SQLite via memory2.
-
-    All ports are auto-wired by name via autoconnect. Only streams
-    that are actually connected will be recorded.
-    """
+    """Records nav stack outputs to SQLite via memory2 (only connected streams are recorded)."""
 
     config: NavRecordConfig
 
@@ -65,10 +61,9 @@ class NavRecord(Recorder):
     slow_down: In[Int8]
     goal_reached: In[Bool]
 
-    # Point clouds (high bandwidth — recorded if connected)
+    # Point clouds
     terrain_map: In[PointCloud2]
     global_map: In[PointCloud2]
 
-    # Raw inputs
     odometry: In[Odometry]
     registered_scan: In[PointCloud2]

@@ -116,6 +116,7 @@ class NativeModuleConfig(ModuleConfig):
         }
 
     def to_cli_args(self) -> list[str]:
+        """Convert subclass config fields to CLI args (--name value)."""
         ignore_fields = {f for f in NativeModuleConfig.model_fields}
         args: list[str] = []
         for f in self.__class__.model_fields:
@@ -140,6 +141,20 @@ _NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=Nativ
 
 
 class NativeModule(Module):
+    """
+    Module that wraps a native executable as a managed subprocess.
+
+    Subclass this, declare In/Out ports, and annotate ``config`` with a
+    :class:`NativeModuleConfig` subclass pointing at the executable.
+
+    On ``start()``, the binary is launched with CLI args::
+
+        <executable> --<port_name> <lcm_topic_string> ... <extra_args>
+
+    The native process should parse these args and pub/sub on the given
+    LCM topics directly.  On ``stop()``, the process receives SIGTERM.
+    """
+
     config: NativeModuleConfig
 
     _process: subprocess.Popen[bytes] | None = None
@@ -148,7 +163,7 @@ class NativeModule(Module):
     _stop_lock: threading.Lock
 
     @functools.cached_property
-    def _mod_label(self) -> str:
+    def _module_label(self) -> str:
         exe = Path(self.config.executable).name if self.config.executable else "?"
         return f"{type(self).__name__}({exe})"
 
@@ -168,7 +183,7 @@ class NativeModule(Module):
         if self._process is not None and self._process.poll() is None:
             logger.warning(
                 "Native process already running",
-                module=self._mod_label,
+                module=self._module_label,
                 pid=self._process.pid,
             )
             return
@@ -188,7 +203,7 @@ class NativeModule(Module):
 
         logger.info(
             "Starting native process",
-            module=self._mod_label,
+            module=self._module_label,
             cmd=" ".join(cmd),
             cwd=cwd,
         )
@@ -213,14 +228,14 @@ class NativeModule(Module):
         self._process.stdin.close()
         logger.info(
             "Native process started",
-            module=self._mod_label,
+            module=self._module_label,
             pid=self._process.pid,
         )
 
         watchdog = threading.Thread(
             target=self._watch_process,
             daemon=True,
-            name=f"native-watchdog-{self._mod_label}",
+            name=f"native-watchdog-{self._module_label}",
         )
         with self._stop_lock:
             self._stopping = False
@@ -241,7 +256,7 @@ class NativeModule(Module):
         if proc is not None and proc.poll() is None:
             logger.info(
                 "Stopping native process",
-                module=self._mod_label,
+                module=self._module_label,
                 pid=proc.pid,
             )
             proc.send_signal(signal.SIGTERM)
@@ -250,7 +265,7 @@ class NativeModule(Module):
             except subprocess.TimeoutExpired:
                 logger.warning(
                     "Native process did not exit, sending SIGKILL",
-                    module=self._mod_label,
+                    module=self._module_label,
                     pid=proc.pid,
                 )
                 proc.kill()
@@ -259,7 +274,7 @@ class NativeModule(Module):
                 except subprocess.TimeoutExpired:
                     logger.error(
                         "Native process not reapable after SIGKILL",
-                        module=self._mod_label,
+                        module=self._module_label,
                         pid=proc.pid,
                     )
 
@@ -287,7 +302,7 @@ class NativeModule(Module):
         if self._stopping:
             logger.info(
                 "Native process exited (expected)",
-                module=self._mod_label,
+                module=self._module_label,
                 pid=pid,
                 returncode=rc,
             )
@@ -295,7 +310,7 @@ class NativeModule(Module):
 
         logger.error(
             "Native process died unexpectedly",
-            module=self._mod_label,
+            module=self._module_label,
             pid=pid,
             returncode=rc,
         )
@@ -311,7 +326,7 @@ class NativeModule(Module):
             target=self._read_log_stream,
             args=(stream, level, pid),
             daemon=True,
-            name=f"native-reader-{level}-{self._mod_label}",
+            name=f"native-reader-{level}-{self._module_label}",
         )
         t.start()
         return t
@@ -333,11 +348,11 @@ class NativeModule(Module):
                 try:
                     data = json.loads(line)
                     event = data.pop("event", line)
-                    log_fn(event, module=self._mod_label, pid=pid, **data)
+                    log_fn(event, module=self._module_label, pid=pid, **data)
                     continue
                 except (json.JSONDecodeError, TypeError):
                     pass
-            log_fn(line, module=self._mod_label, pid=pid)
+            log_fn(line, module=self._module_label, pid=pid)
         stream.close()
 
     def _maybe_build(self) -> None:
@@ -346,7 +361,7 @@ class NativeModule(Module):
         if self.config.build_command is None:
             if not exe.exists():
                 raise FileNotFoundError(
-                    f"[{self._mod_label}] Executable not found: {exe}. "
+                    f"[{self._module_label}] Executable not found: {exe}. "
                     "Set build_command in config to auto-build, or build it manually."
                 )
             return
@@ -376,24 +391,24 @@ class NativeModule(Module):
 
         for line in stdout_lines:
             if line.strip():
-                logger.info(line, module=self._mod_label)
+                logger.info(line, module=self._module_label)
         for line in stderr_lines:
             if line.strip():
-                logger.warning(line, module=self._mod_label)
+                logger.warning(line, module=self._module_label)
 
         if proc.returncode != 0:
             raise RuntimeError(
-                f"[{self._mod_label}] Build command failed after {build_elapsed:.2f}s "
+                f"[{self._module_label}] Build command failed after {build_elapsed:.2f}s "
                 f"(exit {proc.returncode}): {self.config.build_command}"
             )
         if not exe.exists():
             raise FileNotFoundError(
-                f"[{self._mod_label}] Build command succeeded but executable still not found: {exe}"
+                f"[{self._module_label}] Build command succeeded but executable still not found: {exe}"
             )
 
         logger.info(
             "Build command completed",
-            module=self._mod_label,
+            module=self._module_label,
             executable=str(exe),
             duration_sec=round(build_elapsed, 3),
         )

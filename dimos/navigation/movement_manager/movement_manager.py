@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MovementManager: click-to-goal relay + teleop/nav velocity mux."""
+"""
+MovementManager: click-to-goal relay + teleop/nav velocity mux.
+
+NOTE: this should be majorly updated/reworked when mustafa's trajectory controller lands
+"""
 
 from __future__ import annotations
 
@@ -34,9 +38,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Sanity bounds for click-to-goal coordinates; rejects obviously-bogus
-# clicks (e.g. UI sending world-space coords from a stale frame). The map
-# is at most ~kilometre-scale and z is mostly ground-relative.
+# without this you can (basically) click into infinity in rerun (not good for the planner)
 MAX_CLICK_HORIZONTAL_M = 500.0
 MAX_CLICK_VERTICAL_M = 50.0
 

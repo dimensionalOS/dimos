@@ -12,19 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SmartNav composable navigation stack.
+"""Composable navigation stack.
 
-`create_nav_stack(**kwargs)` returns an autoconnected Blueprint containing the core
-SmartNav modules (terrain analysis, local planner, path follower, FAR planner,
-PGO, click-to-goal, cmd-vel mux), with optional TARE exploration.
-
-`nav_stack_rerun_config(user_config)` returns a Rerun config dict with the
-SmartNav defaults filled in via setdefault — pass it to `RerunBridgeModule`
-or `vis_module` separately.
-
-Defaults match the onboard (real hardware) configuration. Override any
-module's config via per-module kwarg dicts (e.g.
-`terrain_analysis={"obstacle_height_threshold": 0.1}`).
+``create_nav_stack()`` returns a Blueprint with terrain analysis, local
+planner, path follower, global planner (FAR or SimplePlanner), and PGO.
+``nav_stack_rerun_config()`` returns Rerun visualization defaults.
 """
 
 from __future__ import annotations
@@ -69,73 +61,29 @@ def create_nav_stack(
     tare_planner: dict[str, Any] | None = None,
     nav_record: dict[str, Any] | None = None,
 ) -> Blueprint:
-    """Compose a SmartNav autoconnect Blueprint with the given options.
+    """Compose a nav stack Blueprint.
 
-    Core external streams (always present regardless of toggles):
-
-        registered_scan: In[PointCloud2]   — world-frame lidar scan
-        odometry:        In[Odometry]      — raw SLAM odometry
-        clicked_point:   In[PointStamped]  — click-to-goal from UI
-        joy_cmd:         In[Twist]         — optional joystick override
-        tele_cmd_vel:    In[Twist]         — optional teleop command
-
-        cmd_vel:            Out[Twist]        — final velocity command (MovementManager)
-        corrected_odometry: Out[Odometry]     — PGO loop-closure-corrected pose
-        global_map:         Out[PointCloud2]  — PGO accumulated keyframe map
-        terrain_map:        Out[PointCloud2]  — TerrainAnalysis ground/obstacle grid
-        path:               Out[Path]         — LocalPlanner's chosen local path
-        goal_path:          Out[Path]         — FAR planner's global path
-        way_point:          Out[PointStamped] — current waypoint target
-        goal:               Out[PointStamped] — current navigation goal
-        stop_movement:      Out[Bool]         — stop signal from MovementManager
-
-    Args:
-        use_tare: Add the TARE frontier-based exploration planner. Auto-remaps
-            MovementManager's `way_point` output so TARE has exclusive control
-            of LocalPlanner's waypoint input.
-        use_terrain_map_ext: Add TerrainMapExt — the persistent extended terrain
-            accumulator used for visualization and wider-range planning.
-        vehicle_height: Ignore terrain points above this height (m). Threaded
-            into TerrainAnalysis's `vehicle_height` config. Defaults to 1.2m.
-        max_speed: Cap peak velocity (m/s) on both LocalPlanner (planning) and
-            PathFollower (execution). Sets `max_speed` and `autonomy_speed` on
-            both modules. Per-module overrides still win.
-        terrain_analysis, terrain_map_ext, local_planner, path_follower,
-        far_planner, pgo, movement_manager, tare_planner:
-        Per-module config override dicts. Merged on top
-        of the SmartNav defaults.
-        record: Add NavRecord module to record all nav streams to SQLite.
-        nav_record: Config override dict for NavRecord (e.g. ``{"db_path": "..."}``).
-
-    Returns:
-        An autoconnected Blueprint with the selected modules wired together.
+    Per-module config dicts (``terrain_analysis``, ``local_planner``, etc.)
+    override defaults. ``vehicle_height`` and ``max_speed`` propagate to
+    the relevant modules automatically.
     """
-    terrain_analysis_config = {**(terrain_analysis or {})}
     far_planner_config = {**(far_planner or {})}
-    local_planner_config = {**(local_planner or {})}
 
     # Propagate vehicle_height to far_planner config
     if vehicle_height is not None:
         far_planner_config.setdefault("vehicle_height", vehicle_height)
-    terrain_analysis_threshold = terrain_analysis_config.get("obstacle_height_threshold", 0.1)
-    local_planner_threshold = local_planner_config.get("obstacle_height_threshold", 0.1)
-
     modules: list[Blueprint] = [
         TerrainAnalysis.blueprint(
             **{
-                # Input filtering
                 "scan_voxel_size": 0.05,
-                # Voxel grid
                 "terrain_voxel_size": terrain_voxel_size,
                 "terrain_voxel_half_width": 10,
-                # Obstacle/ground classification
                 "obstacle_height_threshold": 0.1,
                 "ground_height_threshold": 0.1,
                 "min_relative_z": -1.5,
                 "max_relative_z": 0.3,
                 "use_sorting": True,
                 "quantile_z": 0.25,
-                # Decay and clearing
                 "decay_time": 1.0,
                 "no_decay_distance": 1.5,
                 "clearing_distance": 8.0,
@@ -143,17 +91,14 @@ def create_nav_stack(
                 "no_data_obstacle": False,
                 "no_data_block_skip_count": 0,
                 "min_block_point_count": 10,
-                # Voxel culling
                 "voxel_point_update_threshold": 100,
                 "voxel_time_update_threshold": 2.0,
-                # Dynamic obstacle filtering
                 "min_dynamic_obstacle_distance": 0.14,
                 "abs_dynamic_obstacle_relative_z_threshold": 0.2,
                 "min_dynamic_obstacle_vfov": -55.0,
                 "max_dynamic_obstacle_vfov": 10.0,
                 "min_dynamic_obstacle_point_count": 1,
                 "min_out_of_fov_point_count": 20,
-                # Ground lift limits
                 "consider_drop": False,
                 "limit_ground_lift": False,
                 "max_ground_lift": 0.15,
@@ -187,30 +132,20 @@ def create_nav_stack(
                 **(path_follower or {}),
             }
         ),
-        *(
-            [
-                SimplePlanner.blueprint(
-                    **{
-                        "replan_rate": replan_rate,
-                        **(
-                            {"ground_offset_below_robot": vehicle_height}
-                            if vehicle_height is not None
-                            else {}
-                        ),
-                        **(simple_planner or {}),
-                    }
-                )
-            ]
-            if use_simple_planner
-            else [FarPlanner.blueprint(**far_planner_config)]
-        ),
         PGO.blueprint(**(pgo or {})),
     ]
+    if use_simple_planner:
+        sp_config: dict[str, Any] = {"replan_rate": replan_rate}
+        if vehicle_height is not None:
+            sp_config["ground_offset_below_robot"] = vehicle_height
+        sp_config.update(simple_planner or {})
+        modules.append(SimplePlanner.blueprint(**sp_config))
+    else:
+        modules.append(FarPlanner.blueprint(**far_planner_config))
     if use_terrain_map_ext:
         modules.append(
             TerrainMapExt.blueprint(
                 **{
-                    # Note: stale obstacles may appear and take a bit to clear if this voxel_size is different than the terrain_voxel_size
                     "voxel_size": terrain_voxel_size,
                     "decay_time": 30.0,
                     "publish_rate": replan_rate,
@@ -223,33 +158,22 @@ def create_nav_stack(
         modules.append(TarePlanner.blueprint(**(tare_planner or {})))
     record_remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = []
     if record:
-        # Lazy import: NavRecord pulls in dimos.memory2 → transformers/sklearn,
-        # which fails on linux-aarch64 (e.g. G1 onboard) with "cannot allocate
-        # memory in static TLS block" when sklearn's bundled libgomp is loaded
-        # lazily into a worker process. Only load it when recording is enabled.
+        # Lazy: breaks on G1 onboard (linux-aarch64 TLS allocation failure)
         from dimos.navigation.nav_stack.modules.nav_record.nav_record import NavRecord
 
         modules.append(NavRecord.blueprint(**(nav_record or {})))
         record_remappings.append((NavRecord, "global_map", "global_map_pgo"))
 
     remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
-        # PathFollower cmd_vel needs renaming to avoid collision when
-        # MovementManager is added by the caller (it muxes nav_cmd_vel + tele_cmd_vel → cmd_vel).
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
-        # NativeModule planners still receive corrected odometry via the
-        # stream (C++ binaries subscribe to LCM topics directly).
-        # Python modules (SimplePlanner) query the TF tree
-        # instead (map→body via the PGO map→odom + FastLio2 odom→body chain).
-        *([] if use_simple_planner else [(FarPlanner, "odometry", "corrected_odometry")]),
         (TerrainAnalysis, "odometry", "corrected_odometry"),
         (PGO, "global_map", "global_map_pgo"),
         *record_remappings,
     ]
+    if not use_simple_planner:
+        remappings.append((FarPlanner, "odometry", "corrected_odometry"))
 
     return autoconnect(*modules).remappings(remappings)
-
-
-# ─── Rerun visual overrides (robot-agnostic) ─────────────────────────────────
 
 
 def nav_stack_rerun_config(
@@ -257,69 +181,54 @@ def nav_stack_rerun_config(
     *,
     agentic_debug: bool = False,
 ) -> dict[str, Any]:
-    """Return a rerun config dict with SmartNav defaults filled in via setdefault.
+    """Return a rerun config dict with nav stack visualization defaults.
 
-    The caller's entries win — this just ensures missing keys (blueprint,
-    pubsubs, visual_override entries, static entries) are
-    populated with the SmartNav defaults.
-
-    Args:
-        agentic_debug: When True, elevate nav paths, goals, and waypoints high
-            above the scene so they're visible even when occluded by
-            terrain/obstacles.  Useful for debugging planner behavior from a
-            top-down view.
+    Caller entries win; this fills in missing keys. ``agentic_debug``
+    lifts nav elements above the scene for top-down visibility.
     """
     resolved = dict(user_config or {})
     resolved.setdefault("blueprint", _default_rerun_blueprint)
     resolved.setdefault("pubsubs", [LCM()])
-    resolved.setdefault("visual_override", {})
+    resolved.setdefault("visual_colors", {})
     resolved.setdefault("static", {})
-    visual_override = dict(resolved["visual_override"])
-    visual_override.setdefault("world/sensor_scan", _sensor_scan_override)
-    visual_override.setdefault("world/terrain_map", _terrain_map_override)
-    # terrain_map_ext is the persistent accumulator of the same terrain data,
-    # so reuse the warm (yellow → red) gradient for visual consistency.
-    visual_override.setdefault("world/terrain_map_ext", _terrain_map_override)
-    visual_override.setdefault("world/global_map", _global_map_override)
-    # Common remapped names: PGO renames to global_map_pgo (in nav_stack itself),
-    # FastLio2's global_map is typically remapped to global_map_fastlio to avoid
-    # the collision. Register both so the cool palette applies either way.
-    visual_override.setdefault("world/global_map_pgo", _global_map_override)
-    visual_override.setdefault("world/global_map_fastlio", _global_map_override)
-    # registered_scan is the live lidar scan consumed by nav_stack; share the
-    # global_map's blue → green gradient so SLAM-space data reads as one family.
-    visual_override.setdefault("world/registered_scan", _global_map_override)
-    visual_override.setdefault("world/explored_areas", _explored_areas_override)
-    visual_override.setdefault("world/preloaded_map", _preloaded_map_override)
-    visual_override.setdefault("world/trajectory", _trajectory_override)
-    visual_override.setdefault("world/path", _path_override)
+    visual_colors = dict(resolved["visual_colors"])
+    visual_colors.setdefault("world/sensor_scan", _sensor_scan_colors)
+    visual_colors.setdefault("world/terrain_map", _terrain_map_colors)
+    visual_colors.setdefault("world/terrain_map_ext", _terrain_map_colors)
+    visual_colors.setdefault("world/global_map", _global_map_colors)
+    visual_colors.setdefault("world/global_map_pgo", _global_map_colors)
+    visual_colors.setdefault("world/global_map_fastlio", _global_map_colors)
+    visual_colors.setdefault("world/registered_scan", _global_map_colors)
+    visual_colors.setdefault("world/explored_areas", _explored_areas_colors)
+    visual_colors.setdefault("world/preloaded_map", _preloaded_map_colors)
+    visual_colors.setdefault("world/trajectory", _trajectory_colors)
+    visual_colors.setdefault("world/path", _path_colors)
     if agentic_debug:
-        visual_override.setdefault("world/way_point", _waypoint_override_debug)
-        visual_override.setdefault("world/goal", _goal_override_debug)
-        visual_override.setdefault("world/goal_path", _goal_path_override_debug)
-        visual_override.setdefault("world/nav_boundary", _nav_boundary_override_debug)
+        visual_colors.setdefault("world/way_point", _waypoint_colors_debug)
+        visual_colors.setdefault("world/goal", _goal_colors_debug)
+        visual_colors.setdefault("world/goal_path", _goal_path_colors_debug)
+        visual_colors.setdefault("world/nav_boundary", _nav_boundary_colors_debug)
     else:
-        visual_override.setdefault("world/way_point", _waypoint_override)
-        visual_override.setdefault("world/goal", _goal_override)
-        visual_override.setdefault("world/goal_path", _goal_path_override)
-        visual_override.setdefault("world/nav_boundary", _nav_boundary_override)
-    visual_override.setdefault("world/obstacle_cloud", _obstacle_cloud_override)
-    visual_override.setdefault("world/costmap_cloud", _costmap_cloud_override)
-    visual_override.setdefault("world/free_paths", _free_paths_override)
-    resolved["visual_override"] = visual_override
+        visual_colors.setdefault("world/way_point", _waypoint_colors)
+        visual_colors.setdefault("world/goal", _goal_colors)
+        visual_colors.setdefault("world/goal_path", _goal_path_colors)
+        visual_colors.setdefault("world/nav_boundary", _nav_boundary_colors)
+    visual_colors.setdefault("world/obstacle_cloud", _obstacle_cloud_colors)
+    visual_colors.setdefault("world/costmap_cloud", _costmap_cloud_colors)
+    visual_colors.setdefault("world/free_paths", _free_paths_colors)
+    resolved["visual_colors"] = visual_colors
     static_entries = dict(resolved["static"])
     static_entries.setdefault("world/floor", _static_floor)
     resolved["static"] = static_entries
     return resolved
 
 
-# Z-offsets for Rerun visualization (metres above the data's actual z).
 # Small lifts prevent z-fighting with the terrain/floor plane.
 _VIS_LIFT = 0.3  # default lift for nav markers (goals, paths, boundaries)
-_VIS_LIFT_TRAJECTORY = 0.05  # trajectory breadcrumbs sit just above the floor
-_VIS_LIFT_COSTMAP = 0.2  # lift costmap cells clear of terrain/obstacle clouds
+_VIS_LIFT_TRAJECTORY = 0.05  # just above the floor
+_VIS_LIFT_COSTMAP = 0.2  # high enough to avoid terrain/obstacle clouds
 
-# Agentic debug mode lifts nav elements high above the scene so they're
+# lifts nav elements high above the scene so they're
 # visible from a top-down camera even when terrain occludes them.
 _AGENTIC_DEBUG_LIFT = 3.0
 _AGENTIC_DEBUG_PATH_LIFT = _AGENTIC_DEBUG_LIFT + 0.4  # path slightly above goal markers
@@ -334,19 +243,11 @@ def _default_rerun_blueprint() -> Any:
     )
 
 
-def _sensor_scan_override(cloud: Any) -> Any:
-    """Hide sensor_scan — it clutters the view with raw lidar returns."""
+def _sensor_scan_colors(cloud: Any) -> Any:
     return None
 
 
-def _global_map_override(cloud: Any) -> Any:
-    """Render accumulated global map with a blue→green gradient by z-height.
-
-    Cool half (deep blue → green, passing through teal) keeps the room map
-    visually separated from the terrain_map's warm half (yellow → red).
-    Shared across `world/global_map`, `world/global_map_pgo`, and
-    `world/global_map_fastlio` so every SLAM/PGO map uses the same palette.
-    """
+def _global_map_colors(cloud: Any) -> Any:
     import numpy as np
     import rerun as rr
 
@@ -368,15 +269,7 @@ def _global_map_override(cloud: Any) -> Any:
     return rr.Points3D(positions=points[:, :3], colors=colors, radii=0.03)
 
 
-def _terrain_map_override(cloud: Any) -> Any:
-    """Render terrain_map with a lavender → magenta gradient by z-height.
-
-    The terrain_analysis C++ module sets point intensity to the height
-    difference above the planar voxel ground. Low z → ground (pale lavender),
-    high z → obstacle (vivid magenta). Magenta/purple slice keeps terrain
-    visually distinct from both global_map (blue → green) and any
-    yellow/red elements.
-    """
+def _terrain_map_colors(cloud: Any) -> Any:
     import numpy as np
     import rerun as rr
 
@@ -398,14 +291,7 @@ def _terrain_map_override(cloud: Any) -> Any:
     return rr.Points3D(positions=points[:, :3], colors=colors, radii=0.08)
 
 
-def _costmap_cloud_override(cloud: Any) -> Any:
-    """Render SimplePlanner's costmap_cloud — the blocked grid cells
-    (with inflation) that A* actually treats as obstacles. Big red
-    boxes so they pop against the terrain clouds.
-
-    Lifted above ground so the costmap cells aren't buried under the
-    terrain/obstacle clouds that share the same z-range.
-    """
+def _costmap_cloud_colors(cloud: Any) -> Any:
     import numpy as np
     import rerun as rr
 
@@ -418,13 +304,7 @@ def _costmap_cloud_override(cloud: Any) -> Any:
     return rr.Points3D(positions=lifted, colors=colors, radii=0.12)
 
 
-def _obstacle_cloud_override(cloud: Any) -> Any:
-    """Render LocalPlanner's obstacle_cloud — the vehicle-frame crop the C++
-    planner actually tests candidate paths against. Colored by intensity
-    (= height above ground) with a `plasma` colormap so it's visually
-    distinct from terrain_map. Attached to the sensor TF frame since the
-    points are already in vehicle frame.
-    """
+def _obstacle_cloud_colors(cloud: Any) -> Any:
     import rerun as rr
 
     arch = cloud.to_rerun(colormap="plasma", size=0.06)
@@ -434,18 +314,15 @@ def _obstacle_cloud_override(cloud: Any) -> Any:
     ]
 
 
-def _explored_areas_override(cloud: Any) -> Any:
-    """Render PreloadedMapTracker's explored_areas — cumulative seen points."""
+def _explored_areas_colors(cloud: Any) -> Any:
     return cloud.to_rerun(colormap="magma", size=0.05)
 
 
-def _preloaded_map_override(cloud: Any) -> Any:
-    """Render PreloadedMapTracker's static pre-loaded reference map."""
+def _preloaded_map_colors(cloud: Any) -> Any:
     return cloud.to_rerun(colormap="greys", size=0.04)
 
 
-def _trajectory_override(cloud: Any) -> Any:
-    """Render robot trajectory breadcrumb as a connected line strip."""
+def _trajectory_colors(cloud: Any) -> Any:
     import rerun as rr
 
     points, _ = cloud.as_numpy()
@@ -458,8 +335,7 @@ def _trajectory_override(cloud: Any) -> Any:
     ]
 
 
-def _path_override(path_msg: Any) -> Any:
-    """Render path in vehicle frame by attaching to the sensor TF."""
+def _path_colors(path_msg: Any) -> Any:
     import rerun as rr
 
     if not path_msg.poses:
@@ -472,13 +348,11 @@ def _path_override(path_msg: Any) -> Any:
     ]
 
 
-def _nav_boundary_override(msg: Any) -> Any:
-    """Render navigation boundary as cyan edges."""
+def _nav_boundary_colors(msg: Any) -> Any:
     return msg.to_rerun(z_offset=_VIS_LIFT, color=(0, 220, 255, 200), radii=0.05)
 
 
-def _goal_path_override(path_msg: Any) -> Any:
-    """Render FAR planner's planned path: orange line + yellow node markers."""
+def _goal_path_colors(path_msg: Any) -> Any:
     import rerun as rr
 
     if not path_msg.poses or len(path_msg.poses) < 2:
@@ -493,12 +367,7 @@ def _goal_path_override(path_msg: Any) -> Any:
     ]
 
 
-def _waypoint_override(msg: Any) -> Any:
-    """Render the current waypoint goal as a visible marker.
-
-    Orange + slightly smaller than the goal sphere so the final goal
-    stays the larger, dominant marker.
-    """
+def _waypoint_colors(msg: Any) -> Any:
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -511,8 +380,7 @@ def _waypoint_override(msg: Any) -> Any:
     )
 
 
-def _goal_override(msg: Any) -> Any:
-    """Render the current navigation goal as a purple sphere."""
+def _goal_colors(msg: Any) -> Any:
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -525,8 +393,7 @@ def _goal_override(msg: Any) -> Any:
     )
 
 
-def _free_paths_override(cloud: Any) -> Any:
-    """Render LocalPlanner free (collision-free) candidate paths in vehicle frame."""
+def _free_paths_colors(cloud: Any) -> Any:
     import rerun as rr
 
     return [
@@ -536,13 +403,6 @@ def _free_paths_override(cloud: Any) -> Any:
 
 
 def _static_floor(rr: Any) -> list[Any]:
-    """Static ground plane as a solid textured quad.
-
-    Dropped 0.2 m below z=0 so lidar points that land right at ground height
-    (low-obstacle edges, ground classifications) stay visible instead of
-    getting z-fought / occluded by the floor quad.
-    """
-
     half_size = 50.0
     z_below_ground = -0.2
     floor_color_rgba = [40, 40, 40, 120]  # dark grey, semi-transparent
@@ -560,11 +420,7 @@ def _static_floor(rr: Any) -> list[Any]:
     ]
 
 
-# ─── Debug overrides (elevated paths for top-down debugging) ─────────────────
-
-
-def _waypoint_override_debug(msg: Any) -> Any:
-    """Agentic debug: waypoint elevated above the scene."""
+def _waypoint_colors_debug(msg: Any) -> Any:
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -577,8 +433,7 @@ def _waypoint_override_debug(msg: Any) -> Any:
     )
 
 
-def _goal_override_debug(msg: Any) -> Any:
-    """Agentic debug: goal elevated above the scene."""
+def _goal_colors_debug(msg: Any) -> Any:
     import rerun as rr
 
     if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
@@ -591,8 +446,7 @@ def _goal_override_debug(msg: Any) -> Any:
     )
 
 
-def _goal_path_override_debug(path_msg: Any) -> Any:
-    """Agentic debug: goal path elevated above the scene."""
+def _goal_path_colors_debug(path_msg: Any) -> Any:
     import rerun as rr
 
     if not path_msg.poses or len(path_msg.poses) < 2:
@@ -605,6 +459,5 @@ def _goal_path_override_debug(path_msg: Any) -> Any:
     ]
 
 
-def _nav_boundary_override_debug(msg: Any) -> Any:
-    """Agentic debug: nav boundary elevated above the scene."""
+def _nav_boundary_colors_debug(msg: Any) -> Any:
     return msg.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT, color=(0, 220, 255, 200), radii=0.05)

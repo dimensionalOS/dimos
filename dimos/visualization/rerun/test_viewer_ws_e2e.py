@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 import websockets.asyncio.client as ws_client
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import global_config
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -41,7 +42,7 @@ def server(wait_for_server: Any) -> RerunWebSocketServer:
         module = RerunWebSocketServer()
         module.start()
         wait_for_server(_E2E_PORT)
-        yield module  # type: ignore[misc]
+        yield module
         module.stop()
     finally:
         global_config.update(rerun_websocket_server_port=original_port)
@@ -80,7 +81,7 @@ class TestViewerProtocolE2E:
             ],
         )
 
-        done.wait(timeout=3.0)
+        done.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         unsub()
 
         assert len(received) == 1
@@ -125,7 +126,7 @@ class TestViewerProtocolE2E:
             delay=0.2,
         )
 
-        done.wait(timeout=3.0)
+        done.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         unsub()
 
         assert len(received) == 1, f"Expected exactly 1 click, got {len(received)}"
@@ -176,10 +177,10 @@ class TestViewerBinaryConnectMode:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        yield proc  # type: ignore[misc]
+        yield proc
         proc.terminate()
         try:
-            proc.wait(timeout=3)
+            proc.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         except subprocess.TimeoutExpired:
             proc.kill()
 
@@ -188,11 +189,11 @@ class TestViewerBinaryConnectMode:
     )
     def test_viewer_ws_client_connects(self, viewer_process: subprocess.Popen[bytes]) -> None:
         """dimos-viewer --connect starts and its WS client connects to our server."""
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + DEFAULT_THREAD_JOIN_TIMEOUT
         while time.monotonic() < deadline:
             if viewer_process.poll() is not None:
                 break
-            time.sleep(0.1)
+            time.sleep(DEFAULT_THREAD_JOIN_TIMEOUT / 20)
 
         stdout = (
             viewer_process.stdout.read().decode(errors="replace") if viewer_process.stdout else ""

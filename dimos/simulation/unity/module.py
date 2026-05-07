@@ -80,8 +80,6 @@ _LFS_ASSET = "unity_sim_x86"
 # connection and drops it.
 _BRIDGE_READ_TIMEOUT = 30.0
 
-# TCP protocol helpers
-
 
 def _recvall(sock: socket.socket, size: int) -> bytes:
     buf = bytearray(size)
@@ -121,9 +119,6 @@ def _write_tcp_command(sock: socket.socket, command: str, params: dict[str, Any]
     )
 
 
-# Platform validation
-
-
 def _validate_platform() -> None:
     """Raise if the current platform can't run the Unity x86_64 binary."""
     supported_systems = {"Linux"}
@@ -144,9 +139,6 @@ def _validate_platform() -> None:
             f"Unity simulator requires x86_64 but running on {arch}. "
             f"ARM64 Linux is not supported. Use an x86_64 machine or emulation layer."
         )
-
-
-# Config
 
 
 class UnityBridgeConfig(ModuleConfig):
@@ -203,30 +195,17 @@ class UnityBridgeConfig(ModuleConfig):
     # Set to 0.0 for no drift.
     odom_drift_rate: float = 0.0
 
-    # ─── Terrain inclination fitting (port from ROS vehicleSimulator) ─────
-    # Enable RANSAC-style terrain plane fit to produce vehicle roll/pitch.
-    # Disabled by default — robot stays level when off.
     terrain_inclination_enabled: bool = False
-    # Radius around robot to collect terrain points for the plane fit (m).
-    terrain_fit_radius: float = 1.5
-    # Voxel downsample size for terrain points before fit (m).
-    terrain_fit_voxel_size: float = 0.05
-    # Max iterations for outlier rejection.
+    terrain_fit_radius: float = 1.5  # m
+    terrain_fit_voxel_size: float = 0.05  # m
     terrain_fit_max_iterations: int = 5
-    # Reject points farther than this from the current fit (m).
-    terrain_fit_outlier_threshold: float = 0.2
-    # Require at least this many inliers for a valid fit.
+    terrain_fit_outlier_threshold: float = 0.2  # m
     terrain_fit_min_inliers: int = 500
-    # Clamp terrain tilt to this absolute value (degrees).
-    terrain_max_incline_deg: float = 30.0
-    # Band (m) around current terrain_z to treat as ground for plane fit.
-    terrain_ground_band: float = 0.3
-    # Exponential smoothing rate for roll/pitch updates.
+    terrain_max_incline_deg: float = 30.0  # deg
+    terrain_ground_band: float = 0.3  # m
     inclination_smooth_rate: float = 0.2
 
-    # ─── Sensor offset in kinematics (port from ROS vehicleSimulator) ─────
-    # Offset of the sensor origin from the vehicle center (m).
-    sensor_offset_x: float = 0.0
+    sensor_offset_x: float = 0.0  # m
     sensor_offset_y: float = 0.0
 
 
@@ -244,8 +223,6 @@ _CAM_FX = (_CAM_WIDTH / 2.0) / math.tan(_CAM_HFOV_RAD / 2.0)
 _CAM_FY = _CAM_FX
 _CAM_CX = _CAM_WIDTH / 2.0
 _CAM_CY = _CAM_HEIGHT / 2.0
-
-# Module
 
 
 class UnityBridgeModule(Module):
@@ -281,6 +258,7 @@ class UnityBridgeModule(Module):
                 rrb.Spatial3DView(
                     origin="world",
                     name="3D",
+                    # starts in overhead view: useful for agentic debugging
                     eye_controls=rrb.EyeControls3D(
                         position=(0.0, 0.0, 20.0),
                         look_target=(0.0, 0.0, 0.0),

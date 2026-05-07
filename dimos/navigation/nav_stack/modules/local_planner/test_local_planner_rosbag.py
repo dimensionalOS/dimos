@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rosbag accuracy test for the LocalPlanner native module.
-
-Feeds identical inputs at original timing and compares path output
-against the OG ROS nav stack reference recording.
-"""
+"""Rosbag accuracy test: replays inputs at original timing and compares paths to ROS reference."""
 
 from __future__ import annotations
 
@@ -28,10 +24,8 @@ import lcm as lcmlib
 import numpy as np
 import pytest
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
@@ -39,8 +33,14 @@ from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     lcm_handle_loop,
     load_rosbag_window,
 )
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 pytestmark = [pytest.mark.slow]
+
+_PROCESS_STARTUP_SEC = 2.0
+_POST_FEED_DRAIN_SEC = 2.0
 
 LOCAL_PLANNER_BIN = (
     Path(__file__).parent.parent / "modules" / "local_planner" / "result" / "bin" / "local_planner"
@@ -162,13 +162,7 @@ def _local_planner_args() -> list[str]:
 def _compute_path_deviation(
     our_paths: list[NavPath], ref_endpoints: np.ndarray
 ) -> dict[str, float]:
-    """Compute deviation score between our paths and reference.
-
-    ref_endpoints: (N, 5) — t, n_poses, last_x, last_y, arc_length
-
-    Returns: mean_endpoint_error_m, max_endpoint_error_m, mean_length_ratio,
-             count_ratio, multi_pose_ratio.
-    """
+    """Loss function: nearest-endpoint error + arc-length ratio vs reference."""
     if len(our_paths) == 0 or len(ref_endpoints) == 0:
         return {
             "mean_endpoint_error_m": float("inf"),
@@ -243,12 +237,14 @@ class TestLocalPlannerRosbag:
         ref_paths = window.path_endpoints
         assert len(ref_paths) > 0, "No reference path data in fixture"
 
-        lc = lcmlib.LCM()
+        lcm = lcmlib.LCM()
         path_collector = LcmCollector(topic=PATH_LCM, msg_type=NavPath)
-        path_collector.start(lc)
+        path_collector.start(lcm)
 
         stop_event = threading.Event()
-        handle_thread = threading.Thread(target=lcm_handle_loop, args=(lc, stop_event), daemon=True)
+        handle_thread = threading.Thread(
+            target=lcm_handle_loop, args=(lcm, stop_event), daemon=True
+        )
         handle_thread.start()
 
         runner = NativeProcessRunner(binary_path=str(LOCAL_PLANNER_BIN), args=_local_planner_args())
@@ -256,11 +252,11 @@ class TestLocalPlannerRosbag:
         try:
             runner.start()
             assert runner.is_running, "LocalPlanner binary failed to start"
-            time.sleep(2.0)
+            time.sleep(_PROCESS_STARTUP_SEC)
 
             # Feed at original timing
             feed_at_original_timing(
-                lc,
+                lcm,
                 window,
                 topic_map={
                     "odom": ODOM_LCM,
@@ -270,13 +266,13 @@ class TestLocalPlannerRosbag:
                 },
             )
 
-            time.sleep(2.0)
+            time.sleep(_POST_FEED_DRAIN_SEC)
 
         finally:
             runner.stop()
             stop_event.set()
-            handle_thread.join(timeout=2.0)
-            path_collector.stop(lc)
+            handle_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            path_collector.stop(lcm)
 
         # Compute deviation score
         score = _compute_path_deviation(path_collector.messages, ref_paths)

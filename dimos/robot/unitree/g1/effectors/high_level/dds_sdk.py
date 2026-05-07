@@ -98,7 +98,6 @@ class FsmState(IntEnum):
     SQUAT_STANDUP_TOGGLE = 706
 
 
-# Module
 class G1HighLevelDdsSdkConfig(ModuleConfig):
     ip: str | None = None
     network_interface: str = "eth0"
@@ -110,11 +109,6 @@ class G1HighLevelDdsSdkConfig(ModuleConfig):
 
 
 class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
-    """G1 high-level control module using the native Unitree SDK2 over DDS.
-
-    Suitable for onboard control running directly on the robot.
-    """
-
     cmd_vel: In[Twist]
     config: G1HighLevelDdsSdkConfig
 
@@ -129,8 +123,6 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self._mode_selected = False
         self.motion_switcher: Any = None
         self.loco_client: Any = None
-
-    # lifecycle
 
     @rpc
     def start(self) -> None:
@@ -181,8 +173,6 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self._running = False
         logger.info("G1 DDS SDK connection stopped")
         super().stop()
-
-    # HighLevelG1Spec
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -243,11 +233,13 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         parameter = data.get("parameter", {})
 
         try:
-            if api_id == 7101:  # SET_FSM_ID
+            API_SET_FSM_ID = 7101
+            API_SET_VELOCITY = 7105
+            if api_id == API_SET_FSM_ID:
                 fsm_id = parameter.get("data", 0)
                 code = self.loco_client.SetFsmId(fsm_id)
                 return {"code": code}
-            elif api_id == 7105:  # SET_VELOCITY
+            elif api_id == API_SET_VELOCITY:
                 velocity = parameter.get("velocity", [0, 0, 0])
                 dur = parameter.get("duration", 1.0)
                 code = self.loco_client.SetVelocity(velocity[0], velocity[1], velocity[2], dur)
@@ -267,11 +259,18 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
             if self.config.ai_standup:
                 fsm_id = self._get_fsm_id()
+                if fsm_id is None:
+                    logger.warning(
+                        "Could not read FSM ID; aborting stand_up to avoid unsafe state transition"
+                    )
+                    return False
                 if fsm_id == FsmState.ZERO_TORQUE:
                     logger.info("Robot in zero torque, enabling damp mode...")
                     self.loco_client.SetFsmId(FsmState.DAMP)
                     time.sleep(self._standup_step_delay / 3)
-                    fsm_id = self._get_fsm_id()
+                    # Default to DAMP if the re-query fails — we just commanded
+                    # the transition, so DAMP is the most likely current state.
+                    fsm_id = self._get_fsm_id() or FsmState.DAMP
                 if fsm_id != FsmState.AI_MODE:
                     logger.info("Starting AI mode...")
                     self.loco_client.SetFsmId(FsmState.AI_MODE)
@@ -305,24 +304,11 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
     def disconnect(self) -> None:
         self.stop()
 
-    # skills (LLM-callable)
-
     @skill
     def move_velocity(
         self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0
     ) -> str:
-        """Move the robot using direct velocity commands. Determine duration required based on user distance instructions.
-
-        Example call:
-            args = { "x": 0.5, "y": 0.0, "yaw": 0.0, "duration": 2.0 }
-            move_velocity(**args)
-
-        Args:
-            x: Forward velocity (m/s)
-            y: Left/right velocity (m/s)
-            yaw: Rotational velocity (rad/s)
-            duration: How long to move (seconds)
-        """
+        """Move the robot at the given velocity for ``duration`` seconds."""
         twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
         self.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
@@ -358,8 +344,6 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
         {_MODE_COMMANDS_DOC}
         """
-
-    # private helpers
 
     def _execute_g1_command(
         self,

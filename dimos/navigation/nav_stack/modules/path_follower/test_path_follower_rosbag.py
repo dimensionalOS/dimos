@@ -12,15 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rosbag accuracy test for the PathFollower native module.
-
-Feeds path + odometry at original timing and compares cmd_vel output
-against the OG ROS nav stack reference recording.
-
-The PathFollower is the simplest module to validate since it's a pure
-function of (path, odometry, slow_down) → cmd_vel. Given identical inputs
-and matching parameters, output should be near-exact.
-"""
+"""Rosbag accuracy test: PathFollower is a pure (path, odom, slow_down) -> cmd_vel function,
+so given identical inputs and matching parameters its output should be near-exact."""
 
 from __future__ import annotations
 
@@ -32,10 +25,8 @@ import lcm as lcmlib
 import numpy as np
 import pytest
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
@@ -43,8 +34,14 @@ from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     lcm_handle_loop,
     load_rosbag_window,
 )
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 pytestmark = [pytest.mark.slow]
+
+_PROCESS_STARTUP_SEC = 1.0
+_POST_FEED_DRAIN_SEC = 2.0
 
 PATH_FOLLOWER_BIN = (
     Path(__file__).parent.parent / "modules" / "path_follower" / "result" / "bin" / "path_follower"
@@ -123,12 +120,14 @@ class TestPathFollowerRosbag:
         ref_cmd = window.cmd_vel
         assert len(ref_cmd) > 0, "No reference cmd_vel in fixture"
 
-        lc = lcmlib.LCM()
+        lcm = lcmlib.LCM()
         cmd_collector = LcmCollector(topic=CMD_VEL_LCM, msg_type=Twist)
-        cmd_collector.start(lc)
+        cmd_collector.start(lcm)
 
         stop_event = threading.Event()
-        handle_thread = threading.Thread(target=lcm_handle_loop, args=(lc, stop_event), daemon=True)
+        handle_thread = threading.Thread(
+            target=lcm_handle_loop, args=(lcm, stop_event), daemon=True
+        )
         handle_thread.start()
 
         runner = NativeProcessRunner(
@@ -151,12 +150,12 @@ class TestPathFollowerRosbag:
         try:
             runner.start()
             assert runner.is_running, "PathFollower binary failed to start"
-            time.sleep(1.0)
+            time.sleep(_PROCESS_STARTUP_SEC)
 
             # Feed path + odom from the rosbag at original timing.
             # PathFollower subscribes to /path (LocalPlanner output) and /odometry.
             feed_at_original_timing(
-                lc,
+                lcm,
                 window,
                 topic_map={
                     "odom": ODOM_LCM,
@@ -165,13 +164,13 @@ class TestPathFollowerRosbag:
                 odom_subsample=1,
             )
 
-            time.sleep(2.0)
+            time.sleep(_POST_FEED_DRAIN_SEC)
 
         finally:
             runner.stop()
             stop_event.set()
-            handle_thread.join(timeout=2.0)
-            cmd_collector.stop(lc)
+            handle_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            cmd_collector.stop(lcm)
 
         our_cmds = [(msg.linear.x, msg.linear.y, msg.angular.z) for msg in cmd_collector.messages]
 

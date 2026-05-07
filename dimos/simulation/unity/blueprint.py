@@ -26,9 +26,9 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.core.global_config import global_config
 from dimos.simulation.unity.module import UnityBridgeModule
-from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.vis_module import vis_module
 
 
 def _rerun_blueprint() -> Any:
@@ -43,19 +43,18 @@ def _rerun_blueprint() -> Any:
     )
 
 
-rerun_config = {
-    "blueprint": _rerun_blueprint,
-    "pubsubs": [LCM()],
-    "visual_override": {
-        "world/camera_info": UnityBridgeModule.rerun_suppress_camera_info,
-    },
-    "static": {
-        "world/color_image": UnityBridgeModule.rerun_static_pinhole,
-    },
-}
-
-
 unity_sim = autoconnect(
     UnityBridgeModule.blueprint(),
-    RerunBridgeModule.blueprint(**rerun_config),
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config={
+            "blueprint": _rerun_blueprint,
+            "visual_override": {
+                "world/camera_info": UnityBridgeModule.rerun_suppress_camera_info,
+            },
+            "static": {
+                "world/color_image": UnityBridgeModule.rerun_static_pinhole,
+            },
+        },
+    ),
 )

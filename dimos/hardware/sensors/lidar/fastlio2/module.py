@@ -61,37 +61,12 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM
 from dimos.spec import mapping, perception
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
 
 _CONFIG_DIR = Path(__file__).parent / "config"
 _logger = setup_logger()
-
-
-def _odom_to_body_tf(msg: Odometry) -> Transform:
-    return Transform(
-        frame_id=FRAME_ODOM,
-        child_frame_id=FRAME_BODY,
-        translation=Vector3(
-            msg.pose.position.x,
-            msg.pose.position.y,
-            msg.pose.position.z,
-        ),
-        rotation=Quaternion(
-            msg.pose.orientation.x,
-            msg.pose.orientation.y,
-            msg.pose.orientation.z,
-            msg.pose.orientation.w,
-        ),
-        ts=msg.ts or time.time(),
-    )
-
-
-def _get_local_ips() -> list[str]:
-    """Return all non-loopback IPv4 addresses on this machine."""
-    return [ip for ip, _iface in get_local_ips()]
 
 
 def _find_candidate_ips(lidar_ip: str, local_ips: list[str]) -> list[str]:
@@ -123,8 +98,8 @@ class FastLio2Config(NativeModuleConfig):
     # Frame IDs for output messages.  "odom" reflects that FastLio2 provides
     # locally-smooth, continuous odometry (no loop-closure jumps).  PGO
     # publishes the map→odom correction via TF.
-    frame_id: str = FRAME_ODOM
-    child_frame_id: str = FRAME_BODY
+    frame_id: str = "odom"
+    child_frame_id: str = "base_link"
 
     # FAST-LIO internal processing rates
     msr_freq: float = 50.0
@@ -204,7 +179,24 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
         )
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
-        self.tf.publish(_odom_to_body_tf(msg))
+        self.tf.publish(
+            Transform(
+                frame_id="odom",
+                child_frame_id="base_link",
+                translation=Vector3(
+                    msg.pose.position.x,
+                    msg.pose.position.y,
+                    msg.pose.position.z,
+                ),
+                rotation=Quaternion(
+                    msg.pose.orientation.x,
+                    msg.pose.orientation.y,
+                    msg.pose.orientation.z,
+                    msg.pose.orientation.w,
+                ),
+                ts=msg.ts or time.time(),
+            )
+        )
 
     @rpc
     def stop(self) -> None:
@@ -213,7 +205,7 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     def _validate_network(self) -> None:
         host_ip = self.config.host_ip
         lidar_ip = self.config.lidar_ip
-        local_ips = _get_local_ips()
+        local_ips = [ip for ip, _iface in get_local_ips()]
 
         _logger.info(
             "FastLio2 network check",

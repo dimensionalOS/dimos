@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rosbag accuracy test for the TerrainAnalysis native module.
-
-Feeds registered_scan + odometry at original timing and compares
-terrain_map output against the reference recording.
-"""
+"""Rosbag accuracy test: replays scan+odom at original timing, compares terrain_map to reference."""
 
 from __future__ import annotations
 
@@ -28,10 +24,8 @@ import lcm as lcmlib
 import numpy as np
 import pytest
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
@@ -39,8 +33,14 @@ from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     lcm_handle_loop,
     load_rosbag_window,
 )
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 pytestmark = [pytest.mark.slow]
+
+_PROCESS_STARTUP_SEC = 1.0
+_POST_FEED_DRAIN_SEC = 2.0
 
 TERRAIN_ANALYSIS_BIN = (
     Path(__file__).parent.parent
@@ -68,12 +68,14 @@ class TestTerrainAnalysisRosbag:
         ref_tmaps = window.terrain_maps
         assert len(ref_tmaps) > 0, "No reference terrain maps in fixture"
 
-        lc = lcmlib.LCM()
+        lcm = lcmlib.LCM()
         terrain_collector = LcmCollector(topic=TERRAIN_OUT_LCM, msg_type=PointCloud2)
-        terrain_collector.start(lc)
+        terrain_collector.start(lcm)
 
         stop_event = threading.Event()
-        handle_thread = threading.Thread(target=lcm_handle_loop, args=(lc, stop_event), daemon=True)
+        handle_thread = threading.Thread(
+            target=lcm_handle_loop, args=(lcm, stop_event), daemon=True
+        )
         handle_thread.start()
 
         runner = NativeProcessRunner(
@@ -103,10 +105,10 @@ class TestTerrainAnalysisRosbag:
         try:
             runner.start()
             assert runner.is_running, "TerrainAnalysis binary failed to start"
-            time.sleep(1.0)
+            time.sleep(_PROCESS_STARTUP_SEC)
 
             feed_at_original_timing(
-                lc,
+                lcm,
                 window,
                 topic_map={
                     "odom": ODOM_LCM,
@@ -114,13 +116,13 @@ class TestTerrainAnalysisRosbag:
                 },
             )
 
-            time.sleep(2.0)
+            time.sleep(_POST_FEED_DRAIN_SEC)
 
         finally:
             runner.stop()
             stop_event.set()
-            handle_thread.join(timeout=2.0)
-            terrain_collector.stop(lc)
+            handle_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            terrain_collector.stop(lcm)
 
         # Compare terrain map output
         our_count = len(terrain_collector.messages)

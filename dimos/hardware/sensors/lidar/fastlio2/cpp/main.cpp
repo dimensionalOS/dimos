@@ -61,8 +61,8 @@ static FastLio* g_fastlio = nullptr;
 static std::string g_lidar_topic;
 static std::string g_odometry_topic;
 static std::string g_map_topic;
-static std::string g_frame_id = "map";
-static std::string g_child_frame_id = "body";
+static std::string g_frame_id;        // required via --frame_id
+static std::string g_child_frame_id;   // required via --child_frame_id
 static float g_frequency = 10.0f;
 
 // Initial pose offset (applied to all SLAM outputs)
@@ -396,8 +396,8 @@ int main(int argc, char** argv) {
     std::string host_ip = mod.arg("host_ip", "192.168.1.5");
     std::string lidar_ip = mod.arg("lidar_ip", "192.168.1.155");
     g_frequency = mod.arg_float("frequency", 10.0f);
-    g_frame_id = mod.arg("frame_id", "map");
-    g_child_frame_id = mod.arg("child_frame_id", "body");
+    g_frame_id = mod.arg_required("frame_id");
+    g_child_frame_id = mod.arg_required("child_frame_id");
     float pointcloud_freq = mod.arg_float("pointcloud_freq", 5.0f);
     float odom_freq = mod.arg_float("odom_freq", 50.0f);
     CloudFilterConfig filter_cfg;

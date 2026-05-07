@@ -22,15 +22,16 @@ from typing import Any
 import numpy as np
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_MAP
 
 
 class TerrainMapExtConfig(ModuleConfig):
+    world_frame: str = "map"
     voxel_size: float = 0.4  # meters per voxel (coarser than local)
     decay_time: float = 8.0  # seconds before points expire
     publish_rate: float = 2.0  # Hz
@@ -38,16 +39,7 @@ class TerrainMapExtConfig(ModuleConfig):
 
 
 class TerrainMapExt(Module):
-    """Extended terrain map with voxel eviction.
-
-    Subscribes to terrain_map (local) and accumulates into a persistent
-    map that covers a larger area with slower decay.
-
-    Ports:
-        terrain_map (In[PointCloud2]): Local terrain from TerrainAnalysis.
-        odometry (In[Odometry]): Vehicle pose for range culling.
-        terrain_map_ext (Out[PointCloud2]): Extended accumulated terrain.
-    """
+    """Extended terrain map: accumulates local terrain into a wider, slower-decaying map."""
 
     config: TerrainMapExtConfig
 
@@ -83,7 +75,7 @@ class TerrainMapExt(Module):
     def stop(self) -> None:
         self._running = False
         if self._thread:
-            self._thread.join(timeout=3.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
     def _on_odom(self, msg: Odometry) -> None:
@@ -160,7 +152,7 @@ class TerrainMapExt(Module):
             if pts:
                 arr = np.array(pts, dtype=np.float32)
                 self.terrain_map_ext.publish(
-                    PointCloud2.from_numpy(arr, frame_id=FRAME_MAP, timestamp=now)
+                    PointCloud2.from_numpy(arr, frame_id=self.config.world_frame, timestamp=now)
                 )
 
             elapsed = time.monotonic() - t0

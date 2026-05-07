@@ -25,6 +25,7 @@ from reactivex.disposable import Disposable
 from scipy.spatial import KDTree
 from scipy.spatial.transform import Rotation
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -34,22 +35,16 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Below this many ICP point-to-point correspondences, the alignment is
-# under-constrained — bail out with infinite cost rather than reporting a
-# spurious match.
-_MIN_ICP_INLIERS = 10
-
-# Loop-closure detection needs enough keyframes to have a meaningful
-# distance-vs-time history. Below this, skip the search entirely.
-_MIN_KEYFRAMES_FOR_LOOP_SEARCH = 10
-
 
 class PGOConfig(ModuleConfig):
+    # TF frame name for the world / map root.  odom and body frame names are
+    # fixed by REP-105 convention (odom, base_link) and aren't config knobs.
+    world_frame: str = "map"
+
     # Keyframe detection
     key_pose_delta_trans: float = 0.5
     key_pose_delta_deg: float = 10.0
@@ -59,6 +54,9 @@ class PGOConfig(ModuleConfig):
     loop_time_thresh: float = 60.0
     loop_score_thresh: float = 0.3
     loop_submap_half_range: int = 5
+    min_icp_inliers: int = 10
+    min_keyframes_for_loop_search: int = 10
+    loop_closure_extra_iterations: int = 4
     submap_resolution: float = 0.1
     min_loop_detect_duration: float = 5.0
 
@@ -90,6 +88,7 @@ def _icp(
     max_iter: int = 50,
     max_dist: float = 10.0,
     tol: float = 1e-6,
+    min_inliers: int = 10,
 ) -> tuple[np.ndarray, float]:
     if len(source) == 0 or len(target) == 0:
         return np.eye(4), float("inf")
@@ -102,7 +101,7 @@ def _icp(
         dists, idxs = tree.query(src)
         mask = np.asarray(dists < max_dist)
         idxs = np.asarray(idxs)
-        if int(mask.sum()) < _MIN_ICP_INLIERS:
+        if int(mask.sum()) < min_inliers:
             return T, float("inf")
 
         p = src[mask]
@@ -230,7 +229,7 @@ class _SimplePGO:
         return _voxel_downsample(cloud, self._cfg.submap_resolution)
 
     def search_for_loops(self) -> None:
-        if len(self._key_poses) < _MIN_KEYFRAMES_FOR_LOOP_SEARCH:
+        if len(self._key_poses) < self._cfg.min_keyframes_for_loop_search:
             return
 
         # Rate limit
@@ -269,6 +268,7 @@ class _SimplePGO:
             target,
             max_iter=self._cfg.max_icp_iterations,
             max_dist=self._cfg.max_icp_correspondence_dist,
+            min_inliers=self._cfg.min_icp_inliers,
         )
         if fitness > self._cfg.loop_score_thresh:
             return
@@ -318,7 +318,7 @@ class _SimplePGO:
         self._isam2.update(self._graph, self._values)
         self._isam2.update()
         if has_loop:
-            for _ in range(4):
+            for _ in range(self._cfg.loop_closure_extra_iterations):
                 self._isam2.update()
         self._graph = gtsam.NonlinearFactorGraph()
         self._values = gtsam.Values()
@@ -361,10 +361,9 @@ def process_scan(
     ts: float,
     unregister_input: bool,
 ) -> tuple[Odometry, Transform] | None:
-    """Add a keyframe (if it qualifies), run loop closure, and return the
-    messages to publish. Returns None if the cloud is empty.
+    """Add a keyframe, run loop closure, return messages to publish (None on empty cloud).
 
-    Caller is responsible for holding ``pgo``'s lock during this call.
+    Caller must hold ``pgo``'s lock during this call.
     """
     points, _ = cloud.as_numpy()
     if len(points) == 0:
@@ -393,12 +392,17 @@ def process_scan(
     )
 
 
-def build_corrected_odometry(r: np.ndarray, t: np.ndarray, ts: float) -> Odometry:
+def build_corrected_odometry(
+    r: np.ndarray,
+    t: np.ndarray,
+    ts: float,
+    world_frame: str = "map",
+) -> Odometry:
     q = Rotation.from_matrix(r).as_quat()  # [x,y,z,w]
     return Odometry(
         ts=ts,
-        frame_id=FRAME_MAP,
-        child_frame_id=FRAME_BODY,
+        frame_id=world_frame,
+        child_frame_id="base_link",
         pose=Pose(
             position=[float(t[0]), float(t[1]), float(t[2])],
             orientation=[float(q[0]), float(q[1]), float(q[2]), float(q[3])],
@@ -406,11 +410,17 @@ def build_corrected_odometry(r: np.ndarray, t: np.ndarray, ts: float) -> Odometr
     )
 
 
-def build_map_odom_tf(r_offset: np.ndarray, t_offset: np.ndarray, ts: float) -> Transform:
+def build_map_odom_tf(
+    r_offset: np.ndarray,
+    t_offset: np.ndarray,
+    ts: float,
+    world_frame: str = "map",
+    odom_frame: str = "odom",
+) -> Transform:
     q = Rotation.from_matrix(r_offset).as_quat()  # [x,y,z,w]
     return Transform(
-        frame_id=FRAME_MAP,
-        child_frame_id=FRAME_ODOM,
+        frame_id=world_frame,
+        child_frame_id=odom_frame,
         translation=Vector3(float(t_offset[0]), float(t_offset[1]), float(t_offset[2])),
         rotation=Quaternion(float(q[0]), float(q[1]), float(q[2]), float(q[3])),
         ts=ts,
@@ -469,7 +479,7 @@ class PGO(Module):
     def stop(self) -> None:
         self._running = False
         if self._thread:
-            self._thread.join(timeout=3.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
     def _on_odom(self, msg: Odometry) -> None:
@@ -510,11 +520,7 @@ class PGO(Module):
         self.corrected_odometry.publish(build_corrected_odometry(r, t, ts))
 
     def _publish_map_odom_tf(self, r_offset: np.ndarray, t_offset: np.ndarray, ts: float) -> None:
-        """Publish the ``map → odom`` correction transform to the TF tree.
-
-        Composed with FastLio2's ``odom → body``, this gives any
-        consumer ``map → body`` via BFS chain lookup.
-        """
+        """Publish the map → odom correction transform."""
         self.tf.publish(build_map_odom_tf(r_offset, t_offset, ts))
 
     def _publish_loop(self) -> None:
@@ -532,7 +538,9 @@ class PGO(Module):
                 if len(cloud_np) > 0:
                     now = time.time()
                     self.global_map.publish(
-                        PointCloud2.from_numpy(cloud_np, frame_id=FRAME_MAP, timestamp=now)
+                        PointCloud2.from_numpy(
+                            cloud_np, frame_id=self.config.world_frame, timestamp=now
+                        )
                     )
                 self._last_global_map_time = t0
 

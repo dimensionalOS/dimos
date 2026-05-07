@@ -19,6 +19,8 @@ from typing import Any, get_args
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.visualization.rerun.constants import ViewerBackend
+from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 
 def vis_module(
@@ -47,9 +49,6 @@ def vis_module(
             },
         )
     """
-    from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
-    from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-
     if foxglove_config is None:
         foxglove_config = {}
     if rerun_config is None:

@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rosbag accuracy test for the FAR planner native module.
-
-Feeds identical inputs at original timing and compares waypoint output
-against the OG ROS nav stack reference recording.
-"""
+"""Rosbag accuracy test: replays inputs at original timing and compares waypoints to ROS reference."""
 
 from __future__ import annotations
 
@@ -28,10 +24,8 @@ import lcm as lcmlib
 import numpy as np
 import pytest
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     LcmCollector,
     NativeProcessRunner,
@@ -39,8 +33,16 @@ from dimos.navigation.nav_stack.tests.rosbag_fixtures import (
     lcm_handle_loop,
     load_rosbag_window,
 )
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 pytestmark = [pytest.mark.slow]
+
+# Time for the native process to initialize before feeding data.
+_PROCESS_STARTUP_SEC = 1.5
+# Time after feeding data for the process to finish emitting outputs.
+_POST_FEED_DRAIN_SEC = 3.0
 
 FAR_PLANNER_BIN = (
     Path(__file__).parent.parent
@@ -221,12 +223,14 @@ class TestFarPlannerRosbag:
         ref_wp = window.way_point
         assert len(ref_wp) > 0, "No reference waypoints in fixture"
 
-        lc = lcmlib.LCM()
+        lcm = lcmlib.LCM()
         wp_collector = LcmCollector(topic=WAYPOINT_OUT_LCM, msg_type=PointStamped)
-        wp_collector.start(lc)
+        wp_collector.start(lcm)
 
         stop_event = threading.Event()
-        handle_thread = threading.Thread(target=lcm_handle_loop, args=(lc, stop_event), daemon=True)
+        handle_thread = threading.Thread(
+            target=lcm_handle_loop, args=(lcm, stop_event), daemon=True
+        )
         handle_thread.start()
 
         runner = NativeProcessRunner(binary_path=str(FAR_PLANNER_BIN), args=_far_planner_args())
@@ -234,11 +238,11 @@ class TestFarPlannerRosbag:
         try:
             runner.start()
             assert runner.is_running, "FAR planner binary failed to start"
-            time.sleep(1.5)
+            time.sleep(_PROCESS_STARTUP_SEC)
 
             # Feed at original timing (1:1 with rosbag)
             feed_at_original_timing(
-                lc,
+                lcm,
                 window,
                 topic_map={
                     "odom": ODOM_LCM,
@@ -249,14 +253,13 @@ class TestFarPlannerRosbag:
                 },
             )
 
-            # Wait for final processing
-            time.sleep(3.0)
+            time.sleep(_POST_FEED_DRAIN_SEC)
 
         finally:
             runner.stop()
             stop_event.set()
-            handle_thread.join(timeout=2.0)
-            wp_collector.stop(lc)
+            handle_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            wp_collector.stop(lcm)
 
         our_wps = [(msg.x, msg.y) for msg in wp_collector.messages]
 

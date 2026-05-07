@@ -35,11 +35,7 @@ if TYPE_CHECKING:
 
 
 class ContourPolygons3D(Timestamped):
-    """Filled contour polygons for debug visualization.
-
-    Wire format: ``sensor_msgs/PointCloud2`` where each point's
-    intensity encodes its polygon id.
-    """
+    """Filled contour polygons for debug visualization."""
 
     msg_name = "nav_msgs.ContourPolygons3D"
     ts: float

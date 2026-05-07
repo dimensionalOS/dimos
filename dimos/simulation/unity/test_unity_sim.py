@@ -33,8 +33,8 @@ import time
 
 import numpy as np
 import pytest
-import rerun as rr
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.unity.module import (
@@ -77,11 +77,6 @@ class _MockTransport:
 
 
 def _wire(module) -> dict[str, _MockTransport]:
-    """Attach mock transports to every port so the module can publish/subscribe.
-
-    Out ports use the public ``transport`` setter; In ports (cmd_vel) lack a
-    public setter, so we assign ``_transport`` directly.
-    """
     subscribers = {}
     for name in (
         "odometry",
@@ -246,7 +241,7 @@ class TestTCPBridge:
         finally:
             module._running.clear()
             sock.close()
-            module._unity_thread.join(timeout=3)
+            module._unity_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             module.stop()
 
         assert len(subscribers["registered_scan"]._messages) >= 1
@@ -280,9 +275,6 @@ class TestKinematicSim:
 
         last_odom = subscribers["odometry"]._messages[-1]
         assert last_odom.x == pytest.approx(1.0, abs=0.01)
-
-
-# Terrain inclination & sensor offset (port from ROS vehicleSimulator)
 
 
 class TestTerrainFit:
@@ -389,13 +381,7 @@ class TestSensorOffset:
         module.stop()
         # Yaw should be ~π/2
         assert module._yaw == pytest.approx(math.pi / 2.0, abs=0.02)
-        # Sensor origin started at (0.5, 0) and travels on circle r=0.5
-        # → after quarter turn ends at about (0, 0.5).
-        # Vehicle center is therefore at sensor - rotated_offset = (0 - 0, 0.5 - 0.5) = (0, 0)?
-        # Actually the state IS the sensor origin (integrated via the offset term).
-        # Started at x=0,y=0 (sensor). After rotating π/2, sensor should still be at
-        # the same radius from where the center was.
-        # Simpler assertion: x and y should be nonzero (displacement happened).
+        # Displacement happened (sensor traversed a quarter-circle of radius 0.5).
         assert abs(module._x - 0.0) > 0.01 or abs(module._y - 0.0) > 0.01
 
     def test_yaw_rate_roll_published(self):
@@ -413,19 +399,6 @@ class TestSensorOffset:
         # Angular rates (from Odometry.twist) should include roll/pitch deltas; at zero tilt they're 0.
         assert last.twist.angular.x == pytest.approx(0.0, abs=1e-6)
         assert last.twist.angular.y == pytest.approx(0.0, abs=1e-6)
-
-
-# Rerun Config — fast, runs everywhere
-
-
-class TestRerunConfig:
-    def test_static_pinhole_returns_list(self):
-        result = UnityBridgeModule.rerun_static_pinhole(rr)
-        assert isinstance(result, list)
-        assert len(result) == 2
-
-    def test_suppress_returns_none(self):
-        assert UnityBridgeModule.rerun_suppress_camera_info(None) is None
 
 
 @pytest.mark.slow

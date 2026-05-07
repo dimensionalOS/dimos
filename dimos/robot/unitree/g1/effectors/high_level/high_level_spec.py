@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Spec for G1 high-level control interface.
-
-Any high-level control module (WebRTC, native SDK, etc.) must implement
-this protocol so that skill containers and blueprints can work against
-a single, stable API.
-"""
+"""Spec for G1 high-level control: WebRTC, native SDK, etc. all implement this protocol."""
 
 from typing import Any, Protocol
 
@@ -27,12 +22,7 @@ from dimos.spec.utils import Spec
 
 
 class HighLevelG1Spec(Spec, Protocol):
-    """Common high-level control interface for the Unitree G1.
-
-    Implementations provide velocity control, state queries, and
-    posture commands regardless of the underlying transport (WebRTC,
-    native SDK, etc.).
-    """
+    """Common high-level control interface for the Unitree G1."""
 
     cmd_vel: In[Twist]
 

@@ -1,5 +1,6 @@
 default_stages: [pre-commit]
 default_install_hook_types: [pre-commit, commit-msg]
+exclude: (dimos/models/.*)|(deprecated)
 repos:
 
   - repo: https://github.com/Lucas-C/pre-commit-hooks
@@ -33,12 +34,12 @@ repos:
       - id: trailing-whitespace
         language: python
         types: [text]
-        exclude: \.patch$
+        exclude: \.patch$  # patch files contain intentional trailing whitespace
       - id: end-of-file-fixer
-        exclude: \.patch$
+        exclude: \.patch$  # keep patch files byte-identical to upstream diffs
       - id: mixed-line-ending
         args: [--fix=lf]
-        exclude: \.patch$
+        exclude: \.patch$  # keep patch files byte-identical to upstream diffs
       - id: check-json
       - id: check-toml
       - id: check-yaml

@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TarePlanner NativeModule: C++ frontier-based autonomous exploration planner.
-
-Ported from tare_planner. Uses sensor coverage planning and frontier detection
-to autonomously explore unknown environments.
-"""
+"""TarePlanner NativeModule: C++ frontier-based autonomous exploration planner."""
 
 from __future__ import annotations
 
@@ -42,17 +38,7 @@ class TarePlannerConfig(NativeModuleConfig):
 
 
 class TarePlanner(NativeModule):
-    """TARE planner: frontier-based autonomous exploration.
-
-    Maintains a coverage map and detects frontiers (boundaries between
-    explored and unexplored space). Plans exploration paths that maximize
-    information gain. Outputs waypoints for the local planner.
-
-    Ports:
-        registered_scan (In[PointCloud2]): World-frame point cloud for coverage updates.
-        odometry (In[Odometry]): Vehicle state.
-        way_point (Out[PointStamped]): Exploration waypoint for local planner.
-    """
+    """TARE planner: frontier-based autonomous exploration with sensor coverage planning."""
 
     config: TarePlannerConfig
 
