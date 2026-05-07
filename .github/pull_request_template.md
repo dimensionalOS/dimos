@@ -1,11 +1,15 @@
 
-## Description
-<!-- Keep it high-signal; deep planning belongs in the issue. -->
+## Summary
+<!-- What changed and why? Keep it high-signal; deep planning belongs in the issue. -->
 
-## How to Test
+## Test Plan
+<!-- Include `bash scripts/verify.sh` when applicable, plus any focused/manual checks. -->
 
-<!-- oneliner required to run the actual feature -->
-<!-- blueprint for robot changes, benchmarks for transport changes etc -->
+## Risk
+<!-- Call out robot hardware impact, API compatibility, migrations, or rollout concerns. -->
+
+## Related
+<!-- Link issues, Linear tickets, related PRs, or write N/A. -->
 
 ## Contributor License Agreement
 

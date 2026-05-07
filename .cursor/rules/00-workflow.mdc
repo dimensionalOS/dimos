@@ -1,0 +1,52 @@
+---
+description: Repository-wide workflow rules for Cursor agents in DimOS
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# DimOS Agent Workflow Rules
+
+These rules apply to all agent work in this repository. If a user request conflicts
+with them, pause and explain the conflict before continuing.
+
+## Required
+
+1. Read `AGENTS.md` before substantive code changes and follow the DimOS module,
+   blueprint, testing, and Git workflow guidance there.
+2. Keep changes scoped to the requested task. Avoid unrelated refactors,
+   formatting churn, or generated registry updates unless they are required.
+3. After substantive code changes, run `bash scripts/verify.sh` when feasible.
+   If the full verify is too expensive or blocked, run the narrowest meaningful
+   check and clearly report the gap.
+4. Use feature branches and PRs for repository changes. PRs target `dev` for this
+   repository unless the human explicitly instructs otherwise.
+5. When preparing commits, stage only files related to the current task. Do not use
+   broad `git add -A` in a dirty working tree.
+
+## Forbidden
+
+1. Do not push directly to `main` or `dev`.
+2. Do not run `git push --force` unless the human explicitly approves it for a
+   non-protected branch.
+3. Do not skip or weaken tests, type checks, or `scripts/verify.sh` to make CI
+   appear green.
+4. Do not commit secrets, `.env` files, credentials, private SSH keys, generated
+   local caches, or large data artifacts.
+5. Do not modify existing `~/.ssh/config` entries. Only append new host entries
+   after explicit confirmation from the human.
+
+## Review Focus
+
+- P0: leaked secrets, destructive git operations, unsafe robot control paths,
+  command injection, arbitrary code execution, or data loss.
+- P1: unbounded robot motion or control loops, breaking public APIs, skipped
+  tests, stale generated blueprints, dependency lockfile drift, or CI regressions.
+- P2: maintainability issues, missing focused tests, unclear agent skill schemas,
+  or duplicated logic that increases risk.
+- P3: typos, style nits, and optional cleanup. Do not block PRs on P3 items.
+
+## Completion Report
+
+End each task with a concise summary of changed files, verification run and
+result, PR link if created, and any remaining human setup steps.
