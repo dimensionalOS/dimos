@@ -64,22 +64,10 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec import mapping, perception
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
+from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM
 
 _CONFIG_DIR = Path(__file__).parent / "config"
 _logger = setup_logger()
-
-
-def _find_candidate_ips(lidar_ip: str, local_ips: list[str]) -> list[str]:
-    """Suggest local IPs on the same subnet as the lidar."""
-    candidates: list[str] = []
-    try:
-        lidar_net = ipaddress.IPv4Network(f"{lidar_ip}/24", strict=False)
-        for ip in local_ips:
-            if ipaddress.IPv4Address(ip) in lidar_net:
-                candidates.append(ip)
-    except (ValueError, TypeError):
-        pass
-    return candidates
 
 
 class FastLio2Config(NativeModuleConfig):
@@ -98,8 +86,8 @@ class FastLio2Config(NativeModuleConfig):
     # Frame IDs for output messages.  "odom" reflects that FastLio2 provides
     # locally-smooth, continuous odometry (no loop-closure jumps).  PGO
     # publishes the map→odom correction via TF.
-    frame_id: str = "odom"
-    child_frame_id: str = "base_link"
+    frame_id: str = FRAME_ODOM
+    child_frame_id: str = FRAME_BODY
 
     # FAST-LIO internal processing rates
     msr_freq: float = 50.0
@@ -181,8 +169,8 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     def _on_odom_for_tf(self, msg: Odometry) -> None:
         self.tf.publish(
             Transform(
-                frame_id="odom",
-                child_frame_id="base_link",
+                frame_id=FRAME_ODOM,
+                child_frame_id=FRAME_BODY,
                 translation=Vector3(
                     msg.pose.position.x,
                     msg.pose.position.y,
@@ -216,7 +204,11 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
 
         # Check if host_ip is actually assigned to this machine.
         if host_ip not in local_ips:
-            same_subnet = _find_candidate_ips(lidar_ip, local_ips)
+            try:
+                lidar_net = ipaddress.IPv4Network(f"{lidar_ip}/24", strict=False)
+                same_subnet = [ip for ip in local_ips if ipaddress.IPv4Address(ip) in lidar_net]
+            except (ValueError, TypeError):
+                same_subnet = []
 
             if same_subnet:
                 picked = same_subnet[0]

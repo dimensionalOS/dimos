@@ -239,6 +239,7 @@ def nav_stack_rerun_config(
         visual_override.setdefault("world/goal", _goal_colors)
         visual_override.setdefault("world/goal_path", _goal_path_colors)
         visual_override.setdefault("world/nav_boundary", _nav_boundary_colors)
+    visual_override.setdefault("world/obstacle_cloud", _obstacle_cloud_colors)
     visual_override.setdefault("world/costmap_cloud", _costmap_cloud_colors)
     visual_override.setdefault("world/free_paths", _free_paths_colors)
     resolved["visual_override"] = visual_override
@@ -327,6 +328,16 @@ def _costmap_cloud_colors(cloud: Any) -> Any:
     lifted[:, 2] += _VIS_LIFT_COSTMAP
     colors = np.full((len(points), 3), [255, 40, 40], dtype=np.uint8)
     return rr.Points3D(positions=lifted, colors=colors, radii=0.12)
+
+
+def _obstacle_cloud_colors(cloud: Any) -> Any:
+    import rerun as rr
+
+    arch = cloud.to_rerun(colormap="plasma", size=0.06)
+    return [
+        ("world/obstacle_cloud", rr.Transform3D(parent_frame="tf#/sensor")),
+        ("world/obstacle_cloud", arch),
+    ]
 
 
 def _explored_areas_colors(cloud: Any) -> Any:

@@ -34,6 +34,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
+from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
 
 logger = setup_logger()
 
@@ -273,8 +274,9 @@ def astar(
 
 
 class SimplePlannerConfig(ModuleConfig):
-    world_frame: str = "map"
-    body_frame: str = "base_link"
+    world_frame: str = FRAME_MAP
+    body_frame: str = FRAME_BODY
+    sensor_frame: str = "sensor"
 
     cell_size: float = 0.3  # m per cell
     obstacle_height_threshold: float = 0.15  # m above ground
@@ -375,7 +377,7 @@ class SimplePlanner(Module):
         The first successful lookup wins. ``sensor`` is used by the Unity sim bridge."""
         return [
             (self.config.world_frame, self.config.body_frame),
-            (self.config.world_frame, "sensor"),
+            (self.config.world_frame, self.config.sensor_frame),
         ]
 
     def _query_pose(self) -> bool:

@@ -119,7 +119,10 @@ class NativeModuleConfig(ModuleConfig):
 
     def to_cli_args(self) -> list[str]:
         """Convert subclass config fields to CLI args (--name value)."""
-        ignore_fields = {f for f in NativeModuleConfig.model_fields}
+        # frame_id is declared on ModuleConfig (inherited) but is meant to be
+        # overridable per native module — keep it out of the skip set so a
+        # subclass that sets a non-None default reaches the binary.
+        ignore_fields = {f for f in NativeModuleConfig.model_fields if f != "frame_id"}
         args: list[str] = []
         for f in self.__class__.model_fields:
             if f in ignore_fields:
