@@ -69,19 +69,6 @@ _CONFIG_DIR = Path(__file__).parent / "config"
 _logger = setup_logger()
 
 
-def _find_candidate_ips(lidar_ip: str, local_ips: list[str]) -> list[str]:
-    """Suggest local IPs on the same subnet as the lidar."""
-    candidates: list[str] = []
-    try:
-        lidar_net = ipaddress.IPv4Network(f"{lidar_ip}/24", strict=False)
-        for ip in local_ips:
-            if ipaddress.IPv4Address(ip) in lidar_net:
-                candidates.append(ip)
-    except (ValueError, TypeError):
-        pass
-    return candidates
-
-
 class FastLio2Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/fastlio2_native"
@@ -216,7 +203,11 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
 
         # Check if host_ip is actually assigned to this machine.
         if host_ip not in local_ips:
-            same_subnet = _find_candidate_ips(lidar_ip, local_ips)
+            try:
+                lidar_net = ipaddress.IPv4Network(f"{lidar_ip}/24", strict=False)
+                same_subnet = [ip for ip in local_ips if ipaddress.IPv4Address(ip) in lidar_net]
+            except (ValueError, TypeError):
+                same_subnet = []
 
             if same_subnet:
                 picked = same_subnet[0]
