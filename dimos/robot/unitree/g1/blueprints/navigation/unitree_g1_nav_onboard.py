@@ -46,8 +46,10 @@ unitree_g1_nav_onboard = (
             vehicle_height=G1.height_clearance,
             max_speed=0.5,
             terrain_analysis={
+                "no_decay_distance": 0,
                 "obstacle_height_threshold": 0.01,
                 "ground_height_threshold": 0.01,
+                "sensor_range": 40, # meters
             },
             local_planner={
                 "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
@@ -55,7 +57,7 @@ unitree_g1_nav_onboard = (
             },
             simple_planner={
                 "cell_size": 0.2,
-                "obstacle_height_threshold": 0.14,
+                "obstacle_height_threshold": 0.10,
                 "inflation_radius": 0.5,
                 "lookahead_distance": 2.0,
                 "replan_rate": 5.0,
