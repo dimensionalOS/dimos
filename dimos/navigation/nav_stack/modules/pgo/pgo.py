@@ -64,6 +64,7 @@ class PGOConfig(ModuleConfig):
     unregister_input: bool = True  # Transform world-frame scans to body-frame using odom
 
     # Global map
+    publish_global_map: bool = True
     global_map_publish_rate: float = 0.5
     global_map_voxel_size: float = 0.15
 
@@ -471,9 +472,13 @@ class PGO(Module):
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odom)))
         self.register_disposable(Disposable(self.registered_scan.subscribe(self._on_scan)))
         self._running = True
-        self._thread = threading.Thread(target=self._publish_loop, daemon=True)
-        self._thread.start()
-        logger.info("PGO module started (gtsam iSAM2)")
+        if self.config.publish_global_map:
+            self._thread = threading.Thread(target=self._publish_loop, daemon=True)
+            self._thread.start()
+        logger.info(
+            "PGO module started (gtsam iSAM2)",
+            publish_global_map=self.config.publish_global_map,
+        )
 
     @rpc
     def stop(self) -> None:
