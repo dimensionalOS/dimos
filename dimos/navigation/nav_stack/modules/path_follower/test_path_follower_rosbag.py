@@ -43,9 +43,7 @@ pytestmark = [pytest.mark.slow]
 _PROCESS_STARTUP_SEC = 1.0
 _POST_FEED_DRAIN_SEC = 2.0
 
-PATH_FOLLOWER_BIN = (
-    Path(__file__).parent.parent / "modules" / "path_follower" / "result" / "bin" / "path_follower"
-)
+PATH_FOLLOWER_BIN = Path(__file__).parent / "result" / "bin" / "path_follower"
 
 # LCM topics
 PATH_LCM = "/rbpf_path#nav_msgs.Path"

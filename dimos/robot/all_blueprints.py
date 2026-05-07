@@ -202,6 +202,7 @@ all_modules = {
     "tare-planner": "dimos.navigation.nav_stack.modules.tare_planner.tare_planner.TarePlanner",
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory.TemporalMemory",
     "terrain-analysis": "dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis.TerrainAnalysis",
+    "terrain-map-enhanced": "dimos.navigation.nav_stack.modules.terrain_map_enhanced.terrain_map_enhanced.TerrainMapEnhanced",
     "terrain-map-ext": "dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext.TerrainMapExt",
     "twist-teleop-module": "dimos.teleop.quest.quest_extensions.TwistTeleopModule",
     "unitree-g1-skill-container": "dimos.robot.unitree.g1.skill_container.UnitreeG1SkillContainer",

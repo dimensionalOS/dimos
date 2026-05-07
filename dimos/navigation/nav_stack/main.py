@@ -146,10 +146,12 @@ def create_nav_stack(
         modules.append(
             TerrainMapExt.blueprint(
                 **{
-                    "voxel_size": terrain_voxel_size,
-                    "decay_time": 30.0,
-                    "publish_rate": replan_rate,
-                    "max_range": 40.0,
+                    "scan_voxel_size": 0.1,
+                    "decay_time": 4.0,
+                    "use_sorting": True,
+                    "quantile_z": 0.1,
+                    "lower_bound_z": -2.5,
+                    "vehicle_height": 1.5 if vehicle_height is None else vehicle_height,
                     **(terrain_map_ext or {}),
                 }
             )
@@ -167,6 +169,7 @@ def create_nav_stack(
     remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
         (TerrainAnalysis, "odometry", "corrected_odometry"),
+        (TerrainMapExt, "odometry", "corrected_odometry"),
         (PGO, "global_map", "global_map_pgo"),
         *record_remappings,
     ]

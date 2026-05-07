@@ -24,6 +24,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos_lcm.std_msgs import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
 
 
@@ -38,11 +39,11 @@ class PathFollowerConfig(NativeModuleConfig):
         "look_ahead_distance": "lookAheadDis",
         "max_speed": "maxSpeed",
         "max_yaw_rate": "maxYawRate",
-        "goal_tolerance": "goalTolerance",
-        "vehicle_config": "vehicleConfig",
         "autonomy_mode": "autonomyMode",
         "autonomy_speed": "autonomySpeed",
+        "joy_to_speed_delay": "joyToSpeedDelay",
         "max_acceleration": "maxAccel",
+        "use_fixed_accel_rate": "useFixedAccelRate",
         "slow_down_distance_threshold": "slowDwnDisThre",
         "omni_dir_goal_threshold": "omniDirGoalThre",
         "omni_dir_diff_threshold": "omniDirDiffThre",
@@ -50,21 +51,20 @@ class PathFollowerConfig(NativeModuleConfig):
     }
 
     look_ahead_distance: float = 0.5  # m
-    max_speed: float = 0.75  # m/s
-    max_yaw_rate: float = 40.0  # deg/s (C++ converts to rad/s internally)
+    max_speed: float = 1.0  # m/s (original default)
+    max_yaw_rate: float = 45.0  # deg/s (C++ converts to rad/s internally)
 
-    goal_tolerance: float = 0.3  # m
-
-    vehicle_config: str = "omniDir"  # "omniDir" or "standard"
-    omni_dir_goal_threshold: float = 0.5  # m, set to 0 to disable omni mode
+    omni_dir_goal_threshold: float = 1.0  # m, set to 0 to disable omni mode
     omni_dir_diff_threshold: float = 1.5  # rad
 
     autonomy_mode: bool | None = None
-    autonomy_speed: float = 0.75  # m/s
+    autonomy_speed: float = 1.0  # m/s (original default)
+    joy_to_speed_delay: float = 2.0  # s, delay before /speed topic overrides joy
 
-    two_way_drive: bool = False
-    max_acceleration: float = 1.5  # m/s^2
-    slow_down_distance_threshold: float = 0.875  # m
+    two_way_drive: bool = True  # original default
+    max_acceleration: float = 1.0  # m/s^2 (original default)
+    use_fixed_accel_rate: bool = True  # True=original maxAccel/100 per tick, False=maxAccel*dt
+    slow_down_distance_threshold: float = 1.0  # m (original default)
 
 
 class PathFollower(NativeModule):
@@ -82,6 +82,7 @@ class PathFollower(NativeModule):
 
     path: In[NavPath]
     odometry: In[Odometry]
+    speed: In[Float32]
     slow_down: In[Int8]
     safety_stop: In[Int8]
     cmd_vel: Out[Twist]
