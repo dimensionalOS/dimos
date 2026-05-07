@@ -182,7 +182,6 @@ class LocalPlanner(NativeModule):
 
     path: Out[NavPath]
     effective_cmd_vel: Out[Twist]
-    obstacle_cloud: Out[PointCloud2]
     free_paths: Out[PointCloud2]
     slow_down: Out[Int8]
     goal_reached: Out[Bool]
