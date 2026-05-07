@@ -78,16 +78,6 @@ ping $ROBOT_IP
 
 2. Built-in obstacle avoidance is on. (DimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots)
 
-3. If video is not in sync with lidar/robot position, sync your clock with an NTP server
-
-```bash
-sudo ntpdate pool.ntp.org
-```
-or
-```bash
-sudo sntp -sS pool.ntp.org
-```
-
 ### Ready to run DimOS
 
 ```bash
