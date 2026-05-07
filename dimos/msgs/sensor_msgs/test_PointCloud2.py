@@ -82,6 +82,51 @@ def test_lcm_encode_decode() -> None:
     print("✓ LCM encode/decode test passed - all properties preserved!")
 
 
+def test_lcm_intensity_round_trip() -> None:
+    """Test that intensity values survive an lcm_encode → lcm_decode round trip."""
+    points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=np.float32)
+    intensities = np.array([0.25, 1.1, 0.0], dtype=np.float32)
+
+    original = PointCloud2.from_numpy(
+        points, frame_id="map", timestamp=42.0, intensities=intensities
+    )
+
+    # Verify getter before encoding
+    got = original.intensities_f32()
+    assert got is not None, "intensities_f32() returned None on source cloud"
+    np.testing.assert_allclose(got, intensities, atol=1e-6)
+
+    # Round-trip through LCM
+    binary = original.lcm_encode()
+    decoded = PointCloud2.lcm_decode(binary)
+
+    # Positions preserved
+    decoded_pts, _ = decoded.as_numpy()
+    np.testing.assert_allclose(decoded_pts.astype(np.float32), points, atol=1e-6)
+
+    # Intensities preserved
+    decoded_intensities = decoded.intensities_f32()
+    assert decoded_intensities is not None, "intensities lost after lcm_decode"
+    np.testing.assert_allclose(decoded_intensities, intensities, atol=1e-6)
+
+
+def test_lcm_no_intensity_round_trip() -> None:
+    """Clouds without intensity should round-trip without creating spurious intensities."""
+    points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+    original = PointCloud2.from_numpy(points, frame_id="map", timestamp=1.0)
+
+    assert original.intensities_f32() is None
+
+    binary = original.lcm_encode()
+    decoded = PointCloud2.lcm_decode(binary)
+
+    # No intensities should appear (all-zero wire data is ignored)
+    assert decoded.intensities_f32() is None, "Spurious intensities created from zero wire data"
+
+    decoded_pts, _ = decoded.as_numpy()
+    np.testing.assert_allclose(decoded_pts.astype(np.float32), points, atol=1e-6)
+
+
 def test_bounding_box_intersects() -> None:
     """Test bounding_box_intersects method with various scenarios."""
     # Test 1: Overlapping boxes
