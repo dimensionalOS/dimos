@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -55,7 +56,7 @@ class PathFollowerConfig(NativeModuleConfig):
 
     goal_tolerance: float = 0.3  # m
 
-    vehicle_config: str = "omniDir"  # "omniDir" or "standard"
+    vehicle_config: Literal["omniDir", "standard"] = "omniDir"
     omni_dir_goal_threshold: float = 0.5  # m, set to 0 to disable omni mode
     omni_dir_diff_threshold: float = 1.5  # rad
 
