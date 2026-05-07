@@ -41,7 +41,11 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.type.lidar import RawLidarMsg, pointcloud2_from_webrtc_lidar
+from dimos.robot.unitree.type.lidar import (
+    RawLidarMsg,
+    pointcloud2_from_webrtc_lidar,
+    repair_stale_ts,
+)
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.decorators.decorators import simple_mcache
@@ -248,7 +252,12 @@ class UnitreeWebRTCConnection(Resource):
 
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
-        return backpressure(self.raw_lidar_stream().pipe(ops.map(pointcloud2_from_webrtc_lidar)))
+        return backpressure(
+            self.raw_lidar_stream().pipe(
+                ops.map(pointcloud2_from_webrtc_lidar),
+                repair_stale_ts(),
+            )
+        )
 
     @simple_mcache
     def tf_stream(self) -> Observable[Transform]:
