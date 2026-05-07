@@ -159,12 +159,6 @@ LOGGED_METRICS = (
 )
 
 
-def _role_name(worker: dict[str, Any]) -> str:
-    modules = worker.get("modules") or []
-    if modules:
-        return "_".join(str(m) for m in modules)
-    return f"worker_{worker.get('worker_id', 'unknown')}"
-
 
 def _compute_ranges(data_dicts: list[dict[str, Any]]) -> dict[str, tuple[float, float]]:
     """(min, max) per metric across all processes (for relative coloring)."""
@@ -250,7 +244,9 @@ class ResourceSpyApp(App[None]):
             ts = time.time()
             self._log_role("coordinator", msg.get("coordinator") or {}, ts)
             for worker in msg.get("workers") or []:
-                self._log_role(_role_name(worker), worker, ts)
+                modules = worker.get("modules") or []
+                if modules:
+                    self._log_role("_".join(str(m) for m in modules), worker, ts)
 
     def _log_role(self, role: str, data: dict[str, Any], ts: float) -> None:
         for metric in LOGGED_METRICS:

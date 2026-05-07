@@ -234,6 +234,8 @@ def render(plot: Plot, width: float = 10, height: float = 3.5) -> str:
                 facecolor="#1a1a2e",
                 edgecolor="#2a2a4a",
                 framealpha=0.9,
+                loc="center left",
+                bbox_to_anchor=(1.02, 0.5),
             )
 
         ax.set_xlabel("time (s)")
@@ -246,10 +248,10 @@ def render(plot: Plot, width: float = 10, height: float = 3.5) -> str:
         n_twins = sum(1 for k in axes if k is not None)
         if n_twins >= 2:
             extras = n_twins - 1
-            right_margin = max(0.6, 0.95 - twin_offset_step * extras)
+            right_margin = max(0.5, 0.75 - twin_offset_step * extras)
             fig.subplots_adjust(left=0.08, right=right_margin, top=0.95, bottom=0.18)
         else:
-            fig.tight_layout()
+            fig.subplots_adjust(left=0.08, right=0.75, top=0.95, bottom=0.18)
 
         buf = io.StringIO()
         fig.savefig(buf, format="svg")
