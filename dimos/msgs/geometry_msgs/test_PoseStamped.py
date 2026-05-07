@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import pickle
 import time
 
+import pytest
+
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 def test_lcm_encode_decode() -> None:
@@ -53,3 +58,37 @@ def test_pickle_encode_decode() -> None:
     assert isinstance(pose_dest, PoseStamped)
     assert pose_dest is not pose_source
     assert pose_dest == pose_source
+
+
+def test_agent_encode_returns_absolute_fields() -> None:
+    """Test that agent_encode returns frame_id, x, y, z, and yaw_deg."""
+
+    pose = PoseStamped(
+        position=Vector3(1.0, 2.0, 3.0),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, math.radians(45.0))),
+        frame_id="map",
+    )
+    encoded = pose.agent_encode()
+
+    assert set(encoded.keys()) == {"frame_id", "x", "y", "z", "yaw_deg"}
+    assert encoded["frame_id"] == "map"
+    assert encoded["x"] == pytest.approx(1.0)
+    assert encoded["y"] == pytest.approx(2.0)
+    assert encoded["z"] == pytest.approx(3.0)
+    assert encoded["yaw_deg"] == pytest.approx(45.0, abs=0.1)
+
+
+def test_agent_encode_rounds_values() -> None:
+    """Test that agent_encode rounds position to 3 dp and yaw to 1 dp."""
+
+    pose = PoseStamped(
+        position=Vector3(1.23456, 2.34567, 3.45678),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, math.radians(45.123))),
+        frame_id="map",
+    )
+    encoded = pose.agent_encode()
+
+    assert encoded["x"] == pytest.approx(1.235)
+    assert encoded["y"] == pytest.approx(2.346)
+    assert encoded["z"] == pytest.approx(3.457)
+    assert encoded["yaw_deg"] == pytest.approx(45.1, abs=0.05)

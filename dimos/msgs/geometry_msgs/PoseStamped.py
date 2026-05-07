@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import TYPE_CHECKING, BinaryIO, TypeAlias
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeAlias
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -81,6 +81,23 @@ class PoseStamped(Pose, Timestamped):
             f"PoseStamped(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "
             f"euler=[{math.degrees(self.roll):.1f}, {math.degrees(self.pitch):.1f}, {math.degrees(self.yaw):.1f}])"
         )
+
+    def agent_encode(self) -> dict[str, Any]:
+        """Render the pose for an LLM agent.
+
+        Returns a flat dict with ``frame_id``, ``x``, ``y``, ``z``,
+        ``yaw_deg``. Pass these straight into navigation skills (e.g.
+        ``navigate_to_position``) to act on the pose. To reason about
+        the pose relative to the robot, the agent should fetch its own
+        pose (e.g. via ``current_pose``) and combine the two.
+        """
+        return {
+            "frame_id": self.frame_id,
+            "x": round(self.x, 3),
+            "y": round(self.y, 3),
+            "z": round(self.z, 3),
+            "yaw_deg": round(math.degrees(self.yaw), 1),
+        }
 
     def to_rerun(self) -> Archetype:
         """Convert to rerun Transform3D format.

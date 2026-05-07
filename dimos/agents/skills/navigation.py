@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import time
 from typing import Any
 
@@ -35,6 +36,14 @@ from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+def _make_position_goal(x: float, y: float, yaw_rad: float, frame_id: str) -> PoseStamped:
+    return PoseStamped(
+        position=make_vector3(x, y, 0.0),
+        orientation=Quaternion.from_euler(make_vector3(0.0, 0.0, yaw_rad)),
+        frame_id=frame_id,
+    )
 
 
 class NavigationSkillContainer(Module):
@@ -244,6 +253,78 @@ class NavigationSkillContainer(Module):
         return self._navigate_to(goal_pose, message)
 
     @skill
+    def navigate_to_position(
+        self,
+        x: float,
+        y: float,
+        yaw_deg: float = 0.0,
+        frame_id: str = "map",
+    ) -> str:
+        """Navigate to an absolute position in the given frame.
+
+        Use this to act on a pose returned by another tool — pass its x, y, yaw_deg, and frame_id straight in.
+
+        Args:
+            x: target x in meters
+            y: target y in meters
+            yaw_deg: final heading in degrees, 0 = facing +x
+            frame_id: coordinate frame
+        """
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+
+        goal = _make_position_goal(x, y, math.radians(yaw_deg), frame_id)
+        return self._navigate_to(goal, f"Heading to ({x:.2f}, {y:.2f}) in {frame_id}")
+
+    @skill
+    def rotate_toward_position(
+        self,
+        x: float,
+        y: float,
+        frame_id: str = "map",
+    ) -> str:
+        """Rotate in place to face an absolute position in the given frame.
+
+        Pass the target x and y from a pose's fields. Yaw is computed against the robot's current odometry.
+
+        Args:
+            x: target x in meters
+            y: target y in meters
+            frame_id: coordinate frame
+        """
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+
+        if self._latest_odom is None:
+            return "No odometry data received yet, cannot rotate."
+
+        cur_x = self._latest_odom.position.x
+        cur_y = self._latest_odom.position.y
+        yaw_rad = math.atan2(y - cur_y, x - cur_x)
+
+        goal = _make_position_goal(cur_x, cur_y, yaw_rad, frame_id)
+        return self._navigate_to(goal, f"Rotating to face ({x:.2f}, {y:.2f}) in {frame_id}")
+
+    @skill
+    def current_pose(self) -> str:
+        """Return the robot's current pose.
+
+        Use this to reason about a target pose relative to the robot (e.g. distance or bearing). Compare only against poses with the same frame_id.
+        """
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+
+        if self._latest_odom is None:
+            return "No odometry data received yet."
+
+        data = self._latest_odom.agent_encode()
+        return (
+            f"Pose: ({data['x']}, {data['y']}, {data['z']})\n"
+            f"Yaw: {data['yaw_deg']}°\n"
+            f"Frame: {data['frame_id']}"
+        )
+
+    @skill
     def stop_navigation(self) -> str:
         """Immediatly stop moving."""
 
@@ -273,8 +354,4 @@ class NavigationSkillContainer(Module):
         pos_y = first.get("pos_y", 0)
         theta = first.get("rot_z", 0)
 
-        return PoseStamped(
-            position=make_vector3(pos_x, pos_y, 0),
-            orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
-            frame_id="map",
-        )
+        return _make_position_goal(pos_x, pos_y, theta, "map")
