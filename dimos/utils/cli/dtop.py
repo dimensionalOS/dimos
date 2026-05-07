@@ -153,11 +153,17 @@ _IO_KEYS = ("io_read_bytes", "io_write_bytes")
 _ALL_KEYS = {key for _, key, _ in _LINE1 + _LINE2} | set(_IO_KEYS)
 
 LOGGED_METRICS = (
-    "cpu_percent", "pss", "num_threads", "num_children", "num_fds",
-    "cpu_time_user", "cpu_time_system", "cpu_time_iowait",
-    "io_read_bytes", "io_write_bytes",
+    "cpu_percent",
+    "pss",
+    "num_threads",
+    "num_children",
+    "num_fds",
+    "cpu_time_user",
+    "cpu_time_system",
+    "cpu_time_iowait",
+    "io_read_bytes",
+    "io_write_bytes",
 )
-
 
 
 def _compute_ranges(data_dicts: list[dict[str, Any]]) -> dict[str, tuple[float, float]]:
@@ -209,6 +215,7 @@ class ResourceSpyApp(App[None]):
 
         if db_path is not None:
             from dimos.memory2.store.sqlite import SqliteStore
+
             self._store: SqliteStore | None = SqliteStore(path=db_path)
             self._store.start()
         else:
