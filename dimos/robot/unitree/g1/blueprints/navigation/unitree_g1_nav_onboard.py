@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 nav onboard blueprint: FAR planner + PGO + local obstacle avoidance."""
-
 from __future__ import annotations
 
 import os

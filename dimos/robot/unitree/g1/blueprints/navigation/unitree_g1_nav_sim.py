@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 nav sim blueprint: SimplePlanner + PGO + local obstacle avoidance."""
-
 from __future__ import annotations
 
 from typing import Any
