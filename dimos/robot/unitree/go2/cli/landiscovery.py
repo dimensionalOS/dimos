@@ -109,7 +109,7 @@ def discover(timeout: float = 2.0, iface_ip: str | None = None) -> list[Go2Devic
     Args:
         timeout: seconds to wait for replies after sending the probe.
         iface_ip: pin multicast to this local IPv4 address. If None, probe every
-            non-tunnel interface in parallel.
+            non-tunnel interfacel.
     """
     targets: list[tuple[str | None, str]] = (
         [(None, iface_ip)] if iface_ip else list(_candidate_ifaces())
