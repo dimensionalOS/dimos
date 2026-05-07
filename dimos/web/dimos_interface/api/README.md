@@ -8,10 +8,7 @@ This is a minimal FastAPI server implementation that provides API endpoints for 
 # Navigate to the api directory
 cd api
 
-# Install minimal requirements
-pip install -r requirements.txt
-
-# Run the server
+# Run the server (install the project's `web` extra first, e.g. `pip install -e '.[web]'`)
 python unitree_server.py
 ```
 
