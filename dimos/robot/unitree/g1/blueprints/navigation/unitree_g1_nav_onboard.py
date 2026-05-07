@@ -54,9 +54,9 @@ unitree_g1_nav_onboard = (
                 "publish_free_paths": False,
             },
             simple_planner={
-                "cell_size": 0.3,
-                "obstacle_height_threshold": 0.20,
-                "inflation_radius": 0.4,
+                "cell_size": 0.2,
+                "obstacle_height_threshold": 0.14,
+                "inflation_radius": 0.5,
                 "lookahead_distance": 2.0,
                 "replan_rate": 5.0,
                 "replan_cooldown": 2.0,

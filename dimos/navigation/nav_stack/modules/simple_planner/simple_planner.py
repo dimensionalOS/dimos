@@ -34,7 +34,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
+from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM, FRAME_SENSOR
 
 logger = setup_logger()
 
@@ -276,7 +276,7 @@ def astar(
 class SimplePlannerConfig(ModuleConfig):
     world_frame: str = FRAME_MAP
     body_frame: str = FRAME_BODY
-    sensor_frame: str = "sensor"
+    sensor_frame: str = FRAME_SENSOR
 
     cell_size: float = 0.3  # m per cell
     obstacle_height_threshold: float = 0.15  # m above ground

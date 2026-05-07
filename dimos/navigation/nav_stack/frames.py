@@ -26,3 +26,4 @@ Follows the ROS REP-105 frame convention:
 FRAME_MAP = "map"
 FRAME_ODOM = "odom"
 FRAME_BODY = "body"
+FRAME_SENSOR = "sensor"
