@@ -28,8 +28,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
-import time
 import threading
+import time
 from typing import Any, Generic, TypeVar, cast
 
 import reactivex as rx
