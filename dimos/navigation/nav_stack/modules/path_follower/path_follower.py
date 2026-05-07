@@ -58,7 +58,7 @@ class PathFollowerConfig(NativeModuleConfig):
     omni_dir_diff_threshold: float = 1.5  # rad
 
     autonomy_mode: bool | None = None
-    autonomy_speed: float = 1.0  # m/s (original default)
+    autonomy_speed: float = 0.0  # m/s — start at 0, /speed topic sets actual speed
     joy_to_speed_delay: float = 2.0  # s, delay before /speed topic overrides joy
 
     two_way_drive: bool = True  # original default

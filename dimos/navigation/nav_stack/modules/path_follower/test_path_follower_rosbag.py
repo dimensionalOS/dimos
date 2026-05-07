@@ -224,11 +224,47 @@ class TestPathFollowerRosbag:
             logger.info(f"  Our max speed:      {our_speeds.max():.3f} m/s")
         if len(ref_speeds) > 0:
             logger.info(f"  Ref max speed:      {ref_speeds.max():.3f} m/s")
+
+        # Yaw rate comparison (steady-state)
+        ref_yaws = np.abs(ref_nonzero[:, -1]) if len(ref_nonzero) > 0 else np.array([])
+        our_yaws = np.array([abs(az) for _, _, az in our_nonzero]) if our_nonzero else np.array([])
+        ref_steady_yaw = ref_yaws[ref_speeds > 0.5] if len(ref_yaws) > 0 else np.array([])
+        our_steady_yaw = our_yaws[our_speeds > 0.5] if len(our_yaws) > 0 else np.array([])
+        yaw_ratio = (
+            float(our_steady_yaw.mean() / ref_steady_yaw.mean())
+            if len(ref_steady_yaw) > 0
+            and len(our_steady_yaw) > 0
+            and ref_steady_yaw.mean() > 0.01
+            else 1.0  # If ref yaw is near-zero, skip ratio check
+        )
+
+        logger.info(f"  Yaw rate ratio:     {yaw_ratio:.3f}  (steady-state)")
         logger.info(f"{'=' * 60}\n")
 
+        # --- Assertions (tightened to observed behavior ±5%) ---
         assert len(our_cmds) > 0, "PathFollower produced no cmd_vel"
         assert len(our_nonzero) > 0, "All cmd_vel are zero"
-        # Steady-state speeds should be within 15% of reference
-        assert 0.8 < steady_ratio < 1.2, (
-            f"Steady-state speed ratio {steady_ratio:.3f} outside [0.8, 1.2] tolerance"
+
+        # Count ratio: we expect ~1.02x reference (timing jitter)
+        count_ratio = len(our_cmds) / len(ref_cmd)
+        assert 0.9 < count_ratio < 1.1, (
+            f"Message count ratio {count_ratio:.3f} outside [0.9, 1.1]"
         )
+
+        # Steady-state speed: observed 0.955, allow ±5%
+        assert 0.9 < steady_ratio < 1.05, (
+            f"Steady-state speed ratio {steady_ratio:.3f} outside [0.9, 1.05]"
+        )
+
+        # Max speed must match exactly (same autonomySpeed cap)
+        if len(ref_speeds) > 0 and len(our_speeds) > 0:
+            max_speed_ratio = float(our_speeds.max() / ref_speeds.max())
+            assert 0.95 < max_speed_ratio < 1.05, (
+                f"Max speed ratio {max_speed_ratio:.3f} outside [0.95, 1.05]"
+            )
+
+        # Yaw rate: should be in same ballpark (±30% — more variable than speed)
+        if ref_steady_yaw.mean() > 0.01:
+            assert 0.7 < yaw_ratio < 1.3, (
+                f"Steady-state yaw ratio {yaw_ratio:.3f} outside [0.7, 1.3]"
+            )
