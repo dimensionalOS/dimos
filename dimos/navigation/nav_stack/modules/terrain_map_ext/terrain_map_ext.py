@@ -28,10 +28,11 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.nav_stack.frames import FRAME_MAP
 
 
 class TerrainMapExtConfig(ModuleConfig):
-    world_frame: str = "map"
+    world_frame: str = FRAME_MAP
     voxel_size: float = 0.4  # meters per voxel (coarser than local)
     decay_time: float = 8.0  # seconds before points expire
     publish_rate: float = 2.0  # Hz

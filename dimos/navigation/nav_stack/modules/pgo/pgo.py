@@ -36,14 +36,13 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
+from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
 
 logger = setup_logger()
 
 
 class PGOConfig(ModuleConfig):
-    # TF frame name for the world / map root.  odom and body frame names are
-    # fixed by REP-105 convention (odom, base_link) and aren't config knobs.
-    world_frame: str = "map"
+    world_frame: str = FRAME_MAP
 
     # Keyframe detection
     key_pose_delta_trans: float = 0.5
@@ -397,13 +396,13 @@ def build_corrected_odometry(
     r: np.ndarray,
     t: np.ndarray,
     ts: float,
-    world_frame: str = "map",
+    world_frame: str = FRAME_MAP,
 ) -> Odometry:
     q = Rotation.from_matrix(r).as_quat()  # [x,y,z,w]
     return Odometry(
         ts=ts,
         frame_id=world_frame,
-        child_frame_id="base_link",
+        child_frame_id=FRAME_BODY,
         pose=Pose(
             position=[float(t[0]), float(t[1]), float(t[2])],
             orientation=[float(q[0]), float(q[1]), float(q[2]), float(q[3])],
@@ -415,8 +414,8 @@ def build_map_odom_tf(
     r_offset: np.ndarray,
     t_offset: np.ndarray,
     ts: float,
-    world_frame: str = "map",
-    odom_frame: str = "odom",
+    world_frame: str = FRAME_MAP,
+    odom_frame: str = FRAME_ODOM,
 ) -> Transform:
     q = Rotation.from_matrix(r_offset).as_quat()  # [x,y,z,w]
     return Transform(
