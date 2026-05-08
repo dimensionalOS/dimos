@@ -61,7 +61,7 @@ nav_config = dict(
         "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
         "min_relative_z": -1.5,
         "freeze_ang": 180.0,
-        "obstacle_height_threshold": 0.01,
+        "obstacle_height_threshold": 0.02,
     },
     path_follower={
         "max_acceleration": 4.0,
