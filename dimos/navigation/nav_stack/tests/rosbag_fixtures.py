@@ -107,7 +107,12 @@ def make_odometry_msg(
 
 
 def make_pointcloud_msg(points: np.ndarray, ts: float, frame_id: str = "map") -> PointCloud2:
-    return PointCloud2.from_numpy(points.astype(np.float32), frame_id=frame_id, timestamp=ts)
+    pts = points.astype(np.float32)
+    if pts.ndim == 2 and pts.shape[1] >= 4:
+        return PointCloud2.from_numpy(
+            pts[:, :3], frame_id=frame_id, timestamp=ts, intensities=pts[:, 3]
+        )
+    return PointCloud2.from_numpy(pts, frame_id=frame_id, timestamp=ts)
 
 
 def make_waypoint_msg(
@@ -159,11 +164,11 @@ class NativeProcessRunner:
     args: list[str]
     process: subprocess.Popen[bytes] | None = field(default=None, repr=False)
 
-    def start(self) -> None:
+    def start(self, capture_stderr: bool = False) -> None:
         self.process = subprocess.Popen(
             [self.binary_path, *self.args],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
             start_new_session=True,
         )
 
