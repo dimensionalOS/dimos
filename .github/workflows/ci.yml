@@ -163,6 +163,24 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Source ROS environment
+        # The uv venv is sealed (include-system-site-packages = false), so
+        # `import rclpy` / `ament_index_python` would fail. Sourcing the ROS
+        # setup script and exporting PYTHONPATH/AMENT_PREFIX_PATH/etc into
+        # GITHUB_ENV makes them importable from `uv run`.
+        if: contains(toJSON(matrix.runner), 'Linux')
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          {
+            echo "PYTHONPATH=$PYTHONPATH"
+            echo "AMENT_PREFIX_PATH=$AMENT_PREFIX_PATH"
+            echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
+            echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+            echo "ROS_DISTRO=$ROS_DISTRO"
+            echo "ROS_VERSION=$ROS_VERSION"
+            echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
+          } >> "$GITHUB_ENV"
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not (tool or mujoco)'
       - name: Re-run the failing tests with maximum verbosity
