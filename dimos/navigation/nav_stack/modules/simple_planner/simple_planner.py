@@ -305,6 +305,10 @@ class SimplePlannerConfig(ModuleConfig):
     progress_epsilon: float = 0.25  # m
     stuck_shrink_factor: float = 0.5
     stuck_min_inflation: float = 0.05  # m
+    # Cancel navigation when within this distance of the goal. Should be
+    # slightly larger than LocalPlanner/PathFollower thresholds so
+    # SimplePlanner stops before they do (avoiding stale waypoints).
+    goal_reached_threshold: float = 0.39  # m
 
 
 class SimplePlanner(Module):
@@ -667,6 +671,10 @@ class SimplePlanner(Module):
 
         mono_now = time.monotonic()
         goal_dist = math.hypot(gx - rx, gy - ry)
+
+        if goal_dist <= self.config.goal_reached_threshold:
+            self._cancel_navigation(source="goal_reached")
+            return
         now = time.time()
 
         # If it's too soon for a fresh A*, skip — the waypoint loop

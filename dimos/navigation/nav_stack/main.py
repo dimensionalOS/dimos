@@ -50,6 +50,7 @@ def create_nav_stack(
     use_native_pgo: bool = False,
     vehicle_height: float | None = None,
     max_speed: float | None = None,
+    waypoint_threshold: float | None = None,
     terrain_voxel_size: float = 0.2,
     replan_rate: float = 0.5,
     record: bool = False,
@@ -79,6 +80,14 @@ def create_nav_stack(
     # Propagate vehicle_height to far_planner config
     if vehicle_height is not None:
         far_planner_config.setdefault("vehicle_height", vehicle_height)
+
+    local_planner_config = {**(local_planner or {})}
+    path_follower_config = {**(path_follower or {})}
+    simple_planner_config = {**(simple_planner or {})}
+    if waypoint_threshold is not None:
+        local_planner_config.setdefault("goal_reached_threshold", waypoint_threshold)
+        path_follower_config.setdefault("goal_tolerance", waypoint_threshold)
+        simple_planner_config.setdefault("goal_reached_threshold", waypoint_threshold)
 
     pgo_module: Blueprint
     if use_native_pgo:
@@ -131,7 +140,7 @@ def create_nav_stack(
                 "max_relative_z": 0.3,
                 "min_relative_z": -0.4,
                 "two_way_drive": False,
-                **(local_planner or {}),
+                **local_planner_config,
             }
         ),
         PathFollower.blueprint(
@@ -143,7 +152,7 @@ def create_nav_stack(
                 "slow_down_distance_threshold": 1.0,
                 "omni_dir_goal_threshold": 1.0,
                 "two_way_drive": False,
-                **(path_follower or {}),
+                **path_follower_config,
             }
         ),
         pgo_module,
@@ -152,13 +161,13 @@ def create_nav_stack(
         sp_config: dict[str, Any] = {"replan_rate": replan_rate}
         if vehicle_height is not None:
             sp_config["ground_offset_below_robot"] = vehicle_height
-        sp_config.update(simple_planner or {})
+        sp_config.update(simple_planner_config)
         modules.append(SimplePlanner.blueprint(**sp_config))
     elif planner == "far":
         modules.append(FarPlanner.blueprint(**far_planner_config))
     else:
-        raise Exception(f'invalid planner: {planner}')
-    
+        raise Exception(f"invalid planner: {planner}")
+
     if use_terrain_map_ext:
         modules.append(
             TerrainMapExt.blueprint(
@@ -421,12 +430,13 @@ def _goal_path_colors(path_msg: Any) -> Any:
         # robot.  Explicitly clear edges and replace nodes with a single grey
         # marker so the viewer reads "goal cleared, holding here" instead of
         # showing the stale path from before the cancel.
-        cancel_point = (
-            [[poses[0].x, poses[0].y, poses[0].z + _VIS_LIFT]] if poses else []
-        )
+        cancel_point = [[poses[0].x, poses[0].y, poses[0].z + _VIS_LIFT]] if poses else []
         return [
             ("world/goal_path/edges", rr.LineStrips3D([])),
-            ("world/goal_path/nodes", rr.Points3D(cancel_point, colors=[(160, 160, 160)], radii=0.18)),
+            (
+                "world/goal_path/nodes",
+                rr.Points3D(cancel_point, colors=[(160, 160, 160)], radii=0.18),
+            ),
         ]
 
     points = [[p.x, p.y, p.z + _VIS_LIFT] for p in poses]
@@ -527,7 +537,10 @@ def _goal_path_colors_debug(path_msg: Any) -> Any:
         )
         return [
             ("world/goal_path/edges", rr.LineStrips3D([])),
-            ("world/goal_path/nodes", rr.Points3D(cancel_point, colors=[(160, 160, 160)], radii=0.18)),
+            (
+                "world/goal_path/nodes",
+                rr.Points3D(cancel_point, colors=[(160, 160, 160)], radii=0.18),
+            ),
         ]
 
     points = [[p.x, p.y, p.z + _AGENTIC_DEBUG_PATH_LIFT] for p in poses]
