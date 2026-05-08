@@ -40,11 +40,17 @@ unitree_g1_nav_onboard = (
             config="default.yaml",
         ),
         create_nav_stack(
-            planner="far",
+            planner="simple",
             vehicle_height=G1.height_clearance,
             max_speed=0.6,
             far_planner={
-                "is_static_env": False,
+                "is_static_env": False,     
+                "dyobs_update_thred": 0,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+                "obs_inflate_size": 0,
+                "dynamic_obs_decay_time": 0.2,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
+                "new_points_decay_time": 0.2,
+                "clear_dumper_thred": 1,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+                "update_rate": 10.0,
             },
             terrain_analysis={
                 "no_decay_distance": 0,
