@@ -47,7 +47,6 @@ unitree_g1_nav_onboard = (
                 "is_static_env": False,
             },
             terrain_analysis={
-                "no_decay_distance": 0,
                 "obstacle_height_threshold": 0.01,
                 "ground_height_threshold": 0.01,
                 "sensor_range": 40, # meters
