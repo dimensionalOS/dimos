@@ -97,9 +97,17 @@ class ContourPolygons3D(Timestamped):
 
     def to_rerun(
         self,
-        z_offset: float = 1.5,
+        z_offset: float = 0.0,
+        color: tuple[int, int, int, int] = (220, 30, 30, 255),
+        radii: float = 0.08,
     ) -> Archetype:
-        """Render polygon outlines as ``rr.LineStrips3D`` — pink closed loops."""
+        """Render polygon outlines as ``rr.LineStrips3D`` closed loops.
+
+        ``z_offset`` is the *absolute* render height — the source point's z
+        is discarded.  The C++ FAR planner emits contours at the lidar mount
+        height (~1.2 m), which is too high for a flat 2D obstacle outline,
+        so the visualization pins them to a fixed display height instead.
+        """
         import rerun as rr
 
         pts = self._parse_xyzi()
@@ -116,7 +124,7 @@ class ContourPolygons3D(Timestamped):
             if len(verts) < 3:
                 continue
             # Close the polygon by appending first vertex at the end
-            ring = [[v[0], v[1], v[2] + z_offset] for v in verts]
+            ring = [[v[0], v[1], z_offset] for v in verts]
             ring.append(ring[0])
             strips.append(ring)
 
@@ -125,8 +133,8 @@ class ContourPolygons3D(Timestamped):
 
         return rr.LineStrips3D(
             strips,
-            colors=[(255, 50, 200, 255)] * len(strips),  # bright pink
-            radii=[0.15] * len(strips),  # thick lines
+            colors=[color] * len(strips),
+            radii=[radii] * len(strips),
         )
 
     def __str__(self) -> str:
