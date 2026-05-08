@@ -46,6 +46,7 @@ def _rerun_blueprint() -> Any:
         collapse_panels=True,
     )
 
+
 nav_config = dict(
     planner="simple",
     vehicle_height=G1.height_clearance,

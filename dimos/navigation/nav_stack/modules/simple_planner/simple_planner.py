@@ -109,6 +109,12 @@ _NEIGHBOURS: tuple[tuple[int, int, float], ...] = tuple(
     (dx, dy, math.hypot(dx, dy)) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0)
 )
 
+_COSTMAP_PUBLISH_PERIOD = 0.5  # s (~2 Hz, plenty for rerun visualization)
+_COSTMAP_VIS_Z_LIFT = 0.1  # m above ground plane so costmap floats above terrain
+_TF_WARN_THROTTLE = 5.0  # s between repeated TF-missing warnings
+_COLOR_OBSTACLE = (1.0, 40.0 / 255.0, 40.0 / 255.0)  # red
+_COLOR_INFLATION = (1.0, 165.0 / 255.0, 0.0)  # orange
+
 
 @dataclass
 class StuckState:
@@ -413,7 +419,7 @@ class SimplePlanner(Module):
         tf = resolve_tf_chain(self.tf, list(self._tf_pose_queries))
         if tf is None:
             now = time.monotonic()
-            if now - self._last_tf_warn > 5.0:
+            if now - self._last_tf_warn > _TF_WARN_THROTTLE:
                 self._last_tf_warn = now
                 buffers = list(self.tf.buffers.keys()) if hasattr(self.tf, "buffers") else []
                 logger.warning(
@@ -628,7 +634,7 @@ class SimplePlanner(Module):
         Per-point colors: red for true obstacles (cells whose recorded height
         clears ``obstacle_height``), orange for inflation padding around them.
         """
-        if now - self._last_costmap_pub < 0.5:
+        if now - self._last_costmap_pub < _COSTMAP_PUBLISH_PERIOD:
             return
         self._last_costmap_pub = now
         with self._costmap_lock:
@@ -642,16 +648,18 @@ class SimplePlanner(Module):
         else:
             pts = np.empty((len(blocked), 3), dtype=np.float32)
             colors = np.empty((len(blocked), 3), dtype=np.float32)
-            z = rz - self.config.ground_offset_below_robot + 0.1
-            red = (1.0, 40.0 / 255.0, 40.0 / 255.0)
-            orange = (1.0, 165.0 / 255.0, 0.0)
+            z = rz - self.config.ground_offset_below_robot + _COSTMAP_VIS_Z_LIFT
             for i, cell in enumerate(blocked):
                 ix, iy = cell
                 wx, wy = cm.cell_to_world(ix, iy)
                 pts[i, 0] = wx
                 pts[i, 1] = wy
                 pts[i, 2] = z
-                colors[i] = red if heights.get(cell, float("-inf")) >= obstacle_height else orange
+                colors[i] = (
+                    _COLOR_OBSTACLE
+                    if heights.get(cell, float("-inf")) >= obstacle_height
+                    else _COLOR_INFLATION
+                )
         pcd_t = o3d.t.geometry.PointCloud()
         pcd_t.point["positions"] = o3c.Tensor(pts, dtype=o3c.float32)
         pcd_t.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
@@ -660,7 +668,6 @@ class SimplePlanner(Module):
         )
 
     def _replan_once(self) -> None:
-        # Refresh pose from the TF tree every tick.
         self._query_pose()
 
         with self._lock:
@@ -684,7 +691,6 @@ class SimplePlanner(Module):
                 self._cached_path is not None
                 and mono_now - self._last_plan_time < self.config.replan_cooldown
             )
-        # Publish the debug costmap every tick (throttled internally).
         self._publish_costmap_cloud(rz, now)
 
         if cooldown_active:

@@ -149,12 +149,11 @@ def create_nav_stack(
                 "autonomy_mode": True,
                 "max_speed": 1.0 if max_speed is None else max_speed,
                 "autonomy_speed": 1.0 if max_speed is None else max_speed,
-                "max_acceleration": 1.0,
                 "slow_down_distance_threshold": 1.0,
                 "omni_dir_goal_threshold": 1.0,
                 "two_way_drive": False,
-                "max_yaw_rate": 60.0, # important for smooth movement
-                "max_acceleration": 2.0, # important for smooth movement
+                "max_yaw_rate": 60.0,  # important for smooth movement
+                "max_acceleration": 2.0,  # important for smooth movement
                 **path_follower_config,
             }
         ),

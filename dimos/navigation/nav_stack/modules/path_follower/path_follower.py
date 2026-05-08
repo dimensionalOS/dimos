@@ -19,13 +19,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+from dimos_lcm.std_msgs import Float32
+
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos_lcm.std_msgs import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
 
 

@@ -123,7 +123,7 @@ class MovementManager(Module):
         with self._lock:
             self._teleop_active = True
             self._last_teleop_time = time.monotonic()
-        
+
         self._cancel_goal()
 
         scale = self.config.tele_cmd_vel_scaling

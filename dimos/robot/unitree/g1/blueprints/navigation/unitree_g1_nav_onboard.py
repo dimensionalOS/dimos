@@ -44,18 +44,18 @@ unitree_g1_nav_onboard = (
             vehicle_height=G1.height_clearance,
             max_speed=0.6,
             far_planner={
-                "is_static_env": False,     
-                "dyobs_update_thred": 0,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+                "is_static_env": False,
+                "dyobs_update_thred": 0,
                 "obs_inflate_size": 0,
-                "dynamic_obs_decay_time": 0.2,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
+                "dynamic_obs_decay_time": 0.2,
                 "new_points_decay_time": 0.2,
-                "clear_dumper_thred": 1,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+                "clear_dumper_thred": 1,
                 "update_rate": 10.0,
             },
             terrain_analysis={
                 "obstacle_height_threshold": 0.01,
                 "ground_height_threshold": 0.01,
-                "sensor_range": 40, # meters
+                "sensor_range": 40,  # meters
             },
             local_planner={
                 "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),

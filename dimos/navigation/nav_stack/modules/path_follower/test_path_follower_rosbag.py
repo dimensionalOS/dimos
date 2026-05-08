@@ -232,9 +232,7 @@ class TestPathFollowerRosbag:
         our_steady_yaw = our_yaws[our_speeds > 0.5] if len(our_yaws) > 0 else np.array([])
         yaw_ratio = (
             float(our_steady_yaw.mean() / ref_steady_yaw.mean())
-            if len(ref_steady_yaw) > 0
-            and len(our_steady_yaw) > 0
-            and ref_steady_yaw.mean() > 0.01
+            if len(ref_steady_yaw) > 0 and len(our_steady_yaw) > 0 and ref_steady_yaw.mean() > 0.01
             else 1.0  # If ref yaw is near-zero, skip ratio check
         )
 
@@ -247,9 +245,7 @@ class TestPathFollowerRosbag:
 
         # Count ratio: we expect ~1.02x reference (timing jitter)
         count_ratio = len(our_cmds) / len(ref_cmd)
-        assert 0.9 < count_ratio < 1.1, (
-            f"Message count ratio {count_ratio:.3f} outside [0.9, 1.1]"
-        )
+        assert 0.9 < count_ratio < 1.1, f"Message count ratio {count_ratio:.3f} outside [0.9, 1.1]"
 
         # Steady-state speed: observed 0.955, allow ±5%
         assert 0.9 < steady_ratio < 1.05, (

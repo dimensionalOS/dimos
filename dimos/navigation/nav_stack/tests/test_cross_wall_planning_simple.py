@@ -21,9 +21,10 @@ pytest.importorskip("gtsam")
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.nav_stack.main import create_nav_stack
 from dimos.navigation.nav_stack.tests.conftest import run_cross_wall_test
-from dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_sim import nav_config
-from dimos.simulation.unity.module import UnityBridgeModule
-from dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_sim import unitree_g1_nav_sim
+from dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_sim import (
+    nav_config,
+    unitree_g1_nav_sim,
+)
 
 pytestmark = [pytest.mark.slow, pytest.mark.skipif_in_ci]
 

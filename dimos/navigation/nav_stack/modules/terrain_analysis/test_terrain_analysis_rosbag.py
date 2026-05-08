@@ -42,12 +42,7 @@ pytestmark = [pytest.mark.slow]
 _PROCESS_STARTUP_SEC = 1.0
 _POST_FEED_DRAIN_SEC = 2.0
 
-TERRAIN_ANALYSIS_BIN = (
-    Path(__file__).parent
-    / "result"
-    / "bin"
-    / "terrain_analysis"
-)
+TERRAIN_ANALYSIS_BIN = Path(__file__).parent / "result" / "bin" / "terrain_analysis"
 
 SCAN_LCM = "/rbta_scan#sensor_msgs.PointCloud2"
 ODOM_LCM = "/rbta_odom#nav_msgs.Odometry"

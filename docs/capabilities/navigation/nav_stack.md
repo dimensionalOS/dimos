@@ -32,10 +32,14 @@ All configuration is done through `create_nav_stack()` keyword arguments. Each m
 
 ```python
 create_nav_stack(
-    planner="simple",      # Use A* instead of FAR planner
+    planner="simple",              # "far" (default) or "simple" (A*)
     use_tare=False,                # Add TARE frontier exploration
     use_terrain_map_ext=True,      # Persistent terrain accumulator
     vehicle_height=None,           # Propagated to terrain + planner modules
+    max_speed=None,                # Propagated to local planner + path follower
+    waypoint_threshold=None,       # "Close enough" distance (m) for all modules
+    replan_rate=0.5,               # Global planner replan rate (Hz)
+    record=False,                  # Enable NavRecord module
 
     # Per-module config overrides (dicts merged onto defaults):
     terrain_analysis={...},
@@ -44,7 +48,7 @@ create_nav_stack(
     far_planner={...},
     simple_planner={...},
     pgo={...},
-    movement_manager={...},
+    pgo_native={...},
     tare_planner={...},
     terrain_map_ext={...},
 )

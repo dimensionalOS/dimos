@@ -92,8 +92,6 @@ class GraphNodes3D(Timestamped):
         self.ts = ts if ts != 0 else time.time()
         self.nodes = nodes if nodes is not None else []
 
-    # ── LCM encode / decode ────────────────────────────────────────────
-
     def lcm_encode(self) -> bytes:
         lcm_msg = LCMPath()
         lcm_msg.poses_length = len(self.nodes)
@@ -137,8 +135,6 @@ class GraphNodes3D(Timestamped):
                 )
             )
         return cls(ts=header_ts, frame_id=frame_id, nodes=nodes)
-
-    # ── Rerun visualization ────────────────────────────────────────────
 
     def to_rerun(
         self,
