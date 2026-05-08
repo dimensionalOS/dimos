@@ -51,6 +51,7 @@ def _mujoco_if_sim(sim_path: str, dof: int) -> tuple[Blueprint, ...]:
     return (MujocoSimModule.blueprint(address=sim_path, headless=False, dof=dof),)
 
 
+# Minimal blueprint (no hardware, no tasks)
 coordinator_basic = ControlCoordinator.blueprint(
     tick_rate=100.0,
     publish_joint_state=True,
@@ -61,6 +62,7 @@ coordinator_basic = ControlCoordinator.blueprint(
     }
 )
 
+# Mock 7-DOF arm (for testing)
 _mock_cfg = _catalog_xarm7(name="arm")
 
 coordinator_mock = ControlCoordinator.blueprint(
@@ -72,6 +74,7 @@ coordinator_mock = ControlCoordinator.blueprint(
     }
 )
 
+# XArm7 (real, or MuJoCo with --simulation)
 _xarm7_cfg = _catalog_xarm7(
     name="arm",
     adapter_type="sim_mujoco" if _is_sim else "xarm",
@@ -83,13 +86,14 @@ coordinator_xarm7 = autoconnect(
         hardware=[_xarm7_cfg.to_hardware_component()],
         tasks=[_xarm7_cfg.to_task_config()],
     ),
-    *_mujoco_if_sim(str(XARM7_SIM_PATH), 7),
+    *_mujoco_if_sim(str(XARM7_SIM_PATH), _xarm7_cfg.dof),
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
+# XArm6 (real, or MuJoCo with --simulation)
 _xarm6_cfg = _catalog_xarm6(
     name="arm",
     adapter_type="sim_mujoco" if _is_sim else "xarm",
@@ -101,13 +105,14 @@ coordinator_xarm6 = autoconnect(
         hardware=[_xarm6_cfg.to_hardware_component()],
         tasks=[_xarm6_cfg.to_task_config(task_name="traj_xarm")],
     ),
-    *_mujoco_if_sim(str(XARM6_SIM_PATH), 6),
+    *_mujoco_if_sim(str(XARM6_SIM_PATH), _xarm6_cfg.dof),
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
+# Piper 6-DOF (CAN bus, or MuJoCo with --simulation)
 _piper_cfg = _catalog_piper(
     name="arm",
     adapter_type="sim_mujoco" if _is_sim else "piper",
@@ -119,7 +124,7 @@ coordinator_piper = autoconnect(
         hardware=[_piper_cfg.to_hardware_component()],
         tasks=[_piper_cfg.to_task_config(task_name="traj_piper")],
     ),
-    *_mujoco_if_sim(str(PIPER_SIM_PATH), 6),
+    *_mujoco_if_sim(str(PIPER_SIM_PATH), _piper_cfg.dof),
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),

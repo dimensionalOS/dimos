@@ -61,9 +61,7 @@ def _mujoco_if_sim(sim_path: str, dof: int) -> tuple[Blueprint, ...]:
     return (MujocoSimModule.blueprint(address=sim_path, headless=False, dof=dof),)
 
 
-_xarm6_cfg = _catalog_xarm6(
-    name="arm", adapter_type="xarm", address=global_config.xarm6_ip, add_gripper=False
-)
+_xarm6_cfg = _catalog_xarm6(name="arm", adapter_type="xarm", address=global_config.xarm6_ip)
 _piper_cfg = _catalog_piper(
     name="arm", adapter_type="piper", address=global_config.can_port or "can0"
 )
@@ -85,6 +83,7 @@ _piper_teleop_cfg = _catalog_piper(
     address=str(PIPER_SIM_PATH) if _is_sim else (global_config.can_port or "can0"),
 )
 
+# XArm6 servo - streaming position control
 coordinator_servo_xarm6 = ControlCoordinator.blueprint(
     hardware=[_xarm6_cfg.to_hardware_component()],
     tasks=[
@@ -97,6 +96,7 @@ coordinator_servo_xarm6 = ControlCoordinator.blueprint(
     }
 )
 
+# XArm6 velocity control - streaming velocity for joystick
 coordinator_velocity_xarm6 = ControlCoordinator.blueprint(
     hardware=[_xarm6_cfg.to_hardware_component()],
     tasks=[
@@ -109,6 +109,7 @@ coordinator_velocity_xarm6 = ControlCoordinator.blueprint(
     }
 )
 
+# XArm6 combined (servo + velocity tasks)
 coordinator_combined_xarm6 = ControlCoordinator.blueprint(
     hardware=[_xarm6_cfg.to_hardware_component()],
     tasks=[
@@ -122,6 +123,7 @@ coordinator_combined_xarm6 = ControlCoordinator.blueprint(
     }
 )
 
+# Mock 6-DOF arm with CartesianIK
 _mock_6dof_cfg = _catalog_piper(name="arm")
 
 coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
@@ -143,6 +145,7 @@ coordinator_cartesian_ik_mock = ControlCoordinator.blueprint(
     }
 )
 
+# Piper arm with CartesianIK
 coordinator_cartesian_ik_piper = ControlCoordinator.blueprint(
     hardware=[_piper_cfg.to_hardware_component()],
     tasks=[
@@ -162,6 +165,7 @@ coordinator_cartesian_ik_piper = ControlCoordinator.blueprint(
     }
 )
 
+# XArm7 with TeleopIK (real, or MuJoCo with --simulation)
 coordinator_teleop_xarm7 = autoconnect(
     ControlCoordinator.blueprint(
         hardware=[_xarm7_teleop_cfg.to_hardware_component()],
@@ -178,7 +182,7 @@ coordinator_teleop_xarm7 = autoconnect(
             ),
         ],
     ),
-    *_mujoco_if_sim(str(XARM7_SIM_PATH), 7),
+    *_mujoco_if_sim(str(XARM7_SIM_PATH), _xarm7_teleop_cfg.dof),
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
@@ -189,6 +193,7 @@ coordinator_teleop_xarm7 = autoconnect(
     }
 )
 
+# XArm6 with TeleopIK (real, or MuJoCo with --simulation)
 coordinator_teleop_xarm6 = autoconnect(
     ControlCoordinator.blueprint(
         hardware=[_xarm6_teleop_cfg.to_hardware_component()],
@@ -205,7 +210,7 @@ coordinator_teleop_xarm6 = autoconnect(
             ),
         ],
     ),
-    *_mujoco_if_sim(str(XARM6_SIM_PATH), 6),
+    *_mujoco_if_sim(str(XARM6_SIM_PATH), _xarm6_teleop_cfg.dof),
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
@@ -216,6 +221,7 @@ coordinator_teleop_xarm6 = autoconnect(
     }
 )
 
+# Piper with TeleopIK (real, or MuJoCo with --simulation)
 coordinator_teleop_piper = autoconnect(
     ControlCoordinator.blueprint(
         hardware=[_piper_teleop_cfg.to_hardware_component()],
@@ -232,7 +238,7 @@ coordinator_teleop_piper = autoconnect(
             ),
         ],
     ),
-    *_mujoco_if_sim(str(PIPER_SIM_PATH), 6),
+    *_mujoco_if_sim(str(PIPER_SIM_PATH), _piper_teleop_cfg.dof),
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
@@ -243,8 +249,9 @@ coordinator_teleop_piper = autoconnect(
     }
 )
 
+# Dual arm teleop: XArm6 + Piper with TeleopIK (real-only)
 _xarm6_dual_cfg = _catalog_xarm6(
-    name="xarm_arm", adapter_type="xarm", address=global_config.xarm6_ip, add_gripper=False
+    name="xarm_arm", adapter_type="xarm", address=global_config.xarm6_ip
 )
 _piper_dual_cfg = _catalog_piper(
     name="piper_arm", adapter_type="piper", address=global_config.can_port
