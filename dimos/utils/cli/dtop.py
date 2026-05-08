@@ -265,6 +265,8 @@ class ResourceSpyApp(App[None]):
         ts: float,
         modules: list[str] | None,
     ) -> None:
+        if self._store is None:
+            return
         tags = {"modules": list(modules)} if modules is not None else None
         for metric in LOGGED_METRICS:
             val = data.get(metric)
