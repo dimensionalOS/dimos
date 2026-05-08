@@ -40,9 +40,12 @@ unitree_g1_nav_onboard = (
             config="default.yaml",
         ),
         create_nav_stack(
-            use_simple_planner=True,
+            planner="far",
             vehicle_height=G1.height_clearance,
-            max_speed=0.5,
+            max_speed=0.6,
+            far_planner={
+                "is_static_env": False,
+            },
             terrain_analysis={
                 "no_decay_distance": 0,
                 "obstacle_height_threshold": 0.01,

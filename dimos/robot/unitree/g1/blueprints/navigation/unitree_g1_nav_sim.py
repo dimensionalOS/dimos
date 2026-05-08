@@ -55,7 +55,7 @@ unitree_g1_nav_sim = (
             vehicle_height=G1.height_clearance,
         ),
         create_nav_stack(
-            use_simple_planner=False,
+            planner="far",
             vehicle_height=G1.height_clearance,
             max_speed=2.0,  # m/s, higher than real robot defaults
             terrain_analysis={

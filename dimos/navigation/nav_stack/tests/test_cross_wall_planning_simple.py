@@ -63,7 +63,7 @@ _BLUEPRINT = (
             vehicle_height=1.24,
         ),
         create_nav_stack(
-            use_simple_planner=True,
+            planner="simple",
             terrain_analysis=CROSS_WALL_TERRAIN_ANALYSIS,
             local_planner=CROSS_WALL_LOCAL_PLANNER,
             path_follower=CROSS_WALL_PATH_FOLLOWER,
