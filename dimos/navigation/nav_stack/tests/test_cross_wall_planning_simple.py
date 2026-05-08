@@ -18,66 +18,30 @@ from __future__ import annotations
 
 import pytest
 
-# create_nav_stack pulls in PGO which requires gtsam — skip the whole module
-# if it isn't installed.
 pytest.importorskip("gtsam")
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack
-from dimos.navigation.nav_stack.tests.conftest import (
-    CROSS_WALL_LOCAL_PLANNER,
-    CROSS_WALL_PATH_FOLLOWER,
-    CROSS_WALL_TERRAIN_ANALYSIS,
-    run_cross_wall_test,
-)
+from dimos.navigation.nav_stack.tests.conftest import run_cross_wall_test
+from dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_sim import nav_config
 from dimos.simulation.unity.module import UnityBridgeModule
 
 pytestmark = [pytest.mark.slow, pytest.mark.skipif_in_ci]
-
-# If the robot's z ever exceeds this, it has gone through the ceiling /
-# climbed on top of geometry — navigation is broken. The sim's terrain-z
-# estimate drifts ~0.3 m near walls (wall points within the 0.5 m terrain
-# sampling radius pull the ground estimate upward), so this must tolerate
-# vehicle_height (1.24 m) + terrain drift while still catching
-# through-the-roof failures (roof is at ~3 m+).
-MAX_ALLOWED_Z = 2.1
-
-# Tighten stuck-detection so doorways the wider inflation blocks get opened
-# within a few seconds of non-progress.
-_SIMPLE_PLANNER_TUNING = {
-    "cell_size": 0.3,
-    "obstacle_height_threshold": 0.15,
-    "inflation_radius": 0.7,
-    "lookahead_distance": 2.0,
-    "replan_rate": 5.0,
-    "stuck_seconds": 4.0,
-    "stuck_shrink_factor": 0.5,
-}
-
-_BLUEPRINT = (
-    autoconnect(
-        UnityBridgeModule.blueprint(
-            unity_binary="",
-            unity_scene="home_building_1",
-            vehicle_height=1.24,
-        ),
-        create_nav_stack(
-            planner="simple",
-            terrain_analysis=CROSS_WALL_TERRAIN_ANALYSIS,
-            local_planner=CROSS_WALL_LOCAL_PLANNER,
-            path_follower=CROSS_WALL_PATH_FOLLOWER,
-            simple_planner=_SIMPLE_PLANNER_TUNING,
-        ),
-        MovementManager.blueprint(),
-    )
-    .remappings([(UnityBridgeModule, "terrain_map", "terrain_map_ext")])
-    .global_config(n_workers=8, robot_model="unitree_g1", simulation=True)
-)
 
 
 class TestCrossWallPlanningSimple:
     """E2E: cross-wall routing with SimplePlanner (A* on 2D costmap)."""
 
-    def test_cross_wall_sequence_simple(self):
-        run_cross_wall_test(_BLUEPRINT, label="simple", max_z=MAX_ALLOWED_Z)
+    def test_cross_wall_sequence_simple(self) -> None:
+        blueprint = autoconnect(
+            UnityBridgeModule.blueprint(
+                unity_scene="home_building_1",
+                vehicle_height=nav_config["vehicle_height"],
+                lock_z=True,
+                publish_images=False,
+            ),
+            create_nav_stack(**{**nav_config, "planner": "simple"}),
+            MovementManager.blueprint(),
+        ).global_config(n_workers=8, robot_model="unitree_g1", simulation=True)
+        run_cross_wall_test(blueprint, label="simple")
