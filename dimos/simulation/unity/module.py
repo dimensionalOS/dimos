@@ -195,6 +195,11 @@ class UnityBridgeConfig(ModuleConfig):
     # Set to 0.0 for no drift.
     odom_drift_rate: float = 0.0
 
+    # When True, robot z stays at init_z + vehicle_height for the entire
+    # simulation — terrain feedback cannot change it.  Useful for indoor
+    # environments where terrain noise pushes z through ceilings.
+    lock_z: bool = False
+
     terrain_inclination_enabled: bool = False
     terrain_fit_radius: float = 1.5  # m
     terrain_fit_voxel_size: float = 0.05  # m
@@ -462,6 +467,8 @@ class UnityBridgeModule(Module):
             self._yaw_rate = twist.angular.z
 
     def _on_terrain(self, cloud: PointCloud2) -> None:
+        if self.config.lock_z:
+            return
         points, _ = cloud.as_numpy()
         if len(points) == 0:
             return
