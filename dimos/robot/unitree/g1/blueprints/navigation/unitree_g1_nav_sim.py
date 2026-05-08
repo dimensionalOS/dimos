@@ -46,6 +46,28 @@ def _rerun_blueprint() -> Any:
         collapse_panels=True,
     )
 
+nav_config = dict(
+    planner="simple",
+    vehicle_height=G1.height_clearance,
+    max_speed=2.0,  # m/s, higher than real robot defaults
+    terrain_analysis={
+        "ground_height_threshold": 0.05,
+        "min_relative_z": -1.5,
+    },
+    terrain_map_ext={
+        "decay_time": 120,
+    },
+    local_planner={
+        "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
+        "min_relative_z": -1.5,
+        "freeze_ang": 180.0,
+        "obstacle_height_threshold": 0.01,
+    },
+    path_follower={
+        "max_acceleration": 4.0,
+        "max_yaw_rate": 80.0,
+    },
+)
 
 unitree_g1_nav_sim = (
     autoconnect(
@@ -54,28 +76,7 @@ unitree_g1_nav_sim = (
             vehicle_height=G1.height_clearance,
             lock_z=True,
         ),
-        create_nav_stack(
-            planner="simple",
-            vehicle_height=G1.height_clearance,
-            max_speed=2.0,  # m/s, higher than real robot defaults
-            terrain_analysis={
-                "ground_height_threshold": 0.05,
-                "min_relative_z": -1.5,
-            },
-            terrain_map_ext={
-                "decay_time": 120,
-            },
-            local_planner={
-                "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
-                "min_relative_z": -1.5,
-                "freeze_ang": 180.0,
-                "obstacle_height_threshold": 0.01,
-            },
-            path_follower={
-                "max_acceleration": 4.0,
-                "max_yaw_rate": 80.0,
-            },
-        ),
+        create_nav_stack(**nav_config),
         MovementManager.blueprint(),
         vis_module(
             viewer_backend=global_config.viewer,
