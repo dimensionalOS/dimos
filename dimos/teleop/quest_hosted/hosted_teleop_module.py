@@ -270,14 +270,14 @@ class HostedTeleopModule(Module):
 
             await done
 
-        # Register with broker.
+        # Register with broker. Field names match dimensional-teleop's
+        # POST /api/v1/sessions schema (sdp_offer in, sdp_answer out).
         url = f"{self.config.broker_url.rstrip('/')}/api/v1/sessions"
         headers = self._auth_headers()
         body = {
             "robot_id": self.config.robot_id,
             "robot_name": self.config.robot_name,
-            "sdp": self._pc.localDescription.sdp,
-            "type": self._pc.localDescription.type,
+            "sdp_offer": self._pc.localDescription.sdp,
         }
         resp = await self._http.post(url, json=body, headers=headers)
         resp.raise_for_status()
@@ -285,9 +285,12 @@ class HostedTeleopModule(Module):
         self._session_id = data["session_id"]
 
         await self._pc.setRemoteDescription(
-            RTCSessionDescription(sdp=data["sdp"], type=data["type"])
+            RTCSessionDescription(sdp=data["sdp_answer"], type="answer")
         )
-        logger.info(f"Registered with broker: session_id={self._session_id}")
+        logger.info(
+            f"Registered with broker: session_id={self._session_id}, "
+            f"cf_session_id={data.get('cf_session_id')}"
+        )
 
     async def _disconnect(self) -> None:
         if self._http is not None and self._session_id is not None:
@@ -305,8 +308,14 @@ class HostedTeleopModule(Module):
         self._session_id = None
 
     def _auth_headers(self) -> dict[str, str]:
+        """Robot auth header — dimensional-teleop expects ``X-Robot-API-Key``.
+
+        The configured key must be registered server-side and mapped to a
+        ``robot_id`` matching ``config.robot_id``. The dev broker
+        (``dev_broker.py``) ignores auth entirely.
+        """
         if self.config.broker_api_key:
-            return {"Authorization": f"Bearer {self.config.broker_api_key}"}
+            return {"X-Robot-API-Key": self.config.broker_api_key}
         return {}
 
     # ─── Heartbeat ──────────────────────────────────────────────────────────

@@ -55,9 +55,11 @@
         <div id="status">Ready</div>
 
         <input id="broker-input" type="text" placeholder="Broker URL (https://teleop.dimensional-apps.com)" />
-        <input id="api-key-input" type="password" placeholder="API key (optional)" />
+        <input id="email-input" type="email" placeholder="Email" />
+        <input id="password-input" type="password" placeholder="Password" />
         <div class="row">
-            <button id="refreshBtn" onclick="refreshRobots()">List robots</button>
+            <button id="loginBtn" onclick="login()">Log in</button>
+            <button id="refreshBtn" class="hidden" onclick="refreshRobots()">List robots</button>
         </div>
         <select id="robot-select" class="hidden"></select>
         <button id="connectBtn" class="hidden" onclick="connect()">Connect</button>
@@ -85,22 +87,25 @@
         // UI elements
         const statusEl = document.getElementById('status');
         const brokerInput = document.getElementById('broker-input');
-        const apiKeyInput = document.getElementById('api-key-input');
+        const emailInput = document.getElementById('email-input');
+        const passwordInput = document.getElementById('password-input');
+        const loginBtn = document.getElementById('loginBtn');
         const refreshBtn = document.getElementById('refreshBtn');
         const robotSelect = document.getElementById('robot-select');
         const connectBtn = document.getElementById('connectBtn');
         const disconnectBtn = document.getElementById('disconnectBtn');
         const canvas = document.getElementById('canvas');
 
+        let jwt = '';
+
         const urlParams = new URLSearchParams(window.location.search);
         brokerInput.value = urlParams.get('broker') || localStorage.getItem('dimos_broker') || '';
-        apiKeyInput.value = urlParams.get('api_key') || localStorage.getItem('dimos_api_key') || '';
+        emailInput.value = urlParams.get('email') || localStorage.getItem('dimos_email') || '';
 
         function setStatus(msg) { statusEl.textContent = msg; }
 
         function authHeaders() {
-            const k = apiKeyInput.value.trim();
-            return k ? { 'Authorization': `Bearer ${k}` } : {};
+            return jwt ? { 'Authorization': `Bearer ${jwt}` } : {};
         }
 
         function brokerUrl() {
@@ -109,13 +114,58 @@
             return b;
         }
 
+        // POST /api/v1/auth/login. If account doesn't exist (401), auto-register.
+        window.login = async function() {
+            try {
+                loginBtn.disabled = true;
+                setStatus('Logging in...');
+                localStorage.setItem('dimos_broker', brokerInput.value.trim());
+                localStorage.setItem('dimos_email', emailInput.value.trim());
+
+                const creds = {
+                    email: emailInput.value.trim(),
+                    password: passwordInput.value,
+                };
+                if (!creds.email || !creds.password) {
+                    throw new Error('Enter email + password');
+                }
+
+                let resp = await fetch(`${brokerUrl()}/api/v1/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(creds),
+                });
+                if (resp.status === 401) {
+                    // Auto-register on first run.
+                    setStatus('Creating account...');
+                    resp = await fetch(`${brokerUrl()}/api/v1/auth/register`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(creds),
+                    });
+                }
+                if (!resp.ok) throw new Error(`auth failed: ${resp.status}`);
+                const tokenData = await resp.json();
+                jwt = tokenData.token;
+
+                emailInput.classList.add('hidden');
+                passwordInput.classList.add('hidden');
+                loginBtn.classList.add('hidden');
+                refreshBtn.classList.remove('hidden');
+                setStatus(`Logged in as ${tokenData.user_id}`);
+            } catch (e) {
+                console.error(e);
+                setStatus(`Login failed: ${e.message}`);
+            } finally {
+                loginBtn.disabled = false;
+            }
+        };
+
         // GET /api/v1/sessions → populate robot dropdown
         window.refreshRobots = async function() {
             try {
                 refreshBtn.disabled = true;
                 setStatus('Fetching robot list...');
-                localStorage.setItem('dimos_broker', brokerInput.value.trim());
-                localStorage.setItem('dimos_api_key', apiKeyInput.value.trim());
 
                 const resp = await fetch(`${brokerUrl()}/api/v1/sessions`, {
                     headers: { ...authHeaders() }
@@ -185,13 +235,13 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...authHeaders() },
                 body: JSON.stringify({
-                    sdp: pc.localDescription.sdp,
-                    type: pc.localDescription.type
+                    role: 'operator',
+                    sdp_offer: pc.localDescription.sdp
                 })
             });
             if (!resp.ok) throw new Error(`broker join failed: ${resp.status}`);
-            const answer = await resp.json();
-            await pc.setRemoteDescription(answer);
+            const data = await resp.json();
+            await pc.setRemoteDescription({ type: 'answer', sdp: data.sdp_answer });
 
             await opened;
             setStatus('Connected');
@@ -316,14 +366,26 @@
                 if (!navigator.xr) throw new Error('WebXR not supported. Use Quest 3 browser.');
                 const sessionId = robotSelect.value;
                 if (!sessionId) throw new Error('Pick a robot first');
-                await setupWebRTC(sessionId);
+
+                // Start VR FIRST while the user-gesture activation is still
+                // fresh. WebXR requires requestSession() inside the gesture;
+                // setupWebRTC's awaits would otherwise consume the token.
+                // Pose/joy frames sent before the channel is open are no-ops
+                // (processTracking gates on cmdChannel.readyState).
                 await startVR();
+
+                try {
+                    await setupWebRTC(sessionId);
+                } catch (rtcError) {
+                    if (xrSession) { await xrSession.end().catch(() => {}); xrSession = null; }
+                    throw rtcError;
+                }
+
                 connectBtn.classList.add('hidden');
                 disconnectBtn.classList.remove('hidden');
                 refreshBtn.classList.add('hidden');
                 robotSelect.classList.add('hidden');
                 brokerInput.classList.add('hidden');
-                apiKeyInput.classList.add('hidden');
             } catch (e) {
                 setStatus(`Connection failed: ${e.message}`);
                 console.error(e);
@@ -341,7 +403,6 @@
             disconnectBtn.classList.add('hidden');
             refreshBtn.classList.remove('hidden');
             brokerInput.classList.remove('hidden');
-            apiKeyInput.classList.remove('hidden');
             setStatus('Ready');
         };
     </script>
