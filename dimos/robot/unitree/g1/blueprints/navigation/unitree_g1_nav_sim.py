@@ -50,12 +50,12 @@ def _rerun_blueprint() -> Any:
 unitree_g1_nav_sim = (
     autoconnect(
         UnityBridgeModule.blueprint(
-            unity_binary="",
             unity_scene="home_building_1",
             vehicle_height=G1.height_clearance,
+            lock_z=True,
         ),
         create_nav_stack(
-            planner="far",
+            planner="simple",
             vehicle_height=G1.height_clearance,
             max_speed=2.0,  # m/s, higher than real robot defaults
             terrain_analysis={
@@ -66,6 +66,7 @@ unitree_g1_nav_sim = (
                 "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
                 "min_relative_z": -1.5,
                 "freeze_ang": 180.0,
+                "obstacle_height_threshold": 0.01,
             },
             path_follower={
                 "max_acceleration": 4.0,
@@ -85,18 +86,9 @@ unitree_g1_nav_sim = (
                         "world/color_image": UnityBridgeModule.rerun_static_pinhole,
                         "world/tf/robot": g1_static_robot,
                     },
-                    # Rate-limit heavy point cloud topics to prevent
-                    # rerun viewer backpressure crashes.
-                    "max_hz": {
-                        "world/registered_scan": 2.0,
-                        "world/terrain_map": 2.0,
-                        "world/terrain_map_ext": 1.0,
-                        "world/global_map_pgo": 1.0,
-                        "world/costmap_cloud": 2.0,
-                        "world/obstacle_cloud": 2.0,
-                        "world/free_paths": 2.0,
-                    },
-                }
+                    # Rate-limit heavy point cloud topics to prevent rerun crashing
+                },
+                vis_throttle=0.1,
             ),
         ),
     )
