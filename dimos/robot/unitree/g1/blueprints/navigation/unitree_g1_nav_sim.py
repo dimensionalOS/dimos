@@ -47,7 +47,7 @@ def _rerun_blueprint() -> Any:
     )
 
 
-nav_config = dict(
+nav_config: dict[str, Any] = dict(
     planner="simple",
     vehicle_height=G1.height_clearance,
     max_speed=2.0,  # m/s, higher than real robot defaults
