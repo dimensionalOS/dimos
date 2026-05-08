@@ -84,8 +84,6 @@ class TerrainMapExtConfig(ModuleConfig):
     # Local terrain map merge radius (meters)
     local_terrain_map_radius: float = 4.0
 
-    # Merge local terrain_map points within local_terrain_map_radius into output.
-    # The original C++ DOES this (lines 542-551 of terrainAnalysisExt.cpp).
     # Set to False to only publish points beyond the radius.
     merge_local_terrain: bool = True
 
