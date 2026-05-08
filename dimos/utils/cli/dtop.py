@@ -21,7 +21,6 @@ Usage:
 from __future__ import annotations
 
 from collections import deque
-import json
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -153,6 +152,19 @@ _IO_KEYS = ("io_read_bytes", "io_write_bytes")
 
 _ALL_KEYS = {key for _, key, _ in _LINE1 + _LINE2} | set(_IO_KEYS)
 
+LOGGED_METRICS = (
+    "cpu_percent",
+    "pss",
+    "num_threads",
+    "num_children",
+    "num_fds",
+    "cpu_time_user",
+    "cpu_time_system",
+    "cpu_time_iowait",
+    "io_read_bytes",
+    "io_write_bytes",
+)
+
 
 def _compute_ranges(data_dicts: list[dict[str, Any]]) -> dict[str, tuple[float, float]]:
     """(min, max) per metric across all processes (for relative coloring)."""
@@ -192,15 +204,23 @@ class ResourceSpyApp(App[None]):
     BINDINGS = [("q", "quit"), ("ctrl+c", "quit")]
 
     def __init__(
-        self, topic_name: str = "/dimos/resource_stats", log_path: str | None = None
+        self, topic_name: str = "/dimos/resource_stats", db_path: str | None = None
     ) -> None:
         super().__init__()
         self._topic_name = topic_name
-        self._log_file = open(log_path, "a") if log_path else None
         # Warn about missing system config before entering TUI raw mode.
         from dimos.protocol.service.lcmservice import autoconf
 
         autoconf(check_only=True)
+
+        if db_path is not None:
+            from dimos.memory2.store.sqlite import SqliteStore
+
+            self._store: SqliteStore | None = SqliteStore(path=db_path)
+            self._store.start()
+        else:
+            self._store = None
+        self._mem_streams: dict[str, Any] = {}
 
         self._lcm = PickleLCM()
         self._lcm.subscribe(Topic(self._topic_name), self._on_msg)
@@ -220,16 +240,42 @@ class ResourceSpyApp(App[None]):
 
     async def on_unmount(self) -> None:
         self._lcm.stop()
-        if self._log_file:
-            self._log_file.close()
+        if self._store is not None:
+            self._store.stop()
 
     def _on_msg(self, msg: dict[str, Any], _topic: str) -> None:
         with self._lock:
             self._latest = msg
             self._last_msg_time = time.monotonic()
-        if self._log_file:
-            self._log_file.write(json.dumps({"ts": time.time(), **msg}) + "\n")
-            self._log_file.flush()
+        if self._store is None:
+            return
+        ts = time.time()
+        coord = msg.get("coordinator")
+        if coord:
+            self._log_role("coordinator", coord, ts, None)
+        for i, worker in enumerate(msg.get("workers") or []):
+            worker_id = worker.get("worker_id", i)
+            modules = worker.get("modules") or []
+            self._log_role(f"worker_{worker_id}", worker, ts, modules)
+
+    def _log_role(
+        self,
+        role: str,
+        data: dict[str, Any],
+        ts: float,
+        modules: list[str] | None,
+    ) -> None:
+        if self._store is None:
+            return
+        tags = {"modules": list(modules)} if modules is not None else None
+        for metric in LOGGED_METRICS:
+            val = data.get(metric)
+            if val is None:
+                continue
+            name = f"{role}_{metric}"
+            if name not in self._mem_streams:
+                self._mem_streams[name] = self._store.stream(name, float)
+            self._mem_streams[name].append(float(val), ts=ts, tags=tags)
 
     def _refresh(self) -> None:
         with self._lock:
@@ -509,17 +555,16 @@ def main() -> None:
     )
     parser.add_argument(
         "--log",
-        nargs="?",
-        const=f"dtop_{time.strftime('%Y%m%d_%H%M%S')}.ignore.jsonl",
-        metavar="PATH",
-        help="Log stats to a JSONL file. Uses a timestamped filename if no path is given.",
+        action="store_true",
+        help="Log stats to a memory2 SQLite database (dtop_{timestamp}.ignore.db).",
     )
     args = parser.parse_args()
 
-    if args.log:
-        print(f"Logging to {args.log}")
+    db_path = f"dtop_{time.strftime('%Y%m%d_%H%M%S')}.ignore.db" if args.log else None
+    if db_path:
+        print(f"Logging to {db_path}")
 
-    ResourceSpyApp(topic_name=args.topic, log_path=args.log).run()
+    ResourceSpyApp(topic_name=args.topic, db_path=db_path).run()
 
 
 if __name__ == "__main__":
