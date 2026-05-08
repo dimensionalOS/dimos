@@ -1,0 +1,27 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /opt/dimos-teleop/repo
+            git pull origin main
+            source /opt/dimos-teleop/.venv/bin/activate
+            pip install -q -r app/requirements.txt
+            sudo systemctl restart dimos-teleop
+            # Sync web + Caddyfile
+            rsync -a --delete web/ /opt/dimos-teleop/web/
+            sudo cp Caddyfile /etc/caddy/Caddyfile
+            sudo systemctl reload caddy
+            echo "Deployed $(git rev-parse --short HEAD) at $(date)"
