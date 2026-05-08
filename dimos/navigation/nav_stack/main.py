@@ -175,7 +175,6 @@ def create_nav_stack(
     ]
     if planner == "far":
         remappings.append((FarPlanner, "odometry", "corrected_odometry"))
-        remappings.append((FarPlanner, "registered_scan", "_none"))
 
     return autoconnect(*modules).remappings(remappings)
 
