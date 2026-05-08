@@ -32,7 +32,14 @@ IGNORED_FILES: set[str] = {
     "dimos/core/blueprints.py",
     "dimos/core/test_blueprints.py",
 }
-BLUEPRINT_METHODS = {"transports", "global_config", "remappings", "requirements", "configurators"}
+BLUEPRINT_METHODS = {
+    "transports",
+    "global_config",
+    "remappings",
+    "requirements",
+    "configurators",
+    "default_record_modules",
+}
 _EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule"}
 
 

@@ -150,6 +150,7 @@ unitree_go2_basic = (
     )
     .global_config(n_workers=4, robot_model="unitree_go2")
     .configurators(ClockSyncConfigurator())
+    .default_record_modules(GO2Connection)
 )
 
 __all__ = [

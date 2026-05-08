@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -240,6 +241,17 @@ class Backend(CompositeResource, Generic[T]):
             pass
         finally:
             sub.dispose()
+
+    def delete_range(self, t1: float, t2: float) -> int:
+        """Delete observations in [t1, t2] from all stores. Returns count deleted."""
+        ids = self.metadata_store.delete_range(t1, t2)
+        for obs_id in ids:
+            if self.blob_store is not None:
+                with suppress(KeyError):
+                    self.blob_store.delete(self.name, obs_id)
+            if self.vector_store is not None:
+                self.vector_store.delete(self.name, obs_id)
+        return len(ids)
 
     def count(self, query: StreamQuery) -> int:
         if query.search_vec:

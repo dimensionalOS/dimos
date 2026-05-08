@@ -373,6 +373,8 @@ class SecurityModule(Module):
         with self._lock:
             pose = self._latest_pose
         if pose is not None:
+            # We want to update timestamps, otherwise recordings etc. would fail
+            pose.ts = time.time()
             self.goal_request.publish(pose)
 
     def _transition_to(self, new_state: State) -> None:

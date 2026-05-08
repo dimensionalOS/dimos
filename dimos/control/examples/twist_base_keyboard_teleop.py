@@ -33,12 +33,14 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
+
 from dimos.control.blueprints.mobile import coordinator_mock_twist_base
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
 
-def main() -> None:
+async def main() -> None:
     """Run mock twist base + keyboard teleop."""
     coord = ModuleCoordinator.build(coordinator_mock_twist_base)
     teleop = ModuleCoordinator.build(KeyboardTeleop.blueprint())
@@ -52,9 +54,9 @@ def main() -> None:
     teleop.start()
 
     # Block until Ctrl+C — loop() handles KeyboardInterrupt and calls stop()
-    coord.loop()
+    await coord.loop()
     teleop.stop()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

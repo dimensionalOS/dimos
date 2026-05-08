@@ -18,7 +18,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import re
 import threading
-from typing import Any
 
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.encoders import (
@@ -72,7 +71,7 @@ class Topic:
         return Topic(topic=topic_str, lcm_type=lcm_type or default_lcm_type)
 
 
-class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
+class LCMPubSubBase(LCMService, AllPubSub[Topic, bytes]):
     """LCM-based PubSub with native regex subscription support.
 
     LCM natively supports regex patterns in subscribe(), so we implement
@@ -91,7 +90,7 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
         topic_str = str(topic) if isinstance(topic, Topic) else topic
         self.l.publish(topic_str, message)
 
-    def subscribe_all(self, callback: Callable[[bytes, Topic], Any]) -> Callable[[], None]:
+    def subscribe_all(self, callback: Callable[[bytes, Topic], None]) -> Callable[[], None]:
         return self.subscribe(Topic(re.compile(".*")), callback)
 
     def subscribe(

@@ -69,5 +69,10 @@ class ObservationStore(Configurable, CompositeResource, Generic[T]):
         """Batch fetch by id (for vector search results)."""
         ...
 
+    @abstractmethod
+    def delete_range(self, t1: float, t2: float) -> list[int]:
+        """Delete observations with ts in [t1, t2]. Returns deleted IDs."""
+        ...
+
     def serialize(self) -> dict[str, Any]:
         return {"class": qual(type(self)), "config": self.config.model_dump()}

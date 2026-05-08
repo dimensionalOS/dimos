@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import functools
 import threading
 import time
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -47,7 +47,7 @@ from dimos.robot.unitree.type.lidar import (
     repair_stale_ts,
 )
 from dimos.robot.unitree.type.lowstate import LowStateMsg
-from dimos.robot.unitree.type.odometry import Odometry
+from dimos.robot.unitree.type.odometry import Odometry, RawOdometryMessage
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure, callback_to_observable
 
@@ -244,11 +244,33 @@ class UnitreeWebRTCConnection(Resource):
 
     @simple_mcache
     def raw_lidar_stream(self) -> Observable[RawLidarMsg]:
-        return backpressure(self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]))
+        # Drop WebRTC retransmits at the source: under flaky-transport
+        # conditions Unitree's data channel occasionally redelivers the same
+        # logical frame, carrying an identical `data.stamp`. Both deliveries
+        # arrive back-to-back. Keeping both wastes downstream work (decode,
+        # codec, recording, viz) on a frame consumers already processed and
+        # leaves recordings with the same body_ts twice in a row.
+        return backpressure(
+            self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]).pipe(
+                ops.distinct_until_changed(
+                    key_mapper=lambda raw: cast("RawLidarMsg", raw)["data"]["stamp"]
+                )
+            )
+        )
 
     @simple_mcache
     def raw_odom_stream(self) -> Observable[Pose]:
-        return backpressure(self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]))
+        # Same WebRTC-retransmit dedup as raw_lidar_stream — odom just nests
+        # the stamp one level deeper inside `data.header`.
+        return backpressure(
+            self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]).pipe(
+                ops.distinct_until_changed(
+                    key_mapper=lambda raw: cast("RawOdometryMessage", raw)["data"]["header"][
+                        "stamp"
+                    ]
+                )
+            )
+        )
 
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:

@@ -15,6 +15,7 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+import time
 
 from dimos_lcm.std_msgs import Bool
 
@@ -104,6 +105,8 @@ class PatrollingModule(Module):
         self._planner_spec.set_replanning_enabled(True)
         self._planner_spec.reset_safe_goal_clearance()
         if self._latest_pose is not None:
+            # Update timestamp so recordings see distinct messages.
+            self._latest_pose.ts = time.time()
             self.goal_request.publish(self._latest_pose)
 
     async def _patrol_loop(self) -> None:

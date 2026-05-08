@@ -125,6 +125,16 @@ class Stream(CompositeResource, Generic[T, O]):
             return self._source.is_live()
         return False
 
+    @property
+    def data_type(self) -> type:
+        """Payload type of the root backend, or ``object`` if unbound."""
+        current: Any = self
+        while isinstance(current._source, Stream):
+            current = current._source
+        if current._source is None:
+            return object
+        return cast("type", current._source.data_type)
+
     def __iter__(self) -> Iterator[O]:
         if self._source is None:
             raise TypeError(
@@ -427,6 +437,33 @@ class Stream(CompositeResource, Generic[T, O]):
                 on_error=on_error,
                 on_completed=on_completed,
             )
+        )
+
+    def delete_range(self, t1: float, t2: float) -> int:
+        """Delete all observations with timestamps in [t1, t2]. Returns count deleted."""
+        if isinstance(self._source, Stream):
+            raise TypeError("Cannot delete from a transform stream.")
+        if self._source is None:
+            raise TypeError("No source available.")
+        return self._source.delete_range(t1, t2)
+
+    def publish(self, out: Any) -> DisposableBase:
+        """Publish each observation's data to a Module ``Out`` port.
+
+        Iteration runs on the dimos thread pool (via :meth:`subscribe`).
+        Returns a ``DisposableBase`` suitable for ``register_disposable()``.
+
+        Example::
+
+            lidar.live().transform(VoxelMapTransformer()).publish(self.global_map)
+        """
+
+        def _on_error(e: Exception) -> None:
+            logger.error("Stream.publish() pipeline error: %s", e, exc_info=True)
+
+        return self.subscribe(
+            on_next=lambda obs: out.publish(obs.data),
+            on_error=_on_error,
         )
 
     def chain(self, other: Stream[R, Any]) -> Stream[R]:

@@ -311,6 +311,8 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def publish_camera_info(self) -> None:
         while True:
+            # We want to update timestamps, otherwise recordings etc. would fail
+            self.camera_info_static.ts = time.time()
             self.camera_info.publish(self.camera_info_static)
             time.sleep(1.0)
 

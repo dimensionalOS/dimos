@@ -86,3 +86,13 @@ class ListObservationStore(ObservationStore[T]):
         id_set = set(ids)
         with self._lock:
             return [obs for obs in self._observations if obs.id in id_set]
+
+    def delete_range(self, t1: float, t2: float) -> list[int]:
+        """Delete observations with ts in [t1, t2]. Returns deleted IDs."""
+        with self._lock:
+            to_delete = [obs for obs in self._observations if t1 <= obs.ts <= t2]
+            ids = [obs.id for obs in to_delete]
+            self._observations = deque(
+                obs for obs in self._observations if not (t1 <= obs.ts <= t2)
+            )
+        return ids

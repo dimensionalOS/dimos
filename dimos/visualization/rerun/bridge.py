@@ -20,13 +20,13 @@ from collections.abc import Callable
 from dataclasses import field
 from functools import lru_cache
 import subprocess
+import sys
 import time
 from typing import (
     Any,
     Literal,
     Protocol,
     TypeAlias,
-    TypeGuard,
     cast,
     runtime_checkable,
 )
@@ -47,7 +47,12 @@ from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.init import rerun_init
 
-RERUN_GRPC_PORT = 9877
+if sys.version_info >= (3, 13):
+    from typing import TypeIs
+else:
+    from typing import TypeGuard as TypeIs
+
+RERUN_GRPC_PORT = 9876
 RERUN_WEB_PORT = 9090
 
 # TODO OUT visual annotations
@@ -96,20 +101,16 @@ logger = setup_logger()
 BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
 
 # to_rerun() can return a single archetype or a list of (entity_path, archetype) tuples
-RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
+RerunMulti: TypeAlias = list[tuple[str, Archetype]]
 RerunData: TypeAlias = "Archetype | RerunMulti"
 
 
-def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
+def is_rerun_multi(data: object) -> TypeIs[RerunMulti]:
     """Check if data is a list of (entity_path, archetype) tuples."""
-    return (
-        isinstance(data, list)
-        and bool(data)
-        and isinstance(data[0], tuple)
-        and len(data[0]) == 2
-        and isinstance(data[0][0], str)
-        and isinstance(data[0][1], Archetype)
-    )
+    match data:
+        case [(str(), Archetype()), *_]:
+            return True
+    return False
 
 
 @runtime_checkable
@@ -294,6 +295,8 @@ class RerunBridgeModule(Module):
 
     @rpc
     def start(self) -> None:
+        # Delay import to reduce import time (~2.4s)
+
         super().start()
 
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
@@ -326,7 +329,7 @@ class RerunBridgeModule(Module):
                 )
                 rr.spawn(connect=True, memory_limit=self.config.memory_limit)
         elif self.config.viewer_mode == "web":
-            server_uri = rr.serve_grpc()
+            server_uri = rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
             rr.serve_web_viewer(connect_to=server_uri, open_browser=False)
 
         elif self.config.viewer_mode == "connect":

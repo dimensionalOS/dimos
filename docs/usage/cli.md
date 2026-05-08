@@ -16,7 +16,9 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
 | `--simulation` / `--no-simulation` | bool | `False` | Enable MuJoCo simulation |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
-| `--replay-db` | TEXT | `go2_bigoffice` | Replay memory2 SQLite database name |
+| `--replay-db` | TEXT | `go2_china_office` | Replay memory2 SQLite database name |
+| `--replay-file` | TEXT | `None` | Path to a `.db` recording file for replay |
+| `--record-path` | TEXT | `None` | Record module outputs to a `.db` file |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
 | `--viewer` | `rerun\|rerun-web\|rerun-connect\|foxglove\|none` | `rerun` | Visualization backend |
 | `--n-workers` | INT | `2` | Number of forkserver workers |
@@ -78,8 +80,14 @@ dimos run unitree-go2
 # Background (returns immediately)
 dimos run unitree-go2-agentic --daemon
 
-# Replay with Rerun viewer
+# Replay with Rerun viewer (legacy pickle datasets)
 dimos --replay --viewer rerun run unitree-go2
+
+# Record all sensor outputs to a database
+dimos --record-path recording.db run unitree-go2
+
+# Replay a recording (disables recorded modules, replays via LCM)
+dimos --replay-file recording.db --viewer rerun-web run unitree-go2
 
 # Real robot
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161
@@ -90,6 +98,24 @@ dimos run unitree-go2 keyboard-teleop
 # Disable specific modules
 dimos run unitree-go2-agentic --disable OsmSkill WebInput
 ```
+
+#### Record/replay end-to-end test
+
+```bash
+# 1) Start a stack and record all configured output streams
+dimos --record-path /tmp/recording.db run unitree-go2
+
+# 2) Stop the run, then replay the same file
+dimos --replay-file /tmp/recording.db --viewer rerun-web run unitree-go2
+```
+
+For interactive topic selection, use `dimos recorder` instead of `--record-path`:
+
+```bash
+dimos recorder /tmp/recording.db
+```
+
+Then select streams with `space` and press `r` to start/stop recording.
 
 When `--daemon` is used, the process:
 1. Builds and starts all modules (foreground — you see errors)
@@ -312,6 +338,24 @@ Or run standalone:
 ```bash
 dtop
 ```
+
+### `recorder`
+
+Record and replay tool — a terminal UI for recording LCM streams, playing back recordings, and trimming.
+It allows interactive selection of topics to record.
+
+```bash
+dimos recorder [filename]
+```
+
+Common controls:
+- `space`: select/deselect current stream
+- `r`: start/stop recording selected streams
+- `p`: play/pause recording
+- `s`: stop playback/recording
+- `[` / `]`: mark trim in/out
+- `t`: trim to marked range
+- `d`: delete marked range
 
 ### `rerun-bridge`
 
