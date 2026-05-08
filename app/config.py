@@ -1,3 +1,4 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -15,12 +16,28 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_hours: int = 24
 
+    # CORS
+    public_origin: str = "https://teleop.dimensionalos.com"
+
     # Database
     database_url: str = "sqlite+aiosqlite:///./teleop.db"
 
     # Server
     host: str = "0.0.0.0"
     port: int = 8450
+
+    @model_validator(mode="after")
+    def validate_secrets(self) -> "Settings":
+        """Refuse to start with default secrets in production."""
+        if self.environment != "dev":
+            if not self.jwt_secret or self.jwt_secret == "change-me":
+                raise ValueError(
+                    "JWT_SECRET must be set in production. "
+                    'Generate one with: python3 -c "import secrets; print(secrets.token_hex(32))"'
+                )
+            if not self.cf_teleop_app_secret:
+                raise ValueError("CF_TELEOP_APP_SECRET must be set in production.")
+        return self
 
     @property
     def cf_api_url(self) -> str:

@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DimOS Teleop</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        dim: { 50: '#f0f9ff', 100: '#e0f2fe', 500: '#0ea5e9', 600: '#0284c7', 700: '#0369a1', 900: '#0c4a6e' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .key-reveal { font-family: 'JetBrains Mono', monospace; word-break: break-all; }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+    <div id="app"></div>
+
+    <script>
+    const API = '/api/v1';
+    let token = localStorage.getItem('teleop_token');
+    let userEmail = localStorage.getItem('teleop_email');
+
+    // --- Router ---
+    function navigate(view) {
+        const app = document.getElementById('app');
+        if (view === 'auth') renderAuth(app);
+        else if (view === 'dashboard') renderDashboard(app);
+    }
+
+    // --- API helpers ---
+    async function api(method, path, body = null) {
+        const opts = {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+        };
+        if (token) opts.headers['Authorization'] = `Bearer ${token}`;
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(`${API}${path}`, opts);
+        if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Request failed');
+        return data;
+    }
+
+    function logout() {
+        localStorage.removeItem('teleop_token');
+        localStorage.removeItem('teleop_email');
+        token = null;
+        userEmail = null;
+        navigate('auth');
+    }
+
+    // --- Auth View ---
+    function renderAuth(container) {
+        container.innerHTML = `
+        <div class="min-h-screen flex items-center justify-center p-4">
+            <div class="w-full max-w-md">
+                <div class="text-center mb-8">
+                    <h1 class="text-3xl font-bold text-white mb-2">DimOS Teleop</h1>
+                    <p class="text-gray-400">Remote robot teleoperation platform</p>
+                </div>
+                <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-xl">
+                    <div class="flex mb-6 bg-gray-800 rounded-lg p-1">
+                        <button id="tab-login" onclick="showTab('login')" class="flex-1 py-2 px-4 rounded-md text-sm font-medium bg-dim-600 text-white">Log In</button>
+                        <button id="tab-register" onclick="showTab('register')" class="flex-1 py-2 px-4 rounded-md text-sm font-medium text-gray-400 hover:text-white">Sign Up</button>
+                    </div>
+                    <form id="auth-form" onsubmit="handleAuth(event)">
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-1">Email</label>
+                                <input id="email" type="email" required
+                                    class="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-dim-500 focus:border-transparent"
+                                    placeholder="you@company.com">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-1">Password</label>
+                                <input id="password" type="password" required
+                                    class="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-dim-500 focus:border-transparent"
+                                    placeholder="••••••••">
+                            </div>
+                            <div id="error-msg" class="text-red-400 text-sm hidden"></div>
+                            <button type="submit" class="w-full py-2.5 bg-dim-600 hover:bg-dim-700 text-white font-medium rounded-lg transition-colors">
+                                <span id="auth-btn-text">Log In</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+                <p class="text-center text-gray-500 text-sm mt-6">
+                    Powered by <a href="https://dimensionalos.com" class="text-dim-500 hover:text-dim-400">DimensionalOS</a>
+                </p>
+            </div>
+        </div>`;
+    }
+
+    let authMode = 'login';
+    function showTab(mode) {
+        authMode = mode;
+        document.getElementById('tab-login').className = mode === 'login'
+            ? 'flex-1 py-2 px-4 rounded-md text-sm font-medium bg-dim-600 text-white'
+            : 'flex-1 py-2 px-4 rounded-md text-sm font-medium text-gray-400 hover:text-white';
+        document.getElementById('tab-register').className = mode === 'register'
+            ? 'flex-1 py-2 px-4 rounded-md text-sm font-medium bg-dim-600 text-white'
+            : 'flex-1 py-2 px-4 rounded-md text-sm font-medium text-gray-400 hover:text-white';
+        document.getElementById('auth-btn-text').textContent = mode === 'login' ? 'Log In' : 'Create Account';
+    }
+
+    async function handleAuth(e) {
+        e.preventDefault();
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        const errEl = document.getElementById('error-msg');
+        errEl.classList.add('hidden');
+
+        try {
+            const endpoint = authMode === 'login' ? '/auth/login' : '/auth/register';
+            const data = await api('POST', endpoint, { email, password });
+            token = data.token;
+            userEmail = data.user_id;
+            localStorage.setItem('teleop_token', token);
+            localStorage.setItem('teleop_email', userEmail);
+            navigate('dashboard');
+        } catch (err) {
+            errEl.textContent = err.message;
+            errEl.classList.remove('hidden');
+        }
+    }
+
+    // --- Dashboard View ---
+    async function renderDashboard(container) {
+        container.innerHTML = `
+        <div class="max-w-4xl mx-auto p-6">
+            <header class="flex items-center justify-between mb-8">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">Dashboard</h1>
+                    <p class="text-gray-400 text-sm">${escHtml(userEmail)}</p>
+                </div>
+                <button onclick="logout()" class="px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-lg hover:border-gray-600 transition-colors">
+                    Log Out
+                </button>
+            </header>
+
+            <!-- API Keys Section -->
+            <section class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6 fade-in">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-lg font-semibold text-white">API Keys</h2>
+                        <p class="text-gray-400 text-sm">Authenticate your robots with the teleop service</p>
+                    </div>
+                    <button onclick="showCreateKey()" class="px-4 py-2 bg-dim-600 hover:bg-dim-700 text-white text-sm font-medium rounded-lg transition-colors">
+                        + New Key
+                    </button>
+                </div>
+
+                <div id="create-key-form" class="hidden mb-4 p-4 bg-gray-800 rounded-lg border border-gray-700">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                        <input id="key-name" type="text" placeholder="Key name (e.g. Lab Robot 01)"
+                            class="px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-dim-500">
+                        <input id="key-robot-id" type="text" placeholder="Robot ID (optional)"
+                            class="px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-dim-500">
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="createKey()" class="px-4 py-2 bg-dim-600 hover:bg-dim-700 text-white text-sm rounded-lg transition-colors">Generate Key</button>
+                        <button onclick="hideCreateKey()" class="px-4 py-2 text-gray-400 hover:text-white text-sm rounded-lg transition-colors">Cancel</button>
+                    </div>
+                </div>
+
+                <div id="new-key-reveal" class="hidden mb-4 p-4 bg-green-900/20 border border-green-800 rounded-lg">
+                    <p class="text-green-400 text-sm font-medium mb-2">🔑 Key created! Copy it now — it won't be shown again.</p>
+                    <div class="flex items-center gap-2">
+                        <code id="new-key-value" class="key-reveal flex-1 px-3 py-2 bg-gray-900 rounded text-green-300 text-sm"></code>
+                        <button onclick="copyKey()" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white transition-colors">Copy</button>
+                    </div>
+                    <p class="text-gray-500 text-xs mt-2">Use in DimOS: <code>RemoteTeleopModule(api_key="...")</code></p>
+                </div>
+
+                <div id="keys-list" class="space-y-2">
+                    <div class="text-gray-500 text-sm py-4 text-center">Loading...</div>
+                </div>
+            </section>
+
+            <!-- Connected Robots Section -->
+            <section class="bg-gray-900 border border-gray-800 rounded-xl p-6 fade-in">
+                <div class="mb-4">
+                    <h2 class="text-lg font-semibold text-white">Connected Robots</h2>
+                    <p class="text-gray-400 text-sm">Robots currently registered with the teleop service</p>
+                </div>
+                <div id="robots-list" class="space-y-2">
+                    <div class="text-gray-500 text-sm py-4 text-center">Loading...</div>
+                </div>
+            </section>
+        </div>`;
+
+        loadKeys();
+        loadRobots();
+    }
+
+    function showCreateKey() {
+        document.getElementById('create-key-form').classList.remove('hidden');
+    }
+    function hideCreateKey() {
+        document.getElementById('create-key-form').classList.add('hidden');
+    }
+
+    async function createKey() {
+        const name = document.getElementById('key-name').value;
+        const robotId = document.getElementById('key-robot-id').value || null;
+        if (!name) { alert('Please provide a key name'); return; }
+
+        try {
+            const data = await api('POST', '/keys', { name, robot_id: robotId });
+            document.getElementById('new-key-value').textContent = data.api_key;
+            document.getElementById('new-key-reveal').classList.remove('hidden');
+            hideCreateKey();
+            document.getElementById('key-name').value = '';
+            document.getElementById('key-robot-id').value = '';
+            loadKeys();
+        } catch (err) {
+            alert('Failed to create key: ' + err.message);
+        }
+    }
+
+    function copyKey() {
+        const key = document.getElementById('new-key-value').textContent;
+        navigator.clipboard.writeText(key);
+        event.target.textContent = 'Copied!';
+        setTimeout(() => event.target.textContent = 'Copy', 2000);
+    }
+
+    async function loadKeys() {
+        try {
+            const data = await api('GET', '/keys');
+            const listEl = document.getElementById('keys-list');
+            if (data.keys.length === 0) {
+                listEl.innerHTML = '<p class="text-gray-500 text-sm py-4 text-center">No API keys yet. Create one to connect a robot.</p>';
+                return;
+            }
+            listEl.innerHTML = data.keys.map(k => `
+                <div class="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                            <span class="text-white text-sm font-medium">${escHtml(k.name)}</span>
+                            ${k.robot_id ? `<span class="text-xs px-2 py-0.5 bg-gray-700 rounded text-gray-300">${escHtml(k.robot_id)}</span>` : ''}
+                        </div>
+                        <div class="flex items-center gap-3 mt-1">
+                            <code class="text-gray-400 text-xs">${escHtml(k.key_prefix)}...</code>
+                            <span class="text-gray-600 text-xs">${k.last_used_at ? 'Last used ' + timeAgo(k.last_used_at) : 'Never used'}</span>
+                        </div>
+                    </div>
+                    <button onclick="revokeKey('${k.id}', '${escHtml(k.name)}')" class="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors">
+                        Revoke
+                    </button>
+                </div>
+            `).join('');
+        } catch (err) {
+            document.getElementById('keys-list').innerHTML = `<p class="text-red-400 text-sm">${err.message}</p>`;
+        }
+    }
+
+    async function revokeKey(id, name) {
+        if (!confirm(`Revoke key "${name}"? This cannot be undone.`)) return;
+        try {
+            await api('DELETE', `/keys/${id}`);
+            document.getElementById('new-key-reveal').classList.add('hidden');
+            loadKeys();
+        } catch (err) {
+            alert('Failed to revoke: ' + err.message);
+        }
+    }
+
+    async function loadRobots() {
+        try {
+            const data = await api('GET', '/sessions');
+            const listEl = document.getElementById('robots-list');
+            if (!data.sessions || data.sessions.length === 0) {
+                listEl.innerHTML = '<p class="text-gray-500 text-sm py-4 text-center">No robots connected. Use an API key in your DimOS code to register a robot.</p>';
+                return;
+            }
+            listEl.innerHTML = data.sessions.map(s => `
+                <div class="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
+                    <div class="flex items-center gap-3">
+                        <div class="w-2 h-2 rounded-full ${s.state === 'active' ? 'bg-green-400' : s.state === 'idle' ? 'bg-yellow-400' : 'bg-gray-500'}"></div>
+                        <div>
+                            <span class="text-white text-sm font-medium">${escHtml(s.robot_name)}</span>
+                            <span class="text-gray-500 text-xs ml-2">${escHtml(s.robot_id)}</span>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-xs px-2 py-0.5 rounded ${s.state === 'active' ? 'bg-green-900/30 text-green-400' : 'bg-gray-700 text-gray-400'}">${s.state}</span>
+                        ${s.rtt_ms ? `<span class="text-gray-500 text-xs ml-2">${Math.round(s.rtt_ms)}ms</span>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        } catch (err) {
+            document.getElementById('robots-list').innerHTML = `<p class="text-gray-500 text-sm py-4 text-center">No robots connected.</p>`;
+        }
+    }
+
+    // --- Utils ---
+    function escHtml(s) { return s ? s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) : ''; }
+    function timeAgo(iso) {
+        const diff = Date.now() - new Date(iso).getTime();
+        const mins = Math.floor(diff / 60000);
+        if (mins < 1) return 'just now';
+        if (mins < 60) return `${mins}m ago`;
+        const hrs = Math.floor(mins / 60);
+        if (hrs < 24) return `${hrs}h ago`;
+        return `${Math.floor(hrs/24)}d ago`;
+    }
+
+    // --- Init ---
+    if (token) navigate('dashboard');
+    else navigate('auth');
+    </script>
+</body>
+</html>

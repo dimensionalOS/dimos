@@ -1,0 +1,25 @@
+teleop.dimensionalos.com {
+    # API routes → uvicorn backend (checked first due to handle ordering)
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8450
+    }
+    handle /health {
+        reverse_proxy 127.0.0.1:8450
+    }
+    handle /docs* {
+        reverse_proxy 127.0.0.1:8450
+    }
+    handle /openapi.json {
+        reverse_proxy 127.0.0.1:8450
+    }
+    handle /redoc* {
+        reverse_proxy 127.0.0.1:8450
+    }
+
+    # Everything else → static frontend (SPA fallback)
+    handle {
+        root * /opt/dimos-teleop/web
+        try_files {path} /index.html
+        file_server
+    }
+}
