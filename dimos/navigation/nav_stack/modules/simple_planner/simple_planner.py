@@ -22,10 +22,10 @@ import threading
 import time
 from typing import Any
 
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -36,8 +36,8 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_SENSOR
 from dimos.utils.logging_config import setup_logger
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM, FRAME_SENSOR
 
 logger = setup_logger()
 
@@ -284,8 +284,15 @@ class SimplePlannerConfig(ModuleConfig):
     cell_size: float = 0.3  # m per cell
     obstacle_height_threshold: float = 0.15  # m above ground
     inflation_radius: float = 0.2  # m, shrunk by stuck-detection
-    lookahead_distance: float = 2.0  # m
+    # How far ahead along the A* path to place the waypoint sent to LocalPlanner.
+    # Larger values produce smoother, more anticipatory motion but can cut corners
+    # smaller values track the planned path more tightly but may cause stop-and-go behavior as the robot catches its own waypoint.
+    lookahead_distance: float = 1.0  # m
     replan_rate: float = 5.0  # Hz
+    # Rate at which the leading waypoint slides along the cached path,
+    # independent of the (slower) A* replan loop. Higher values give
+    # smoother pursuit of the path between replans.
+    waypoint_rate: float = 30.0  # Hz
     # A* only re-runs after this cooldown; waypoints republish from cache.
     replan_cooldown: float = 2.0  # s
     max_expansions: int = 200_000
@@ -298,8 +305,6 @@ class SimplePlannerConfig(ModuleConfig):
     progress_epsilon: float = 0.25  # m
     stuck_shrink_factor: float = 0.5
     stuck_min_inflation: float = 0.05  # m
-    # Should be larger than LocalPlanner's goal_reached_threshold.
-    waypoint_advance_radius: float = 1.0  # m
 
 
 class SimplePlanner(Module):
@@ -319,6 +324,7 @@ class SimplePlanner(Module):
         super().__init__(**kwargs)
         self._running = False
         self._thread: threading.Thread | None = None
+        self._waypoint_thread: threading.Thread | None = None
         self._robot_x = 0.0
         self._robot_y = 0.0
         self._robot_z = 0.0
@@ -358,9 +364,7 @@ class SimplePlanner(Module):
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
-        self.register_disposable(
-            Disposable(self.stop_movement.subscribe(self._on_stop_movement))
-        )
+        self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop_movement)))
         self.register_disposable(
             Disposable(self.terrain_map_ext.subscribe(self._on_terrain_map_ext))
         )
@@ -368,11 +372,16 @@ class SimplePlanner(Module):
         self._running = True
         self._thread = threading.Thread(target=self._planning_loop, daemon=True)
         self._thread.start()
+        self._waypoint_thread = threading.Thread(target=self._waypoint_loop, daemon=True)
+        self._waypoint_thread.start()
         logger.info("SimplePlanner started")
 
     @rpc
     def stop(self) -> None:
         self._running = False
+        if self._waypoint_thread is not None:
+            self._waypoint_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._waypoint_thread = None
         if self._thread is not None:
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._thread = None
@@ -572,6 +581,43 @@ class SimplePlanner(Module):
             if sleep > 0:
                 time.sleep(sleep)
 
+    def _waypoint_loop(self) -> None:
+        """Slide the leading waypoint along the cached path at waypoint_rate Hz."""
+        rate = self.config.waypoint_rate
+        period = 1.0 / rate if rate > 0 else 0.05
+        while self._running:
+            t0 = time.monotonic()
+            try:
+                self._update_waypoint()
+            except Exception as exc:
+                logger.error("Waypoint update error", exc_info=exc)
+            dt = time.monotonic() - t0
+            sleep = period - dt
+            if sleep > 0:
+                time.sleep(sleep)
+
+    def _update_waypoint(self) -> None:
+        """Recompute and publish the leading waypoint from the current pose and cached path."""
+        self._query_pose()
+        with self._lock:
+            if not self._has_odom or self._goal_x is None:
+                return
+            rx, ry = self._robot_x, self._robot_y
+            gz = self._goal_z
+            cached = self._cached_path
+        if not cached:
+            return
+        wx, wy = self._lookahead(cached, rx, ry, self.config.lookahead_distance)
+        last = cached[-1]
+        is_goal = (wx, wy) == last
+        with self._lock:
+            self._current_wp = (wx, wy)
+            self._current_wp_is_goal = is_goal
+        now = time.time()
+        self.way_point.publish(
+            PointStamped(ts=now, frame_id=self.config.world_frame, x=wx, y=wy, z=gz)
+        )
+
     def _publish_costmap_cloud(self, rz: float, now: float) -> None:
         """Publish blocked-cell centers as a colored PointCloud2 for rerun (throttled to ~2 Hz).
 
@@ -609,52 +655,6 @@ class SimplePlanner(Module):
             PointCloud2(pointcloud=pcd_t, ts=now, frame_id=self.config.world_frame)
         )
 
-    def _publish_from_cached(self, rx: float, ry: float, gz: float, now: float) -> None:
-        """Republish a look-ahead waypoint from the cached path.
-
-        Called while the replan cooldown is in effect — we don't touch
-        the goal_path (it's already current in the viewer) but we do
-        keep feeding LocalPlanner fresh waypoints so it doesn't treat
-        the robot as idle.
-        """
-        with self._lock:
-            cached = self._cached_path
-        if not cached:
-            return
-        wx, wy = self._lookahead(cached, rx, ry, self.config.lookahead_distance)
-        last = cached[-1]
-        is_goal = (wx, wy) == last
-        with self._lock:
-            self._current_wp = (wx, wy)
-            self._current_wp_is_goal = is_goal
-        self.way_point.publish(
-            PointStamped(ts=now, frame_id=self.config.world_frame, x=wx, y=wy, z=gz)
-        )
-
-    def _maybe_advance_waypoint(self, rx: float, ry: float, gz: float) -> None:
-        """If the robot is close to the current intermediate waypoint, advance it."""
-        with self._lock:
-            wp = self._current_wp
-            is_goal = self._current_wp_is_goal
-            cached = self._cached_path
-        if wp is None or is_goal or cached is None:
-            return
-        dist_sq = (wp[0] - rx) ** 2 + (wp[1] - ry) ** 2
-        threshold_sq = self.config.waypoint_advance_radius**2
-        if dist_sq > threshold_sq:
-            return
-        extended_lookahead = self.config.lookahead_distance * 1.5
-        wx, wy = self._lookahead(cached, rx, ry, extended_lookahead)
-        last = cached[-1]
-        new_is_goal = (wx, wy) == last
-        with self._lock:
-            self._current_wp = (wx, wy)
-            self._current_wp_is_goal = new_is_goal
-        now = time.time()
-        self.way_point.publish(
-            PointStamped(ts=now, frame_id=self.config.world_frame, x=wx, y=wy, z=gz)
-        )
-
     def _replan_once(self) -> None:
         # Refresh pose from the TF tree every tick.
         self._query_pose()
@@ -669,12 +669,8 @@ class SimplePlanner(Module):
         goal_dist = math.hypot(gx - rx, gy - ry)
         now = time.time()
 
-        # Keep the next waypoint ahead of the robot so the local planner
-        # never stops on an intermediate waypoint.
-        self._maybe_advance_waypoint(rx, ry, gz)
-
-        # If it's too soon for a fresh A*, just refresh the waypoint from
-        # the cached path using the current pose.
+        # If it's too soon for a fresh A*, skip — the waypoint loop
+        # handles sliding the leading point along the cached path.
         with self._lock:
             cooldown_active = (
                 self._cached_path is not None
@@ -684,7 +680,6 @@ class SimplePlanner(Module):
         self._publish_costmap_cloud(rz, now)
 
         if cooldown_active:
-            self._publish_from_cached(rx, ry, gz, now)
             return
 
         # Don't bump inflation back up on progress: if we shrank it to clear
@@ -778,18 +773,7 @@ class SimplePlanner(Module):
             )
         self.goal_path.publish(Path(ts=now, frame_id=self.config.world_frame, poses=poses))
 
-        # Pick look-ahead waypoint
-        wx, wy = self._lookahead(path_world, rx, ry, self.config.lookahead_distance)
-        last = path_world[-1]
-        is_goal = (wx, wy) == last
-        with self._lock:
-            self._current_wp = (wx, wy)
-            self._current_wp_is_goal = is_goal
-        self.way_point.publish(
-            PointStamped(ts=now, frame_id=self.config.world_frame, x=wx, y=wy, z=gz)
-        )
-
-        # 1 Hz diagnostic: cells in costmap, path length, chosen waypoint
+        # 1 Hz diagnostic: cells in costmap, path length
         if now - self._last_diag_print >= 1.0:
             self._last_diag_print = now
             with self._costmap_lock:
@@ -801,7 +785,6 @@ class SimplePlanner(Module):
                 blocked_cells=blocked,
                 robot=f"({rx:.2f},{ry:.2f})",
                 goal=f"({gx:.2f},{gy:.2f})",
-                waypoint=f"({wx:.2f},{wy:.2f})",
                 inflation=round(effective_inflation, 2),
             )
 
