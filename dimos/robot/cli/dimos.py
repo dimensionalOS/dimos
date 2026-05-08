@@ -226,7 +226,7 @@ def run(
     cli_config_overrides: dict[str, Any] = ctx.obj
 
     # this is a workaround until we have a proper way to have delayed-module-choice in blueprints
-    # ex: vis_module(viewer=global_config.viewer) is WRONG (viewer will always be default value) without this patch
+    # ex: vis_module(viewer=global_config.viewer) is wrong (viewer will always be default value) without this patch
     global_config.update(**cli_config_overrides)
 
     # Clean stale registry entries
