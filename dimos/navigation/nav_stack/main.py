@@ -152,6 +152,8 @@ def create_nav_stack(
                 "slow_down_distance_threshold": 1.0,
                 "omni_dir_goal_threshold": 1.0,
                 "two_way_drive": False,
+                "max_yaw_rate": 60.0, # important for smooth movement
+                "max_acceleration": 2.0, # important for smooth movement
                 **path_follower_config,
             }
         ),
