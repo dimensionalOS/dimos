@@ -351,6 +351,7 @@ tests = [
     "dimos[psql,drone,cpu]",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
+    "python-can>=4",
     "langchain-chroma>=1,<2",
     "unitree-webrtc-connect-leshy>=2.0.7",
 

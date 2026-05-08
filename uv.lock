@@ -1620,7 +1620,7 @@ name = "cuda-bindings"
 version = "12.9.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "cuda-pathfinder", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/37/31/bfcc870f69c6a017c4ad5c42316207fc7551940db6f3639aa4466ec5faf3/cuda_bindings-12.9.4-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a022c96b8bd847e8dc0675523431149a4c3e872f440e3002213dbb9e08f0331a", size = 11800959, upload-time = "2025-10-21T14:51:26.458Z" },
@@ -1659,9 +1659,9 @@ name = "cupy-cuda12x"
 version = "13.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastrlock" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "fastrlock", marker = "platform_machine != 'aarch64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (python_full_version >= '3.11' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (python_full_version < '3.11' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/2e/db22c5148884e4e384f6ebbc7971fa3710f3ba67ca492798890a0fdebc45/cupy_cuda12x-13.6.0-cp310-cp310-manylinux2014_aarch64.whl", hash = "sha256:9e37f60f27ff9625dfdccc4688a09852707ec613e32ea9404f425dd22a386d14", size = 126341714, upload-time = "2025-08-18T08:24:08.335Z" },
@@ -2128,6 +2128,7 @@ tests = [
     { name = "pytest-mock" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "python-can" },
     { name = "python-lsp-ruff" },
     { name = "python-lsp-server", extra = ["all"] },
     { name = "requests-mock" },
@@ -2168,6 +2169,7 @@ tests-self-hosted = [
     { name = "pytest-mock" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "python-can" },
     { name = "python-lsp-ruff" },
     { name = "python-lsp-server", extra = ["all"] },
     { name = "requests-mock" },
@@ -2406,6 +2408,7 @@ tests = [
     { name = "pytest-mock", specifier = "==3.15.0" },
     { name = "pytest-timeout", specifier = "==2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
+    { name = "python-can", specifier = ">=4" },
     { name = "python-lsp-ruff", specifier = "==2.3.0" },
     { name = "python-lsp-server", extras = ["all"], specifier = "==1.14.0" },
     { name = "requests-mock", specifier = "==1.12.1" },
@@ -2447,6 +2450,7 @@ tests-self-hosted = [
     { name = "pytest-mock", specifier = "==3.15.0" },
     { name = "pytest-timeout", specifier = "==2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
+    { name = "python-can", specifier = ">=4" },
     { name = "python-lsp-ruff", specifier = "==2.3.0" },
     { name = "python-lsp-server", extras = ["all"], specifier = "==1.14.0" },
     { name = "requests-mock", specifier = "==1.12.1" },
@@ -2724,7 +2728,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -6078,7 +6082,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.10.2.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/41/e79269ce215c857c935fd86bcfe91a451a584dfc27f1e068f568b9ad1ab7/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:c9132cc3f8958447b4910a1720036d9eff5928cc3179b0a51fb6d167c6cc87d8", size = 705026878, upload-time = "2025-06-06T21:52:51.348Z" },
@@ -6091,7 +6095,7 @@ name = "nvidia-cufft-cu12"
 version = "11.3.3.83"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/60/bc/7771846d3a0272026c416fbb7e5f4c1f146d6d80704534d0b187dd6f4800/nvidia_cufft_cu12-11.3.3.83-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:848ef7224d6305cdb2a4df928759dca7b1201874787083b6e7550dd6765ce69a", size = 193109211, upload-time = "2025-03-07T01:44:56.873Z" },
@@ -6123,9 +6127,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.3.90"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "nvidia-cusparse-cu12", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-cusparse-cu12", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/32/f7cd6ce8a7690544d084ea21c26e910a97e077c9b7f07bf5de623ee19981/nvidia_cusolver_cu12-11.7.3.90-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:db9ed69dbef9715071232caa9b69c52ac7de3a95773c2db65bdba85916e4e5c0", size = 267229841, upload-time = "2025-03-07T01:46:54.356Z" },
@@ -6138,7 +6142,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.8.93"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/f7/cd777c4109681367721b00a106f491e0d0d15cfa1fd59672ce580ce42a97/nvidia_cusparse_cu12-12.5.8.93-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:9b6c161cb130be1a07a27ea6923df8141f3c295852f4b260c65f18f3e0a091dc", size = 288117129, upload-time = "2025-03-07T01:47:40.407Z" },
@@ -6187,10 +6191,10 @@ wheels = [
 
 [package.optional-dependencies]
 all = [
-    { name = "nvidia-libnvcomp-cu12" },
-    { name = "nvidia-nvjpeg-cu12" },
-    { name = "nvidia-nvjpeg2k-cu12" },
-    { name = "nvidia-nvtiff-cu12" },
+    { name = "nvidia-libnvcomp-cu12", marker = "platform_machine != 'aarch64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-nvjpeg-cu12", marker = "platform_machine != 'aarch64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-nvjpeg2k-cu12", marker = "platform_machine != 'aarch64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-nvtiff-cu12", marker = "platform_machine != 'aarch64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 
 [[package]]
@@ -6364,12 +6368,12 @@ name = "onnxruntime-gpu"
 version = "1.24.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "flatbuffers" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "packaging" },
-    { name = "protobuf" },
-    { name = "sympy" },
+    { name = "flatbuffers", marker = "platform_machine != 'aarch64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (python_full_version >= '3.11' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (python_full_version < '3.11' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "packaging", marker = "platform_machine != 'aarch64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "protobuf", marker = "platform_machine != 'aarch64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "sympy", marker = "platform_machine != 'aarch64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/c7/07d06175f1124fc89e8b7da30d70eb8e0e1400d90961ae1cbea9da69e69b/onnxruntime_gpu-1.24.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ac4bfc90c376516b13d709764ab257e4e3d78639bf6a2ccfc826e9db4a5c7ddf", size = 252616647, upload-time = "2026-02-05T17:24:02.993Z" },
@@ -6443,13 +6447,13 @@ name = "open3d-unofficial-arm"
 version = "0.19.0.post5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "configargparse" },
-    { name = "dash" },
-    { name = "flask" },
-    { name = "nbformat" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "werkzeug" },
+    { name = "configargparse", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "dash", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "flask", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nbformat", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'win32') or (python_full_version >= '3.11' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (python_full_version >= '3.11' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform != 'win32') or (python_full_version < '3.11' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (python_full_version < '3.11' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "werkzeug", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/02/87/95d3cf9017a0e89a708e611d003abeb66c88d7947fa7238962971cc8b0cb/open3d_unofficial_arm-0.19.0.post5-cp310-cp310-manylinux_2_35_aarch64.whl", hash = "sha256:26bc160f3326a74b232f026d741a576bf0d1fa7b1d5128c5e979d7b4d2d1b983", size = 48230542, upload-time = "2026-02-10T08:37:33.928Z" },
@@ -8165,7 +8169,7 @@ name = "pyobjc-framework-cocoa"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
+    { name = "pyobjc-core", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/02/a3/16ca9a15e77c061a9250afbae2eae26f2e1579eb8ca9462ae2d2c71e1169/pyobjc_framework_cocoa-12.1.tar.gz", hash = "sha256:5556c87db95711b985d5efdaaf01c917ddd41d148b1e52a0c66b1a2e2c5c1640", size = 2772191, upload-time = "2025-11-14T10:13:02.069Z" }
 wheels = [
@@ -8183,8 +8187,8 @@ name = "pyobjc-framework-corebluetooth"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-cocoa", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
+    { name = "pyobjc-core", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "pyobjc-framework-cocoa", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4b/25/d21d6cb3fd249c2c2aa96ee54279f40876a0c93e7161b3304bf21cbd0bfe/pyobjc_framework_corebluetooth-12.1.tar.gz", hash = "sha256:8060c1466d90bbb9100741a1091bb79975d9ba43911c9841599879fc45c2bbe0", size = 33157, upload-time = "2025-11-14T10:13:28.064Z" }
 wheels = [
@@ -8202,8 +8206,8 @@ name = "pyobjc-framework-libdispatch"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-cocoa", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
+    { name = "pyobjc-core", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "pyobjc-framework-cocoa", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/26/e8/75b6b9b3c88b37723c237e5a7600384ea2d84874548671139db02e76652b/pyobjc_framework_libdispatch-12.1.tar.gz", hash = "sha256:4035535b4fae1b5e976f3e0e38b6e3442ffea1b8aa178d0ca89faa9b8ecdea41", size = 38277, upload-time = "2025-11-14T10:16:46.235Z" }
 wheels = [
@@ -11080,7 +11084,7 @@ name = "winrt-runtime"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/16/dd/acdd527c1d890c8f852cc2af644aa6c160974e66631289420aa871b05e65/winrt_runtime-3.2.1.tar.gz", hash = "sha256:c8dca19e12b234ae6c3dadf1a4d0761b51e708457492c13beb666556958801ea", size = 21721, upload-time = "2025-06-06T14:40:27.593Z" }
 wheels = [
@@ -11106,7 +11110,7 @@ name = "winrt-windows-devices-bluetooth"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b2/a0/1c8a0c469abba7112265c6cb52f0090d08a67c103639aee71fc690e614b8/winrt_windows_devices_bluetooth-3.2.1.tar.gz", hash = "sha256:db496d2d92742006d5a052468fc355bf7bb49e795341d695c374746113d74505", size = 23732, upload-time = "2025-06-06T14:41:20.489Z" }
 wheels = [
@@ -11132,7 +11136,7 @@ name = "winrt-windows-devices-bluetooth-advertisement"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/06/fc/7ffe66ca4109b9e994b27c00f3d2d506e6e549e268791f755287ad9106d8/winrt_windows_devices_bluetooth_advertisement-3.2.1.tar.gz", hash = "sha256:0223852a7b7fa5c8dea3c6a93473bd783df4439b1ed938d9871f947933e574cc", size = 16906, upload-time = "2025-06-06T14:41:21.448Z" }
 wheels = [
@@ -11158,7 +11162,7 @@ name = "winrt-windows-devices-bluetooth-genericattributeprofile"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/44/21/aeeddc0eccdfbd25e543360b5cc093233e2eab3cdfb53ad3cabae1b5d04d/winrt_windows_devices_bluetooth_genericattributeprofile-3.2.1.tar.gz", hash = "sha256:cdf6ddc375e9150d040aca67f5a17c41ceaf13a63f3668f96608bc1d045dde71", size = 38896, upload-time = "2025-06-06T14:41:22.687Z" }
 wheels = [
@@ -11184,7 +11188,7 @@ name = "winrt-windows-devices-enumeration"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/dd/75835bfbd063dffa152109727dedbd80f6e92ea284855f7855d48cdf31c9/winrt_windows_devices_enumeration-3.2.1.tar.gz", hash = "sha256:df316899e39bfc0ffc1f3cb0f5ee54d04e1d167fbbcc1484d2d5121449a935cf", size = 23538, upload-time = "2025-06-06T14:41:26.787Z" }
 wheels = [
@@ -11210,7 +11214,7 @@ name = "winrt-windows-devices-radios"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5e/02/9704ea359ad8b0d6faa1011f98fb477e8fb6eac5201f39d19e73c2407e7b/winrt_windows_devices_radios-3.2.1.tar.gz", hash = "sha256:4dc9b9d1501846049eb79428d64ec698d6476c27a357999b78a8331072e18a0b", size = 5908, upload-time = "2025-06-06T14:41:44.868Z" }
 wheels = [
@@ -11236,7 +11240,7 @@ name = "winrt-windows-foundation"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0c/55/098ce7ea0679efcc1298b269c48768f010b6c68f90c588f654ec874c8a74/winrt_windows_foundation-3.2.1.tar.gz", hash = "sha256:ad2f1fcaa6c34672df45527d7c533731fdf65b67c4638c2b4aca949f6eec0656", size = 30485, upload-time = "2025-06-06T14:41:53.344Z" }
 wheels = [
@@ -11262,7 +11266,7 @@ name = "winrt-windows-foundation-collections"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ef/62/d21e3f1eeb8d47077887bbf0c3882c49277a84d8f98f7c12bda64d498a07/winrt_windows_foundation_collections-3.2.1.tar.gz", hash = "sha256:0eff1ad0d8d763ad17e9e7bbd0c26a62b27215016393c05b09b046d6503ae6d5", size = 16043, upload-time = "2025-06-06T14:41:53.983Z" }
 wheels = [
@@ -11288,7 +11292,7 @@ name = "winrt-windows-storage-streams"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
+    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/00/50/f4488b07281566e3850fcae1021f0285c9653992f60a915e15567047db63/winrt_windows_storage_streams-3.2.1.tar.gz", hash = "sha256:476f522722751eb0b571bc7802d85a82a3cae8b1cce66061e6e758f525e7b80f", size = 34335, upload-time = "2025-06-06T14:43:23.905Z" }
 wheels = [
@@ -11416,9 +11420,9 @@ name = "xformers"
 version = "0.0.34"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "torch" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (python_full_version >= '3.11' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (python_full_version < '3.11' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "torch", marker = "platform_machine != 'aarch64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ef/2b/365151a1e2e6aa70c1bd66e0532e3d71915a28a34ebde3d9b068e8849f66/xformers-0.0.34.tar.gz", hash = "sha256:716bd9ffe61f46c2cc0536abf8b8c43ec594bea47a49394ea5cfa417e9de6a6f", size = 14303297, upload-time = "2026-01-23T18:14:31.457Z" }
 wheels = [
