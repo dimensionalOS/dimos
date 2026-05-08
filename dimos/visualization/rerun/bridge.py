@@ -39,6 +39,7 @@ from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
 import typer
 
+from dimos.constants import ZENOH_DIMOS_KEY_PREFIX
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
@@ -321,9 +322,10 @@ class RerunBridgeModule(Module):
         if isinstance(raw, str):
             topic_str = raw
         topic_str = topic_str.split("#")[0]
-        # Strip Zenoh key prefix (dimos/) to match LCM entity paths
-        if topic_str.startswith("dimos/"):
-            topic_str = "/" + topic_str.removeprefix("dimos/")
+        # Strip Zenoh key root to match LCM-style entity paths.
+        _prefix = f"{ZENOH_DIMOS_KEY_PREFIX}/"
+        if topic_str.startswith(_prefix):
+            topic_str = "/" + topic_str.removeprefix(_prefix)
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:

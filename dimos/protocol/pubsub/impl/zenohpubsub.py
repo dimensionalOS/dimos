@@ -24,6 +24,7 @@ from collections.abc import Callable
 import threading
 from typing import TYPE_CHECKING, Any
 
+from dimos.constants import ZENOH_DIMOS_KEY_PREFIX
 from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.protocol.pubsub.spec import AllPubSub
@@ -151,10 +152,10 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
 
         def unsubscribe() -> None:
             nonlocal undeclared
-            if undeclared:
-                return
-            undeclared = True
             with self._subscriber_lock:
+                if undeclared:
+                    return
+                undeclared = True
                 if sub not in self._subscribers:
                     return  # Already removed by stop() — stop() owns the undeclare
                 self._subscribers.remove(sub)
@@ -164,7 +165,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
 
     def subscribe_all(self, callback: Callable[[bytes, Topic], Any]) -> Callable[[], None]:
         """Subscribe to all dimos key expressions via wildcard."""
-        return self.subscribe(Topic("dimos/**"), callback)
+        return self.subscribe(Topic(f"{ZENOH_DIMOS_KEY_PREFIX}/**"), callback)
 
     def stop(self) -> None:
         """Clean up publishers and subscribers."""

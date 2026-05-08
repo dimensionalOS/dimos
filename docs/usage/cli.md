@@ -197,6 +197,19 @@ Print resolved GlobalConfig values and their sources.
 dimos show-config
 ```
 
+### `dimos topic echo` and `dimos topic send`
+
+Subscribe to or publish on a channel by name, for quick debugging.
+
+```bash
+dimos topic echo /some_topic [MsgType]
+dimos topic send /some_topic '<python expression>'
+```
+
+**Zenoh and `--transport`:** These commands are **LCM-only**. They do not use the `dimos` global `--transport` flag and never open a Zenoh subscriber or publisher. Implementation uses `LCMTransport`, `pLCMTransport`, or raw LCM subscribe via `LCMPubSubBase` (see `dimos/robot/cli/topic.py`).
+
+If DimOS is running with `--transport=zenoh`, module streams use Zenoh (key expressions such as `dimos/...` on the Zenoh session), not the LCM UDP multicast bus. In that common case, `dimos topic echo` will **not** show the same traffic as the running stack. Use `--transport=lcm` when you need to snoop on the wire with these commands, use `lcmspy`, or use Zenoh-specific tooling against the stack's Zenoh keys.
+
 ---
 
 ## Agent & MCP Commands

@@ -25,25 +25,20 @@ pytest.importorskip("zenoh")
 from dimos.core.test_utils import retry_until
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
-from dimos.protocol.service.zenohservice import _sessions
+from dimos.protocol.service.zenohservice import close_all_zenoh_sessions
 
 
 @pytest.fixture()
 def pubsub():
     """Create and start a ZenohPubSubBase instance, clean up after."""
     # Each test gets a fresh session to avoid thread leak detection
-    for session in _sessions.values():
-        session.close()
-    _sessions.clear()
+    close_all_zenoh_sessions()
 
     ps = ZenohPubSubBase()
     ps.start()
     yield ps
     ps.stop()
-    # Close sessions so Zenoh's internal threads are joined
-    for session in _sessions.values():
-        session.close()
-    _sessions.clear()
+    close_all_zenoh_sessions()
 
 
 class TestZenohPubSubBase:

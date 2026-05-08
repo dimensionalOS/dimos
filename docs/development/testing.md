@@ -55,7 +55,7 @@ For non-interactive runs, especially on macOS, prefer `CI=1`. This skips system 
 Run the slow tests:
 
 ```bash
-CI=1 ./bin/pytest-slow
+./bin/pytest-slow
 ```
 
 (This is just a shortcut for `pytest -m 'not (tool or mujoco)' dimos`. I.e., run both fast tests and slow tests, but not `tool` or `mujoco`.)

@@ -49,5 +49,10 @@ DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4
 # From https://github.com/lcm-proj/lcm.git
 LCM_MAX_CHANNEL_NAME_LENGTH = 63
 
+# First path segment of Zenoh key expressions for DimOS module streams. Used by
+# ModuleCoordinator (dimos + LCM-style "/name") and ZenohPubSub.subscribe_all
+# (wildcard f"{ZENOH_DIMOS_KEY_PREFIX}/**"). Rerun bridge strips this prefix for entity paths.
+ZENOH_DIMOS_KEY_PREFIX = "dimos"
+
 # Default timeout (seconds) for thread.join() during shutdown.
 DEFAULT_THREAD_JOIN_TIMEOUT = 2.0

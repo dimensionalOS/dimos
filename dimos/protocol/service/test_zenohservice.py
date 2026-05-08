@@ -20,17 +20,14 @@ import pytest
 
 pytest.importorskip("zenoh")
 
-from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, _sessions
+from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, close_all_zenoh_sessions
 
 
 @pytest.fixture(autouse=True)
 def _clear_sessions():
     """Clear the global session cache before each test."""
     yield
-    # Close and remove all sessions after each test
-    for session in _sessions.values():
-        session.close()
-    _sessions.clear()
+    close_all_zenoh_sessions()
 
 
 class TestZenohConfig:

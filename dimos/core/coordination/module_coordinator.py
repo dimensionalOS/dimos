@@ -23,6 +23,7 @@ import sys
 import threading
 from typing import TYPE_CHECKING, Any, cast
 
+from dimos.constants import ZENOH_DIMOS_KEY_PREFIX
 from dimos.core.coordination.rpyc_server import RpycServer
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_docker import WorkerManagerDocker
@@ -557,7 +558,7 @@ def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> Pu
             )
         from dimos.core.transport import ZenohTransport, pZenohTransport
 
-        zenoh_topic = f"dimos{topic}"
+        zenoh_topic = f"{ZENOH_DIMOS_KEY_PREFIX}{topic}"
         transport = (
             pZenohTransport(zenoh_topic)
             if use_pickled
@@ -634,7 +635,9 @@ def _run_configurators(blueprint: Blueprint) -> None:
     from dimos.protocol.service.system_configurator.base import configure_system
     from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
 
-    lcm_checks = lcm_configurators() if global_config.transport == "lcm" else []
+    # LCM is still used outside merged module transports (CLI side channels, agents, tests).
+    # OS multicast/buffer tuning applies whenever those paths run, not only when transport=lcm.
+    lcm_checks = lcm_configurators()
     configurators = [*lcm_checks, *blueprint.configurator_checks]
 
     try:

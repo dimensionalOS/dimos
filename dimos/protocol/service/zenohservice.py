@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import threading
 from typing import Any
@@ -31,6 +32,25 @@ logger = setup_logger()
 
 _sessions: dict[str, zenoh.Session] = {}
 _sessions_lock = threading.Lock()
+
+
+def close_all_zenoh_sessions() -> None:
+    """Close and clear every cached session in this process.
+
+    Safe to call when no live publishers or subscribers still reference the
+    sessions (call after module ``stop()``). Idempotent if the cache is empty.
+    """
+    with _sessions_lock:
+        to_close = list(_sessions.values())
+        _sessions.clear()
+    for session in to_close:
+        try:
+            session.close()  # type: ignore[no-untyped-call]
+        except Exception:
+            logger.error("Error closing Zenoh session", exc_info=True)
+
+
+atexit.register(close_all_zenoh_sessions)
 
 
 class ZenohConfig(BaseConfig):
@@ -83,4 +103,5 @@ class ZenohService(Service):
 __all__ = [
     "ZenohConfig",
     "ZenohService",
+    "close_all_zenoh_sessions",
 ]
