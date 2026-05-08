@@ -2,13 +2,16 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # Deployment environment: "prod" | "dev". Defaults to prod (fail-safe).
+    environment: str = "prod"
+
     # Cloudflare Realtime SFU
     cf_teleop_app_id: str = ""
     cf_teleop_app_secret: str = ""
     cf_sfu_base_url: str = "https://rtc.live.cloudflare.com/v1/apps"
 
     # Auth
-    jwt_secret: str = "change-me"
+    jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
     jwt_expire_hours: int = 24
 
@@ -27,3 +30,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if settings.environment == "prod" and len(settings.jwt_secret) < 32:
+    raise RuntimeError(
+        "JWT_SECRET must be set to a random string of >=32 chars in prod"
+    )

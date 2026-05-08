@@ -20,7 +20,6 @@ USERS: dict[str, dict] = {}
 class RegisterRequest(BaseModel):
     email: str
     password: str
-    role: str = "operator"
 
 
 class LoginRequest(BaseModel):
@@ -48,11 +47,11 @@ async def register(body: RegisterRequest):
     USERS[body.email] = {
         "email": body.email,
         "password_hash": hash_password(body.password),
-        "role": body.role,
+        "role": "operator",
     }
 
-    token = create_token(body.email, body.role)
-    return TokenResponse(token=token, user_id=body.email, role=body.role)
+    token = create_token(body.email, "operator")
+    return TokenResponse(token=token, user_id=body.email, role="operator")
 
 
 @router.post("/login", response_model=TokenResponse)

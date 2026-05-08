@@ -17,11 +17,10 @@ async def lifespan(app: FastAPI):
     # Startup: init DB
     await init_db()
 
-    # Register a default robot key for development
-    # In production, use POST /auth/robots to register keys
-    dev_key = "dev-robot-key-change-me"
-    register_robot_key(dev_key, "dev-robot")
-    print(f"Dev robot key registered: {dev_key} → dev-robot")
+    if settings.environment == "dev":
+        dev_key = "dev-robot-key-change-me"
+        register_robot_key(dev_key, "dev-robot")
+        print(f"[dev] robot key registered: {dev_key} → dev-robot")
 
     yield
     # Shutdown
