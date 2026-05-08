@@ -213,6 +213,10 @@ class UnityBridgeConfig(ModuleConfig):
     sensor_offset_x: float = 0.0  # m
     sensor_offset_y: float = 0.0
 
+    # Disable image decoding and publishing (color_image, semantic_image,
+    # camera_info) to save CPU when only navigation is needed.
+    publish_images: bool = True
+
 
 # Camera intrinsics constants.
 #
@@ -677,6 +681,8 @@ class UnityBridgeModule(Module):
                     )
 
         elif "image" in topic and "compressed" in topic:
+            if not self.config.publish_images:
+                return
             img_result = deserialize_compressed_image(data)
             if img_result is not None:
                 img_bytes, _fmt, _frame_id, ts = img_result

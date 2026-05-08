@@ -64,8 +64,8 @@ nav_config = dict(
         "obstacle_height_threshold": 0.02,
     },
     path_follower={
-        "max_acceleration": 4.0,
-        "max_yaw_rate": 80.0,
+        "max_acceleration": 2.0,
+        "max_yaw_rate": 60.0,
     },
 )
 
@@ -75,6 +75,7 @@ unitree_g1_nav_sim = (
             unity_scene="home_building_1",
             vehicle_height=G1.height_clearance,
             lock_z=True,
+            publish_images=False,
         ),
         create_nav_stack(**nav_config),
         MovementManager.blueprint(),
