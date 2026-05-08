@@ -47,7 +47,7 @@ def create_nav_stack(
     use_tare: bool = False,
     use_terrain_map_ext: bool = True,
     planner: str = "far",
-    use_native_pgo: bool = False,
+    use_native_pgo: bool = True,
     vehicle_height: float | None = None,
     max_speed: float | None = None,
     waypoint_threshold: float | None = None,
