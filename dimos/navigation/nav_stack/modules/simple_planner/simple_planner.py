@@ -25,6 +25,7 @@ from typing import Any
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -309,6 +310,7 @@ class SimplePlanner(Module):
     terrain_map_ext: In[PointCloud2]
     terrain_map: In[PointCloud2]
     goal: In[PointStamped]
+    stop_movement: In[Bool]
     way_point: Out[PointStamped]
     goal_path: Out[Path]
     costmap_cloud: Out[PointCloud2]
@@ -356,6 +358,9 @@ class SimplePlanner(Module):
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
+        self.register_disposable(
+            Disposable(self.stop_movement.subscribe(self._on_stop_movement))
+        )
         self.register_disposable(
             Disposable(self.terrain_map_ext.subscribe(self._on_terrain_map_ext))
         )
@@ -411,24 +416,54 @@ class SimplePlanner(Module):
             self._has_odom = True
         return True
 
+    def _cancel_navigation(self, source: str) -> None:
+        """Clear the active goal and tell LocalPlanner to hold position.
+
+        Refresh the pose from TF first — the cached value can be up to
+        one planner tick (~200 ms) stale, and during teleop the robot is
+        being pushed, so a stale "stop here" waypoint becomes a real
+        target the local planner drives back to.
+        """
+        self._query_pose()
+        with self._lock:
+            already_idle = self._goal_x is None and self._goal_y is None
+            self._goal_x = None
+            self._goal_y = None
+            self._cached_path = None
+            self._current_wp = None
+            self._current_wp_is_goal = False
+            rx, ry, rz = self._robot_x, self._robot_y, self._robot_z
+        now = time.time()
+        self.way_point.publish(
+            PointStamped(ts=now, frame_id=self.config.world_frame, x=rx, y=ry, z=rz)
+        )
+        # Single-pose path at the robot — explicitly distinguishes "cancelled,
+        # holding position" from "no goal_path message yet" in the viewer.
+        self.goal_path.publish(
+            Path(
+                ts=now,
+                frame_id=self.config.world_frame,
+                poses=[
+                    PoseStamped(
+                        ts=now,
+                        frame_id=self.config.world_frame,
+                        position=[rx, ry, rz],
+                        orientation=[0.0, 0.0, 0.0, 1.0],
+                    )
+                ],
+            )
+        )
+        if not already_idle:
+            logger.info("Goal cleared — idle until new goal", source=source)
+
+    def _on_stop_movement(self, msg: Bool) -> None:
+        if msg.data:
+            self._cancel_navigation(source="stop_movement")
+
     def _on_goal(self, msg: PointStamped) -> None:
         # NaN sentinel = cancel navigation (e.g. teleop took over).
         if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
-            with self._lock:
-                self._goal_x = None
-                self._goal_y = None
-                self._cached_path = None
-                rx, ry, rz = self._robot_x, self._robot_y, self._robot_z
-            # Publish robot position as waypoint so LocalPlanner stops
-            # tracking the stale waypoint.
-            self._current_wp = None
-            self._current_wp_is_goal = False
-            now = time.time()
-            self.way_point.publish(
-                PointStamped(ts=now, frame_id=self.config.world_frame, x=rx, y=ry, z=rz)
-            )
-            self.goal_path.publish(Path(ts=now, frame_id=self.config.world_frame, poses=[]))
-            logger.info("Goal cleared — idle until new goal")
+            self._cancel_navigation(source="nan_goal")
             return
         with self._lock:
             self._goal_x = float(msg.x)
