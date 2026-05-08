@@ -19,8 +19,9 @@ with them, pause and explain the conflict before continuing.
 3. After substantive code changes, run `bash scripts/verify.sh` when feasible.
    If the full verify is too expensive or blocked, run the narrowest meaningful
    check and clearly report the gap.
-4. Use feature branches and PRs for repository changes. PRs target `dev` for this
-   repository unless the human explicitly instructs otherwise.
+4. Use feature branches and PRs for repository changes. For `/ship` work in this
+   fork, default to the current `origin` tracking branch as both the base and
+   merge target unless the human names another branch.
 5. When preparing commits, stage only files related to the current task. Do not use
    broad `git add -A` in a dirty working tree.
 

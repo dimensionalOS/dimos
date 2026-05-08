@@ -21,6 +21,7 @@
         # 1. Shared package list (tool-chain + project deps)
         # ------------------------------------------------------------
         # we "flag" each package with what we need it for (e.g. LD_LIBRARY_PATH, nativeBuildInputs vs buildInputs, etc)
+        # These flags keep the dev shell and Docker image package wiring in sync.
         aggregation = lib.aggregator [
           ### Core shell & utils
           { vals.pkg=pkgs.bashInteractive;    flags={}; }

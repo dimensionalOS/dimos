@@ -14,10 +14,11 @@
 
 from enum import Enum
 import sys
-from threading import Thread
+from threading import Event, Lock, Thread
 import time
 from typing import TYPE_CHECKING, Any, Protocol
 
+from dimos_lcm.std_msgs import Bool
 from pydantic import Field
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
@@ -54,6 +55,9 @@ else:
     from typing import TypeVar
 
 logger = setup_logger()
+FORCE_MOVE_OVERRIDE_TIMEOUT_SECONDS = 0.5
+FORCE_MOVE_COMMAND_THRESHOLD = 0.1
+FORCE_MOVE_DOUBLE_TAP_WINDOW_SECONDS = 0.8
 
 
 class Go2Mode(str, Enum):
@@ -195,6 +199,7 @@ _Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
 class GO2Connection(Module, Camera, Pointcloud):
     config: ConnectionConfig
     cmd_vel: In[Twist]
+    force_move_override: In[Bool]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
     lidar: Out[PointCloud2]
@@ -205,6 +210,12 @@ class GO2Connection(Module, Camera, Pointcloud):
     camera_info_static: CameraInfo = _camera_info_static()
     _camera_info_thread: Thread | None = None
     _latest_video_frame: Image | None = None
+    _force_move_override_thread: Thread | None = None
+    _force_move_override_enabled: bool = False
+    _force_move_override_last_update: float = 0.0
+    _force_move_override_from_twist_gesture: bool = False
+    _last_move_tap_time: float = 0.0
+    _move_command_active: bool = False
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
@@ -219,6 +230,8 @@ class GO2Connection(Module, Camera, Pointcloud):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.connection = make_connection(self.config.ip, self.config.g)
+        self._force_move_override_lock = Lock()
+        self._force_move_override_stop = Event()
 
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
@@ -249,12 +262,21 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.video_stream().subscribe(onimage))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
+        self.register_disposable(
+            Disposable(self.force_move_override.subscribe(self._set_force_move_override))
+        )
 
         self._camera_info_thread = Thread(
             target=self.publish_camera_info,
             daemon=True,
         )
         self._camera_info_thread.start()
+        self._force_move_override_stop.clear()
+        self._force_move_override_thread = Thread(
+            target=self._force_move_override_watchdog,
+            daemon=True,
+        )
+        self._force_move_override_thread.start()
 
         self.standup()
         time.sleep(3)
@@ -264,11 +286,19 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.connection.enable_rage_mode()
 
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
+        self._force_move_override_enabled = False
 
         # self.record("go2_bigoffice")
 
     @rpc
     def stop(self) -> None:
+        if self.connection and self._force_move_override_enabled:
+            self._set_force_move_override(Bool(data=False))
+
+        self._force_move_override_stop.set()
+        if self._force_move_override_thread and self._force_move_override_thread.is_alive():
+            self._force_move_override_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+
         self.liedown()
 
         if self.connection:
@@ -317,7 +347,65 @@ class GO2Connection(Module, Camera, Pointcloud):
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to robot."""
+        self._update_force_move_override_from_twist(twist)
         return self.connection.move(twist, duration)
+
+    def _set_force_move_override(self, msg: Bool) -> None:
+        enabled = bool(msg.data)
+        with self._force_move_override_lock:
+            self._force_move_override_last_update = time.monotonic()
+            if enabled == self._force_move_override_enabled:
+                return
+
+            self._force_move_override_enabled = enabled
+
+        if enabled:
+            logger.warning("Force move override enabled: disabling Go2 obstacle avoidance")
+            self.connection.set_obstacle_avoidance(False)
+            return
+
+        logger.warning("Force move override disabled: stopping and restoring Go2 obstacle avoidance")
+        self.connection.move(
+            Twist(
+                linear=Vector3(0.0, 0.0, 0.0),
+                angular=Vector3(0.0, 0.0, 0.0),
+            )
+        )
+        self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
+
+    def _force_move_override_watchdog(self) -> None:
+        while not self._force_move_override_stop.wait(0.1):
+            with self._force_move_override_lock:
+                enabled = self._force_move_override_enabled
+                age = time.monotonic() - self._force_move_override_last_update
+
+            if enabled and age > FORCE_MOVE_OVERRIDE_TIMEOUT_SECONDS:
+                logger.warning("Force move override timed out; restoring Go2 obstacle avoidance")
+                self._set_force_move_override(Bool(data=False))
+
+    def _update_force_move_override_from_twist(self, twist: Twist) -> None:
+        move_active = (
+            abs(twist.linear.x) > FORCE_MOVE_COMMAND_THRESHOLD
+            or abs(twist.linear.y) > FORCE_MOVE_COMMAND_THRESHOLD
+            or abs(twist.angular.z) > FORCE_MOVE_COMMAND_THRESHOLD
+        )
+        now = time.monotonic()
+
+        if move_active:
+            if not self._move_command_active:
+                if now - self._last_move_tap_time <= FORCE_MOVE_DOUBLE_TAP_WINDOW_SECONDS:
+                    self._force_move_override_from_twist_gesture = True
+                self._last_move_tap_time = now
+
+            self._move_command_active = True
+            if self._force_move_override_from_twist_gesture:
+                self._set_force_move_override(Bool(data=True))
+            return
+
+        self._move_command_active = False
+        if self._force_move_override_from_twist_gesture:
+            self._force_move_override_from_twist_gesture = False
+            self._set_force_move_override(Bool(data=False))
 
     @rpc
     def standup(self) -> bool:

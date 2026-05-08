@@ -5,10 +5,12 @@ import Button from "./Button";
 interface KeyboardControlPanelProps {
   onSendMoveCommand: (linear: [number, number, number], angular: [number, number, number]) => void;
   onStopMoveCommand: () => void;
+  onSetForceMoveOverride: (options: { enabled: boolean }) => void;
 }
 
 const linearSpeed = 0.5;
 const angularSpeed = 0.8;
+const forceOverrideSpeedMultiplier = 0.4;
 const publishRate = 10.0; // Hz
 
 const controlKeys = new Set([
@@ -39,9 +41,12 @@ function calculateVelocities(keys: Set<string>) {
   let linearY = 0.0;
   let angularY = 0.0;
   let angularZ = 0.0;
+  const isForceOverrideRequested = keys.has("Shift") && keys.has("Control");
 
   let speedMultiplier = 1.0;
-  if (keys.has("Shift")) {
+  if (isForceOverrideRequested) {
+    speedMultiplier = forceOverrideSpeedMultiplier;
+  } else if (keys.has("Shift")) {
     speedMultiplier = 2.0; // Boost mode
   } else if (keys.has("Control")) {
     speedMultiplier = 0.5; // Slow mode
@@ -80,15 +85,21 @@ function calculateVelocities(keys: Set<string>) {
     angularY = -angularSpeed * speedMultiplier;
   }
 
-  return { linearX, linearY, angularY, angularZ };
+  const forceMoveOverride =
+    isForceOverrideRequested &&
+    (linearX !== 0.0 || linearY !== 0.0 || angularY !== 0.0 || angularZ !== 0.0);
+
+  return { linearX, linearY, angularY, angularZ, forceMoveOverride };
 }
 
 export default function KeyboardControlPanel({
   onSendMoveCommand,
   onStopMoveCommand,
+  onSetForceMoveOverride,
 }: KeyboardControlPanelProps): React.ReactElement {
   const [isActive, setIsActive] = React.useState(false);
   const keysPressed = React.useRef<Set<string>>(new Set());
+  const forceOverrideRef = React.useRef(false);
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const handleKeyDown = React.useCallback((event: KeyboardEvent) => {
@@ -121,10 +132,15 @@ export default function KeyboardControlPanel({
 
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("keyup", handleKeyUp);
+    const pressedKeys = keysPressed.current;
 
     // Start publishing loop
     intervalRef.current = setInterval(() => {
-      const velocities = calculateVelocities(keysPressed.current);
+      const velocities = calculateVelocities(pressedKeys);
+      if (velocities.forceMoveOverride === true || forceOverrideRef.current) {
+        onSetForceMoveOverride({ enabled: velocities.forceMoveOverride });
+      }
+      forceOverrideRef.current = velocities.forceMoveOverride;
 
       onSendMoveCommand(
         [velocities.linearX, velocities.linearY, 0],
@@ -141,10 +157,19 @@ export default function KeyboardControlPanel({
         intervalRef.current = null;
       }
 
-      keysPressed.current.clear();
+      pressedKeys.clear();
+      forceOverrideRef.current = false;
+      onSetForceMoveOverride({ enabled: false });
       onStopMoveCommand();
     };
-  }, [isActive, handleKeyDown, handleKeyUp, onSendMoveCommand, onStopMoveCommand]);
+  }, [
+    isActive,
+    handleKeyDown,
+    handleKeyUp,
+    onSendMoveCommand,
+    onSetForceMoveOverride,
+    onStopMoveCommand,
+  ]);
 
   const toggleKeyboardControl = () => {
     if (isActive) {
@@ -185,6 +210,7 @@ export default function KeyboardControlPanel({
           <div>W/S: Forward/Backward | A/D: Turn</div>
           <div>Arrows: Strafe/Pitch | Space: Stop</div>
           <div>Shift: Boost | Ctrl: Slow</div>
+          <div style={{ color: "#ff6666" }}>Hold Ctrl+Shift+move: force move override</div>
         </div>
       )}
       <Button isActive={isActive} onClick={toggleKeyboardControl}>

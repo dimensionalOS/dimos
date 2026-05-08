@@ -107,6 +107,7 @@ class WebsocketVisModule(Module):
     stop_explore_cmd: Out[Bool]
     cmd_vel: Out[Twist]
     movecmd_stamped: Out[TwistStamped]
+    force_move_override: Out[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         """Initialize the WebSocket visualization module.
@@ -321,6 +322,13 @@ class WebsocketVisModule(Module):
         async def stop_explore(sid) -> None:  # type: ignore[no-untyped-def]
             logger.info("Stopping exploration")
             self.stop_explore_cmd.publish(Bool(data=True))
+
+        @self.sio.event  # type: ignore[untyped-decorator]
+        async def force_move_override(sid: str, data: dict[str, Any]) -> None:
+            enabled = bool(data.get("enabled", False))
+            logger.warning(f"Force move override {'enabled' if enabled else 'disabled'}")
+            if self.force_move_override and self.force_move_override.transport:
+                self.force_move_override.publish(Bool(data=enabled))
 
         @self.sio.event  # type: ignore[untyped-decorator]
         async def clear_gps_goals(sid: str) -> None:

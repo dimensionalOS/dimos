@@ -31,7 +31,7 @@ __pycache__
 .bash_history
 
 # Ignore all local test data.
-/data/*
+/data/
 
 # node env (used by devcontainers cli)
 node_modules
@@ -41,8 +41,6 @@ package-lock.json
 # Ignore build artifacts
 dist/
 build/
-
-data/*
 FastSAM-x.pt
 yolo11n.pt
 

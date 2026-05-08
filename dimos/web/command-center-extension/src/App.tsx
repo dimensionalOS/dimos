@@ -1,12 +1,12 @@
 import * as React from "react";
 
+import Button from "./Button";
 import Connection from "./Connection";
 import ExplorePanel from "./ExplorePanel";
 import GpsButton from "./GpsButton";
-import Button from "./Button";
 import KeyboardControlPanel from "./KeyboardControlPanel";
-import VisualizerWrapper from "./components/VisualizerWrapper";
 import LeafletMap from "./components/LeafletMap";
+import VisualizerWrapper from "./components/VisualizerWrapper";
 import { AppAction, AppState, LatLon } from "./types";
 
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -78,6 +78,10 @@ export default function App(): React.ReactElement {
     connectionRef.current?.stopMoveCommand();
   }, []);
 
+  const handleSetForceMoveOverride = React.useCallback((options: { enabled: boolean }) => {
+    connectionRef.current?.setForceMoveOverride(options);
+  }, []);
+
   const handleReturnHome = React.useCallback(() => {
     connectionRef.current?.worldClick(0, 0);
   }, []);
@@ -112,15 +116,24 @@ export default function App(): React.ReactElement {
         }}
       >
         <GpsButton
-          onUseGps={() => setIsGpsMode(true)}
-          onUseCostmap={() => setIsGpsMode(false)}
+          onUseGps={() => {
+            setIsGpsMode(true);
+          }}
+          onUseCostmap={() => {
+            setIsGpsMode(false);
+          }}
         ></GpsButton>
         <ExplorePanel onStartExplore={handleStartExplore} onStopExplore={handleStopExplore} />
-        <Button onClick={handleReturnHome} isActive={false}>Go Home</Button>
-        <Button onClick={handleStop} isActive={false}>Stop</Button>
+        <Button onClick={handleReturnHome} isActive={false}>
+          Go Home
+        </Button>
+        <Button onClick={handleStop} isActive={false}>
+          Stop
+        </Button>
         <KeyboardControlPanel
           onSendMoveCommand={handleSendMoveCommand}
           onStopMoveCommand={handleStopMoveCommand}
+          onSetForceMoveOverride={handleSetForceMoveOverride}
         />
       </div>
     </div>

@@ -45,7 +45,13 @@ export default class Connection {
     });
 
     this.socket.on("full_state", (data: FullStateData) => {
-      const state: Partial<{ costmap: Costmap; robotPose: Vector; gpsLocation: LatLon; gpsTravelGoalPoints: LatLon[]; path: Path }> = {};
+      const state: Partial<{
+        costmap: Costmap;
+        robotPose: Vector;
+        gpsLocation: LatLon;
+        gpsTravelGoalPoints: LatLon[];
+        path: Path;
+      }> = {};
 
       if (data.costmap != undefined) {
         state.costmap = Costmap.decode(data.costmap);
@@ -92,11 +98,17 @@ export default class Connection {
     this.socket.emit("move_command", twist);
   }
 
+  setForceMoveOverride(options: { enabled: boolean }): void {
+    const { enabled } = options;
+    this.socket.emit("force_move_override", { enabled });
+  }
+
   sendGpsGoal(goal: LatLon): void {
     this.socket.emit("gps_goal", goal);
   }
 
   stopMoveCommand(): void {
+    this.setForceMoveOverride({ enabled: false });
     const twist: TwistCommand = {
       linear: { x: 0, y: 0, z: 0 },
       angular: { x: 0, y: 0, z: 0 },

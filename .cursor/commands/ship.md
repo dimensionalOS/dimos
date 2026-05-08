@@ -14,9 +14,11 @@ before deciding what to do next.
 
 ## 2. Branch
 
-- Fetch the base branch: `git fetch origin`.
-- Create a small task branch from `origin/dev` unless the human asks for another
-  base.
+- Fetch from the fork remote: `git fetch origin`.
+- Use the current `origin` tracking branch as the base and merge target unless
+  the human names another branch. If no clear `origin` tracking branch exists,
+  stop and ask which fork branch to use.
+- Create a small task branch from `origin/<base-branch>`.
 - Use DimOS branch prefixes: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`,
   `chore/`, or `perf/`.
 
@@ -51,10 +53,11 @@ checks and report exactly what was not covered.
 - Commit with a concise conventional message, such as `fix: ...` or `chore: ...`.
 - Do not use `--no-verify`.
 
-## 7. Push And PR
+## 7. Push And Merge
 
 - Push with upstream tracking: `git push -u origin <branch>`.
-- Create a PR targeting `dev`.
+- Create a PR targeting the selected fork base branch, or merge back into that
+  fork branch using the repository's normal review flow.
 - Fill the PR template with Summary, Test plan, Risk, Related, and the CLA
   checkbox when applicable.
 - If auto-merge is enabled and checks are required, use squash auto-merge.
