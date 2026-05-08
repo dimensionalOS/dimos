@@ -62,6 +62,7 @@ nav_config = dict(
         "min_relative_z": -1.5,
         "freeze_ang": 180.0,
         "obstacle_height_threshold": 0.02,
+        "publish_free_paths": True,
     },
     path_follower={
         "max_acceleration": 2.0,

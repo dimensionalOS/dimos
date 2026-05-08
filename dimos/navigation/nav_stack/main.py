@@ -140,6 +140,7 @@ def create_nav_stack(
                 "max_relative_z": 0.3,
                 "min_relative_z": -0.4,
                 "two_way_drive": False,
+                "publish_free_paths": False,
                 **local_planner_config,
             }
         ),
