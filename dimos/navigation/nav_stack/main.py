@@ -213,6 +213,7 @@ def nav_stack_rerun_config(
     user_config: dict[str, Any] | None = None,
     *,
     agentic_debug: bool = False,
+    show_registered_scan: bool = False,
     vis_throttle: float = 1.0,
 ) -> dict[str, Any]:
     """Return a rerun config dict with nav stack visualization defaults.
@@ -239,7 +240,9 @@ def nav_stack_rerun_config(
     visual_override.setdefault("world/global_map", _global_map_colors)
     visual_override.setdefault("world/global_map_pgo", _global_map_colors)
     visual_override.setdefault("world/global_map_fastlio", _global_map_colors)
-    visual_override.setdefault("world/registered_scan", _registered_scan_colors)
+    visual_override.setdefault(
+        "world/registered_scan", _registered_scan_colors if show_registered_scan else _hide
+    )
     visual_override.setdefault("world/explored_areas", _explored_areas_colors)
     visual_override.setdefault("world/preloaded_map", _preloaded_map_colors)
     visual_override.setdefault("world/trajectory", _trajectory_colors)
