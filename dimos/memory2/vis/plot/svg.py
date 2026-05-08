@@ -254,7 +254,7 @@ def render(plot: Plot, width: float = 10, height: float = 3.5) -> str:
             fig.subplots_adjust(left=0.08, right=0.75, top=0.95, bottom=0.18)
 
         buf = io.StringIO()
-        fig.savefig(buf, format="svg")
+        fig.savefig(buf, format="svg", bbox_inches="tight")
         plt.close(fig)
 
         return buf.getvalue()

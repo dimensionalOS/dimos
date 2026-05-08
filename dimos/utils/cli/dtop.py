@@ -247,15 +247,25 @@ class ResourceSpyApp(App[None]):
         with self._lock:
             self._latest = msg
             self._last_msg_time = time.monotonic()
-        if self._store is not None:
-            ts = time.time()
-            self._log_role("coordinator", msg.get("coordinator") or {}, ts)
-            for worker in msg.get("workers") or []:
-                modules = worker.get("modules") or []
-                if modules:
-                    self._log_role("_".join(str(m) for m in modules), worker, ts)
+        if self._store is None:
+            return
+        ts = time.time()
+        coord = msg.get("coordinator")
+        if coord:
+            self._log_role("coordinator", coord, ts, None)
+        for i, worker in enumerate(msg.get("workers") or []):
+            worker_id = worker.get("worker_id", i)
+            modules = worker.get("modules") or []
+            self._log_role(f"worker_{worker_id}", worker, ts, modules)
 
-    def _log_role(self, role: str, data: dict[str, Any], ts: float) -> None:
+    def _log_role(
+        self,
+        role: str,
+        data: dict[str, Any],
+        ts: float,
+        modules: list[str] | None,
+    ) -> None:
+        tags = {"modules": list(modules)} if modules is not None else None
         for metric in LOGGED_METRICS:
             val = data.get(metric)
             if val is None:
@@ -263,7 +273,7 @@ class ResourceSpyApp(App[None]):
             name = f"{role}_{metric}"
             if name not in self._mem_streams:
                 self._mem_streams[name] = self._store.stream(name, float)
-            self._mem_streams[name].append(float(val), ts=ts)
+            self._mem_streams[name].append(float(val), ts=ts, tags=tags)
 
     def _refresh(self) -> None:
         with self._lock:
