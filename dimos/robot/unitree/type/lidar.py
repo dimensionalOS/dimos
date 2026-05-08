@@ -114,10 +114,7 @@ def repair_stale_ts(
         if not calibrated:
             if prev_raw is not None and item.ts != prev_raw:
                 calibrated = True
-                logger.info(
-                    "repair_stale_ts: sensor stamps advancing — using sensor time after %d-frame calibration",
-                    n_seen + 1,
-                )
+                # lidar stamps advancing — using lidar time",
             prev_raw = item.ts
             n_seen += 1
 
@@ -125,13 +122,14 @@ def repair_stale_ts(
             old = item.ts
             item.ts = prev_good + default_period
             logger.warning("repair_stale_ts: stale stamp %.6f → %.6f", old, item.ts)
+
         prev_good = item.ts
 
         if not calibrated and n_seen >= calibration_frames:
             calibrated = True
             use_system_time = True
             logger.warning(
-                "repair_stale_ts: sensor stamps frozen (%d calibration stamps equal) — using system time",
+                "repair_stale_ts: lidar timestmaps frozen (%d calibration stamps equal) — using system time, upgrade your GO2 firmware",
                 calibration_frames,
             )
 
