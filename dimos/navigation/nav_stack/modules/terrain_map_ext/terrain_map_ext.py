@@ -82,7 +82,7 @@ class TerrainMapExtConfig(ModuleConfig):
     ceiling_filtering_threshold: float = 2.0
 
     # Local terrain map merge radius (meters)
-    local_terrain_map_radius: float = 4.0
+    local_terrain_map_radius: float = 0.5 # original default is 4 but thats crazy
 
     # Set to False to only publish points beyond the radius.
     merge_local_terrain: bool = True
