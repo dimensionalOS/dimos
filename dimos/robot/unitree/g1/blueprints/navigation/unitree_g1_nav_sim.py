@@ -62,6 +62,9 @@ unitree_g1_nav_sim = (
                 "ground_height_threshold": 0.05,
                 "min_relative_z": -1.5,
             },
+            terrain_map_ext={
+                "decay_time": 120,
+            },
             local_planner={
                 "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
                 "min_relative_z": -1.5,
