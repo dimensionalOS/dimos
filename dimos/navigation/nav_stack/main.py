@@ -46,7 +46,7 @@ def create_nav_stack(
     *,
     use_tare: bool = False,
     use_terrain_map_ext: bool = True,
-    use_simple_planner: bool = False,
+    planner: str = "far",
     use_native_pgo: bool = False,
     vehicle_height: float | None = None,
     max_speed: float | None = None,
@@ -148,14 +148,17 @@ def create_nav_stack(
         ),
         pgo_module,
     ]
-    if use_simple_planner:
+    if planner == "simple":
         sp_config: dict[str, Any] = {"replan_rate": replan_rate}
         if vehicle_height is not None:
             sp_config["ground_offset_below_robot"] = vehicle_height
         sp_config.update(simple_planner or {})
         modules.append(SimplePlanner.blueprint(**sp_config))
-    else:
+    elif planner == "far":
         modules.append(FarPlanner.blueprint(**far_planner_config))
+    else:
+        raise Exception(f'invalid planner: {planner}')
+    
     if use_terrain_map_ext:
         modules.append(
             TerrainMapExt.blueprint(
@@ -188,7 +191,7 @@ def create_nav_stack(
         (pgo_class, "global_map", "global_map_pgo"),
         *record_remappings,
     ]
-    if not use_simple_planner:
+    if planner == "far":
         remappings.append((FarPlanner, "odometry", "corrected_odometry"))
 
     return autoconnect(*modules).remappings(remappings)
@@ -224,7 +227,7 @@ def nav_stack_rerun_config(
     visual_override.setdefault("world/global_map", _global_map_colors)
     visual_override.setdefault("world/global_map_pgo", _global_map_colors)
     visual_override.setdefault("world/global_map_fastlio", _global_map_colors)
-    visual_override.setdefault("world/registered_scan", _global_map_colors)
+    visual_override.setdefault("world/registered_scan", _registered_scan_colors)
     visual_override.setdefault("world/explored_areas", _explored_areas_colors)
     visual_override.setdefault("world/preloaded_map", _preloaded_map_colors)
     visual_override.setdefault("world/trajectory", _trajectory_colors)
@@ -234,11 +237,17 @@ def nav_stack_rerun_config(
         visual_override.setdefault("world/goal", _goal_colors_debug)
         visual_override.setdefault("world/goal_path", _goal_path_colors_debug)
         visual_override.setdefault("world/nav_boundary", _nav_boundary_colors_debug)
+        visual_override.setdefault("world/contour_polygons", _contour_polygons_colors_debug)
+        visual_override.setdefault("world/graph_nodes", _graph_nodes_colors_debug)
+        visual_override.setdefault("world/graph_edges", _graph_edges_colors_debug)
     else:
         visual_override.setdefault("world/way_point", _waypoint_colors)
         visual_override.setdefault("world/goal", _goal_colors)
         visual_override.setdefault("world/goal_path", _goal_path_colors)
         visual_override.setdefault("world/nav_boundary", _nav_boundary_colors)
+        visual_override.setdefault("world/contour_polygons", _contour_polygons_colors)
+        visual_override.setdefault("world/graph_nodes", _hide)
+        visual_override.setdefault("world/graph_edges", _hide)
     visual_override.setdefault("world/obstacle_cloud", _obstacle_cloud_colors)
     visual_override.setdefault("world/costmap_cloud", _costmap_cloud_colors)
     visual_override.setdefault("world/free_paths", _free_paths_colors)
@@ -295,6 +304,20 @@ def _global_map_colors(cloud: Any) -> Any:
     return rr.Points3D(positions=points[:, :3], colors=colors, radii=0.03)
 
 
+def _registered_scan_colors(cloud: Any) -> Any:
+    """Live lidar — bright white-ish points, larger than the accumulated map
+    so the current sweep stands out against ``global_map`` underneath."""
+    import numpy as np
+    import rerun as rr
+
+    points, _ = cloud.as_numpy()
+    if len(points) == 0:
+        return None
+
+    colors = np.full((len(points), 3), [255, 240, 180], dtype=np.uint8)
+    return rr.Points3D(positions=points[:, :3], colors=colors, radii=0.05)
+
+
 def _terrain_map_colors(cloud: Any) -> Any:
     import numpy as np
     import rerun as rr
@@ -321,12 +344,15 @@ def _costmap_cloud_colors(cloud: Any) -> Any:
     import numpy as np
     import rerun as rr
 
-    points, _ = cloud.as_numpy()
+    points, embedded = cloud.as_numpy()
     if len(points) == 0:
         return None
     lifted = points[:, :3].copy()
     lifted[:, 2] += _VIS_LIFT_COSTMAP
-    colors = np.full((len(points), 3), [255, 40, 40], dtype=np.uint8)
+    if embedded is not None:
+        colors = (np.clip(embedded, 0.0, 1.0) * 255).astype(np.uint8)
+    else:
+        colors = np.full((len(points), 3), [255, 40, 40], dtype=np.uint8)
     return rr.Points3D(positions=lifted, colors=colors, radii=0.12)
 
 
@@ -378,13 +404,32 @@ def _nav_boundary_colors(msg: Any) -> Any:
     return msg.to_rerun(z_offset=_VIS_LIFT, color=(0, 220, 255, 200), radii=0.05)
 
 
+def _contour_polygons_colors(msg: Any) -> Any:
+    return msg.to_rerun(z_offset=_VIS_LIFT, color=(220, 30, 30, 255), radii=0.08)
+
+
+def _hide(_msg: Any) -> Any:
+    return None
+
+
 def _goal_path_colors(path_msg: Any) -> Any:
     import rerun as rr
 
-    if not path_msg.poses or len(path_msg.poses) < 2:
-        return None
+    poses = path_msg.poses or []
+    if len(poses) < 2:
+        # Cancellation sentinel from SimplePlanner — one (or zero) pose at the
+        # robot.  Explicitly clear edges and replace nodes with a single grey
+        # marker so the viewer reads "goal cleared, holding here" instead of
+        # showing the stale path from before the cancel.
+        cancel_point = (
+            [[poses[0].x, poses[0].y, poses[0].z + _VIS_LIFT]] if poses else []
+        )
+        return [
+            ("world/goal_path/edges", rr.LineStrips3D([])),
+            ("world/goal_path/nodes", rr.Points3D(cancel_point, colors=[(160, 160, 160)], radii=0.18)),
+        ]
 
-    points = [[p.x, p.y, p.z + _VIS_LIFT] for p in path_msg.poses]
+    points = [[p.x, p.y, p.z + _VIS_LIFT] for p in poses]
     return [
         # Edges: orange line connecting all waypoints
         ("world/goal_path/edges", rr.LineStrips3D([points], colors=[(255, 140, 0)], radii=0.06)),
@@ -475,10 +520,17 @@ def _goal_colors_debug(msg: Any) -> Any:
 def _goal_path_colors_debug(path_msg: Any) -> Any:
     import rerun as rr
 
-    if not path_msg.poses or len(path_msg.poses) < 2:
-        return None
+    poses = path_msg.poses or []
+    if len(poses) < 2:
+        cancel_point = (
+            [[poses[0].x, poses[0].y, poses[0].z + _AGENTIC_DEBUG_PATH_LIFT]] if poses else []
+        )
+        return [
+            ("world/goal_path/edges", rr.LineStrips3D([])),
+            ("world/goal_path/nodes", rr.Points3D(cancel_point, colors=[(160, 160, 160)], radii=0.18)),
+        ]
 
-    points = [[p.x, p.y, p.z + _AGENTIC_DEBUG_PATH_LIFT] for p in path_msg.poses]
+    points = [[p.x, p.y, p.z + _AGENTIC_DEBUG_PATH_LIFT] for p in poses]
     return [
         ("world/goal_path/edges", rr.LineStrips3D([points], colors=[(255, 140, 0)], radii=0.06)),
         ("world/goal_path/nodes", rr.Points3D(points, colors=[(255, 255, 0)], radii=0.15)),
@@ -487,3 +539,15 @@ def _goal_path_colors_debug(path_msg: Any) -> Any:
 
 def _nav_boundary_colors_debug(msg: Any) -> Any:
     return msg.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT, color=(0, 220, 255, 200), radii=0.05)
+
+
+def _contour_polygons_colors_debug(msg: Any) -> Any:
+    return msg.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT, color=(220, 30, 30, 255), radii=0.08)
+
+
+def _graph_nodes_colors_debug(msg: Any) -> Any:
+    return msg.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT)
+
+
+def _graph_edges_colors_debug(msg: Any) -> Any:
+    return msg.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT)

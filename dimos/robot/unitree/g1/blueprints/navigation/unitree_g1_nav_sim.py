@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 nav sim blueprint: SimplePlanner + PGO + local obstacle avoidance."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -57,7 +55,7 @@ unitree_g1_nav_sim = (
             vehicle_height=G1.height_clearance,
         ),
         create_nav_stack(
-            use_simple_planner=False,
+            planner="far",
             vehicle_height=G1.height_clearance,
             max_speed=2.0,  # m/s, higher than real robot defaults
             terrain_analysis={

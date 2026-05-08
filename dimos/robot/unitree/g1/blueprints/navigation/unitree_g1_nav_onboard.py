@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 nav onboard blueprint: FAR planner + PGO + local obstacle avoidance."""
-
 from __future__ import annotations
 
 import os
@@ -42,21 +40,25 @@ unitree_g1_nav_onboard = (
             config="default.yaml",
         ),
         create_nav_stack(
-            use_simple_planner=True,
+            planner="far",
             vehicle_height=G1.height_clearance,
-            max_speed=0.5,
+            max_speed=0.6,
+            far_planner={
+                "is_static_env": False,
+            },
             terrain_analysis={
                 "obstacle_height_threshold": 0.01,
                 "ground_height_threshold": 0.01,
+                "sensor_range": 40, # meters
             },
             local_planner={
                 "paths_dir": str(G1_LOCAL_PLANNER_PRECOMPUTED_PATHS),
                 "publish_free_paths": False,
             },
             simple_planner={
-                "cell_size": 0.3,
-                "obstacle_height_threshold": 0.20,
-                "inflation_radius": 0.4,
+                "cell_size": 0.2,
+                "obstacle_height_threshold": 0.10,
+                "inflation_radius": 0.5,
                 "lookahead_distance": 2.0,
                 "replan_rate": 5.0,
                 "replan_cooldown": 2.0,

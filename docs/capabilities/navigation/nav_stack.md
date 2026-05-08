@@ -32,7 +32,7 @@ All configuration is done through `create_nav_stack()` keyword arguments. Each m
 
 ```python
 create_nav_stack(
-    use_simple_planner=False,      # Use A* instead of FAR planner
+    planner="simple",      # Use A* instead of FAR planner
     use_tare=False,                # Add TARE frontier exploration
     use_terrain_map_ext=True,      # Persistent terrain accumulator
     vehicle_height=None,           # Propagated to terrain + planner modules
@@ -53,7 +53,7 @@ create_nav_stack(
 ### Global Planner Selection
 
 - **FarPlanner** (default) -- visibility-graph planner with larger sensor range. Better for outdoor or long-range navigation.
-- **SimplePlanner** (`use_simple_planner=True`) -- grid-based A* planner. Lightweight, readable, good for smaller environments or debugging.
+- **SimplePlanner** (`planner="simple"`) -- grid-based A* planner. Lightweight, readable, good for smaller environments or debugging.
 
 ### Exploration
 
@@ -239,7 +239,7 @@ my_robot_nav = (
         # 2. Navigation stack — consumes registered_scan + odometry,
         #    produces cmd_vel
         create_nav_stack(
-            use_simple_planner=True,
+            planner="simple",
             vehicle_height=0.8,          # your robot's height
         ),
 

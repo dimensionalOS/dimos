@@ -23,6 +23,9 @@ import time
 from typing import Any
 
 import numpy as np
+import open3d as o3d  # type: ignore[import-untyped]
+import open3d.core as o3c  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -34,7 +37,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
+from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM, FRAME_SENSOR
 
 logger = setup_logger()
 
@@ -276,7 +279,7 @@ def astar(
 class SimplePlannerConfig(ModuleConfig):
     world_frame: str = FRAME_MAP
     body_frame: str = FRAME_BODY
-    sensor_frame: str = "sensor"
+    sensor_frame: str = FRAME_SENSOR
 
     cell_size: float = 0.3  # m per cell
     obstacle_height_threshold: float = 0.15  # m above ground
@@ -307,6 +310,7 @@ class SimplePlanner(Module):
     terrain_map_ext: In[PointCloud2]
     terrain_map: In[PointCloud2]
     goal: In[PointStamped]
+    stop_movement: In[Bool]
     way_point: Out[PointStamped]
     goal_path: Out[Path]
     costmap_cloud: Out[PointCloud2]
@@ -354,6 +358,9 @@ class SimplePlanner(Module):
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
+        self.register_disposable(
+            Disposable(self.stop_movement.subscribe(self._on_stop_movement))
+        )
         self.register_disposable(
             Disposable(self.terrain_map_ext.subscribe(self._on_terrain_map_ext))
         )
@@ -409,24 +416,54 @@ class SimplePlanner(Module):
             self._has_odom = True
         return True
 
+    def _cancel_navigation(self, source: str) -> None:
+        """Clear the active goal and tell LocalPlanner to hold position.
+
+        Refresh the pose from TF first — the cached value can be up to
+        one planner tick (~200 ms) stale, and during teleop the robot is
+        being pushed, so a stale "stop here" waypoint becomes a real
+        target the local planner drives back to.
+        """
+        self._query_pose()
+        with self._lock:
+            already_idle = self._goal_x is None and self._goal_y is None
+            self._goal_x = None
+            self._goal_y = None
+            self._cached_path = None
+            self._current_wp = None
+            self._current_wp_is_goal = False
+            rx, ry, rz = self._robot_x, self._robot_y, self._robot_z
+        now = time.time()
+        self.way_point.publish(
+            PointStamped(ts=now, frame_id=self.config.world_frame, x=rx, y=ry, z=rz)
+        )
+        # Single-pose path at the robot — explicitly distinguishes "cancelled,
+        # holding position" from "no goal_path message yet" in the viewer.
+        self.goal_path.publish(
+            Path(
+                ts=now,
+                frame_id=self.config.world_frame,
+                poses=[
+                    PoseStamped(
+                        ts=now,
+                        frame_id=self.config.world_frame,
+                        position=[rx, ry, rz],
+                        orientation=[0.0, 0.0, 0.0, 1.0],
+                    )
+                ],
+            )
+        )
+        if not already_idle:
+            logger.info("Goal cleared — idle until new goal", source=source)
+
+    def _on_stop_movement(self, msg: Bool) -> None:
+        if msg.data:
+            self._cancel_navigation(source="stop_movement")
+
     def _on_goal(self, msg: PointStamped) -> None:
         # NaN sentinel = cancel navigation (e.g. teleop took over).
         if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
-            with self._lock:
-                self._goal_x = None
-                self._goal_y = None
-                self._cached_path = None
-                rx, ry, rz = self._robot_x, self._robot_y, self._robot_z
-            # Publish robot position as waypoint so LocalPlanner stops
-            # tracking the stale waypoint.
-            self._current_wp = None
-            self._current_wp_is_goal = False
-            now = time.time()
-            self.way_point.publish(
-                PointStamped(ts=now, frame_id=self.config.world_frame, x=rx, y=ry, z=rz)
-            )
-            self.goal_path.publish(Path(ts=now, frame_id=self.config.world_frame, poses=[]))
-            logger.info("Goal cleared — idle until new goal")
+            self._cancel_navigation(source="nan_goal")
             return
         with self._lock:
             self._goal_x = float(msg.x)
@@ -536,24 +573,40 @@ class SimplePlanner(Module):
                 time.sleep(sleep)
 
     def _publish_costmap_cloud(self, rz: float, now: float) -> None:
-        """Publish blocked-cell centers as a PointCloud2 for rerun (throttled to ~2 Hz)."""
+        """Publish blocked-cell centers as a colored PointCloud2 for rerun (throttled to ~2 Hz).
+
+        Per-point colors: red for true obstacles (cells whose recorded height
+        clears ``obstacle_height``), orange for inflation padding around them.
+        """
         if now - self._last_costmap_pub < 0.5:
             return
         self._last_costmap_pub = now
         with self._costmap_lock:
             cm = self._costmap
-        blocked = cm.blocked_cells()
+            heights = dict(cm.heights)
+            blocked = list(cm.blocked_cells())
+            obstacle_height = cm.obstacle_height
         if not blocked:
             pts = np.zeros((0, 3), dtype=np.float32)
+            colors = np.zeros((0, 3), dtype=np.float32)
         else:
             pts = np.empty((len(blocked), 3), dtype=np.float32)
-            for i, (ix, iy) in enumerate(blocked):
+            colors = np.empty((len(blocked), 3), dtype=np.float32)
+            z = rz - self.config.ground_offset_below_robot + 0.1
+            red = (1.0, 40.0 / 255.0, 40.0 / 255.0)
+            orange = (1.0, 165.0 / 255.0, 0.0)
+            for i, cell in enumerate(blocked):
+                ix, iy = cell
                 wx, wy = cm.cell_to_world(ix, iy)
                 pts[i, 0] = wx
                 pts[i, 1] = wy
-                pts[i, 2] = rz - self.config.ground_offset_below_robot + 0.1
+                pts[i, 2] = z
+                colors[i] = red if heights.get(cell, float("-inf")) >= obstacle_height else orange
+        pcd_t = o3d.t.geometry.PointCloud()
+        pcd_t.point["positions"] = o3c.Tensor(pts, dtype=o3c.float32)
+        pcd_t.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
         self.costmap_cloud.publish(
-            PointCloud2.from_numpy(pts, frame_id=self.config.world_frame, timestamp=now)
+            PointCloud2(pointcloud=pcd_t, ts=now, frame_id=self.config.world_frame)
         )
 
     def _publish_from_cached(self, rx: float, ry: float, gz: float, now: float) -> None:
