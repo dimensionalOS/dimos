@@ -38,7 +38,7 @@
         });
       in {
         packages.default = pkgs.stdenv.mkDerivation {
-          pname = "smartnav-pgo-native";
+          pname = "smartnav-pgo";
           version = "0.1.0";
           src = ./.;
 

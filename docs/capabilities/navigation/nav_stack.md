@@ -47,7 +47,7 @@ create_nav_stack(
     path_follower={...},
     far_planner={...},
     simple_planner={...},
-    pgo_native={...},
+    pgo={...},
     tare_planner={...},
     terrain_map_ext={...},
 )
@@ -126,7 +126,7 @@ Each module's config is a Pydantic model with documented defaults. Check the sou
 - **PathFollower** — `dimos/navigation/nav_stack/modules/path_follower/path_follower.py`
 - **FarPlanner** — `dimos/navigation/nav_stack/modules/far_planner/far_planner.py`
 - **SimplePlanner** — `dimos/navigation/nav_stack/modules/simple_planner/simple_planner.py`
-- **PGONative** — `dimos/navigation/nav_stack/modules/pgo_native/pgo_native.py`
+- **PGO** — `dimos/navigation/nav_stack/modules/pgo/pgo.py`
 - **TerrainMapExt** — `dimos/navigation/nav_stack/modules/terrain_map_ext/terrain_map_ext.py`
 - **MovementManager** — `dimos/navigation/nav_stack/modules/movement_manager/movement_manager.py`
 

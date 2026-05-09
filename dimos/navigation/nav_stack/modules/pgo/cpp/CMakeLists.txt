@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(pgo_native CXX)
+project(pgo CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,13 +21,13 @@ find_package(GTSAM REQUIRED)
 
 add_definitions(-DUSE_PCL)
 
-add_executable(pgo_native
+add_executable(pgo
   main.cpp
   simple_pgo.cpp
   commons.cpp
 )
 
-target_include_directories(pgo_native PRIVATE
+target_include_directories(pgo PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${dimos_lcm_SOURCE_DIR}/generated/cpp_lcm_msgs
   ${LCM_INCLUDE_DIRS}
@@ -36,14 +36,14 @@ target_include_directories(pgo_native PRIVATE
   ${GTSAM_INCLUDE_DIR}
 )
 
-target_link_libraries(pgo_native PRIVATE
+target_link_libraries(pgo PRIVATE
   ${LCM_LIBRARIES}
   ${PCL_LIBRARIES}
   gtsam
 )
 
-target_link_directories(pgo_native PRIVATE
+target_link_directories(pgo PRIVATE
   ${LCM_LIBRARY_DIRS}
 )
 
-install(TARGETS pgo_native DESTINATION bin)
+install(TARGETS pgo DESTINATION bin)

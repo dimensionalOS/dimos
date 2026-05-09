@@ -29,7 +29,7 @@ from dimos.core.module import ModuleBase
 from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanner
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
 from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
-from dimos.navigation.nav_stack.modules.pgo_native.pgo_native import PGONative
+from dimos.navigation.nav_stack.modules.pgo.pgo import PGO
 from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
 from dimos.navigation.nav_stack.modules.tare_planner.tare_planner import TarePlanner
 from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
@@ -58,7 +58,7 @@ def create_nav_stack(
     path_follower: dict[str, Any] | None = None,
     far_planner: dict[str, Any] | None = None,
     simple_planner: dict[str, Any] | None = None,
-    pgo_native: dict[str, Any] | None = None,
+    pgo: dict[str, Any] | None = None,
     tare_planner: dict[str, Any] | None = None,
     nav_record: dict[str, Any] | None = None,
 ) -> Blueprint:
@@ -82,7 +82,7 @@ def create_nav_stack(
         path_follower_config.setdefault("goal_tolerance", waypoint_threshold)
         simple_planner_config.setdefault("goal_reached_threshold", waypoint_threshold)
 
-    pgo_module: Blueprint = PGONative.blueprint(**(pgo_native or {}))
+    pgo_module: Blueprint = PGO.blueprint(**(pgo or {}))
 
     modules: list[Blueprint] = [
         TerrainAnalysis.blueprint(
@@ -187,7 +187,7 @@ def create_nav_stack(
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
         (TerrainAnalysis, "odometry", "corrected_odometry"),
         (TerrainMapExt, "odometry", "corrected_odometry"),
-        (PGONative, "global_map", "global_map_pgo"),
+        (PGO, "global_map", "global_map_pgo"),
         *record_remappings,
     ]
     if planner == "far":

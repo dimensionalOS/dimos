@@ -39,9 +39,9 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class PGONativeConfig(NativeModuleConfig):
+class PGOConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent / "cpp")
-    executable: str = "result/bin/pgo_native"
+    executable: str = "result/bin/pgo"
     build_command: str | None = "nix build .#default --no-write-lock-file"
 
     # Frame names
@@ -68,14 +68,14 @@ class PGONativeConfig(NativeModuleConfig):
     global_map_publish_rate: float = 1.0
 
 
-class PGONative(NativeModule):
+class PGO(NativeModule):
     """Native C++ pose graph optimization with loop closure.
 
     Faithful reimplementation of the upstream PGO using GTSAM iSAM2 + PCL ICP.
     Publishes corrected odometry, accumulated global map, and map->odom TF.
     """
 
-    config: PGONativeConfig
+    config: PGOConfig
 
     registered_scan: In[PointCloud2]
     odometry: In[Odometry]
