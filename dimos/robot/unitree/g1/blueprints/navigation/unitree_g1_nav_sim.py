@@ -74,7 +74,6 @@ nav_config: dict[str, Any] = dict(
 unitree_g1_nav_sim = (
     autoconnect(
         UnityBridgeModule.blueprint(
-            unity_scene="home_building_1",
             vehicle_height=G1.height_clearance,
             lock_z=True,
             publish_images=False,
