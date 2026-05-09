@@ -23,7 +23,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.11"
+version = "0.0.12"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -346,6 +346,11 @@ docker = [
 
 base = [
     "dimos[agents,web,visualization]",
+]
+
+# All extras except dds and unitree-dds (which require special system setup).
+all = [
+    "dimos[agents,base,cpu,cuda,dev,docker,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
 ]
 
 [tool.ruff]

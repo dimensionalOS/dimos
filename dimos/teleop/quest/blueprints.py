@@ -13,14 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Teleop blueprints for testing and deployment."""
+"""Teleop blueprints for testing and deployment.
+
+Single sim/real blueprints — pass `--simulation` to run inside MuJoCo, omit for real
+hardware. The underlying coordinator blueprints branch on `global_config.simulation`.
+"""
 
 from dimos.control.blueprints.teleop import (
     coordinator_teleop_dual,
     coordinator_teleop_piper,
-    coordinator_teleop_sim_piper,
-    coordinator_teleop_sim_xarm6,
-    coordinator_teleop_sim_xarm7,
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
 )
@@ -44,7 +45,7 @@ teleop_quest_rerun = autoconnect(
 )
 
 
-# Single XArm7 teleop: right controller -> xarm7
+# XArm7 teleop (sim with --simulation, real otherwise): right controller -> xarm7
 teleop_quest_xarm7 = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_xarm7,
@@ -58,21 +59,7 @@ teleop_quest_xarm7 = autoconnect(
 )
 
 
-# Single XArm7 teleop in MuJoCo sim
-teleop_quest_xarm7_sim = autoconnect(
-    ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
-    coordinator_teleop_sim_xarm7,
-).transports(
-    {
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
-)
-
-
-# Single Piper teleop: left controller -> piper arm
+# Piper teleop (sim with --simulation, real otherwise): left controller -> piper arm
 teleop_quest_piper = autoconnect(
     ArmTeleopModule.blueprint(task_names={"left": "teleop_piper"}),
     coordinator_teleop_piper,
@@ -86,21 +73,7 @@ teleop_quest_piper = autoconnect(
 )
 
 
-# Single Piper teleop in MuJoCo sim
-teleop_quest_piper_sim = autoconnect(
-    ArmTeleopModule.blueprint(task_names={"left": "teleop_piper"}),
-    coordinator_teleop_sim_piper,
-).transports(
-    {
-        ("left_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
-)
-
-
-# Single XArm6 teleop: right controller -> xarm6
+# XArm6 teleop (sim with --simulation, real otherwise): right controller -> xarm6
 teleop_quest_xarm6 = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_xarm6,
@@ -114,21 +87,7 @@ teleop_quest_xarm6 = autoconnect(
 )
 
 
-# Single XArm6 teleop in MuJoCo sim
-teleop_quest_xarm6_sim = autoconnect(
-    ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
-    coordinator_teleop_sim_xarm6,
-).transports(
-    {
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
-)
-
-
-# Dual arm teleop: right -> piper, left -> xarm6 (TeleopIK)
+# Dual arm teleop: right -> piper, left -> xarm6 (TeleopIK, real-only)
 teleop_quest_dual = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_piper", "left": "teleop_xarm"}),
     coordinator_teleop_dual,
@@ -148,10 +107,7 @@ teleop_quest_dual = autoconnect(
 __all__ = [
     "teleop_quest_dual",
     "teleop_quest_piper",
-    "teleop_quest_piper_sim",
     "teleop_quest_rerun",
     "teleop_quest_xarm6",
-    "teleop_quest_xarm6_sim",
     "teleop_quest_xarm7",
-    "teleop_quest_xarm7_sim",
 ]
