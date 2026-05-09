@@ -28,7 +28,7 @@ uv pip install 'dimos[misc,sim,visualization,agents,web,perception,unitree,manip
 ```sh
 # this allows getting large files on-demand (and not pulling all immediately)
 export GIT_LFS_SKIP_SMUDGE=1
-git clone -b dev https://github.com/dimensionalOS/dimos.git
+git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
 
 uv sync --extra all
