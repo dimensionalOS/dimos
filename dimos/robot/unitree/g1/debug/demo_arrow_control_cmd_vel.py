@@ -17,6 +17,7 @@
 
 import curses
 import time
+import traceback
 from typing import Any
 
 import lcm
@@ -176,8 +177,6 @@ if __name__ == "__main__":
         curses.wrapper(main)
     except Exception as e:
         print(f"\nError: {e}")
-        import traceback
-
         traceback.print_exc()
 
     print("\nDone")

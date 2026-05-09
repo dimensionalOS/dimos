@@ -81,6 +81,9 @@ class RerunWebSocketServer(Module):
         super().__init__(**kwargs)
         self._stop_event: asyncio.Event | None = None
         self._server_ready = threading.Event()
+        # Set on the first WebSocket client connection. Tests use this to verify
+        # an external client (e.g. dimos-viewer --connect) actually connected.
+        self.client_connected = threading.Event()
 
     @property
     def host(self) -> str:
@@ -129,6 +132,7 @@ class RerunWebSocketServer(Module):
             return
         addr = websocket.remote_address
         logger.info(f"RerunWebSocketServer: viewer connected from {addr}")
+        self.client_connected.set()
         try:
             async for raw in websocket:
                 self._dispatch(raw)

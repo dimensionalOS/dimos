@@ -88,13 +88,7 @@ def _wire(module) -> dict[str, _MockTransport]:
         "camera_info",
     ):
         transport = _MockTransport()
-        port = getattr(module, name)
-        if hasattr(type(port), "transport") and isinstance(
-            getattr(type(port), "transport", None), property
-        ):
-            port.transport = transport
-        else:
-            port._transport = transport  # In ports have no public setter
+        getattr(module, name).transport = transport
         subscribers[name] = transport
     return subscribers
 
@@ -148,7 +142,7 @@ class TestConfig:
     def test_defaults(self):
         config = UnityBridgeConfig()
         assert config.unity_port == 10000
-        assert config.sim_rate == 200.0
+        assert config.sim_rate == pytest.approx(200.0)
 
     def test_custom_binary_path(self):
         config = UnityBridgeConfig(unity_binary="/custom/path/Model.x86_64")
@@ -334,8 +328,8 @@ class TestTerrainFit:
         self._feed_terrain(module, points)
         module.stop()
         # Values unchanged
-        assert module._terrain_roll == 0.05
-        assert module._terrain_pitch == 0.05
+        assert module._terrain_roll == pytest.approx(0.05)
+        assert module._terrain_pitch == pytest.approx(0.05)
 
     def test_disabled_by_default(self):
         module = UnityBridgeModule(unity_binary="")
@@ -347,8 +341,8 @@ class TestTerrainFit:
         points = np.column_stack([xx.ravel(), yy.ravel(), (-0.1 * xx).ravel()])
         self._feed_terrain(module, points)
         module.stop()
-        assert module._terrain_roll == 0.0
-        assert module._terrain_pitch == 0.0
+        assert module._terrain_roll == pytest.approx(0.0)
+        assert module._terrain_pitch == pytest.approx(0.0)
 
 
 class TestSensorOffset:
