@@ -49,9 +49,9 @@ def server(wait_for_server: Any) -> RerunWebSocketServer:
 
 def _send_messages(port: int, messages: list[dict[str, Any]], *, delay: float = 0.05) -> None:
     async def _run() -> None:
-        async with ws_client.connect(f"ws://127.0.0.1:{port}/ws") as ws:
-            for msg in messages:
-                await ws.send(json.dumps(msg))
+        async with ws_client.connect(f"ws://127.0.0.1:{port}/ws") as websocket:
+            for message in messages:
+                await websocket.send(json.dumps(message))
             await asyncio.sleep(delay)
 
     asyncio.run(_run())
@@ -64,69 +64,75 @@ class TestViewerProtocolE2E:
         """A viewer click over WebSocket publishes PointStamped."""
         received: list[Any] = []
         done = threading.Event()
-        unsub = server.clicked_point.subscribe(lambda pt: (received.append(pt), done.set()))
-
-        _send_messages(
-            _E2E_PORT,
-            [
-                {
-                    "type": "click",
-                    "x": 10.0,
-                    "y": 20.0,
-                    "z": 0.5,
-                    "entity_path": "/world/robot",
-                    "timestamp_ms": 42000,
-                }
-            ],
+        unsubscribe = server.clicked_point.subscribe(
+            lambda point: (received.append(point), done.set())
         )
 
-        done.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        unsub()
+        try:
+            _send_messages(
+                _E2E_PORT,
+                [
+                    {
+                        "type": "click",
+                        "x": 10.0,
+                        "y": 20.0,
+                        "z": 0.5,
+                        "entity_path": "/world/robot",
+                        "timestamp_ms": 42000,
+                    }
+                ],
+            )
+            done.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        finally:
+            unsubscribe()
 
         assert len(received) == 1
-        pt = received[0]
-        assert pt.x == pytest.approx(10.0)
-        assert pt.y == pytest.approx(20.0)
-        assert pt.z == pytest.approx(0.5)
-        assert pt.frame_id == "/world/robot"
-        assert pt.ts == pytest.approx(42.0)
+        point = received[0]
+        assert point.x == pytest.approx(10.0)
+        assert point.y == pytest.approx(20.0)
+        assert point.z == pytest.approx(0.5)
+        assert point.frame_id == "/world/robot"
+        assert point.ts == pytest.approx(42.0)
 
     def test_full_viewer_session_sequence(self, server: RerunWebSocketServer) -> None:
         """Realistic session: heartbeats, click, twist, stop — only the click produces a point."""
         received: list[Any] = []
         done = threading.Event()
-        unsub = server.clicked_point.subscribe(lambda pt: (received.append(pt), done.set()))
-
-        _send_messages(
-            _E2E_PORT,
-            [
-                {"type": "heartbeat", "timestamp_ms": 1000},
-                {"type": "heartbeat", "timestamp_ms": 2000},
-                {
-                    "type": "click",
-                    "x": 3.14,
-                    "y": 2.71,
-                    "z": 1.41,
-                    "entity_path": "/world",
-                    "timestamp_ms": 3000,
-                },
-                {
-                    "type": "twist",
-                    "linear_x": 0.5,
-                    "linear_y": 0.0,
-                    "linear_z": 0.0,
-                    "angular_x": 0.0,
-                    "angular_y": 0.0,
-                    "angular_z": 0.0,
-                },
-                {"type": "stop"},
-                {"type": "heartbeat", "timestamp_ms": 4000},
-            ],
-            delay=0.2,
+        unsubscribe = server.clicked_point.subscribe(
+            lambda point: (received.append(point), done.set())
         )
 
-        done.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        unsub()
+        try:
+            _send_messages(
+                _E2E_PORT,
+                [
+                    {"type": "heartbeat", "timestamp_ms": 1000},
+                    {"type": "heartbeat", "timestamp_ms": 2000},
+                    {
+                        "type": "click",
+                        "x": 3.14,
+                        "y": 2.71,
+                        "z": 1.41,
+                        "entity_path": "/world",
+                        "timestamp_ms": 3000,
+                    },
+                    {
+                        "type": "twist",
+                        "linear_x": 0.5,
+                        "linear_y": 0.0,
+                        "linear_z": 0.0,
+                        "angular_x": 0.0,
+                        "angular_y": 0.0,
+                        "angular_z": 0.0,
+                    },
+                    {"type": "stop"},
+                    {"type": "heartbeat", "timestamp_ms": 4000},
+                ],
+                delay=0.2,
+            )
+            done.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        finally:
+            unsubscribe()
 
         assert len(received) == 1, f"Expected exactly 1 click, got {len(received)}"
         assert received[0].x == pytest.approx(3.14)
@@ -138,26 +144,45 @@ class TestViewerProtocolE2E:
         received: list[Any] = []
         all_done = threading.Event()
 
-        def _on_pt(pt: Any) -> None:
-            received.append(pt)
+        def _on_point(point: Any) -> None:
+            received.append(point)
             if len(received) >= 2:
                 all_done.set()
 
-        unsub = server.clicked_point.subscribe(_on_pt)
+        unsubscribe = server.clicked_point.subscribe(_on_point)
 
-        _send_messages(
-            _E2E_PORT,
-            [{"type": "click", "x": 1.0, "y": 0.0, "z": 0.0, "entity_path": "", "timestamp_ms": 0}],
-        )
-        _send_messages(
-            _E2E_PORT,
-            [{"type": "click", "x": 2.0, "y": 0.0, "z": 0.0, "entity_path": "", "timestamp_ms": 0}],
-        )
+        try:
+            _send_messages(
+                _E2E_PORT,
+                [
+                    {
+                        "type": "click",
+                        "x": 1.0,
+                        "y": 0.0,
+                        "z": 0.0,
+                        "entity_path": "",
+                        "timestamp_ms": 0,
+                    }
+                ],
+            )
+            _send_messages(
+                _E2E_PORT,
+                [
+                    {
+                        "type": "click",
+                        "x": 2.0,
+                        "y": 0.0,
+                        "z": 0.0,
+                        "entity_path": "",
+                        "timestamp_ms": 0,
+                    }
+                ],
+            )
+            all_done.wait(timeout=5.0)
+        finally:
+            unsubscribe()
 
-        all_done.wait(timeout=5.0)
-        unsub()
-
-        xs = sorted(pt.x for pt in received)
+        xs = sorted(point.x for point in received)
         assert xs == [1.0, 2.0], f"Unexpected xs: {xs}"
 
 
@@ -168,7 +193,7 @@ class TestViewerBinaryConnectMode:
     def viewer_process(self, server: RerunWebSocketServer) -> subprocess.Popen[bytes]:
         if not os.environ.get("DISPLAY"):
             pytest.skip("dimos-viewer requires a display (winit cannot start without one)")
-        proc = subprocess.Popen(
+        process = subprocess.Popen(
             [
                 "dimos-viewer",
                 "--connect",
@@ -177,12 +202,12 @@ class TestViewerBinaryConnectMode:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        yield proc
-        proc.terminate()
+        yield process
+        process.terminate()
         try:
-            proc.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            process.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            process.kill()
 
     def test_viewer_ws_client_connects(
         self, server: RerunWebSocketServer, viewer_process: subprocess.Popen[bytes]

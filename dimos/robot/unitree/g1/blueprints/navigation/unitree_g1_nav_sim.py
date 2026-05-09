@@ -26,27 +26,6 @@ from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
 from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.visualization.vis_module import vis_module
 
-
-def _rerun_blueprint() -> Any:
-    import rerun.blueprint as rrb
-
-    return rrb.Blueprint(
-        rrb.Vertical(
-            rrb.Spatial3DView(
-                origin="world",
-                name="3D",
-                # start in a top-down view and full-screened
-                eye_controls=rrb.EyeControls3D(
-                    position=(0.0, 0.0, 20.0),
-                    look_target=(0.0, 0.0, 0.0),
-                    eye_up=(0.0, 0.0, 1.0),
-                ),
-            ),
-        ),
-        collapse_panels=True,
-    )
-
-
 nav_config: dict[str, Any] = dict(
     planner="simple",
     vehicle_height=G1.height_clearance,
@@ -84,7 +63,6 @@ unitree_g1_nav_sim = (
             viewer_backend=global_config.viewer,
             rerun_config=nav_stack_rerun_config(
                 {
-                    "blueprint": _rerun_blueprint,
                     "visual_override": {
                         "world/camera_info": UnityBridgeModule.rerun_suppress_camera_info,
                     },

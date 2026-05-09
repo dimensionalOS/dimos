@@ -1,6 +1,6 @@
-# Smart Nav
+# Nav Stack
 
-Smart Nav is a modular navigation stack for autonomous robot navigation and exploration. It handles terrain classification, obstacle avoidance, global path planning, local trajectory selection, and loop-closure-corrected mapping -- all wired together as composable Blueprint modules.
+The Nav Stack is a modular navigation stack for autonomous robot navigation and exploration. It handles terrain classification, obstacle avoidance, global path planning, local trajectory selection, and loop-closure-corrected mapping -- all wired together as composable Blueprint modules.
 
 It's a good fit when you have a lidar-equipped robot and need end-to-end autonomous navigation: give it a registered point cloud and odometry, and it produces velocity commands. The stack runs without ROS -- modules communicate over DimOS streams (LCM/SHM) and each component can be swapped or tuned independently.
 
@@ -10,7 +10,7 @@ from dimos.navigation.nav_stack.main import create_nav_stack
 blueprint = create_nav_stack()
 ```
 
-Smart Nav consumes three external streams (typically provided by a SLAM module like FastLio2):
+The Nav Stack consumes three external streams (typically provided by a SLAM module like FastLio2):
 
 | Stream | Type | Description |
 |--------|------|-------------|
@@ -97,7 +97,7 @@ create_nav_stack(
 
 ### Visualization
 
-Smart Nav includes Rerun visualization configuration out of the box:
+The Nav Stack includes Rerun visualization configuration out of the box:
 
 ```python
 from dimos.navigation.nav_stack.main import nav_stack_rerun_config
@@ -317,7 +317,7 @@ my_robot_nav = (
 
 ### Adding Teleop
 
-Smart Nav's MovementManager accepts `tele_cmd_vel` for manual override. When teleop commands arrive, MovementManager cancels the active navigation goal and forwards teleop velocities directly. After `tele_cooldown_sec` (default 1s) of silence, autonomous navigation resumes.
+The Nav Stack's MovementManager accepts `tele_cmd_vel` for manual override. When teleop commands arrive, MovementManager cancels the active navigation goal and forwards teleop velocities directly. After `tele_cooldown_sec` (default 1s) of silence, autonomous navigation resumes.
 
 Wire any module that publishes `tele_cmd_vel: Out[Twist]` (keyboard teleop, joystick, etc.) into the `autoconnect` and it connects automatically.
 

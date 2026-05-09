@@ -188,13 +188,8 @@ class UnityBridgeConfig(ModuleConfig):
     # Odometry drift rate: standard deviation of Gaussian noise added to the
     # internal drift offset each sim step (metres per step). Drift accumulates
     # over time, simulating encoder/IMU integration error.
-    # At 200Hz with drift_rate=0.001: ~4.5cm drift after 10s, ~14cm after 100s.
-    # Set to 0.0 for no drift.
     odom_drift_rate: float = 0.0
 
-    # When True, robot z stays at init_z + vehicle_height for the entire
-    # simulation — terrain feedback cannot change it.  Useful for indoor
-    # environments where terrain noise pushes z through ceilings.
     lock_z: bool = False
 
     terrain_inclination_enabled: bool = False

@@ -12,13 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared G1 high-level command tables and dispatch helper.
-
-Both ``dds_sdk`` and ``webrtc`` effectors expose the same arm / mode command
-catalogue; this module is the single source of truth so adding a command in
-one place reaches both transports.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -56,15 +49,19 @@ G1_MODE_CONTROLS: list[tuple[str, int, str]] = [
 ]
 
 ARM_COMMANDS: dict[str, tuple[int, str]] = {
-    name: (id_, description) for name, id_, description in G1_ARM_CONTROLS
+    name: (command_id, description) for name, command_id, description in G1_ARM_CONTROLS
 }
 
 MODE_COMMANDS: dict[str, tuple[int, str]] = {
-    name: (id_, description) for name, id_, description in G1_MODE_CONTROLS
+    name: (command_id, description) for name, command_id, description in G1_MODE_CONTROLS
 }
 
-ARM_COMMANDS_DOC = "\n".join(f'- "{name}": {desc}' for name, (_, desc) in ARM_COMMANDS.items())
-MODE_COMMANDS_DOC = "\n".join(f'- "{name}": {desc}' for name, (_, desc) in MODE_COMMANDS.items())
+ARM_COMMANDS_DOC = "\n".join(
+    f'- "{name}": {description}' for name, (_, description) in ARM_COMMANDS.items()
+)
+MODE_COMMANDS_DOC = "\n".join(
+    f'- "{name}": {description}' for name, (_, description) in MODE_COMMANDS.items()
+)
 
 
 PublishRequest = Callable[[str, dict[str, Any]], dict[str, Any]]
@@ -88,14 +85,14 @@ def execute_g1_command(
         suggestions = difflib.get_close_matches(command_name, command_dict.keys(), n=3, cutoff=0.6)
         return f"There's no '{command_name}' command. Did you mean: {suggestions}"
 
-    id_, _ = command_dict[command_name]
+    command_id, _ = command_dict[command_name]
 
     try:
-        publish_request(topic, {"api_id": api_id, "parameter": {"data": id_}})
+        publish_request(topic, {"api_id": api_id, "parameter": {"data": command_id}})
         return f"'{command_name}' command executed successfully."
-    except Exception as e:
+    except Exception as exc:
         if logger is not None:
-            logger.error(f"Failed to execute {command_name}: {e}")
+            logger.error(f"Failed to execute {command_name}: {exc}")
         return "Failed to execute the command."
 
 

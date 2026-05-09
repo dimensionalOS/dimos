@@ -66,8 +66,6 @@ def create_nav_stack(
     """
     far_planner_config = {**(far_planner or {})}
     far_planner_config.setdefault("is_static_env", False)
-
-    # Propagate vehicle_height to far_planner config
     if vehicle_height is not None:
         far_planner_config.setdefault("vehicle_height", vehicle_height)
 
@@ -146,11 +144,11 @@ def create_nav_stack(
         pgo_module,
     ]
     if planner == "simple":
-        sp_config: dict[str, Any] = {"replan_rate": replan_rate}
+        merged_simple_planner_config: dict[str, Any] = {"replan_rate": replan_rate}
         if vehicle_height is not None:
-            sp_config["ground_offset_below_robot"] = vehicle_height
-        sp_config.update(simple_planner_config)
-        modules.append(SimplePlanner.blueprint(**sp_config))
+            merged_simple_planner_config["ground_offset_below_robot"] = vehicle_height
+        merged_simple_planner_config.update(simple_planner_config)
+        modules.append(SimplePlanner.blueprint(**merged_simple_planner_config))
     elif planner == "far":
         modules.append(FarPlanner.blueprint(**far_planner_config))
     else:
@@ -353,10 +351,10 @@ def _costmap_cloud_colors(cloud: Any) -> Any:
 def _obstacle_cloud_colors(cloud: Any) -> Any:
     import rerun as rr
 
-    arch = cloud.to_rerun(colormap="plasma", size=0.06)
+    archetype = cloud.to_rerun(colormap="plasma", size=0.06)
     return [
         ("world/obstacle_cloud", rr.Transform3D(parent_frame="tf#/sensor")),
-        ("world/obstacle_cloud", arch),
+        ("world/obstacle_cloud", archetype),
     ]
 
 
@@ -374,42 +372,48 @@ def _trajectory_colors(cloud: Any) -> Any:
     points, _ = cloud.as_numpy()
     if len(points) < 2:
         return None
-    pts = [[float(p[0]), float(p[1]), float(p[2]) + _VIS_LIFT_TRAJECTORY] for p in points]
+    lifted_points = [
+        [float(point[0]), float(point[1]), float(point[2]) + _VIS_LIFT_TRAJECTORY]
+        for point in points
+    ]
     return [
-        ("world/trajectory/line", rr.LineStrips3D([pts], colors=[(0, 200, 255)], radii=0.03)),
-        ("world/trajectory/nodes", rr.Points3D(pts, colors=[(0, 150, 255)], radii=0.05)),
+        (
+            "world/trajectory/line",
+            rr.LineStrips3D([lifted_points], colors=[(0, 200, 255)], radii=0.03),
+        ),
+        ("world/trajectory/nodes", rr.Points3D(lifted_points, colors=[(0, 150, 255)], radii=0.05)),
     ]
 
 
-def _path_colors(path_msg: Any) -> Any:
+def _path_colors(path: Any) -> Any:
     import rerun as rr
 
-    if not path_msg.poses:
+    if not path.poses:
         return None
 
-    points = [[p.x, p.y, p.z + _VIS_LIFT] for p in path_msg.poses]
+    points = [[pose.x, pose.y, pose.z + _VIS_LIFT] for pose in path.poses]
     return [
         ("world/nav_path", rr.Transform3D(parent_frame="tf#/sensor")),
         ("world/nav_path", rr.LineStrips3D([points], colors=[(0, 255, 128)], radii=0.05)),
     ]
 
 
-def _nav_boundary_colors(msg: Any) -> Any:
-    return msg.to_rerun(z_offset=_VIS_LIFT, color=(0, 220, 255, 200), radii=0.05)
+def _nav_boundary_colors(boundary: Any) -> Any:
+    return boundary.to_rerun(z_offset=_VIS_LIFT, color=(0, 220, 255, 200), radii=0.05)
 
 
-def _contour_polygons_colors(msg: Any) -> Any:
-    return msg.to_rerun(z_offset=_VIS_LIFT, color=(220, 30, 30, 255), radii=0.08)
+def _contour_polygons_colors(polygons: Any) -> Any:
+    return polygons.to_rerun(z_offset=_VIS_LIFT, color=(220, 30, 30, 255), radii=0.08)
 
 
-def _hide(_msg: Any) -> Any:
+def _hide(_message: Any) -> Any:
     return None
 
 
-def _goal_path_colors(path_msg: Any) -> Any:
+def _goal_path_colors(path: Any) -> Any:
     import rerun as rr
 
-    poses = path_msg.poses or []
+    poses = path.poses or []
     if len(poses) < 2:
         # Cancellation sentinel from SimplePlanner — one (or zero) pose at the
         # robot.  Explicitly clear edges and replace nodes with a single grey
@@ -424,36 +428,34 @@ def _goal_path_colors(path_msg: Any) -> Any:
             ),
         ]
 
-    points = [[p.x, p.y, p.z + _VIS_LIFT] for p in poses]
+    points = [[pose.x, pose.y, pose.z + _VIS_LIFT] for pose in poses]
     return [
-        # Edges: orange line connecting all waypoints
         ("world/goal_path/edges", rr.LineStrips3D([points], colors=[(255, 140, 0)], radii=0.06)),
-        # Nodes: yellow spheres at each graph node in the path
         ("world/goal_path/nodes", rr.Points3D(points, colors=[(255, 255, 0)], radii=0.15)),
     ]
 
 
-def _waypoint_colors(msg: Any) -> Any:
+def _waypoint_colors(waypoint: Any) -> Any:
     import rerun as rr
 
-    if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
+    if not all(math.isfinite(value) for value in (waypoint.x, waypoint.y, waypoint.z)):
         return None
 
     return rr.Points3D(
-        positions=[[msg.x, msg.y, msg.z + _VIS_LIFT]],
+        positions=[[waypoint.x, waypoint.y, waypoint.z + _VIS_LIFT]],
         colors=[(255, 140, 0)],
         radii=0.22,
     )
 
 
-def _goal_colors(msg: Any) -> Any:
+def _goal_colors(goal: Any) -> Any:
     import rerun as rr
 
-    if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
+    if not all(math.isfinite(value) for value in (goal.x, goal.y, goal.z)):
         return None
 
     return rr.Points3D(
-        positions=[[msg.x, msg.y, msg.z + _VIS_LIFT]],
+        positions=[[goal.x, goal.y, goal.z + _VIS_LIFT]],
         colors=[(180, 60, 220)],
         radii=0.3,
     )
@@ -468,12 +470,12 @@ def _free_paths_colors(cloud: Any) -> Any:
     ]
 
 
-def _static_floor(rr: Any) -> list[Any]:
+def _static_floor(rerun_module: Any) -> list[Any]:
     half_size = 50.0
     z_below_ground = -0.2
     floor_color_rgba = [40, 40, 40, 120]  # dark grey, semi-transparent
     return [
-        rr.Mesh3D(
+        rerun_module.Mesh3D(
             vertex_positions=[
                 [-half_size, -half_size, z_below_ground],
                 [half_size, -half_size, z_below_ground],
@@ -486,36 +488,36 @@ def _static_floor(rr: Any) -> list[Any]:
     ]
 
 
-def _waypoint_colors_debug(msg: Any) -> Any:
+def _waypoint_colors_debug(waypoint: Any) -> Any:
     import rerun as rr
 
-    if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
+    if not all(math.isfinite(value) for value in (waypoint.x, waypoint.y, waypoint.z)):
         return None
 
     return rr.Points3D(
-        positions=[[msg.x, msg.y, msg.z + _AGENTIC_DEBUG_LIFT]],
+        positions=[[waypoint.x, waypoint.y, waypoint.z + _AGENTIC_DEBUG_LIFT]],
         colors=[(255, 140, 0)],
         radii=0.22,
     )
 
 
-def _goal_colors_debug(msg: Any) -> Any:
+def _goal_colors_debug(goal: Any) -> Any:
     import rerun as rr
 
-    if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
+    if not all(math.isfinite(value) for value in (goal.x, goal.y, goal.z)):
         return None
 
     return rr.Points3D(
-        positions=[[msg.x, msg.y, msg.z + _AGENTIC_DEBUG_LIFT]],
+        positions=[[goal.x, goal.y, goal.z + _AGENTIC_DEBUG_LIFT]],
         colors=[(180, 60, 220)],
         radii=0.3,
     )
 
 
-def _goal_path_colors_debug(path_msg: Any) -> Any:
+def _goal_path_colors_debug(path: Any) -> Any:
     import rerun as rr
 
-    poses = path_msg.poses or []
+    poses = path.poses or []
     if len(poses) < 2:
         cancel_point = (
             [[poses[0].x, poses[0].y, poses[0].z + _AGENTIC_DEBUG_PATH_LIFT]] if poses else []
@@ -528,24 +530,28 @@ def _goal_path_colors_debug(path_msg: Any) -> Any:
             ),
         ]
 
-    points = [[p.x, p.y, p.z + _AGENTIC_DEBUG_PATH_LIFT] for p in poses]
+    points = [[pose.x, pose.y, pose.z + _AGENTIC_DEBUG_PATH_LIFT] for pose in poses]
     return [
         ("world/goal_path/edges", rr.LineStrips3D([points], colors=[(255, 140, 0)], radii=0.06)),
         ("world/goal_path/nodes", rr.Points3D(points, colors=[(255, 255, 0)], radii=0.15)),
     ]
 
 
-def _nav_boundary_colors_debug(msg: Any) -> Any:
-    return msg.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT, color=(0, 220, 255, 200), radii=0.05)
+def _nav_boundary_colors_debug(boundary: Any) -> Any:
+    return boundary.to_rerun(
+        z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT, color=(0, 220, 255, 200), radii=0.05
+    )
 
 
-def _contour_polygons_colors_debug(msg: Any) -> Any:
-    return msg.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT, color=(220, 30, 30, 255), radii=0.08)
+def _contour_polygons_colors_debug(polygons: Any) -> Any:
+    return polygons.to_rerun(
+        z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT, color=(220, 30, 30, 255), radii=0.08
+    )
 
 
-def _graph_nodes_colors_debug(msg: Any) -> Any:
-    return msg.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT)
+def _graph_nodes_colors_debug(graph_nodes: Any) -> Any:
+    return graph_nodes.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT)
 
 
-def _graph_edges_colors_debug(msg: Any) -> Any:
-    return msg.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT)
+def _graph_edges_colors_debug(graph_edges: Any) -> Any:
+    return graph_edges.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT)
