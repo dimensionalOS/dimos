@@ -81,7 +81,7 @@ def _check_blueprint(blueprint_name: str) -> None:
 
 def test_old_self_hosted_blueprints() -> None:
     """Validate no non-existent name in SELF_HOSTED_BLUEPRINTS."""
-    unused_names set(SELF_HOSTED_BLUEPRINTS) - set(all_blueprints)
+    unused_names = set(SELF_HOSTED_BLUEPRINTS) - set(all_blueprints)
     assert not unused_names
 
 
