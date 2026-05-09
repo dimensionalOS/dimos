@@ -28,7 +28,6 @@ OPTIONAL_ERROR_SUBSTRINGS = {
 # These need git LFS, so can't be run on the ubuntu runners.
 SELF_HOSTED_BLUEPRINTS = frozenset(
     {
-        "basic",
         "coordinator-basic",
         "coordinator-cartesian-ik-mock",
         "coordinator-cartesian-ik-piper",
@@ -38,32 +37,22 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-servo-xarm6",
         "coordinator-teleop-dual",
         "coordinator-teleop-piper",
-        "coordinator-teleop-sim-piper",
-        "coordinator-teleop-sim-xarm6",
-        "coordinator-teleop-sim-xarm7",
         "coordinator-teleop-xarm6",
         "coordinator-teleop-xarm7",
         "coordinator-velocity-xarm6",
         "coordinator-xarm6",
         "coordinator-xarm7",
         "dual-xarm6-planner",
-        "mock",
-        "piper",
         "teleop-quest-dual",
         "teleop-quest-piper",
-        "teleop-quest-piper-sim",
         "teleop-quest-rerun",
         "teleop-quest-xarm6",
-        "teleop-quest-xarm6-sim",
         "teleop-quest-xarm7",
-        "teleop-quest-xarm7-sim",
         "xarm-perception",
         "xarm-perception-agent",
         "xarm-perception-sim",
         "xarm-perception-sim-agent",
-        "xarm6",
         "xarm6-planner-only",
-        "xarm7",
         "xarm7-planner-coordinator",
         "xarm7-planner-coordinator-agent",
     }
@@ -92,7 +81,8 @@ def _check_blueprint(blueprint_name: str) -> None:
 
 def test_old_self_hosted_blueprints() -> None:
     """Validate no non-existent name in SELF_HOSTED_BLUEPRINTS."""
-    assert not set(SELF_HOSTED_BLUEPRINTS) - set(all_blueprints)
+    unused_names set(SELF_HOSTED_BLUEPRINTS) - set(all_blueprints)
+    assert not unused_names
 
 
 @pytest.mark.parametrize("blueprint_name", UBUNTU_BLUEPRINTS)
