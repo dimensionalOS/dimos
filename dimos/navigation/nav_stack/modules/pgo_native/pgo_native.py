@@ -33,7 +33,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP
+from dimos.navigation.nav_stack.frames import FRAME_ODOM, FRAME_MAP
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -46,7 +46,7 @@ class PGONativeConfig(NativeModuleConfig):
 
     # Frame names
     world_frame: str = FRAME_MAP
-    local_frame: str = FRAME_BODY
+    local_frame: str = FRAME_ODOM
 
     # Keyframe detection
     key_pose_delta_deg: float = 10.0
