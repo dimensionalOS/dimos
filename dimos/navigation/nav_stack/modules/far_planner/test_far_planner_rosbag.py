@@ -44,14 +44,7 @@ _PROCESS_STARTUP_SEC = 1.5
 # Time after feeding data for the process to finish emitting outputs.
 _POST_FEED_DRAIN_SEC = 3.0
 
-FAR_PLANNER_BIN = (
-    Path(__file__).parent.parent
-    / "modules"
-    / "far_planner"
-    / "result"
-    / "bin"
-    / "far_planner_native"
-)
+FAR_PLANNER_BIN = Path(__file__).parent / "result" / "bin" / "far_planner_native"
 
 # LCM topics
 SCAN_LCM = "/rbfp_scan#sensor_msgs.PointCloud2"
