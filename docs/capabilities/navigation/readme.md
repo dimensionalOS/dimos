@@ -8,4 +8,4 @@ Note: in the future these will be merged into one system.
 
 ## Simple Nav
 
-- [Go2 Navigation](/docs/capabilities/navigation/native/index.md) — column-carving voxel mapping + slope-based costmap
+- [Simple Navigation](/docs/capabilities/navigation/native/index.md) — column-carving voxel mapping + slope-based costmap
