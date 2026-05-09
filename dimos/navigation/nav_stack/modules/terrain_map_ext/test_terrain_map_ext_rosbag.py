@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from collections import deque
 import math
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -45,14 +44,14 @@ from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import (
     _voxel_index,
 )
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import load_rosbag_window
+from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 pytestmark = [pytest.mark.slow]
 
-DATA_DIR = Path(__file__).parent.parent.parent / "tests" / "data"
-ROSBAG_FIXTURE = DATA_DIR / "og_nav_60s.npz"
+ROSBAG_FIXTURE = get_data("og_nav_60s.npz")
 
 # OG nav stack runtime parameters — matches terrain_analysis_ext.launch overrides
 # used when the rosbag was recorded. Key differences from C++ code defaults:
