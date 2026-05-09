@@ -75,12 +75,12 @@ def load_rosbag_window(path: Path = ROSBAG_FIXTURE_60S) -> RosbagWindow:
 
     def load_indexed(prefix: str, data_suffix: str = "pts") -> list[tuple[float, np.ndarray]]:
         result = []
-        for i in range(MAX_INDEXED_ENTRIES):
-            t_key = f"{prefix}_{i}_t"
-            d_key = f"{prefix}_{i}_{data_suffix}"
-            if t_key not in data:
+        for index in range(MAX_INDEXED_ENTRIES):
+            time_key = f"{prefix}_{index}_t"
+            data_key = f"{prefix}_{index}_{data_suffix}"
+            if time_key not in data:
                 break
-            result.append((float(data[t_key][0]), data[d_key]))
+            result.append((float(data[time_key][0]), data[data_key]))
         return result
 
     return RosbagWindow(
@@ -97,27 +97,31 @@ def load_rosbag_window(path: Path = ROSBAG_FIXTURE_60S) -> RosbagWindow:
 
 
 def make_odometry_msg(
-    pos: np.ndarray, quat: np.ndarray, ts: float, frame_id: str = "map", child_frame: str = "sensor"
+    position: np.ndarray,
+    quaternion: np.ndarray,
+    ts: float,
+    frame_id: str = "map",
+    child_frame: str = "sensor",
 ) -> Odometry:
     """Build an Odometry message from position + quaternion arrays."""
     pose = Pose()
-    pose.position.x = float(pos[0])
-    pose.position.y = float(pos[1])
-    pose.position.z = float(pos[2])
-    pose.orientation.x = float(quat[0])
-    pose.orientation.y = float(quat[1])
-    pose.orientation.z = float(quat[2])
-    pose.orientation.w = float(quat[3])
+    pose.position.x = float(position[0])
+    pose.position.y = float(position[1])
+    pose.position.z = float(position[2])
+    pose.orientation.x = float(quaternion[0])
+    pose.orientation.y = float(quaternion[1])
+    pose.orientation.z = float(quaternion[2])
+    pose.orientation.w = float(quaternion[3])
     return Odometry(ts=ts, frame_id=frame_id, child_frame_id=child_frame, pose=pose)
 
 
 def make_pointcloud_msg(points: np.ndarray, ts: float, frame_id: str = "map") -> PointCloud2:
-    pts = points.astype(np.float32)
-    if pts.ndim == 2 and pts.shape[1] >= 4:
+    points_f32 = points.astype(np.float32)
+    if points_f32.ndim == 2 and points_f32.shape[1] >= 4:
         return PointCloud2.from_numpy(
-            pts[:, :3], frame_id=frame_id, timestamp=ts, intensities=pts[:, 3]
+            points_f32[:, :3], frame_id=frame_id, timestamp=ts, intensities=points_f32[:, 3]
         )
-    return PointCloud2.from_numpy(pts, frame_id=frame_id, timestamp=ts)
+    return PointCloud2.from_numpy(points_f32, frame_id=frame_id, timestamp=ts)
 
 
 def make_waypoint_msg(
@@ -209,22 +213,28 @@ def feed_at_original_timing(
     timeline: list[tuple[float, str, Any]] = []
 
     # Odom at subsampled rate
-    for i in range(0, len(window.odom), odom_subsample):
-        row = window.odom[i]
+    for odom_index in range(0, len(window.odom), odom_subsample):
+        row = window.odom[odom_index]
         msg = make_odometry_msg(row[1:4], row[4:8], ts=row[0])
         timeline.append((row[0], topic_map.get("odom", ""), msg))
 
-    for t, pts in window.scans:
+    for timestamp, points in window.scans:
         if "scan" in topic_map:
-            timeline.append((t, topic_map["scan"], make_pointcloud_msg(pts, ts=t)))
+            timeline.append(
+                (timestamp, topic_map["scan"], make_pointcloud_msg(points, ts=timestamp))
+            )
 
-    for t, pts in window.terrain_maps:
+    for timestamp, points in window.terrain_maps:
         if "terrain" in topic_map:
-            timeline.append((t, topic_map["terrain"], make_pointcloud_msg(pts, ts=t)))
+            timeline.append(
+                (timestamp, topic_map["terrain"], make_pointcloud_msg(points, ts=timestamp))
+            )
 
-    for t, pts in window.terrain_maps_ext:
+    for timestamp, points in window.terrain_maps_ext:
         if "terrain_ext" in topic_map:
-            timeline.append((t, topic_map["terrain_ext"], make_pointcloud_msg(pts, ts=t)))
+            timeline.append(
+                (timestamp, topic_map["terrain_ext"], make_pointcloud_msg(points, ts=timestamp))
+            )
 
     for row in window.way_point:
         if "waypoint" in topic_map:
@@ -237,33 +247,33 @@ def feed_at_original_timing(
             timeline.append((float(row[0]), topic_map["goal"], msg))
 
     # Path messages (for PathFollower testing)
-    for t, pose_arr in window.paths:
-        if "path" not in topic_map or len(pose_arr) == 0:
+    for timestamp, pose_array in window.paths:
+        if "path" not in topic_map or len(pose_array) == 0:
             continue
         poses = []
-        for row in pose_arr:
+        for row in pose_array:
             poses.append(
                 PoseStamped(
-                    ts=t,
+                    ts=timestamp,
                     frame_id="map",
                     position=[float(row[0]), float(row[1]), float(row[2])],
                     orientation=[float(row[3]), float(row[4]), float(row[5]), float(row[6])],
                 )
             )
-        path_msg = NavPath(ts=t, frame_id="map", poses=poses)
-        timeline.append((t, topic_map["path"], path_msg))
+        path_msg = NavPath(ts=timestamp, frame_id="map", poses=poses)
+        timeline.append((timestamp, topic_map["path"], path_msg))
 
-    timeline.sort(key=lambda x: x[0])
-    timeline = [(t, topic, msg) for t, topic, msg in timeline if topic]
+    timeline.sort(key=lambda entry: entry[0])
+    timeline = [(timestamp, topic, msg) for timestamp, topic, msg in timeline if topic]
 
     if not timeline:
         return
 
-    t_start = timeline[0][0]
+    start_timestamp = timeline[0][0]
     real_start = time.monotonic()
-    for t, topic, msg in timeline:
-        target_dt = t - t_start
+    for timestamp, topic, msg in timeline:
+        target_offset = timestamp - start_timestamp
         elapsed = time.monotonic() - real_start
-        if target_dt > elapsed:
-            time.sleep(target_dt - elapsed)
+        if target_offset > elapsed:
+            time.sleep(target_offset - elapsed)
         lcm.publish(topic, msg.lcm_encode())
