@@ -14,11 +14,7 @@
 
 """Rosbag validation test for TerrainMapExt.
 
-Feeds recorded registered_scan + odometry data directly to the TerrainMapExt
-processing pipeline (bypassing Module wiring) and validates that the output
-terrain cloud exhibits the expected behavior: ground estimation, height filtering,
-connectivity checking, and intensity (elevation distance) correctness.
-
+Feeds recorded registered_scan + odometry data directly to the TerrainMapExt.
 Compares against the reference terrain_map_ext output recorded from the OG ROS
 nav stack at multiple timestamps.
 """
@@ -53,8 +49,7 @@ pytestmark = [pytest.mark.slow]
 
 ROSBAG_FIXTURE = get_data("og_nav_60s.npz")
 
-# OG nav stack runtime parameters — matches terrain_analysis_ext.launch overrides
-# used when the rosbag was recorded. Key differences from C++ code defaults:
+# Key differences from C++ code defaults:
 # useSorting=true, quantileZ=0.1, lowerBoundZ=-2.5, checkTerrainConn=false
 DEFAULT_CONFIG = TerrainMapExtConfig(
     scan_voxel_size=0.1,
