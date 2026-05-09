@@ -224,6 +224,9 @@ def run(
 
     cli_config_overrides: dict[str, Any] = ctx.obj
 
+    # Apply CLI overrides to global_config before importing blueprint modules
+    global_config.update(**cli_config_overrides)
+
     # Clean stale registry entries
     stale = cleanup_stale()
     if stale:

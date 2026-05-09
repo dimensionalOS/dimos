@@ -12,8 +12,8 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
@@ -22,8 +22,8 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'win32'",
@@ -812,16 +812,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -1283,16 +1283,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -1566,10 +1566,10 @@ wheels = [
 
 [package.optional-dependencies]
 cuda = [
-    { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "nvidia-cublas-cu12", version = "12.9.1.4", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
-    { name = "nvidia-cuda-runtime-cu12", version = "12.8.90", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "nvidia-cuda-runtime-cu12", version = "12.9.79", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
+    { name = "nvidia-cublas-cu12", version = "12.8.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-cublas-cu12", version = "12.9.1.4", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-runtime-cu12", version = "12.8.90", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-cuda-runtime-cu12", version = "12.9.79", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or sys_platform == 'win32'" },
 ]
 
 [[package]]
@@ -1824,7 +1824,7 @@ wheels = [
 
 [[package]]
 name = "dimos"
-version = "0.0.11"
+version = "0.0.12"
 source = { editable = "." }
 dependencies = [
     { name = "annotation-protocol" },
@@ -1880,6 +1880,101 @@ agents = [
     { name = "ollama" },
     { name = "openai" },
     { name = "sounddevice" },
+]
+all = [
+    { name = "anthropic" },
+    { name = "catkin-pkg" },
+    { name = "cerebras-cloud-sdk" },
+    { name = "ctransformers", extra = ["cuda"] },
+    { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "dimos-lcm" },
+    { name = "dimos-viewer" },
+    { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform != 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform != 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine == 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'darwin' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "edgetam-dimos" },
+    { name = "einops" },
+    { name = "empy" },
+    { name = "fastapi" },
+    { name = "faster-whisper" },
+    { name = "ffmpeg-python" },
+    { name = "filterpy" },
+    { name = "gdown" },
+    { name = "googlemaps" },
+    { name = "hydra-core" },
+    { name = "ipykernel" },
+    { name = "jinja2" },
+    { name = "kaleido" },
+    { name = "langchain" },
+    { name = "langchain-chroma" },
+    { name = "langchain-core" },
+    { name = "langchain-huggingface" },
+    { name = "langchain-ollama" },
+    { name = "langchain-openai" },
+    { name = "langchain-text-splitters" },
+    { name = "lap" },
+    { name = "lark" },
+    { name = "lcm" },
+    { name = "matplotlib" },
+    { name = "moondream" },
+    { name = "mujoco" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "nvidia-nvimgcodec-cu12", extra = ["all"], marker = "platform_machine == 'x86_64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "ollama" },
+    { name = "omegaconf" },
+    { name = "onnx" },
+    { name = "onnxruntime" },
+    { name = "onnxruntime-gpu", marker = "platform_machine == 'x86_64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "open-clip-torch" },
+    { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "open3d-unofficial-arm", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform != 'linux' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform != 'linux' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "openai" },
+    { name = "opencv-python-headless" },
+    { name = "pillow" },
+    { name = "piper-sdk" },
+    { name = "playground" },
+    { name = "plotly" },
+    { name = "plum-dispatch" },
+    { name = "portal" },
+    { name = "psycopg2-binary" },
+    { name = "pycollada" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pygame" },
+    { name = "pymavlink" },
+    { name = "pyrealsense2", marker = "sys_platform != 'darwin' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "python-multipart" },
+    { name = "pyturbojpeg" },
+    { name = "pyyaml" },
+    { name = "reactivex" },
+    { name = "requests" },
+    { name = "rerun-sdk" },
+    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "sentence-transformers" },
+    { name = "sortedcontainers" },
+    { name = "sounddevice" },
+    { name = "soundfile" },
+    { name = "sse-starlette" },
+    { name = "structlog" },
+    { name = "tensorboard" },
+    { name = "tensorzero" },
+    { name = "tiktoken" },
+    { name = "timm" },
+    { name = "torchreid" },
+    { name = "transformers", extra = ["torch"] },
+    { name = "trimesh" },
+    { name = "typeguard" },
+    { name = "typer" },
+    { name = "ultralytics" },
+    { name = "unitree-webrtc-connect-leshy" },
+    { name = "uvicorn" },
+    { name = "xacro" },
+    { name = "xarm-python-sdk" },
+    { name = "xformers", marker = "platform_machine == 'x86_64' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "yapf" },
 ]
 base = [
     { name = "anthropic" },
@@ -2197,6 +2292,7 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
+    { name = "dimos", extras = ["agents", "base", "cpu", "cuda", "docker", "drone", "manipulation", "misc", "perception", "psql", "sim", "unitree", "visualization", "web"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["agents", "web", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
@@ -2320,7 +2416,7 @@ requires-dist = [
     { name = "xformers", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
-provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "psql", "sim", "drone", "dds", "docker", "base"]
+provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "psql", "sim", "drone", "dds", "docker", "base", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
@@ -2591,8 +2687,8 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
@@ -2728,7 +2824,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -3085,16 +3181,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -3702,16 +3798,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -3799,16 +3895,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -3874,16 +3970,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -5466,8 +5562,8 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
@@ -5728,16 +5824,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
@@ -5870,16 +5966,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/65/21b3bc86aac7b8f2862db1e808f1ea22b028e30a225a34a5ede9bf8678f2/numpy-2.3.5.tar.gz", hash = "sha256:784db1dcdab56bf0517743e746dfb0f885fc68d948aba86eeec2cba234bdf1c0", size = 20584950, upload-time = "2025-11-16T22:52:42.067Z" }
@@ -5964,15 +6060,10 @@ name = "nvidia-cublas-cu12"
 version = "12.8.4.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
 ]
 wheels = [
@@ -5991,13 +6082,18 @@ resolution-markers = [
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'win32'",
@@ -6033,15 +6129,10 @@ name = "nvidia-cuda-runtime-cu12"
 version = "12.8.90"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
-    "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
 ]
 wheels = [
@@ -6060,13 +6151,18 @@ resolution-markers = [
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'win32'",
@@ -6447,13 +6543,13 @@ name = "open3d-unofficial-arm"
 version = "0.19.0.post5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "configargparse", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "dash", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "flask", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "nbformat", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'win32') or (python_full_version >= '3.11' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (python_full_version >= '3.11' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform != 'win32') or (python_full_version < '3.11' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (python_full_version < '3.11' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "werkzeug", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "configargparse" },
+    { name = "dash" },
+    { name = "flask" },
+    { name = "nbformat" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "werkzeug" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/02/87/95d3cf9017a0e89a708e611d003abeb66c88d7947fa7238962971cc8b0cb/open3d_unofficial_arm-0.19.0.post5-cp310-cp310-manylinux_2_35_aarch64.whl", hash = "sha256:26bc160f3326a74b232f026d741a576bf0d1fa7b1d5128c5e979d7b4d2d1b983", size = 48230542, upload-time = "2026-02-10T08:37:33.928Z" },
@@ -6931,16 +7027,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -8169,7 +8265,7 @@ name = "pyobjc-framework-cocoa"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "pyobjc-core", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/02/a3/16ca9a15e77c061a9250afbae2eae26f2e1579eb8ca9462ae2d2c71e1169/pyobjc_framework_cocoa-12.1.tar.gz", hash = "sha256:5556c87db95711b985d5efdaaf01c917ddd41d148b1e52a0c66b1a2e2c5c1640", size = 2772191, upload-time = "2025-11-14T10:13:02.069Z" }
 wheels = [
@@ -8187,8 +8283,8 @@ name = "pyobjc-framework-corebluetooth"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "pyobjc-framework-cocoa", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "pyobjc-core", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-cocoa", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4b/25/d21d6cb3fd249c2c2aa96ee54279f40876a0c93e7161b3304bf21cbd0bfe/pyobjc_framework_corebluetooth-12.1.tar.gz", hash = "sha256:8060c1466d90bbb9100741a1091bb79975d9ba43911c9841599879fc45c2bbe0", size = 33157, upload-time = "2025-11-14T10:13:28.064Z" }
 wheels = [
@@ -8206,8 +8302,8 @@ name = "pyobjc-framework-libdispatch"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
-    { name = "pyobjc-framework-cocoa", marker = "(platform_machine == 'aarch64' and sys_platform != 'win32') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin' or (sys_platform == 'win32' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (sys_platform == 'win32' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "pyobjc-core", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-cocoa", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform == 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/26/e8/75b6b9b3c88b37723c237e5a7600384ea2d84874548671139db02e76652b/pyobjc_framework_libdispatch-12.1.tar.gz", hash = "sha256:4035535b4fae1b5e976f3e0e38b6e3442ffea1b8aa178d0ca89faa9b8ecdea41", size = 38277, upload-time = "2025-11-14T10:16:46.235Z" }
 wheels = [
@@ -9289,16 +9385,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -9424,16 +9520,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -9881,16 +9977,16 @@ resolution-markers = [
     "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
-    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
     "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -11084,7 +11180,7 @@ name = "winrt-runtime"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "typing-extensions", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/16/dd/acdd527c1d890c8f852cc2af644aa6c160974e66631289420aa871b05e65/winrt_runtime-3.2.1.tar.gz", hash = "sha256:c8dca19e12b234ae6c3dadf1a4d0761b51e708457492c13beb666556958801ea", size = 21721, upload-time = "2025-06-06T14:40:27.593Z" }
 wheels = [
@@ -11110,7 +11206,7 @@ name = "winrt-windows-devices-bluetooth"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b2/a0/1c8a0c469abba7112265c6cb52f0090d08a67c103639aee71fc690e614b8/winrt_windows_devices_bluetooth-3.2.1.tar.gz", hash = "sha256:db496d2d92742006d5a052468fc355bf7bb49e795341d695c374746113d74505", size = 23732, upload-time = "2025-06-06T14:41:20.489Z" }
 wheels = [
@@ -11136,7 +11232,7 @@ name = "winrt-windows-devices-bluetooth-advertisement"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/06/fc/7ffe66ca4109b9e994b27c00f3d2d506e6e549e268791f755287ad9106d8/winrt_windows_devices_bluetooth_advertisement-3.2.1.tar.gz", hash = "sha256:0223852a7b7fa5c8dea3c6a93473bd783df4439b1ed938d9871f947933e574cc", size = 16906, upload-time = "2025-06-06T14:41:21.448Z" }
 wheels = [
@@ -11162,7 +11258,7 @@ name = "winrt-windows-devices-bluetooth-genericattributeprofile"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/44/21/aeeddc0eccdfbd25e543360b5cc093233e2eab3cdfb53ad3cabae1b5d04d/winrt_windows_devices_bluetooth_genericattributeprofile-3.2.1.tar.gz", hash = "sha256:cdf6ddc375e9150d040aca67f5a17c41ceaf13a63f3668f96608bc1d045dde71", size = 38896, upload-time = "2025-06-06T14:41:22.687Z" }
 wheels = [
@@ -11188,7 +11284,7 @@ name = "winrt-windows-devices-enumeration"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/dd/75835bfbd063dffa152109727dedbd80f6e92ea284855f7855d48cdf31c9/winrt_windows_devices_enumeration-3.2.1.tar.gz", hash = "sha256:df316899e39bfc0ffc1f3cb0f5ee54d04e1d167fbbcc1484d2d5121449a935cf", size = 23538, upload-time = "2025-06-06T14:41:26.787Z" }
 wheels = [
@@ -11214,7 +11310,7 @@ name = "winrt-windows-devices-radios"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5e/02/9704ea359ad8b0d6faa1011f98fb477e8fb6eac5201f39d19e73c2407e7b/winrt_windows_devices_radios-3.2.1.tar.gz", hash = "sha256:4dc9b9d1501846049eb79428d64ec698d6476c27a357999b78a8331072e18a0b", size = 5908, upload-time = "2025-06-06T14:41:44.868Z" }
 wheels = [
@@ -11240,7 +11336,7 @@ name = "winrt-windows-foundation"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0c/55/098ce7ea0679efcc1298b269c48768f010b6c68f90c588f654ec874c8a74/winrt_windows_foundation-3.2.1.tar.gz", hash = "sha256:ad2f1fcaa6c34672df45527d7c533731fdf65b67c4638c2b4aca949f6eec0656", size = 30485, upload-time = "2025-06-06T14:41:53.344Z" }
 wheels = [
@@ -11266,7 +11362,7 @@ name = "winrt-windows-foundation-collections"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ef/62/d21e3f1eeb8d47077887bbf0c3882c49277a84d8f98f7c12bda64d498a07/winrt_windows_foundation_collections-3.2.1.tar.gz", hash = "sha256:0eff1ad0d8d763ad17e9e7bbd0c26a62b27215016393c05b09b046d6503ae6d5", size = 16043, upload-time = "2025-06-06T14:41:53.983Z" }
 wheels = [
@@ -11292,7 +11388,7 @@ name = "winrt-windows-storage-streams"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "winrt-runtime", marker = "sys_platform == 'win32' or (extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds')" },
+    { name = "winrt-runtime", marker = "platform_machine == 'aarch64' or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-dds' and extra == 'extra-5-dimos-unitree-dds') or (platform_machine != 'aarch64' and extra == 'extra-5-dimos-unitree' and extra == 'extra-5-dimos-unitree-dds') or sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/00/50/f4488b07281566e3850fcae1021f0285c9653992f60a915e15567047db63/winrt_windows_storage_streams-3.2.1.tar.gz", hash = "sha256:476f522722751eb0b571bc7802d85a82a3cae8b1cce66061e6e758f525e7b80f", size = 34335, upload-time = "2025-06-06T14:43:23.905Z" }
 wheels = [
