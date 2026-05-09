@@ -88,13 +88,7 @@ def _wire(module) -> dict[str, _MockTransport]:
         "camera_info",
     ):
         transport = _MockTransport()
-        port = getattr(module, name)
-        if hasattr(type(port), "transport") and isinstance(
-            getattr(type(port), "transport", None), property
-        ):
-            port.transport = transport
-        else:
-            port._transport = transport  # In ports have no public setter
+        getattr(module, name).transport = transport
         subscribers[name] = transport
     return subscribers
 
