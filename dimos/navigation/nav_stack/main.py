@@ -12,17 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Composable navigation stack.
-
-``create_nav_stack()`` returns a Blueprint with terrain analysis, local
-planner, path follower, global planner (FAR or SimplePlanner), and PGO.
-``nav_stack_rerun_config()`` returns Rerun visualization defaults.
-"""
 
 from __future__ import annotations
 
 import math
 from typing import Any
+
+import numpy as np
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import ModuleBase
@@ -69,6 +65,7 @@ def create_nav_stack(
     the relevant modules automatically.
     """
     far_planner_config = {**(far_planner or {})}
+    far_planner_config.setdefault("is_static_env", False)
 
     # Propagate vehicle_height to far_planner config
     if vehicle_height is not None:
@@ -208,8 +205,7 @@ def nav_stack_rerun_config(
     Caller entries win; this fills in missing keys. ``agentic_debug``
     lifts nav elements above the scene for top-down visibility.
 
-    ``vis_throttle`` scales all ``max_hz`` values — e.g. 0.5 halves every
-    rate limit, sending half as many frames to Rerun.
+    Use ``vis_throttle`` (make smaller) if there is crashing related to Rerun/Dimos-Viewer.
     """
     resolved = dict(user_config or {})
     if vis_throttle != 1.0 and "max_hz" in resolved:
@@ -285,7 +281,6 @@ def _sensor_scan_colors(cloud: Any) -> Any:
 
 
 def _global_map_colors(cloud: Any) -> Any:
-    import numpy as np
     import rerun as rr
 
     points, _ = cloud.as_numpy()
@@ -309,7 +304,6 @@ def _global_map_colors(cloud: Any) -> Any:
 def _registered_scan_colors(cloud: Any) -> Any:
     """Live lidar — bright white-ish points, larger than the accumulated map
     so the current sweep stands out against ``global_map`` underneath."""
-    import numpy as np
     import rerun as rr
 
     points, _ = cloud.as_numpy()
@@ -321,7 +315,6 @@ def _registered_scan_colors(cloud: Any) -> Any:
 
 
 def _terrain_map_colors(cloud: Any) -> Any:
-    import numpy as np
     import rerun as rr
 
     points, _ = cloud.as_numpy()
@@ -343,7 +336,6 @@ def _terrain_map_colors(cloud: Any) -> Any:
 
 
 def _costmap_cloud_colors(cloud: Any) -> Any:
-    import numpy as np
     import rerun as rr
 
     points, embedded = cloud.as_numpy()

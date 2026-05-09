@@ -20,7 +20,7 @@ from lcm import LCM
 
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.protocol.service.lcmservice import (
-    DEFAULT_LCM_URL,
+    _DEFAULT_LCM_URL,
     LCMConfig,
     LCMService,
     autoconf,
@@ -98,7 +98,7 @@ class TestLCMConfig:
     def test_default_values(self) -> None:
         config = LCMConfig()
         assert config.ttl == 0
-        assert config.url == DEFAULT_LCM_URL
+        assert config.url == _DEFAULT_LCM_URL
         assert config.lcm is None
 
     def test_custom_url(self) -> None:
@@ -132,9 +132,9 @@ class TestLCMService:
             mock_lcm_class.return_value = mock_lcm_instance
 
             service = LCMService()
-            assert service.config.url == DEFAULT_LCM_URL
+            assert service.config.url == _DEFAULT_LCM_URL
             assert service.l == mock_lcm_instance
-            mock_lcm_class.assert_called_once_with(DEFAULT_LCM_URL)
+            mock_lcm_class.assert_called_once_with(_DEFAULT_LCM_URL)
 
     def test_init_with_custom_url(self) -> None:
         custom_url = "udpm://192.168.1.1:7777?ttl=1"

@@ -34,7 +34,7 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.protocol.service.lcmservice import DEFAULT_LCM_URL
+from dimos.protocol.service.lcmservice import _DEFAULT_LCM_URL
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -86,7 +86,7 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
     robot_z = 0.0
     max_z_seen = 0.0
 
-    lcm = lcmlib.LCM(DEFAULT_LCM_URL)
+    lcm = lcmlib.LCM(_DEFAULT_LCM_URL)
 
     def _odom_handler(_channel: str, data: bytes) -> None:
         nonlocal odom_count, robot_x, robot_y, robot_z, max_z_seen
