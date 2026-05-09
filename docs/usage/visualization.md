@@ -72,17 +72,24 @@ dimos --rerun-web --rerun-open native run unitree-go2
 To enable visualization in your own blueprint, use `vis_module`:
 
 ```python
-from dimos.core.global_config import global_config
-from dimos.visualization.vis_module import vis_module
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.visualization.vis_module import vis_module
 
 camera_demo = autoconnect(
     CameraModule.blueprint(),
     vis_module(viewer_backend=global_config.viewer),
 )
 
+```
+
+Run the stack locally (this blocks until you stop the process):
+
+```python skip
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+
 if __name__ == "__main__":
-    camera_demo.build().loop()
+    ModuleCoordinator.build(camera_demo).loop()
 ```
 
 Every LCM stream, such as `color_image` (output by CameraModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the LCM topic as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
@@ -102,7 +109,7 @@ This happens on lower-end hardware (NUC, older laptops) with large maps.
 
 Edit [`dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py):
 
-```python
+```python skip
 # Before (high detail, slower on large maps)
 voxel_mapper(voxel_size=0.05),  # 5cm voxels
 

@@ -136,7 +136,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 ## Interactive Install
 
-```sh
+```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
@@ -225,7 +225,7 @@ dimos stop                                # Shut down
 
 See below a simple robot connection module that sends streams of continuous `cmd_vel` to the robot and receives `color_image` to a simple `Listener` module. DimOS Modules are subsystems on a robot that communicate with other modules using standardized messages.
 
-```py
+```py skip
 import threading, time, numpy as np
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
@@ -274,7 +274,7 @@ Blueprints are instructions for how to construct and wire modules. We compose th
 Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `In[]` and `Out[]` message types.
 
 A blueprint example that connects the image stream from a robot to an MCP-backed LLM agent for reasoning and action execution.
-```py
+```py skip
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import Image
@@ -311,7 +311,7 @@ if __name__ == "__main__":
 
 ## Develop on DimOS
 
-```sh
+```sh skip
 export GIT_LFS_SKIP_SMUDGE=1
 git clone https://github.com/dimensionalOS/dimos.git
 cd dimos

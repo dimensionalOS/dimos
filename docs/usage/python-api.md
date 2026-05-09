@@ -9,7 +9,7 @@ The `Dimos` class is the main entry point for using DimOS from Python. There are
 
 (Remember to source `.env`.)
 
-```python
+```python skip session=dimos_local
 from dimos import Dimos
 
 app = Dimos(n_workers=8)
@@ -29,7 +29,6 @@ app.ReplanningAStarPlanner
 # Access a private variable.
 print(app.ReplanningAStarPlanner._planner._safe_goal_clearance)
 
-
 # Add another module dynamically.
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 app.run(KeyboardTeleop)
@@ -47,7 +46,7 @@ app.stop()
 module's stream. Useful for quick inspection without writing a
 subscriber:
 
-```python
+```python skip
 # Grab the image.
 img = app.peek_stream("color_image", 1.0)
 
@@ -69,7 +68,7 @@ Start a daemon first (via CLI or another script), then connect to it:
 dimos run unitree-go2-agentic
 ```
 
-```python
+```python skip
 from dimos import Dimos
 
 app = Dimos.connect()
@@ -83,7 +82,7 @@ app.stop()  # closes the connection (does NOT stop the remote process)
 
 Connect to a specific instance:
 
-```python
+```python skip
 # By run ID (from `dimos status`)
 app = Dimos.connect(run_id="20260306-143022-unitree-go2")
 
@@ -93,7 +92,7 @@ app = Dimos.connect(host="192.168.1.50", port=18861)
 
 `run()` and `restart()` also work against a daemon:
 
-```python
+```python skip
 app = Dimos.connect()
 
 app.run("keyboard-teleop")       # add a module by registry name
@@ -114,7 +113,7 @@ be picklable.
 
 In local mode, you can hot-restart a module:
 
-```python
+```python skip
 from dimos.agents.mcp.mcp_server import McpServer
 
 app.restart(McpServer)

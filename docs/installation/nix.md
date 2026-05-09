@@ -4,7 +4,7 @@ You need to have [nix](https://nixos.org/) installed and [flakes](https://nixos.
 
 [official install docs](https://nixos.org/download/) recommended, but here is a quickstart:
 
-```sh
+```sh skip
 # Install Nix https://nixos.org/download/
 curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
 . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
@@ -15,7 +15,7 @@ mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" 
 
 # Using DimOS as a library
 
-```sh
+```sh skip
 mkdir myproject && cd myproject
 
 # pull the flake (needed for nix develop outside the repo)
@@ -35,7 +35,7 @@ pip install "dimos[misc,sim,visualization,agents,web,perception,unitree,manipula
 
 # Developing on DimOS
 
-```sh
+```sh skip
 # this allows getting large files on-demand (and not pulling all immediately)
 export GIT_LFS_SKIP_SMUDGE=1
 git clone https://github.com/dimensionalOS/dimos.git

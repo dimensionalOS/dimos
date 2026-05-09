@@ -1,6 +1,6 @@
 # macOS Install (12.6 or newer)
 
-```sh
+```sh skip
 # install homebrew
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 # install dependencies
@@ -12,7 +12,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin
 
 # Using DimOS as a library
 
-```sh
+```sh skip
 mkdir myproject && cd myproject
 
 uv venv --python 3.12
@@ -25,7 +25,7 @@ uv pip install 'dimos[misc,sim,visualization,agents,web,perception,unitree,manip
 
 # Developing on DimOS
 
-```sh
+```sh skip
 # this allows getting large files on-demand (and not pulling all immediately)
 export GIT_LFS_SKIP_SMUDGE=1
 git clone https://github.com/dimensionalOS/dimos.git
