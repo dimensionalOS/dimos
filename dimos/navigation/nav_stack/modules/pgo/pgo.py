@@ -86,15 +86,14 @@ class PGO(NativeModule):
     @rpc
     def start(self) -> None:
         super().start()
-        # Seed identity TF so consumers can query map->body immediately
+        self.register_disposable(
+            Disposable(self.pgo_tf.transport.subscribe(self._on_tf_correction, self.pgo_tf))
+        )
+        # Seed identity TF so consumers can query map->body immediately.
         self._publish_tf(
             translation=(0.0, 0.0, 0.0),
             rotation=(0.0, 0.0, 0.0, 1.0),
             ts=time.time(),
-        )
-        # Subscribe to pgo_tf output to relay TF corrections
-        self.register_disposable(
-            Disposable(self.pgo_tf.transport.subscribe(self._on_tf_correction, self.pgo_tf))
         )
         logger.info("PGO native module started (C++ iSAM2 + PCL ICP)")
 
