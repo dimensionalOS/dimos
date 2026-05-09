@@ -14,8 +14,7 @@
 
 """Native C++ PGO module — faithful reimplementation of the original nav stack PGO.
 
-Uses GTSAM iSAM2 for pose graph optimization and PCL ICP for loop closure
-verification.  All parameters match the upstream ``pgo_unity_sim.yaml`` defaults.
+Uses GTSAM iSAM2 for pose graph optimization and PCL ICP for loop closure.
 """
 
 from __future__ import annotations
@@ -52,7 +51,7 @@ class PGOConfig(NativeModuleConfig):
     key_pose_delta_deg: float = 10.0
     key_pose_delta_trans: float = 0.5
 
-    # Loop closure (defaults match original pgo_unity_sim.yaml)
+    # Loop closure
     loop_search_radius: float = 1.0
     loop_time_thresh: float = 60.0
     loop_score_thresh: float = 0.15
@@ -69,11 +68,7 @@ class PGOConfig(NativeModuleConfig):
 
 
 class PGO(NativeModule):
-    """Native C++ pose graph optimization with loop closure.
-
-    Faithful reimplementation of the upstream PGO using GTSAM iSAM2 + PCL ICP.
-    Publishes corrected odometry, accumulated global map, and map->odom TF.
-    """
+    """Pose graph optimization with loop closure using GTSAM iSAM2 + PCL ICP."""
 
     config: PGOConfig
 

@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Rosbag accuracy test: PathFollower is a pure (path, odom, slow_down) -> cmd_vel function,
-so given identical inputs and matching parameters its output should be near-exact."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -53,8 +50,7 @@ CMD_VEL_LCM = "/rbpf_cmd#geometry_msgs.Twist"
 SLOW_DOWN_LCM = "/rbpf_slow#std_msgs.Int8"
 SAFETY_STOP_LCM = "/rbpf_safety#std_msgs.Int8"
 
-# OG nav stack G1 config values (from unitree_g1.yaml)
-# Exact OG nav stack runtime params (from params.txt dump)
+# OG nav stack G1 config values
 OG_PATHFOLLOWER_ARGS = [
     "--lookAheadDis",
     "0.5",

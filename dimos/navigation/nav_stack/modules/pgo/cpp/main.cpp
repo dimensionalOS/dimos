@@ -124,7 +124,7 @@ int main(int argc, char** argv)
     std::string global_map_topic = mod.topic("global_map");
     std::string tf_topic = mod.topic("pgo_tf");
 
-    // Config parameters (defaults match original YAML configs)
+    // Config parameters
     Config config;
     config.key_pose_delta_deg = mod.arg_float("key_pose_delta_deg", 10.0f);
     config.key_pose_delta_trans = mod.arg_float("key_pose_delta_trans", 0.5f);
