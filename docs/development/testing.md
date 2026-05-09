@@ -3,7 +3,7 @@
 For development, you should install all dependencies so that tests have access to them.
 
 ```bash
-uv sync --all-extras --no-extra dds
+uv sync --extra all
 ```
 
 ## Types of tests
