@@ -17,7 +17,7 @@ ssh -L 3030:localhost:3030 unitree@192.168.123.164
 # Password: 123
 ```
 
-### Use Eithernet to get WiFi Working
+### Use Ethernet to get WiFi Working
 
 After ssh-ing in, find additional IPs:
 ```bash
