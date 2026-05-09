@@ -15,13 +15,14 @@
 """Keyboard teleop for twist base via ControlCoordinator.
 
 Runs a mock holonomic twist base with pygame keyboard control.
-WASD keys publish Twist → coordinator's twist_command port → virtual joints
+The same bindings as `KeyboardTeleop` (arrows + WASD, Alt+A/D or Alt+←/→ strafe)
+publish Twist → coordinator's twist_command port → virtual joints
 → tick loop → MockTwistBaseAdapter.
 
 Controls:
-    W/S: Forward/backward (linear.x)
-    Q/E: Strafe left/right (linear.y)
-    A/D: Turn left/right (angular.z)
+    W/S and Up/Down: Forward/backward (linear.x)
+    A/D and Left/Right: Turn (angular.z)
+    Alt+A/D or Alt+←/→: Strafe left/right (linear.y)
     Shift: 2x boost
     Ctrl: 0.5x slow
     Space: Emergency stop
