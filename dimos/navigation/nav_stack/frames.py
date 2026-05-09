@@ -12,16 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Standard TF frame IDs for the SmartNav navigation stack.
-
-Follows the ROS REP-105 frame convention:
-
-    map → odom → body
-
-- **map**: Global, loop-closure-corrected frame (published by PGO).
-- **odom**: Continuous, locally smooth frame with no jumps (published by FastLio2).
-- **body**: Robot body / IMU frame.
-"""
+# NOTE: this will be deleted shortly - do not rely on
 
 FRAME_MAP = "map"
 FRAME_ODOM = "odom"
