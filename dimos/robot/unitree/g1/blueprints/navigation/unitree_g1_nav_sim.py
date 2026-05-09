@@ -42,9 +42,10 @@ nav_config: dict[str, Any] = dict(
         "min_relative_z": -1.5,
         "freeze_ang": 180.0,
         "obstacle_height_threshold": 0.02,
-        "publish_free_paths": True,
+        "publish_free_paths": True,  # turn off visual for better runtime performance
     },
     path_follower={
+        # these effect smoothness quite a bit
         "max_acceleration": 2.0,
         "max_yaw_rate": 60.0,
     },
