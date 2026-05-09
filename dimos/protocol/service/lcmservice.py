@@ -34,7 +34,7 @@ logger = setup_logger()
 _DEFAULT_LCM_HOST = "239.255.76.67"
 _DEFAULT_LCM_PORT = "7667"
 # LCM_DEFAULT_URL is used by LCM (we didn't pick that env var name)
-_DEFAULT_LCM_URL = os.getenv(
+DEFAULT_LCM_URL = os.getenv(
     "LCM_DEFAULT_URL", f"udpm://{_DEFAULT_LCM_HOST}:{_DEFAULT_LCM_PORT}?ttl=0"
 )
 
@@ -49,7 +49,7 @@ def autoconf(check_only: bool = False) -> None:
 
 class LCMConfig(BaseConfig):
     ttl: int = 0
-    url: str = _DEFAULT_LCM_URL
+    url: str = DEFAULT_LCM_URL
     lcm: lcm_mod.LCM | None = None
 
 
