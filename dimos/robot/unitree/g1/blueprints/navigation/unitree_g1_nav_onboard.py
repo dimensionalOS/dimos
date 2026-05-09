@@ -73,7 +73,8 @@ unitree_g1_nav_onboard = (
                     "visual_override": {"world/odometry": g1_odometry_tf_override},
                     "static": {"world/tf/robot": g1_static_robot},
                     "memory_limit": "1GB",
-                }
+                },
+                vis_throttle=0.5,
             ),
         ),
     )
