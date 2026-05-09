@@ -525,19 +525,17 @@ class SimplePlanner(Module):
         cell_size = cm.cell_size
         ixs = np.floor(xs / cell_size).astype(np.int64)
         iys = np.floor(ys / cell_size).astype(np.int64)
-        # Group by cell and take max height per cell (vectorized).
         keys = np.column_stack((ixs, iys))
-        _, inverse, counts = np.unique(keys, axis=0, return_inverse=True, return_counts=True)
-        max_h = np.full(len(counts), float("-inf"))
+        unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
+        max_h = np.full(len(unique_keys), float("-inf"))
         np.maximum.at(max_h, inverse, hs)
-        unique_keys = keys[np.unique(inverse, return_index=True)[1]]
+        # Single tolist() per array beats per-element int()/float() casts.
+        heights_dict = cm.heights
         dirty = False
-        for i in range(len(unique_keys)):
-            key = (int(unique_keys[i, 0]), int(unique_keys[i, 1]))
-            h = float(max_h[i])
-            prev = cm.heights.get(key, float("-inf"))
-            if h > prev:
-                cm.heights[key] = h
+        for (ix, iy), h in zip(unique_keys.tolist(), max_h.tolist(), strict=True):
+            key = (ix, iy)
+            if h > heights_dict.get(key, float("-inf")):
+                heights_dict[key] = h
                 dirty = True
         if dirty:
             cm.mark_dirty()
