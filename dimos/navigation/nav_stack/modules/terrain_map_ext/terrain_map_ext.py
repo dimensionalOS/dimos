@@ -97,19 +97,14 @@ class TerrainMapExtConfig(ModuleConfig):
 def _voxel_index(x: float, y: float, voxel_size: float, half_width: int) -> int:
     """Compute voxel grid index matching the C++ int-cast-with-negative-correction."""
     offset = x - y + voxel_size / 2
-    ind = int(offset / voxel_size) + half_width
+    index = int(offset / voxel_size) + half_width
     if offset < 0:
-        ind -= 1
-    return ind
+        index -= 1
+    return index
 
 
 class TerrainMapExt(Module):
-    """Extended terrain map: accumulates local terrain into a wider, slower-decaying map.
-
-    Subscribes to registered_scan directly (parallel to TerrainAnalysis),
-    estimates ground elevation per planar voxel column, runs BFS connectivity
-    to reject ceiling/overhead structures, and publishes filtered terrain.
-    """
+    """Extended terrain map: accumulates local terrain into a wider, slower-decaying map."""
 
     config: TerrainMapExtConfig
 
@@ -124,34 +119,28 @@ class TerrainMapExt(Module):
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
-        # Vehicle state
         self._vehicle_x = 0.0
         self._vehicle_y = 0.0
         self._vehicle_z = 0.0
 
-        # System time tracking (matching C++ systemInitTime pattern)
         self._system_init_time = 0.0
         self._system_inited = False
         self._laser_cloud_time = 0.0
 
-        # Rolling terrain voxel grid: list of point arrays (x, y, z, intensity)
-        # intensity stores (laserCloudTime - systemInitTime) for decay
+        # Per-cell point arrays: each entry is [x, y, z, time_offset] where
+        # time_offset = laser_cloud_time - system_init_time, used for decay.
         self._terrain_voxel_cloud: list[list[list[float]]] = [[] for _ in range(TERRAIN_VOXEL_NUM)]
         self._terrain_voxel_update_num = [0] * TERRAIN_VOXEL_NUM
         self._terrain_voxel_update_time = [0.0] * TERRAIN_VOXEL_NUM
 
-        # Grid shift tracking for rolling
         self._terrain_voxel_shift_x = 0
         self._terrain_voxel_shift_y = 0
 
-        # Pending scan data
         self._new_laser_cloud = False
         self._laser_cloud_crop: list[list[float]] = []
 
-        # Local terrain map (from TerrainAnalysis, for merge within radius)
         self._terrain_cloud_local: np.ndarray = np.zeros((0, 3), dtype=np.float32)
 
-        # Clearing state
         self._clearing_cloud = False
 
     @rpc
@@ -221,10 +210,10 @@ class TerrainMapExt(Module):
         cropped: list[list[float]] = []
         time_offset = laser_cloud_time - self._system_init_time
 
-        for i in range(len(points)):
-            point_x = float(points[i, 0])
-            point_y = float(points[i, 1])
-            point_z = float(points[i, 2])
+        for index in range(len(points)):
+            point_x = float(points[index, 0])
+            point_y = float(points[index, 1])
+            point_z = float(points[index, 2])
 
             distance = math.sqrt((point_x - vehicle_x) ** 2 + (point_y - vehicle_y) ** 2)
 
@@ -268,33 +257,33 @@ class TerrainMapExt(Module):
 
             # Stack cropped scan into terrain voxels
             for point in cropped:
-                ind_x = _voxel_index(
+                index_x = _voxel_index(
                     point[0], vehicle_x, terrain_voxel_size, TERRAIN_VOXEL_HALF_WIDTH
                 )
-                ind_y = _voxel_index(
+                index_y = _voxel_index(
                     point[1], vehicle_y, terrain_voxel_size, TERRAIN_VOXEL_HALF_WIDTH
                 )
 
-                if 0 <= ind_x < TERRAIN_VOXEL_WIDTH and 0 <= ind_y < TERRAIN_VOXEL_WIDTH:
-                    flat_idx = TERRAIN_VOXEL_WIDTH * ind_x + ind_y
-                    self._terrain_voxel_cloud[flat_idx].append(point)
-                    self._terrain_voxel_update_num[flat_idx] += 1
+                if 0 <= index_x < TERRAIN_VOXEL_WIDTH and 0 <= index_y < TERRAIN_VOXEL_WIDTH:
+                    flat_index = TERRAIN_VOXEL_WIDTH * index_x + index_y
+                    self._terrain_voxel_cloud[flat_index].append(point)
+                    self._terrain_voxel_update_num[flat_index] += 1
 
             # Downsample / evict voxels that exceed thresholds
-            for ind in range(TERRAIN_VOXEL_NUM):
+            for voxel_index in range(TERRAIN_VOXEL_NUM):
                 if (
-                    self._terrain_voxel_update_num[ind] >= config.voxel_point_update_threshold
-                    or time_offset - self._terrain_voxel_update_time[ind]
+                    self._terrain_voxel_update_num[voxel_index]
+                    >= config.voxel_point_update_threshold
+                    or time_offset - self._terrain_voxel_update_time[voxel_index]
                     >= config.voxel_time_update_threshold
                     or clearing_cloud
                 ):
-                    cell_points = self._terrain_voxel_cloud[ind]
+                    cell_points = self._terrain_voxel_cloud[voxel_index]
                     if not cell_points:
-                        self._terrain_voxel_update_num[ind] = 0
-                        self._terrain_voxel_update_time[ind] = time_offset
+                        self._terrain_voxel_update_num[voxel_index] = 0
+                        self._terrain_voxel_update_time[voxel_index] = time_offset
                         continue
 
-                    # Voxel grid downsample
                     downsampled = self._voxel_downsample(cell_points, config.scan_voxel_size)
 
                     # Re-filter: height bounds, decay, clearing
@@ -317,16 +306,16 @@ class TerrainMapExt(Module):
                         if in_height and in_time and not_cleared:
                             filtered.append(point)
 
-                    self._terrain_voxel_cloud[ind] = filtered
-                    self._terrain_voxel_update_num[ind] = 0
-                    self._terrain_voxel_update_time[ind] = time_offset
+                    self._terrain_voxel_cloud[voxel_index] = filtered
+                    self._terrain_voxel_update_num[voxel_index] = 0
+                    self._terrain_voxel_update_time[voxel_index] = time_offset
 
             # Gather terrain cloud from central 21x21 cells
             terrain_cloud: list[list[float]] = []
-            for ind_x in range(TERRAIN_VOXEL_HALF_WIDTH - 10, TERRAIN_VOXEL_HALF_WIDTH + 11):
-                for ind_y in range(TERRAIN_VOXEL_HALF_WIDTH - 10, TERRAIN_VOXEL_HALF_WIDTH + 11):
+            for index_x in range(TERRAIN_VOXEL_HALF_WIDTH - 10, TERRAIN_VOXEL_HALF_WIDTH + 11):
+                for index_y in range(TERRAIN_VOXEL_HALF_WIDTH - 10, TERRAIN_VOXEL_HALF_WIDTH + 11):
                     terrain_cloud.extend(
-                        self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * ind_x + ind_y]
+                        self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * index_x + index_y]
                     )
 
             # Ground elevation estimation on planar grid
@@ -343,45 +332,52 @@ class TerrainMapExt(Module):
                 upper = config.upper_bound_z + config.distance_ratio_z * distance
 
                 if relative_z > lower and relative_z < upper:
-                    ind_x = _voxel_index(
+                    index_x = _voxel_index(
                         point[0], vehicle_x, planar_voxel_size, PLANAR_VOXEL_HALF_WIDTH
                     )
-                    ind_y = _voxel_index(
+                    index_y = _voxel_index(
                         point[1], vehicle_y, planar_voxel_size, PLANAR_VOXEL_HALF_WIDTH
                     )
 
                     # Spread to 3x3 neighborhood
                     for delta_x in range(-1, 2):
                         for delta_y in range(-1, 2):
-                            nx = ind_x + delta_x
-                            ny = ind_y + delta_y
-                            if 0 <= nx < PLANAR_VOXEL_WIDTH and 0 <= ny < PLANAR_VOXEL_WIDTH:
-                                planar_point_elev[PLANAR_VOXEL_WIDTH * nx + ny].append(point[2])
+                            neighbor_x = index_x + delta_x
+                            neighbor_y = index_y + delta_y
+                            if (
+                                0 <= neighbor_x < PLANAR_VOXEL_WIDTH
+                                and 0 <= neighbor_y < PLANAR_VOXEL_WIDTH
+                            ):
+                                planar_point_elev[
+                                    PLANAR_VOXEL_WIDTH * neighbor_x + neighbor_y
+                                ].append(point[2])
 
             # Estimate ground elevation per planar voxel
             if config.use_sorting:
-                for i in range(PLANAR_VOXEL_NUM):
-                    elevations = planar_point_elev[i]
+                for index in range(PLANAR_VOXEL_NUM):
+                    elevations = planar_point_elev[index]
                     if elevations:
                         elevations.sort()
                         quantile_id = int(config.quantile_z * len(elevations))
                         quantile_id = max(0, min(quantile_id, len(elevations) - 1))
-                        planar_voxel_elev[i] = elevations[quantile_id]
+                        planar_voxel_elev[index] = elevations[quantile_id]
             else:
-                for i in range(PLANAR_VOXEL_NUM):
-                    elevations = planar_point_elev[i]
+                for index in range(PLANAR_VOXEL_NUM):
+                    elevations = planar_point_elev[index]
                     if elevations:
-                        planar_voxel_elev[i] = min(elevations)
+                        planar_voxel_elev[index] = min(elevations)
 
             # BFS terrain connectivity check
             if config.check_terrain_connectivity:
-                center_ind = PLANAR_VOXEL_WIDTH * PLANAR_VOXEL_HALF_WIDTH + PLANAR_VOXEL_HALF_WIDTH
-                if not planar_point_elev[center_ind]:
-                    planar_voxel_elev[center_ind] = vehicle_z + config.terrain_under_vehicle
+                center_index = (
+                    PLANAR_VOXEL_WIDTH * PLANAR_VOXEL_HALF_WIDTH + PLANAR_VOXEL_HALF_WIDTH
+                )
+                if not planar_point_elev[center_index]:
+                    planar_voxel_elev[center_index] = vehicle_z + config.terrain_under_vehicle
 
                 queue: deque[int] = deque()
-                queue.append(center_ind)
-                planar_voxel_conn[center_ind] = 1
+                queue.append(center_index)
+                planar_voxel_conn[center_index] = 1
 
                 while queue:
                     front = queue.popleft()
@@ -392,22 +388,25 @@ class TerrainMapExt(Module):
 
                     for delta_x in range(-10, 11):
                         for delta_y in range(-10, 11):
-                            nx = front_x + delta_x
-                            ny = front_y + delta_y
-                            if 0 <= nx < PLANAR_VOXEL_WIDTH and 0 <= ny < PLANAR_VOXEL_WIDTH:
-                                neighbor_ind = PLANAR_VOXEL_WIDTH * nx + ny
+                            neighbor_x = front_x + delta_x
+                            neighbor_y = front_y + delta_y
+                            if (
+                                0 <= neighbor_x < PLANAR_VOXEL_WIDTH
+                                and 0 <= neighbor_y < PLANAR_VOXEL_WIDTH
+                            ):
+                                neighbor_index = PLANAR_VOXEL_WIDTH * neighbor_x + neighbor_y
                                 if (
-                                    planar_voxel_conn[neighbor_ind] == 0
-                                    and planar_point_elev[neighbor_ind]
+                                    planar_voxel_conn[neighbor_index] == 0
+                                    and planar_point_elev[neighbor_index]
                                 ):
                                     elev_diff = abs(
-                                        planar_voxel_elev[front] - planar_voxel_elev[neighbor_ind]
+                                        planar_voxel_elev[front] - planar_voxel_elev[neighbor_index]
                                     )
                                     if elev_diff < config.terrain_connectivity_threshold:
-                                        queue.append(neighbor_ind)
-                                        planar_voxel_conn[neighbor_ind] = 1
+                                        queue.append(neighbor_index)
+                                        planar_voxel_conn[neighbor_index] = 1
                                     elif elev_diff > config.ceiling_filtering_threshold:
-                                        planar_voxel_conn[neighbor_ind] = -1
+                                        planar_voxel_conn[neighbor_index] = -1
 
             # Build output: points beyond local radius with ground/connectivity filter
             output_points: list[list[float]] = []
@@ -423,31 +422,30 @@ class TerrainMapExt(Module):
                     and relative_z < upper
                     and distance > config.local_terrain_map_radius
                 ):
-                    ind_x = _voxel_index(
+                    index_x = _voxel_index(
                         point[0], vehicle_x, planar_voxel_size, PLANAR_VOXEL_HALF_WIDTH
                     )
-                    ind_y = _voxel_index(
+                    index_y = _voxel_index(
                         point[1], vehicle_y, planar_voxel_size, PLANAR_VOXEL_HALF_WIDTH
                     )
 
-                    if 0 <= ind_x < PLANAR_VOXEL_WIDTH and 0 <= ind_y < PLANAR_VOXEL_WIDTH:
-                        flat_ind = PLANAR_VOXEL_WIDTH * ind_x + ind_y
-                        elevation_distance = abs(point[2] - planar_voxel_elev[flat_ind])
-                        connected = planar_voxel_conn[flat_ind] == 2
+                    if 0 <= index_x < PLANAR_VOXEL_WIDTH and 0 <= index_y < PLANAR_VOXEL_WIDTH:
+                        flat_index = PLANAR_VOXEL_WIDTH * index_x + index_y
+                        elevation_distance = abs(point[2] - planar_voxel_elev[flat_index])
+                        connected = planar_voxel_conn[flat_index] == 2
                         if elevation_distance < config.vehicle_height and (
                             connected or not config.check_terrain_connectivity
                         ):
-                            # intensity = elevation distance from ground
                             output_points.append([point[0], point[1], point[2], elevation_distance])
 
             # Merge local terrain map within localTerrainMapRadius
             # NOTE: The original C++ does NOT do this — it only publishes points
             # beyond the radius. Controlled by merge_local_terrain config flag.
             if config.merge_local_terrain:
-                for i in range(len(local_terrain)):
-                    point_x = float(local_terrain[i, 0])
-                    point_y = float(local_terrain[i, 1])
-                    point_z = float(local_terrain[i, 2])
+                for index in range(len(local_terrain)):
+                    point_x = float(local_terrain[index, 0])
+                    point_y = float(local_terrain[index, 1])
+                    point_z = float(local_terrain[index, 2])
                     distance = math.sqrt((point_x - vehicle_x) ** 2 + (point_y - vehicle_y) ** 2)
                     if distance <= config.local_terrain_map_radius:
                         output_points.append([point_x, point_y, point_z, 0.0])
@@ -455,15 +453,14 @@ class TerrainMapExt(Module):
             with self._lock:
                 self._clearing_cloud = False
 
-            # Publish with intensity (elevation distance from ground)
             if output_points:
-                arr = np.array(output_points, dtype=np.float32)
+                output_array = np.array(output_points, dtype=np.float32)
                 self.terrain_map_ext.publish(
                     PointCloud2.from_numpy(
-                        arr[:, :3],
+                        output_array[:, :3],
                         frame_id=config.world_frame,
                         timestamp=laser_cloud_time,
-                        intensities=arr[:, 3],
+                        intensities=output_array[:, 3],
                     )
                 )
 
@@ -471,58 +468,58 @@ class TerrainMapExt(Module):
         self, vehicle_x: float, vehicle_y: float, terrain_voxel_size: float
     ) -> None:
         """Roll the terrain voxel grid to keep it centered on the vehicle."""
-        terrain_voxel_cen_x = terrain_voxel_size * self._terrain_voxel_shift_x
-        terrain_voxel_cen_y = terrain_voxel_size * self._terrain_voxel_shift_y
+        terrain_voxel_center_x = terrain_voxel_size * self._terrain_voxel_shift_x
+        terrain_voxel_center_y = terrain_voxel_size * self._terrain_voxel_shift_y
 
         # Roll in -X direction
         # NOTE: The C++ does NOT shift terrainVoxelUpdateNum/Time during rollover.
         # Only the point cloud pointers are shifted. Counters stay at their indices.
-        while vehicle_x - terrain_voxel_cen_x < -terrain_voxel_size:
-            for ind_y in range(TERRAIN_VOXEL_WIDTH):
-                for ind_x in range(TERRAIN_VOXEL_WIDTH - 1, 0, -1):
-                    self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * ind_x + ind_y] = (
-                        self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * (ind_x - 1) + ind_y]
+        while vehicle_x - terrain_voxel_center_x < -terrain_voxel_size:
+            for index_y in range(TERRAIN_VOXEL_WIDTH):
+                for index_x in range(TERRAIN_VOXEL_WIDTH - 1, 0, -1):
+                    self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * index_x + index_y] = (
+                        self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * (index_x - 1) + index_y]
                     )
-                self._terrain_voxel_cloud[ind_y] = []
+                self._terrain_voxel_cloud[index_y] = []
             self._terrain_voxel_shift_x -= 1
-            terrain_voxel_cen_x = terrain_voxel_size * self._terrain_voxel_shift_x
+            terrain_voxel_center_x = terrain_voxel_size * self._terrain_voxel_shift_x
 
         # Roll in +X direction
-        while vehicle_x - terrain_voxel_cen_x > terrain_voxel_size:
-            for ind_y in range(TERRAIN_VOXEL_WIDTH):
-                for ind_x in range(TERRAIN_VOXEL_WIDTH - 1):
-                    self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * ind_x + ind_y] = (
-                        self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * (ind_x + 1) + ind_y]
+        while vehicle_x - terrain_voxel_center_x > terrain_voxel_size:
+            for index_y in range(TERRAIN_VOXEL_WIDTH):
+                for index_x in range(TERRAIN_VOXEL_WIDTH - 1):
+                    self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * index_x + index_y] = (
+                        self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * (index_x + 1) + index_y]
                     )
                 self._terrain_voxel_cloud[
-                    TERRAIN_VOXEL_WIDTH * (TERRAIN_VOXEL_WIDTH - 1) + ind_y
+                    TERRAIN_VOXEL_WIDTH * (TERRAIN_VOXEL_WIDTH - 1) + index_y
                 ] = []
             self._terrain_voxel_shift_x += 1
-            terrain_voxel_cen_x = terrain_voxel_size * self._terrain_voxel_shift_x
+            terrain_voxel_center_x = terrain_voxel_size * self._terrain_voxel_shift_x
 
         # Roll in -Y direction
-        while vehicle_y - terrain_voxel_cen_y < -terrain_voxel_size:
-            for ind_x in range(TERRAIN_VOXEL_WIDTH):
-                for ind_y in range(TERRAIN_VOXEL_WIDTH - 1, 0, -1):
-                    self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * ind_x + ind_y] = (
-                        self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * ind_x + (ind_y - 1)]
+        while vehicle_y - terrain_voxel_center_y < -terrain_voxel_size:
+            for index_x in range(TERRAIN_VOXEL_WIDTH):
+                for index_y in range(TERRAIN_VOXEL_WIDTH - 1, 0, -1):
+                    self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * index_x + index_y] = (
+                        self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * index_x + (index_y - 1)]
                     )
-                self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * ind_x] = []
+                self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * index_x] = []
             self._terrain_voxel_shift_y -= 1
-            terrain_voxel_cen_y = terrain_voxel_size * self._terrain_voxel_shift_y
+            terrain_voxel_center_y = terrain_voxel_size * self._terrain_voxel_shift_y
 
         # Roll in +Y direction
-        while vehicle_y - terrain_voxel_cen_y > terrain_voxel_size:
-            for ind_x in range(TERRAIN_VOXEL_WIDTH):
-                for ind_y in range(TERRAIN_VOXEL_WIDTH - 1):
-                    self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * ind_x + ind_y] = (
-                        self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * ind_x + (ind_y + 1)]
+        while vehicle_y - terrain_voxel_center_y > terrain_voxel_size:
+            for index_x in range(TERRAIN_VOXEL_WIDTH):
+                for index_y in range(TERRAIN_VOXEL_WIDTH - 1):
+                    self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * index_x + index_y] = (
+                        self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * index_x + (index_y + 1)]
                     )
                 self._terrain_voxel_cloud[
-                    TERRAIN_VOXEL_WIDTH * ind_x + (TERRAIN_VOXEL_WIDTH - 1)
+                    TERRAIN_VOXEL_WIDTH * index_x + (TERRAIN_VOXEL_WIDTH - 1)
                 ] = []
             self._terrain_voxel_shift_y += 1
-            terrain_voxel_cen_y = terrain_voxel_size * self._terrain_voxel_shift_y
+            terrain_voxel_center_y = terrain_voxel_size * self._terrain_voxel_shift_y
 
     @staticmethod
     def _voxel_downsample(points: list[list[float]], voxel_size: float) -> list[list[float]]:
