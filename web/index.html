@@ -18,6 +18,19 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         .key-reveal { font-family: 'JetBrains Mono', monospace; word-break: break-all; }
         #canvas { display: none; position: absolute; inset: 0; width: 100%; height: 100%; }
+        .kb-key {
+            width: 56px; height: 56px;
+            display: flex; align-items: center; justify-content: center;
+            background: #1f2937; border: 1px solid #374151;
+            border-radius: 8px; font-family: monospace; font-weight: 600;
+            color: #d1d5db;
+            user-select: none;
+        }
+        .kb-key.wide { width: 96px; font-size: 0.85rem; }
+        .kb-key.pressed {
+            background: #0284c7; border-color: #38bdf8;
+            color: white;
+        }
     </style>
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen">
@@ -41,6 +54,15 @@
         let lastSendTime = 0;
         let activeRobot = null;
         const sendInterval = 1000 / 80;
+
+        // Probed once at boot. Quest browser → true; desktop/mobile → false.
+        let xrSupported = false;
+        const xrDetection = (async () => {
+            if (!navigator.xr) return false;
+            const ar = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+            if (ar) return true;
+            return await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
+        })().then(v => { xrSupported = v; return v; });
 
         // ─── API helpers ────────────────────────────────────────────────────
         function brokerOrigin() {
@@ -86,6 +108,7 @@
             if (view === 'auth') renderAuth(app);
             else if (view === 'dashboard') renderDashboard(app);
             else if (view === 'teleop') renderTeleop(app);
+            else if (view === 'keyboard') renderKeyboard(app);
         }
 
         // ─── Auth view ──────────────────────────────────────────────────────
@@ -325,6 +348,7 @@
         // ─── Robot list ─────────────────────────────────────────────────────
         async function loadRobots() {
             const listEl = document.getElementById('robots-list');
+            await xrDetection;
             try {
                 const robots = await api('GET', '/sessions');
                 // Broker returns a flat list per sessions.py:list_sessions response_model.
@@ -350,9 +374,10 @@
                         </button>
                     </div>
                 `).join('');
+                const handler = xrSupported ? connectToRobot : connectKeyboard;
                 listEl.querySelectorAll('.connect-btn').forEach(btn => {
                     btn.addEventListener('click', (e) => {
-                        connectToRobot(e.target.dataset.id, e.target.dataset.name);
+                        handler(e.target.dataset.id, e.target.dataset.name);
                     });
                 });
             } catch (err) {
@@ -382,6 +407,160 @@
                 setStatus(`Connection failed: ${e.message}`);
                 setTimeout(() => navigate('dashboard'), 3000);
             }
+        }
+
+        // ─── Keyboard mode ──────────────────────────────────────────────────
+        // WASD-driven TwistStamped over the same cmd_unreliable channel as VR,
+        // sent at the shared `sendInterval` (80 Hz).
+        let kbInterval = null;
+        const kbKeys = new Set();
+
+        async function connectKeyboard(sessionId, robotName) {
+            activeRobot = { session_id: sessionId, robot_name: robotName };
+            try {
+                navigate('keyboard');
+                await setupWebRTC(sessionId);
+                setStatus(`Connected — ${robotName}`);
+                startKeyboardLoop();
+            } catch (e) {
+                console.error(e);
+                setStatus(`Connection failed: ${e.message}`);
+                setTimeout(() => navigate('dashboard'), 3000);
+            }
+        }
+
+        function renderKeyboard(c) {
+            c.innerHTML = `
+            <div class="min-h-screen flex flex-col items-center justify-center p-6 fade-in select-none">
+                <div class="w-full max-w-xl text-center">
+                    <h1 class="text-3xl font-bold text-white mb-2">${escHtml(activeRobot?.robot_name || 'Keyboard teleop')}</h1>
+                    <div id="teleop-status" class="text-lg text-gray-300 px-4 py-3 bg-gray-900 border border-gray-800 rounded-lg my-4">
+                        Negotiating...
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4 my-6 text-left">
+                        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                            <div class="text-xs text-gray-500 mb-2">Controls</div>
+                            <div class="text-sm text-gray-300 space-y-1">
+                                <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">W</kbd> / <kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">S</kbd> — forward / back</div>
+                                <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">A</kbd> / <kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">D</kbd> — turn left / right</div>
+                                <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">Shift</kbd> — 2× faster (any)</div>
+                                <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">Ctrl</kbd>+<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">W</kbd>/<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">S</kbd> — slow (½×)</div>
+                                <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">Ctrl</kbd>+<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">A</kbd>/<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">D</kbd> — strafe</div>
+                            </div>
+                        </div>
+                        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                            <div class="text-xs text-gray-500 mb-2">Live twist</div>
+                            <pre id="twist-readout" class="text-sm text-green-300 font-mono">linear.x  = 0
+linear.y  = 0
+linear.z  = 0
+angular.z = 0</pre>
+                        </div>
+                    </div>
+
+                    <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 my-6">
+                        <div class="flex flex-col items-center gap-2">
+                            <div id="key-w" class="kb-key">W</div>
+                            <div class="flex gap-2">
+                                <div id="key-a" class="kb-key">A</div>
+                                <div id="key-s" class="kb-key">S</div>
+                                <div id="key-d" class="kb-key">D</div>
+                            </div>
+                            <div class="flex gap-2 mt-3">
+                                <div id="key-shift" class="kb-key wide">Shift</div>
+                                <div id="key-ctrl" class="kb-key wide">Ctrl</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button id="disconnectBtn" class="mt-4 px-6 py-2.5 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors">
+                        Disconnect
+                    </button>
+                </div>
+            </div>`;
+            document.getElementById('disconnectBtn').onclick = disconnect;
+        }
+
+        function trackedKey(e) {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return null;
+            const k = e.key.toLowerCase();
+            if (k === 'w' || k === 'a' || k === 's' || k === 'd') return k;
+            if (e.key === 'Shift' || e.key === 'Control') return e.key;
+            return null;
+        }
+        function onKeyDown(e) {
+            const k = trackedKey(e);
+            if (k === null) return;
+            kbKeys.add(k);
+            e.preventDefault();
+        }
+        function onKeyUp(e) {
+            const k = trackedKey(e);
+            if (k === null) return;
+            kbKeys.delete(k);
+        }
+
+        function buildTwist() {
+            // Shift = 2×, Ctrl + W/S = ½×, Ctrl + A/D = strafe; both held = neither.
+            const shift = kbKeys.has('Shift') && !kbKeys.has('Control');
+            const ctrl  = kbKeys.has('Control') && !kbKeys.has('Shift');
+            const fwd = (kbKeys.has('w') ? 1 : 0) - (kbKeys.has('s') ? 1 : 0);
+            const lr  = (kbKeys.has('a') ? 1 : 0) - (kbKeys.has('d') ? 1 : 0);
+
+            const fwdScale = shift ? 2.0 : (ctrl ? 0.5 : 1.0);
+            const lrScale  = shift ? 2.0 : 1.0;
+            return {
+                linear_x:  fwd * fwdScale,
+                linear_y:  ctrl ? lr : 0,
+                linear_z:  0,
+                angular_z: ctrl ? 0  : lr * lrScale,
+            };
+        }
+
+        function startKeyboardLoop() {
+            window.addEventListener('keydown', onKeyDown);
+            window.addEventListener('keyup', onKeyUp);
+            kbInterval = setInterval(() => {
+                // Always update key visuals; only send/readout when channel is up.
+                updateKeyVisuals();
+                if (!cmdChannel || cmdChannel.readyState !== 'open') return;
+                const t = buildTwist();
+                const nowMs = Date.now();
+                const ts = new std_msgs.Time({
+                    sec: Math.floor(nowMs / 1000),
+                    nsec: (nowMs % 1000) * 1_000_000,
+                });
+                const twist = new geometry_msgs.TwistStamped({
+                    header: new std_msgs.Header({ stamp: ts, frame_id: 'keyboard' }),
+                    twist: new geometry_msgs.Twist({
+                        linear: new geometry_msgs.Vector3({ x: t.linear_x, y: t.linear_y, z: t.linear_z }),
+                        angular: new geometry_msgs.Vector3({ x: 0, y: 0, z: t.angular_z }),
+                    }),
+                });
+                cmdChannel.send(twist.encode());
+                const out = document.getElementById('twist-readout');
+                if (out) out.textContent =
+                    `linear.x  = ${t.linear_x.toFixed(2)}\n` +
+                    `linear.y  = ${t.linear_y.toFixed(2)}\n` +
+                    `linear.z  = ${t.linear_z.toFixed(2)}\n` +
+                    `angular.z = ${t.angular_z.toFixed(2)}`;
+            }, sendInterval);
+        }
+
+        function updateKeyVisuals() {
+            const map = { 'w': 'key-w', 's': 'key-s', 'a': 'key-a', 'd': 'key-d',
+                          'Shift': 'key-shift', 'Control': 'key-ctrl' };
+            for (const [k, id] of Object.entries(map)) {
+                const el = document.getElementById(id);
+                if (el) el.classList.toggle('pressed', kbKeys.has(k));
+            }
+        }
+
+        function stopKeyboardLoop() {
+            window.removeEventListener('keydown', onKeyDown);
+            window.removeEventListener('keyup', onKeyUp);
+            if (kbInterval) { clearInterval(kbInterval); kbInterval = null; }
+            kbKeys.clear();
         }
 
         // ─── Teleop view ────────────────────────────────────────────────────
@@ -597,6 +776,7 @@
                 }
             } catch (_) {}
 
+            stopKeyboardLoop();
             if (xrSession) { await xrSession.end().catch(() => {}); xrSession = null; }
             if (cmdChannel) { try { cmdChannel.close(); } catch (_) {} cmdChannel = null; }
             if (pc) { try { pc.close(); } catch (_) {} pc = null; }
@@ -610,6 +790,20 @@
         // ─── Init ───────────────────────────────────────────────────────────
         if (token) navigate('dashboard');
         else navigate('auth');
+
+        // DevTools-only preview hook — no broker required.
+        window._teleopDev = {
+            previewKeyboard() {
+                cmdChannel = { readyState: 'open', send: () => {} };
+                activeRobot = { session_id: 'preview', robot_name: 'Preview Bot' };
+                navigate('keyboard');
+            },
+            previewVR() {
+                activeRobot = { session_id: 'preview', robot_name: 'Preview Bot' };
+                navigate('teleop');
+            },
+            navigate,
+        };
     </script>
 </body>
 </html>
