@@ -38,6 +38,33 @@ jobs:
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
 
+  md-babel:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          lfs: true
+      # Docs decode JPEG from SQLite via PyTurboJPEG; pyaudio needs portaudio.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libturbojpeg portaudio19-dev
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      - name: Install Python dependencies
+        run: uv sync --group tests --frozen
+      - name: Execute documentation code blocks
+        run: ./bin/run-doc-codeblocks --ci --no-cache
+
   tests:
     timeout-minutes: 20
     strategy:
