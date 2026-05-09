@@ -201,9 +201,7 @@ def feed_at_original_timing(
     """Replay recorded data over LCM at the original inter-message timing.
 
     Args:
-        lcm: LCM instance.
-        window: Loaded rosbag data.
-        topic_map: Maps data key to LCM topic string. Keys:
+        topic_map: key to LCM topic string. Keys:
             "odom", "scan", "terrain", "terrain_ext", "waypoint", "goal"
         odom_subsample: Keep every Nth odom message (200Hz is excessive for testing).
             Use 4 for ~50Hz, 1 for full rate.
