@@ -271,7 +271,9 @@ def generate_pdf(
         f"page={page_size.upper()}, mode={'pack' if pack else 'single'}"
     )
     c.setKeywords(
-        [family, f"{size_mm:g}mm", page_size, "pack" if pack else "single", f"ids:{ids_span}"]
+        ", ".join(
+            [family, f"{size_mm:g}mm", page_size, "pack" if pack else "single", f"ids:{ids_span}"]
+        )
     )
     c.setCreator("dimos apriltag")
     c.setProducer("dimos apriltag")
