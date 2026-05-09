@@ -21,7 +21,6 @@ import json
 import os
 import subprocess
 import threading
-import time
 from typing import Any
 
 import pytest
@@ -167,15 +166,16 @@ class TestViewerBinaryConnectMode:
 
     @pytest.fixture()
     def viewer_process(self, server: RerunWebSocketServer) -> subprocess.Popen[bytes]:
+        if not os.environ.get("DISPLAY"):
+            pytest.skip("dimos-viewer requires a display (winit cannot start without one)")
         proc = subprocess.Popen(
             [
                 "dimos-viewer",
                 "--connect",
                 f"--ws-url=ws://127.0.0.1:{_E2E_PORT}/ws",
             ],
-            env={**os.environ, "DISPLAY": ""},
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         yield proc
         proc.terminate()
@@ -184,25 +184,12 @@ class TestViewerBinaryConnectMode:
         except subprocess.TimeoutExpired:
             proc.kill()
 
-    @pytest.mark.skip(
-        reason="Incompatible with current winit: fails without DISPLAY (headless CI exits before WS connect) and hangs with DISPLAY (GUI event loop blocks before printing URL).",
-    )
-    def test_viewer_ws_client_connects(self, viewer_process: subprocess.Popen[bytes]) -> None:
+    def test_viewer_ws_client_connects(
+        self, server: RerunWebSocketServer, viewer_process: subprocess.Popen[bytes]
+    ) -> None:
         """dimos-viewer --connect starts and its WS client connects to our server."""
-        deadline = time.monotonic() + DEFAULT_THREAD_JOIN_TIMEOUT
-        while time.monotonic() < deadline:
-            if viewer_process.poll() is not None:
-                break
-            time.sleep(DEFAULT_THREAD_JOIN_TIMEOUT / 20)
-
-        stdout = (
-            viewer_process.stdout.read().decode(errors="replace") if viewer_process.stdout else ""
-        )
-        stderr = (
-            viewer_process.stderr.read().decode(errors="replace") if viewer_process.stderr else ""
-        )
-
-        combined = stdout + stderr
-        assert f"ws://127.0.0.1:{_E2E_PORT}" in combined, (
-            f"Viewer did not attempt WS connection.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        connected = server.client_connected.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        assert connected, (
+            f"dimos-viewer did not establish a WS connection within "
+            f"{DEFAULT_THREAD_JOIN_TIMEOUT}s. viewer_process.poll()={viewer_process.poll()}"
         )
