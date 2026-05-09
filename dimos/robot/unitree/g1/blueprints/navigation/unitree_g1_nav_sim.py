@@ -70,8 +70,8 @@ unitree_g1_nav_sim = (
                         "world/color_image": UnityBridgeModule.rerun_static_pinhole,
                         "world/tf/robot": g1_static_robot,
                     },
-                    # Rate-limit heavy point cloud topics to prevent rerun crashing
                 },
+                # Rate-limit heavy point cloud topics to prevent rerun crashing
                 vis_throttle=0.1,
             ),
         ),

@@ -81,6 +81,12 @@ class UnitreeG1SkillContainer(Module):
         Example call:
             args = { "x": 0.5, "y": 0.0, "yaw": 0.0, "duration": 2.0 }
             move(**args)
+
+        Args:
+            x: Forward velocity (m/s)
+            y: Left/right velocity (m/s)
+            yaw: Rotational velocity (rad/s)
+            duration: How long to move (seconds)
         """
 
         twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))

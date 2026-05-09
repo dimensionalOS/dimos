@@ -59,9 +59,12 @@ WARMUP_SEC = 15.0
 # Seconds to wait for the first odometry message after the blueprint starts.
 ODOM_WAIT_SEC = 60.0
 
+# Seconds between odometry polls while waiting for the robot to reach a goal.
+GOAL_POLL_INTERVAL_SEC = 0.1
 
-def _distance(x1: float, y1: float, x2: float, y2: float) -> float:
-    return math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+
+def _distance(from_x: float, from_y: float, to_x: float, to_y: float) -> float:
+    return math.sqrt((from_x - to_x) ** 2 + (from_y - to_y) ** 2)
 
 
 def _clear_precomputed_paths() -> None:
@@ -69,8 +72,8 @@ def _clear_precomputed_paths() -> None:
         Path(__file__).resolve().parents[3] / "data" / "unitree_g1_local_planner_precomputed_paths"
     )
     if paths_dir.exists():
-        for f in paths_dir.iterdir():
-            f.unlink(missing_ok=True)
+        for path in paths_dir.iterdir():
+            path.unlink(missing_ok=True)
 
 
 def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None = None) -> None:
@@ -128,56 +131,56 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
 
         with lock:
             assert odom_count > 0, f"No odometry received after {ODOM_WAIT_SEC}s — sim not running?"
-            x0, y0 = robot_x, robot_y
+            initial_x, initial_y = robot_x, robot_y
 
-        logger.info(f"[{label}] Odom online. Robot at ({x0:.2f}, {y0:.2f})")
+        logger.info(f"[{label}] Odom online. Robot at ({initial_x:.2f}, {initial_y:.2f})")
         logger.info(f"[{label}] Warming up for {WARMUP_SEC}s…")
         time.sleep(WARMUP_SEC)
 
-        for name, gx, gy, gz, timeout_sec, threshold in CROSS_WALL_WAYPOINTS:
+        for name, goal_x, goal_y, goal_z, timeout_sec, threshold in CROSS_WALL_WAYPOINTS:
             with lock:
-                sx, sy = robot_x, robot_y
+                start_x, start_y = robot_x, robot_y
 
             logger.info(
-                f"[{label}] === {name}: goal ({gx}, {gy}) | "
-                f"robot ({sx:.2f}, {sy:.2f}) | "
-                f"dist={_distance(sx, sy, gx, gy):.2f}m | "
+                f"[{label}] === {name}: goal ({goal_x}, {goal_y}) | "
+                f"robot ({start_x:.2f}, {start_y:.2f}) | "
+                f"dist={_distance(start_x, start_y, goal_x, goal_y):.2f}m | "
                 f"budget={timeout_sec}s ==="
             )
 
-            goal = PointStamped(x=gx, y=gy, z=gz, ts=time.time(), frame_id="map")
+            goal = PointStamped(x=goal_x, y=goal_y, z=goal_z, ts=time.time(), frame_id="map")
             lcm.publish(GOAL_TOPIC, goal.lcm_encode())
 
-            t0 = time.monotonic()
+            start_time = time.monotonic()
             reached = False
-            cx, cy = sx, sy
-            dist = _distance(cx, cy, gx, gy)
+            current_x, current_y = start_x, start_y
+            distance = _distance(current_x, current_y, goal_x, goal_y)
             while True:
                 with lock:
-                    cx, cy = robot_x, robot_y
-                    cz = robot_z
-                    cur_max_z = max_z_seen
+                    current_x, current_y = robot_x, robot_y
+                    current_z = robot_z
+                    current_max_z = max_z_seen
 
                 if max_z is not None:
-                    assert cz <= max_z, (
-                        f"{name}: robot z={cz:.2f}m exceeded {max_z}m — "
+                    assert current_z <= max_z, (
+                        f"{name}: robot z={current_z:.2f}m exceeded {max_z}m — "
                         f"robot went through the ceiling. "
-                        f"pos=({cx:.2f}, {cy:.2f}, {cz:.2f}), max_z={cur_max_z:.2f}m"
+                        f"pos=({current_x:.2f}, {current_y:.2f}, {current_z:.2f}), "
+                        f"max_z={current_max_z:.2f}m"
                     )
 
-                dist = _distance(cx, cy, gx, gy)
-                elapsed = time.monotonic() - t0
-                if dist <= threshold:
+                distance = _distance(current_x, current_y, goal_x, goal_y)
+                elapsed = time.monotonic() - start_time
+                if distance <= threshold:
                     reached = True
                     break
                 if elapsed >= timeout_sec:
                     break
-                _POLL_INTERVAL = 0.1  # seconds
-                time.sleep(_POLL_INTERVAL)
+                time.sleep(GOAL_POLL_INTERVAL_SEC)
 
             assert reached, (
-                f"{name}: robot did not reach ({gx}, {gy}) within {timeout_sec}s. "
-                f"Final pos=({cx:.2f}, {cy:.2f}), dist={dist:.2f}m"
+                f"{name}: robot did not reach ({goal_x}, {goal_y}) within {timeout_sec}s. "
+                f"Final pos=({current_x:.2f}, {current_y:.2f}), dist={distance:.2f}m"
             )
 
         if max_z is not None:
