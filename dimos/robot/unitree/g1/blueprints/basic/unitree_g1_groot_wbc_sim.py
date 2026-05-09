@@ -161,6 +161,74 @@ _MJCF_PATH = "data/mujoco_sim/g1_gear_wbc.xml"
 #       z=0.  Off by default — for multi-story scenes the first hit is
 #       usually a ceiling / upper floor, not the ground.  Use only when
 #       you know origin is over the surface you want to stand on.
+# Named scene presets — pick a scene by short name; the preset resolves
+# to a bundle directory containing the mesh + an ``alignment.yaml`` with
+# scale / translation / rotation_zyx / y_up.  Magic numbers live with
+# the asset, not here.  Add new entries by pointing to a new bundle.
+#
+#   DIMOS_SCENE=gggs  → GGGS-extracted dimos_office mesh + alignment.yaml.
+#                       DIMOS_SCENE_MESH_TRIS=200k|500k picks the decimation.
+_SCENE_PRESETS: dict[str, dict[str, str]] = {
+    "gggs": {
+        "bundle_dir": "/home/pim/Desktop/real2sim_6DOFasset_gen/data/gggs_runs/dimos_office_20260507_101502",
+        # Visual mesh (rendered by viser, mesh camera) — the smooth
+        # GGGS surface with vertex colors.
+        "mesh_pattern": "recon_post_{tris}.glb",
+        # Collision mesh (baked into the MuJoCo MJCF) — CoACD-decomposed
+        # multi-prim GLB.  Each convex part is its own scene-graph node,
+        # so dimos's _load_glb_prims iterates them as separate prims and
+        # MuJoCo gets one convex hull per part.  Loading the raw
+        # single-mesh GLB for collision is wrong: every <mesh> is
+        # hulled and a room's hull is just its bounding box.
+        "collision_mesh_pattern": "recon_post_{tris}_coacd.glb",
+        "tris_default": "500k",
+    },
+}
+_scene_preset = os.environ.get("DIMOS_SCENE", "").strip().lower() or None
+if _scene_preset and _scene_preset not in _SCENE_PRESETS:
+    raise ValueError(
+        f"Unknown DIMOS_SCENE preset {_scene_preset!r}; known: {sorted(_SCENE_PRESETS)}"
+    )
+if _scene_preset:
+    import yaml as _yaml
+
+    _spec = _SCENE_PRESETS[_scene_preset]
+    _bundle_dir = os.environ.get(
+        f"DIMOS_SCENE_{_scene_preset.upper()}_BUNDLE_DIR", _spec["bundle_dir"]
+    )
+    _tris = os.environ.get("DIMOS_SCENE_MESH_TRIS", _spec["tris_default"])
+    _preset_mesh_path = os.path.join(_bundle_dir, _spec["mesh_pattern"].format(tris=_tris))
+    _preset_collision_pattern = _spec.get("collision_mesh_pattern", _spec["mesh_pattern"])
+    _preset_collision_path = os.path.join(_bundle_dir, _preset_collision_pattern.format(tris=_tris))
+    _alignment_path = os.path.join(_bundle_dir, "alignment.yaml")
+    if not os.path.exists(_alignment_path):
+        raise FileNotFoundError(
+            f"DIMOS_SCENE={_scene_preset}: alignment.yaml missing at {_alignment_path}"
+        )
+    with open(_alignment_path) as _f:
+        _alignment = _yaml.safe_load(_f) or {}
+    os.environ.setdefault("DIMOS_SCENE_MESH_PATH", _preset_mesh_path)
+    os.environ.setdefault("DIMOS_SCENE_MESH_COLLISION_PATH", _preset_collision_path)
+    os.environ.setdefault("DIMOS_SCENE_MESH_SCALE", str(_alignment.get("scale", 1.0)))
+    os.environ.setdefault(
+        "DIMOS_SCENE_MESH_TRANSLATION",
+        ",".join(str(v) for v in _alignment.get("translation", [0.0, 0.0, 0.0])),
+    )
+    os.environ.setdefault(
+        "DIMOS_SCENE_MESH_ROTATION_ZYX_DEG",
+        ",".join(str(v) for v in _alignment.get("rotation_zyx", [0.0, 0.0, 0.0])),
+    )
+    os.environ.setdefault("DIMOS_SCENE_MESH_Y_UP", "1" if _alignment.get("y_up", False) else "0")
+    # AUTO_GROUND is intentionally OFF for the gggs preset.  dimos's
+    # ``floor_z_under_origin`` ray-casts down from z=+1000, so for an
+    # enclosed room the *first* hit is the ceiling, not the floor —
+    # auto-ground would then shift the entire mesh down by the room
+    # height, putting the floor several metres below z=0 and spawning
+    # the robot on the (now-grounded) ceiling.  The alignment.yaml
+    # already lands the scanned floor within ~3 cm of z=0, which the
+    # robot MJCF's flat <geom name="floor"> plane absorbs cleanly
+    # alongside the CoACD walls/furniture.
+
 _scene_mesh_path_override = os.environ.get("DIMOS_SCENE_MESH_PATH") or None
 if _scene_mesh_path_override:
     # User-supplied scene; keep historical Sketchfab-cm defaults so old
@@ -189,6 +257,13 @@ else:
         float(x) for x in os.environ.get("DIMOS_SCENE_MESH_ROTATION_ZYX_DEG", "0,0,0").split(",")
     )
     _scene_mesh_y_up = os.environ.get("DIMOS_SCENE_MESH_Y_UP", "0") != "0"
+# Optional separate collision mesh.  Single-mesh scans want their visual
+# mesh smooth (the GGGS surface) while their MuJoCo collision mesh is a
+# CoACD-decomposed multi-prim GLB — without that split, every <mesh> in
+# MuJoCo collapses to a single convex hull and the room behaves like a
+# bounding box.  When unset, falls back to the visual path so the
+# default artist-mesh flow is unchanged.
+_scene_collision_mesh_path = os.environ.get("DIMOS_SCENE_MESH_COLLISION_PATH") or _scene_mesh_path
 _scene_mesh_collision = os.environ.get("DIMOS_SCENE_MESH_COLLISION", "1") not in ("", "0")
 _scene_mesh_auto_ground = os.environ.get("DIMOS_SCENE_MESH_AUTO_GROUND", "0") not in ("", "0")
 # Perf knob: kill the entire lidar/voxel/costmap pipeline.  When set, the
@@ -255,7 +330,7 @@ if _scene_mesh_path:
         try:
             _MJCF_PATH = str(
                 bake_scene_mjcf(
-                    scene_mesh_path=_scene_mesh_path,
+                    scene_mesh_path=_scene_collision_mesh_path,
                     robot_mjcf_path=_MJCF_PATH,
                     alignment=SceneMeshAlignment(
                         scale=_scene_mesh_scale,
@@ -481,6 +556,8 @@ _g1_engine = MujocoSimModule.blueprint(
         ("depth_image", Image): LCMTransport("/head/depth_image", Image),
         ("camera_info", CameraInfo): LCMTransport("/head/camera_info", CameraInfo),
         ("depth_camera_info", CameraInfo): LCMTransport("/head/depth_camera_info", CameraInfo),
+        # Respawn signal from dashboard "Respawn" button.
+        ("respawn_cmd", DimosBool): LCMTransport("/sim/respawn", DimosBool),
     }
 )
 
@@ -492,6 +569,7 @@ _g1_ws_vis = WebsocketVisModule.blueprint().transports(
         ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
         ("activate", DimosBool): LCMTransport("/g1/activate", DimosBool),
         ("dry_run", DimosBool): LCMTransport("/g1/dry_run", DimosBool),
+        ("respawn_cmd", DimosBool): LCMTransport("/sim/respawn", DimosBool),
         ("color_image", Image): LCMTransport("/splat/color_image", Image),
     },
 )
@@ -515,12 +593,17 @@ except Exception as e:
 _splat_path = _legacy_splat_path
 if _splat_path is not None and _splat_path.exists():
     # Show the splat alongside the mesh when we're using the default office
-    # bundle (so the user can visually compare both in the same world frame).
-    # When the user provides their *own* scene mesh, hide the splat — it's
-    # unrelated geometry that just confuses the picture.  The
+    # bundle OR a known scene preset (both refer to the same physical scene
+    # as the splat, so overlaying them is the whole point).  Hide only when
+    # the user supplies an arbitrary DIMOS_SCENE_MESH_PATH — that's
+    # unrelated geometry and would just confuse the picture.  The
     # SplatCameraModule below still uses the splat for the head-camera feed
-    # in either case.
-    _viser_splat_path = None if _scene_mesh_path_override else str(_splat_path)
+    # in any case.
+    _viser_splat_path = (
+        str(_splat_path)
+        if (_scene_mesh_path_override is None or _scene_preset is not None)
+        else None
+    )
     import tempfile
 
     # Splat alignment policy:
