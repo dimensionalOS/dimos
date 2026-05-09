@@ -17,6 +17,7 @@
 
 import curses
 import time
+import traceback
 from typing import Any
 
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -179,8 +180,6 @@ if __name__ == "__main__":
         curses.wrapper(main)
     except Exception as e:
         print(f"\n✗ Error: {e}")
-        import traceback
-
         traceback.print_exc()
 
     print("\n✓ Done")
