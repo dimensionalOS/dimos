@@ -129,9 +129,6 @@ class WebsocketVisModule(Module):
 
         # Track GPS goal points for visualization
         self.gps_goal_points: list[dict[str, float]] = []
-        logger.info(
-            f"WebSocket visualization module initialized on port {self.config.port}, GPS goal tracking enabled"
-        )
 
     def _start_broadcast_loop(self) -> None:
         def websocket_vis_loop() -> None:
@@ -150,6 +147,10 @@ class WebsocketVisModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+
+        logger.info(
+            f"WebSocket visualization module starting on port {self.config.port}, GPS goal tracking enabled"
+        )
 
         self._create_server()
 

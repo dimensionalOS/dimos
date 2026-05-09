@@ -34,6 +34,13 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+# WebSocket keep-alive: send a ping every 30s, treat the peer as gone if no
+# pong arrives in 30s. Matches the dimos-viewer client expectations.
+WS_PING_INTERVAL_SEC = 30
+WS_PING_TIMEOUT_SEC = 30
+MS_PER_SEC = 1000.0
+
+
 class ClickMsg(TypedDict):
     type: Literal["click"]
     x: float
@@ -119,8 +126,8 @@ class RerunWebSocketServer(Module):
             self._handle_client,
             host=self.host,
             port=self.port,
-            ping_interval=30,
-            ping_timeout=30,
+            ping_interval=WS_PING_INTERVAL_SEC,
+            ping_timeout=WS_PING_TIMEOUT_SEC,
             logger=ws_logger,
         ):
             self._server_ready.set()
@@ -128,7 +135,7 @@ class RerunWebSocketServer(Module):
 
     async def _handle_client(self, websocket: Any) -> None:
         if hasattr(websocket, "request") and websocket.request.path != "/ws":
-            await websocket.close(1008, "Not Found")
+            await websocket.close(1008, "Invalid path: only /ws is supported")
             return
         addr = websocket.remote_address
         logger.info(f"RerunWebSocketServer: viewer connected from {addr}")
@@ -157,7 +164,7 @@ class RerunWebSocketServer(Module):
                     x=float(msg.get("x", 0)),
                     y=float(msg.get("y", 0)),
                     z=float(msg.get("z", 0)),
-                    ts=float(msg.get("timestamp_ms", 0)) / 1000.0,
+                    ts=float(msg.get("timestamp_ms", 0)) / MS_PER_SEC,
                     frame_id=str(msg.get("entity_path", "")),
                 )
             )

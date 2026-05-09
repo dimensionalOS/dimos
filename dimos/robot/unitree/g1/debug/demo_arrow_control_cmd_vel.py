@@ -30,8 +30,8 @@ from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSd
 CMD_VEL_CHANNEL = "/cmd_vel#geometry_msgs.Twist"
 
 
-def publish_twist(lc: lcm.LCM, twist: Twist) -> None:
-    lc.publish(CMD_VEL_CHANNEL, twist.lcm_encode())
+def publish_twist(lcm_handle: lcm.LCM, twist: Twist) -> None:
+    lcm_handle.publish(CMD_VEL_CHANNEL, twist.lcm_encode())
 
 
 def draw_ui(stdscr: Any, state_text: str = "Not connected") -> None:
@@ -83,7 +83,7 @@ def main(stdscr: Any) -> None:
     time.sleep(1)
 
     # Raw LCM publisher — messages go to the transport above
-    lc = lcm.LCM()
+    lcm_handle = lcm.LCM()
 
     draw_ui(stdscr, "Connected - publishing on " + CMD_VEL_CHANNEL)
 
@@ -135,7 +135,7 @@ def main(stdscr: Any) -> None:
                 action = "Strafing right..."
             elif key_char == " ":
                 stop = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0))
-                publish_twist(lc, stop)
+                publish_twist(lcm_handle, stop)
                 action = "Stopped"
                 last_cmd_time = current_time
             elif key_char == "1":
@@ -150,7 +150,7 @@ def main(stdscr: Any) -> None:
                 last_cmd_time = current_time
 
             if twist is not None:
-                publish_twist(lc, twist)
+                publish_twist(lcm_handle, twist)
                 last_cmd_time = current_time
 
             if action:
@@ -161,7 +161,7 @@ def main(stdscr: Any) -> None:
     finally:
         draw_ui(stdscr, "Stopping...")
         stop = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0))
-        publish_twist(lc, stop)
+        publish_twist(lcm_handle, stop)
         time.sleep(0.5)
         conn.disconnect()
         draw_ui(stdscr, "Done")

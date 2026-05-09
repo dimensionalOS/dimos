@@ -364,6 +364,11 @@ class SimplePlanner(Module):
         self._last_tf_warn = 0.0
         self._lock = threading.Lock()
         self._costmap_lock = threading.Lock()
+        self._costmap: Costmap
+
+    @rpc
+    def build(self) -> None:
+        super().build()
         self._costmap = Costmap(
             cell_size=self.config.cell_size,
             obstacle_height=self.config.obstacle_height_threshold,

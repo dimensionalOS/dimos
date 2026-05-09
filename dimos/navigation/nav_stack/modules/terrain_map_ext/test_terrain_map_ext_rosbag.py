@@ -39,7 +39,7 @@ from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import (
     TerrainMapExtConfig,
     _voxel_index,
 )
-from dimos.navigation.nav_stack.tests.rosbag_fixtures import load_rosbag_window
+from dimos.navigation.nav_stack.tests.rosbag_fixtures import RosbagWindow, load_rosbag_window
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
@@ -366,19 +366,19 @@ def _spatial_overlap_fraction(
 
 
 def _run_processor_to_scan_index(
-    window: object, processor: _OfflineTerrainMapExt, scan_index: int
+    window: RosbagWindow, processor: _OfflineTerrainMapExt, scan_index: int
 ) -> tuple[np.ndarray, np.ndarray]:
     """Run processor through scans[0..scan_index] and return final (positions, intensities)."""
     positions = np.zeros((0, 3), dtype=np.float32)
     intensities = np.zeros(0, dtype=np.float32)
     for idx in range(scan_index + 1):
-        scan_time, scan_points = window.scans[idx]  # type: ignore[attr-defined]
+        scan_time, scan_points = window.scans[idx]
         vehicle_x, vehicle_y, vehicle_z = _find_nearest_odom(
             window.odom,
-            scan_time,  # type: ignore[attr-defined]
+            scan_time,
         )
         local_terrain = None
-        for tmap_time, tmap_points in window.terrain_maps:  # type: ignore[attr-defined]
+        for tmap_time, tmap_points in window.terrain_maps:
             if abs(tmap_time - scan_time) < 0.5:
                 local_terrain = tmap_points
                 break

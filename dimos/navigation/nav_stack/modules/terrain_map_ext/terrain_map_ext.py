@@ -129,9 +129,10 @@ class TerrainMapExt(Module):
 
         # Per-cell point arrays: each entry is [x, y, z, time_offset] where
         # time_offset = laser_cloud_time - system_init_time, used for decay.
-        self._terrain_voxel_cloud: list[list[list[float]]] = [[] for _ in range(TERRAIN_VOXEL_NUM)]
-        self._terrain_voxel_update_num = [0] * TERRAIN_VOXEL_NUM
-        self._terrain_voxel_update_time = [0.0] * TERRAIN_VOXEL_NUM
+        # Populated in start() to avoid duplicating the prealloc.
+        self._terrain_voxel_cloud: list[list[list[float]]] = []
+        self._terrain_voxel_update_num: list[int] = []
+        self._terrain_voxel_update_time: list[float] = []
 
         self._terrain_voxel_shift_x = 0
         self._terrain_voxel_shift_y = 0

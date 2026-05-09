@@ -472,9 +472,9 @@ class DockerModuleInner:
         self._kwargs = kwargs
 
     def start(self) -> None:
-        mod_path, class_name = self._module_path.rsplit(".", 1)
-        mod = importlib.import_module(mod_path)
-        module_class = getattr(mod, class_name)
+        module_path, class_name = self._module_path.rsplit(".", 1)
+        module = importlib.import_module(module_path)
+        module_class = getattr(module, class_name)
 
         self._module = module_class(*self._args, **self._kwargs)
         logger.info(f"[docker runner] module constructed: {class_name}")

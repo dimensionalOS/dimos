@@ -102,8 +102,6 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
             if robot_z > max_z_seen:
                 max_z_seen = robot_z
 
-    subscription = lcm.subscribe(ODOM_TOPIC, _odom_handler)
-
     lcm_stop = threading.Event()
 
     def _lcm_loop() -> None:
@@ -117,9 +115,11 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
                 return
 
     lcm_thread = threading.Thread(target=_lcm_loop, daemon=True)
-    lcm_thread.start()
+    subscription = None
 
     try:
+        subscription = lcm.subscribe(ODOM_TOPIC, _odom_handler)
+        lcm_thread.start()
         logger.info(f"[{label}] Blueprint started, waiting for odom…")
 
         deadline = time.monotonic() + ODOM_WAIT_SEC
@@ -193,7 +193,9 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
 
     finally:
         lcm_stop.set()
-        lcm_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        assert not lcm_thread.is_alive(), "LCM loop thread didn't exit cleanly"
-        lcm.unsubscribe(subscription)
+        if lcm_thread.is_alive():
+            lcm_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            assert not lcm_thread.is_alive(), "LCM loop thread didn't exit cleanly"
+        if subscription is not None:
+            lcm.unsubscribe(subscription)
         coordinator.stop()

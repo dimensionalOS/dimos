@@ -51,6 +51,10 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+
+    @rpc
+    def build(self) -> None:
+        super().build()
         self._planner = GlobalPlanner(self.config.g)
 
     @rpc

@@ -693,7 +693,7 @@ class PointCloud2(Timestamped):
         size: float | None = None,
         fill_mode: str = "solid",
         bottom_cutoff: float | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> Archetype:
         """Convert to Rerun archetype for visualization.
 

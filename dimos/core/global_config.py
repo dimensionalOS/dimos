@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import re
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,6 +22,7 @@ from dimos.models.vl.types import VlModelName
 from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
     RERUN_OPEN_DEFAULT,
+    RERUN_WEBSOCKET_SERVER_PORT,
     RerunOpenOption,
     ViewerBackend,
 )
@@ -44,7 +46,7 @@ class GlobalConfig(BaseSettings):
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
     rerun_host: str | None = None
-    rerun_websocket_server_port: int = 3030
+    rerun_websocket_server_port: int = RERUN_WEBSOCKET_SERVER_PORT
     n_workers: int = 2
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None
@@ -72,7 +74,7 @@ class GlobalConfig(BaseSettings):
         extra="ignore",
     )
 
-    def update(self, **kwargs: object) -> None:
+    def update(self, **kwargs: Any) -> None:
         """Update config fields in place."""
         for key, value in kwargs.items():
             if not hasattr(self, key):

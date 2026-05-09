@@ -173,6 +173,9 @@ class NativeModule(Module):
         super().__init__(**kwargs)
         self._stop_lock = threading.Lock()
 
+    @rpc
+    def build(self) -> None:
+        super().build()
         if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
             base_dir = Path(inspect.getfile(type(self))).resolve().parent
             self.config.cwd = str(base_dir / self.config.cwd)

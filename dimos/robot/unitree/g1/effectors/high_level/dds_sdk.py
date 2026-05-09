@@ -61,6 +61,11 @@ _LOCO_API_IDS = {
     "GET_BALANCE_MODE": ROBOT_API_ID_LOCO_GET_BALANCE_MODE,
 }
 
+# Loco API IDs for write operations dispatched from execute_g1_command.
+# (read-only IDs above come from the Unitree SDK; these match the same scheme.)
+_API_SET_FSM_ID = 7101
+_API_SET_VELOCITY = 7105
+
 
 class FsmState(IntEnum):
     ZERO_TORQUE = 0
@@ -125,9 +130,7 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self._select_motion_mode()
         self._running = True
 
-        # Stream._transport is the only way to check if a port is wired;
-        # there is no public API for this yet (see dimos/core/stream.py).
-        if self.cmd_vel._transport is not None:
+        if self.cmd_vel.transport is not None:
             self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
         logger.info("G1 DDS SDK connection started")
 
@@ -206,13 +209,11 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         parameter = data.get("parameter", {})
 
         try:
-            API_SET_FSM_ID = 7101
-            API_SET_VELOCITY = 7105
-            if api_id == API_SET_FSM_ID:
+            if api_id == _API_SET_FSM_ID:
                 fsm_id = parameter.get("data", 0)
                 code = self.loco_client.SetFsmId(fsm_id)
                 return {"code": code}
-            elif api_id == API_SET_VELOCITY:
+            elif api_id == _API_SET_VELOCITY:
                 velocity = parameter.get("velocity", [0, 0, 0])
                 dur = parameter.get("duration", 1.0)
                 code = self.loco_client.SetVelocity(velocity[0], velocity[1], velocity[2], dur)
