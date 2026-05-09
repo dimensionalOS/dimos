@@ -28,6 +28,7 @@ OPTIONAL_ERROR_SUBSTRINGS = {
 # These need git LFS, so can't be run on the ubuntu runners.
 SELF_HOSTED_BLUEPRINTS = frozenset(
     {
+        "basic",
         "coordinator-cartesian-ik-mock",
         "coordinator-cartesian-ik-piper",
         "coordinator-combined-xarm6",
@@ -41,6 +42,8 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-teleop-xarm7",
         "coordinator-velocity-xarm6",
         "dual-xarm6-planner",
+        "mock",
+        "piper",
         "teleop-quest-dual",
         "teleop-quest-piper",
         "teleop-quest-piper-sim",
@@ -53,7 +56,9 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "xarm-perception-agent",
         "xarm-perception-sim",
         "xarm-perception-sim-agent",
+        "xarm6",
         "xarm6-planner-only",
+        "xarm7",
         "xarm7-planner-coordinator",
         "xarm7-planner-coordinator-agent",
     }
