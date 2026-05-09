@@ -394,6 +394,8 @@ lint = [
 tests-self-hosted = [
     {include-group = "tests"},
     "dimos[agents,perception,manipulation,sim,unitree,misc]",
+    # Needed to compile the in-tree extensions.
+    "pybind11>=2.12",
 ]
 
 [tool.uv]
