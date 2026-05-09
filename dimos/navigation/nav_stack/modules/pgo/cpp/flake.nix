@@ -58,6 +58,13 @@
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
           ];
+
+          # On macOS, libgtsam.4.dylib is referenced via @rpath but the binary
+          # has no LC_RPATH entries, so it fails to load at runtime. Add one
+          # pointing at the gtsam lib dir.
+          postInstall = pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+            ${pkgs.darwin.cctools}/bin/install_name_tool -add_rpath ${gtsam}/lib $out/bin/pgo
+          '';
         };
       });
 }
