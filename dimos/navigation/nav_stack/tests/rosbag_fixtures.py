@@ -45,6 +45,11 @@ logger = setup_logger()
 
 ROSBAG_FIXTURE_60S = get_data("og_nav_60s.npz")
 
+# Upper bound on the number of indexed entries (scan_0..scan_N, tmap_0..tmap_N,
+# path_0..path_N) inside a rosbag npz. Loop breaks early when keys run out;
+# this is just the safety ceiling.
+MAX_INDEXED_ENTRIES = 500
+
 
 @dataclass
 class RosbagWindow:
@@ -70,7 +75,7 @@ def load_rosbag_window(path: Path = ROSBAG_FIXTURE_60S) -> RosbagWindow:
 
     def load_indexed(prefix: str, data_suffix: str = "pts") -> list[tuple[float, np.ndarray]]:
         result = []
-        for i in range(500):
+        for i in range(MAX_INDEXED_ENTRIES):
             t_key = f"{prefix}_{i}_t"
             d_key = f"{prefix}_{i}_{data_suffix}"
             if t_key not in data:

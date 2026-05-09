@@ -56,6 +56,9 @@ CROSS_WALL_WAYPOINTS: list[tuple[str, float, float, float, float, float]] = [
 # Seconds for nav stack to build terrain + visibility graph before goals fly.
 WARMUP_SEC = 15.0
 
+# Seconds to wait for the first odometry message after the blueprint starts.
+ODOM_WAIT_SEC = 60.0
+
 
 def _distance(x1: float, y1: float, x2: float, y2: float) -> float:
     return math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
@@ -146,7 +149,7 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
     try:
         logger.info(f"[{label}] Blueprint started, waiting for odom…")
 
-        deadline = time.monotonic() + 60.0
+        deadline = time.monotonic() + ODOM_WAIT_SEC
         while time.monotonic() < deadline:
             with lock:
                 if odom_count > 0:
@@ -154,7 +157,7 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
             time.sleep(0.5)
 
         with lock:
-            assert odom_count > 0, "No odometry received after 60s — sim not running?"
+            assert odom_count > 0, f"No odometry received after {ODOM_WAIT_SEC}s — sim not running?"
             x0, y0 = robot_x, robot_y
 
         logger.info(f"[{label}] Odom online. Robot at ({x0:.2f}, {y0:.2f})")
