@@ -43,7 +43,7 @@ pytestmark = [pytest.mark.slow]
 _PROCESS_STARTUP_SEC = 2.0
 _POST_FEED_DRAIN_SEC = 3.0
 
-PGO_BIN = Path(__file__).parent / "cpp" / "result" / "bin" / "pgo_native"
+PGO_BIN = Path(__file__).parent / "cpp" / "result" / "bin" / "pgo"
 
 # LCM topic names for this test (prefixed to avoid collision)
 SCAN_LCM = "/rbpgo_scan#sensor_msgs.PointCloud2"
@@ -53,7 +53,7 @@ GLOBAL_MAP_LCM = "/rbpgo_global_map#sensor_msgs.PointCloud2"
 TF_LCM = "/rbpgo_tf#nav_msgs.Odometry"
 
 
-class TestPGONativeRosbag:
+class TestPGORosbag:
     """Validate PGO native module accuracy against OG nav stack recording."""
 
     def test_pgo_corrected_odometry(self) -> None:

@@ -48,7 +48,6 @@ create_nav_stack(
     far_planner={...},
     simple_planner={...},
     pgo={...},
-    pgo_native={...},
     tare_planner={...},
     terrain_map_ext={...},
 )
