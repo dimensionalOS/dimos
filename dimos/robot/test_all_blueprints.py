@@ -29,9 +29,12 @@ OPTIONAL_ERROR_SUBSTRINGS = {
 SELF_HOSTED_BLUEPRINTS = frozenset(
     {
         "basic",
+        "coordinator-basic",
         "coordinator-cartesian-ik-mock",
         "coordinator-cartesian-ik-piper",
         "coordinator-combined-xarm6",
+        "coordinator-mock",
+        "coordinator-piper",
         "coordinator-servo-xarm6",
         "coordinator-teleop-dual",
         "coordinator-teleop-piper",
@@ -41,6 +44,8 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-teleop-xarm6",
         "coordinator-teleop-xarm7",
         "coordinator-velocity-xarm6",
+        "coordinator-xarm6",
+        "coordinator-xarm7",
         "dual-xarm6-planner",
         "mock",
         "piper",
@@ -87,7 +92,7 @@ def _check_blueprint(blueprint_name: str) -> None:
 
 def test_old_self_hosted_blueprints() -> None:
     """Validate no non-existent name in SELF_HOSTED_BLUEPRINTS."""
-    assert not SELF_HOSTED_BLUEPRINTS - set(all_blueprints)
+    assert not set(SELF_HOSTED_BLUEPRINTS) - set(all_blueprints)
 
 
 @pytest.mark.parametrize("blueprint_name", UBUNTU_BLUEPRINTS)
