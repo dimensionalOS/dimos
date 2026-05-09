@@ -177,6 +177,7 @@ all_modules = {
     "person-follow-skill-container": "dimos.agents.skills.person_follow.PersonFollowSkillContainer",
     "person-tracker": "dimos.perception.detection.person_tracker.PersonTracker",
     "pgo": "dimos.navigation.nav_stack.modules.pgo.pgo.PGO",
+    "pgo-native": "dimos.navigation.nav_stack.modules.pgo_native.pgo_native.PGONative",
     "phone-teleop-module": "dimos.teleop.phone.phone_teleop_module.PhoneTeleopModule",
     "pick-and-place-module": "dimos.manipulation.pick_and_place_module.PickAndPlaceModule",
     "quest-teleop-module": "dimos.teleop.quest.quest_teleop_module.QuestTeleopModule",
