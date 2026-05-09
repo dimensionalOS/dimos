@@ -133,23 +133,39 @@ class KeyboardTeleop(Module):
             twist.linear = Vector3(0, 0, 0)
             twist.angular = Vector3(0, 0, 0)
 
-            # Forward/backward (W/S)
-            if pygame.K_w in self._keys_held:
+            keys = self._keys_held
+
+            # Forward/backward — W/S or Up/Down (opposing keys cancel)
+            forward = pygame.K_w in keys or pygame.K_UP in keys
+            backward = pygame.K_s in keys or pygame.K_DOWN in keys
+            if forward and not backward:
                 twist.linear.x = self.linear_speed
-            if pygame.K_s in self._keys_held:
+            elif backward and not forward:
                 twist.linear.x = -self.linear_speed
 
-            # Strafe left/right (Q/E)
-            if pygame.K_q in self._keys_held:
-                twist.linear.y = self.linear_speed
-            if pygame.K_e in self._keys_held:
-                twist.linear.y = -self.linear_speed
+            alt_held = pygame.K_LALT in keys or pygame.K_RALT in keys
+            alt_strafe = alt_held and (
+                pygame.K_a in keys
+                or pygame.K_d in keys
+                or pygame.K_LEFT in keys
+                or pygame.K_RIGHT in keys
+            )
 
-            # Turning (A/D)
-            if pygame.K_a in self._keys_held:
-                twist.angular.z = self.angular_speed
-            if pygame.K_d in self._keys_held:
-                twist.angular.z = -self.angular_speed
+            # Alt + A/D or arrows: strafe (linear.y). Otherwise turn (yaw).
+            if alt_strafe:
+                strafe_left = pygame.K_a in keys or pygame.K_LEFT in keys
+                strafe_right = pygame.K_d in keys or pygame.K_RIGHT in keys
+                if strafe_left and not strafe_right:
+                    twist.linear.y = self.linear_speed
+                elif strafe_right and not strafe_left:
+                    twist.linear.y = -self.linear_speed
+            else:
+                turn_left = pygame.K_a in keys or pygame.K_LEFT in keys
+                turn_right = pygame.K_d in keys or pygame.K_RIGHT in keys
+                if turn_left and not turn_right:
+                    twist.angular.z = self.angular_speed
+                elif turn_right and not turn_left:
+                    twist.angular.z = -self.angular_speed
 
             # Apply speed modifiers (Shift = boost, Ctrl = slow)
             speed_multiplier = 1.0
@@ -196,7 +212,8 @@ class KeyboardTeleop(Module):
             f"Linear Y (Strafe L/R): {twist.linear.y:+.2f} m/s",
             f"Angular Z (Turn L/R): {twist.angular.z:+.2f} rad/s",
             "",
-            "Keys: " + ", ".join([pygame.key.name(k).upper() for k in self._keys_held if k < 256]),
+            "Keys: "
+            + ", ".join(pygame.key.name(k).upper() for k in sorted(self._keys_held)),
         ]
 
         for text in texts:
@@ -213,7 +230,7 @@ class KeyboardTeleop(Module):
 
         y_pos = 280
         help_texts = [
-            "WS: Move | AD: Turn | QE: Strafe",
+            "W/S & Up/Dn: Move | A/D & L/R: Turn | Alt+A/D or Alt+L/R: Strafe",
             "Shift: Boost | Ctrl: Slow",
             "Space: E-Stop | ESC: Quit",
         ]
@@ -223,3 +240,6 @@ class KeyboardTeleop(Module):
             y_pos += 25
 
         pygame.display.flip()
+
+
+__all__ = ["KeyboardTeleop"]

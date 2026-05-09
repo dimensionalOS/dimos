@@ -23,6 +23,7 @@ const controlKeys = new Set([
   " ",
   "Shift",
   "Control",
+  "Alt",
 ]);
 
 function isEditableTarget(target: EventTarget | null) {
@@ -52,32 +53,40 @@ function calculateVelocities(keys: Set<string>) {
     return { linearX: 0, linearY: 0, angularY: 0, angularZ: 0 };
   }
 
-  // Linear X (forward/backward) - W/S
-  if (keys.has("w")) {
+  const forward = keys.has("w") || keys.has("ArrowUp");
+  const backward = keys.has("s") || keys.has("ArrowDown");
+
+  // Linear X (forward/backward) - W/S or ↑/↓
+  if (forward && !backward) {
     linearX = linearSpeed * speedMultiplier;
-  } else if (keys.has("s")) {
+  } else if (backward && !forward) {
     linearX = -linearSpeed * speedMultiplier;
   }
 
-  // Angular Z (yaw/turn) - A/D
-  if (keys.has("a")) {
-    angularZ = angularSpeed * speedMultiplier;
-  } else if (keys.has("d")) {
-    angularZ = -angularSpeed * speedMultiplier;
-  }
+  const altStrafe =
+    keys.has("Alt") &&
+    (keys.has("a") ||
+      keys.has("d") ||
+      keys.has("ArrowLeft") ||
+      keys.has("ArrowRight"));
 
-  // Linear Y (strafe) - Left/Right arrows
-  if (keys.has("ArrowLeft")) {
-    linearY = linearSpeed * speedMultiplier;
-  } else if (keys.has("ArrowRight")) {
-    linearY = -linearSpeed * speedMultiplier;
-  }
-
-  // Angular Y (pitch) - Up/Down arrows
-  if (keys.has("ArrowUp")) {
-    angularY = angularSpeed * speedMultiplier;
-  } else if (keys.has("ArrowDown")) {
-    angularY = -angularSpeed * speedMultiplier;
+  // Alt + A/D or ←/→: strafe (linear Y). Otherwise those keys turn (yaw).
+  if (altStrafe) {
+    const strafeLeft = keys.has("a") || keys.has("ArrowLeft");
+    const strafeRight = keys.has("d") || keys.has("ArrowRight");
+    if (strafeLeft && !strafeRight) {
+      linearY = linearSpeed * speedMultiplier;
+    } else if (strafeRight && !strafeLeft) {
+      linearY = -linearSpeed * speedMultiplier;
+    }
+  } else {
+    const turnLeft = keys.has("a") || keys.has("ArrowLeft");
+    const turnRight = keys.has("d") || keys.has("ArrowRight");
+    if (turnLeft && !turnRight) {
+      angularZ = angularSpeed * speedMultiplier;
+    } else if (turnRight && !turnLeft) {
+      angularZ = -angularSpeed * speedMultiplier;
+    }
   }
 
   return { linearX, linearY, angularY, angularZ };
@@ -182,8 +191,8 @@ export default function KeyboardControlPanel({
       {isActive && (
         <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
           <div>Controls:</div>
-          <div>W/S: Forward/Backward | A/D: Turn</div>
-          <div>Arrows: Strafe/Pitch | Space: Stop</div>
+          <div>W/S or ↑/↓: Forward/Backward | A/D or ←/→: Turn</div>
+          <div>Alt+A/D or Alt+←/→: Strafe | Space: Stop</div>
           <div>Shift: Boost | Ctrl: Slow</div>
         </div>
       )}
