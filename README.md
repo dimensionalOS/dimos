@@ -313,7 +313,7 @@ if __name__ == "__main__":
 
 ```sh
 export GIT_LFS_SKIP_SMUDGE=1
-git clone -b dev https://github.com/dimensionalOS/dimos.git
+git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
 
 uv sync --extra all
