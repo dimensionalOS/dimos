@@ -26,19 +26,15 @@
         pkgs = import nixpkgs { inherit system; };
         lcm = lcm-extended.packages.${system}.lcm;
 
-        # Use gtsam-extended's C++ library with unstable features (iSAM2)
         gtsam-base = gtsam-extended.packages.${system}.gtsam-cpp;
-        gtsam = gtsam-base.overrideAttrs (old: {
+        gtsam = gtsam-base.overrideAttrs (_old: {
           src = pkgs.fetchFromGitHub {
             owner = "borglab";
             repo = "gtsam";
-            rev = "develop";
-            sha256 = "sha256-IoXNMb6xwoxGgjWl/urzLPUvCMG3d8cOfxmvsE0p1bc=";
+            rev = "1a9792a7ede244850a413739557635b606f295c0";
+            sha256 = "sha256-zxm5TGVPW1vipFVpw01zcvKRw4mkh+5ZBCR1n6G466o=";
           };
           env.NIX_CFLAGS_COMPILE = "-Wno-error=array-bounds";
-          cmakeFlags = (builtins.filter (f: f != "-DGTSAM_BUILD_UNSTABLE=OFF") old.cmakeFlags) ++ [
-            "-DGTSAM_BUILD_UNSTABLE=ON"
-          ];
         });
       in {
         packages.default = pkgs.stdenv.mkDerivation {
