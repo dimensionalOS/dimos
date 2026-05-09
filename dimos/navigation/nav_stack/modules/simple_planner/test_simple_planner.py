@@ -219,7 +219,8 @@ class TestSimplePlannerPlan:
 
     def test_lookahead_empty_path(self):
         wx, wy = SimplePlanner._lookahead([], 3.0, 4.0, 1.0)
-        assert wx == 3.0 and wy == 4.0
+        assert wx == pytest.approx(3.0)
+        assert wy == pytest.approx(4.0)
 
     def test_plan_with_inflation_override_opens_doorway(self):
         costmap = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=1.0)
@@ -276,9 +277,9 @@ class TestBlockedAtInflation:
     def test_does_not_mutate_costmap(self):
         costmap = Costmap(cell_size=1.0, obstacle_height=0.1, inflation_radius=0.0)
         costmap.update(0.0, 0.0, 1.0)
-        assert costmap.inflation_radius == 0.0
+        assert costmap.inflation_radius == pytest.approx(0.0)
         _blocked_at_inflation(costmap, 3.0)
-        assert costmap.inflation_radius == 0.0  # unchanged
+        assert costmap.inflation_radius == pytest.approx(0.0)  # unchanged
         # Live costmap'state own blocked_cells still reflects its own inflation
         assert costmap.blocked_cells() == {(0, 0)}
 
@@ -321,40 +322,40 @@ class TestStuckEscalation:
     def test_progress_refreshes_last_time(self):
         state = self._initial_state()
         state = self._step(state, 10.0, 0.0)
-        assert state.ref_goal_dist == 10.0
+        assert state.ref_goal_dist == pytest.approx(10.0)
         state = self._step(state, 9.0, 1.0)
-        assert state.last_progress_time == 1.0
-        assert state.ref_goal_dist == 9.0
-        assert state.effective_inflation == 0.4
+        assert state.last_progress_time == pytest.approx(1.0)
+        assert state.ref_goal_dist == pytest.approx(9.0)
+        assert state.effective_inflation == pytest.approx(0.4)
 
     def test_tiny_progress_does_not_count(self):
         state = self._initial_state()
         state = self._step(state, 10.0, 0.0, progress_epsilon=0.25)
         state = self._step(state, 9.9, 1.0, progress_epsilon=0.25)
-        assert state.ref_goal_dist == 10.0
-        assert state.last_progress_time == 0.0
+        assert state.ref_goal_dist == pytest.approx(10.0)
+        assert state.last_progress_time == pytest.approx(0.0)
 
     def test_escalation_shrinks_inflation(self):
         state = self._initial_state(inflation_radius=0.4)
         kwargs = dict(stuck_seconds=5.0, stuck_shrink_factor=0.5)
         state = self._step(state, 10.0, 0.0, **kwargs)
         state = self._step(state, 10.0, 4.9, **kwargs)
-        assert state.effective_inflation == 0.4
+        assert state.effective_inflation == pytest.approx(0.4)
         state = self._step(state, 10.0, 5.0, **kwargs)
-        assert state.effective_inflation == 0.2
+        assert state.effective_inflation == pytest.approx(0.2)
         state = self._step(state, 10.0, 10.0, **kwargs)
-        assert state.effective_inflation == 0.1
+        assert state.effective_inflation == pytest.approx(0.1)
 
     def test_escalation_respects_floor(self):
         state = self._initial_state(inflation_radius=0.4)
         kwargs = dict(stuck_seconds=1.0, stuck_shrink_factor=0.5, stuck_min_inflation=0.2)
         state = self._step(state, 10.0, 0.0, **kwargs)
         state = self._step(state, 10.0, 1.0, **kwargs)
-        assert state.effective_inflation == 0.2
+        assert state.effective_inflation == pytest.approx(0.2)
         state = self._step(state, 10.0, 2.0, **kwargs)
-        assert state.effective_inflation == 0.2
+        assert state.effective_inflation == pytest.approx(0.2)
         state = self._step(state, 10.0, 3.0, **kwargs)
-        assert state.effective_inflation == 0.2
+        assert state.effective_inflation == pytest.approx(0.2)
 
     def test_cached_path_lookahead_tracks_robot_position(self):
         cached = [(x, 0.0) for x in (0.0, 1.0, 2.0, 3.0, 4.0, 5.0)]
@@ -369,7 +370,7 @@ class TestStuckEscalation:
         state = self._initial_state(inflation_radius=0.4)
         state = self._step(state, 10.0, 0.0, stuck_seconds=1.0)
         state = self._step(state, 10.0, 1.0, stuck_seconds=1.0)
-        assert state.effective_inflation == 0.2
+        assert state.effective_inflation == pytest.approx(0.2)
         state = self._step(state, 9.0, 1.5, stuck_seconds=1.0)
-        assert state.effective_inflation == 0.2
-        assert state.ref_goal_dist == 9.0
+        assert state.effective_inflation == pytest.approx(0.2)
+        assert state.ref_goal_dist == pytest.approx(9.0)
