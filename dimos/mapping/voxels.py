@@ -107,6 +107,14 @@ class VoxelGrid:
         self.get_global_pointcloud.invalidate_cache(self)
         self.get_global_pointcloud2.invalidate_cache(self)
 
+        # Return Open3D's CUDA caching pool to the driver. The ops above
+        # (HashMap construction in carving, ``key_tensor()[idx]``, ``find()``,
+        # ``activate()``) allocate per-call device buffers; Open3D's caching
+        # allocator holds them in pool indefinitely once the Python wrappers
+        # are released. Without this call, VRAM grows ~0.8 MB/call until OOM.
+        if str(self._dev).startswith("CUDA"):
+            o3c.cuda.release_cache()
+
     def _carve_and_insert(self, new_keys: o3c.Tensor) -> None:
         """Column carving: remove all existing voxels sharing (X,Y) with new_keys, then insert."""
         if new_keys.shape[0] == 0:
