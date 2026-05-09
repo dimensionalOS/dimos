@@ -153,9 +153,6 @@ class UnityBridgeConfig(ModuleConfig):
     # from LFS data (unity_sim_x86/environment/Model.x86_64).
     unity_binary: str = ""
 
-    # Scene name — used when building the blueprint to identify the environment.
-    unity_scene: str = "office_1"
-
     # Max seconds to wait for Unity to connect after launch.
     unity_connect_timeout: float = 30.0
 
