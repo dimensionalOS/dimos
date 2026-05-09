@@ -60,26 +60,40 @@ def test_wiring() -> None:
 When a resource is shared across multiple tests, use a pytest fixture with `yield` instead of repeating context managers in each test:
 
 ```python
-# GOOD - fixture handles lifecycle for all tests that use it
+from collections.abc import Iterator
+from pathlib import Path
+import tempfile
+
+import pytest
+
+from dimos.memory2.store.sqlite import SqliteStore
+from dimos.msgs.sensor_msgs.Image import Image
+
+
 @pytest.fixture(scope="module")
 def store() -> Iterator[SqliteStore]:
-    db = SqliteStore(path=str(DB_PATH))
-    with db:
-        yield db
+    # Example uses an empty temp DB so it runs standalone; point `path` at shared test data when needed.
+    with tempfile.TemporaryDirectory() as d:
+        db_path = Path(d) / "memory.db"
+        db = SqliteStore(path=str(db_path))
+        with db:
+            yield db
+
 
 def test_query(store: SqliteStore) -> None:
-    assert store.stream("video", Image).count() > 0
+    assert store.stream("video", Image).count() == 0
+
 
 def test_search(store: SqliteStore) -> None:
     results = store.stream("video", Image).limit(5).to_list()
-    assert len(results) == 5
+    assert results == []
 ```
 
 ## No conditional logic in assertions
 
 Tests must be deterministic. If you don't know the state, the test is wrong.
 
-```python
+```python skip
 # BAD - assertion may never execute
 if hasattr(obj, "_disposables") and obj._disposables is not None:
     assert obj._disposables.is_disposed
@@ -101,7 +115,7 @@ assert obj._disposables.is_disposed
 
 Don't use `time.sleep()` to wait for async operations. Use `threading.Event` to synchronize emitter/receiver patterns.
 
-```python
+```python skip
 # BAD - arbitrary sleep, fragile
 module.start()
 time.sleep(0.5)
@@ -122,7 +136,7 @@ assert received == [84]
 
 Configuration fields on non-Pydantic classes should be private (underscore-prefixed) unless they are part of the public API.
 
-```python
+```python skip
 # BAD
 self.voxel_size = voxel_size
 self.carve_columns = carve_columns
@@ -136,7 +150,7 @@ self._carve_columns = carve_columns
 
 Avoid `# type: ignore` by using proper types:
 
-```python
+```python skip
 # BAD
 self.vbg = None  # type: ignore[assignment]
 

@@ -110,23 +110,53 @@ ros = nav.transports(
 
 Each **stream** on a module can use a different transport. Set `.transport` on the stream **before starting** modules.
 
+The runnable example below uses a tiny synthetic image publisher instead of `CameraModule` so it works without a webcam and in CI; the wiring is the same as with a real camera.
+
 ```python ansi=false
 import time
 
-from dimos.core.module import Module
-from dimos.core.stream import In
+import numpy as np
+import reactivex as rx
+
+from dimos.core.core import rpc
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.msgs.sensor_msgs import Image
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+
+
+class TickerCameraConfig(ModuleConfig):
+    frequency_hz: float = 2.0
+
+
+class TickerCameraModule(Module):
+    """Publish synthetic frames so this example runs without a webcam."""
+
+    config: TickerCameraConfig
+    color_image: Out[Image]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+        def emit(_: int) -> None:
+            img = Image.from_numpy(
+                np.zeros((480, 640, 3), dtype=np.uint8),
+                format=ImageFormat.RGB,
+                frame_id="synthetic",
+            )
+            self.color_image.publish(img)
+
+        period = 1.0 / max(self.config.frequency_hz, 0.1)
+        self.register_disposable(rx.interval(period).subscribe(emit))
 
 
 class ImageListener(Module):
     image: In[Image]
 
-    def start(self):
-        super().start()
-        self.image.subscribe(lambda img: print(f"Received: {img.shape}"))
+    async def handle_image(self, img: Image) -> None:
+        print(f"Received: {img.shape}")
 
 
 if __name__ == "__main__":
@@ -134,7 +164,7 @@ if __name__ == "__main__":
     dimos = ModuleCoordinator()
     dimos.start()
 
-    camera = dimos.deploy(CameraModule, frequency=2.0)
+    camera = dimos.deploy(TickerCameraModule, frequency_hz=2.0)
     listener = dimos.deploy(ImageListener)
 
     # Choose a transport for the stream (example: LCM typed channel)
@@ -150,16 +180,23 @@ if __name__ == "__main__":
 ```
 
 <!--Result:-->
-
 ```
-Initialized dimos local cluster with 2 workers, memory limit: auto
-2026-01-24T13:17:50.190559Z [info     ] Deploying module.                                            [dimos/core/__init__.py] module=CameraModule
-2026-01-24T13:17:50.218466Z [info     ] Deployed module.                                             [dimos/core/__init__.py] module=CameraModule worker_id=1
-2026-01-24T13:17:50.229474Z [info     ] Deploying module.                                            [dimos/core/__init__.py] module=ImageListener
-2026-01-24T13:17:50.250199Z [info     ] Deployed module.                                             [dimos/core/__init__.py] module=ImageListener worker_id=0
+02:57:31.428 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
+02:57:31.761 [inf][/coordination/python_worker.py] Deployed module. module=TickerCameraModule module_id=0 worker_id=0
+02:57:31.768 [inf][/coordination/python_worker.py] Deployed module. module=ImageListener module_id=1 worker_id=1
+02:57:33.778 [inf][dination/module_coordinator.py] Stopping module... module=ImageListener
+02:57:33.793 [inf][dination/module_coordinator.py] Module stopped. module=ImageListener
+02:57:33.793 [inf][dination/module_coordinator.py] Stopping module... module=TickerCameraModule
+02:57:33.802 [inf][dination/module_coordinator.py] Module stopped. module=TickerCameraModule
+02:57:33.802 [inf][ation/worker_manager_python.py] Shutting down all workers...
 Received: (480, 640, 3)
 Received: (480, 640, 3)
 Received: (480, 640, 3)
+02:57:33.803 [inf][/coordination/python_worker.py] Worker stopping module... module=ImageListener module_id=1 worker_id=1
+02:57:33.803 [inf][/coordination/python_worker.py] Worker module stopped. module=ImageListener module_id=1 worker_id=1
+02:57:33.861 [inf][/coordination/python_worker.py] Worker stopping module... module=TickerCameraModule module_id=0 worker_id=0
+02:57:33.862 [inf][/coordination/python_worker.py] Worker module stopped. module=TickerCameraModule module_id=0 worker_id=0
+02:57:33.892 [inf][ation/worker_manager_python.py] All workers shut down
 ```
 
 See [Modules](/docs/usage/modules.md) for more on module architecture.
@@ -219,7 +256,7 @@ print(inspect.getsource(PubSub.subscribe))
 ```
 
 <!--Result:-->
-```python
+```
     @abstractmethod
     def publish(self, topic: TopicT, message: MsgT) -> None:
         """Publish a message to a topic."""
@@ -241,8 +278,8 @@ LCM is UDP multicast. It’s very fast on a robot LAN, but it’s **best-effort*
 For local emission it autoconfigures system in a way in which it's more robust and faster then other more common protocols like ROS, DDS
 
 ```python
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 
 lcm = LCM()
 lcm.start()
@@ -270,7 +307,7 @@ Received velocity: x=1.0, y=0.0, z=0.5
 Shared memory is highest performance, but only works on the **same machine**.
 
 ```python
-from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
+from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
 
 shm = PickleSharedMemory(prefer="cpu")
 shm.start()
@@ -295,7 +332,7 @@ Received: [{'data': [1, 2, 3]}]
 
 For network communication, DDS uses the Data Distribution Service (DDS) protocol:
 
-```python session=dds_demo ansi=false
+```python skip session=dds_demo ansi=false
 from dataclasses import dataclass
 from cyclonedds.idl import IdlStruct
 
@@ -325,7 +362,6 @@ dds.stop()
 ```
 Received: [SensorReading(value=22.5)]
 ```
-
 ---
 
 ## A minimal transport: `Memory`
@@ -333,7 +369,7 @@ Received: [SensorReading(value=22.5)]
 The simplest toy backend is `Memory` (single process). Start from there when implementing a new pubsub backend.
 
 ```python
-from dimos.protocol.pubsub.memory import Memory
+from dimos.protocol.pubsub.impl.memory import Memory
 
 bus = Memory()
 received = []
@@ -365,7 +401,7 @@ See [`pubsub/impl/memory.py`](/dimos/protocol/pubsub/impl/memory.py) for the com
 
 Transports often need to serialize messages before sending and deserialize after receiving.
 
-`PubSubEncoderMixin` at [`pubsub/spec.py`](/dimos/protocol/pubsub/spec.py#L95) provides a clean way to add encoding/decoding to any pubsub implementation.
+`PubSubEncoderMixin` at [`pubsub/encoders.py`](/dimos/protocol/pubsub/encoders.py#L39) provides a clean way to add encoding/decoding to any pubsub implementation.
 
 ### Available mixins
 
@@ -380,8 +416,10 @@ Transports often need to serialize messages before sending and deserialize after
 ### Creating a custom mixin
 
 ```python session=jsonencoder no-result
-from dimos.protocol.pubsub.spec import PubSubEncoderMixin
 import json
+
+from dimos.protocol.pubsub.encoders import PubSubEncoderMixin
+
 
 class JsonEncoderMixin(PubSubEncoderMixin[str, dict, bytes]):
     def encode(self, msg: dict, topic: str) -> bytes:
@@ -394,7 +432,8 @@ class JsonEncoderMixin(PubSubEncoderMixin[str, dict, bytes]):
 Combine with a pubsub implementation via multiple inheritance:
 
 ```python session=jsonencoder no-result
-from dimos.protocol.pubsub.memory import Memory
+from dimos.protocol.pubsub.impl.memory import Memory
+
 
 class MyJsonPubSub(JsonEncoderMixin, Memory):
     pass
@@ -403,7 +442,9 @@ class MyJsonPubSub(JsonEncoderMixin, Memory):
 Swap serialization by changing the mixin:
 
 ```python session=jsonencoder no-result
-from dimos.protocol.pubsub.spec import PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import PickleEncoderMixin
+from dimos.protocol.pubsub.impl.memory import Memory
+
 
 class MyPicklePubSub(PickleEncoderMixin, Memory):
     pass

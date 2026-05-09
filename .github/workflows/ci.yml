@@ -1,7 +1,7 @@
 name: ci
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
     paths-ignore:
       - '**.md'
   pull_request:

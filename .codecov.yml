@@ -1,5 +1,5 @@
 codecov:
-  branch: dev
+  branch: main
   notify:
     manual_trigger: true
 

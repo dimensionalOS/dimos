@@ -29,7 +29,7 @@ connection = ConnectionModule.blueprint
 
 Now you can create the blueprint with:
 
-```python session=blueprint-ex1
+```python skip session=blueprint-ex1
 blueprint = connection('arg1', 'arg2', kwarg='value')
 ```
 
@@ -244,13 +244,27 @@ config = base_blueprint.config()
 config(**blueprint_args)  # raises pydantic.ValidationError if args are incorrect
 ```
 
-`dimos.robot.cli.dimos.arghelp()` is a helper function that will return a string
+`dimos.robot.cli.dimos.arg_help()` is a helper function that will return a string
 containing all details of these arguments (this is how the output is produced when
 running `dimos run unitree-go2 --help`, for example):
 
 ```python session=blueprint-ex1
-from dimos.robot.cli.dimos import arghelp
-print(arghelp(base_blueprint.config(), base_blueprint))
+from dimos.robot.cli.dimos import arg_help
+
+print(arg_help(base_blueprint.config(), base_blueprint))
+```
+
+<!--Result:-->
+```
+    module1:
+      * module1.default_rpc_timeout: float (default: 120.0)
+      * module1.frame_id_prefix: str | None (default: None)
+      * module1.frame_id: str | None (default: None)
+      * module1.arg1: int (default: 1)
+    module2:
+      * module2.default_rpc_timeout: float (default: 120.0)
+      * module2.frame_id_prefix: str | None (default: None)
+      * module2.frame_id: str | None (default: None)
 ```
 
 Another function is `dimos.robot.cli.dimos.load_config_args()` which can create the
@@ -258,15 +272,16 @@ argument dict for users from a config file, environment variables and CLI argume
 
 
 ```python session=blueprint-ex1
+from pathlib import Path
+
 from dimos.robot.cli.dimos import load_config_args
 
 config_path = Path.home() / "base-blueprint-config.json"
-cli_args = ["arg1=5"]
+cli_args = ["module1.arg1=5"]
 blueprint_args = load_config_args(base_blueprint.config(), cli_args, config_path)
 # Test user input is valid
 config(**blueprint_args)
-# Then we can build the blueprint
-base_blueprint.build(blueprint_args)
+# Then pass blueprint_args to ModuleCoordinator.build(...) (see coordinator docs)
 ```
 
 ## Calling the methods of other modules
@@ -351,7 +366,6 @@ Skills are methods on a `Module` decorated with `@skill`. The agent automaticall
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.agents.annotation import skill
-from dimos.core.global_config import GlobalConfig
 
 class SomeSkill(Module):
 
@@ -365,8 +379,20 @@ class SomeSkill(Module):
 
 All you have to do to build a blueprint is call:
 
-```python session=blueprint-ex4
-module_coordinator = SomeSkill.blueprint().build(global_config=GlobalConfig())
+```python skip session=blueprint-ex4
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+
+module_coordinator = ModuleCoordinator.build(SomeSkill.blueprint())
+module_coordinator.stop()
+```
+
+<!--Result:-->
+```
+16:30:00.119 [inf][dination/module_coordinator.py] Building the blueprint
+16:30:00.133 [inf][dination/module_coordinator.py] Starting the modules
+16:30:01.320 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
+16:30:01.321 [inf][ation/worker_manager_python.py] Shutting down all workers...
+16:30:01.480 [inf][ation/worker_manager_python.py] All workers shut down
 ```
 
 This returns a `ModuleCoordinator` instance that manages all deployed modules.
@@ -375,7 +401,7 @@ This returns a `ModuleCoordinator` instance that manages all deployed modules.
 
 You can block the thread until it exits with:
 
-```python session=blueprint-ex4
+```python skip session=blueprint-ex4
 module_coordinator.loop()
 ```
 
