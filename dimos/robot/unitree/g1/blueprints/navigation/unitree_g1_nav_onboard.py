@@ -45,12 +45,6 @@ unitree_g1_nav_onboard = (
             max_speed=0.6,
             far_planner={
                 "is_static_env": False,
-                "dyobs_update_thred": 0,
-                "obs_inflate_size": 0,
-                "dynamic_obs_decay_time": 0.2,
-                "new_points_decay_time": 0.2,
-                "clear_dumper_thred": 1,
-                "update_rate": 10.0,
             },
             terrain_analysis={
                 "obstacle_height_threshold": 0.01,
