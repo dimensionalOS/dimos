@@ -85,6 +85,11 @@ def _check_blueprint(blueprint_name: str) -> None:
     )
 
 
+def test_old_self_hosted_blueprints() -> None:
+    """Validate no non-existent name in SELF_HOSTED_BLUEPRINTS."""
+    assert not SELF_HOSTED_BLUEPRINTS - set(all_blueprints)
+
+
 @pytest.mark.parametrize("blueprint_name", UBUNTU_BLUEPRINTS)
 def test_blueprint_is_valid(blueprint_name: str) -> None:
     """Validate blueprints that should import on the ubuntu-latest runner."""
