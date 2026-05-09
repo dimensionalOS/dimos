@@ -163,6 +163,8 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Build C++ extensions in-place
+        run: uv run python setup.py build_ext --inplace
       - name: Source ROS environment
         # The uv venv is sealed (include-system-site-packages = false), so
         # `import rclpy` / `ament_index_python` would fail. Sourcing the ROS
