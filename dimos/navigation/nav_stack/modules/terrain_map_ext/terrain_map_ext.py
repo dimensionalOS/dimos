@@ -263,10 +263,10 @@ class TerrainMapExt(Module):
             terrain_voxel_size = config.terrain_voxel_size
             time_offset = laser_cloud_time - self._system_init_time
 
-            # --- Terrain voxel rollover ---
+            # Terrain voxel rollover
             self._roll_terrain_grid(vehicle_x, vehicle_y, terrain_voxel_size)
 
-            # --- Stack cropped scan into terrain voxels ---
+            # Stack cropped scan into terrain voxels
             for point in cropped:
                 ind_x = _voxel_index(
                     point[0], vehicle_x, terrain_voxel_size, TERRAIN_VOXEL_HALF_WIDTH
@@ -280,7 +280,7 @@ class TerrainMapExt(Module):
                     self._terrain_voxel_cloud[flat_idx].append(point)
                     self._terrain_voxel_update_num[flat_idx] += 1
 
-            # --- Downsample / evict voxels that exceed thresholds ---
+            # Downsample / evict voxels that exceed thresholds
             for ind in range(TERRAIN_VOXEL_NUM):
                 if (
                     self._terrain_voxel_update_num[ind] >= config.voxel_point_update_threshold
@@ -321,7 +321,7 @@ class TerrainMapExt(Module):
                     self._terrain_voxel_update_num[ind] = 0
                     self._terrain_voxel_update_time[ind] = time_offset
 
-            # --- Gather terrain cloud from central 21x21 cells ---
+            # Gather terrain cloud from central 21x21 cells
             terrain_cloud: list[list[float]] = []
             for ind_x in range(TERRAIN_VOXEL_HALF_WIDTH - 10, TERRAIN_VOXEL_HALF_WIDTH + 11):
                 for ind_y in range(TERRAIN_VOXEL_HALF_WIDTH - 10, TERRAIN_VOXEL_HALF_WIDTH + 11):
@@ -329,7 +329,7 @@ class TerrainMapExt(Module):
                         self._terrain_voxel_cloud[TERRAIN_VOXEL_WIDTH * ind_x + ind_y]
                     )
 
-            # --- Ground elevation estimation on planar grid ---
+            # Ground elevation estimation on planar grid
             planar_voxel_elev = [0.0] * PLANAR_VOXEL_NUM
             planar_point_elev: list[list[float]] = [[] for _ in range(PLANAR_VOXEL_NUM)]
             planar_voxel_conn = [0] * PLANAR_VOXEL_NUM
@@ -373,7 +373,7 @@ class TerrainMapExt(Module):
                     if elevations:
                         planar_voxel_elev[i] = min(elevations)
 
-            # --- BFS terrain connectivity check ---
+            # BFS terrain connectivity check
             if config.check_terrain_connectivity:
                 center_ind = PLANAR_VOXEL_WIDTH * PLANAR_VOXEL_HALF_WIDTH + PLANAR_VOXEL_HALF_WIDTH
                 if not planar_point_elev[center_ind]:
@@ -409,7 +409,7 @@ class TerrainMapExt(Module):
                                     elif elev_diff > config.ceiling_filtering_threshold:
                                         planar_voxel_conn[neighbor_ind] = -1
 
-            # --- Build output: points beyond local radius with ground/connectivity filter ---
+            # Build output: points beyond local radius with ground/connectivity filter
             output_points: list[list[float]] = []
 
             for point in terrain_cloud:
@@ -440,7 +440,7 @@ class TerrainMapExt(Module):
                             # intensity = elevation distance from ground
                             output_points.append([point[0], point[1], point[2], elevation_distance])
 
-            # --- Merge local terrain map within localTerrainMapRadius ---
+            # Merge local terrain map within localTerrainMapRadius
             # NOTE: The original C++ does NOT do this — it only publishes points
             # beyond the radius. Controlled by merge_local_terrain config flag.
             if config.merge_local_terrain:
@@ -455,7 +455,7 @@ class TerrainMapExt(Module):
             with self._lock:
                 self._clearing_cloud = False
 
-            # --- Publish with intensity (elevation distance from ground) ---
+            # Publish with intensity (elevation distance from ground)
             if output_points:
                 arr = np.array(output_points, dtype=np.float32)
                 self.terrain_map_ext.publish(

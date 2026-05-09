@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from collections import deque
 import math
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -45,14 +44,14 @@ from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import (
     _voxel_index,
 )
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import load_rosbag_window
+from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 pytestmark = [pytest.mark.slow]
 
-DATA_DIR = Path(__file__).parent.parent.parent / "tests" / "data"
-ROSBAG_FIXTURE = DATA_DIR / "og_nav_60s.npz"
+ROSBAG_FIXTURE = get_data("og_nav_60s.npz")
 
 # OG nav stack runtime parameters — matches terrain_analysis_ext.launch overrides
 # used when the rosbag was recorded. Key differences from C++ code defaults:
@@ -610,7 +609,7 @@ class TestTerrainMapExtRosbag:
         vehicle_x, vehicle_y, vehicle_z = _find_nearest_odom(window.odom, window.scans[19][0])
         planar_voxel_size = DEFAULT_CONFIG.planar_voxel_size
 
-        # --- 1. Cross-check: intensity == |z - ground_elev| for non-local points ---
+        # 1. Cross-check: intensity == |z - ground_elev| for non-local points
         non_local_mask = intensities > 0
         non_local_pts = positions[non_local_mask]
         non_local_int = intensities[non_local_mask]
@@ -643,7 +642,7 @@ class TestTerrainMapExtRosbag:
             f"max error = {np.max(np.abs(non_local_int - recomputed)):.2e}"
         )
 
-        # --- 2. Ground elevation should be near or below vehicle z ---
+        # 2. Ground elevation should be near or below vehicle z
         populated_indices = [i for i in range(PLANAR_VOXEL_NUM) if planar_point_elev[i]]
         populated_elevs = np.array([planar_elev[i] for i in populated_indices])
 
@@ -655,7 +654,7 @@ class TestTerrainMapExtRosbag:
         )
         assert above_vehicle < 0.25, f"{above_vehicle:.1%} of ground cells are >0.5m above vehicle"
 
-        # --- 3. Connected cells should form a coherent region ---
+        # 3. Connected cells should form a coherent region
         connected_count = sum(1 for c in planar_conn if c == 2)
         populated_count = len(populated_indices)
         conn_ratio = connected_count / max(populated_count, 1)
@@ -667,7 +666,7 @@ class TestTerrainMapExtRosbag:
             "BFS may not be propagating correctly"
         )
 
-        # --- 4. Adjacent populated cells should have smooth ground elevation ---
+        # 4. Adjacent populated cells should have smooth ground elevation
         elev_diffs: list[float] = []
         for i in populated_indices:
             ix = i // PLANAR_VOXEL_WIDTH

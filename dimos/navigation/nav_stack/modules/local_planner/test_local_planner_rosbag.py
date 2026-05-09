@@ -42,9 +42,7 @@ pytestmark = [pytest.mark.slow]
 _PROCESS_STARTUP_SEC = 2.0
 _POST_FEED_DRAIN_SEC = 2.0
 
-LOCAL_PLANNER_BIN = (
-    Path(__file__).parent.parent / "modules" / "local_planner" / "result" / "bin" / "local_planner"
-)
+LOCAL_PLANNER_BIN = Path(__file__).parent / "result" / "bin" / "local_planner"
 
 # LCM topics
 SCAN_LCM = "/rblp_scan#sensor_msgs.PointCloud2"

@@ -239,7 +239,7 @@ class TestPathFollowerRosbag:
         logger.info(f"  Yaw rate ratio:     {yaw_ratio:.3f}  (steady-state)")
         logger.info(f"{'=' * 60}\n")
 
-        # --- Assertions (tightened to observed behavior ±5%) ---
+        # Assertions (tightened to observed behavior ±5%)
         assert len(our_cmds) > 0, "PathFollower produced no cmd_vel"
         assert len(our_nonzero) > 0, "All cmd_vel are zero"
 
