@@ -14,7 +14,6 @@
 
 """G1 high-level control via native Unitree SDK2 (DDS)."""
 
-import difflib
 from enum import IntEnum
 import json
 import threading
@@ -40,6 +39,17 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.unitree.g1.effectors.high_level.commands import (
+    ARM_API_ID,
+    ARM_COMMANDS,
+    ARM_COMMANDS_DOC,
+    ARM_TOPIC,
+    MODE_API_ID,
+    MODE_COMMANDS,
+    MODE_COMMANDS_DOC,
+    MODE_TOPIC,
+    execute_g1_command,
+)
 from dimos.robot.unitree.g1.effectors.high_level.high_level_spec import HighLevelG1Spec
 from dimos.utils.logging_config import setup_logger
 
@@ -50,43 +60,6 @@ _LOCO_API_IDS = {
     "GET_FSM_MODE": ROBOT_API_ID_LOCO_GET_FSM_MODE,
     "GET_BALANCE_MODE": ROBOT_API_ID_LOCO_GET_BALANCE_MODE,
 }
-
-
-# G1 Arm Actions - all use api_id 7106 on topic "rt/api/arm/request"
-G1_ARM_CONTROLS = [
-    ("Handshake", 27, "Perform a handshake gesture with the right hand."),
-    ("HighFive", 18, "Give a high five with the right hand."),
-    ("Hug", 19, "Perform a hugging gesture with both arms."),
-    ("HighWave", 26, "Wave with the hand raised high."),
-    ("Clap", 17, "Clap hands together."),
-    ("FaceWave", 25, "Wave near the face level."),
-    ("LeftKiss", 12, "Blow a kiss with the left hand."),
-    ("ArmHeart", 20, "Make a heart shape with both arms overhead."),
-    ("RightHeart", 21, "Make a heart gesture with the right hand."),
-    ("HandsUp", 15, "Raise both hands up in the air."),
-    ("XRay", 24, "Hold arms in an X-ray pose position."),
-    ("RightHandUp", 23, "Raise only the right hand up."),
-    ("Reject", 22, "Make a rejection or 'no' gesture."),
-    ("CancelAction", 99, "Cancel any current arm action and return hands to neutral position."),
-]
-
-# G1 Movement Modes - all use api_id 7101 on topic "rt/api/sport/request"
-G1_MODE_CONTROLS = [
-    ("WalkMode", 500, "Switch to normal walking mode."),
-    ("WalkControlWaist", 501, "Switch to walking mode with waist control."),
-    ("RunMode", 801, "Switch to running mode."),
-]
-
-_ARM_COMMANDS: dict[str, tuple[int, str]] = {
-    name: (id_, description) for name, id_, description in G1_ARM_CONTROLS
-}
-
-_MODE_COMMANDS: dict[str, tuple[int, str]] = {
-    name: (id_, description) for name, id_, description in G1_MODE_CONTROLS
-}
-
-_ARM_COMMANDS_DOC = "\n".join(f'- "{name}": {desc}' for name, (_, desc) in _ARM_COMMANDS.items())
-_MODE_COMMANDS_DOC = "\n".join(f'- "{name}": {desc}' for name, (_, desc) in _MODE_COMMANDS.items())
 
 
 class FsmState(IntEnum):
@@ -316,7 +289,9 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
     @skill
     def execute_arm_command(self, command_name: str) -> str:
         """Execute a Unitree G1 arm command."""
-        return self._execute_g1_command(_ARM_COMMANDS, 7106, "rt/api/arm/request", command_name)
+        return execute_g1_command(
+            self.publish_request, ARM_COMMANDS, ARM_API_ID, ARM_TOPIC, command_name, logger=logger
+        )
 
     execute_arm_command.__doc__ = f"""Execute a Unitree G1 arm command.
 
@@ -326,13 +301,20 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
         Here are all the command names and what they do.
 
-        {_ARM_COMMANDS_DOC}
+        {ARM_COMMANDS_DOC}
         """
 
     @skill
     def execute_mode_command(self, command_name: str) -> str:
         """Execute a Unitree G1 mode command."""
-        return self._execute_g1_command(_MODE_COMMANDS, 7101, "rt/api/sport/request", command_name)
+        return execute_g1_command(
+            self.publish_request,
+            MODE_COMMANDS,
+            MODE_API_ID,
+            MODE_TOPIC,
+            command_name,
+            logger=logger,
+        )
 
     execute_mode_command.__doc__ = f"""Execute a Unitree G1 mode command.
 
@@ -342,30 +324,8 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
         Here are all the command names and what they do.
 
-        {_MODE_COMMANDS_DOC}
+        {MODE_COMMANDS_DOC}
         """
-
-    def _execute_g1_command(
-        self,
-        command_dict: dict[str, tuple[int, str]],
-        api_id: int,
-        topic: str,
-        command_name: str,
-    ) -> str:
-        if command_name not in command_dict:
-            suggestions = difflib.get_close_matches(
-                command_name, command_dict.keys(), n=3, cutoff=0.6
-            )
-            return f"There's no '{command_name}' command. Did you mean: {suggestions}"
-
-        id_, _ = command_dict[command_name]
-
-        try:
-            self.publish_request(topic, {"api_id": api_id, "parameter": {"data": id_}})
-            return f"'{command_name}' command executed successfully."
-        except Exception as e:
-            logger.error(f"Failed to execute {command_name}: {e}")
-            return "Failed to execute the command."
 
     def _select_motion_mode(self) -> None:
         if not self.motion_switcher or self._mode_selected:
