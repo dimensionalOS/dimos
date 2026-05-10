@@ -14,7 +14,7 @@
 
 """Unified robot configuration.
 
-Single source of truth for a robot arm. The URDF/MJCF model file is the
+Single source of truth for a robot. The URDF/MJCF model file is the
 ground truth — joint names, DOF, limits, and link hierarchy are parsed
 automatically. Generates RobotModelConfig, HardwareComponent, and TaskConfig.
 """
@@ -26,6 +26,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr
 
+from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.coordinator import TaskConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.model_parser import ModelDescription, parse_model
 
 
@@ -39,14 +45,6 @@ class GripperConfig(BaseModel):
     close_position: float = 0.0
 
 
-from dimos.control.components import HardwareComponent, HardwareType
-from dimos.control.coordinator import TaskConfig
-from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
-
 class RobotConfig(BaseModel):
     """Unified robot configuration — URDF/MJCF is the ground truth.
 
@@ -56,7 +54,18 @@ class RobotConfig(BaseModel):
     # Required fields
     name: str
     model_path: Path
-    end_effector_link: str
+    end_effector_link: str | None = None
+
+    # Physical dimensions (meters)
+    height_clearance: float | None = None  # max height
+    width_clearance: float | None = None  # max width
+
+    # These offsets are applied so that odometry  at 0,0,0 corresponds roughly with the floor
+    # Note: these cannot (easily) be calculated from the URDF because
+    #       the URDF doesn't always have an initial robot pose/stance
+    # This is a quality of life offset, not exact
+    # The key names should match keys in the urdf
+    internal_odom_offsets: dict[str, Any] = Field(default_factory=dict)
 
     # Hardware connection
     adapter_type: str = "mock"
@@ -179,6 +188,11 @@ class RobotConfig(BaseModel):
 
     def to_robot_model_config(self) -> RobotModelConfig:
         """Generate RobotModelConfig for ManipulationModule."""
+        if self.end_effector_link is None:
+            raise ValueError(
+                f"RobotConfig '{self.name}' has no end_effector_link — "
+                "cannot generate RobotModelConfig for manipulation."
+            )
         bp = self.base_pose
         base_pose = PoseStamped(
             position=Vector3(x=bp[0], y=bp[1], z=bp[2]),
@@ -254,8 +268,6 @@ class RobotConfig(BaseModel):
             **task_kwargs: Extra fields passed to TaskConfig (e.g., model_path,
                 ee_joint_id, hand, gripper_joint, gripper_open_pos, gripper_closed_pos).
         """
-        from dimos.control.coordinator import TaskConfig
-
         return TaskConfig(
             name=task_name if task_name is not None else self.coordinator_task_name,
             type=task_type if task_type is not None else self.task_type,

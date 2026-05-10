@@ -24,7 +24,7 @@ from pathlib import Path
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
 
 import click
 from dotenv import load_dotenv
@@ -40,6 +40,7 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.constants import RerunOpenOption
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
@@ -224,7 +225,8 @@ def run(
 
     cli_config_overrides: dict[str, Any] = ctx.obj
 
-    # Apply CLI overrides to global_config before importing blueprint modules
+    # this is a workaround until we have a proper way to have delayed-module-choice in blueprints
+    # ex: vis_module(viewer=global_config.viewer) is wrong (viewer will always be default value) without this patch
     global_config.update(**cli_config_overrides)
 
     # Clean stale registry entries
@@ -665,17 +667,22 @@ def send(
 
 @main.command(name="rerun-bridge")
 def rerun_bridge_cmd(
-    viewer_mode: str = typer.Option(
-        "native", help="Viewer mode: native (desktop), web (browser), none (headless)"
-    ),
     memory_limit: str = typer.Option(
         "25%", help="Memory limit for Rerun viewer (e.g., '4GB', '16GB', '25%')"
+    ),
+    rerun_open: str = typer.Option("native", help="How to open Rerun: native, web, both, none"),
+    rerun_web: bool = typer.Option(
+        True, "--rerun-web/--no-rerun-web", help="Enable/Disable Rerun web server"
     ),
 ) -> None:
     """Launch the Rerun visualization bridge."""
     from dimos.visualization.rerun.bridge import run_bridge
 
-    run_bridge(viewer_mode=viewer_mode, memory_limit=memory_limit)
+    run_bridge(
+        memory_limit=memory_limit,
+        rerun_open=cast("RerunOpenOption", rerun_open),
+        rerun_web=rerun_web,
+    )
 
 
 if __name__ == "__main__":
