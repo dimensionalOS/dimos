@@ -44,6 +44,17 @@ public:
         return it != args_.end() ? it->second : default_val;
     }
 
+    /// Get a required string arg value; throws if not present.
+    /// Use this for values that must come from the Python config rather than
+    /// silently falling back to a C++ default that can drift out of sync.
+    std::string arg_required(const std::string& key) const {
+        auto it = args_.find(key);
+        if (it == args_.end()) {
+            throw std::runtime_error("NativeModule: missing required arg '--" + key + "'");
+        }
+        return it->second;
+    }
+
     /// Get a float arg value, or a default if not present.
     float arg_float(const std::string& key, float default_val = 0.0f) const {
         auto it = args_.find(key);

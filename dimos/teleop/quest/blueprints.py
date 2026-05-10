@@ -30,12 +30,12 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 from dimos.teleop.quest.quest_types import Buttons
-from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.vis_module import vis_module
 
 # Arm teleop with press-and-hold engage (has rerun viz)
 teleop_quest_rerun = autoconnect(
     ArmTeleopModule.blueprint(),
-    RerunBridgeModule.blueprint(),
+    vis_module("rerun"),
 ).transports(
     {
         ("left_controller_output", PoseStamped): LCMTransport("/teleop/left_delta", PoseStamped),

@@ -48,6 +48,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
+    config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
 
     # Propagate coverage collection to subprocesses.
     if os.environ.get("_DIMOS_COV"):
@@ -62,6 +63,7 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
+        "skipif_macos": (_is_macos(), "Not intended to run on macOS"),
     }
     for marker_name, (condition, reason) in _skipif_markers.items():
         if condition:
