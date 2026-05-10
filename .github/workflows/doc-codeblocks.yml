@@ -51,11 +51,23 @@ jobs:
 
       # Docs decode JPEG from SQLite via PyTurboJPEG; it needs the system lib (see docs/installation/ubuntu.md).
       # macOS dev machines often have libjpeg-turbo from Homebrew; the ros-dev container does not by default.
-      # Examples also use get_data() which resolves Git LFS blobs under data/ (lazy pull per archive).
-      - name: Install TurboJPEG and git-lfs for doc examples
+      # Pull only LFS archives referenced by executable docs (get_data names map to data/.lfs/<name>.tar.gz).
+      # When adding doc blocks that call get_data on new archives, add the matching path here.
+      - name: Install TurboJPEG and selective Git LFS for doc examples
+        shell: bash
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y git-lfs libturbojpeg
+          git lfs install
+          doc_lfs_archives=(
+            data/.lfs/go2_bigoffice.db.tar.gz
+            data/.lfs/unitree_go2_bigoffice_map.pickle.tar.gz
+            data/.lfs/cafe.jpg.tar.gz
+          )
+          old_ifs=$IFS
+          IFS=,
+          GIT_LFS_FORCE_PROGRESS=1 git lfs pull -I "${doc_lfs_archives[*]}"
+          IFS=$old_ifs
 
       - uses: actions/setup-node@v4
         with:
