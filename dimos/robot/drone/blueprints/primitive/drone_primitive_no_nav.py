@@ -75,7 +75,7 @@ def _drone_rerun_blueprint() -> Any:
     )
 
 rerun_config = {
-    "blueprint": _drone_rerun_blueprint(),
+    "blueprint": _drone_rerun_blueprint,
     "pubsubs": [LCM()],
     "visual_override": {
         "world/camera_info": _convert_camera_info,
@@ -94,7 +94,7 @@ elif global_config.viewer.startswith("rerun"):
     from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
 
     _with_vis = autoconnect(
-        RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode((), **rerun_config)),
+        RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode(), **rerun_config),
     )
 else:
     _with_vis = autoconnect()

@@ -27,7 +27,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.simulation.mujoco.input_controller import InputController
-from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
+from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController, DroneController
 from dimos.utils.data import get_data
 
 
@@ -51,6 +51,10 @@ def get_assets() -> dict[str, bytes]:
     person_dir = epath.Path(str(get_data("person")))
     mjx_env.update_assets(assets, person_dir, "*.obj")
     mjx_env.update_assets(assets, person_dir, "*.png")
+
+    # From: https://github.com/google-deepmind/mujoco_menagerie/tree/main/bitcraze_crazyflie_2
+    mjx_env.update_assets(assets, mjx_env.MENAGERIE_PATH / "bitcraze_crazyflie_2")
+    mjx_env.update_assets(assets, mjx_env.MENAGERIE_PATH / "bitcraze_crazyflie_2" / "assets")
 
     return assets
 
@@ -90,6 +94,8 @@ def load_model(
             policy: OnnxController = Go1OnnxController(**params)
         case "unitree_g1":
             policy = G1OnnxController(**params, drift_compensation=[-0.18, 0.0, -0.09])
+        case "bitcraze_crazyflie_2":
+            policy = DroneController(**params)
         case _:
             raise ValueError(f"Unknown robot policy: {robot}")
 

@@ -154,3 +154,16 @@ class G1OnnxController(OnnxController):
     def _post_control_update(self) -> None:
         phase_tp1 = self._phase + self._phase_dt
         self._phase = np.fmod(phase_tp1 + np.pi, 2 * np.pi) - np.pi
+
+class DroneController():
+    def __init__(
+            self,
+            input_controller: InputController,
+    ) -> None:
+        self._input_controller = input_controller
+    
+    def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray[Any, Any]:
+        
+        # Check data.sensor names to determine which drone model is being used
+        command = self._input_controller.get_command()
+        return command.astype(np.float32)
