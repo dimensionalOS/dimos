@@ -85,3 +85,80 @@ rerun_config = {
         "world/tf/base_link": _static_base_link,
     }
 }
+
+if global_config.viewer == "foxglove":
+    from dimos.robot.foxglove_bridge import FoxgloveBridge
+
+    _with_vis = autoconnect(FoxgloveBridge.blueprint())
+elif global_config.viewer.startswith("rerun"):
+    from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
+
+    _with_vis = autoconnect(
+        RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode((), **rerun_config)),
+    )
+else:
+    _with_vis = autoconnect()
+
+def _create_webcam() -> Webcam:
+    return Webcam(
+        camera_index=0,
+        fps=15,
+        stereo_slice="left",
+        camera_info=zed.CameraInfo.SingleWebcam,
+    )
+
+_camera = (
+    autoconnect(
+        CameraModule.blueprint(
+            transform=Transform(
+                translation=Vector3(0.05, 0.0, 0.0),
+                rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
+                frame_id="sensor",
+                child_frame_id="camera_link",
+            ),
+            hardware=_create_webcam
+        ),
+    )
+    if not global_config.simulation
+    else autoconnect()
+)
+
+#Note: Maybe Voxel and Lidar might not be needed
+
+drone_primitive_no_nav = (
+    autoconnect(
+        _with_vis,
+        _camera,
+        VoxelGridMapper.blueprint(),
+        CostMapper.blueprint(),
+        WavefrontFrontierExplorer.blueprint(),
+        #Visualization
+        WebsocketVisModule.blueprint(),
+    )
+    .global_config(n_workers=4, robot_model="drone")
+    .transports(
+        {   
+            # Movement command 
+            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+            # State Estimation from ROS
+            ("state_estimation", Odometry): LCMTransport("/state_estimation", Odometry),
+            # Odometry output from ROSNavigationModule
+            ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
+            # Navigation module topics from nav_bot
+            ("goal_req", PoseStamped): LCMTransport("/goal_req", PoseStamped),
+            ("goal_active", PoseStamped): LCMTransport("/goal_active", PoseStamped),
+            ("path_active", Path): LCMTransport("/path_active", Path),
+            ("pointcloud", PointCloud2): LCMTransport("/lidar", PointCloud2),
+            ("global_pointcloud", PointCloud2): LCMTransport("/map", PointCloud2),
+            # Original navigation topics for backwards compatibility
+            ("goal_pose", PoseStamped): LCMTransport("/goal_pose", PoseStamped),
+            ("goal_reached", Bool): LCMTransport("/goal_reached", Bool),
+            ("cancel_goal", Bool): LCMTransport("/cancel_goal", Bool),
+            # Camera topics
+            ("color_image", Image): LCMTransport("/color_image", Image),
+            ("camera_info", CameraInfo): LCMTransport("/camera_info", CameraInfo),
+        }
+    )
+)
+
+__all__ = ["drone_primitive_no_nav"]
