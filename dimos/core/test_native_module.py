@@ -28,7 +28,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
+from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -60,7 +60,6 @@ def read_json_file(path: str) -> dict[str, str]:
 
 class StubNativeConfig(NativeModuleConfig):
     executable: str = _ECHO
-    log_format: LogFormat = LogFormat.TEXT
     output_file: str | None = None
     die_after: float | None = None
     some_param: float = 1.5
@@ -79,7 +78,7 @@ class StubConsumer(Module):
 
     @rpc
     def start(self) -> None:
-        pass
+        super().start()
 
 
 class StubProducer(Module):
@@ -87,32 +86,42 @@ class StubProducer(Module):
 
     @rpc
     def start(self) -> None:
-        pass
+        super().start()
+
+
+_WATCHDOG_POLL_INTERVAL = 0.1
+_WATCHDOG_MAX_POLLS = 30
+_THREAD_DRAIN_DELAY = 0.5
 
 
 def test_process_crash_triggers_stop() -> None:
     """When the native process dies unexpectedly, the watchdog calls stop()."""
-    mod = StubNativeModule(die_after=0.2)
-    mod.pointcloud.transport = LCMTransport("/pc", PointCloud2)
-    mod.start()
+    module = StubNativeModule(die_after=0.2)
+    transport = LCMTransport("/pc", PointCloud2)
+    module.pointcloud.transport = transport
+    try:
+        module.start()
 
-    assert mod._process is not None
-    pid = mod._process.pid
+        assert module._process is not None
+        pid = module._process.pid
 
-    # Wait for the process to die and the watchdog to call stop()
-    for _ in range(30):
-        time.sleep(0.1)
-        if mod._process is None:
-            break
+        # Wait for the process to die and the watchdog to call stop()
+        for _ in range(_WATCHDOG_MAX_POLLS):
+            time.sleep(_WATCHDOG_POLL_INTERVAL)
+            if module._process is None:
+                break
 
-    assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
+        assert module._process is None, f"Watchdog did not clean up after process {pid} died"
 
-    # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
-    # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
-    time.sleep(0.5)
-
-    # Ensure all threads (LCM transport, event loop) are cleaned up
-    mod.stop()
+        # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
+        # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
+        time.sleep(_THREAD_DRAIN_DELAY)
+    finally:
+        module.stop()
+        try:
+            transport.stop()
+        except Exception:
+            pass
 
 
 @pytest.mark.slow
@@ -138,7 +147,7 @@ def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
 
 
 @pytest.mark.slow
-def test_autoconnect(args_file: str) -> None:
+def test_autoconnect(args_file):
     """autoconnect passes correct topic args to the native subprocess."""
     blueprint = autoconnect(
         StubNativeModule.blueprint(
@@ -156,7 +165,7 @@ def test_autoconnect(args_file: str) -> None:
     coordinator = ModuleCoordinator.build(blueprint.global_config(viewer="none"))
     try:
         # Validate blueprint wiring: all modules deployed
-        native = coordinator.get_instance(StubNativeModule)  # type: ignore[arg-type]
+        native = coordinator.get_instance(StubNativeModule)
         consumer = coordinator.get_instance(StubConsumer)
         producer = coordinator.get_instance(StubProducer)
         assert native is not None
@@ -175,7 +184,7 @@ def test_autoconnect(args_file: str) -> None:
         for _ in range(50):
             if Path(args_file).exists():
                 break
-            time.sleep(0.1)
+            time.sleep(_WATCHDOG_POLL_INTERVAL)
     finally:
         coordinator.stop()
 

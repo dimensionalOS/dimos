@@ -68,7 +68,7 @@ yolo11n.pt
 
 *mobileclip*
 /results
-/result
+results/
 **/cpp/result
 
 CLAUDE.MD
