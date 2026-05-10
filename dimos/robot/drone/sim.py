@@ -21,5 +21,5 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.mujoco_connection import MujocoConnection
-from dimos.robot.drone.type.odometry import Odometry as SimOdometry
+from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
 from dimos.utils.logging_config import setup_logger

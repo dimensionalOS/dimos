@@ -28,7 +28,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-from dimos.robot.drone.type.odometry import Odometry
+from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
 
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
