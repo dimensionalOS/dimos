@@ -8,7 +8,7 @@ from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -45,7 +45,7 @@ class DroneSimConnection(DroneConnectionModule):
 
     @rpc
     def start(self) -> None:
-        super().start()
+        Module.start(self)
 
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -71,7 +71,7 @@ class DroneSimConnection(DroneConnectionModule):
         self.connection.stop()
         if self._camera_info_thread and self._camera_info_thread.is_alive():
             self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        super().stop()
+        Module.stop(self)
 
     def _publish_camera_info_loop(self) -> None:
         assert self.connection is not None
