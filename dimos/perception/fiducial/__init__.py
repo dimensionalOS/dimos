@@ -12,6 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+try:
+    import cv2.aruco  # noqa: F401
+except (ImportError, AttributeError) as e:
+    raise ImportError(
+        "dimos.perception.fiducial requires cv2.aruco. Install with: uv sync --inexact --extra apriltag"
+    ) from e
+
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule, MarkerTfModuleConfig, deploy
 
 __all__ = ["MarkerTfModule", "MarkerTfModuleConfig", "deploy"]
