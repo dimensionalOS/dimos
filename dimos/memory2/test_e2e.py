@@ -34,7 +34,7 @@ from dimos.utils.data import get_data_dir
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-DB_PATH = get_data_dir() / "go2_bigoffice.db"
+DB_PATH = get_data_dir() / "go2_short.db"
 
 
 @pytest.fixture(scope="module")
@@ -74,17 +74,17 @@ class PoseIndex:
 
 @pytest.fixture(scope="module")
 def video_replay() -> LegacyPickleStore[Image]:
-    return LegacyPickleStore("unitree_go2_bigoffice/video")
+    return LegacyPickleStore("go2_short/video")
 
 
 @pytest.fixture(scope="module")
 def odom_index() -> PoseIndex:
-    return PoseIndex(LegacyPickleStore("unitree_go2_bigoffice/odom"))
+    return PoseIndex(LegacyPickleStore("go2_short/odom"))
 
 
 @pytest.fixture(scope="module")
 def lidar_replay() -> LegacyPickleStore[PointCloud2]:
-    return LegacyPickleStore("unitree_go2_bigoffice/lidar")
+    return LegacyPickleStore("go2_short/lidar")
 
 
 @pytest.mark.tool

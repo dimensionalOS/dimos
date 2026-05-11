@@ -1,0 +1,9 @@
+codecov:
+  branch: main
+
+coverage:
+  status: false
+
+comment:
+  require_head: false
+  require_base: false

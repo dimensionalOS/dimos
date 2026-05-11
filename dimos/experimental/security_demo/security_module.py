@@ -17,6 +17,7 @@ from __future__ import annotations  # noqa: I001
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Literal
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 
 import cv2
 import numpy as np
@@ -393,6 +394,6 @@ class SecurityModule(Module):
         with self._lock:
             thread = self._main_thread
         if thread is not None:
-            thread.join(timeout=2.0)
+            thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             with self._lock:
                 self._main_thread = None

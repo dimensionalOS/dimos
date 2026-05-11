@@ -1,6 +1,6 @@
 # System Dependencies Install (Ubuntu 22.04 or 24.04)
 
-```sh
+```sh skip
 sudo apt-get update
 sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit
 
@@ -10,7 +10,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin
 
 # Using DimOS as a library
 
-```sh
+```sh skip
 mkdir myproject && cd myproject
 
 uv venv --python 3.12
@@ -23,13 +23,13 @@ uv pip install 'dimos[misc,sim,visualization,agents,web,perception,unitree,manip
 
 # Developing on DimOS
 
-```sh
+```sh skip
 # this allows getting large files on-demand (and not pulling all immediately)
 export GIT_LFS_SKIP_SMUDGE=1
-git clone -b dev https://github.com/dimensionalOS/dimos.git
+git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
 
-uv sync --all-extras --no-extra dds
+uv sync --extra all
 
 # type check
 uv run mypy dimos

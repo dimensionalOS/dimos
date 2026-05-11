@@ -18,6 +18,7 @@ import time
 from reactivex import Subject
 
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.stream.audio.node_output import SounddeviceAudioOutput
@@ -46,7 +47,7 @@ class SpeakSkill(Module):
         with self._bg_threads_lock:
             threads = list(self._bg_threads)
         for t in threads:
-            t.join(timeout=2.0)
+            t.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._tts_node:
             self._tts_node.dispose()
             self._tts_node = None

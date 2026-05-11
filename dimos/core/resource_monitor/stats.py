@@ -115,6 +115,33 @@ def _collect_proc(proc: psutil.Process) -> ProcStats:
     )
 
 
+@dataclass(frozen=True)
+class ChildProcessStats:
+    """CPU stats for a single child process."""
+
+    pid: int
+    name: str
+    cpu_percent: float
+
+
+def collect_children_stats(pid: int) -> list[ChildProcessStats]:
+    """Return per-child CPU stats for all direct children of pid."""
+    result: list[ChildProcessStats] = []
+    try:
+        proc = _get_process(pid)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return result
+    for child in proc.children(recursive=False):
+        try:
+            child_proc = _get_process(child.pid)
+            name = child_proc.name()
+            cpu = child_proc.cpu_percent(interval=None)
+            result.append(ChildProcessStats(pid=child.pid, name=name, cpu_percent=cpu))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return result
+
+
 def collect_process_stats(pid: int) -> ProcessStats:
     """Collect resource stats for a single process by PID."""
     try:
@@ -137,3 +164,4 @@ class WorkerStats(ProcessStats):
 
     worker_id: int = -1
     modules: list[str] = field(default_factory=list)
+    children: list[ChildProcessStats] = field(default_factory=list)

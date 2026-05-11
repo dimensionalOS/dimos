@@ -1,37 +1,43 @@
 # Viewer Backends
 
-Dimos supports three visualization backends: Rerun (web or native) and Foxglove.
+Dimos supports three visualization backends: `rerun` (default), `foxglove`, and `none`.
 
 ## Quick Start
 
-Choose your viewer via the CLI (preferred):
+Choose your viewer via the CLI:
 
 ```bash
 # Rerun native viewer (default) - dimos-viewer with built-in teleop + click-to-navigate
 dimos run unitree-go2
 
-# Explicitly select the viewer mode:
+# Explicitly select the viewer backend:
 dimos --viewer rerun run unitree-go2
-dimos --viewer rerun-web run unitree-go2
 dimos --viewer foxglove run unitree-go2
+dimos --viewer none run unitree-go2
 ```
 
-Alternative (environment variable):
+Control how the Rerun viewer opens with `--rerun-open` and `--rerun-web`:
 
 ```bash
-# Rerun native viewer (default) - dimos-viewer with built-in teleop + click-to-navigate
-VIEWER=rerun dimos run unitree-go2
+# Open native desktop viewer (default)
+dimos --rerun-open native run unitree-go2
 
-# Rerun web viewer - browser dashboard + teleop at http://localhost:7779
-VIEWER=rerun-web dimos run unitree-go2
+# Open web viewer in browser
+dimos --rerun-open web run unitree-go2
 
-# Foxglove - Use Foxglove Studio instead of Rerun
-VIEWER=foxglove dimos run unitree-go2
+# Open both native and web
+dimos --rerun-open both run unitree-go2
+
+# No viewer (headless) — data still accessible via gRPC
+dimos --rerun-open none run unitree-go2
+
+# Serve the web viewer without auto-opening a browser
+dimos --rerun-web --rerun-open native run unitree-go2
 ```
 
 ## Viewer Modes Explained
 
-### Rerun Native (`rerun`) — Default
+### Rerun Native (`rerun`, `--rerun-open native`) — Default
 
 **What you get:**
 - [dimos-viewer](https://github.com/dimensionalOS/dimos-viewer), a custom Dimensional fork of Rerun with built-in keyboard teleop and click-to-navigate
@@ -41,7 +47,7 @@ VIEWER=foxglove dimos run unitree-go2
 
 ---
 
-### Rerun Web (`rerun-web`)
+### Rerun Web (`rerun`, `--rerun-open web`)
 
 **What you get:**
 - Browser-based dashboard at http://localhost:7779
@@ -63,22 +69,27 @@ VIEWER=foxglove dimos run unitree-go2
 
 ## Rendering with Custom Blueprints
 
-To enable rerun within your own blueprint simply include `RerunBridgeModule`:
+To enable visualization in your own blueprint, use `vis_module`:
 
 ```python
-from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.visualization.vis_module import vis_module
 
 camera_demo = autoconnect(
     CameraModule.blueprint(),
-    RerunBridgeModule.blueprint(
-        viewer_mode="native", # native (desktop), web (browser), none (headless)
-    ),
+    vis_module(viewer_backend=global_config.viewer),
 )
 
+```
+
+Run the stack locally (this blocks until you stop the process):
+
+```python skip
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+
 if __name__ == "__main__":
-    camera_demo.build().loop()
+    ModuleCoordinator.build(camera_demo).loop()
 ```
 
 Every LCM stream, such as `color_image` (output by CameraModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the LCM topic as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
@@ -98,7 +109,7 @@ This happens on lower-end hardware (NUC, older laptops) with large maps.
 
 Edit [`dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py):
 
-```python
+```python skip
 # Before (high detail, slower on large maps)
 voxel_mapper(voxel_size=0.05),  # 5cm voxels
 
@@ -111,6 +122,34 @@ voxel_mapper(voxel_size=0.1),   # 10cm voxels
 - But slightly less detail in the map
 
 ---
+
+## Direct Visualization from a Module
+
+If you want to log data to Rerun directly from inside a module (e.g. for debugging or one-off visualizations), use `rerun_init` instead of calling `rr.init()` yourself. It handles colormap registration and can optionally start a gRPC server so a viewer can connect.
+
+```python
+import rerun as rr
+from dimos.visualization.rerun.init import rerun_init
+
+# Basic init (no gRPC server — use when RerunBridgeModule is already running)
+rerun_init()
+rr.log("debug/my_points", rr.Points3D(positions=[[1, 2, 3]]))
+
+# Start a gRPC server so you can connect a viewer
+rerun_init(start_grpc=True)
+# Then connect with: dimos-viewer --connect rerun+http://127.0.0.1:9877/proxy
+
+# Custom gRPC config
+rerun_init(
+    start_grpc=True,
+    grpc_config={
+        "connect_url": "rerun+http://127.0.0.1:9999/proxy",
+        "server_memory_limit": "4GB",
+    },
+)
+```
+
+When a `RerunBridgeModule` is already part of your blueprint, you typically don't need `start_grpc` — just call `rerun_init()` and log directly with `rr.log()`. The data will appear in the existing viewer.
 
 ## How to use Rerun on `dev` (and the TF/entity nuances)
 

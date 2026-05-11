@@ -121,10 +121,14 @@ class ModuleBase(Configurable, CompositeResource):
     _module_closed_lock: threading.Lock
     _loop_thread_timeout: float = 2.0
     _main_gen: AsyncGenerator[None, None] | None = None
+    _tools: dict[str, Any]
+    _tools_lock: threading.Lock
 
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
+        self._tools = {}
+        self._tools_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
         try:
             self.rpc = self.config.rpc_transport(  # type: ignore[call-arg]
@@ -174,6 +178,7 @@ class ModuleBase(Configurable, CompositeResource):
                 return
             self._module_closed = True
 
+        self._close_all_tools()
         self._close_rpc()
 
         # Save into local variables to avoid race when stopping concurrently
@@ -199,6 +204,16 @@ class ModuleBase(Configurable, CompositeResource):
             attr.stop()
             attr.owner = None
 
+    def _close_all_tools(self) -> None:
+        with self._tools_lock:
+            streams = list(self._tools.values())
+            self._tools.clear()
+        for stream in streams:
+            try:
+                stream.stop()
+            except Exception:
+                logger.exception("failed to stop tool-stream during module close")
+
     def _close_rpc(self) -> None:
         if self.rpc:
             self.rpc.stop()  # type: ignore[attr-defined]
@@ -215,6 +230,8 @@ class ModuleBase(Configurable, CompositeResource):
         state.pop("_rpc", None)
         state.pop("_tf", None)
         state.pop("_main_gen", None)
+        state.pop("_tools", None)
+        state.pop("_tools_lock", None)
         return state
 
     def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
@@ -227,6 +244,8 @@ class ModuleBase(Configurable, CompositeResource):
         self._rpc = None
         self._tf = None
         self._main_gen = None
+        self._tools = {}
+        self._tools_lock = threading.Lock()
 
     @property
     def tf(self):  # type: ignore[no-untyped-def]
@@ -443,6 +462,66 @@ class ModuleBase(Configurable, CompositeResource):
         on_msg, dispatcher_disp = self._make_async_dispatch(async_cb)
         sub = observable.subscribe(on_msg)
         return self.register_disposable(CompositeDisposable(sub, dispatcher_disp))
+
+    def start_tool(self, name: str) -> None:
+        """Open a tool-stream channel named `name` for this module.
+
+        Must be called from inside a `@skill` method's main thread. The caller's
+        `progressToken` is captured at this moment so later updates can be
+        routed as `notifications/progress` frames bound to the originating
+        `tools/call`.
+
+        Raises `RuntimeError` if a tool with the same name is already active on
+        this module (two concurrent streams for the same logical tool is almost
+        always a programmer error; `stop_tool` the previous one first).
+        """
+        # Lazy import
+        from dimos.agents.mcp.tool_stream import ToolStream
+
+        stream = ToolStream(name)
+        with self._tools_lock:
+            # Defensive check to prevent duplicate tools with the same name.
+            if name in self._tools:
+                # Unwind the already-constructed stream before raising so the
+                # LCM transport doesn't leak.
+                try:
+                    stream.stop()
+                except Exception:
+                    logger.exception("failed to unwind duplicate ToolStream")
+                raise RuntimeError(
+                    f"Tool {name!r} is already active on {type(self).__name__}. "
+                    f"Call stop_tool({name!r}) first."
+                )
+            self._tools[name] = stream
+
+    def tool_update(self, name: str, message: str) -> None:
+        """Publish `message` on the tool-stream channel named `name`.
+
+        Safe to call from any thread. If `name` is not currently active (never
+        started, or already stopped), logs a warning and returns. Background
+        loops racing against teardown don't need to guard themselves.
+        """
+        with self._tools_lock:
+            stream = self._tools.get(name)
+        if stream is None:
+            logger.warning(
+                "tool_update on unknown tool",
+                tool=name,
+                module=type(self).__name__,
+            )
+            return
+        stream.send(message)
+
+    def stop_tool(self, name: str) -> None:
+        """Close the tool-stream channel named `name`."""
+        with self._tools_lock:
+            stream = self._tools.pop(name, None)
+        if stream is None:
+            return
+        try:
+            stream.stop()
+        except Exception:
+            logger.exception("Failed to stop tool-stream", tool=name)
 
     def _start_main(self) -> None:
         """

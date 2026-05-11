@@ -17,12 +17,10 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any
 
-from langchain_core.messages import HumanMessage
 import numpy as np
 from reactivex.disposable import Disposable
 from turbojpeg import TurboJPEG
 
-from dimos.agents.agent_spec import AgentSpec
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -66,7 +64,6 @@ class PersonFollowSkillContainer(Module):
     global_map: In[PointCloud2]
     cmd_vel: Out[Twist]
 
-    _agent_spec: AgentSpec
     _frequency: float = 20.0  # Hz - control loop frequency
     _max_lost_frames: int = 15  # number of frames to wait before declaring person lost
     _patrolling_module_spec: PatrollingModuleSpec
@@ -101,6 +98,11 @@ class PersonFollowSkillContainer(Module):
     @rpc
     def stop(self) -> None:
         self._stop_following()
+
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._thread = None
 
         with self._lock:
             if self._tracker is not None:
@@ -140,6 +142,10 @@ class PersonFollowSkillContainer(Module):
         """
 
         self._stop_following()
+
+        if self._thread is not None:
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._thread = None
 
         self._should_stop.clear()
 
@@ -228,12 +234,13 @@ class PersonFollowSkillContainer(Module):
 
         logger.info(f"EdgeTAM initialized with {len(initial_detections)} detections")
 
+        self.start_tool("follow_person")
         self._thread = Thread(target=self._follow_loop, args=(tracker, query), daemon=True)
         self._thread.start()
 
         message = (
             "Found the person. Starting to follow. You can stop following by calling "
-            "the 'stop_following' tool."
+            "the 'stop_following' tool. You will receive streaming updates."
         )
 
         if self._patrolling_module_spec.is_patrolling():
@@ -304,8 +311,11 @@ class PersonFollowSkillContainer(Module):
 
     def _send_stop_reason(self, query: str, reason: str) -> None:
         self.cmd_vel.publish(Twist.zero())
-        message = f"Person follow stopped for '{query}'. Reason: {reason}."
-        self._agent_spec.add_message(HumanMessage(message))
+        self.tool_update(
+            "follow_person",
+            f"Person follow stopped for '{query}'. Reason: {reason}.",
+        )
+        self.stop_tool("follow_person")
         logger.info("Person follow stopped", query=query, reason=reason)
 
 

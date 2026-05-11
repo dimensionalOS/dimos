@@ -25,6 +25,9 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
@@ -34,18 +37,19 @@ DEFAULT_ANGULAR_SPEED: float = 0.8  # rad/s
 DEFAULT_BOOST_MULTIPLIER: float = 2.0
 DEFAULT_SLOW_MULTIPLIER: float = 0.5
 
+_WINDOW_WIDTH = 500
+_WINDOW_HEIGHT = 400
+_FONT_SIZE = 24
+_CONTROL_RATE_HZ = 50
+_BACKGROUND_COLOR = (30, 30, 30)
+_HELP_TEXT_COLOR = (150, 150, 150)
+_INDICATOR_RADIUS = 15
+
 
 class KeyboardTeleop(Module):
-    """Pygame-based keyboard control module.
+    """Pygame-based keyboard control. Outputs Twist on cmd_vel."""
 
-    Outputs standard Twist messages on /cmd_vel for velocity control.
-
-    Speed constants can be tuned at the top of this file, or overridden
-    per-instance by passing linear_speed / angular_speed /
-    boost_multiplier / slow_multiplier to the constructor.
-    """
-
-    cmd_vel: Out[Twist]  # Standard velocity commands
+    cmd_vel: Out[Twist]
 
     _stop_event: threading.Event
     _keys_held: set[int] | None = None
@@ -79,8 +83,6 @@ class KeyboardTeleop(Module):
         self._thread = threading.Thread(target=self._pygame_loop, daemon=True)
         self._thread.start()
 
-        return
-
     @rpc
     def stop(self) -> None:
         stop_twist = Twist()
@@ -101,10 +103,10 @@ class KeyboardTeleop(Module):
             raise RuntimeError("_keys_held not initialized")
 
         pygame.init()
-        self._screen = pygame.display.set_mode((500, 400), pygame.SWSURFACE)
+        self._screen = pygame.display.set_mode((_WINDOW_WIDTH, _WINDOW_HEIGHT), pygame.SWSURFACE)
         pygame.display.set_caption("Keyboard Teleop")
         self._clock = pygame.time.Clock()
-        self._font = pygame.font.Font(None, 24)
+        self._font = pygame.font.Font(None, _FONT_SIZE)
 
         while not self._stop_event.is_set():
             for event in pygame.event.get():
@@ -120,7 +122,7 @@ class KeyboardTeleop(Module):
                         stop_twist.linear = Vector3(0, 0, 0)
                         stop_twist.angular = Vector3(0, 0, 0)
                         self.cmd_vel.publish(stop_twist)
-                        print("EMERGENCY STOP!")
+                        logger.warning("EMERGENCY STOP!")
                     elif event.key == pygame.K_ESCAPE:
                         # ESC quits
                         self._stop_event.set()
@@ -162,15 +164,14 @@ class KeyboardTeleop(Module):
             twist.linear.y *= speed_multiplier
             twist.angular.z *= speed_multiplier
 
-            # Always publish twist at 50Hz
             self.cmd_vel.publish(twist)
 
             self._update_display(twist)
 
-            # Maintain 50Hz rate
+            # Maintain control loop rate
             if self._clock is None:
                 raise RuntimeError("_clock not initialized")
-            self._clock.tick(50)
+            self._clock.tick(_CONTROL_RATE_HZ)
 
         pygame.quit()
 
@@ -178,7 +179,7 @@ class KeyboardTeleop(Module):
         if self._screen is None or self._font is None or self._keys_held is None:
             raise RuntimeError("Not initialized correctly")
 
-        self._screen.fill((30, 30, 30))
+        self._screen.fill(_BACKGROUND_COLOR)
 
         y_pos = 20
 
@@ -207,9 +208,9 @@ class KeyboardTeleop(Module):
             y_pos += 30
 
         if twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0:
-            pygame.draw.circle(self._screen, (255, 0, 0), (450, 30), 15)  # Red = moving
+            pygame.draw.circle(self._screen, (255, 0, 0), (450, 30), _INDICATOR_RADIUS)
         else:
-            pygame.draw.circle(self._screen, (0, 255, 0), (450, 30), 15)  # Green = stopped
+            pygame.draw.circle(self._screen, (0, 255, 0), (450, 30), _INDICATOR_RADIUS)
 
         y_pos = 280
         help_texts = [
@@ -218,7 +219,7 @@ class KeyboardTeleop(Module):
             "Space: E-Stop | ESC: Quit",
         ]
         for text in help_texts:
-            surf = self._font.render(text, True, (150, 150, 150))
+            surf = self._font.render(text, True, _HELP_TEXT_COLOR)
             self._screen.blit(surf, (20, y_pos))
             y_pos += 25
 

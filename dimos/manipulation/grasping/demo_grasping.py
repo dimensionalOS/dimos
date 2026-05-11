@@ -22,7 +22,7 @@ from dimos.manipulation.grasping.graspgen_module import graspgen
 from dimos.manipulation.grasping.grasping import GraspingModule
 from dimos.perception.detection.detectors.yoloe import YoloePromptMode
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.visualization.vis_module import vis_module
 
 camera_module = RealSenseCamera.blueprint(enable_pointcloud=False)
 
@@ -44,7 +44,7 @@ demo_grasping = autoconnect(
             ("/tmp", "/tmp", "rw")
         ],  # Grasp visualization debug standalone: python -m dimos.manipulation.grasping.visualize_grasps
     ),
-    FoxgloveBridge.blueprint(),
+    vis_module("foxglove"),
     McpServer.blueprint(),
     McpClient.blueprint(),
 ).global_config(viewer="foxglove")
