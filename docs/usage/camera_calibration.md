@@ -35,3 +35,31 @@ uv run dimos cameracalibrate --source folder --images ./capture --cols 8 --rows 
 ```
 
 Wrong `--square-size-m` skews metric geometry even when reprojection error looks good.
+
+## Run `dimos cameracalibrate`
+
+Run from the repo or any directory where `uv run dimos` resolves (same pattern as other `dimos` CLIs). Required flags are always `--source`, `--cols`, `--rows`, `--square-size-m`, and `--out`. Folder mode also requires `--images`.
+
+**Webcam (interactive).** Open a live preview on device `--device-index`. When inner corners are detected, the board is drawn on the preview; press **Space** to accept the current frame. The CLI collects `--target-count` accepted frames (default 20) then solves. Press **q** to quit early (that aborts unless enough frames were already accepted).
+
+```bash
+uv run dimos cameracalibrate --source webcam --device-index 0 --cols 8 --rows 6 --square-size-m 0.02485 --out ./camera_info.yaml
+```
+
+**Folder (stills).** Load every `*.png`, `*.jpg`, and `*.jpeg` in the directory, sorted by filename. Each image should show the full board with detectable inner corners.
+
+```bash
+uv run dimos cameracalibrate --source folder --images ./capture/ --cols 8 --rows 6 --square-size-m 0.02485 --out ./camera_info.yaml
+```
+
+Optional flags (same for both sources): `--target-count` (webcam only; default 20), `--camera-name` (default `webcam`), `--frame-id` (default `camera_optical`; accepted by the CLI but not written into the YAML, which matches the ROS CameraInfo file schema), `--no-display` (no OpenCV window; for headless or automation).
+
+On success the process prints the calibration RMS, the YAML path, and a preview PNG path (same basename as `--out`, suffix `.preview.png`). Example:
+
+```text
+RMS: 0.342187 px (20 frame(s) used)
+Wrote camera info YAML to camera_info.yaml
+Wrote preview overlay PNG to camera_info.preview.png
+```
+
+Your RMS and frame count depend on the capture; paths echo the `--out` you passed (for example `./camera_info.yaml` if you used that form).
