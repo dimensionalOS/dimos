@@ -47,7 +47,7 @@ def _convert_navigation_costmap(grid: Any) -> Any:
 def _static_base_link(rr: Any) -> list[Any]:
     return [
         rr.Boxes3D(
-            half_sizes=[0.2, 0.15, 0.75],
+            half_sizes=[0.05, 0.05, 0.02],
             colors=[(0, 255, 127)],
             fill_mode="MajorWireframe",
         ),
