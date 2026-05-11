@@ -61,6 +61,12 @@ jobs:
           for pkg in gnu-sed gcc portaudio git-lfs libjpeg-turbo; do
             brew list "$pkg" &>/dev/null || brew install "$pkg"
           done
+          # DimSim's bridge launches headless via Playwright with channel: "chrome"
+          # which hardcodes /Applications/Google Chrome.app. Bundled Chromium has
+          # broken WebGL on macOS, so we install real Chrome.
+          if [ ! -d "/Applications/Google Chrome.app" ]; then
+            brew install --cask google-chrome
+          fi
 
       - name: Set up git-lfs
         run: |
@@ -97,9 +103,14 @@ jobs:
           ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
           LCM_DEFAULT_URL: "udpm://239.255.76.67:7667?ttl=0"
           CI: "1"
+          # Hardware GPU via Metal/ANGLE through the brew-installed Chrome.app.
+          # Bundled Chromium has broken WebGL on macOS, and SwiftShader (cpu)
+          # saturates the main thread on the Mac Mini-class runner.
+          DIMSIM_RENDER: gpu
+          DIMSIM_CHROME_CHANNEL: chrome
         run: |
           source .venv/bin/activate
-          python -m pytest --durations=10 -m 'not (tool or mujoco)' --timeout=120 dimos/
+          python -m pytest --durations=10 -m 'not (tool or mujoco)' --timeout=240 dimos/
 
       - name: Check disk usage (post-test)
         if: always()
@@ -110,4 +121,4 @@ jobs:
         run: |
           source .venv/bin/activate
           mypy dimos
-# macOS CI retrigger
+# retrigger: dimsim v0.2.7 (5Hz lidar)

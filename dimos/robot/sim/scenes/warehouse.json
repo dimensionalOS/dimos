@@ -1,0 +1,268 @@
+{
+  "version": "2.0",
+  "worldKey": "default",
+  "exportedAt": 0,
+  "tags": [
+    "empty",
+    "template"
+  ],
+  "embodiment": {
+    "avatarUrl": [
+      "/agent-model/unitree_go2.glb",
+      "/agent-model/robot.glb"
+    ],
+    "radius": 0.12,
+    "halfHeight": 0.25,
+    "lidarMountHeight": 0.35,
+    "type": "quadruped",
+    "walkSpeed": 3.0
+  },
+  "assets": [],
+  "primitives": [
+    {
+      "id": "floor",
+      "type": "box",
+      "name": "floor",
+      "dimensions": {
+        "width": 20.0,
+        "height": 0.1,
+        "depth": 20.0
+      },
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": -0.05,
+          "z": 0
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "material": {
+        "color": "#808080"
+      },
+      "castShadow": true,
+      "receiveShadow": true
+    },
+    {
+      "id": "crate-0",
+      "type": "box",
+      "name": "crate-0",
+      "dimensions": {
+        "width": 1.0,
+        "height": 1.0,
+        "depth": 1.0
+      },
+      "transform": {
+        "position": {
+          "x": 3.0,
+          "y": 0.5,
+          "z": 2
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "material": {
+        "color": "#8b4513"
+      },
+      "castShadow": true,
+      "receiveShadow": true
+    },
+    {
+      "id": "crate-1",
+      "type": "box",
+      "name": "crate-1",
+      "dimensions": {
+        "width": 1.0,
+        "height": 1.0,
+        "depth": 1.0
+      },
+      "transform": {
+        "position": {
+          "x": 4.5,
+          "y": 0.5,
+          "z": 2
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "material": {
+        "color": "#8b4513"
+      },
+      "castShadow": true,
+      "receiveShadow": true
+    },
+    {
+      "id": "crate-2",
+      "type": "box",
+      "name": "crate-2",
+      "dimensions": {
+        "width": 1.0,
+        "height": 1.0,
+        "depth": 1.0
+      },
+      "transform": {
+        "position": {
+          "x": 6.0,
+          "y": 0.5,
+          "z": 2
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "material": {
+        "color": "#8b4513"
+      },
+      "castShadow": true,
+      "receiveShadow": true
+    },
+    {
+      "id": "crate-3",
+      "type": "box",
+      "name": "crate-3",
+      "dimensions": {
+        "width": 1.0,
+        "height": 1.0,
+        "depth": 1.0
+      },
+      "transform": {
+        "position": {
+          "x": 7.5,
+          "y": 0.5,
+          "z": 2
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "material": {
+        "color": "#8b4513"
+      },
+      "castShadow": true,
+      "receiveShadow": true
+    },
+    {
+      "id": "ball",
+      "type": "sphere",
+      "name": "ball",
+      "dimensions": {
+        "radius": 0.3
+      },
+      "transform": {
+        "position": {
+          "x": -2,
+          "y": 2,
+          "z": -2
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "material": {
+        "color": "#ff4444"
+      },
+      "castShadow": true,
+      "receiveShadow": true
+    }
+  ],
+  "lights": [
+    {
+      "id": "ambient-1",
+      "type": "ambient",
+      "color": "#ffffff",
+      "intensity": 0.6
+    },
+    {
+      "id": "dir-sun",
+      "type": "directional",
+      "color": "#fff5e6",
+      "intensity": 1.5,
+      "position": {
+        "x": 10,
+        "y": 20,
+        "z": 10
+      },
+      "target": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "castShadow": true
+    },
+    {
+      "id": "hemi-1",
+      "type": "hemisphere",
+      "color": "#87ceeb",
+      "groundColor": "#4a7a4a",
+      "intensity": 0.4,
+      "position": {
+        "x": 0,
+        "y": 10,
+        "z": 0
+      }
+    }
+  ],
+  "groups": [],
+  "sceneSettings": {
+    "sky": {
+      "enabled": true,
+      "topColor": "#1a6be0",
+      "horizonColor": "#c8ddf5",
+      "bottomColor": "#4a7a4a",
+      "brightness": 1,
+      "softness": 0.6,
+      "sunStrength": 0.3,
+      "sunHeight": 0.45
+    }
+  },
+  "dimosSpawnPoint": {
+    "x": 0.0,
+    "y": 0.5,
+    "z": 0.0
+  }
+}
