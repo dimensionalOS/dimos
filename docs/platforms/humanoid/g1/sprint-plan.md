@@ -54,7 +54,7 @@ dimos mcp list-tools
 dimos log -n 100
 ```
 
-- For GCP, use the requested project alias/ID explicitly on every command, e.g. `gcloud ... --project openclaw`. If `openclaw` is only a local alias, resolve it before submitting builds; in this workspace the active project currently resolves to `openclaw-1773763209`.
+- For GCP, use the requested project alias/ID explicitly on every command, e.g. `gcloud ... --project YOUR_PROJECT_ID`. If a short name is only a local alias, resolve it before submitting builds.
 - A practical cloud target is a Docker image that runs the same smoke command headlessly (`--viewer none`) for CI; interactive graphics/GPU should stay local or on a GPU VM with display forwarding.
 - Do not require real robot networking (`ROBOT_IP`, DDS/WebRTC, sport mode) for simulation sprints.
 
