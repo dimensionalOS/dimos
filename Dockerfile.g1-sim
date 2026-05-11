@@ -1,0 +1,38 @@
+# Headless DimOS Unitree G1 simulation smoke image.
+FROM python:3.12-slim
+
+ENV UV_SYSTEM_PYTHON=1 \
+    PYTHONUNBUFFERED=1 \
+    DIMOS_INSTALL=0 \
+    DIMOS_USE_SYSTEM=1 \
+    RUN_SECONDS=20 \
+    BLUEPRINT=unitree-g1-sim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+        libegl1 \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
+        libsm6 \
+        libx11-6 \
+        libxext6 \
+        libxrender1 \
+        pkg-config \
+        portaudio19-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+WORKDIR /app
+COPY pyproject.toml setup.py README.md LICENSE MANIFEST.in ./
+COPY dimos ./dimos
+COPY scripts/g1_sim_smoke.sh ./scripts/g1_sim_smoke.sh
+
+RUN uv pip install '.[unitree,sim]'
+
+CMD ["bash", "scripts/g1_sim_smoke.sh"]
