@@ -63,6 +63,8 @@ class MockController:
             self._command[0] = linear[0]  # forward/backward
             self._command[1] = linear[1]  # left/right
             self._command[2] = angular[2]  # rotation
+        else:
+            self._command[:] = 0
         result: NDArray[Any] = self._command.copy()
         return result
 
@@ -75,6 +77,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     robot_name = config.robot_model or "unitree_go1"
     if robot_name == "unitree_go2":
         robot_name = "unitree_go1"
+    if robot_name == "drone":
+        robot_name = "bitcraze_crazyflie_2"
 
     controller = MockController(shm)
     model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
@@ -87,6 +91,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
             z = 0.3
         case "unitree_g1":
             z = 0.8
+        case "bitcraze_crazyflie_2":
+            z = 0.5
         case _:
             z = 0
 
