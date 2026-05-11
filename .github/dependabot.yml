@@ -7,6 +7,9 @@ updates:
     # https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns
     cooldown:
       default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
 
   - package-ecosystem: "uv"
     directory: "/"
@@ -18,6 +21,9 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 10
+    groups:
+      python:
+        patterns: ["*"]
 
   - package-ecosystem: "docker"
     directories: ["/docker/*/"]
@@ -26,3 +32,6 @@ updates:
     # https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns
     cooldown:
       default-days: 7
+    groups:
+      docker:
+        patterns: ["*"]
