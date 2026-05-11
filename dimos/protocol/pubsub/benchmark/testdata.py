@@ -15,6 +15,7 @@
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+import os
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -279,6 +280,44 @@ from dimos.protocol.pubsub.impl.rospubsub import (
     RawROSTopic,
     ROSTopic,
 )
+
+try:
+    from dimos.protocol.pubsub.impl.webrtc_providers.cloudflare import CloudflareProvider
+    from dimos.protocol.pubsub.impl.webrtcpubsub import (
+        WEBRTC_AVAILABLE,
+        WebRTCPubSub,
+    )
+except ImportError:  # pragma: no cover
+    WEBRTC_AVAILABLE = False
+    WebRTCPubSub = None  # type: ignore[assignment,misc]
+    CloudflareProvider = None  # type: ignore[assignment,misc]
+
+if (
+    WEBRTC_AVAILABLE
+    and os.environ.get("CF_TELEOP_APP_ID")
+    and os.environ.get("CF_TELEOP_APP_SECRET")
+):
+
+    @contextmanager
+    def webrtc_pubsub_channel() -> Generator["WebRTCPubSub", None, None]:
+        """WebRTC DataChannel pubsub via Cloudflare Realtime SFU."""
+        provider = CloudflareProvider()
+        pubsub = WebRTCPubSub(provider=provider)
+        pubsub.start()
+        try:
+            yield pubsub
+        finally:
+            pubsub.stop()
+
+    def webrtc_msggen(size: int) -> tuple[str, bytes]:
+        return ("benchmark_webrtc", make_data_bytes(size))
+
+    testcases.append(
+        Case(
+            pubsub_context=webrtc_pubsub_channel,
+            msg_gen=webrtc_msggen,
+        )
+    )
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

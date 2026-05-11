@@ -327,6 +327,12 @@ dds = [
     "cyclonedds>=0.10.5",
 ]
 
+webrtc = [
+    # WebRTC DataChannel pubsub (Cloudflare Realtime SFU)
+    "aiortc>=1.13.0",
+    "httpx>=0.27.0",
+]
+
 # Minimal dependencies for Docker modules that communicate with the DimOS host
 docker = [
     "dimos-lcm",

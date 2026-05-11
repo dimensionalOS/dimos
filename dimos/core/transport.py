@@ -35,6 +35,11 @@ except ImportError:
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.impl.webrtcpubsub import (
+    WEBRTC_AVAILABLE,
+    DataChannelProvider,
+    WebRTCPubSub,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -325,6 +330,59 @@ if DDS_AVAILABLE:
                 if not self._started:
                     self.start()
                 return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+
+class WebRTCTransport(PubSubTransport[T]):
+    """Transport over WebRTC DataChannels.
+
+    Backend-agnostic: accepts any :class:`DataChannelProvider`
+    (Cloudflare, LiveKit, etc). Messages are raw bytes.
+    """
+
+    _started: bool = False
+
+    def __init__(
+        self,
+        topic: str,
+        *,
+        provider: DataChannelProvider | None = None,
+        **provider_kwargs: Any,
+    ) -> None:
+        super().__init__(topic)
+        if not WEBRTC_AVAILABLE:
+            raise RuntimeError(
+                "WebRTC support requires aiortc and httpx. Install with `pip install dimos[webrtc]`."
+            )
+        if provider is not None:
+            self.webrtc = WebRTCPubSub(provider=provider)
+        else:
+            # Default: Cloudflare provider from env vars
+            from dimos.protocol.pubsub.impl.webrtc_providers.cloudflare import CloudflareProvider
+
+            self.webrtc = WebRTCPubSub(provider=CloudflareProvider(**provider_kwargs))
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        return (WebRTCTransport, (self.topic,))
+
+    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+        if not self._started:
+            self.start()
+        self.webrtc.publish(self.topic, msg)
+
+    def subscribe(  # type: ignore[override]
+        self, callback: Callable[[T], None], selfstream: In[T] | None = None
+    ) -> Callable[[], None]:
+        if not self._started:
+            self.start()
+        return self.webrtc.subscribe(self.topic, lambda msg, _topic: callback(msg))  # type: ignore[arg-type]
+
+    def start(self) -> None:
+        self.webrtc.start()
+        self._started = True
+
+    def stop(self) -> None:
+        self.webrtc.stop()
+        self._started = False
 
 
 class ZenohTransport(PubSubTransport[T]): ...
