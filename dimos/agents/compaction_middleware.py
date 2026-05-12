@@ -120,11 +120,6 @@ TRANSCRIPT:
 """
 
 
-# ---------------------------------------------------------------------------
-# Token counting (placeholder; memoized in additional_kwargs["dimos_tokens"])
-# ---------------------------------------------------------------------------
-
-
 def count_tokens(text: str) -> int:
     """Approximate token count for a string. Pessimistic heuristic: ceil(len/3)."""
     if not text:
@@ -181,11 +176,6 @@ def _has_image(content: Any) -> bool:
     if not isinstance(content, list):
         return False
     return any(isinstance(b, dict) and b.get("type") in ("image_url", "image") for b in content)
-
-
-# ---------------------------------------------------------------------------
-# Middleware
-# ---------------------------------------------------------------------------
 
 
 class DimosCompactionMiddleware(AgentMiddleware):  # type: ignore[misc]
@@ -509,11 +499,6 @@ class DimosCompactionMiddleware(AgentMiddleware):  # type: ignore[misc]
             content=f"[Prior conversation summary]\n{summary_text}",
             additional_kwargs=kw,
         )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _stringify_content(content: Any) -> str:

@@ -44,10 +44,6 @@ from dimos.agents.compaction_middleware import (
 )
 from dimos.agents.mcp.mcp_client import _tag_turn
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def make_human(text: str, turn: int) -> HumanMessage:
     m = HumanMessage(content=text)
@@ -115,11 +111,6 @@ def make_counting_fake(responses: list[str]) -> tuple[CountingFake, list[str]]:
     return m, m.received
 
 
-# ---------------------------------------------------------------------------
-# Token counter tests
-# ---------------------------------------------------------------------------
-
-
 def test_token_counter_text() -> None:
     s = "x" * 30
     assert count_tokens(s) == 30 // CHARS_PER_TOKEN  # 10
@@ -152,11 +143,6 @@ def test_static_tokens_cached() -> None:
     b = mw._static_tokens()
     assert a == b
     assert mw._static_cache is not None  # cache populated
-
-
-# ---------------------------------------------------------------------------
-# before_model behavior tests
-# ---------------------------------------------------------------------------
 
 
 def test_below_threshold_is_noop() -> None:
@@ -442,16 +428,6 @@ def test_recompaction_folds_prior_summary() -> None:
     assert len(compacted) == 1
     # And [s1] was visible to the second summarizer call.
     assert any("[s1]" in p for p in received[1:])
-
-
-# ---------------------------------------------------------------------------
-# Integration tests — middleware running inside a real `create_agent` loop.
-#
-# These exercise paths the unit tests above cannot: the `add_messages` reducer's
-# interpretation of `RemoveMessage(REMOVE_ALL_MESSAGES)`, what the agent node
-# actually sees AFTER compaction, and the "fires before EVERY model call"
-# invariant when a single turn involves multiple model invocations.
-# ---------------------------------------------------------------------------
 
 
 class RecordingFakeAgent(FakeMessagesListChatModel):
