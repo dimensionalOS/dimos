@@ -399,13 +399,6 @@ tests-self-hosted = [
 ]
 
 [tool.uv]
-# `unitree-dds` is a superset of `unitree` (adds DDS bridge libs that need
-# system cyclonedds). Mark them conflicting so uv's universal resolver
-# doesn't try to satisfy both at once when `unitree` is requested.
-conflicts = [
-    [{ extra = "unitree" }, { extra = "unitree-dds" }],
-    [{ extra = "dds" }, { extra = "unitree-dds" }],
-]
 default-groups = ["tests"]
 
 [tool.ruff]
