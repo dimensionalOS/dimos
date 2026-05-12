@@ -2173,6 +2173,7 @@ lint = [
     { name = "openai" },
     { name = "openai-whisper" },
     { name = "pandas-stubs" },
+    { name = "pytest" },
     { name = "python-can" },
     { name = "python-socketio" },
     { name = "ruff" },
@@ -2454,6 +2455,7 @@ lint = [
     { name = "openai" },
     { name = "openai-whisper" },
     { name = "pandas-stubs", specifier = ">=2.3.2.250926,<3" },
+    { name = "pytest", specifier = "==8.3.5" },
     { name = "python-can", specifier = ">=4" },
     { name = "python-socketio", specifier = ">=5.16.1" },
     { name = "ruff", specifier = "==0.14.3" },
@@ -6553,13 +6555,13 @@ name = "open3d-unofficial-arm"
 version = "0.19.0.post9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "configargparse", marker = "platform_machine == 'aarch64' and sys_platform != 'win32'" },
-    { name = "dash", marker = "platform_machine == 'aarch64' and sys_platform != 'win32'" },
-    { name = "flask", marker = "platform_machine == 'aarch64' and sys_platform != 'win32'" },
-    { name = "nbformat", marker = "platform_machine == 'aarch64' and sys_platform != 'win32'" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'win32'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform != 'win32'" },
-    { name = "werkzeug", marker = "platform_machine == 'aarch64' and sys_platform != 'win32'" },
+    { name = "configargparse", marker = "platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'" },
+    { name = "dash", marker = "platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'" },
+    { name = "flask", marker = "platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'" },
+    { name = "nbformat", marker = "platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'" },
+    { name = "werkzeug", marker = "platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ec/f9/edcfaa213800ea278804402baa65693840bc7a323b3de8a31c54ce4e42c8/open3d_unofficial_arm-0.19.0.post9.tar.gz", hash = "sha256:ee300bd557f04750db6e47ccb6c6867c6dd6cfc04169dddeb92505da9ea739ef", size = 5327, upload-time = "2026-04-16T21:21:11.152Z" }
 wheels = [
