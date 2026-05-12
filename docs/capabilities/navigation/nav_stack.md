@@ -82,7 +82,7 @@ create_nav_stack(
 
 Capped at two levels: LocalPlanner caps how fast it will *plan*, PathFollower caps how fast it will *execute*.
 
-```python
+```python session=nav_stack
 create_nav_stack(
     local_planner={"max_speed": 1.5, "autonomy_speed": 1.0},
     path_follower={"max_speed": 1.5, "autonomy_speed": 1.0},
@@ -167,7 +167,7 @@ Following the CMU autonomy convention, odometry splits into two paths: **local**
 
 If you have a Livox Mid-360 lidar and a module that consumes `cmd_vel: In[Twist]`, compose three blueprints with `autoconnect`:
 
-```python
+```python skip
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -201,7 +201,7 @@ my_robot_nav = (
 
 Just needs `cmd_vel: In[Twist]` and a subscription that drives the hardware:
 
-```python
+```python skip
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -235,7 +235,7 @@ class MyRobotControl(Module):
 
 Add a Rerun bridge:
 
-```python
+```python skip
 from dimos.navigation.nav_stack.main import nav_stack_rerun_config
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
