@@ -362,7 +362,7 @@ tests = [
 
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
-    "dimos[psql,drone,cpu]",
+    "dimos[apriltag,psql,drone,cpu]",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
