@@ -24,7 +24,7 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait as futures_wait
 from dataclasses import dataclass
 from enum import Enum
 import threading
@@ -148,6 +148,7 @@ class ManipulationModule(Module):
         # Per-robot async planning job tracking
         self._planning_jobs: dict[RobotName, PlanningJob] = {}
         self._executing: dict[RobotName, bool] = {}
+        self._last_op_success: dict[RobotName, bool] = {}
         self._next_request_id: int = 0
         self._planning_pool: ThreadPoolExecutor | None = None
 
@@ -360,8 +361,29 @@ class ManipulationModule(Module):
 
     @rpc
     def get_state(self) -> str:
-        """Get current manipulation state name."""
-        return self._state.name
+        """Get aggregate manipulation state derived from per-robot job records.
+
+        may need to be revisited
+
+        Priority: FAULT > PLANNING > EXECUTING > COMPLETED > IDLE.
+        """
+        with self._lock:
+            if self._state == ManipulationState.FAULT:
+                return ManipulationState.FAULT.name
+            if any(j.success is False for j in self._planning_jobs.values()):
+                return ManipulationState.FAULT.name
+            if any(
+                j.future is None or not j.future.done()
+                for j in self._planning_jobs.values()
+            ):
+                return ManipulationState.PLANNING.name
+            # During transition, execute() still flips self._state to EXECUTING/COMPLETED.
+            # Once execute() is rewritten to use self._executing, the self._state check drops.
+            if self._state == ManipulationState.EXECUTING or any(self._executing.values()):
+                return ManipulationState.EXECUTING.name
+            if any(self._last_op_success.values()):
+                return ManipulationState.COMPLETED.name
+            return ManipulationState.IDLE.name
 
     @rpc
     def get_error(self) -> str:
@@ -391,8 +413,10 @@ class ManipulationModule(Module):
         """
         if self._state == ManipulationState.EXECUTING:
             return "Error: Cannot reset while executing — cancel the motion first"
-        self._state = ManipulationState.IDLE
-        self._error_message = ""
+        with self._lock:
+            self._state = ManipulationState.IDLE
+            self._error_message = ""
+            self._last_op_success.clear()
         return "Reset to IDLE — ready for new commands"
 
     @rpc
@@ -530,6 +554,84 @@ class ManipulationModule(Module):
                 job.future = future
         return True
 
+    def _build_status(self, robot_name: RobotName, job: PlanningJob | None) -> dict[str, Any]:
+        """Caller must hold self._lock."""
+        if job is None:
+            return {
+                "robot_name": robot_name,
+                "active": False,
+                "accepted": False,
+                "done": False,
+                "success": None,
+                "error": None,
+                "duration_s": None,
+            }
+        done = job.future is not None and job.future.done()
+        end_time = job.completed_at if job.completed_at is not None else time.time()
+        return {
+            "robot_name": robot_name,
+            "active": not done,
+            "accepted": True,
+            "done": done,
+            "success": job.success,
+            "error": job.error,
+            "duration_s": end_time - job.accepted_at,
+        }
+
+    @rpc
+    def get_planning_status(
+        self, robot_name: RobotName | None = None
+    ) -> dict[str, Any]:
+        """Return per-robot planning job status.
+
+        With a robot_name, returns a single status dict for that robot.
+        With robot_name=None, returns a {robot_name: status_dict} map covering
+        every robot that has ever had a planning job submitted.
+        """
+        with self._lock:
+            if robot_name is not None:
+                return self._build_status(robot_name, self._planning_jobs.get(robot_name))
+            return {
+                name: self._build_status(name, job)
+                for name, job in self._planning_jobs.items()
+            }
+
+    @rpc
+    def wait_for_planning_completion(
+        self, robot_name: RobotName | None = None, timeout: float | None = None
+    ) -> bool:
+        """Block until planning job(s) reach a terminal state.
+
+        Returns True iff every waited-on job completed within the timeout
+        (regardless of success). Check get_planning_status() or has_planned_path()
+        to distinguish success from planning failure.
+
+        With robot_name=None, timeout is a total wall-clock budget across all
+        currently-active robots, not per-robot.
+
+        Args:
+            robot_name: robot name to wait for
+            timeout: Max time to wait in seconds
+        """
+        with self._lock:
+            if robot_name is not None:
+                job = self._planning_jobs.get(robot_name)
+                futures = (
+                    [job.future]
+                    if job is not None and job.future is not None
+                    else []
+                )
+            else:
+                futures = [
+                    j.future for j in self._planning_jobs.values() if j.future is not None
+                ]
+
+        if not futures:
+            return True
+
+        _, not_done = futures_wait(futures, timeout=timeout)
+        return not not_done
+
     def _planning_worker(
         self,
         robot_name: RobotName,
@@ -638,6 +740,7 @@ class ManipulationModule(Module):
             job.completed_at = time.time()
             job.success = success
             job.error = error
+            self._last_op_success[robot_name] = success
             if success and path is not None and traj is not None:
                 self._planned_paths[robot_name] = path
                 self._planned_trajectories[robot_name] = traj
