@@ -26,7 +26,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import JpegLcmTransport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_stack.main import create_nav_stack
+from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.sim.adapter import DimSimAdapter
 from dimos.robot.sim.bridge import DimSimBridge
 from dimos.robot.sim.jpeg_lcm import SimJpegLCM
@@ -81,19 +81,25 @@ def _static_body(rr: Any) -> list[Any]:
     ]
 
 
-rerun_config = {
-    "blueprint": _go2_sim_rerun_blueprint,
-    "pubsubs": [SimJpegLCM()],
-    "visual_override": {
-        "world/camera_info": DimSimBridge.rerun_suppress_camera_info,
-        "world/color_image": _convert_color_image,
-        "world/navigation_costmap": _convert_navigation_costmap,
+# Use nav_stack's standard rerun defaults (paint costmap_cloud, terrain
+# maps, paths, way_points, etc.) and overlay our go2/dimsim-specific
+# entries. Without this base, SimplePlanner's ``costmap_cloud`` and
+# ``goal_path`` channels have no visual_override and don't show up.
+rerun_config = nav_stack_rerun_config(
+    {
+        "blueprint": _go2_sim_rerun_blueprint,
+        "pubsubs": [SimJpegLCM()],
+        "visual_override": {
+            "world/camera_info": DimSimBridge.rerun_suppress_camera_info,
+            "world/color_image": _convert_color_image,
+            "world/navigation_costmap": _convert_navigation_costmap,
+        },
+        "static": {
+            "world/tf/body": _static_body,
+            "world/tf/camera_optical": DimSimBridge.rerun_static_pinhole,
+        },
     },
-    "static": {
-        "world/tf/body": _static_body,
-        "world/tf/camera_optical": DimSimBridge.rerun_static_pinhole,
-    },
-}
+)
 
 # DimSim publishes JPEG-encoded image bytes on /color_image and
 # /depth_image. JpegLcmTransport on the consumer side decodes them
