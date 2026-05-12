@@ -13,7 +13,10 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from dataclasses import dataclass
+import os
 from queue import Empty, Queue
+import sys
 from threading import Event, RLock, Thread
 import time
 from typing import Any
@@ -59,6 +62,7 @@ class McpClient(Module):
     _message_queue: Queue[BaseMessage]
     _tool_registry: dict[str, dict[str, Any]]
     _history: list[BaseMessage]
+    _parent_session_id: str | None
     _thread: Thread
     _stop_event: Event
     _http_client: httpx.Client
@@ -72,6 +76,7 @@ class McpClient(Module):
         self._message_queue = Queue()
         self._tool_registry = {}
         self._history = []
+        self._parent_session_id: str | None = None
         self._thread = Thread(
             target=self._thread_loop,
             name=f"{self.__class__.__name__}-thread",
@@ -218,6 +223,15 @@ class McpClient(Module):
 
             model = MockModel(json_path=self.config.model_fixture)
 
+        from dimos.core.global_config import global_config
+        from dimos.core.session_store import restore_session
+
+        self._history, self._parent_session_id = restore_session(
+            blueprint=os.environ.get("DIMOS_BLUEPRINT", ""),
+            restore_session_id=global_config.restore_session,
+            no_restore=global_config.no_restore,
+        )
+
         with self._lock:
             self._state_graph = create_agent(
                 model=model,
@@ -238,6 +252,22 @@ class McpClient(Module):
         if self._thread.is_alive():
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         self._http_client.close()
+
+        run_id = os.environ.get("DIMOS_RUN_ID", "")
+        blueprint = os.environ.get("DIMOS_BLUEPRINT", "")
+        if run_id and blueprint and self._history:
+            from dimos.core.session_store import save_session
+
+            save_session(
+                run_id=run_id,
+                blueprint=blueprint,
+                model=self.config.model,
+                started_at=os.environ.get("DIMOS_STARTED_AT"),
+                original_argv=sys.argv,
+                history=self._history,
+                parent_session_id=self._parent_session_id,
+            )
+
         super().stop()
 
     @rpc
