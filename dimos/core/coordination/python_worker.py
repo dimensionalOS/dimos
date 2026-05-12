@@ -21,6 +21,7 @@ import os
 import signal
 import sys
 import threading
+import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
@@ -418,13 +419,19 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
                     "allow_pickle": True,
                 },
             )
-            # `ThreadedServer.__init__` binds the socket but does not call
-            # `listen()` — that happens in `start()` on the thread. Call
-            # `_listen()` synchronously first so the port we return is
-            # actually accepting connections.
-            state.rpyc_server._listen()
+            # `ThreadedServer.__init__` binds the socket but `listen()` only
+            # runs once `start()` executes on the thread, which sets
+            # `active=True` immediately after. Wait on that flag so callers
+            # never see a Connection refused before the accept loop is live.
             state.rpyc_thread = threading.Thread(target=state.rpyc_server.start, daemon=True)
             state.rpyc_thread.start()
+            deadline = time.monotonic() + 5.0
+            while not state.rpyc_server.active:
+                if not state.rpyc_thread.is_alive():
+                    raise RuntimeError("rpyc server thread died before listening")
+                if time.monotonic() > deadline:
+                    raise RuntimeError("rpyc server failed to start listening within 5s")
+                time.sleep(0.001)
             return WorkerResponse(result=state.rpyc_server.port)
 
         case ShutdownRequest():
