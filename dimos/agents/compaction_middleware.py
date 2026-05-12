@@ -219,7 +219,7 @@ class DimosCompactionMiddleware(AgentMiddleware):  # type: ignore[misc]
         # fake models accept and ignore the kwarg.
         try:
             self._summarizer = summarizer.bind(max_tokens=summary_size_tokens)
-        except Exception:  # noqa: BLE001 — exotic duck-typed summarizers may not support bind
+        except Exception:
             self._summarizer = summarizer
         self._threshold = threshold_tokens
         self._target = target_tokens
@@ -368,9 +368,7 @@ class DimosCompactionMiddleware(AgentMiddleware):  # type: ignore[misc]
 
             new_kwargs = dict(m.additional_kwargs or {})
             new_kwargs.pop("dimos_tokens", None)
-            new_msg = m.model_copy(
-                update={"content": new_blocks, "additional_kwargs": new_kwargs}
-            )
+            new_msg = m.model_copy(update={"content": new_blocks, "additional_kwargs": new_kwargs})
             out.append(new_msg)
         return out
 
@@ -473,7 +471,7 @@ class DimosCompactionMiddleware(AgentMiddleware):  # type: ignore[misc]
             transcript=transcript, summary_size_tokens=self._summary_size
         )
         # `cast` because @retry erases the return type to Any.
-        return cast(str, self._invoke_summarizer(prompt))
+        return cast("str", self._invoke_summarizer(prompt))
 
     @retry(max_retries=2, on_exception=Exception, delay=0.5)  # type: ignore[untyped-decorator]
     def _invoke_summarizer(self, prompt: str) -> str:

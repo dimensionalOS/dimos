@@ -53,9 +53,7 @@ def _env_int(name: str) -> int | None:
     try:
         return int(v)
     except ValueError:
-        raise ValueError(
-            f"Environment variable {name!r} must be an integer, got {v!r}"
-        ) from None
+        raise ValueError(f"Environment variable {name!r} must be an integer, got {v!r}") from None
 
 
 def _env_str(name: str) -> str | None:
@@ -280,8 +278,7 @@ class McpClient(Module):
                     tool_schemas=[
                         t.args_schema.model_json_schema()
                         for t in tools
-                        if t.args_schema is not None
-                        and hasattr(t.args_schema, "model_json_schema")
+                        if t.args_schema is not None and hasattr(t.args_schema, "model_json_schema")
                     ],
                 )
             )

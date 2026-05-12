@@ -44,7 +44,6 @@ from dimos.agents.compaction_middleware import (
 )
 from dimos.agents.mcp.mcp_client import _tag_turn
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -492,9 +491,7 @@ def test_full_loop_compaction_fires_inside_create_agent() -> None:
     `RemoveMessage(REMOVE_ALL_MESSAGES)`, and the final state contains the
     summary plus the agent's appended response.
     """
-    agent_model = RecordingFakeAgent(
-        responses=[AIMessage(content="Acknowledged.")]
-    )
+    agent_model = RecordingFakeAgent(responses=[AIMessage(content="Acknowledged.")])
     summarizer = CountingFake(responses=["FAKE_SUMMARY"])
 
     history: list[BaseMessage] = [SystemMessage(content="You are a test agent.")]
@@ -516,20 +513,17 @@ def test_full_loop_compaction_fires_inside_create_agent() -> None:
         middleware=[mw],
     )
 
-    result = graph.invoke(cast(Any, {"messages": history}))
+    result = graph.invoke(cast("Any", {"messages": history}))
     final_messages = result["messages"]
 
     # 1. The agent's response was appended (loop ran to completion).
-    assert any(
-        isinstance(m, AIMessage) and m.content == "Acknowledged." for m in final_messages
-    )
+    assert any(isinstance(m, AIMessage) and m.content == "Acknowledged." for m in final_messages)
 
     # 2. A compaction summary message exists in the final state.
     summaries = [
         m
         for m in final_messages
-        if isinstance(m, SystemMessage)
-        and (m.additional_kwargs or {}).get("dimos_compacted")
+        if isinstance(m, SystemMessage) and (m.additional_kwargs or {}).get("dimos_compacted")
     ]
     assert len(summaries) == 1
     assert "FAKE_SUMMARY" in summaries[0].content
@@ -551,8 +545,7 @@ def test_full_loop_compaction_fires_inside_create_agent() -> None:
     # 5. Old turns are gone from the final state too (reducer wiped them via
     #    the REMOVE_ALL_MESSAGES sentinel).
     final_contents = " | ".join(
-        m.content if isinstance(m.content, str) else str(m.content)
-        for m in final_messages
+        m.content if isinstance(m.content, str) else str(m.content) for m in final_messages
     )
     assert "q1 " not in final_contents
     assert "q2 " not in final_contents
@@ -570,9 +563,7 @@ def test_compaction_fires_between_tool_call_and_final_answer() -> None:
         responses=[
             AIMessage(
                 content="",
-                tool_calls=[
-                    {"name": "get_big_result", "args": {}, "id": "call_x"}
-                ],
+                tool_calls=[{"name": "get_big_result", "args": {}, "id": "call_x"}],
             ),
             AIMessage(content="Tool reply received."),
         ]
@@ -600,7 +591,7 @@ def test_compaction_fires_between_tool_call_and_final_answer() -> None:
         middleware=[mw],
     )
 
-    result = graph.invoke(cast(Any, {"messages": history}))
+    result = graph.invoke(cast("Any", {"messages": history}))
     final_messages = result["messages"]
 
     # 1. Model was called twice (tool_call round-trip + final answer).
@@ -630,6 +621,5 @@ def test_compaction_fires_between_tool_call_and_final_answer() -> None:
 
     # 5. Final answer was appended.
     assert any(
-        isinstance(m, AIMessage) and m.content == "Tool reply received."
-        for m in final_messages
+        isinstance(m, AIMessage) and m.content == "Tool reply received." for m in final_messages
     )
