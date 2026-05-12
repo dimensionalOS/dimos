@@ -303,8 +303,13 @@ base = [
 ]
 
 # All extras except dds and unitree-dds (which require special system setup).
+apriltag = [
+    "opencv-contrib-python==4.10.0.84",
+    "reportlab>=4.5.0",
+]
+
 all = [
-    "dimos[agents,base,cpu,cuda,docker,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,docker,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
 ]
 
 [dependency-groups]
