@@ -98,7 +98,7 @@ uv run dimos --rerun-host 0.0.0.0 run unitree-g1-nav-onboard
 
 On your laptop:
 
-```sh
+```sh skip
 # install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv venv --python "3.12"

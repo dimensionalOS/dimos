@@ -136,11 +136,8 @@ from dimos.visualization.rerun.init import rerun_init
 rerun_init()
 rr.log("debug/my_points", rr.Points3D(positions=[[1, 2, 3]]))
 
-# Start a gRPC server so you can connect a viewer
-rerun_init(start_grpc=True)
-# Then connect with: dimos-viewer --connect rerun+http://127.0.0.1:9877/proxy
-
-# Custom gRPC config
+# Start a gRPC server so a viewer can connect.  `grpc_config` is required
+# whenever start_grpc=True; it carries the connect URL and the server memory cap.
 rerun_init(
     start_grpc=True,
     grpc_config={
@@ -148,6 +145,7 @@ rerun_init(
         "server_memory_limit": "4GB",
     },
 )
+# Then connect with: dimos-viewer --connect rerun+http://127.0.0.1:9999/proxy
 ```
 
 When a `RerunBridgeModule` is already part of your blueprint, you typically don't need `start_grpc` — just call `rerun_init()` and log directly with `rr.log()`. The data will appear in the existing viewer.
