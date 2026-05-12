@@ -20,9 +20,13 @@ import base64
 from collections.abc import Callable
 import functools
 import json
+import math
+import os
+from pathlib import Path
 import pickle
 import subprocess
 import sys
+import sysconfig
 import threading
 import time
 from typing import Any, TypeVar
@@ -98,8 +102,6 @@ class MujocoConnection:
 
         Uses pinhole camera model: f = height / (2 * tan(fovy / 2))
         """
-        import math
-
         fovy = math.radians(VIDEO_CAMERA_FOV)
         f = VIDEO_HEIGHT / (2 * math.tan(fovy / 2))
         cx = VIDEO_WIDTH / 2.0
@@ -126,12 +128,23 @@ class MujocoConnection:
 
         # Launch the subprocess
         try:
-            # mjpython must be used macOS (because of launch_passive inside mujoco_process.py)
+            # mjpython must be used on macOS (because of launch_passive inside mujoco_process.py).
+            # It needs libpython on the dylib search path; uv-installed Pythons
+            # use @rpath which doesn't always resolve inside venvs, so we
+            # point DYLD_LIBRARY_PATH at the real libpython directory.
             executable = sys.executable if sys.platform != "darwin" else "mjpython"
+            env = os.environ.copy()
+            if sys.platform == "darwin":
+                # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
+                libdir = Path(sysconfig.get_config_var("LIBDIR") or "")
+                if libdir.is_dir():
+                    existing = env.get("DYLD_LIBRARY_PATH", "")
+                    env["DYLD_LIBRARY_PATH"] = f"{libdir}:{existing}" if existing else str(libdir)
 
             self.process = subprocess.Popen(
                 [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
                 stderr=subprocess.PIPE,
+                env=env,
             )
 
         except Exception as e:

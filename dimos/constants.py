@@ -51,3 +51,5 @@ LCM_MAX_CHANNEL_NAME_LENGTH = 63
 
 # Default timeout (seconds) for thread.join() during shutdown.
 DEFAULT_THREAD_JOIN_TIMEOUT = 2.0
+
+DEFAULT_BUILD_NATIVE = False

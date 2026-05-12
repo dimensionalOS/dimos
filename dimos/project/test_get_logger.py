@@ -41,6 +41,10 @@ WHITELIST = [
         'logger = logging.getLogger("gstreamer_tcp_sender")',
     ),
     ("dimos/core/test_async_module_main.py", 'target = logging.getLogger("dimos/core/module.py")'),
+    (
+        "dimos/visualization/rerun/websocket_server.py",
+        'ws_logger = logging.getLogger("websockets.server")',
+    ),
 ]
 
 
