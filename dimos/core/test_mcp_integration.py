@@ -25,10 +25,10 @@ once per test.  Only classes that explicitly manage their own lifecycle
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime, timezone
 import json
 import os
-from typing import TYPE_CHECKING
 
 import pytest
 import requests
@@ -36,7 +36,6 @@ from typer.testing import CliRunner
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.conftest import _BUCKET
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
@@ -48,9 +47,6 @@ from dimos.core.run_registry import (
 from dimos.core.tests.stress_test_module import StressTestModule
 from dimos.robot.cli.dimos import main
 
-if TYPE_CHECKING:
-    from collections.abc import Generator
-
 
 @pytest.fixture(autouse=True)
 def _ci_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,9 +54,7 @@ def _ci_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _clean_registry(
-    tmp_path: object, monkeypatch: pytest.MonkeyPatch
-) -> Generator[object, None, None]:
+def _clean_registry(tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> Iterator[object]:
     from pathlib import Path
 
     import dimos.core.run_registry as _reg
@@ -72,7 +66,7 @@ def _clean_registry(
 
 
 @pytest.fixture(scope="class")
-def mcp_shared(request: pytest.FixtureRequest) -> Generator[ModuleCoordinator, None, None]:
+def mcp_shared(mcp_url: str) -> Iterator[ModuleCoordinator]:
     """Build a shared StressTestModule + McpServer.  Class-scoped -- started
     once, torn down after every test in the class finishes.  Use for
     read-only tests that don't stop/restart the server."""
@@ -82,15 +76,14 @@ def mcp_shared(request: pytest.FixtureRequest) -> Generator[ModuleCoordinator, N
         McpServer.blueprint(),
     )
     coord = ModuleCoordinator.build(bp)
-    url = f"http://localhost:{20000 + _BUCKET}/mcp"
-    ready = McpAdapter(url=url).wait_for_ready()
+    ready = McpAdapter(url=mcp_url).wait_for_ready()
     yield coord
     coord.stop()
     assert ready, "MCP server did not start within timeout"
 
 
 @pytest.fixture()
-def mcp_entry(mcp_shared: ModuleCoordinator, tmp_path: object) -> Generator[RunEntry, None, None]:
+def mcp_entry(mcp_shared: ModuleCoordinator, tmp_path: object) -> Iterator[RunEntry]:
     """Create registry entry for the running blueprint."""
     from pathlib import Path
 

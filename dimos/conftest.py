@@ -88,19 +88,19 @@ def pytest_configure(config):
         os.environ["COVERAGE_PROCESS_START"] = str(config.rootpath / "pyproject.toml")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def mcp_port() -> int:
     """The MCP server port pinned for this xdist worker."""
     return 20000 + _BUCKET
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def mcp_url(mcp_port: int) -> str:
     """The MCP server URL pinned for this xdist worker."""
     return f"http://localhost:{mcp_port}/mcp"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def lcm_url() -> str:
     """The LCM bus URL pinned for this xdist worker."""
     return f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
