@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+import os
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
 import time
@@ -21,12 +22,16 @@ import uuid
 
 import httpx
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage, RemoveMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.graph.state import CompiledStateGraph
+from pydantic import Field
 from reactivex.disposable import Disposable
 
+from dimos.agents.compaction_middleware import DimosCompactionMiddleware
 from dimos.agents.mcp import tool_stream
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
@@ -41,11 +46,34 @@ from dimos.utils.sequential_ids import SequentialIds
 logger = setup_logger()
 
 
+def _env_int(name: str) -> int | None:
+    v = os.environ.get(name)
+    return int(v) if v else None
+
+
+def _env_str(name: str) -> str | None:
+    return os.environ.get(name) or None
+
+
 class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-4o"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
+
+    # Compaction: env-driven, agent-scoped. On by default.
+    agent_compaction_threshold: int = Field(
+        default_factory=lambda: _env_int("AGENT_COMPACTION_THRESHOLD") or 40_000
+    )
+    agent_compaction_target: int = Field(
+        default_factory=lambda: _env_int("AGENT_COMPACTION_TARGET") or 3_000
+    )
+    agent_compaction_summary_size: int = Field(
+        default_factory=lambda: _env_int("AGENT_COMPACTION_SUMMARY_SIZE") or 1_000
+    )
+    agent_compaction_model: str | None = Field(
+        default_factory=lambda: _env_str("AGENT_COMPACTION_MODEL")
+    )
 
 
 class McpClient(Module):
@@ -64,6 +92,7 @@ class McpClient(Module):
     _http_client: httpx.Client
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
+    _turn: int
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -81,6 +110,7 @@ class McpClient(Module):
         self._http_client = httpx.Client(timeout=120.0)
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
+        self._turn = 0
 
     def __reduce__(self) -> Any:
         return (self.__class__, (), {})
@@ -218,11 +248,50 @@ class McpClient(Module):
 
             model = MockModel(json_path=self.config.model_fixture)
 
+        middleware: list[Any] = []
+        if self.config.agent_compaction_threshold and self.config.agent_compaction_target:
+            if self.config.agent_compaction_model:
+                summarizer = init_chat_model(self.config.agent_compaction_model)
+            elif isinstance(model, str):
+                # `create_agent` accepts a model-name string and coerces internally,
+                # but the middleware needs an actual ChatModel object.
+                summarizer = init_chat_model(model)
+            else:
+                summarizer = model
+
+            middleware.append(
+                DimosCompactionMiddleware(
+                    summarizer=summarizer,
+                    threshold_tokens=self.config.agent_compaction_threshold,
+                    target_tokens=self.config.agent_compaction_target,
+                    summary_size_tokens=self.config.agent_compaction_summary_size,
+                    system_prompt=self.config.system_prompt,
+                    # Pass JSON schemas (dicts), not pydantic class objects —
+                    # otherwise json.dumps inside the middleware falls back to
+                    # str() and produces a useless tiny string, leading to
+                    # massive undercount of tool-definition tokens.
+                    tool_schemas=[
+                        t.args_schema.model_json_schema()
+                        for t in tools
+                        if t.args_schema is not None
+                        and hasattr(t.args_schema, "model_json_schema")
+                    ],
+                )
+            )
+            logger.info(
+                "Compaction middleware enabled.",
+                threshold=self.config.agent_compaction_threshold,
+                target=self.config.agent_compaction_target,
+                summary_size=self.config.agent_compaction_summary_size,
+                summarizer_model=self.config.agent_compaction_model or "(reuse agent)",
+            )
+
         with self._lock:
             self._state_graph = create_agent(
                 model=model,
                 tools=tools,
                 system_prompt=self.config.system_prompt,
+                middleware=middleware,
             )
             if not self._thread.is_alive():
                 self._thread.start()
@@ -315,23 +384,71 @@ class McpClient(Module):
                     raise ValueError("No state graph initialized")
                 self._process_message(self._state_graph, message)
 
+    def _apply_messages_update(self, node_messages: list[BaseMessage], turn: int) -> None:
+        """Merge a node's emitted messages into `self._history`, mirroring the
+        `add_messages` reducer langgraph uses internally.
+
+        Honors `RemoveMessage(id=REMOVE_ALL_MESSAGES)` as "wipe history and use
+        what came after" so compaction-middleware replacements don't accrete
+        in our local history. Specific-id RemoveMessages prune matching entries.
+        Already-tagged messages (re-emitted by middleware) keep their tags;
+        new messages get the current turn id.
+        """
+        wipe_idx: int | None = None
+        for i, m in enumerate(node_messages):
+            if isinstance(m, RemoveMessage) and m.id == REMOVE_ALL_MESSAGES:
+                wipe_idx = i
+
+        if wipe_idx is not None:
+            self._history = []
+            iter_msgs = node_messages[wipe_idx + 1 :]
+            is_replay = True
+        else:
+            iter_msgs = node_messages
+            is_replay = False
+
+        for msg in iter_msgs:
+            if isinstance(msg, RemoveMessage):
+                # Specific-id removal: drop matching from history.
+                self._history = [h for h in self._history if getattr(h, "id", None) != msg.id]
+                continue
+            if not is_replay:
+                _tag_turn(msg, turn)
+            self._history.append(msg)
+            pretty_print_langchain_message(msg)
+            self.agent.publish(msg)
+
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
     ) -> None:
         self.agent_idle.publish(False)
+        self._turn += 1
+        turn = self._turn
+        _tag_turn(message, turn)
         self._history.append(message)
         pretty_print_langchain_message(message)
         self.agent.publish(message)
 
         for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
             for node_output in update.values():
-                for msg in node_output.get("messages", []):
-                    self._history.append(msg)
-                    pretty_print_langchain_message(msg)
-                    self.agent.publish(msg)
+                # Middleware hooks (e.g. compaction's before_model) may emit
+                # updates whose value is None when they made no change.
+                if not isinstance(node_output, dict):
+                    continue
+                self._apply_messages_update(node_output.get("messages") or [], turn)
 
         if self._message_queue.empty():
             self.agent_idle.publish(True)
+
+
+def _tag_turn(message: BaseMessage, turn: int) -> None:
+    """Stamp a turn id into the message's additional_kwargs.
+
+    Used by prompt-compaction to group/score messages by the turn that produced them.
+    """
+    kwargs = getattr(message, "additional_kwargs", None)
+    if isinstance(kwargs, dict):
+        kwargs["dimos_turn"] = turn
 
 
 def _append_image_to_history(
