@@ -25,14 +25,14 @@ from dimos.mapping.models import LatLon
 from dimos.mapping.osm.osm import get_osm_map
 from dimos.utils.data import get_data
 
-_fixture_dir = get_data("osm_map_test")
+pytestmark = pytest.mark.self_hosted
 
 
 def _tile_callback(request: Request, context: Any) -> bytes:
     parts = (request.url or "").split("/")
     zoom, x, y_png = parts[-3], parts[-2], parts[-1]
     y = y_png.removesuffix(".png")
-    tile_path = _fixture_dir / f"{zoom}_{x}_{y}.png"
+    tile_path = get_data("osm_map_test") / f"{zoom}_{x}_{y}.png"
     context.headers["Content-Type"] = "image/png"
     return tile_path.read_bytes()
 
@@ -51,7 +51,7 @@ def test_get_osm_map(mock_openstreetmap_org: None) -> None:
     assert map_image.position == position
     assert map_image.n_tiles == 4
 
-    expected_image = cv2.imread(str(_fixture_dir / "full.png"))
+    expected_image = cv2.imread(str(get_data("osm_map_test") / "full.png"))
     expected_image_rgb = cv2.cvtColor(expected_image, cv2.COLOR_BGR2RGB)
     assert np.array_equal(map_image.image.data, expected_image_rgb), "Map is not the same."
 

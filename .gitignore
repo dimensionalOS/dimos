@@ -2,6 +2,9 @@
 **/*.ignore
 **/*.ignore.*
 
+# Default output of `dimos apriltag`
+/apriltags.pdf
+
 .vscode/
 
 # Ignore Python cache files

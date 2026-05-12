@@ -6,8 +6,6 @@ repos:
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: v1.5.5
     hooks:
-      - id: forbid-crlf
-      - id: remove-crlf
       - id: insert-license
         files: \.py$
         exclude: (__init__\.py$)|(dimos/rxpy_backpressure/)

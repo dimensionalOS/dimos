@@ -18,7 +18,7 @@ source .venv/bin/activate
 
 # install everything (depending on your use case you might not need all extras,
 # check your respective platform guides)
-uv pip install 'dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu,dev]'
+uv pip install 'dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu]'
 ```
 
 # Developing on DimOS
@@ -29,11 +29,13 @@ export GIT_LFS_SKIP_SMUDGE=1
 git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
 
-uv sync --extra all
+# `uv run` syncs the project deps + `tests` group on demand — enough for
+# the default test suite and mypy. For self-hosted tests, sync the extras
+# explicitly (see docs/development/testing.md).
 
 # type check
 uv run mypy dimos
 
 # tests (around a minute to run)
-uv run pytest dimos
+uv run pytest --numprocesses=auto dimos
 ```

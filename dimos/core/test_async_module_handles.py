@@ -54,7 +54,6 @@ def double_a_transport():
     double_a_tr.stop()
 
 
-@pytest.mark.slow
 def test_async_module_handles(start_double_module, a_transport, double_a_transport):
     queue = Queue()
     double_a_transport.subscribe(queue.put)

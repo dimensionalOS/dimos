@@ -98,7 +98,6 @@ def create_worker_manager():
         manager.stop()
 
 
-@pytest.mark.slow
 @pytest.mark.skipif_macos_bug
 def test_worker_manager_basic(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
@@ -117,7 +116,6 @@ def test_worker_manager_basic(create_worker_manager):
     module.stop()
 
 
-@pytest.mark.slow
 @pytest.mark.skipif_macos_bug
 def test_worker_manager_multiple_different_modules(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
@@ -140,7 +138,6 @@ def test_worker_manager_multiple_different_modules(create_worker_manager):
     module2.stop()
 
 
-@pytest.mark.slow
 @pytest.mark.skipif_macos_bug
 def test_worker_manager_parallel_deployment(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
@@ -176,7 +173,6 @@ def test_worker_manager_parallel_deployment(create_worker_manager):
     module3.stop()
 
 
-@pytest.mark.slow
 @pytest.mark.skipif_macos_bug
 def test_collect_stats(create_worker_manager):
     from dimos.core.resource_monitor.monitor import StatsMonitor
@@ -223,7 +219,6 @@ def test_collect_stats(create_worker_manager):
     module2.stop()
 
 
-@pytest.mark.slow
 @pytest.mark.skipif_macos_bug
 def test_worker_pool_modules_share_workers(create_worker_manager):
     manager = create_worker_manager(n_workers=1)
@@ -270,7 +265,6 @@ def manager_and_modules():
         manager.stop()
 
 
-@pytest.mark.slow
 @pytest.mark.skipif_macos_bug
 def test_health_check_alive_workers(manager_and_modules):
     manager, modules = manager_and_modules(n_workers=2)
@@ -281,7 +275,6 @@ def test_health_check_alive_workers(manager_and_modules):
     assert manager.health_check() is True
 
 
-@pytest.mark.slow
 @pytest.mark.skipif_macos_bug
 def test_add_workers_grows_pool(manager_and_modules):
     manager, modules = manager_and_modules(n_workers=1)
@@ -296,7 +289,6 @@ def test_add_workers_grows_pool(manager_and_modules):
     assert module.increment() == 1
 
 
-@pytest.mark.slow
 @pytest.mark.skipif_macos_bug
 def test_load_balancing_distributes_modules(manager_and_modules):
     manager, modules = manager_and_modules(n_workers=2)

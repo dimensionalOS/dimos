@@ -17,7 +17,7 @@
 Markers:
     - No special markers needed for unit tests (all run on any platform).
     - Tests that launch the actual Unity binary should use:
-        @pytest.mark.slow
+        @pytest.mark.self_hosted
         @pytest.mark.skipif(platform.system() != "Linux" or platform.machine() not in ("x86_64", "AMD64"),
                             reason="Unity binary requires Linux x86_64")
         @pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="Unity requires a display (X11)")
@@ -210,7 +210,6 @@ class TestROS1Deserialization:
 
 
 class TestTCPBridge:
-    @pytest.mark.slow
     def test_handshake_and_data_flow(self):
         """Mock Unity connects, sends a PointCloud2, verifies bridge publishes it."""
         port = _find_free_port()
@@ -395,7 +394,6 @@ class TestSensorOffset:
         assert last.twist.angular.y == pytest.approx(0.0, abs=1e-6)
 
 
-@pytest.mark.slow
 @pytest.mark.skipif(not _is_linux_x86, reason="Unity binary requires Linux x86_64")
 @pytest.mark.skipif(not _has_display, reason="Unity requires DISPLAY (X11)")
 class TestLiveUnity:

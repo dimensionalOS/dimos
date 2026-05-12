@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from dimos.core.tests.stress_test_module import StressTestModule
@@ -30,7 +32,14 @@ def app():
 
 
 @pytest.fixture
-def running_app():
+def running_app() -> Iterator[Dimos]:
+    """Function-scoped: a Dimos with `StressTestModule` running.
+
+    Function-scoped (not session) because every Dimos instance in this
+    process shares the LCM bus, so a peer test that calls `.stop()` on
+    its own `StressTestModule` would broadcast a stop RPC that closed
+    *this* instance's module too.
+    """
     instance = Dimos(n_workers=1)
     instance.run(StressTestModule)
     try:
@@ -40,10 +49,12 @@ def running_app():
 
 
 @pytest.fixture
-def client(running_app):
+def client(running_app: Dimos) -> Iterator[Dimos]:
+    """Rpyc client paired with the per-test `running_app`."""
     port = running_app._coordinator.start_rpyc_service()
     instance = Dimos.connect(host="localhost", port=port)
     try:
         yield instance
     finally:
-        instance.stop()
+        if instance.is_running:
+            instance.stop()

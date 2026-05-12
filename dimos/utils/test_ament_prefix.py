@@ -16,17 +16,26 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import os
 from pathlib import Path
+from typing import TypeVar
 
 import pytest
 
 from dimos.utils import ament_prefix
 from dimos.utils.ament_prefix import ensure_ament_packages, process_xacro
 
-_needs_ament = pytest.mark.skipif(
-    not ament_prefix._has_ament, reason="ament_index_python not installed"
-)
+_F = TypeVar("_F", bound=Callable[..., object])
+
+
+def _needs_ament(f: _F) -> _F:
+    """Marker for tests that need ament_index_python (ROS-only)."""
+    f = pytest.mark.skipif(not ament_prefix._has_ament, reason="ament_index_python not installed")(
+        f
+    )
+    return pytest.mark.self_hosted(f)
+
 
 try:
     import xacro as _xacro_module  # noqa: F401

@@ -23,7 +23,7 @@ from dimos.utils import data
 from dimos.utils.data import LfsPath
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_pull_file() -> None:
     repo_root = data.get_project_root()
     test_file_name = "cafe.jpg"
@@ -79,7 +79,7 @@ def test_pull_file() -> None:
         )
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_pull_dir() -> None:
     repo_root = data.get_project_root()
     test_dir_name = "ab_lidar_frames"
@@ -182,7 +182,7 @@ def test_lfs_path_no_download_on_creation() -> None:
     assert cache is None
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_lfs_path_with_real_file() -> None:
     """Test LfsPath with a real small LFS file."""
     # Use a small existing LFS file
@@ -216,7 +216,7 @@ def test_lfs_path_with_real_file() -> None:
     assert content.startswith(b"\x89PNG")
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_lfs_path_unload_and_reload() -> None:
     """Test unloading and reloading an LFS file."""
     filename = "three_paths.png"
@@ -261,7 +261,7 @@ def test_lfs_path_unload_and_reload() -> None:
     assert content_first == content_second
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_lfs_path_operations() -> None:
     """Test various Path operations with LfsPath."""
     filename = "three_paths.png"
@@ -290,7 +290,7 @@ def test_lfs_path_operations() -> None:
     assert filename in fspath_result
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_lfs_path_division_operator() -> None:
     """Test path division operator with LfsPath."""
     # Use a directory for testing
@@ -304,7 +304,7 @@ def test_lfs_path_division_operator() -> None:
     assert "three_paths.png" in str(result)
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_lfs_path_multiple_instances() -> None:
     """Test that multiple LfsPath instances for same file work correctly."""
     filename = "three_paths.png"
