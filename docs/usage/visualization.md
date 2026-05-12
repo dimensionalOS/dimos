@@ -71,7 +71,7 @@ dimos --rerun-web --rerun-open native run unitree-go2
 
 To enable visualization in your own blueprint, use `vis_module`:
 
-```python
+```python skip
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.module import CameraModule
@@ -128,7 +128,7 @@ voxel_mapper(voxel_size=0.1),   # 10cm voxels
 
 If you want to log data to Rerun directly from inside a module (e.g. for debugging or one-off visualizations), use `rerun_init` instead of calling `rr.init()` yourself. It handles colormap registration and can optionally start a gRPC server so a viewer can connect.
 
-```python
+```python skip
 import rerun as rr
 from dimos.visualization.rerun.init import rerun_init
 
