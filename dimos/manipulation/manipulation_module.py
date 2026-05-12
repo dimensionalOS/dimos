@@ -1290,20 +1290,40 @@ class ManipulationModule(Module):
         logger.info(f"EE z={ee.position.z:.3f} < {min_z}, lifting to z={lift_z:.3f}")
         lift_pose = Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
         if not self.plan_to_pose(lift_pose, robot_name):
-            return f"Error: Failed to plan lift from z={ee.position.z:.3f}"
+            return f"Error: Planning request rejected for lift from z={ee.position.z:.3f}"
         return self._preview_execute_wait(robot_name)
+
+    def _wait_plan(self, robot_name: RobotName | None = None) -> str | None:
+        """Block on the in-flight planning job and validate its result.
+
+        Returns None on success, or an error string. Callers that want to
+        retry on planning failure (e.g. pick() iterating grasp candidates)
+        should use this directly; sites that always bail on failure can use
+        the bundled _preview_execute_wait().
+        """
+        plan_timeout = self.config.planning_timeout + 5.0
+        if not self.wait_for_planning_completion(robot_name, plan_timeout):
+            return f"Error: Planning timed out after {plan_timeout:.1f}s"
+        status = self.get_planning_status(robot_name)
+        if not status.get("success"):
+            err = status.get("error") or "unknown reason"
+            return f"Error: Planning failed — {err}"
+        return None
 
     def _preview_execute_wait(
         self, robot_name: RobotName | None = None, preview_duration: float = 0.5
     ) -> str | None:
-        """Preview planned path, execute, and wait for completion.
+        """Wait for in-flight planning, then preview, execute, and wait for the trajectory.
 
-        Returns None on success, or an error string on failure.
-
-        Args:
-            robot_name: Robot to operate on
-            preview_duration: Duration to animate the preview in Meshcat (seconds)
+        Returns None on success, or an error string on failure. Run this after
+        plan_to_*() returns True (accepted): the planning job is in flight,
+        and this helper blocks until it finishes, then runs the rest of the
+        motion sequence. Idempotent w.r.t. the wait — if planning is already
+        done, the wait is a no-op.
         """
+        if (err := self._wait_plan(robot_name)) is not None:
+            return err
+
         logger.info("Previewing trajectory...")
         self.preview_path(preview_duration, robot_name)
 
@@ -1405,7 +1425,7 @@ class ManipulationModule(Module):
             return err
 
         if not self.plan_to_pose(pose, robot_name):
-            return f"Error: Planning failed — pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision"
+            return f"Error: Planning request rejected for pose ({x:.3f}, {y:.3f}, {z:.3f})"
 
         err = self._preview_execute_wait(robot_name)
         if err:
@@ -1440,7 +1460,7 @@ class ManipulationModule(Module):
 
         logger.info(f"Planning motion to joints [{', '.join(f'{j:.3f}' for j in joint_values)}]...")
         if not self.plan_to_joints(goal, rname):
-            return "Error: Planning failed — joint configuration may be unreachable or in collision"
+            return "Error: Planning request rejected for target joint configuration"
 
         err = self._preview_execute_wait(robot_name)
         if err:
@@ -1472,7 +1492,7 @@ class ManipulationModule(Module):
         goal = JointState(name=config.joint_names, position=config.home_joints)
         logger.info("Planning motion to home position...")
         if not self.plan_to_joints(goal, rname):
-            return "Error: Failed to plan path to home position"
+            return "Error: Planning request rejected for home position"
 
         err = self._preview_execute_wait(robot_name)
         if err:
@@ -1528,7 +1548,7 @@ class ManipulationModule(Module):
             f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in init.position)}]..."
         )
         if not self.plan_to_joints(init, robot_name):
-            return "Error: Failed to plan path to init position"
+            return "Error: Planning request rejected for init position"
 
         err = self._preview_execute_wait(robot_name)
         if err:

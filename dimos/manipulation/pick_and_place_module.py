@@ -577,15 +577,21 @@ then refreshes perception obstacles.
 
             logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
             if not self.plan_to_pose(pre_grasp_pose, rname):
-                logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
-                continue  # Try next candidate
+                logger.info(f"Grasp candidate {i + 1} approach rejected, trying next")
+                continue
+            # Wait for the async planner before committing to this candidate —
+            # planning may still fail after acceptance (collision, IK).
+            plan_err = self._wait_plan(rname)
+            if plan_err:
+                logger.info(f"Grasp candidate {i + 1} {plan_err}, trying next")
+                continue
 
             # 3. Open gripper before approach
             logger.info("Opening gripper...")
             self._set_gripper_position(0.85, rname)
             time.sleep(0.5)
 
-            # 4. Execute approach to pre-grasp
+            # 4. Execute approach to pre-grasp (planning already validated)
             err = self._preview_execute_wait(rname)
             if err:
                 return err
@@ -593,7 +599,7 @@ then refreshes perception obstacles.
             # 5. Move to grasp pose
             logger.info("Moving to grasp position...")
             if not self.plan_to_pose(grasp_pose, rname):
-                return "Error: Grasp pose planning failed"
+                return "Error: Grasp pose planning request rejected"
             err = self._preview_execute_wait(rname)
             if err:
                 return err
@@ -606,7 +612,7 @@ then refreshes perception obstacles.
             # 7. Retract to pre-grasp
             logger.info("Retracting with object...")
             if not self.plan_to_pose(pre_grasp_pose, rname):
-                return "Error: Retract planning failed"
+                return "Error: Retract planning request rejected"
             err = self._preview_execute_wait(rname)
             if err:
                 return err
@@ -672,7 +678,7 @@ then refreshes perception obstacles.
         # 1. Move to pre-place
         logger.info(f"Planning approach to place position ({x:.3f}, {y:.3f}, {z:.3f})...")
         if not self.plan_to_pose(pre_place_pose, rname):
-            return "Error: Pre-place approach planning failed"
+            return "Error: Pre-place approach planning request rejected"
 
         err = self._preview_execute_wait(rname)
         if err:
@@ -681,7 +687,7 @@ then refreshes perception obstacles.
         # 2. Lower to place position
         logger.info("Lowering to place position...")
         if not self.plan_to_pose(place_pose, rname):
-            return "Error: Place pose planning failed"
+            return "Error: Place pose planning request rejected"
         err = self._preview_execute_wait(rname)
         if err:
             return err
@@ -694,7 +700,7 @@ then refreshes perception obstacles.
         # 4. Retract
         logger.info("Retracting...")
         if not self.plan_to_pose(pre_place_pose, rname):
-            return "Error: Retract planning failed"
+            return "Error: Retract planning request rejected"
         err = self._preview_execute_wait(rname)
         if err:
             return err
