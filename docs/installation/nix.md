@@ -53,5 +53,5 @@ pip install -e ".[misc,sim,visualization,agents,web,perception,unitree,manipulat
 mypy dimos
 
 # tests (around a minute to run)
-pytest dimos
+pytest --numprocesses=auto dimos
 ```

@@ -1,9 +1,12 @@
 # Testing
 
-For development, you should install all dependencies so that tests have access to them.
+`uv run` syncs the project deps + `tests` group on demand, so the default test suite needs no upfront install — just `uv run pytest --numprocesses=auto dimos` (xdist parallelizes across cores).
+
+Self-hosted tests need the heavy optional extras (LFS data, perception models, simulation, hardware SDKs, …). Sync them explicitly before running:
 
 ```bash
-uv sync --all-extras
+uv sync --all-extras              # everything the resolver supports for your platform
+uv sync --group tests-self-hosted # just what CI installs on the self-hosted runner
 ```
 
 ## Types of tests
@@ -23,18 +26,16 @@ Rather than waste time on classifying tests, it's better to separate tests by ho
 
 | Test Group | When to run | Typical usage |
 |------------|-------------|---------------|
-| **fast tests** | after each code change | often run with filesystem watchers so tests rerun whenever a file is saved |
-| **self-hosted tests** | every once in a while to make sure you haven't broken anything | maybe every commit, but definitely before publishing a PR |
+| **default** | after each code change | often run with filesystem watchers so tests rerun whenever a file is saved |
+| **self-hosted** | every once in a while to make sure you haven't broken anything | maybe every commit, but definitely before publishing a PR |
 
 The purpose of running tests in a loop is to get immediate feedback. The faster the loop, the easier it is to identify a problem since the source is the tiny bit of code you changed.
 
-For the purposes of DimOS, self-hosted tests are marked with `@pytest.mark.self_hosted` (they need LFS, ROS, CUDA, or other heavy deps); fast tests are all the remaining ones.
+Self-hosted tests are marked with `@pytest.mark.self_hosted` (they need LFS, ROS, CUDA, or other heavy deps); the default suite is everything else.
 
 ## Usage
 
-### Fast tests
-
-Run the fast tests:
+### Default suite
 
 ```bash
 ./bin/pytest-fast
@@ -43,20 +44,18 @@ Run the fast tests:
 This is the same as:
 
 ```bash
-pytest dimos
+pytest --numprocesses=auto dimos
 ```
 
-The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes the `self_hosted`/`mujoco`/`tool`. So plain `pytest dimos` only runs fast tests.
+The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `self_hosted`/`mujoco`/`tool`, so plain `pytest dimos` runs only the default suite; `--numprocesses=auto` parallelizes across cores via pytest-xdist.
 
 ### Self-hosted tests
-
-Run the self-hosted tests:
 
 ```bash
 ./bin/pytest-slow
 ```
 
-(This is just a shortcut for `pytest -m 'not (tool or mujoco)' dimos`. I.e., run both fast tests and self-hosted tests, but not `tool` or `mujoco`.)
+(Shortcut for `pytest --numprocesses=auto -m 'not (tool or mujoco)' dimos` — runs the default suite *and* self-hosted tests, but not `tool` or `mujoco`.)
 
 When writing or debugging a specific self-hosted test, override `-m` yourself to run it:
 

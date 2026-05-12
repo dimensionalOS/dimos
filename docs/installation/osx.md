@@ -31,11 +31,13 @@ export GIT_LFS_SKIP_SMUDGE=1
 git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
 
-uv sync --all-extras
+# `uv run` syncs the project deps + `tests` group on demand — enough for
+# the default test suite and mypy. For self-hosted tests, sync the extras
+# explicitly (see docs/development/testing.md).
 
 # type check
 uv run mypy dimos
 
 # tests (around a minute to run)
-uv run pytest dimos
+uv run pytest --numprocesses=auto dimos
 ```

@@ -3,4 +3,4 @@
 set -euo pipefail
 
 . .venv/bin/activate
-exec pytest "$@" -m 'not (tool or mujoco)' dimos
+exec pytest --numprocesses=auto "$@" -m 'not (tool or mujoco)' dimos
