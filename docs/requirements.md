@@ -45,18 +45,18 @@ pip install 'dimos[base,unitree,manipulation]'       # + Arm control
 | `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |
 | `web` | FastAPI web interface, audio | fastapi, uvicorn, ffmpeg-python | No |
 | `sim` | MuJoCo simulation | mujoco, playground, pygame | No |
-| `whisper` | OpenAI Whisper STT (full, requires torch) | openai-whisper | **Yes** |
 | `unitree` | Unitree Go2 / G1 support | unitree-webrtc-connect | No |
+| `unitree-dds` | Unitree DDS bridge (superset of `unitree`) | unitree-sdk2py, cyclonedds | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
 | `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
+| `navigation` | GTSAM-backed pose graph optimization | gtsam-extended | No |
 | `cuda` | GPU acceleration | cupy, onnxruntime-gpu, xformers | **Yes** |
 | `cpu` | CPU inference backends | onnxruntime, ctransformers | No |
 | `misc` | Extra models, embeddings, hardware SDKs | cerebras, edgetam, sentence-transformers, tiktoken | Varies |
 | `docker` | Minimal set for Docker sidecar modules | dimos-lcm, numpy, opencv-headless, rerun-sdk | No |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
-| `dev` | Linting, testing, type stubs | ruff, mypy, pytest, pre-commit | No |
 | `psql` | PostgreSQL storage | psycopg2 | No |
-| `dds` | DDS transport (CycloneDDS) | dev + cyclonedds | No |
+| `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
 
 ## Headless / Server Environments
 

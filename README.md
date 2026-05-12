@@ -316,7 +316,7 @@ export GIT_LFS_SKIP_SMUDGE=1
 git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
 
-uv sync --extra all
+uv sync --all-extras
 
 # Run fast test suite
 uv run pytest dimos
