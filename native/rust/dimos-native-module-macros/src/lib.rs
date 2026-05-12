@@ -91,9 +91,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     let config_type: Type = classified
         .iter()
-        .find_map(|f| {
-            matches!(f.kind, FieldKind::Config).then(|| f.ty.clone())
-        })
+        .find_map(|f| matches!(f.kind, FieldKind::Config).then(|| f.ty.clone()))
         .unwrap_or_else(|| syn::parse_quote!(()));
 
     let config_param: TokenStream2 = if config_seen.is_some() {
@@ -212,9 +210,8 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
                 }
                 Ok(())
             })?;
-            let decode = decode.ok_or_else(|| {
-                syn::Error::new_spanned(attr, "#[input] requires `decode = ...`")
-            })?;
+            let decode = decode
+                .ok_or_else(|| syn::Error::new_spanned(attr, "#[input] requires `decode = ...`"))?;
             let handler = handler.unwrap_or_else(|| format_ident!("handle_{}", name));
             found = Some(FieldKind::Input { decode, handler });
         } else if path.is_ident("output") {
@@ -229,9 +226,9 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
                 if meta.path.is_ident("encode") {
                     encode = Some(meta.value()?.parse()?);
                 } else {
-                    return Err(meta.error(
-                        "unrecognized #[output] argument; expected `encode = ...`",
-                    ));
+                    return Err(
+                        meta.error("unrecognized #[output] argument; expected `encode = ...`")
+                    );
                 }
                 Ok(())
             })?;

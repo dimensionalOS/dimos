@@ -219,8 +219,7 @@ where
     }
     eprintln!("[{exe}] config: {config:?}");
 
-    let (publish_tx, publish_rx) =
-        mpsc::channel::<(String, Vec<u8>)>(PUBLISH_CHANNEL_CAPACITY);
+    let (publish_tx, publish_rx) = mpsc::channel::<(String, Vec<u8>)>(PUBLISH_CHANNEL_CAPACITY);
     let mut builder = Builder::new(topics, publish_tx);
     let mut module = M::build(&mut builder, config);
     spawn_pubsub_tasks(transport, builder.routes, publish_rx);
@@ -247,11 +246,13 @@ mod tests {
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
 
+    type InboundQueue = Mutex<VecDeque<(String, Vec<u8>)>>;
+
     /// Mock transport for testing message timing.
     ///
     /// Lets us test for concurrency and blocking when handling different messages.
     struct ControllableMockTransport {
-        inbound: Arc<Mutex<VecDeque<(String, Vec<u8>)>>>,
+        inbound: Arc<InboundQueue>,
         inbound_notify: Arc<Notify>,
         publish_delay_ms: Arc<AtomicU64>,
         publish_entered: Arc<Notify>,
@@ -263,7 +264,7 @@ mod tests {
     impl ControllableMockTransport {
         fn new() -> Self {
             Self {
-                inbound: Arc::new(Mutex::new(VecDeque::new())),
+                inbound: Arc::new(InboundQueue::new(VecDeque::new())),
                 inbound_notify: Arc::new(Notify::new()),
                 publish_delay_ms: Arc::new(AtomicU64::new(0)),
                 publish_entered: Arc::new(Notify::new()),
@@ -298,12 +299,7 @@ mod tests {
         }
     }
 
-    fn inject_inbound(
-        inbound: &Mutex<VecDeque<(String, Vec<u8>)>>,
-        notify: &Notify,
-        channel: &str,
-        data: Vec<u8>,
-    ) {
+    fn inject_inbound(inbound: &InboundQueue, notify: &Notify, channel: &str, data: Vec<u8>) {
         inbound
             .lock()
             .unwrap()
