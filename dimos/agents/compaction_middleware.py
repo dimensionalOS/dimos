@@ -326,18 +326,18 @@ class DimosCompactionMiddleware(AgentMiddleware):  # type: ignore[misc]
         return self._static_tokens() + sum(count_message_tokens(m) for m in messages)
 
     def _static_tokens(self) -> int:
-        """Tokens for the system prompt + tool schemas (cached)."""
-        key = (
-            hash(self._system_prompt or ""),
-            hash(json.dumps(self._tool_schemas, sort_keys=True, default=str)),
-        )
-        if self._static_cache and self._static_cache[0] == hash(key):
-            return self._static_cache[1]
+        """Tokens for the system prompt + tool schemas.
 
+        Computed once and cached forever — both inputs are bound at `__init__`
+        and never mutate, so there's no need to recompute (or even rehash) on
+        subsequent calls.
+        """
+        if self._static_cache is not None:
+            return self._static_cache[1]
         total = count_tokens(self._system_prompt or "")
         if self._tool_schemas:
             total += count_tokens(json.dumps(self._tool_schemas, default=str))
-        self._static_cache = (hash(key), total)
+        self._static_cache = (0, total)  # sentinel key; payload is immutable
         return total
 
     def _strip_images(self, messages: list[BaseMessage]) -> list[BaseMessage]:

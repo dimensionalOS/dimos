@@ -48,7 +48,14 @@ logger = setup_logger()
 
 def _env_int(name: str) -> int | None:
     v = os.environ.get(name)
-    return int(v) if v else None
+    if not v:
+        return None
+    try:
+        return int(v)
+    except ValueError:
+        raise ValueError(
+            f"Environment variable {name!r} must be an integer, got {v!r}"
+        ) from None
 
 
 def _env_str(name: str) -> str | None:
@@ -393,6 +400,12 @@ class McpClient(Module):
         in our local history. Specific-id RemoveMessages prune matching entries.
         Already-tagged messages (re-emitted by middleware) keep their tags;
         new messages get the current turn id.
+
+        Publish discipline: a message is printed and published on the `agent`
+        stream at most once per session. When compaction replays previously-seen
+        messages alongside a fresh summary, we publish only the genuinely-new
+        objects (identified by Python identity against the pre-wipe history),
+        so downstream subscribers don't see duplicates.
         """
         wipe_idx: int | None = None
         for i, m in enumerate(node_messages):
@@ -400,10 +413,12 @@ class McpClient(Module):
                 wipe_idx = i
 
         if wipe_idx is not None:
+            pre_wipe_obj_ids = {id(h) for h in self._history}
             self._history = []
             iter_msgs = node_messages[wipe_idx + 1 :]
             is_replay = True
         else:
+            pre_wipe_obj_ids = set()
             iter_msgs = node_messages
             is_replay = False
 
@@ -415,6 +430,14 @@ class McpClient(Module):
             if not is_replay:
                 _tag_turn(msg, turn)
             self._history.append(msg)
+            # Skip publish for messages already shown before a compaction wipe.
+            # The middleware emits its replacement as
+            # `[RemoveMessage, *protected, summary, *keep_tail, *current_turn]`;
+            # only `summary` (and any fresh AIMessages from later nodes in the
+            # same stream) are new — the rest are the same Python objects that
+            # were already published when they first arrived.
+            if is_replay and id(msg) in pre_wipe_obj_ids:
+                continue
             pretty_print_langchain_message(msg)
             self.agent.publish(msg)
 
