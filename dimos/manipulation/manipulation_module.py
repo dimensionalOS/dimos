@@ -370,16 +370,16 @@ class ManipulationModule(Module):
         with self._lock:
             if self._state == ManipulationState.FAULT:
                 return ManipulationState.FAULT.name
-            if any(j.success is False for j in self._planning_jobs.values()):
+            # FAULT reads _last_op_success (cleared by reset) rather than the
+            # historical _planning_jobs records, so reset truly clears the fault.
+            if any(s is False for s in self._last_op_success.values()):
                 return ManipulationState.FAULT.name
             if any(
                 j.future is None or not j.future.done()
                 for j in self._planning_jobs.values()
             ):
                 return ManipulationState.PLANNING.name
-            # During transition, execute() still flips self._state to EXECUTING/COMPLETED.
-            # Once execute() is rewritten to use self._executing, the self._state check drops.
-            if self._state == ManipulationState.EXECUTING or any(self._executing.values()):
+            if any(self._executing.values()):
                 return ManipulationState.EXECUTING.name
             if any(self._last_op_success.values()):
                 return ManipulationState.COMPLETED.name
@@ -395,28 +395,52 @@ class ManipulationModule(Module):
         return self._error_message
 
     @rpc
-    def cancel(self) -> bool:
-        """Cancel current motion."""
-        if self._state != ManipulationState.EXECUTING:
-            return False
-        self._state = ManipulationState.IDLE
-        logger.info("Motion cancelled")
-        return True
+    def cancel(self, robot_name: RobotName | None = None) -> bool:
+        """Clear the execute() accept window for one robot or all robots.
+
+        Best-effort signal — coordinator interaction is unchanged. Does not
+        cancel in-flight planning jobs (use reset() for that).
+
+        Args:
+            robot_name: Robot to cancel. None cancels every robot currently
+                in its execute() accept window.
+
+        Returns:
+            True if at least one robot was cancelled, else False.
+        """
+        with self._lock:
+            if robot_name is not None:
+                if not self._executing.get(robot_name, False):
+                    return False
+                self._executing[robot_name] = False
+                logger.info(f"Cancelled execute window for '{robot_name}'")
+                return True
+            if not any(self._executing.values()):
+                return False
+            self._executing = {k: False for k in self._executing}
+            logger.info("Cancelled execute window for all robots")
+            return True
 
     @rpc
     @skill
     def reset(self) -> str:
-        """Reset the robot module to IDLE state, clearing any fault.
+        """Reset the module to IDLE: drop stored plans and invalidate active jobs.
 
-        Use this after an error or fault to allow new commands.
-        Cannot reset while a motion is executing — cancel first.
+        In-flight planner threads keep running (Drake's RRT is not preemptable),
+        but their late results are dropped at compare-and-store via the
+        invalidated flag. Use cancel() to abort an active coordinator execution.
         """
-        if self._state == ManipulationState.EXECUTING:
-            return "Error: Cannot reset while executing — cancel the motion first"
         with self._lock:
-            self._state = ManipulationState.IDLE
-            self._error_message = ""
+            if any(self._executing.values()):
+                return "Error: Cannot reset while executing — cancel the motion first"
+            for job in self._planning_jobs.values():
+                if job.future is None or not job.future.done():
+                    job.invalidated = True
+            self._planned_paths.clear()
+            self._planned_trajectories.clear()
             self._last_op_success.clear()
+            self._error_message = ""
+            self._state = ManipulationState.IDLE
         return "Reset to IDLE — ready for new commands"
 
     @rpc
@@ -476,7 +500,11 @@ class ManipulationModule(Module):
         name, robot_id, _, _ = robot
         with self._lock:
             existing = self._planning_jobs.get(name)
-            if existing is not None and (existing.future is None or not existing.future.done()):
+            if (
+                existing is not None
+                and not existing.invalidated
+                and (existing.future is None or not existing.future.done())
+            ):
                 logger.warning(f"Cannot plan: '{name}' already has an active planning job")
                 return None
             if self._executing.get(name, False):
@@ -559,23 +587,27 @@ class ManipulationModule(Module):
         if job is None:
             return {
                 "robot_name": robot_name,
+                "request_id": None,
                 "active": False,
                 "accepted": False,
                 "done": False,
                 "success": None,
                 "error": None,
                 "duration_s": None,
+                "invalidated": False,
             }
         done = job.future is not None and job.future.done()
         end_time = job.completed_at if job.completed_at is not None else time.time()
         return {
             "robot_name": robot_name,
+            "request_id": job.request_id,
             "active": not done,
             "accepted": True,
             "done": done,
             "success": job.success,
             "error": job.error,
             "duration_s": end_time - job.accepted_at,
+            "invalidated": job.invalidated,
         }
 
     @rpc
@@ -751,6 +783,8 @@ class ManipulationModule(Module):
     def preview_path(self, duration: float = 3.0, robot_name: RobotName | None = None) -> bool:
         """Preview the planned path in the visualizer.
 
+        Rejects if a planning job is still in flight for this robot.
+
         Args:
             duration: Total animation duration in seconds
             robot_name: Robot to preview (required if multiple robots configured)
@@ -765,30 +799,53 @@ class ManipulationModule(Module):
             return False
         robot_name, robot_id, _, _ = robot
 
-        planned_path = self._planned_paths.get(robot_name)
-        if planned_path is None or len(planned_path) == 0:
-            logger.warning(f"No planned path to preview for {robot_name}")
-            return False
+        with self._lock:
+            job = self._planning_jobs.get(robot_name)
+            if (
+                job is not None
+                and not job.invalidated
+                and (job.future is None or not job.future.done())
+            ):
+                logger.warning(
+                    f"Cannot preview: planning still active for '{robot_name}'"
+                )
+                return False
+            planned_path = self._planned_paths.get(robot_name)
+            if planned_path is None or len(planned_path) == 0:
+                logger.warning(f"No planned path to preview for {robot_name}")
+                return False
 
-        # Interpolate and animate
+        # Animate outside the lock — the WorldMonitor handles its own
+        # synchronization for visualization writes.
         interpolated = interpolate_path(planned_path, resolution=0.1)
         self._world_monitor.world.animate_path(robot_id, interpolated, duration)
         return True
 
     @rpc
-    def has_planned_path(self) -> bool:
-        """Check if there's a planned path ready.
+    def has_planned_path(self, robot_name: RobotName | None = None) -> bool:
+        """Check if a usable planned path exists for the given robot.
 
-        Returns:
-            True if a path is planned and ready
+        Returns False if a planning job is still in flight, since the stored
+        path (if any) reflects a stale prior plan that was cleared on accept.
+
+        Args:
+            robot_name: Robot to query (required if multiple robots configured)
         """
-        robot = self._get_robot()
+        robot = self._get_robot(robot_name)
         if robot is None:
             return False
         robot_name, _, _, _ = robot
 
-        path = self._planned_paths.get(robot_name)
-        return path is not None and len(path) > 0
+        with self._lock:
+            job = self._planning_jobs.get(robot_name)
+            if (
+                job is not None
+                and not job.invalidated
+                and (job.future is None or not job.future.done())
+            ):
+                return False
+            path = self._planned_paths.get(robot_name)
+            return path is not None and len(path) > 0
 
     @rpc
     def get_visualization_url(self) -> str | None:
@@ -802,19 +859,20 @@ class ManipulationModule(Module):
         return self._world_monitor.get_visualization_url()
 
     @rpc
-    def clear_planned_path(self) -> bool:
-        """Clear the stored planned path.
+    def clear_planned_path(self, robot_name: RobotName | None = None) -> bool:
+        """Clear the stored planned path and trajectory for the given robot.
 
-        Returns:
-            True if cleared
+        Args:
+            robot_name: Robot whose stored plan to drop (required if multiple
+                robots configured).
         """
-        robot = self._get_robot()
+        robot = self._get_robot(robot_name)
         if robot is None:
             return False
         robot_name, _, _, _ = robot
-
-        self._planned_paths.pop(robot_name, None)
-        self._planned_trajectories.pop(robot_name, None)
+        with self._lock:
+            self._planned_paths.pop(robot_name, None)
+            self._planned_trajectories.pop(robot_name, None)
         return True
 
     @rpc
@@ -958,14 +1016,16 @@ class ManipulationModule(Module):
 
     @rpc
     def execute(self, robot_name: RobotName | None = None) -> bool:
-        """Execute planned trajectory via ControlCoordinator."""
+        """Ship the stored trajectory to the coordinator for execution.
+
+        Rejects if a planning job is still in flight or no trajectory is stored
+        for this robot. Sets self._executing[robot_name] during the brief
+        task_invoke accept window so cancel(robot_name) and aggregate
+        get_state() can see the EXECUTING state.
+        """
         if (robot := self._get_robot(robot_name)) is None:
             return False
         robot_name, _, config, _ = robot
-
-        if (traj := self._planned_trajectories.get(robot_name)) is None:
-            logger.warning("No planned trajectory")
-            return False
         if not config.coordinator_task_name:
             logger.error(f"No coordinator_task_name for '{robot_name}'")
             return False
@@ -973,21 +1033,46 @@ class ManipulationModule(Module):
             logger.error("No coordinator client")
             return False
 
-        translated = self._translate_trajectory_to_coordinator(traj, config)
-        logger.info(
-            f"Executing: task='{config.coordinator_task_name}', {len(translated.points)} pts, {translated.duration:.2f}s"
-        )
+        with self._lock:
+            job = self._planning_jobs.get(robot_name)
+            if (
+                job is not None
+                and not job.invalidated
+                and (job.future is None or not job.future.done())
+            ):
+                logger.warning(
+                    f"Cannot execute: planning still active for '{robot_name}'"
+                )
+                return False
+            traj = self._planned_trajectories.get(robot_name)
+            if traj is None:
+                logger.warning(f"No planned trajectory for '{robot_name}'")
+                return False
+            self._executing[robot_name] = True
 
-        self._state = ManipulationState.EXECUTING
-        result = client.task_invoke(
-            config.coordinator_task_name, "execute", {"trajectory": translated}
-        )
+        try:
+            translated = self._translate_trajectory_to_coordinator(traj, config)
+            logger.info(
+                f"Executing '{robot_name}': task='{config.coordinator_task_name}', "
+                f"{len(translated.points)} pts, {translated.duration:.2f}s"
+            )
+            result = client.task_invoke(
+                config.coordinator_task_name, "execute", {"trajectory": translated}
+            )
+        finally:
+            with self._lock:
+                self._executing[robot_name] = False
+
+        with self._lock:
+            self._last_op_success[robot_name] = bool(result)
+            if not result:
+                self._state = ManipulationState.FAULT
+                self._error_message = f"Coordinator rejected trajectory for '{robot_name}'"
         if result:
-            logger.info("Trajectory accepted")
-            self._state = ManipulationState.COMPLETED
+            logger.info(f"Trajectory accepted for '{robot_name}'")
             return True
-        else:
-            return self._fail("Coordinator rejected trajectory")
+        logger.warning(f"Coordinator rejected trajectory for '{robot_name}'")
+        return False
 
     @rpc
     def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
