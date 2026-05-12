@@ -375,7 +375,7 @@ class ManipulationModule(Module):
             if any(s is False for s in self._last_op_success.values()):
                 return ManipulationState.FAULT.name
             if any(
-                j.future is None or not j.future.done()
+                not j.invalidated and (j.future is None or not j.future.done())
                 for j in self._planning_jobs.values()
             ):
                 return ManipulationState.PLANNING.name
