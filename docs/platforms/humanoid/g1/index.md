@@ -78,7 +78,7 @@ Note: this button combination may vary based on the model of the G1
 
 In the ssh terminal `ssh -L 3030:localhost:3030 unitree@192.168.123.164`
 
-```sh
+```sh skip
 source .venv/bin/activate
 uv run dimos --rerun-host 0.0.0.0 run unitree-g1-nav-onboard
 # should print out something like:

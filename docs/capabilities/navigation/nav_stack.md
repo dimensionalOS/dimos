@@ -33,7 +33,7 @@ The stack produces:
 
 All configuration goes through `create_nav_stack()` keyword arguments. Top-level switches plus per-module config dicts:
 
-```python
+```python skip
 create_nav_stack(
     planner="simple",              # "far" (default) or "simple" (A*)
     use_tare=False,                # Add TARE frontier exploration
