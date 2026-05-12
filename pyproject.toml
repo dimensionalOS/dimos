@@ -393,6 +393,7 @@ lint = [
     "types-pyaudio",
     "types-psycopg2>=2.9.21.20251012",
     "types-PyYAML>=6.0.12.20250915,<7",
+    "types-reportlab>=4.5.0",
     "types-requests>=2.32.4.20260107,<3",
 
     {include-group = "project-deps"},

@@ -2207,6 +2207,7 @@ lint = [
     { name = "types-psycopg2" },
     { name = "types-pyaudio" },
     { name = "types-pyyaml" },
+    { name = "types-reportlab" },
     { name = "types-requests" },
     { name = "ultralytics" },
     { name = "watchdog" },
@@ -2491,6 +2492,7 @@ lint = [
     { name = "types-psycopg2", specifier = ">=2.9.21.20251012" },
     { name = "types-pyaudio" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915,<7" },
+    { name = "types-reportlab", specifier = ">=4.5.0" },
     { name = "types-requests", specifier = ">=2.32.4.20260107,<3" },
     { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "watchdog", specifier = ">=3.0.0" },
@@ -10757,6 +10759,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/7e/69/3c51b36d04da19b92f9e815be12753125bd8bc247ba0470a982e6979e71c/types_pyyaml-6.0.12.20250915.tar.gz", hash = "sha256:0f8b54a528c303f0e6f7165687dd33fafa81c807fcac23f632b63aa624ced1d3", size = 17522, upload-time = "2025-09-15T03:01:00.728Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bd/e0/1eed384f02555dde685fff1a1ac805c1c7dcb6dd019c916fe659b1c1f9ec/types_pyyaml-6.0.12.20250915-py3-none-any.whl", hash = "sha256:e7d4d9e064e89a3b3cae120b4990cd370874d2bf12fa5f46c97018dd5d3c9ab6", size = 20338, upload-time = "2025-09-15T03:00:59.218Z" },
+]
+
+[[package]]
+name = "types-reportlab"
+version = "4.5.0.20260509"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/b0/49340b03f2417ff19b02f3a93d2fbca4578c7e40c6f68286afbe2fcc3f30/types_reportlab-4.5.0.20260509.tar.gz", hash = "sha256:a36cbdb1227ed1977a3ec8bd5d629821bb4181e83d62e2238394d59a111ab358", size = 71893, upload-time = "2026-05-09T04:58:51.495Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0e/86/aa8a8d4721f6094e273b2635f15cd7a278bc300728c248ab14b255255d6c/types_reportlab-4.5.0.20260509-py3-none-any.whl", hash = "sha256:b64e452be52f469ae0820d809eefb3ae4929e815d1318407cebe79ec0153b6e8", size = 112848, upload-time = "2026-05-09T04:58:50.244Z" },
 ]
 
 [[package]]
