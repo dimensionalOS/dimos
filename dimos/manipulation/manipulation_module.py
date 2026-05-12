@@ -363,16 +363,10 @@ class ManipulationModule(Module):
     def get_state(self) -> str:
         """Get aggregate manipulation state derived from per-robot job records.
 
-        may need to be revisited
-
         Priority: FAULT > PLANNING > EXECUTING > COMPLETED > IDLE.
         """
         with self._lock:
-            if self._state == ManipulationState.FAULT:
-                return ManipulationState.FAULT.name
-            # FAULT reads _last_op_success (cleared by reset) rather than the
-            # historical _planning_jobs records, so reset truly clears the fault.
-            if any(s is False for s in self._last_op_success.values()):
+            if self._has_fault_locked():
                 return ManipulationState.FAULT.name
             if any(
                 not j.invalidated and (j.future is None or not j.future.done())
@@ -384,6 +378,13 @@ class ManipulationModule(Module):
             if any(self._last_op_success.values()):
                 return ManipulationState.COMPLETED.name
             return ManipulationState.IDLE.name
+
+    def _has_fault_locked(self) -> bool:
+        """Return whether the module is faulted. Caller must hold self._lock."""
+        if self._state == ManipulationState.FAULT:
+            return True
+        # Failed jobs are kept as FAULT until reset() clears _last_op_success.
+        return any(s is False for s in self._last_op_success.values())
 
     @rpc
     def get_error(self) -> str:
@@ -499,6 +500,9 @@ class ManipulationModule(Module):
             return None
         name, robot_id, _, _ = robot
         with self._lock:
+            if self._has_fault_locked():
+                logger.warning("Cannot plan: module is in FAULT, call reset() first")
+                return None
             existing = self._planning_jobs.get(name)
             if (
                 existing is not None
@@ -871,6 +875,16 @@ class ManipulationModule(Module):
             return False
         robot_name, _, _, _ = robot
         with self._lock:
+            job = self._planning_jobs.get(robot_name)
+            if (
+                job is not None
+                and not job.invalidated
+                and (job.future is None or not job.future.done())
+            ):
+                logger.warning(
+                    f"Cannot clear planned path: planning still active for '{robot_name}'"
+                )
+                return False
             self._planned_paths.pop(robot_name, None)
             self._planned_trajectories.pop(robot_name, None)
         return True
@@ -1034,6 +1048,9 @@ class ManipulationModule(Module):
             return False
 
         with self._lock:
+            if self._has_fault_locked():
+                logger.warning("Cannot execute: module is in FAULT, call reset() first")
+                return False
             job = self._planning_jobs.get(robot_name)
             if (
                 job is not None

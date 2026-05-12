@@ -340,6 +340,35 @@ class TestAsyncPlanningUnit:
         assert async_module.get_state() == ManipulationState.FAULT.name
         assert "Planning failed" in async_module.get_error()
 
+    def test_fault_rejects_new_plans_until_reset(self, async_module):
+        failed = _PlanControl(succeed=False)
+        after_reset = _PlanControl()
+        async_module._planner = _GatedPlanner([failed, after_reset])
+
+        assert async_module.plan_to_joints(
+            JointState(name=["j1", "j2"], position=[0.1, 0.1]), "left_arm"
+        )
+        assert failed.started.wait(timeout=0.5)
+        failed.release.set()
+        assert async_module.wait_for_planning_completion("left_arm", timeout=1.0)
+        assert async_module.get_state() == ManipulationState.FAULT.name
+
+        assert (
+            async_module.plan_to_joints(
+                JointState(name=["j1", "j2"], position=[0.2, 0.2]), "right_arm"
+            )
+            is False
+        )
+
+        assert async_module.reset().startswith("Reset")
+        assert async_module.plan_to_joints(
+            JointState(name=["j1", "j2"], position=[0.2, 0.2]), "right_arm"
+        )
+        assert after_reset.started.wait(timeout=0.5)
+        after_reset.release.set()
+        assert async_module.wait_for_planning_completion("right_arm", timeout=1.0)
+        assert async_module.get_state() == ManipulationState.COMPLETED.name
+
     def test_late_invalidated_job_does_not_overwrite_newer_plan(self, async_module):
         first = _PlanControl()
         second = _PlanControl()
@@ -401,6 +430,23 @@ class TestAsyncPlanningUnit:
 
         left_active.release.set()
         assert async_module.wait_for_planning_completion("left_arm", timeout=1.0)
+
+    def test_clear_planned_path_rejects_active_plan(self, async_module):
+        control = _PlanControl()
+        async_module._planner = _GatedPlanner([control])
+
+        assert async_module.plan_to_joints(
+            JointState(name=["j1", "j2"], position=[0.1, 0.1]), "left_arm"
+        )
+        assert control.started.wait(timeout=0.5)
+
+        assert async_module.clear_planned_path("left_arm") is False
+
+        control.release.set()
+        assert async_module.wait_for_planning_completion("left_arm", timeout=1.0)
+        assert async_module.has_planned_path("left_arm") is True
+        assert async_module.clear_planned_path("left_arm") is True
+        assert async_module.has_planned_path("left_arm") is False
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")

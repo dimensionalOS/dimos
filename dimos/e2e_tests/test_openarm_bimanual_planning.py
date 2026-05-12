@@ -26,11 +26,15 @@ import pytest
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.logging_config import setup_logger
 
 _ROBOTS = ("left_arm", "right_arm")
 _TARGET = [0.05] * 7
 _JOINT_STATE_TOPIC = "/coordinator/joint_state#sensor_msgs.JointState"
 _PLANNING_TIMEOUT_S = 30.0
+_PREVIEW_DURATION_S = 0.5
+
+logger = setup_logger()
 
 
 def _wait_until(
@@ -111,20 +115,34 @@ def _plan_concurrently(client: RPCClient, targets: dict[str, list[float]]) -> fl
     return time.monotonic() - start
 
 
-def _execute_concurrently(client: RPCClient) -> None:
+def _preview_concurrently(client: RPCClient) -> float:
+    def preview(robot_name: str) -> bool:
+        return bool(client.preview_path(_PREVIEW_DURATION_S, robot_name))
+
+    start = time.monotonic()
+    with ThreadPoolExecutor(max_workers=len(_ROBOTS)) as pool:
+        futures = {robot_name: pool.submit(preview, robot_name) for robot_name in _ROBOTS}
+        for robot_name, future in futures.items():
+            assert future.result(timeout=5.0) is True, f"{robot_name} preview failed"
+    return time.monotonic() - start
+
+
+def _execute_concurrently(client: RPCClient) -> float:
     def execute(robot_name: str) -> bool:
         return bool(client.execute(robot_name))
 
+    start = time.monotonic()
     with ThreadPoolExecutor(max_workers=len(_ROBOTS)) as pool:
         futures = {robot_name: pool.submit(execute, robot_name) for robot_name in _ROBOTS}
         for robot_name, future in futures.items():
             assert future.result(timeout=5.0) is True, f"{robot_name} execute was not accepted"
+    return time.monotonic() - start
 
 
 @pytest.mark.skipif_in_ci
 @pytest.mark.slow
 def test_openarm_mock_bimanual_planning_overlap(lcm_spy, start_blueprint) -> None:
-    """OpenArm mock should plan both arms concurrently and execute both trajectories."""
+    """OpenArm mock should overlap bimanual plan, preview, and execute acceptance."""
     lcm_spy.save_topic(_JOINT_STATE_TOPIC)
     start_blueprint("openarm-mock-planner-coordinator")
     lcm_spy.wait_for_saved_topic(_JOINT_STATE_TOPIC)
@@ -163,6 +181,18 @@ def test_openarm_mock_bimanual_planning_overlap(lcm_spy, start_blueprint) -> Non
                 f"concurrent={concurrent_total_s:.2f}s"
             )
 
-        _execute_concurrently(client)
+        preview_total_s = _preview_concurrently(client)
+        execute_accept_s = _execute_concurrently(client)
+        logger.info(
+            "OpenArm bimanual timing: sequential_plan=%.2fs "
+            "(left=%.2fs right=%.2fs), concurrent_plan=%.2fs, "
+            "concurrent_preview=%.2fs, concurrent_execute_accept=%.2fs",
+            sequential_total_s,
+            sequential_left_s,
+            sequential_right_s,
+            concurrent_total_s,
+            preview_total_s,
+            execute_accept_s,
+        )
     finally:
         client.stop_rpc_client()
