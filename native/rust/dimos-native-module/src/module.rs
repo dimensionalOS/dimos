@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::io::{self, BufRead};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -12,7 +13,7 @@ const PUBLISH_CHANNEL_CAPACITY: usize = 64;
 
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's mpsc channel.
-trait Route: Send {
+pub(crate) trait Route: Send {
     fn topic(&self) -> &str;
     fn try_dispatch(&self, data: &[u8]);
 }
@@ -49,6 +50,7 @@ impl<T> Input<T> {
     }
 }
 
+#[derive(Clone)]
 pub struct Output<T> {
     pub topic: String,
     encode: fn(&T) -> Vec<u8>,
@@ -96,100 +98,38 @@ fn parse_config_json<C: DeserializeOwned>(line: &str) -> io::Result<(HashMap<Str
     Ok((topics, config))
 }
 
-/// High-level wrapper around a transport for use in dimos native modules.
-///
-/// Generic over any `T: Transport`. Use `LcmTransport` for the standard LCM
-/// UDP multicast transport.
-///
-/// # Usage
-///
-/// ```ignore
-/// let transport = LcmTransport::new().await?;
-/// let (mut module, config) = NativeModule::from_stdin::<MyConfig>(transport).await?;
-///
-/// let mut image_in = module.input("color_image", Image::decode);
-/// let cmd_out      = module.output("cmd_vel", Twist::encode);
-/// let _handle      = module.spawn();
-///
-/// loop {
-///     tokio::select! {
-///         Some(frame) = image_in.recv() => { cmd_out.publish(&twist).await.ok(); }
-///     }
-/// }
-/// ```
-pub struct NativeModule<T: Transport> {
-    transport: T,
-    routes: Vec<Box<dyn Route>>,
-    topics: HashMap<String, String>,
-    publish_tx: mpsc::Sender<(String, Vec<u8>)>,
-    publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
+pub trait Module: Sized + Send + 'static {
+    type Config: DeserializeOwned + Debug;
+
+    fn build(builder: &mut Builder, config: Self::Config) -> Self;
+
+    fn setup(&mut self) -> impl std::future::Future<Output = ()> + Send {
+        async {}
+    }
+
+    fn dispatch(&mut self) -> impl std::future::Future<Output = ()> + Send;
+
+    fn teardown(&mut self) -> impl std::future::Future<Output = ()> + Send {
+        async {}
+    }
 }
 
-impl<T: Transport> NativeModule<T> {
-    pub(crate) fn new(transport: T) -> Self {
-        let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
+pub struct Builder {
+    topics: HashMap<String, String>,
+    routes: Vec<Box<dyn Route>>,
+    publish_tx: mpsc::Sender<(String, Vec<u8>)>,
+}
+
+impl Builder {
+    pub(crate) fn new(
+        topics: HashMap<String, String>,
+        publish_tx: mpsc::Sender<(String, Vec<u8>)>,
+    ) -> Self {
         Self {
-            transport,
+            topics,
             routes: Vec::new(),
-            topics: HashMap::new(),
             publish_tx,
-            publish_rx,
         }
-    }
-
-    /// Parse `--port_name topic_string` pairs from argv, as injected by NativeModule.
-    pub async fn from_args(transport: T) -> io::Result<Self> {
-        let mut module = Self::new(transport);
-        let args: Vec<String> = std::env::args().collect();
-        let mut i = 1;
-        while i < args.len() {
-            if let Some(port) = args[i].strip_prefix("--") {
-                if i + 1 < args.len() && !args[i + 1].starts_with("--") {
-                    module.topics.insert(port.to_string(), args[i + 1].clone());
-                    i += 2;
-                    continue;
-                }
-            }
-            i += 1;
-        }
-        Ok(module)
-    }
-
-    /// Read config from a single JSON line on stdin, as written by the Python NativeModule declaration.
-    ///
-    /// The JSON format is:
-    /// ```json
-    /// {"topics": {"port_name": "lcm/topic", ...}, "config": { ... }}
-    /// ```
-    ///
-    /// `C` is the module-specific config type. Use `()` for modules with no configuration.
-    pub async fn from_stdin<C: DeserializeOwned + std::fmt::Debug>(
-        transport: T,
-    ) -> io::Result<(Self, C)> {
-        let mut line = String::new();
-        io::stdin().lock().read_line(&mut line)?;
-
-        let (topics, config) = parse_config_json::<C>(&line)?;
-
-        let mut module = Self::new(transport);
-        module.topics = topics;
-
-        let exe = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "unknown".to_string());
-        eprintln!("[{exe}] topics received:");
-        for (port, topic) in &module.topics {
-            eprintln!("  {port} -> {topic}");
-        }
-        eprintln!("[{exe}] config: {config:?}");
-
-        Ok((module, config))
-    }
-
-    /// Manually set a topic for a port — useful for testing without a parent process.
-    pub fn map_topic(&mut self, port: &str, topic: &str) {
-        self.topics.insert(port.to_string(), topic.to_string());
     }
 
     fn topic_for(&self, port: &str) -> String {
@@ -199,12 +139,11 @@ impl<T: Transport> NativeModule<T> {
             .unwrap_or_else(|| format!("/{port}"))
     }
 
-    /// Register an input port. Must be called before `spawn()`.
-    pub fn input<M: Send + 'static>(
+    pub fn input<T: Send + 'static>(
         &mut self,
         port: &str,
-        decode: fn(&[u8]) -> io::Result<M>,
-    ) -> Input<M> {
+        decode: fn(&[u8]) -> io::Result<T>,
+    ) -> Input<T> {
         let topic = self.topic_for(port);
         let (tx, rx) = mpsc::channel(INPUT_CHANNEL_CAPACITY);
         self.routes.push(Box::new(TypedRoute {
@@ -218,71 +157,86 @@ impl<T: Transport> NativeModule<T> {
         }
     }
 
-    /// Register an output port. Must be called before `spawn()`.
-    pub fn output<M: Send + 'static>(&self, port: &str, encode: fn(&M) -> Vec<u8>) -> Output<M> {
+    pub fn output<T>(&self, port: &str, encode: fn(&T) -> Vec<u8>) -> Output<T> {
         Output {
             topic: self.topic_for(port),
             encode,
             sender: self.publish_tx.clone(),
         }
     }
+}
 
-    /// Start the background recv/dispatch/publish loop.
-    ///
-    /// Consumes the module — no new ports can be registered after this point.
-    pub fn spawn(self) -> NativeModuleHandle {
-        let NativeModule {
-            transport,
-            routes,
-            mut publish_rx,
-            ..
-        } = self;
-        let transport = Arc::new(transport);
+pub(crate) fn spawn_pubsub_tasks<T: Transport>(
+    transport: T,
+    routes: Vec<Box<dyn Route>>,
+    mut publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
+) {
+    let transport = Arc::new(transport);
 
-        let recv_transport = Arc::clone(&transport);
-        let receiver = tokio::spawn(async move {
-            loop {
-                match recv_transport.recv().await {
-                    Ok((channel, data)) => {
-                        for route in &routes {
-                            if route.topic() == channel {
-                                route.try_dispatch(&data);
-                            }
+    let recv_transport = Arc::clone(&transport);
+    tokio::spawn(async move {
+        loop {
+            match recv_transport.recv().await {
+                Ok((channel, data)) => {
+                    for route in &routes {
+                        if route.topic() == channel {
+                            route.try_dispatch(&data);
                         }
                     }
-                    Err(e) => {
-                        eprintln!("dimos_module: recv error: {e}");
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    }
+                }
+                Err(e) => {
+                    eprintln!("dimos_module: recv error: {e}");
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 }
             }
-        });
-
-        let pub_transport = Arc::clone(&transport);
-        let publisher = tokio::spawn(async move {
-            while let Some((topic, data)) = publish_rx.recv().await {
-                if let Err(e) = pub_transport.publish(&topic, &data).await {
-                    eprintln!("dimos_module: publish error on {topic}: {e}");
-                }
-            }
-        });
-
-        NativeModuleHandle { receiver, publisher }
-    }
-}
-
-pub struct NativeModuleHandle {
-    receiver: tokio::task::JoinHandle<()>,
-    publisher: tokio::task::JoinHandle<()>,
-}
-
-impl NativeModuleHandle {
-    pub async fn join(self) -> Result<(), tokio::task::JoinError> {
-        tokio::select! {
-            r = self.receiver  => r,
-            r = self.publisher => r,
         }
+    });
+
+    let pub_transport = Arc::clone(&transport);
+    tokio::spawn(async move {
+        while let Some((topic, data)) = publish_rx.recv().await {
+            if let Err(e) = pub_transport.publish(&topic, &data).await {
+                eprintln!("dimos_module: publish error on {topic}: {e}");
+            }
+        }
+    });
+}
+
+pub async fn run<M, T>(transport: T) -> io::Result<()>
+where
+    M: Module,
+    T: Transport,
+{
+    let mut line = String::new();
+    io::stdin().lock().read_line(&mut line)?;
+    let (topics, config) = parse_config_json::<M::Config>(&line)?;
+
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "unknown".to_string());
+    eprintln!("[{exe}] topics received:");
+    for (port, topic) in &topics {
+        eprintln!("  {port} -> {topic}");
     }
+    eprintln!("[{exe}] config: {config:?}");
+
+    let (publish_tx, publish_rx) =
+        mpsc::channel::<(String, Vec<u8>)>(PUBLISH_CHANNEL_CAPACITY);
+    let mut builder = Builder::new(topics, publish_tx);
+    let mut module = M::build(&mut builder, config);
+    spawn_pubsub_tasks(transport, builder.routes, publish_rx);
+
+    module.setup().await;
+
+    tokio::select! {
+        _ = module.dispatch() => {}
+        _ = tokio::signal::ctrl_c() => {}
+    }
+
+    module.teardown().await;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -295,20 +249,9 @@ mod tests {
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
 
-    struct MockTransport;
-
-    impl crate::transport::Transport for MockTransport {
-        async fn publish(&self, _channel: &str, _data: &[u8]) -> io::Result<()> {
-            Ok(())
-        }
-        async fn recv(&self) -> io::Result<(String, Vec<u8>)> {
-            std::future::pending().await
-        }
-    }
-
-    /// Mock transport for testing message timing
+    /// Mock transport for testing message timing.
     ///
-    /// Let's us test for concurrency and blocking when handling different messages.
+    /// Lets us test for concurrency and blocking when handling different messages.
     struct ControllableMockTransport {
         inbound: Arc<Mutex<VecDeque<(String, Vec<u8>)>>>,
         inbound_notify: Arc<Notify>,
@@ -456,49 +399,54 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // --- topic_for / map_topic ---
+    // --- topic_for fallback ---
 
-    #[test]
-    fn unmapped_port_falls_back_to_slash_port() {
-        let module = NativeModule::new(MockTransport);
-        assert_eq!(module.topic_for("cmd_vel"), "/cmd_vel");
+    fn topics(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(p, t)| (p.to_string(), t.to_string()))
+            .collect()
+    }
+
+    fn builder_with_topics(pairs: &[(&str, &str)]) -> Builder {
+        let (publish_tx, _) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
+        Builder::new(topics(pairs), publish_tx)
     }
 
     #[test]
-    fn map_topic_overrides_fallback() {
-        let mut module = NativeModule::new(MockTransport);
-        module.map_topic("cmd_vel", "/robot/cmd_vel");
-        assert_eq!(module.topic_for("cmd_vel"), "/robot/cmd_vel");
+    fn unmapped_port_falls_back_to_slash_port() {
+        let builder = builder_with_topics(&[]);
+        assert_eq!(builder.topic_for("cmd_vel"), "/cmd_vel");
+    }
+
+    #[test]
+    fn mapped_port_uses_given_topic() {
+        let builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
+        assert_eq!(builder.topic_for("cmd_vel"), "/robot/cmd_vel");
     }
 
     #[test]
     fn input_uses_mapped_topic() {
-        let mut module = NativeModule::new(MockTransport);
-        module.map_topic("data", "/test/data");
-        let input = module.input("data", |b| Ok(b.to_vec()));
+        let mut builder = builder_with_topics(&[("data", "/test/data")]);
+        let input = builder.input("data", |b| Ok(b.to_vec()));
         assert_eq!(input.topic, "/test/data");
     }
 
     #[test]
     fn input_falls_back_to_slash_port_when_unmapped() {
-        let mut module = NativeModule::new(MockTransport);
-        let input = module.input("data", |b| Ok(b.to_vec()));
+        let mut builder = builder_with_topics(&[]);
+        let input = builder.input("data", |b| Ok(b.to_vec()));
         assert_eq!(input.topic, "/data");
     }
 
     #[test]
     fn output_uses_mapped_topic() {
-        let mut module = NativeModule::new(MockTransport);
-        module.map_topic("cmd_vel", "/robot/cmd_vel");
-        let output = module.output("cmd_vel", |b: &Vec<u8>| b.clone());
+        let builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
+        let output = builder.output("cmd_vel", |b: &Vec<u8>| b.clone());
         assert_eq!(output.topic, "/robot/cmd_vel");
     }
 
-    // Make sure we can publish and receive messages at the same time.
-    // Slow processing on either of the directions should not block the other.
-    // i.e. follow this sequence of events: 1) publish 2) receive
-    // if the publish takes a long time, we should receive the message even while publishing the other.
-    // The other direction should hold as well: long receiving should not prevent messages from being published
+    // --- recv/publish concurrency ---
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn slow_publish_does_not_block_recv() {
@@ -512,12 +460,11 @@ mod tests {
         // set publishing to take 200ms
         publish_delay_ms.store(200, Ordering::Relaxed);
 
-        let mut module = NativeModule::new(transport);
-        module.map_topic("data", "/data");
-        module.map_topic("out", "/out");
-        let _input = module.input::<Vec<u8>>("data", |b| Ok(b.to_vec()));
-        let output = module.output::<Vec<u8>>("out", |b: &Vec<u8>| b.clone());
-        let _handle = module.spawn();
+        let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
+        let mut builder = Builder::new(topics(&[("data", "/data"), ("out", "/out")]), publish_tx);
+        let _input = builder.input("data", |b| Ok(b.to_vec()));
+        let output = builder.output("out", |b: &Vec<u8>| b.clone());
+        spawn_pubsub_tasks(transport, builder.routes, publish_rx);
 
         // start the 200ms publish
         output.publish(&vec![0u8]).await.ok();
@@ -547,17 +494,16 @@ mod tests {
         let inbound_notify = transport.inbound_notify.clone();
         let recv_returned = transport.recv_returned.clone();
 
-        let mut module = NativeModule::new(transport);
-        module.map_topic("slow", "/slow");
-        module.map_topic("out", "/out");
+        let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
+        let mut builder = Builder::new(topics(&[("slow", "/slow"), ("out", "/out")]), publish_tx);
 
         // simulate slow processing function in a receive
-        let _input = module.input::<Vec<u8>>("slow", |b| {
+        let _input = builder.input("slow", |b| {
             std::thread::sleep(Duration::from_millis(200));
             Ok(b.to_vec())
         });
-        let output = module.output::<Vec<u8>>("out", |b: &Vec<u8>| b.clone());
-        let _handle = module.spawn();
+        let output = builder.output("out", |b: &Vec<u8>| b.clone());
+        spawn_pubsub_tasks(transport, builder.routes, publish_rx);
 
         // send a message to the receiving
         inject_inbound(&inbound, &inbound_notify, "/slow", vec![1u8]);

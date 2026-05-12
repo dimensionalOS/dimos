@@ -3,7 +3,8 @@ pub mod module;
 pub mod transport;
 
 pub use lcm::LcmTransport;
-pub use module::{Input, NativeModule, NativeModuleHandle, Output};
+pub use dimos_native_module_macros::Module;
+pub use module::{run, Builder, Input, Module, Output};
 pub use transport::Transport;
 
 // Re-export LcmOptions so callers don't need to depend on dimos-lcm directly.
