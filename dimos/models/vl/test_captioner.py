@@ -58,7 +58,7 @@ def florence2_model(request: pytest.FixtureRequest) -> Generator[Florence2Model,
     yield from generic_model_fixture(request.param)
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_captioner(captioner_model: CaptionerModel, test_image: Image) -> None:
     """Test captioning functionality across different model types."""
@@ -87,7 +87,7 @@ def test_captioner(captioner_model: CaptionerModel, test_image: Image) -> None:
     assert all(isinstance(c, str) and len(c) > 0 for c in captions)
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_florence2_detail_levels(florence2_model: Florence2Model, test_image: Image) -> None:
     """Test Florence-2 different detail levels."""

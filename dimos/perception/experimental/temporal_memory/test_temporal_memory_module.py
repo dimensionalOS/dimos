@@ -556,7 +556,6 @@ class VideoReplayModule(Module):
 
 @pytest.mark.skipif_in_ci
 @pytest.mark.skipif_no_openai
-@pytest.mark.slow
 class TestTemporalMemoryIntegration:
     @pytest.fixture(scope="function")
     def dimos_cluster(self):

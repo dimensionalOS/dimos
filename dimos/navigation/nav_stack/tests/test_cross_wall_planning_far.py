@@ -26,7 +26,7 @@ from dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_sim import (
     unitree_g1_nav_sim,
 )
 
-pytestmark = [pytest.mark.slow, pytest.mark.skipif_in_ci, pytest.mark.skipif_macos]
+pytestmark = [pytest.mark.skipif_in_ci, pytest.mark.skipif_macos]
 
 
 class TestCrossWallPlanning:

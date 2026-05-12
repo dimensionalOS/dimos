@@ -37,7 +37,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-pytestmark = [pytest.mark.slow]
+pytestmark = [pytest.mark.self_hosted]
 
 # Time for the native process to initialize before feeding data.
 _PROCESS_STARTUP_SEC = 1.5

@@ -4,7 +4,7 @@ A modular navigation stack for autonomous robot navigation: terrain classificati
 
 Good fit when you have a lidar-equipped robot and need end-to-end autonomy: feed it a registered point cloud and odometry, and it produces velocity commands. No ROS — modules communicate over DimOS streams (LCM/SHM).
 
-```python
+```python session=nav_stack
 from dimos.navigation.nav_stack.main import create_nav_stack
 
 blueprint = create_nav_stack()
@@ -71,7 +71,7 @@ create_nav_stack(
 
 Keep `obstacle_height_threshold` aligned between TerrainAnalysis and LocalPlanner — if TerrainAnalysis flags something but LocalPlanner's threshold is higher, the planner will drive through it.
 
-```python skip
+```python session=nav_stack
 create_nav_stack(
     terrain_analysis={"obstacle_height_threshold": 0.1},
     local_planner={"obstacle_height_threshold": 0.1},
@@ -82,7 +82,7 @@ create_nav_stack(
 
 Capped at two levels: LocalPlanner caps how fast it will *plan*, PathFollower caps how fast it will *execute*.
 
-```python skip
+```python session=nav_stack
 create_nav_stack(
     local_planner={"max_speed": 1.5, "autonomy_speed": 1.0},
     path_follower={"max_speed": 1.5, "autonomy_speed": 1.0},

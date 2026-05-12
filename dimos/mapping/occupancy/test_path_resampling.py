@@ -25,6 +25,8 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 
+pytestmark = pytest.mark.self_hosted
+
 
 @pytest.fixture
 def costmap() -> OccupancyGrid:
