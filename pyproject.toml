@@ -176,7 +176,6 @@ agents = [
 
 web = [
     "fastapi>=0.115.6",
-    "python-socketio>=5.11.0,<6",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
     "jinja2>=3.1.6",
