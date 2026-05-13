@@ -584,6 +584,7 @@ then refreshes perception obstacles.
             plan_err = self._wait_plan(rname)
             if plan_err:
                 logger.info(f"Grasp candidate {i + 1} {plan_err}, trying next")
+                self._clear_failed_plan_for_retry(rname)
                 continue
 
             # 3. Open gripper before approach

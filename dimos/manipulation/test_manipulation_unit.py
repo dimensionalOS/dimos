@@ -25,8 +25,11 @@ import pytest
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
+    PlanningJob,
 )
+from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -173,6 +176,45 @@ class TestStateMachine:
         module._state = ManipulationState.FAULT
         assert module._begin_planning() is None
 
+    def test_clear_failed_plan_for_retry_clears_only_completed_failed_plan(self):
+        """Internal retry clear removes one terminal failed plan."""
+        module = _make_module()
+        module._planning_jobs["test_arm"] = PlanningJob(
+            request_id=1,
+            accepted_at=1.0,
+            completed_at=2.0,
+            success=False,
+            error="no IK",
+        )
+        module._last_op_success["test_arm"] = False
+        module._planned_paths["test_arm"] = MagicMock()
+        module._planned_trajectories["test_arm"] = MagicMock()
+        module._error_message = "no IK"
+
+        assert module.get_state() == ManipulationState.FAULT.name
+        assert module._clear_failed_plan_for_retry("test_arm") is True
+        assert module.get_state() == ManipulationState.IDLE.name
+        assert "test_arm" not in module._planning_jobs
+        assert "test_arm" not in module._last_op_success
+        assert module._error_message == ""
+
+    def test_clear_failed_plan_for_retry_preserves_other_fault(self):
+        """Internal retry clear does not mask another robot's failed plan."""
+        module = _make_module()
+        for name, success in {"left": False, "right": False}.items():
+            module._planning_jobs[name] = PlanningJob(
+                request_id=1,
+                accepted_at=1.0,
+                completed_at=2.0,
+                success=success,
+                error=f"{name} failed",
+            )
+            module._last_op_success[name] = success
+
+        assert module._clear_failed_plan_for_retry("left") is True
+        assert module.get_state() == ManipulationState.FAULT.name
+        assert module._last_op_success == {"right": False}
+
 
 class TestRobotSelection:
     """Test robot selection logic."""
@@ -201,6 +243,50 @@ class TestRobotSelection:
         result = module._get_robot("left")
         assert result is not None
         assert result[0] == "left"
+
+
+class TestPickAndPlaceRetry:
+    """Test pick() grasp-candidate retry behavior."""
+
+    def test_pick_clears_failed_candidate_plan_before_retry(self, robot_config):
+        """A failed approach plan for one grasp candidate does not block the next."""
+        with patch.object(PickAndPlaceModule, "__init__", lambda self: None):
+            module = PickAndPlaceModule.__new__(PickAndPlaceModule)
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+
+        grasp_poses = [
+            Pose(Vector3(0.2, 0.0, 0.2), Quaternion()),
+            Pose(Vector3(0.25, 0.0, 0.2), Quaternion()),
+        ]
+        module._generate_grasps_for_pick = MagicMock(return_value=grasp_poses)
+        module._lift_if_low = MagicMock(return_value=None)
+        module._compute_pre_grasp_pose = MagicMock(side_effect=lambda pose, _offset: pose)
+        module._wait_plan = MagicMock(side_effect=["Error: Planning failed: no IK", None])
+        module._set_gripper_position = MagicMock()
+        module._preview_execute_wait = MagicMock(return_value=None)
+
+        events: list[str] = []
+
+        def plan_to_pose(_pose: Pose, _robot_name: str) -> bool:
+            events.append("plan")
+            return True
+
+        def clear_failed_plan(_robot_name: str) -> bool:
+            events.append("clear")
+            return True
+
+        module.plan_to_pose = MagicMock(side_effect=plan_to_pose)
+        module._clear_failed_plan_for_retry = MagicMock(side_effect=clear_failed_plan)
+
+        with patch("dimos.manipulation.pick_and_place_module.time.sleep", return_value=None):
+            result = module.pick("cup", robot_name="test_arm")
+
+        assert "Pick complete" in result
+        assert "'cup'" in result
+        assert module._wait_plan.call_count == 2
+        assert module._clear_failed_plan_for_retry.call_count == 1
+        assert events[:3] == ["plan", "clear", "plan"]
+        assert module.plan_to_pose.call_count == 4
 
 
 class TestJointNameTranslation:

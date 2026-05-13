@@ -532,6 +532,32 @@ class ManipulationModule(Module):
             self._planning_jobs[name] = PlanningJob(request_id=request_id, accepted_at=time.time())
         return name, robot_id, request_id
 
+    def _clear_failed_plan_for_retry(self, robot_name: RobotName) -> bool:
+        """Clear one completed failed plan so an internal retry loop can continue.
+
+        This is intentionally narrower than reset(): it only applies to a
+        terminal failed planning job for one robot, and it does not clear active
+        planning or execution. Use it for algorithms where a failed plan is an
+        expected candidate rejection, such as pick() trying the next grasp pose.
+        """
+        with self._lock:
+            if self._executing.get(robot_name, False):
+                return False
+            job = self._planning_jobs.get(robot_name)
+            if job is None or self._job_active_locked(job) or job.success is not False:
+                return False
+
+            self._planning_jobs.pop(robot_name, None)
+            self._planned_paths.pop(robot_name, None)
+            self._planned_trajectories.pop(robot_name, None)
+            self._last_op_success.pop(robot_name, None)
+
+            has_remaining_planning_fault = any(s is False for s in self._last_op_success.values())
+            if self._state != ManipulationState.FAULT and not has_remaining_planning_fault:
+                self._state = ManipulationState.IDLE
+                self._error_message = ""
+            return True
+
     def _fail(self, msg: str) -> bool:
         """Set FAULT state with error message."""
         logger.warning(msg)
