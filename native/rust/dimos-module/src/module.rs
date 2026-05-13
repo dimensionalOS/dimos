@@ -168,11 +168,11 @@ pub(crate) fn spawn_pubsub_tasks<T: Transport>(
     transport: T,
     routes: HashMap<String, Vec<Box<dyn Route>>>,
     mut publish_rx: mpsc::Receiver<(String, Vec<u8>)>,
-) {
+) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>) {
     let transport = Arc::new(transport);
 
     let recv_transport = Arc::clone(&transport);
-    tokio::spawn(async move {
+    let recv_handle = tokio::spawn(async move {
         loop {
             match recv_transport.recv().await {
                 Ok((channel, data)) => {
@@ -191,13 +191,25 @@ pub(crate) fn spawn_pubsub_tasks<T: Transport>(
     });
 
     let pub_transport = Arc::clone(&transport);
-    tokio::spawn(async move {
+    let pub_handle = tokio::spawn(async move {
         while let Some((topic, data)) = publish_rx.recv().await {
             if let Err(e) = pub_transport.publish(&topic, &data).await {
                 eprintln!("dimos_module: publish error on {topic}: {e}");
             }
         }
     });
+
+    (recv_handle, pub_handle)
+}
+
+fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
+    match res {
+        Ok(()) => eprintln!("dimos_module: {name} task exited unexpectedly"),
+        Err(e) => {
+            eprintln!("dimos_module: {name} task panicked, propagating");
+            std::panic::resume_unwind(e.into_panic());
+        }
+    }
 }
 
 pub async fn run<M, T>(transport: T) -> io::Result<()>
@@ -222,13 +234,16 @@ where
     let (publish_tx, publish_rx) = mpsc::channel::<(String, Vec<u8>)>(PUBLISH_CHANNEL_CAPACITY);
     let mut builder = Builder::new(topics, publish_tx);
     let mut module = M::build(&mut builder, config);
-    spawn_pubsub_tasks(transport, builder.routes, publish_rx);
+    let (mut recv_handle, mut pub_handle) =
+        spawn_pubsub_tasks(transport, builder.routes, publish_rx);
 
     module.setup().await;
 
     tokio::select! {
         _ = module.handle() => {}
         _ = tokio::signal::ctrl_c() => {}
+        res = &mut recv_handle => propagate_task_failure("recv", res),
+        res = &mut pub_handle => propagate_task_failure("publish", res),
     }
 
     module.teardown().await;
@@ -518,5 +533,29 @@ mod tests {
              {publish_count} events. The publish path should be independent \
              of recv-side CPU work."
         );
+    }
+
+    // propagate_task_failure
+
+    #[tokio::test]
+    async fn propagates_task_panic_payload() {
+        let handle = tokio::spawn(async { panic!("kaboom") });
+        let res = handle.await;
+
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            propagate_task_failure("recv", res);
+        }));
+
+        let payload = caught.expect_err("expected helper to re-panic");
+        let msg = payload
+            .downcast_ref::<&'static str>()
+            .copied()
+            .expect("panic payload should be a string literal");
+        assert_eq!(msg, "kaboom");
+    }
+
+    #[test]
+    fn ok_does_not_panic() {
+        propagate_task_failure("recv", Ok(()));
     }
 }

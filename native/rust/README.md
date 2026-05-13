@@ -32,7 +32,7 @@ impl MyModule {
     // initialization or publisher setup
     async fn on_start(&mut self) { /* ... */ }
 
-    // processing function expectd by cmd: Input
+    // processing function expected by cmd: Input
     async fn handle_cmd(&mut self, msg: Twist) { /* ... */ }
 
     // teardown / clean up logic
