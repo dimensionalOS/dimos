@@ -385,39 +385,46 @@ class DimosCompactionMiddleware(AgentMiddleware):  # type: ignore[misc]
         Everything from this index to the end is preserved verbatim by the
         middleware: no image stripping, no summarization.
 
-        Untagged-history fallback: when no message carries a `dimos_turn` tag
-        at all (i.e., a caller wired this middleware in without going through
-        McpClient), we anchor on the latest `HumanMessage` — treating it as
-        the start of the current turn. Messages before that point are
-        eligible for compaction; the latest user input plus any in-flight
-        assistant / tool messages after it are protected. If no
-        `HumanMessage` exists at all (unusual), we fall back to protecting
-        just the last message.
+        `dimos_turn` values are monotonically increasing within a history
+        (`McpClient._process_message` increments `self._turn` once per
+        user-facing turn before tagging). So we find the boundary in a single
+        backward pass: the first tagged message we see *is* the max turn,
+        and the first subsequent message tagged with a lower value marks
+        where the current-turn group ends.
+
+        Untagged-history fallback: when no message carries a `dimos_turn`
+        tag at all (a caller wired the middleware in without going through
+        McpClient), we anchor on the latest `HumanMessage`. If there's no
+        `HumanMessage` either, we warn and fall through to full-list
+        compaction; `_split` still guarantees at least one message survives
+        in the kept tail.
         """
         max_turn: int | None = None
-        for m in messages:
-            t = (m.additional_kwargs or {}).get("dimos_turn")
-            if isinstance(t, int) and (max_turn is None or t > max_turn):
-                max_turn = t
+        for i in range(len(messages) - 1, -1, -1):
+            t = (messages[i].additional_kwargs or {}).get("dimos_turn")
+            if isinstance(t, int):
+                if max_turn is None:
+                    max_turn = t
+                elif t < max_turn:
+                    return i + 1
+            # Untagged messages: in-flight in the current turn, keep walking.
 
         if max_turn is None:
-            # No tags. Walk back to find the latest HumanMessage and treat
-            # everything from there to the end as the current turn.
+            # No tags anywhere. Anchor on the latest HumanMessage.
             for i in range(len(messages) - 1, -1, -1):
                 if isinstance(messages[i], HumanMessage):
                     return i
-            return max(0, len(messages) - 1)
+            logger.warning(
+                "Compaction: no `dimos_turn` tags and no HumanMessage found; "
+                "treating the entire history as compactable. "
+                "This should not happen — check whether the agent harness is "
+                "tagging messages or producing well-formed conversations.",
+                n_messages=len(messages),
+            )
+            return len(messages)
 
-        # Walk back from end: anything with dimos_turn == max_turn OR untagged
-        # is part of the current turn. Stop at the first message tagged with a
-        # turn < max_turn.
-        cut = 0
-        for i in range(len(messages) - 1, -1, -1):
-            t = (messages[i].additional_kwargs or {}).get("dimos_turn")
-            if isinstance(t, int) and t < max_turn:
-                cut = i + 1
-                break
-        return cut
+        # All tagged messages share max_turn (no lower-turn boundary found).
+        return 0
 
     def _split(
         self, messages: list[BaseMessage], *, budget: int
