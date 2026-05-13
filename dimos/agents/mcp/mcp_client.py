@@ -35,6 +35,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
+from dimos.telemetry import session_attributes, span as trace_span
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -64,6 +65,7 @@ class McpClient(Module):
     _http_client: httpx.Client
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
+    _session_id: str
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -81,6 +83,9 @@ class McpClient(Module):
         self._http_client = httpx.Client(timeout=120.0)
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
+        # Stable per-instance id; every agent.turn span is tagged with it so
+        # the observability backend groups all turns into one session.
+        self._session_id = str(uuid.uuid4())
 
     def __reduce__(self) -> Any:
         return (self.__class__, (), {})
@@ -323,12 +328,13 @@ class McpClient(Module):
         pretty_print_langchain_message(message)
         self.agent.publish(message)
 
-        for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
-            for node_output in update.values():
-                for msg in node_output.get("messages", []):
-                    self._history.append(msg)
-                    pretty_print_langchain_message(msg)
-                    self.agent.publish(msg)
+        with trace_span("agent.turn", **session_attributes(self._session_id)):
+            for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
+                for node_output in update.values():
+                    for msg in node_output.get("messages", []):
+                        self._history.append(msg)
+                        pretty_print_langchain_message(msg)
+                        self.agent.publish(msg)
 
         if self._message_queue.empty():
             self.agent_idle.publish(True)
