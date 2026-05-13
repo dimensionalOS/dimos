@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -26,6 +26,7 @@ from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanne
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
 from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
 from dimos.navigation.nav_stack.modules.pgo.pgo import PGO
+from dimos.navigation.nav_stack.modules.rtab_map.rtab_map import RtabMap
 from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
 from dimos.navigation.nav_stack.modules.tare_planner.tare_planner import TarePlanner
 from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
@@ -33,6 +34,8 @@ from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import T
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
+
+SlamChoice = Literal["pgo", "rtab"]
 
 logger = setup_logger()
 
@@ -42,6 +45,7 @@ def create_nav_stack(
     use_tare: bool = False,
     use_terrain_map_ext: bool = True,
     planner: str = "far",
+    slam_choice: SlamChoice = "pgo",
     vehicle_height: float | None = None,
     max_speed: float | None = None,
     waypoint_threshold: float | None = None,
@@ -55,6 +59,7 @@ def create_nav_stack(
     far_planner: dict[str, Any] | None = None,
     simple_planner: dict[str, Any] | None = None,
     pgo: dict[str, Any] | None = None,
+    rtab_map: dict[str, Any] | None = None,
     tare_planner: dict[str, Any] | None = None,
     nav_record: dict[str, Any] | None = None,
 ) -> Blueprint:
@@ -63,6 +68,14 @@ def create_nav_stack(
     Per-module config dicts (``terrain_analysis``, ``local_planner``, etc.)
     override defaults. ``vehicle_height`` and ``max_speed`` propagate to
     the relevant modules automatically.
+
+    ``slam_choice`` picks the SLAM provider that publishes ``corrected_odometry``
+    and the ``map -> odom`` TF correction:
+
+    * ``"pgo"`` (default) — the existing C++ PGO native module.
+    * ``"rtab"`` — :class:`RtabMap`, a Python module that wraps RTAB-Map's
+      OctoMap-based mapping with raycasting clearing on by default. Consumes
+      FastLIO2 odometry the same way PGO does.
     """
     far_planner_config = {**(far_planner or {})}
     far_planner_config.setdefault("is_static_env", False)
@@ -77,7 +90,13 @@ def create_nav_stack(
         path_follower_config.setdefault("goal_tolerance", waypoint_threshold)
         simple_planner_config.setdefault("goal_reached_threshold", waypoint_threshold)
 
-    pgo_module: Blueprint = PGO.blueprint(**(pgo or {}))
+    slam_module: Blueprint
+    if slam_choice == "pgo":
+        slam_module = PGO.blueprint(**(pgo or {}))
+    elif slam_choice == "rtab":
+        slam_module = RtabMap.blueprint(**(rtab_map or {}))
+    else:
+        raise Exception(f"invalid slam_choice: {slam_choice}")
 
     modules: list[Blueprint] = [
         TerrainAnalysis.blueprint(
@@ -141,7 +160,7 @@ def create_nav_stack(
                 **path_follower_config,
             }
         ),
-        pgo_module,
+        slam_module,
     ]
     if planner == "simple":
         merged_simple_planner_config: dict[str, Any] = {"replan_rate": replan_rate}
@@ -178,11 +197,12 @@ def create_nav_stack(
         modules.append(NavRecord.blueprint(**(nav_record or {})))
         record_remappings.append((NavRecord, "global_map", "global_map_pgo"))
 
+    slam_class: type[ModuleBase] = PGO if slam_choice == "pgo" else RtabMap
     remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
         (TerrainAnalysis, "odometry", "corrected_odometry"),
         (TerrainMapExt, "odometry", "corrected_odometry"),
-        (PGO, "global_map", "global_map_pgo"),
+        (slam_class, "global_map", "global_map_pgo"),
         *record_remappings,
     ]
     if planner == "far":
