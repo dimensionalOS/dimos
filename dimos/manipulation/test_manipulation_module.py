@@ -47,8 +47,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.data import get_data
 
-pytestmark = pytest.mark.self_hosted
-
 
 def _drake_available() -> bool:
     return importlib.util.find_spec("pydrake") is not None
@@ -453,6 +451,7 @@ class TestAsyncPlanningUnit:
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
 @pytest.mark.skipif(not _xarm_urdf_available(), reason="XArm URDF not available")
+@pytest.mark.self_hosted
 class TestManipulationModuleIntegration:
     """Integration tests for ManipulationModule with real Drake backend."""
 
@@ -554,6 +553,7 @@ class TestManipulationModuleIntegration:
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
 @pytest.mark.skipif(not _xarm_urdf_available(), reason="XArm URDF not available")
+@pytest.mark.self_hosted
 class TestCoordinatorIntegration:
     """Test coordinator integration with mocked RPC client."""
 

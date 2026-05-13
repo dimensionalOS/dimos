@@ -96,6 +96,11 @@ def _make_module():
         module._robots = {}
         module._planned_paths = {}
         module._planned_trajectories = {}
+        module._planning_jobs = {}
+        module._executing = {}
+        module._last_op_success = {}
+        module._next_request_id = 0
+        module._planning_pool = None
         module._world_monitor = None
         module._planner = None
         module._kinematics = None
@@ -107,15 +112,14 @@ class TestStateMachine:
     """Test state transitions."""
 
     def test_cancel_only_during_execution(self):
-        """Cancel only works in EXECUTING state."""
+        """Cancel only works for robots in the execute accept window."""
         module = _make_module()
 
-        module._state = ManipulationState.IDLE
         assert module.cancel() is False
 
-        module._state = ManipulationState.EXECUTING
+        module._executing["test_arm"] = True
         assert module.cancel() is True
-        assert module._state == ManipulationState.IDLE
+        assert module._executing["test_arm"] is False
 
     def test_reset_not_during_execution(self):
         """Reset works in any state except EXECUTING."""
@@ -128,7 +132,7 @@ class TestStateMachine:
         assert module._state == ManipulationState.IDLE
         assert module._error_message == ""
 
-        module._state = ManipulationState.EXECUTING
+        module._executing["test_arm"] = True
         result = module.reset()
         assert "Error" in result
 
@@ -142,23 +146,31 @@ class TestStateMachine:
         assert module._state == ManipulationState.FAULT
         assert module._error_message == "Test error"
 
-    def test_begin_planning_state_checks(self, robot_config):
-        """_begin_planning only allowed from IDLE or COMPLETED."""
+    def test_begin_planning_registers_per_robot_job(self, robot_config):
+        """_begin_planning registers a per-robot async planning job."""
         module = _make_module()
         module._world_monitor = MagicMock()
+        module._planner = MagicMock()
+        module._planning_pool = MagicMock()
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
 
-        # From IDLE - OK
-        module._state = ManipulationState.IDLE
-        assert module._begin_planning() == ("test_arm", "robot_id")
-        assert module._state == ManipulationState.PLANNING
+        assert module._begin_planning() == ("test_arm", "robot_id", 0)
+        assert module.get_state() == ManipulationState.PLANNING.name
+        assert module._planning_jobs["test_arm"].request_id == 0
 
-        # From COMPLETED - OK
-        module._state = ManipulationState.COMPLETED
-        assert module._begin_planning() == ("test_arm", "robot_id")
+    def test_begin_planning_rejects_fault_and_duplicate_active_job(self, robot_config):
+        """_begin_planning rejects faulted modules and duplicate jobs per robot."""
+        module = _make_module()
+        module._world_monitor = MagicMock()
+        module._planner = MagicMock()
+        module._planning_pool = MagicMock()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
 
-        # From EXECUTING - Fail
-        module._state = ManipulationState.EXECUTING
+        assert module._begin_planning() == ("test_arm", "robot_id", 0)
+        assert module._begin_planning() is None
+
+        module.reset()
+        module._state = ManipulationState.FAULT
         assert module._begin_planning() is None
 
 
@@ -220,6 +232,7 @@ class TestExecute:
         module = _make_module()
         module._robots = {"test_arm": ("id", robot_config, MagicMock())}
         module._planned_trajectories = {}
+        module._coordinator_client = MagicMock()
 
         assert module.execute() is False
 
@@ -249,7 +262,7 @@ class TestExecute:
         module._coordinator_client = mock_client
 
         assert module.execute() is True
-        assert module._state == ManipulationState.COMPLETED
+        assert module.get_state() == ManipulationState.COMPLETED.name
         mock_client.task_invoke.assert_called_once_with(
             "traj_arm", "execute", {"trajectory": simple_trajectory}
         )
@@ -265,7 +278,7 @@ class TestExecute:
         module._coordinator_client = mock_client
 
         assert module.execute() is False
-        assert module._state == ManipulationState.FAULT
+        assert module.get_state() == ManipulationState.FAULT.name
 
 
 class TestRobotModelConfigMapping:
