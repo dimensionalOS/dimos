@@ -166,7 +166,9 @@ def _default_blueprint() -> Blueprint:
 class Config(ModuleConfig):
     pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
-    visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
+    visual_override: dict[Glob | str, Callable[[Any], Archetype] | None] = field(
+        default_factory=dict
+    )
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
     max_hz: dict[str, float] = field(default_factory=dict)
 
