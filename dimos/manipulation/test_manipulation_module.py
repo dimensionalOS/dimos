@@ -33,6 +33,7 @@ import pytest
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
+    PlanningJob,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
@@ -275,6 +276,34 @@ class TestAsyncPlanningUnit:
         assert async_module._wait_plan() is None
         status = async_module.get_planning_status("left_arm")
         assert status["success"] is True
+
+    def test_completed_job_with_missing_future_is_not_active(self, async_module):
+        control = _PlanControl()
+        async_module._planner = _GatedPlanner([control])
+
+        assert async_module.plan_to_joints(
+            JointState(name=["j1", "j2"], position=[0.1, 0.1]), "left_arm"
+        )
+        assert control.started.wait(timeout=0.5)
+        control.release.set()
+        assert async_module.wait_for_planning_completion("left_arm", timeout=1.0)
+
+        with async_module._lock:
+            job = async_module._planning_jobs["left_arm"]
+            async_module._planning_jobs["left_arm"] = PlanningJob(
+                request_id=job.request_id,
+                accepted_at=job.accepted_at,
+                future=None,
+                completed_at=job.completed_at,
+                success=job.success,
+                error=job.error,
+            )
+
+        status = async_module.get_planning_status("left_arm")
+        assert status["done"] is True
+        assert status["active"] is False
+        assert async_module.has_planned_path("left_arm") is True
+        assert async_module.preview_path(0.1, "left_arm") is True
 
     def test_distinct_robots_can_have_active_plans_simultaneously(self, async_module):
         release = threading.Event()
