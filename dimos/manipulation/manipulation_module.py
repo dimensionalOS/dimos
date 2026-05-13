@@ -75,8 +75,7 @@ PlannedTrajectories: TypeAlias = dict[RobotName, JointTrajectory]
 
 @dataclass
 class PlanningJob:
-    """In-flight or completed planning job for a single robot.
-    """
+    """In-flight or completed planning job for a single robot."""
 
     request_id: int
     accepted_at: float
@@ -391,9 +390,7 @@ class ManipulationModule(Module):
         Caller must hold self._lock. completed_at is authoritative because a
         very fast worker can complete before plan_to_* records job.future.
         """
-        return job.completed_at is not None or (
-            job.future is not None and job.future.done()
-        )
+        return job.completed_at is not None or (job.future is not None and job.future.done())
 
     def _job_active_locked(self, job: PlanningJob | None) -> bool:
         """Return whether a planning job should block plan/preview/execute.
@@ -532,9 +529,7 @@ class ManipulationModule(Module):
             self._planned_trajectories.pop(name, None)
             request_id = self._next_request_id
             self._next_request_id += 1
-            self._planning_jobs[name] = PlanningJob(
-                request_id=request_id, accepted_at=time.time()
-            )
+            self._planning_jobs[name] = PlanningJob(request_id=request_id, accepted_at=time.time())
         return name, robot_id, request_id
 
     def _fail(self, msg: str) -> bool:
@@ -629,9 +624,7 @@ class ManipulationModule(Module):
         }
 
     @rpc
-    def get_planning_status(
-        self, robot_name: RobotName | None = None
-    ) -> dict[str, Any]:
+    def get_planning_status(self, robot_name: RobotName | None = None) -> dict[str, Any]:
         """Return per-robot planning job status.
 
         With a robot_name, returns a single status dict for that robot.
@@ -642,8 +635,7 @@ class ManipulationModule(Module):
             if robot_name is not None:
                 return self._build_status(robot_name, self._planning_jobs.get(robot_name))
             return {
-                name: self._build_status(name, job)
-                for name, job in self._planning_jobs.items()
+                name: self._build_status(name, job) for name, job in self._planning_jobs.items()
             }
 
     @rpc
@@ -666,15 +658,9 @@ class ManipulationModule(Module):
         with self._lock:
             if robot_name is not None:
                 job = self._planning_jobs.get(robot_name)
-                futures = (
-                    [job.future]
-                    if job is not None and job.future is not None
-                    else []
-                )
+                futures = [job.future] if job is not None and job.future is not None else []
             else:
-                futures = [
-                    j.future for j in self._planning_jobs.values() if j.future is not None
-                ]
+                futures = [j.future for j in self._planning_jobs.values() if j.future is not None]
 
         if not futures:
             return True
@@ -725,8 +711,12 @@ class ManipulationModule(Module):
                 )
                 if not ik.is_success() or ik.joint_state is None:
                     self._complete_job(
-                        robot_name, request_id, False,
-                        f"IK failed: {ik.status.name}", None, None,
+                        robot_name,
+                        request_id,
+                        False,
+                        f"IK failed: {ik.status.name}",
+                        None,
+                        None,
                     )
                     return
                 logger.info(f"IK solved for '{robot_name}', error: {ik.position_error:.4f}m")
@@ -752,8 +742,12 @@ class ManipulationModule(Module):
             )
             if not result.is_success():
                 self._complete_job(
-                    robot_name, request_id, False,
-                    f"Planning failed: {result.status.name}", None, None,
+                    robot_name,
+                    request_id,
+                    False,
+                    f"Planning failed: {result.status.name}",
+                    None,
+                    None,
                 )
                 return
 
@@ -820,9 +814,7 @@ class ManipulationModule(Module):
         with self._lock:
             job = self._planning_jobs.get(robot_name)
             if self._job_active_locked(job):
-                logger.warning(
-                    f"Cannot preview: planning still active for '{robot_name}'"
-                )
+                logger.warning(f"Cannot preview: planning still active for '{robot_name}'")
                 return False
             planned_path = self._planned_paths.get(robot_name)
             if planned_path is None or len(planned_path) == 0:
@@ -1055,9 +1047,7 @@ class ManipulationModule(Module):
                 return False
             job = self._planning_jobs.get(robot_name)
             if self._job_active_locked(job):
-                logger.warning(
-                    f"Cannot execute: planning still active for '{robot_name}'"
-                )
+                logger.warning(f"Cannot execute: planning still active for '{robot_name}'")
                 return False
             traj = self._planned_trajectories.get(robot_name)
             if traj is None:
@@ -1065,28 +1055,40 @@ class ManipulationModule(Module):
                 return False
             self._executing[robot_name] = True
 
+        execution_error: str | None = None
         try:
             translated = self._translate_trajectory_to_coordinator(traj, config)
             logger.info(
                 f"Executing '{robot_name}': task='{config.coordinator_task_name}', "
                 f"{len(translated.points)} pts, {translated.duration:.2f}s"
             )
-            result = client.task_invoke(
-                config.coordinator_task_name, "execute", {"trajectory": translated}
+            result = bool(
+                client.task_invoke(
+                    config.coordinator_task_name, "execute", {"trajectory": translated}
+                )
             )
-        finally:
-            with self._lock:
-                self._executing[robot_name] = False
+        except Exception as e:
+            logger.exception(f"Execution request failed for '{robot_name}'")
+            result = False
+            execution_error = f"Execution request failed for '{robot_name}': {e}"
 
+        # Update execution and fault state together so observers never see a
+        # completed state after the coordinator has rejected or crashed.
         with self._lock:
+            self._executing[robot_name] = False
             self._last_op_success[robot_name] = bool(result)
             if not result:
                 self._state = ManipulationState.FAULT
-                self._error_message = f"Coordinator rejected trajectory for '{robot_name}'"
+                self._error_message = (
+                    execution_error or f"Coordinator rejected trajectory for '{robot_name}'"
+                )
         if result:
             logger.info(f"Trajectory accepted for '{robot_name}'")
             return True
-        logger.warning(f"Coordinator rejected trajectory for '{robot_name}'")
+        if execution_error:
+            logger.warning(execution_error)
+        else:
+            logger.warning(f"Coordinator rejected trajectory for '{robot_name}'")
         return False
 
     @rpc

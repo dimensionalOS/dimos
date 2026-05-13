@@ -267,9 +267,7 @@ class TestAsyncPlanningUnit:
         async_module._planner = _GatedPlanner([control])
         async_module._robots = {"left_arm": async_module._robots["left_arm"]}
 
-        assert async_module.plan_to_joints(
-            JointState(name=["j1", "j2"], position=[0.1, 0.1])
-        )
+        assert async_module.plan_to_joints(JointState(name=["j1", "j2"], position=[0.1, 0.1]))
         assert control.started.wait(timeout=0.5)
         control.release.set()
 

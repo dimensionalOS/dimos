@@ -280,6 +280,36 @@ class TestExecute:
         assert module.execute() is False
         assert module.get_state() == ManipulationState.FAULT.name
 
+    def test_execute_task_invoke_exception_sets_fault(self, robot_config, simple_trajectory):
+        """Coordinator exceptions are recorded as execution failures."""
+        module = _make_module()
+        module._robots = {"test_arm": ("id", robot_config, MagicMock())}
+        module._planned_trajectories = {"test_arm": simple_trajectory}
+
+        mock_client = MagicMock()
+        mock_client.task_invoke.side_effect = RuntimeError("coordinator crashed")
+        module._coordinator_client = mock_client
+
+        assert module.execute() is False
+        assert module._executing["test_arm"] is False
+        assert module.get_state() == ManipulationState.FAULT.name
+        assert "coordinator crashed" in module.get_error()
+
+    def test_execute_translation_exception_sets_fault(self, robot_config, simple_trajectory):
+        """Trajectory translation exceptions are recorded as execution failures."""
+        module = _make_module()
+        module._robots = {"test_arm": ("id", robot_config, MagicMock())}
+        module._planned_trajectories = {"test_arm": simple_trajectory}
+        module._coordinator_client = MagicMock()
+        module._translate_trajectory_to_coordinator = MagicMock(
+            side_effect=RuntimeError("bad trajectory")
+        )
+
+        assert module.execute() is False
+        assert module._executing["test_arm"] is False
+        assert module.get_state() == ManipulationState.FAULT.name
+        assert "bad trajectory" in module.get_error()
+
 
 class TestRobotModelConfigMapping:
     """Test RobotModelConfig joint name mapping helpers."""
