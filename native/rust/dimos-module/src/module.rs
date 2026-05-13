@@ -314,8 +314,7 @@ mod tests {
         name: String,
     }
 
-    // --- parse_config_json ---
-
+    // parse_config_json
     #[test]
     fn parses_topics_and_config() {
         let json = r#"{"topics": {"data": "/foo/data", "confirm": "/foo/confirm"}, "config": {"value": 42, "name": "hello"}}"#;
@@ -393,7 +392,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // --- topic_for fallback ---
+    // topic_for fallback
 
     fn topics(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs
@@ -440,7 +439,7 @@ mod tests {
         assert_eq!(output.topic, "/robot/cmd_vel");
     }
 
-    // --- recv/publish concurrency ---
+    // recv/publish concurrency
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn slow_publish_does_not_block_recv() {

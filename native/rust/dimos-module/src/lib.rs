@@ -2,7 +2,7 @@ pub mod lcm;
 pub mod module;
 pub mod transport;
 
-pub use dimos_native_module_macros::Module;
+pub use dimos_module_macros::Module;
 pub use lcm::LcmTransport;
 pub use module::{run, Builder, Input, Module, Output};
 pub use transport::Transport;

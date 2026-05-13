@@ -1,4 +1,4 @@
-use dimos_native_module::{run, Input, LcmTransport, Module, Output};
+use dimos_module::{run, Input, LcmTransport, Module, Output};
 use lcm_msgs::geometry_msgs::{Twist, Vector3};
 use tokio::time::{interval, Duration};
 

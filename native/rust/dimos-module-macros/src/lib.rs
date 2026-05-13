@@ -161,12 +161,12 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     });
 
     Ok(quote! {
-        impl ::dimos_native_module::Module for #struct_name {
+        impl ::dimos_module::Module for #struct_name {
             type Config = #config_type;
 
             fn build(
-                builder: &mut ::dimos_native_module::Builder,
-                #config_param: <Self as ::dimos_native_module::Module>::Config,
+                builder: &mut ::dimos_module::Builder,
+                #config_param: <Self as ::dimos_module::Module>::Config,
             ) -> Self {
                 Self {
                     #(#build_field_inits,)*

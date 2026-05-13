@@ -1,8 +1,8 @@
 [package]
-name = "dimos-native-module-macros"
+name = "dimos-module-macros"
 version = "0.1.0"
 edition = "2021"
-description = "Proc-macros for dimos-native-module"
+description = "Proc-macros for dimos-module"
 license = "Apache-2.0"
 
 [lib]

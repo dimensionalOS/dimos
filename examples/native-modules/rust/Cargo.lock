@@ -19,33 +19,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "dimos-native-module"
+name = "dimos-module"
 version = "0.1.0"
 dependencies = [
  "dimos-lcm",
- "dimos-native-module-macros",
+ "dimos-module-macros",
  "serde",
  "serde_json",
  "tokio",
 ]
 
 [[package]]
-name = "dimos-native-module-examples"
-version = "0.1.0"
-dependencies = [
- "dimos-native-module",
- "lcm-msgs",
- "serde",
- "tokio",
-]
-
-[[package]]
-name = "dimos-native-module-macros"
+name = "dimos-module-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "dimos-native-module-examples"
+version = "0.1.0"
+dependencies = [
+ "dimos-module",
+ "lcm-msgs",
+ "serde",
+ "tokio",
 ]
 
 [[package]]

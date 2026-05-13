@@ -19,11 +19,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "dimos-native-module"
+name = "dimos-module"
 version = "0.1.0"
 dependencies = [
  "dimos-lcm",
- "dimos-native-module-macros",
+ "dimos-module-macros",
  "lcm-msgs",
  "serde",
  "serde_json",
@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dimos-native-module-macros"
+name = "dimos-module-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
