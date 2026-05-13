@@ -31,7 +31,6 @@ from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
 
 @pytest.mark.skipif_in_ci
-@pytest.mark.slow
 class TestControlCoordinatorE2E:
     """End-to-end tests for ControlCoordinator."""
 

@@ -21,6 +21,7 @@ import time
 class DimosCliCall:
     process: subprocess.Popen[bytes] | None
     demo_args: list[str] | None = None
+    mcp_port: int | None = None
 
     def __init__(self) -> None:
         self.process = None
@@ -33,8 +34,21 @@ class DimosCliCall:
         if len(args) == 1:
             args = ["run", *args]
 
+        # If a port was supplied, override `global_config.mcp_port` (used by
+        # `McpServer.start` to bind) and `McpClient.mcp_server_url` (which
+        # defaults to a hard-coded `http://localhost:9990/mcp`) so server
+        # and client agree on the same port.
+        global_overrides: list[str] = []
+        blueprint_overrides: list[str] = []
+        if self.mcp_port is not None:
+            global_overrides += ["--mcp-port", str(self.mcp_port)]
+            blueprint_overrides += [
+                "-o",
+                f"mcpclient.mcp_server_url=http://localhost:{self.mcp_port}/mcp",
+            ]
+
         self.process = subprocess.Popen(
-            ["dimos", "--simulation", *args],
+            ["dimos", *global_overrides, "--simulation", *args, *blueprint_overrides],
             start_new_session=True,
         )
 

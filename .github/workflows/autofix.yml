@@ -1,0 +1,32 @@
+name: autofix.ci
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  lint:
+    timeout-minutes: 1
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    env:
+      UV_NO_SYNC: "1"  # Disable installing default packages on `uv run`
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --only-group autofix --frozen
+      - name: Ruff fix
+        run: uv run ruff check --fix-only --unsafe-fixes
+      - name: Ruff format
+        run: uv run ruff format
+      - name: uv lock
+        run: uv lock
+      - name: autofix.ci
+        uses: autofix-ci/action@v1

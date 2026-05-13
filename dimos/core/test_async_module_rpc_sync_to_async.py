@@ -101,7 +101,6 @@ def out_transport():
     ret.stop()
 
 
-@pytest.mark.slow
 def test_async_module_rpc_sync_to_async(start_module, in_transport, out_transport):
     """
     Test that you can call a synchronous RPC from an asynchronous RPC and vice versa.

@@ -245,7 +245,6 @@ def out_transport():
     out_tr.stop()
 
 
-@pytest.mark.slow
 def test_main_and_handle_together(start_main_handler_module, a_transport, out_transport):
     queue: Queue[int] = Queue()
     out_transport.subscribe(queue.put)

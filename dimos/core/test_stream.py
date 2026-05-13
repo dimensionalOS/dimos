@@ -168,9 +168,9 @@ class SpyLCMTransport(LCMTransport):
         return wrapped_unsubscribe
 
 
-@pytest.mark.parametrize("subscriber_class", [ClassicSubscriber, RXPYSubscriber])
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_macos_bug
+@pytest.mark.parametrize("subscriber_class", [ClassicSubscriber, RXPYSubscriber])
 def test_subscription(dimos, subscriber_class) -> None:
     robot = dimos.deploy(MockRobotClient)
 
@@ -211,7 +211,7 @@ def test_subscription(dimos, subscriber_class) -> None:
     robot.stop_rpc_client()
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_macos_bug
 def test_get_next(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
@@ -244,7 +244,7 @@ def test_get_next(dimos) -> None:
     robot.stop_rpc_client()
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_macos_bug
 def test_hot_getter(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)

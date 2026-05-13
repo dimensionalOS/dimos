@@ -14,6 +14,7 @@
 
 import re
 
+import pytest
 from reactivex import operators as ops
 
 from dimos.memory.timeseries.legacy import LegacyPickleStore
@@ -21,6 +22,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
+
+pytestmark = pytest.mark.self_hosted
 
 
 def test_timed_sensor_replay() -> None:
