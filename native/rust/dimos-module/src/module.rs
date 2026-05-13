@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::io::{self, BufRead};
+use std::io;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
 use serde::de::DeserializeOwned;
@@ -218,7 +219,9 @@ where
     T: Transport,
 {
     let mut line = String::new();
-    io::stdin().lock().read_line(&mut line)?;
+    BufReader::new(tokio::io::stdin())
+        .read_line(&mut line)
+        .await?;
     let (topics, config) = parse_config_json::<M::Config>(&line)?;
 
     let exe = std::env::current_exe()

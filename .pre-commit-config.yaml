@@ -111,14 +111,30 @@ repos:
 
       - id: cargo-fmt
         name: cargo fmt
-        entry: bash -c "cargo fmt --manifest-path native/rust/Cargo.toml --all --check && cargo fmt --manifest-path examples/native-modules/rust/Cargo.toml --check"
+        entry: |
+          bash -c '
+            set -euo pipefail
+            git ls-files "*Cargo.toml" | while read -r m; do
+              cargo locate-project --manifest-path "$m" --workspace --message-format plain
+            done | sort -u | while read -r root; do
+              cargo fmt --manifest-path "$root" --all --check
+            done
+          '
         language: system
         types: [rust]
         pass_filenames: false
 
       - id: cargo-clippy
         name: cargo clippy
-        entry: bash -c "cargo clippy --manifest-path native/rust/Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path examples/native-modules/rust/Cargo.toml --all-targets -- -D warnings"
+        entry: |
+          bash -c '
+            set -euo pipefail
+            git ls-files "*Cargo.toml" | while read -r m; do
+              cargo locate-project --manifest-path "$m" --workspace --message-format plain
+            done | sort -u | while read -r root; do
+              cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
+            done
+          '
         language: system
         types: [rust]
         pass_filenames: false
