@@ -36,5 +36,5 @@ class TestCrossWallPlanning:
         blueprint = autoconnect(
             unitree_g1_nav_sim,
             create_nav_stack(**{**nav_config, "planner": "far"}),
-        ).global_config(dtop=True)
+        ).global_config()
         run_cross_wall_test(blueprint, label="far")
