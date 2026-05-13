@@ -74,9 +74,9 @@ We don't have proper loop closure and stable odometry, we trust the data go2 odo
 
 ![Global map](assets/2-globalmap.png)
 
-### 3. Global Costmap — [`CostMapper`](/dimos/mapping/costmapper.py)
+### 3. Global Costmap — [`CostMapper`](/dimos/mapping/cost_mapper.py)
 
-The [`CostMapper`](/dimos/mapping/costmapper.py) converts the 3D voxel map into a 2D occupancy grid. The default algorithm (`height_cost`) maps rate of change of Z, with some smoothing.
+The [`CostMapper`](/dimos/mapping/cost_mapper.py) converts the 3D voxel map into a 2D occupancy grid. The default algorithm (`height_cost`) maps rate of change of Z, with some smoothing.
 
 algo settings are in [`occupancy.py`](/dimos/mapping/pointclouds/occupancy.py) and can be configured per robot
 
@@ -159,7 +159,7 @@ The navigation stack is composed in the [`unitree_go2`](/dimos/robot/unitree/go2
 ```python fold output=assets/go2_blueprint.svg
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.introspection import to_svg
-from dimos.mapping.costmapper import cost_mapper
+from dimos.mapping.cost_mapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.navigation.replanning_a_star.module import replanning_a_star_planner

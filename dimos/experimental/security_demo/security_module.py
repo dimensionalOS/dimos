@@ -38,14 +38,14 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
-from dimos.navigation.patrolling.routers.patrol_router import PatrolRouter
+from dimos.navigation.modules.patrolling.create_patrol_router import create_patrol_router
+from dimos.navigation.modules.patrolling.routers.patrol_router import PatrolRouter
 from dimos.agents.skills.speak_skill_spec import SpeakSkillSpec
-from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
-from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
+from dimos.navigation.modules.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
+from dimos.navigation.utils.visual_servoing_2d import VisualServoing2D
 from dimos.perception.common.utils import draw_bounding_box
 from dimos.utils.logging_config import setup_logger
-from dimos.navigation.patrolling.constants import EXTRA_CLEARANCE
+from dimos.navigation.modules.patrolling.constants import EXTRA_CLEARANCE
 
 if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox

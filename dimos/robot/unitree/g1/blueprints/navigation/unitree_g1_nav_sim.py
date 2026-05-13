@@ -42,8 +42,8 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
+from dimos.navigation.modules.movement_manager.movement_manager import MovementManager
+from dimos.navigation.nav_stack import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS, G1_VEHICLE_HEIGHT
 from dimos.robot.unitree.g1.g1_rerun import g1_static_robot
 from dimos.simulation.unity.module import UnityBridgeModule

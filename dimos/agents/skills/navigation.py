@@ -27,10 +27,10 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
-from dimos.navigation.navigation_spec import NavigationInterfaceSpec
-from dimos.navigation.visual.query import get_object_bbox_from_image
+from dimos.navigation.specs import NavigationInterfaceSpec
 from dimos.perception.object_tracking_spec import ObjectTrackingSpec
 from dimos.perception.spatial_memory_spec import SpatialMemorySpec
+from dimos.perception.visual_query import get_object_bbox_from_image
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 

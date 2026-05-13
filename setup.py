@@ -67,8 +67,12 @@ if not python_is_macos_universal_binary():
 # C++ extensions
 ext_modules = [
     Pybind11Extension(
-        "dimos.navigation.replanning_a_star.min_cost_astar_ext",
-        [os.path.join("dimos", "navigation", "replanning_a_star", "min_cost_astar_cpp.cpp")],
+        "dimos.navigation.modules.replanning_a_star.min_cost_astar_ext",
+        [
+            os.path.join(
+                "dimos", "navigation", "modules", "replanning_a_star", "min_cost_astar_cpp.cpp"
+            )
+        ],
         extra_compile_args=extra_compile_args,
         define_macros=[
             ("NDEBUG", "1"),

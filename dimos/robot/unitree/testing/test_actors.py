@@ -19,9 +19,6 @@ import pytest
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.type.map import Map as Mapper
 
 
 @pytest.fixture
@@ -80,13 +77,6 @@ def test_basic(dimos) -> None:
 
     print("result is", res)
     assert res == 20
-
-
-@pytest.mark.tool
-def test_mapper_start(dimos) -> None:
-    mapper = dimos.deploy(Mapper)
-    mapper.lidar.transport = LCMTransport("/lidar", PointCloud2)
-    print("start res", mapper.start().result())
 
 
 @pytest.mark.tool

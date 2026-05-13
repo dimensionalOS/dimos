@@ -34,10 +34,10 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.patrolling.patrolling_module_spec import PatrollingModuleSpec
-from dimos.navigation.visual.query import get_object_bbox_from_image
-from dimos.navigation.visual_servoing.detection_navigation import DetectionNavigation
-from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
+from dimos.navigation.modules.patrolling.patrolling_module_spec import PatrollingModuleSpec
+from dimos.navigation.utils.detection_navigation import DetectionNavigation
+from dimos.navigation.utils.visual_servoing_2d import VisualServoing2D
+from dimos.perception.visual_query import get_object_bbox_from_image
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

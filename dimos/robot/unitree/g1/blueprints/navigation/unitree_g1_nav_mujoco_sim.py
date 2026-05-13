@@ -45,8 +45,8 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_stack.main import create_nav_stack
+from dimos.navigation.modules.movement_manager.movement_manager import MovementManager
+from dimos.navigation.nav_stack import create_nav_stack
 from dimos.robot.unitree.g1.blueprints.navigation._mujoco_pose_adapter import (
     MujocoPoseToOdometryAdapter,
 )

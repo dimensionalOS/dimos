@@ -45,8 +45,8 @@ import os
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
+from dimos.navigation.modules.movement_manager.movement_manager import MovementManager
+from dimos.navigation.nav_stack import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.unitree.g1.config import G1, G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 from dimos.robot.unitree.g1.g1_rerun import (

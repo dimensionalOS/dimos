@@ -25,7 +25,7 @@ from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.hardware.sensors.camera.zed import compat as zed
-from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.modules.cost_mapper.cost_mapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -37,7 +37,7 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+from dimos.navigation.modules.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
 from dimos.visualization.vis_module import vis_module

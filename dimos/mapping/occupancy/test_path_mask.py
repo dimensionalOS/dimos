@@ -22,7 +22,7 @@ from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
+from dimos.navigation.modules.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 
 
