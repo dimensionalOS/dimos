@@ -120,8 +120,9 @@ The tracker (ObjectMemoryTracker)
 -----------------------------------------------------
 
 The tracker is **detector-agnostic** — anything publishing
-``list[DetObject]`` on ``raw_detections`` works. v3 just plugs
-``LazyPerceptionModule`` in front of it; the contract is the same.
+``list[DetObject]`` on ``raw_detections`` works. ``LazyPerceptionModule``
+is what plugs in front of it here; the contract doesn't depend on
+which detector is used.
 
 **Belief model.** For each tracked object::
 
@@ -142,8 +143,10 @@ pipeline's recency filter on peak frames).
 
 **Four-tier match.** Per detection, the matcher tries in order:
 
-1. ``track-id`` — O(1) lookup. YOLOE assigned ids; under v3 VLM
-   detections have ``track_id = -1`` so this tier is mostly inert.
+1. ``track-id`` — O(1) lookup against the detector's tracker id, if
+   it assigns one. VLM-based detection does not (``track_id = -1``),
+   so this tier is mostly inert under the current pipeline; legacy
+   detectors that supply ids would still use it.
 2. ``tight spatial`` — within ``distance_threshold``, name-agnostic.
    Absorbs label flicker.
 3. ``drift`` — wider ``reacquire_radius``, same voted name, against
@@ -365,7 +368,7 @@ class LazyPerceptionModuleSpec(Protocol):
 
 
 # =============================================================================
-#  ObjectMemoryTracker — v1 lifecycle + new watched_names port for v3
+#  ObjectMemoryTracker — identity, lifecycle events, watched_names port
 # =============================================================================
 
 
