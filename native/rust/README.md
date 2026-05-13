@@ -1,4 +1,4 @@
-# dimos rust module SDK
+# DimOS Rust module SDK
 
 Two crates:
 
