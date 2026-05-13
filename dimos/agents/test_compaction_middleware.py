@@ -374,6 +374,54 @@ def test_tool_call_pair_coherence() -> None:
     assert len(survivors_of_target_turn) in (0, 4)
 
 
+def test_untagged_history_anchors_current_turn_on_latest_human() -> None:
+    """If the input has no dimos_turn tags at all, the fallback treats the
+    latest HumanMessage as the start of the current turn — its content (and
+    anything emitted after it) is protected; older messages are compactable.
+    """
+    # Manually-built history with NO turn tags anywhere.
+    history: list[BaseMessage] = [
+        SystemMessage(content="You are a test agent."),
+        HumanMessage(content="old q " + "x" * 500),
+        AIMessage(content="old a " + "x" * 500),
+        HumanMessage(content="old q2 " + "x" * 500),
+        AIMessage(content="old a2 " + "x" * 500),
+        HumanMessage(content="LATEST_USER_INPUT_UNIQUE_MARKER"),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "echo", "args": {"text": "x"}, "id": "c1"}],
+        ),
+    ]
+    fake, received = make_counting_fake(["[summary]"])
+    mw = DimosCompactionMiddleware(
+        summarizer=fake,
+        threshold_tokens=400,
+        target_tokens=200,
+        summary_size_tokens=40,
+    )
+    result = mw.before_model(state(history), runtime=None)
+    assert result is not None, "should compact: total is over threshold"
+
+    new_history = result["messages"][1:]  # skip RemoveMessage sentinel
+    # The latest HumanMessage is preserved verbatim in the kept tail.
+    assert any(
+        isinstance(m, HumanMessage)
+        and isinstance(m.content, str)
+        and "LATEST_USER_INPUT_UNIQUE_MARKER" in m.content
+        for m in new_history
+    )
+    # The trailing AIMessage(tool_call) is also preserved.
+    assert any(
+        isinstance(m, AIMessage)
+        and (getattr(m, "tool_calls", None) or [{}])[0].get("id") == "c1"
+        for m in new_history
+    )
+    # And the latest HumanMessage's content was NOT sent to the summarizer.
+    assert not any(
+        "LATEST_USER_INPUT_UNIQUE_MARKER" in p for p in received
+    ), "latest human input must not be summarized away"
+
+
 def test_summarize_failure_propagates() -> None:
     class BoomFake(FakeListChatModel):
         def invoke(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]

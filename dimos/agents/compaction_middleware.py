@@ -55,6 +55,20 @@ the in-flight user query plus any tool calls/responses still being resolved.
 Compressing those would either confuse the model mid-step or strip the very
 context the user is asking about right now.
 
+Tool-call coherence is the harness's responsibility
+---------------------------------------------------
+
+The middleware never *introduces* orphan tool calls: `_split` aligns cuts to
+`dimos_turn` boundaries, so an `AIMessage(tool_calls=...)` and its matching
+`ToolMessage` — both stamped with the same turn — always travel together
+into either the summary or the kept tail. But the middleware doesn't *fix*
+orphans it inherits either. If the harness appends an
+`AIMessage(tool_calls=...)` without its corresponding `ToolMessage`, the
+orphan is passed through verbatim when it lives in the current turn (and the
+LLM call will typically raise on the malformed conversation). The middleware
+surfaces the issue; it doesn't paper over it. Proper turn-ordering on append
+is the caller's job.
+
 Known limitations
 -----------------
 
@@ -371,9 +385,14 @@ class DimosCompactionMiddleware(AgentMiddleware):  # type: ignore[misc]
         Everything from this index to the end is preserved verbatim by the
         middleware: no image stripping, no summarization.
 
-        Returns `len(messages)` when there are no tagged messages at all (in
-        which case the whole list is considered "current" — degenerate case,
-        the caller will no-op).
+        Untagged-history fallback: when no message carries a `dimos_turn` tag
+        at all (i.e., a caller wired this middleware in without going through
+        McpClient), we anchor on the latest `HumanMessage` — treating it as
+        the start of the current turn. Messages before that point are
+        eligible for compaction; the latest user input plus any in-flight
+        assistant / tool messages after it are protected. If no
+        `HumanMessage` exists at all (unusual), we fall back to protecting
+        just the last message.
         """
         max_turn: int | None = None
         for m in messages:
@@ -382,7 +401,12 @@ class DimosCompactionMiddleware(AgentMiddleware):  # type: ignore[misc]
                 max_turn = t
 
         if max_turn is None:
-            return len(messages)
+            # No tags. Walk back to find the latest HumanMessage and treat
+            # everything from there to the end as the current turn.
+            for i in range(len(messages) - 1, -1, -1):
+                if isinstance(messages[i], HumanMessage):
+                    return i
+            return max(0, len(messages) - 1)
 
         # Walk back from end: anything with dimos_turn == max_turn OR untagged
         # is part of the current turn. Stop at the first message tagged with a
