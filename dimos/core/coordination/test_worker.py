@@ -190,6 +190,9 @@ def test_collect_stats(create_worker_manager):
         def log_stats(self, coordinator, workers):
             captured.append(workers)
 
+        def stop(self):
+            pass
+
     monitor = StatsMonitor(manager, resource_logger=CapturingLogger(), interval=0.5)
     monitor.start()
     import time
