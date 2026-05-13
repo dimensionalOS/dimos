@@ -7,7 +7,7 @@
       "light": "#1682a3",
       "dark": "#1682a3"
     },
-    "favicon": "/favicon.svg",
+    "favicon": "assets/favicon.png",
     "seo": {
       "metatags": {
         "og:site_name": "Dimensional",
@@ -35,7 +35,7 @@
         {
           "group": "Usage",
           "pages": [
-            "usage/concepts",
+            "usage/README",
             "usage/blueprints",
             "usage/modules",
             "usage/native_modules",
@@ -49,7 +49,7 @@
             {
               "group": "Data Streams",
               "pages": [
-                "usage/data_streams/overview",
+                "usage/data_streams/README",
                 "usage/data_streams/reactivex",
                 "usage/data_streams/advanced_streams",
                 "usage/data_streams/quality_filter",
@@ -60,7 +60,7 @@
             {
               "group": "Sensor Streams",
               "pages": [
-                "usage/sensor_streams/overview",
+                "usage/sensor_streams/README",
                 "usage/sensor_streams/reactivex",
                 "usage/sensor_streams/advanced_streams",
                 "usage/sensor_streams/quality_filter",
@@ -71,7 +71,7 @@
             {
               "group": "Transports",
               "pages": [
-                "usage/transports/overview",
+                "usage/transports/index",
                 "usage/transports/dds"
               ]
             }
@@ -80,18 +80,18 @@
         {
           "group": "Capabilities",
           "pages": [
-            "capabilities/agents",
+            "capabilities/agents/readme",
             {
               "group": "Navigation",
               "pages": [
-                "capabilities/navigation/overview",
-                "capabilities/navigation/native-go2"
+                "capabilities/navigation/readme",
+                "capabilities/navigation/native/index"
               ]
             },
             {
               "group": "Manipulation",
               "pages": [
-                "capabilities/manipulation/overview",
+                "capabilities/manipulation/readme",
                 "capabilities/manipulation/adding_a_custom_arm",
                 "capabilities/manipulation/openarm_integration"
               ]
@@ -99,19 +99,19 @@
             {
               "group": "Memory",
               "pages": [
-                "capabilities/memory/overview",
+                "capabilities/memory/index",
                 "capabilities/memory/plot",
                 "capabilities/memory/algo_comparison"
               ]
             },
-            "capabilities/perception"
+            "capabilities/perception/readme"
           ]
         },
         {
           "group": "Platforms",
           "pages": [
-  "platforms/quadruped-go2",
-            "platforms/humanoid-g1"
+            "platforms/quadruped/go2/index",
+            "platforms/humanoid/g1/index"
           ]
         },
         {
@@ -128,13 +128,13 @@
         {
           "group": "For Agents",
           "pages": [
-            "agents/overview",
+            "agents/index",
             "agents/style",
             "agents/testing",
             {
               "group": "Writing Docs",
               "pages": [
-                "agents/docs/overview",
+                "agents/docs/index",
                 "agents/docs/codeblocks",
                 "agents/docs/doclinks"
               ]
