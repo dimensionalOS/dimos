@@ -229,9 +229,7 @@ def _bake_collision_hulls(
             obj_file = cache_dir / f"{asset_name}.obj"
             _write_mesh_obj(obj_file, prim.vertices, prim.triangles)
             asset_lines.append(_ASSET_LINE.format(name=asset_name, file=str(obj_file)))
-            geom_lines.append(
-                _VISUAL_GEOM_LINE.format(name=f"{asset_name}_geom", mesh=asset_name)
-            )
+            geom_lines.append(_VISUAL_GEOM_LINE.format(name=f"{asset_name}_geom", mesh=asset_name))
             n_visuals += 1
 
         tm = trimesh.Trimesh(
