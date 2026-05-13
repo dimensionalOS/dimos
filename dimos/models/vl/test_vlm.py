@@ -46,7 +46,7 @@ if TYPE_CHECKING:
         (QwenVlModel, "Qwen"),
     ],
 )
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
     if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
@@ -119,7 +119,7 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
         (QwenVlModel, "Qwen"),
     ],
 )
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> None:
     """Test VLM point detection capabilities."""
@@ -188,7 +188,7 @@ def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> 
         (MoondreamVlModel, "Moondream"),
     ],
 )
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_multi optimization - single image, multiple queries."""
@@ -239,7 +239,6 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
     ],
 )
 @pytest.mark.tool
-@pytest.mark.slow
 def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_batch optimization - multiple images, same query."""
     from dimos.memory.timeseries.legacy import LegacyPickleStore
@@ -292,7 +291,7 @@ def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
         (QwenVlModel, [None, (512, 512), (256, 256)]),
     ],
 )
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_resize(
     model_class: "type[VlModel]",

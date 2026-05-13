@@ -40,14 +40,11 @@ from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import (
     _voxel_index,
 )
 from dimos.navigation.nav_stack.tests.rosbag_fixtures import load_rosbag_window
-from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-pytestmark = [pytest.mark.slow]
-
-ROSBAG_FIXTURE = get_data("og_nav_60s.npz")
+pytestmark = [pytest.mark.self_hosted]
 
 # Key differences from C++ code defaults:
 # useSorting=true, quantileZ=0.1, lowerBoundZ=-2.5, checkTerrainConn=false
@@ -398,7 +395,7 @@ class TestTerrainMapExtRosbag:
 
     def test_produces_output(self) -> None:
         """Feeding scans produces non-empty terrain_map_ext output."""
-        window = load_rosbag_window(ROSBAG_FIXTURE)
+        window = load_rosbag_window()
         processor = _OfflineTerrainMapExt(DEFAULT_CONFIG)
         positions, _ = _run_processor_to_scan_index(window, processor, 9)
         assert len(positions) > 0, "TerrainMapExt produced no output after 10 scans"
@@ -406,7 +403,7 @@ class TestTerrainMapExtRosbag:
 
     def test_height_filtering(self) -> None:
         """Every output point must satisfy per-point height bounds with distance scaling."""
-        window = load_rosbag_window(ROSBAG_FIXTURE)
+        window = load_rosbag_window()
         processor = _OfflineTerrainMapExt(DEFAULT_CONFIG)
         positions, _ = _run_processor_to_scan_index(window, processor, 19)
 
@@ -431,7 +428,7 @@ class TestTerrainMapExtRosbag:
 
     def test_accumulation_grows(self) -> None:
         """Point count should grow as more scans are accumulated."""
-        window = load_rosbag_window(ROSBAG_FIXTURE)
+        window = load_rosbag_window()
         processor = _OfflineTerrainMapExt(DEFAULT_CONFIG)
 
         counts = []
@@ -450,7 +447,7 @@ class TestTerrainMapExtRosbag:
 
     def test_intensity_is_elevation_distance(self) -> None:
         """Output intensity must be the elevation distance from estimated ground."""
-        window = load_rosbag_window(ROSBAG_FIXTURE)
+        window = load_rosbag_window()
         processor = _OfflineTerrainMapExt(DEFAULT_CONFIG)
         positions, intensities = _run_processor_to_scan_index(window, processor, 19)
 
@@ -479,7 +476,7 @@ class TestTerrainMapExtRosbag:
 
     def test_spatial_overlap_with_reference(self) -> None:
         """Our output should spatially overlap with the reference terrain_map_ext."""
-        window = load_rosbag_window(ROSBAG_FIXTURE)
+        window = load_rosbag_window()
         assert len(window.terrain_maps_ext) > 0, "No reference terrain_map_ext"
 
         processor = _OfflineTerrainMapExt(DEFAULT_CONFIG)
@@ -501,7 +498,7 @@ class TestTerrainMapExtRosbag:
 
     def test_reference_comparison_multiple_timestamps(self) -> None:
         """Compare count ratio and spatial overlap at multiple timestamps."""
-        window = load_rosbag_window(ROSBAG_FIXTURE)
+        window = load_rosbag_window()
         assert len(window.terrain_maps_ext) > 0, "No reference terrain_map_ext"
 
         test_indices = [5, 10, 15, 20, 25]
@@ -558,7 +555,7 @@ class TestTerrainMapExtRosbag:
 
     def test_far_field_count(self) -> None:
         """Far-field-only count (no local merge) should closely match reference far-field."""
-        window = load_rosbag_window(ROSBAG_FIXTURE)
+        window = load_rosbag_window()
         assert len(window.terrain_maps_ext) > 0, "No reference terrain_map_ext"
 
         no_merge_config = TerrainMapExtConfig(
@@ -591,7 +588,7 @@ class TestTerrainMapExtRosbag:
 
     def test_ground_elevation_validation(self) -> None:
         """Validate planar_voxel_elev: the core ground estimation computation."""
-        window = load_rosbag_window(ROSBAG_FIXTURE)
+        window = load_rosbag_window()
         processor = _OfflineTerrainMapExt(DEFAULT_CONFIG)
         positions, intensities = _run_processor_to_scan_index(window, processor, 19)
 

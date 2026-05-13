@@ -28,9 +28,14 @@ logger = setup_logger()
 class ResourceLogger(Protocol):
     def log_stats(self, coordinator: ProcessStats, workers: list[WorkerStats]) -> None: ...
 
+    def stop(self) -> None: ...
+
 
 class StructlogResourceLogger:
     """Default implementation — logs resource stats via structlog info."""
+
+    def stop(self) -> None:
+        pass
 
     def log_stats(self, coordinator: ProcessStats, workers: list[WorkerStats]) -> None:
         logger.info(
@@ -64,6 +69,9 @@ class LCMResourceLogger:
         from dimos.core.transport import pLCMTransport
 
         self._transport: pLCMTransport[dict[str, Any]] = pLCMTransport(topic)
+
+    def stop(self) -> None:
+        self._transport.stop()
 
     def log_stats(self, coordinator: ProcessStats, workers: list[WorkerStats]) -> None:
         self._transport.broadcast(

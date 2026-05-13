@@ -136,11 +136,11 @@ def test_basic_sync_call(rpc_context, impl_name: str) -> None:
 
         try:
             # Make sync call
-            result, _ = client.call_sync("add", ([5, 3], {}), rpc_timeout=2.0)
+            result, _ = client.call_sync("add", ([5, 3], {}), rpc_timeout=5.0)
             assert result == 8
 
             # Test with different arguments
-            result, _ = client.call_sync("add", ([10, -2], {}), rpc_timeout=2.0)
+            result, _ = client.call_sync("add", ([10, -2], {}), rpc_timeout=5.0)
             assert result == 8
 
         finally:
@@ -294,7 +294,6 @@ def test_exception_handling_callback(rpc_context, impl_name: str) -> None:
             unsub_server()
 
 
-@pytest.mark.slow
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
 @pytest.mark.skipif_macos_bug
 def test_timeout(rpc_context, impl_name: str) -> None:

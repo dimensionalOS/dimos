@@ -108,8 +108,8 @@ class VoxelGrid:
         self.get_global_pointcloud2.invalidate_cache(self)
 
         # Return Open3D's CUDA caching pool to the driver. The ops above
-        # (HashMap construction in carving, ``key_tensor()[idx]``, ``find()``,
-        # ``activate()``) allocate per-call device buffers; Open3D's caching
+        # (HashMap construction in carving, key_tensor()[idx], find(),
+        # activate()) allocate per-call device buffers; Open3D's caching
         # allocator holds them in pool indefinitely once the Python wrappers
         # are released. Without this call, VRAM grows ~0.8 MB/call until OOM.
         if str(self._dev).startswith("CUDA"):

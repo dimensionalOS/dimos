@@ -95,6 +95,7 @@ class StatsMonitor(Resource):
         if self._thread is not None:
             self._thread.join(timeout=5.0)
             self._thread = None
+        self._logger.stop()
 
     def _loop(self) -> None:
         while not self._stop.wait(self._interval):

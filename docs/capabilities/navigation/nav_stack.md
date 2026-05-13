@@ -4,7 +4,7 @@ A modular navigation stack for autonomous robot navigation: terrain classificati
 
 Good fit when you have a lidar-equipped robot and need end-to-end autonomy: feed it a registered point cloud and odometry, and it produces velocity commands. No ROS — modules communicate over DimOS streams (LCM/SHM).
 
-```python
+```python session=nav_stack
 from dimos.navigation.nav_stack.main import create_nav_stack
 
 blueprint = create_nav_stack()
@@ -33,7 +33,7 @@ The stack produces:
 
 All configuration goes through `create_nav_stack()` keyword arguments. Top-level switches plus per-module config dicts:
 
-```python
+```python skip
 create_nav_stack(
     planner="simple",              # "far" (default) or "simple" (A*)
     use_tare=False,                # Add TARE frontier exploration
@@ -71,7 +71,7 @@ create_nav_stack(
 
 Keep `obstacle_height_threshold` aligned between TerrainAnalysis and LocalPlanner — if TerrainAnalysis flags something but LocalPlanner's threshold is higher, the planner will drive through it.
 
-```python
+```python session=nav_stack
 create_nav_stack(
     terrain_analysis={"obstacle_height_threshold": 0.1},
     local_planner={"obstacle_height_threshold": 0.1},
@@ -82,7 +82,7 @@ create_nav_stack(
 
 Capped at two levels: LocalPlanner caps how fast it will *plan*, PathFollower caps how fast it will *execute*.
 
-```python
+```python session=nav_stack
 create_nav_stack(
     local_planner={"max_speed": 1.5, "autonomy_speed": 1.0},
     path_follower={"max_speed": 1.5, "autonomy_speed": 1.0},
@@ -167,7 +167,7 @@ Following the CMU autonomy convention, odometry splits into two paths: **local**
 
 If you have a Livox Mid-360 lidar and a module that consumes `cmd_vel: In[Twist]`, compose three blueprints with `autoconnect`:
 
-```python
+```python skip
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -201,7 +201,7 @@ my_robot_nav = (
 
 Just needs `cmd_vel: In[Twist]` and a subscription that drives the hardware:
 
-```python
+```python skip
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -235,7 +235,7 @@ class MyRobotControl(Module):
 
 Add a Rerun bridge:
 
-```python
+```python skip
 from dimos.navigation.nav_stack.main import nav_stack_rerun_config
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 

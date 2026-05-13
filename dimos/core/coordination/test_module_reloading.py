@@ -93,7 +93,6 @@ def test_module_file():
     path.write_text(original)
 
 
-@pytest.mark.slow
 def test_module_reloading(repl, greeting, response, test_module_file):
     repl.stdin.write("""
 from dimos.core.coordination.module_coordinator import ModuleCoordinator

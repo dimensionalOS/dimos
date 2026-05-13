@@ -15,12 +15,14 @@
 
 
 import numpy as np
+import pytest
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.utils.testing.replay import SensorReplay
 
 
+@pytest.mark.self_hosted
 def test_lcm_encode_decode() -> None:
     """Test LCM encode/decode preserves pointcloud data."""
     replay = SensorReplay("office_lidar", autocast=pointcloud2_from_webrtc_lidar)

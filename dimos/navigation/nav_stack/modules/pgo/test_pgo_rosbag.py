@@ -38,7 +38,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-pytestmark = [pytest.mark.slow]
+pytestmark = [pytest.mark.self_hosted]
 
 _PROCESS_STARTUP_SEC = 2.0
 _POST_FEED_DRAIN_SEC = 3.0

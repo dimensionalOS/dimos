@@ -43,8 +43,6 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-ROSBAG_FIXTURE_60S = get_data("og_nav_60s.npz")
-
 # Upper bound on the number of indexed entries (scan_0..scan_N, tmap_0..tmap_N,
 # path_0..path_N) inside a rosbag npz. Loop breaks early when keys run out;
 # this is just the safety ceiling.
@@ -66,8 +64,10 @@ class RosbagWindow:
     paths: list[tuple[float, np.ndarray]]  # [(t, poses_Nx7: x,y,z,qx,qy,qz,qw), ...]
 
 
-def load_rosbag_window(path: Path = ROSBAG_FIXTURE_60S) -> RosbagWindow:
-    """Load a pre-extracted rosbag fixture."""
+def load_rosbag_window(path: Path | None = None) -> RosbagWindow:
+    """Load a pre-extracted rosbag fixture (defaults to the 60s OG-nav recording)."""
+    if path is None:
+        path = get_data("og_nav_60s.npz")
     if not path.exists():
         pytest.skip(f"Rosbag fixture not found: {path}")
 
