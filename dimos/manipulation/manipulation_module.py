@@ -1318,11 +1318,16 @@ class ManipulationModule(Module):
         should use this directly; sites that always bail on failure can use
         the bundled _preview_execute_wait().
         """
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return "Error: Robot not found"
+        rname, _, _, _ = robot
+
         plan_timeout = self.config.planning_timeout + 5.0
-        if not self.wait_for_planning_completion(robot_name, plan_timeout):
+        if not self.wait_for_planning_completion(rname, plan_timeout):
             return f"Error: Planning timed out after {plan_timeout:.1f}s"
-        status = self.get_planning_status(robot_name)
-        if not status.get("success"):
+        status = self.get_planning_status(rname)
+        if status.get("success") is not True:
             err = status.get("error") or "unknown reason"
             return f"Error: Planning failed — {err}"
         return None

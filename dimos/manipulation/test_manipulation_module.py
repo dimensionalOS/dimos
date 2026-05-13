@@ -261,6 +261,21 @@ class TestAsyncPlanningUnit:
         assert async_module.get_state() == ManipulationState.COMPLETED.name
         assert async_module.has_planned_path("left_arm") is True
 
+    def test_wait_plan_resolves_single_robot_default(self, async_module):
+        control = _PlanControl()
+        async_module._planner = _GatedPlanner([control])
+        async_module._robots = {"left_arm": async_module._robots["left_arm"]}
+
+        assert async_module.plan_to_joints(
+            JointState(name=["j1", "j2"], position=[0.1, 0.1])
+        )
+        assert control.started.wait(timeout=0.5)
+        control.release.set()
+
+        assert async_module._wait_plan() is None
+        status = async_module.get_planning_status("left_arm")
+        assert status["success"] is True
+
     def test_distinct_robots_can_have_active_plans_simultaneously(self, async_module):
         release = threading.Event()
         left = _PlanControl(release=release)
