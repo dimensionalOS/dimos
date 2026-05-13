@@ -59,7 +59,9 @@ def _command_center_blueprints() -> list[Blueprint]:
         return []
     try:
         from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"socketio", "fastapi", "uvicorn", "starlette"}:
+            raise
         import logging
 
         logging.getLogger(__name__).warning(
@@ -124,7 +126,7 @@ _sim_mjcf_path = _mjcf_path
 if _scene_mesh_path and _scene_mesh_collision:
     try:
         from dimos.mapping.mesh_scene import SceneMeshAlignment
-        from dimos.mapping.usdz_to_mjcf import bake_scene_mjcf
+        from dimos.mapping.scene_mesh_to_mjcf import bake_scene_mjcf
 
         _sim_mjcf_path = str(
             bake_scene_mjcf(
@@ -203,7 +205,6 @@ mujoco_scene_playground = autoconnect(
         ("global_costmap", OccupancyGrid): LCMTransport("/global_costmap", OccupancyGrid),
         ("path", PathMsg): LCMTransport("/nav_path", PathMsg),
         ("clicked_point", PointStamped): LCMTransport("/clicked_point", PointStamped),
-        ("goal", PointStamped): LCMTransport("/goal", PointStamped),
         ("goal_request", PoseStamped): LCMTransport("/goal_request", PoseStamped),
         ("stop_movement", Bool): LCMTransport("/stop_movement", Bool),
         ("point_goal", PointStamped): LCMTransport("/point_goal", PointStamped),

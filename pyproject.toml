@@ -304,6 +304,7 @@ sim = [
     "mujoco>=3.3.4",
     "playground>=0.0.5",
     "pygame>=2.6.1",
+    "trimesh",
     "usd-core>=24.0",
 ]
 

@@ -556,34 +556,6 @@ def load_scene_prims(
     return prims
 
 
-def floor_z_under_origin(
-    scene_mesh_path: str | Path,
-    alignment: SceneMeshAlignment | None = None,
-) -> float:
-    """Return the z of the first surface ``(x=0, y=0)`` falls onto.
-
-    Casts one ray straight down from a high z; the first hit defines
-    the local floor at origin.  Falls back to the mesh's bbox min-z
-    when origin is over a hole (or outside the bbox xy footprint).
-    Used by the GR00T sim blueprint to align the loaded scene with
-    the robot's default spawn pose so all three downstream views
-    (viser, mesh camera, MuJoCo physics) share one world frame.
-    """
-    import open3d.core as o3c
-
-    mesh = load_scene_mesh(scene_mesh_path, alignment=alignment)
-    scene = make_raycasting_scene(mesh)
-    rays = o3c.Tensor(
-        np.array([[0.0, 0.0, 1000.0, 0.0, 0.0, -1.0]], dtype=np.float32),
-        dtype=o3c.Dtype.Float32,
-    )
-    t = float(scene.cast_rays(rays)["t_hit"].numpy()[0])
-    if np.isfinite(t):
-        return 1000.0 - t
-    bb = mesh.get_axis_aligned_bounding_box()
-    return float(bb.min_bound[2])
-
-
 __all__ = [
     "SceneMeshAlignment",
     "load_scene_mesh",

@@ -12,35 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bake a USDZ/GLB/OBJ scene mesh into an MJCF wrapper around a robot MJCF.
-
-MuJoCo only reads ``.stl`` / ``.obj`` / ``.msh`` meshes — not USD.  This
-module loads a scene mesh through the existing ``mesh_scene`` loader,
-writes the welded geometry out as OBJ, and emits a tiny MJCF that
-``<include>``s the robot MJCF and adds the scene mesh as a single
-static collidable body.
-
-Pipeline:
-
-  1. ``load_scene_mesh()`` → ``open3d.geometry.TriangleMesh`` in dimos
-     world frame (Z-up, meters), with all per-prim transforms baked in.
-  2. ``open3d.io.write_triangle_mesh()`` → OBJ on disk.
-  3. Wrapper MJCF references both the robot MJCF (via absolute-path
-     ``<include>``) and the scene OBJ, declares one body with one mesh
-     geom (``contype=1 conaffinity=1`` — collides with anything that's
-     also enabled).  ``meshdir`` / ``texturedir`` in the wrapper's
-     ``<compiler>`` are pinned to the robot MJCF's directory so the
-     robot's STLs still resolve through the include.
-
-Output is cached at ``~/.cache/dimos/scene_meshes/<hash>/`` keyed on
-the source mesh, robot MJCF, alignment params, and mesh directory.
-"""
+"""Bake a scene mesh into an MJCF wrapper around a robot MJCF."""
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
@@ -74,6 +53,18 @@ _GEOM_LINE = (
     '      <geom name="{name}" type="mesh" mesh="{mesh}" '
     'contype="1" conaffinity="1" group="3" rgba="0.6 0.6 0.6 1"/>'
 )
+_DEGENERATE_EPS = 1e-3
+_SHELL_VOLUME_M3 = 2.0
+
+
+@dataclass
+class _BakeArtifacts:
+    asset_lines: list[str]
+    geom_lines: list[str]
+    total_tris: int
+    skipped_degenerate: int
+    n_hulls: int
+    n_decomposed: int
 
 
 def bake_scene_mjcf(
@@ -86,13 +77,13 @@ def bake_scene_mjcf(
     """Convert ``scene_mesh_path`` to OBJ and emit a wrapped MJCF.
 
     Args:
-        scene_mesh_path: ``.usdz`` / ``.glb`` / ``.obj`` etc. — anything
+        scene_mesh_path: ``.usdz`` / ``.glb`` / ``.obj`` etc.; anything
             ``mesh_scene.load_scene_mesh`` accepts.
         robot_mjcf_path: the base robot MJCF the wrapper will
             ``<include>``.
         alignment: scale / translation / rotation / y-up swap to bake
             into the OBJ before MuJoCo sees it.  Authoritative for all
-            three views (MuJoCo physics, viser, mesh camera) — the
+            three views (MuJoCo physics, viser, mesh camera); the
             blueprint passes the same ``SceneMeshAlignment`` to each
             so the world frames agree to the millimeter.
         meshdir: directory MuJoCo should resolve unqualified mesh
@@ -117,20 +108,12 @@ def bake_scene_mjcf(
 
     meshdir = Path(meshdir).expanduser().resolve() if meshdir else robot_mjcf_path.parent
 
-    # Cache key — invalidates when any input changes.
-    h = hashlib.sha256()
-    h.update(scene_mesh_path.read_bytes())
-    h.update(robot_mjcf_path.read_bytes())
-    h.update(repr(sorted(asdict(align).items())).encode())
-    h.update(str(meshdir).encode())
-    cache_key = h.hexdigest()[:12]
-
+    cache_key = _cache_key(scene_mesh_path, robot_mjcf_path, align, meshdir)
     root = (cache_root or CACHE_DIR).expanduser()
     cache_dir = root / cache_key
     wrapper_path = cache_dir / "wrapper.xml"
 
-    # Cache hit: wrapper exists + at least one prim OBJ next to it.
-    if wrapper_path.exists() and any(cache_dir.glob("*.obj")):
+    if _cache_hit(wrapper_path, cache_dir):
         logger.info(f"bake_scene_mjcf: cache hit at {cache_dir}")
         return wrapper_path
 
@@ -142,6 +125,47 @@ def bake_scene_mjcf(
     prims = load_scene_prims(scene_mesh_path, alignment=align)
     logger.info(f"bake_scene_mjcf: {len(prims)} prims to bake")
 
+    artifacts = _bake_collision_hulls(prims, cache_dir)
+    if not artifacts.asset_lines:
+        raise RuntimeError(
+            "bake_scene_mjcf: every hull came out degenerate; nothing left to collide against"
+        )
+    logger.info(
+        f"bake_scene_mjcf: baked {artifacts.n_hulls} convex hulls from {len(prims)} prims "
+        f"({artifacts.total_tris} tris total), VHACD-decomposed {artifacts.n_decomposed} "
+        f"shell prims, skipped {artifacts.skipped_degenerate} degenerate hulls"
+    )
+
+    _write_wrapper(
+        wrapper_path=wrapper_path,
+        cache_key=cache_key,
+        meshdir=meshdir,
+        robot_mjcf_path=robot_mjcf_path,
+        asset_lines=artifacts.asset_lines,
+        geom_lines=artifacts.geom_lines,
+    )
+    return wrapper_path
+
+
+def _cache_key(
+    scene_mesh_path: Path,
+    robot_mjcf_path: Path,
+    alignment: SceneMeshAlignment,
+    meshdir: Path,
+) -> str:
+    h = hashlib.sha256()
+    h.update(scene_mesh_path.read_bytes())
+    h.update(robot_mjcf_path.read_bytes())
+    h.update(repr(sorted(asdict(alignment).items())).encode())
+    h.update(str(meshdir).encode())
+    return h.hexdigest()[:12]
+
+
+def _cache_hit(wrapper_path: Path, cache_dir: Path) -> bool:
+    return wrapper_path.exists() and any(cache_dir.glob("*.obj"))
+
+
+def _bake_collision_hulls(prims: list[Any], cache_dir: Path) -> _BakeArtifacts:
     import trimesh
 
     asset_lines: list[str] = []
@@ -149,12 +173,8 @@ def bake_scene_mjcf(
     total_tris = 0
     skipped_degenerate = 0
     n_hulls = 0
-    _DEGENERATE_EPS = 1e-3
-    # Furniture-scale prims are fine as one hull. Large shell-like prims
-    # need decomposition or MuJoCo sees the room as a solid block.
-    _SHELL_VOLUME_M3 = 2.0
     n_decomposed = 0
-    logger.info(f"bake_scene_mjcf: per-prim convex-hulling {len(prims)} prims (one-time)…")
+    logger.info(f"bake_scene_mjcf: per-prim convex-hulling {len(prims)} prims (one-time)")
     for prim in prims:
         tm = trimesh.Trimesh(
             vertices=prim.vertices.astype(np.float64),
@@ -167,81 +187,99 @@ def bake_scene_mjcf(
             logger.warning(f"  convex_hull failed for {prim.name}: {e}; skipping")
             continue
 
-        if float(single_hull.volume) > _SHELL_VOLUME_M3:
-            try:
-                parts = tm.convex_decomposition(maxConvexHulls=64, resolution=200_000)
-                if not isinstance(parts, list):
-                    parts = [parts]
-                hulls = parts
-                n_decomposed += 1
-                logger.info(
-                    f"  {prim.name}: VHACD decomposed "
-                    f"({single_hull.volume:.1f} m³ shell → {len(parts)} sub-hulls)"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"  VHACD failed for {prim.name}: {e}; "
-                    f"using single hull (will swallow robot spawn area)"
-                )
-                hulls = [single_hull]
-        else:
-            hulls = [single_hull]
+        hulls, decomposed = _collision_hulls(tm, single_hull, prim.name)
+        if decomposed:
+            n_decomposed += 1
 
         for j, hull in enumerate(hulls):
             v = np.asarray(hull.vertices, dtype=np.float32)
             f = np.asarray(hull.faces, dtype=np.int32)
-            if len(v) < 4 or len(f) < 4:
-                skipped_degenerate += 1
-                continue
-            extent = v.max(axis=0) - v.min(axis=0)
-            if (extent < _DEGENERATE_EPS).any():
-                skipped_degenerate += 1
-                continue
-            min_ext = float(extent.min())
-            max_ext = float(extent.max())
-            if max_ext > 0 and (min_ext / max_ext) < 0.05:
-                skipped_degenerate += 1
-                continue
-            if min_ext < 5e-3:
-                skipped_degenerate += 1
-                continue
-            try:
-                from scipy.spatial import ConvexHull, QhullError
-
-                ConvexHull(v, qhull_options="Qt")
-            except (QhullError, ValueError):
+            if not _valid_hull(v, f):
                 skipped_degenerate += 1
                 continue
 
             asset_name = f"{prim.name}_h{j:03d}"
             obj_file = cache_dir / f"{asset_name}.obj"
-            o3d_mesh = o3d.geometry.TriangleMesh()
-            o3d_mesh.vertices = o3d.utility.Vector3dVector(v.astype(np.float64))
-            o3d_mesh.triangles = o3d.utility.Vector3iVector(f)
-            o3d_mesh.compute_vertex_normals()
-            if not o3d.io.write_triangle_mesh(
-                str(obj_file),
-                o3d_mesh,
-                write_vertex_normals=True,
-                write_vertex_colors=False,
-            ):
-                raise RuntimeError(f"open3d failed to write OBJ: {obj_file}")
+            _write_hull_obj(obj_file, v, f)
 
             total_tris += len(f)
             n_hulls += 1
             asset_lines.append(_ASSET_LINE.format(name=asset_name, file=str(obj_file)))
             geom_lines.append(_GEOM_LINE.format(name=f"{asset_name}_geom", mesh=asset_name))
 
-    if not asset_lines:
-        raise RuntimeError(
-            "bake_scene_mjcf: every hull came out degenerate; nothing left to collide against"
-        )
-    logger.info(
-        f"bake_scene_mjcf: baked {n_hulls} convex hulls from {len(prims)} prims "
-        f"({total_tris} tris total), VHACD-decomposed {n_decomposed} shell prims, "
-        f"skipped {skipped_degenerate} degenerate hulls"
+    return _BakeArtifacts(
+        asset_lines=asset_lines,
+        geom_lines=geom_lines,
+        total_tris=total_tris,
+        skipped_degenerate=skipped_degenerate,
+        n_hulls=n_hulls,
+        n_decomposed=n_decomposed,
     )
 
+
+def _collision_hulls(tm: Any, single_hull: Any, prim_name: str) -> tuple[list[Any], bool]:
+    if float(single_hull.volume) <= _SHELL_VOLUME_M3:
+        return [single_hull], False
+    try:
+        parts = tm.convex_decomposition(maxConvexHulls=64, resolution=200_000)
+        hulls = parts if isinstance(parts, list) else [parts]
+        logger.info(
+            f"  {prim_name}: VHACD decomposed "
+            f"({single_hull.volume:.1f} m³ shell -> {len(hulls)} sub-hulls)"
+        )
+        return hulls, True
+    except Exception as e:
+        logger.warning(
+            f"  VHACD failed for {prim_name}: {e}; using single hull "
+            "(large rooms may collide as a solid shell)"
+        )
+        return [single_hull], False
+
+
+def _valid_hull(v: np.ndarray, f: np.ndarray) -> bool:
+    if len(v) < 4 or len(f) < 4:
+        return False
+    extent = v.max(axis=0) - v.min(axis=0)
+    if (extent < _DEGENERATE_EPS).any():
+        return False
+    min_ext = float(extent.min())
+    max_ext = float(extent.max())
+    if max_ext > 0 and (min_ext / max_ext) < 0.05:
+        return False
+    if min_ext < 5e-3:
+        return False
+    try:
+        from scipy.spatial import ConvexHull, QhullError
+
+        ConvexHull(v, qhull_options="Qt")
+    except (QhullError, ValueError):
+        return False
+    return True
+
+
+def _write_hull_obj(obj_file: Path, vertices: np.ndarray, faces: np.ndarray) -> None:
+    o3d_mesh = o3d.geometry.TriangleMesh()
+    o3d_mesh.vertices = o3d.utility.Vector3dVector(vertices.astype(np.float64))
+    o3d_mesh.triangles = o3d.utility.Vector3iVector(faces)
+    o3d_mesh.compute_vertex_normals()
+    if not o3d.io.write_triangle_mesh(
+        str(obj_file),
+        o3d_mesh,
+        write_vertex_normals=True,
+        write_vertex_colors=False,
+    ):
+        raise RuntimeError(f"open3d failed to write OBJ: {obj_file}")
+
+
+def _write_wrapper(
+    *,
+    wrapper_path: Path,
+    cache_key: str,
+    meshdir: Path,
+    robot_mjcf_path: Path,
+    asset_lines: list[str],
+    geom_lines: list[str],
+) -> None:
     wrapper_xml = _WRAPPER_TEMPLATE.format(
         model_name=f"robot_with_scene_{cache_key}",
         meshdir=str(meshdir),
@@ -251,19 +289,10 @@ def bake_scene_mjcf(
     )
     wrapper_path.write_text(wrapper_xml)
     logger.info(f"bake_scene_mjcf: wrote wrapper {wrapper_path}")
-    return wrapper_path
 
 
 def cli_main() -> None:
-    """``python -m dimos.mapping.usdz_to_mjcf <scene_path> <robot_mjcf> [scale] [--view]``.
-
-    Bake the wrapper, verify it loads, optionally open MuJoCo's native
-    viewer for visual inspection.  ``--view`` works on macOS without
-    ``mjpython`` because we're invoking ``mujoco.viewer.launch`` from
-    the main thread of a fresh process — the issue dimos hits in
-    workers is that ``launch_passive`` in a *non-main* thread requires
-    mjpython.
-    """
+    """Bake a wrapper, verify it loads, optionally open MuJoCo's native viewer."""
     import sys
 
     args = list(sys.argv[1:])
@@ -273,7 +302,7 @@ def cli_main() -> None:
         args.remove("--view")
     if len(args) < 2:
         print(
-            "usage: python -m dimos.mapping.usdz_to_mjcf <scene_path> <robot_mjcf> [scale] [--view]"
+            "usage: python -m dimos.mapping.scene_mesh_to_mjcf <scene_path> <robot_mjcf> [scale] [--view]"
         )
         sys.exit(2)
     scene = Path(args[0])
@@ -298,7 +327,7 @@ def cli_main() -> None:
         # toggles the rendering panel where you can switch geom groups
         # (group 3 = our scene collision hulls, group 1 = robot
         # visual mesh, group 0 = robot collision mesh).
-        print("\n→ launching MuJoCo viewer (press Esc / close window to exit)")
+        print("\nlaunching MuJoCo viewer (press Esc / close window to exit)")
         mujoco.viewer.launch(model)
 
 

@@ -148,6 +148,14 @@ class MujocoSimModule(
         return self.config.enable_color or self.config.enable_depth or self.config.enable_pointcloud
 
     @property
+    def _primary_camera_needed(self) -> bool:
+        return (
+            self.config.enable_color
+            or self.config.enable_depth
+            or (self.config.enable_pointcloud and not self.config.lidar_camera_names)
+        )
+
+    @property
     def _camera_link(self) -> str:
         return f"{self.config.camera_name}_link"
 
@@ -188,17 +196,45 @@ class MujocoSimModule(
         if not self.config.address:
             raise RuntimeError("MujocoSimModule: config.address (MJCF path) is required")
 
-        # SHM key — adapter derives the same key from the same MJCF path.
         shm_key = shm_key_from_path(self.config.address)
         self._shm = ManipShmWriter(shm_key)
+        camera_configs = self._make_camera_configs()
 
-        camera_configs: list[CameraConfig] = []
-        primary_needed = (
-            self.config.enable_color
-            or self.config.enable_depth
-            or (self.config.enable_pointcloud and not self.config.lidar_camera_names)
+        self._engine = MujocoEngine(
+            config_path=Path(self.config.address),
+            headless=self.config.headless,
+            cameras=camera_configs,
+            meshdir=self.config.meshdir,
+            on_before_step=self._apply_shm_commands,
+            on_after_step=self._after_step,
         )
-        if primary_needed:
+
+        dof = self.config.dof
+        joint_names = list(self._engine.joint_names)
+        self._detect_gripper(joint_names)
+
+        if not self._engine.connect():
+            raise RuntimeError("MujocoSimModule: engine.connect() failed")
+
+        self._shm.signal_ready(num_joints=len(joint_names))
+        self._stop_event.clear()
+
+        self._start_kinematic_base_control()
+        self._start_camera_publishers()
+        self._start_pointcloud_publisher()
+
+        logger.info(
+            "MujocoSimModule started",
+            address=self.config.address,
+            dof=dof,
+            camera=self.config.camera_name,
+            camera_enabled=self._camera_enabled,
+            shm_key=shm_key,
+        )
+
+    def _make_camera_configs(self) -> list[CameraConfig]:
+        camera_configs: list[CameraConfig] = []
+        if self._primary_camera_needed:
             camera_configs.append(
                 CameraConfig(
                     name=self.config.camera_name,
@@ -216,7 +252,7 @@ class MujocoSimModule(
         lidar_scene_option.geomgroup[4] = 0
         lidar_scene_option.geomgroup[5] = 0
         for lidar_name in self.config.lidar_camera_names:
-            if lidar_name == self.config.camera_name and primary_needed:
+            if lidar_name == self.config.camera_name and self._primary_camera_needed:
                 continue
             camera_configs.append(
                 CameraConfig(
@@ -227,87 +263,66 @@ class MujocoSimModule(
                     scene_option=lidar_scene_option,
                 )
             )
+        return camera_configs
 
-        # Build engine with SHM hooks installed. Camera configs are optional:
-        # physics and SHM state exchange must keep working in headless/no-render
-        # deployments.
-        self._engine = MujocoEngine(
-            config_path=Path(self.config.address),
-            headless=self.config.headless,
-            cameras=camera_configs,
-            meshdir=self.config.meshdir,
-            on_before_step=self._apply_shm_commands,
-            on_after_step=self._publish_shm_state,
+    def _detect_gripper(self, joint_names: list[str]) -> None:
+        dof = self.config.dof
+        if len(joint_names) <= dof:
+            return
+        assert self._engine is not None
+        ctrl_range = self._engine.get_actuator_ctrl_range(dof)
+        joint_range = self._engine.get_joint_range(dof)
+        if ctrl_range is None or joint_range is None:
+            raise ValueError(f"Gripper joint at index {dof} missing ctrl/joint range in MJCF")
+        self._gripper_idx = dof
+        self._gripper_ctrl_range = ctrl_range
+        self._gripper_joint_range = joint_range
+        logger.info(
+            "MujocoSimModule: gripper detected",
+            idx=dof,
+            ctrl_range=ctrl_range,
+            joint_range=joint_range,
         )
 
-        # Detect gripper (extra joint beyond dof).
-        dof = self.config.dof
-        joint_names = list(self._engine.joint_names)
-        if len(joint_names) > dof:
-            ctrl_range = self._engine.get_actuator_ctrl_range(dof)
-            joint_range = self._engine.get_joint_range(dof)
-            if ctrl_range is None or joint_range is None:
-                raise ValueError(f"Gripper joint at index {dof} missing ctrl/joint range in MJCF")
-            self._gripper_idx = dof
-            self._gripper_ctrl_range = ctrl_range
-            self._gripper_joint_range = joint_range
-            logger.info(
-                "MujocoSimModule: gripper detected",
-                idx=dof,
-                ctrl_range=ctrl_range,
-                joint_range=joint_range,
+    def _start_kinematic_base_control(self) -> None:
+        if not self.config.enable_kinematic_base_control:
+            return
+        assert self._engine is not None
+        if not self._engine.has_root_freejoint:
+            logger.warning("Kinematic base control requested, but MJCF has no freejoint root")
+        root_pose = self._engine.get_root_pose()
+        self._kinematic_base_z = None if root_pose is None else float(root_pose[0][2])
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
+
+    def _start_camera_publishers(self) -> None:
+        if not self._primary_camera_needed:
+            return
+        self._build_camera_info()
+
+        self._publish_thread = threading.Thread(
+            target=self._publish_loop, daemon=True, name="MujocoSimPublish"
+        )
+        self._publish_thread.start()
+
+        interval_sec = 1.0 / self.config.camera_info_fps
+        self.register_disposable(
+            rx.interval(interval_sec).subscribe(
+                on_next=lambda _: self._publish_camera_info(),
+                on_error=lambda e: logger.error("CameraInfo publish error", error=str(e)),
             )
+        )
 
-        # Start physics (sim thread spawned inside engine.connect()).
-        if not self._engine.connect():
-            raise RuntimeError("MujocoSimModule: engine.connect() failed")
-
-        self._shm.signal_ready(num_joints=len(joint_names))
-
-        self._stop_event.clear()
-
-        if self.config.enable_kinematic_base_control:
-            if not self._engine.has_root_freejoint:
-                logger.warning("Kinematic base control requested, but MJCF has no freejoint root")
-            root_pose = self._engine.get_root_pose()
-            self._kinematic_base_z = None if root_pose is None else float(root_pose[0][2])
-            self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
-
-        if primary_needed:
-            # Camera intrinsics.
-            self._build_camera_info()
-
-            self._publish_thread = threading.Thread(
-                target=self._publish_loop, daemon=True, name="MujocoSimPublish"
+    def _start_pointcloud_publisher(self) -> None:
+        if not self.config.enable_pointcloud:
+            return
+        if not (self._primary_camera_needed or self.config.lidar_camera_names):
+            return
+        pc_interval = 1.0 / self.config.pointcloud_fps
+        self.register_disposable(
+            rx.interval(pc_interval).subscribe(
+                on_next=lambda _: self._generate_pointcloud(),
+                on_error=lambda e: logger.error("Pointcloud error", error=str(e)),
             )
-            self._publish_thread.start()
-
-            # Periodic camera_info publishing.
-            interval_sec = 1.0 / self.config.camera_info_fps
-            self.register_disposable(
-                rx.interval(interval_sec).subscribe(
-                    on_next=lambda _: self._publish_camera_info(),
-                    on_error=lambda e: logger.error("CameraInfo publish error", error=str(e)),
-                )
-            )
-
-        # Optional pointcloud generation.
-        if self.config.enable_pointcloud and (primary_needed or self.config.lidar_camera_names):
-            pc_interval = 1.0 / self.config.pointcloud_fps
-            self.register_disposable(
-                rx.interval(pc_interval).subscribe(
-                    on_next=lambda _: self._generate_pointcloud(),
-                    on_error=lambda e: logger.error("Pointcloud error", error=str(e)),
-                )
-            )
-
-        logger.info(
-            "MujocoSimModule started",
-            address=self.config.address,
-            dof=dof,
-            camera=self.config.camera_name,
-            camera_enabled=self._camera_enabled,
-            shm_key=shm_key,
         )
 
     @rpc
@@ -382,10 +397,11 @@ class MujocoSimModule(
             fixed_z=self._kinematic_base_z,
         )
 
-    def _publish_shm_state(self, engine: MujocoEngine) -> None:
-        """Post-step hook: publish joint state to SHM."""
+    def _after_step(self, engine: MujocoEngine) -> None:
         self._apply_cmd_vel(engine)
+        self._publish_state(engine)
 
+    def _publish_state(self, engine: MujocoEngine) -> None:
         shm = self._shm
         if shm is None:
             return

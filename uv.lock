@@ -2191,6 +2191,7 @@ sim = [
     { name = "mujoco" },
     { name = "playground" },
     { name = "pygame" },
+    { name = "trimesh" },
     { name = "usd-core" },
 ]
 unitree = [
@@ -2252,6 +2253,7 @@ viz = [
     { name = "playground" },
     { name = "plyfile" },
     { name = "pygame" },
+    { name = "trimesh" },
     { name = "usd-core" },
     { name = "viser" },
 ]
@@ -2413,6 +2415,7 @@ requires-dist = [
     { name = "torchreid", marker = "extra == 'misc'", specifier = "==0.2.5" },
     { name = "transformers", extras = ["torch"], marker = "extra == 'perception'", specifier = ">=4.53.0,<4.54" },
     { name = "trimesh", marker = "extra == 'manipulation'" },
+    { name = "trimesh", marker = "extra == 'sim'" },
     { name = "typeguard", marker = "extra == 'misc'" },
     { name = "typer", specifier = ">=0.19.2,<1" },
     { name = "typer", marker = "extra == 'docker'", specifier = ">=0.19.2,<1" },

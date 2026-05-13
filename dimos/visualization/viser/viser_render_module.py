@@ -53,6 +53,7 @@ from dimos.visualization.viser.robot_meshes import (
 from dimos.visualization.viser.splat import SplatAlignment, load_splat
 
 logger = setup_logger()
+_WORLD_FRAME = "world"
 
 
 def _compose_scene_mesh_wxyz(
@@ -197,20 +198,36 @@ class ViserRenderModule(Module):
 
         import viser
 
+        splat = self._load_splat()
+        self._load_robot_meshes()
+        self._server = viser.ViserServer(host="0.0.0.0", port=self._port)
+        self._configure_server()
+        logger.info(f"Viser viewer: http://localhost:{self._port}/")
+
+        self._add_splat(splat)
+        self._add_scene_mesh_if_configured()
+        self._add_layer_controls()
+        self._add_robot_meshes()
+        self._add_camera_frustum()
+        self._add_click_controls()
+        self._subscribe_inputs()
+        self._start_render_thread()
+
+    def _load_splat(self) -> Any | None:
         alignment = (
             SplatAlignment.from_yaml(self._alignment_yaml)
             if self._alignment_yaml and self._alignment_yaml.exists()
             else SplatAlignment()
         )
-
-        if self._splat_path is not None:
-            logger.info(f"Viser: loading splat from {self._splat_path}")
-            splat = load_splat(self._splat_path, alignment=alignment)
-            logger.info(f"Viser: loaded {len(splat.centers)} Gaussians")
-        else:
-            splat = None
+        if self._splat_path is None:
             logger.info("Viser: splat disabled (no splat_path provided)")
+            return None
+        logger.info(f"Viser: loading splat from {self._splat_path}")
+        splat = load_splat(self._splat_path, alignment=alignment)
+        logger.info(f"Viser: loaded {len(splat.centers)} Gaussians")
+        return splat
 
+    def _load_robot_meshes(self) -> None:
         logger.info(f"Viser: loading robot meshes from {self._mjcf_path}")
         self._robot = load_robot_meshes(self._mjcf_path, meshdir=self._mjcf_meshdir)
         logger.info(
@@ -218,10 +235,8 @@ class ViserRenderModule(Module):
             f"{len(self._robot.body_names)} bodies"
         )
 
-        self._server = viser.ViserServer(host="0.0.0.0", port=self._port)
-        # Strip the floating control panel down to just a collapse button —
-        # the viewer is render-only, no GUI controls live in the panel, and
-        # viser exposes no API to hide the panel entirely.
+    def _configure_server(self) -> None:
+        assert self._server is not None
         self._server.gui.set_panel_label(None)
         self._server.gui.configure_theme(
             control_layout="collapsible",
@@ -229,33 +244,29 @@ class ViserRenderModule(Module):
             show_share_button=False,
             dark_mode=True,
         )
-        logger.info(f"Viser viewer: http://localhost:{self._port}/")
 
-        if splat is not None:
-            self._splat_data = splat
-            self._splat_handle = self._server.scene.add_gaussian_splats(
-                "/splat",
-                centers=splat.centers,
-                covariances=splat.covariances,
-                rgbs=splat.rgbs,
-                opacities=splat.opacities,
-            )
+    def _add_splat(self, splat: Any | None) -> None:
+        if splat is None:
+            return
+        assert self._server is not None
+        self._splat_data = splat
+        self._splat_handle = self._server.scene.add_gaussian_splats(
+            "/splat",
+            centers=splat.centers,
+            covariances=splat.covariances,
+            rgbs=splat.rgbs,
+            opacities=splat.opacities,
+        )
 
-        # Optional scene mesh (.usdz / .glb / etc.) — drawn in the same
-        # world frame as the robot.  ``MeshCameraModule`` ray-casts the
-        # same mesh to feed the head-camera RGB topic.
+    def _add_scene_mesh_if_configured(self) -> None:
         if self._scene_mesh_path is not None and self._scene_mesh_path.exists():
             try:
                 self._add_scene_mesh()
             except Exception as e:
                 logger.warning(f"Viser: scene mesh load failed: {e}")
 
-        # Three independent layer toggles: Splat / Mesh / Lidar.
-        # Each checkbox only appears when the corresponding backdrop
-        # actually exists in this run (no point in a "Show splat" toggle
-        # when no splat was loaded).  Combined, they cover every subset
-        # — splat-only, mesh-only, lidar-only, splat+mesh, splat+lidar,
-        # mesh+lidar, all three.
+    def _add_layer_controls(self) -> None:
+        assert self._server is not None
         if self._splat_handle is not None:
             self._splat_checkbox = self._server.gui.add_checkbox(
                 "Show splat", initial_value=self._splat_visible
@@ -311,8 +322,9 @@ class ViserRenderModule(Module):
             if self._lidar_handle is not None:
                 self._lidar_handle.visible = self._lidar_visible
 
-        # One frame per body; meshes are added as children so they
-        # follow when the body frame moves.
+    def _add_robot_meshes(self) -> None:
+        assert self._server is not None
+        assert self._robot is not None
         for body_id, body_name in enumerate(self._robot.body_names):
             self._body_frames[body_id] = self._server.scene.add_frame(
                 f"/robot/{body_name}",
@@ -334,9 +346,9 @@ class ViserRenderModule(Module):
                 wxyz=tuple(geom.local_wxyz),
             )
 
-        # Camera frustum overlay — shows where a robot-mounted RGB sensor
-        # would look from.  Stays None if the configured mount body
-        # isn't in this MJCF (e.g. swap to a robot without head_link).
+    def _add_camera_frustum(self) -> None:
+        assert self._server is not None
+        assert self._robot is not None
         if self._camera_spec is not None:
             cam_body_id = mujoco.mj_name2id(
                 self._robot.model, mujoco.mjtObj.mjOBJ_BODY, self._camera_spec.body_name
@@ -356,10 +368,8 @@ class ViserRenderModule(Module):
                     color=self._camera_spec.frustum_color,
                 )
 
-        # Click-to-navigate. We arm a one-shot scene click callback when
-        # the user presses "Set nav goal", because viser disables camera
-        # orbit while the click callback is registered (App.tsx:514) — so
-        # leaving it always-on would break LMB orbit globally.
+    def _add_click_controls(self) -> None:
+        assert self._server is not None
         nav_goal_button = self._server.gui.add_button("Set nav goal")
 
         @nav_goal_button.on_click
@@ -379,11 +389,6 @@ class ViserRenderModule(Module):
                 nav_goal_button.disabled = False
                 nav_goal_button.label = "Set nav goal"
 
-        # Click-to-point. Same one-shot-callback pattern; the click ray
-        # is intersected with the scene-mesh raycaster if one is loaded,
-        # else with an eye-height (z=1.0 m) horizontal plane so pointing
-        # works even when no scene mesh is configured. Published on
-        # /point_goal; G1ManipulationModule subscribes and runs point_at.
         point_goal_button = self._server.gui.add_button("Set point goal")
 
         @point_goal_button.on_click
@@ -403,6 +408,7 @@ class ViserRenderModule(Module):
                 point_goal_button.disabled = False
                 point_goal_button.label = "Set point goal"
 
+    def _subscribe_inputs(self) -> None:
         try:
             unsub = self.path.subscribe(self._on_path)
             self.register_disposable(Disposable(unsub))
@@ -427,6 +433,7 @@ class ViserRenderModule(Module):
         except Exception as e:
             logger.warning(f"Viser: odom subscribe failed: {e}")
 
+    def _start_render_thread(self) -> None:
         self._render_thread = threading.Thread(
             target=self._render_loop, name="viser-render", daemon=True
         )
@@ -561,7 +568,7 @@ class ViserRenderModule(Module):
         except Exception as e:
             logger.debug(f"Viser nav-goal marker failed: {e}")
 
-        point = PointStamped(x=float(x), y=float(y), z=0.0, ts=time.time(), frame_id="map")
+        point = PointStamped(x=float(x), y=float(y), z=0.0, ts=time.time(), frame_id=_WORLD_FRAME)
         self.clicked_point.publish(point)
         logger.info(f"Viser nav-goal: published clicked_point=({x:.3f}, {y:.3f})")
 
@@ -618,7 +625,9 @@ class ViserRenderModule(Module):
         except Exception as e:
             logger.debug(f"Viser point-goal marker failed: {e}")
 
-        point = PointStamped(x=float(x), y=float(y), z=float(z), ts=time.time(), frame_id="map")
+        point = PointStamped(
+            x=float(x), y=float(y), z=float(z), ts=time.time(), frame_id=_WORLD_FRAME
+        )
         self.point_goal.publish(point)
         logger.info(f"Viser point-goal: published point_goal=({x:.3f}, {y:.3f}, {z:.3f})")
 
