@@ -65,15 +65,12 @@ def test_defaults_match_spec() -> None:
     assert config.grid_flat_obstacle_detected is True
 
 
-def test_loop_closure_tunables_present() -> None:
-    """Loop-closure tunables exist with sensible defaults (parity with PGO)."""
+def test_native_module_executable_set() -> None:
+    """NativeModule path: executable and nix build command are configured."""
     config = RtabMapConfig()
-    assert config.key_pose_delta_trans > 0
-    assert config.key_pose_delta_deg > 0
-    assert config.loop_search_radius > 0
-    assert 0.0 < config.loop_score_thresh < 1.0
-    assert config.submap_resolution > 0
-    assert config.min_loop_detect_duration > 0
+    assert config.executable.endswith("rtab_map")
+    assert config.build_command is not None
+    assert "nix build" in config.build_command
 
 
 # ---------------------------------------------------------------------------

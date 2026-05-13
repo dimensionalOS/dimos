@@ -217,6 +217,7 @@ def nav_stack_rerun_config(
     agentic_debug: bool = False,
     show_registered_scan: bool = False,
     vis_throttle: float = 1.0,
+    rtab_focus: bool = False,
 ) -> dict[str, Any]:
     """Return a rerun config dict with nav stack visualization defaults.
 
@@ -224,6 +225,11 @@ def nav_stack_rerun_config(
     lifts nav elements above the scene for top-down visibility.
 
     Use ``vis_throttle`` (make smaller) if there is crashing related to Rerun/Dimos-Viewer.
+
+    ``rtab_focus`` is a temporary debugging flag: hide everything except
+    the RTAB OctoMap output, the 2D projection, the robot base box, and
+    the trajectory. Useful for visually validating that the RtabMap
+    native module is actually populating its outputs end-to-end.
     """
     resolved = dict(user_config or {})
     if vis_throttle != 1.0 and "max_hz" in resolved:
@@ -235,38 +241,71 @@ def nav_stack_rerun_config(
     resolved.setdefault("visual_override", {})
     resolved.setdefault("static", {})
     visual_override = dict(resolved["visual_override"])
-    visual_override.setdefault("world/sensor_scan", _sensor_scan_colors)
-    visual_override.setdefault("world/terrain_map", _terrain_map_colors)
-    visual_override.setdefault("world/terrain_map_ext", _terrain_map_colors)
-    visual_override.setdefault("world/global_map", _global_map_colors)
-    visual_override.setdefault("world/global_map_pgo", _global_map_colors)
-    visual_override.setdefault("world/global_map_fastlio", _global_map_colors)
-    visual_override.setdefault(
-        "world/registered_scan", _registered_scan_colors if show_registered_scan else _hide
-    )
-    visual_override.setdefault("world/explored_areas", _explored_areas_colors)
-    visual_override.setdefault("world/preloaded_map", _preloaded_map_colors)
-    visual_override.setdefault("world/trajectory", _trajectory_colors)
-    visual_override.setdefault("world/path", _path_colors)
-    if agentic_debug:
-        visual_override.setdefault("world/way_point", _waypoint_colors_debug)
-        visual_override.setdefault("world/goal", _goal_colors_debug)
-        visual_override.setdefault("world/goal_path", _goal_path_colors_debug)
-        visual_override.setdefault("world/nav_boundary", _nav_boundary_colors_debug)
-        visual_override.setdefault("world/contour_polygons", _contour_polygons_colors_debug)
-        visual_override.setdefault("world/graph_nodes", _graph_nodes_colors_debug)
-        visual_override.setdefault("world/graph_edges", _graph_edges_colors_debug)
+    if rtab_focus:
+        # Hide every nav-stack visual layer except RTAB-Map's own outputs
+        # and the trajectory/robot, so we can eyeball whether the OctoMap
+        # is actually being built. The robot's base box is configured at
+        # the blueprint level (not here), so it stays visible naturally.
+        for hidden in (
+            "world/sensor_scan",
+            "world/terrain_map",
+            "world/terrain_map_ext",
+            "world/global_map",
+            "world/global_map_pgo",
+            "world/global_map_fastlio",
+            "world/registered_scan",
+            "world/explored_areas",
+            "world/preloaded_map",
+            "world/way_point",
+            "world/goal",
+            "world/goal_path",
+            "world/nav_boundary",
+            "world/contour_polygons",
+            "world/graph_nodes",
+            "world/graph_edges",
+            "world/obstacle_cloud",
+            "world/costmap_cloud",
+            "world/free_paths",
+            "world/path",
+        ):
+            visual_override.setdefault(hidden, _hide)
+        # Keep these on (the actual RTAB outputs + robot trajectory).
+        visual_override.setdefault("world/octomap", _global_map_colors)
+        visual_override.setdefault("world/projected_2d_grid", _global_map_colors)
+        visual_override.setdefault("world/trajectory", _trajectory_colors)
     else:
-        visual_override.setdefault("world/way_point", _waypoint_colors)
-        visual_override.setdefault("world/goal", _goal_colors)
-        visual_override.setdefault("world/goal_path", _goal_path_colors)
-        visual_override.setdefault("world/nav_boundary", _nav_boundary_colors)
-        visual_override.setdefault("world/contour_polygons", _contour_polygons_colors)
-        visual_override.setdefault("world/graph_nodes", _hide)
-        visual_override.setdefault("world/graph_edges", _hide)
-    visual_override.setdefault("world/obstacle_cloud", _obstacle_cloud_colors)
-    visual_override.setdefault("world/costmap_cloud", _costmap_cloud_colors)
-    visual_override.setdefault("world/free_paths", _free_paths_colors)
+        visual_override.setdefault("world/sensor_scan", _sensor_scan_colors)
+        visual_override.setdefault("world/terrain_map", _terrain_map_colors)
+        visual_override.setdefault("world/terrain_map_ext", _terrain_map_colors)
+        visual_override.setdefault("world/global_map", _global_map_colors)
+        visual_override.setdefault("world/global_map_pgo", _global_map_colors)
+        visual_override.setdefault("world/global_map_fastlio", _global_map_colors)
+        visual_override.setdefault(
+            "world/registered_scan", _registered_scan_colors if show_registered_scan else _hide
+        )
+        visual_override.setdefault("world/explored_areas", _explored_areas_colors)
+        visual_override.setdefault("world/preloaded_map", _preloaded_map_colors)
+        visual_override.setdefault("world/trajectory", _trajectory_colors)
+        visual_override.setdefault("world/path", _path_colors)
+        if agentic_debug:
+            visual_override.setdefault("world/way_point", _waypoint_colors_debug)
+            visual_override.setdefault("world/goal", _goal_colors_debug)
+            visual_override.setdefault("world/goal_path", _goal_path_colors_debug)
+            visual_override.setdefault("world/nav_boundary", _nav_boundary_colors_debug)
+            visual_override.setdefault("world/contour_polygons", _contour_polygons_colors_debug)
+            visual_override.setdefault("world/graph_nodes", _graph_nodes_colors_debug)
+            visual_override.setdefault("world/graph_edges", _graph_edges_colors_debug)
+        else:
+            visual_override.setdefault("world/way_point", _waypoint_colors)
+            visual_override.setdefault("world/goal", _goal_colors)
+            visual_override.setdefault("world/goal_path", _goal_path_colors)
+            visual_override.setdefault("world/nav_boundary", _nav_boundary_colors)
+            visual_override.setdefault("world/contour_polygons", _contour_polygons_colors)
+            visual_override.setdefault("world/graph_nodes", _hide)
+            visual_override.setdefault("world/graph_edges", _hide)
+        visual_override.setdefault("world/obstacle_cloud", _obstacle_cloud_colors)
+        visual_override.setdefault("world/costmap_cloud", _costmap_cloud_colors)
+        visual_override.setdefault("world/free_paths", _free_paths_colors)
     resolved["visual_override"] = visual_override
     static_entries = dict(resolved["static"])
     static_entries.setdefault("world/floor", _static_floor)

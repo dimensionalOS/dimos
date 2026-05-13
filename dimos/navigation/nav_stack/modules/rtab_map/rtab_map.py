@@ -12,104 +12,79 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RTAB-Map SLAM module — alternative to PGO that consumes FastLIO2 odometry.
+"""Native C++ RtabMap module — alternative SLAM provider to PGO.
 
-Mirrors the PGO contract (same input/output streams) plus two extra outputs
-that surface OctoMap state for downstream consumers:
-
-- ``octomap``: occupied voxel centroids in the map frame
-- ``projected_2d_grid``: footprint of the OctoMap projected onto the floor
-
-The module is a Python :class:`Module` (not a :class:`NativeModule`) because
-the actual RTAB-Map runtime is wrapped behind a :class:`RtabRunner` seam, so
-validation can exercise the wiring with a pure-Python lite runner without
-requiring a C++ binary in the test loop.
-
-User-set defaults from the spec are honored: 3D enabled, OctoMap enabled,
-raycasting/point-clearing enabled.
+Wraps `result/bin/rtab_map`, a C++ binary that links librtabmap and
+consumes FastLIO2 odometry as an external odom source. Defaults match the
+user spec: 3D enabled, OctoMap enabled, raycasting / point clearing enabled.
+The binary subscribes to and publishes on LCM channels matching the streams
+declared here. ``rtab_tf`` carries the ``map -> odom`` correction as an
+:class:`Odometry` message (parity with PGO's ``pgo_tf``); we re-publish it
+through :attr:`self.tf` exactly the way PGO does.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
+import time
 
-import numpy as np
 from reactivex.disposable import Disposable
-from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_ODOM
-from dimos.navigation.nav_stack.modules.rtab_map._rtab_runner import (
-    LiteRtabRunner,
-    LiteRtabRunnerConfig,
-    RtabRunner,
-    RunnerStepResult,
-)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-class RtabMapConfig(ModuleConfig):
-    """Config for the RtabMap module.
+class RtabMapConfig(NativeModuleConfig):
+    """Config for the RtabMap native module."""
 
-    The OctoMap-relevant defaults match the user spec exactly: 3D on,
-    OctoMap on, raycasting / point clearing on. Naming follows RTAB-Map's
-    own ``Grid/*`` parameter namespace where possible.
-    """
-
-    # --- OctoMap / Grid defaults (the six required by the locked spec) ---
-    grid_3d: bool = True
-    grid_ray_tracing: bool = True
-    grid_from_depth: bool = False  # LiDAR mode; RGBD is a follow-up
-    grid_cell_size: float = 0.1
-    grid_max_ground_angle: float = 45.0
-    grid_ground_is_obstacle: bool = False
-    grid_flat_obstacle_detected: bool = True
-
-    # --- Loop closure tunables (analogous to PGOConfig) ---
-    key_pose_delta_trans: float = 0.5
-    key_pose_delta_deg: float = 10.0
-    loop_search_radius: float = 2.0
-    loop_score_thresh: float = 0.6
-    submap_resolution: float = 0.1
-    min_loop_detect_duration: float = 5.0
+    cwd: str | None = str(Path(__file__).resolve().parent / "cpp")
+    executable: str = "result/bin/rtab_map"
+    build_command: str | None = "nix build .#default --no-write-lock-file"
 
     # --- Frame names ---
     world_frame: str = FRAME_MAP
     local_frame: str = FRAME_ODOM
     body_frame: str = FRAME_BODY
 
-    # --- Output publishing ---
-    publish_global_map: bool = True
-    publish_octomap: bool = True
-    publish_projected_2d_grid: bool = True
+    # --- OctoMap / Grid defaults (the six required by the locked spec) ---
+    grid_3d: bool = True
+    grid_ray_tracing: bool = True
+    grid_from_depth: bool = False
+    grid_cell_size: float = 0.1
+    grid_max_ground_angle: float = 45.0
+    grid_ground_is_obstacle: bool = False
+    grid_flat_obstacle_detected: bool = True
+
+    # --- Publishing cadence ---
+    octomap_publish_period: float = 0.5
+    global_map_publish_period: float = 1.0
+    global_map_voxel_size: float = 0.15
 
     # --- Input handling ---
-    unregister_input: bool = True  # input scans are in world frame; convert to body
+    # Input scans arrive in the world (map) frame; the binary undoes the
+    # current odom transform so rtabmap sees body-frame scans.
+    unregister_input: bool = True
 
 
-class RtabMap(Module):
-    """RTAB-Map-backed loop closure + occupancy mapping module.
+class RtabMap(NativeModule):
+    """RtabMap NativeModule — librtabmap behind an LCM wrapper.
 
-    Plays the same role in the nav stack as :class:`PGO`: takes FastLIO2's raw
-    odometry and the registered scan stream, detects loop closures, publishes
-    a corrected odometry stream, a ``map -> odom`` TF correction, and the
-    accumulated global cloud. Adds two OctoMap outputs.
-
-    The actual algorithm lives in a :class:`RtabRunner` implementation that
-    can be swapped at construction time (defaults to :class:`LiteRtabRunner`
-    for tests and bring-up; will move to a system-rtabmap subprocess bridge
-    in a follow-up).
+    Plays the same role in the nav stack as :class:`PGO`: consumes
+    FastLIO2's external odometry + registered lidar scans, runs RTAB-Map
+    SLAM internally (lidar-only mode, ICP registration), and publishes
+    corrected odometry, the accumulated global cloud, a ``map -> odom`` TF
+    correction, plus OctoMap-derived outputs (occupied voxels and a 2D
+    projection).
     """
 
     config: RtabMapConfig
@@ -123,92 +98,28 @@ class RtabMap(Module):
     octomap: Out[PointCloud2]
     projected_2d_grid: Out[PointCloud2]
 
-    def __init__(
-        self,
-        runner: RtabRunner | None = None,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(**kwargs)
-        self._runner: RtabRunner = runner or LiteRtabRunner(self._lite_config_from(self.config))
-        self._latest_odom: Odometry | None = None
-
-    @classmethod
-    def _lite_config_from(cls, config: RtabMapConfig) -> LiteRtabRunnerConfig:
-        return LiteRtabRunnerConfig(
-            cell_size=config.grid_cell_size,
-            ray_tracing=config.grid_ray_tracing,
-            max_ground_angle_deg=config.grid_max_ground_angle,
-            ground_is_obstacle=config.grid_ground_is_obstacle,
-            keyframe_delta_trans=config.key_pose_delta_trans,
-            keyframe_delta_rad=float(np.deg2rad(config.key_pose_delta_deg)),
-            revisit_radius_m=config.loop_search_radius,
-            loop_fitness_threshold=config.loop_score_thresh,
-            min_loop_detect_duration_s=config.min_loop_detect_duration,
-        )
-
-    # ------------- lifecycle -------------
-
     @rpc
     def start(self) -> None:
         super().start()
-        # Subscribe to inputs. Scans are the primary trigger; odom is cached
-        # so each scan step can look up the latest body pose.
-        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
-        self.register_disposable(
-            Disposable(self.registered_scan.subscribe(self._on_registered_scan))
-        )
-        # Subscribe to our own rtab_tf to fan corrections out to the Python TF
-        # bridge — same pattern PGO uses for pgo_tf.
+        # Fan map->odom corrections from the C++ binary to the Python TF
+        # bridge — same pattern PGO uses for pgo_tf. Subscribing through
+        # the transport (not the Out's local subscribers) is required
+        # because the publisher lives in the C++ subprocess.
         self.register_disposable(
             Disposable(self.rtab_tf.transport.subscribe(self._on_tf_correction, self.rtab_tf))
         )
-        # Seed identity TF so downstream consumers can resolve `map -> body`
-        # before the first loop closure shifts the frame.
+        # Seed identity TF so downstream consumers can resolve map->body
+        # before the first loop closure shifts the map frame.
         self._publish_tf(
             translation=(0.0, 0.0, 0.0),
             rotation=(0.0, 0.0, 0.0, 1.0),
-            ts=0.0,
+            ts=time.time(),
         )
-        logger.info(
-            "RtabMap started (grid_3d=%s ray_tracing=%s cell=%.3f)",
-            self.config.grid_3d,
-            self.config.grid_ray_tracing,
-            self.config.grid_cell_size,
-        )
+        logger.info("RtabMap native module started (C++ librtabmap + LCM)")
 
     @rpc
     def stop(self) -> None:
         super().stop()
-
-    # ------------- handlers -------------
-
-    def _on_odometry(self, msg: Odometry) -> None:
-        self._latest_odom = msg
-
-    def _on_registered_scan(self, scan: PointCloud2) -> None:
-        odom = self._latest_odom
-        if odom is None:
-            # Nothing to correct against yet — wait for first odometry.
-            return
-
-        scan_points_map, _ = scan.as_numpy()
-        if scan_points_map is None or len(scan_points_map) == 0:
-            return
-
-        odom_pose = _se3_from_odometry(odom)
-        scan_points_body = (
-            _world_to_body(scan_points_map, odom_pose)
-            if self.config.unregister_input
-            else scan_points_map
-        )
-
-        result = self._runner.process(
-            scan_points_body=scan_points_body.astype(np.float64),
-            odom_pose=odom_pose,
-            timestamp=float(scan.ts),
-        )
-
-        self._publish_results(result, odom, scan_ts=float(scan.ts))
 
     def _on_tf_correction(self, msg: Odometry) -> None:
         self._publish_tf(
@@ -219,59 +130,8 @@ class RtabMap(Module):
                 msg.pose.orientation.z,
                 msg.pose.orientation.w,
             ),
-            ts=msg.ts,
+            ts=msg.ts or time.time(),
         )
-
-    # ------------- publishing -------------
-
-    def _publish_results(
-        self,
-        result: RunnerStepResult,
-        source_odom: Odometry,
-        scan_ts: float,
-    ) -> None:
-        corrected = _odometry_from_se3(
-            result.corrected_pose,
-            frame_id=self.config.world_frame,
-            child_frame_id=self.config.body_frame,
-            ts=source_odom.ts,
-        )
-        self.corrected_odometry.publish(corrected)
-
-        tf_msg = _odometry_from_se3(
-            result.tf_correction,
-            frame_id=self.config.world_frame,
-            child_frame_id=self.config.local_frame,
-            ts=source_odom.ts,
-        )
-        self.rtab_tf.publish(tf_msg)
-
-        if self.config.publish_octomap:
-            self.octomap.publish(
-                PointCloud2.from_numpy(
-                    result.octomap_voxels,
-                    frame_id=self.config.world_frame,
-                    timestamp=scan_ts,
-                )
-            )
-
-        if self.config.publish_projected_2d_grid:
-            self.projected_2d_grid.publish(
-                PointCloud2.from_numpy(
-                    result.projected_2d_voxels,
-                    frame_id=self.config.world_frame,
-                    timestamp=scan_ts,
-                )
-            )
-
-        if self.config.publish_global_map:
-            self.global_map.publish(
-                PointCloud2.from_numpy(
-                    result.global_map_points,
-                    frame_id=self.config.world_frame,
-                    timestamp=scan_ts,
-                )
-            )
 
     def _publish_tf(
         self,
@@ -288,54 +148,3 @@ class RtabMap(Module):
                 ts=ts,
             )
         )
-
-
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
-
-
-def _se3_from_odometry(msg: Odometry) -> np.ndarray:
-    """Build a 4x4 SE(3) matrix from an :class:`Odometry` message's pose."""
-    quat = msg.pose.orientation
-    rot = Rotation.from_quat([quat.x, quat.y, quat.z, quat.w]).as_matrix()
-    pose = np.eye(4)
-    pose[:3, :3] = rot
-    pose[:3, 3] = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
-    return pose
-
-
-def _odometry_from_se3(
-    pose: np.ndarray,
-    *,
-    frame_id: str,
-    child_frame_id: str,
-    ts: float,
-) -> Odometry:
-    """Pack a 4x4 SE(3) matrix back into an :class:`Odometry` message."""
-    quat = Rotation.from_matrix(pose[:3, :3]).as_quat()  # [x, y, z, w]
-    pose_msg = Pose(
-        float(pose[0, 3]),
-        float(pose[1, 3]),
-        float(pose[2, 3]),
-        float(quat[0]),
-        float(quat[1]),
-        float(quat[2]),
-        float(quat[3]),
-    )
-    return Odometry(
-        ts=ts,
-        frame_id=frame_id,
-        child_frame_id=child_frame_id,
-        pose=PoseWithCovariance(pose_msg),
-    )
-
-
-def _world_to_body(points_world: np.ndarray, body_to_world: np.ndarray) -> np.ndarray:
-    """Inverse transform world-frame points back into the body frame."""
-    inv = np.eye(4)
-    rot_t = body_to_world[:3, :3].T
-    inv[:3, :3] = rot_t
-    inv[:3, 3] = -rot_t @ body_to_world[:3, 3]
-    rotated = points_world @ inv[:3, :3].T
-    return rotated + inv[:3, 3]
