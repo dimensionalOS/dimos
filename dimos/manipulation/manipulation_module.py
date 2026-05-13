@@ -364,6 +364,8 @@ class ManipulationModule(Module):
         """Get aggregate manipulation state derived from per-robot job records.
 
         Priority: FAULT > PLANNING > EXECUTING > COMPLETED > IDLE.
+        FAULT is module-wide: any failed plan or coordinator rejection blocks
+        new plans/executions for every robot until reset() clears the fault.
         """
         with self._lock:
             if self._has_fault_locked():
@@ -444,6 +446,8 @@ class ManipulationModule(Module):
         In-flight planner threads keep running (Drake's RRT is not preemptable),
         but their late results are dropped at compare-and-store via the
         invalidated flag. Use cancel() to abort an active coordinator execution.
+        Also clears the module-wide FAULT state raised by any robot's planning
+        or execution failure.
         """
         with self._lock:
             if any(self._executing.values()):

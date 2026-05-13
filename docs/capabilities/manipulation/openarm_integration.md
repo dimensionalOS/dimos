@@ -181,7 +181,9 @@ True
 
 `plan()` returns `True` once the request is **accepted**, not once planning finishes. `wait_plan()` returns `True` only if the plan succeeded — on failure, check `plan_status(robot_name)["error"]` or the coordinator terminal for `COLLISION_AT_GOAL`, `INVALID_START`, `NO_SOLUTION`, etc. `preview()` / `execute()` will reject while a plan is still in flight, so always `wait_plan()` first.
 
-If you ever get stuck in a `FAULT` state (e.g. an invalid plan was sent), reset the state machine:
+Planning and execution failures are treated as module-wide faults. In a bimanual sequence, if either arm fails to plan or the coordinator rejects a trajectory, `state()` reports `FAULT` and new plans for both arms are blocked until reset. This keeps the two-arm workflow from continuing from a partial plan.
+
+If you ever get stuck in a `FAULT` state, reset the state machine:
 
 ```python skip
 >>> _client.reset()
@@ -203,6 +205,8 @@ True
 ```
 
 Each arm has its own planner thread and its own coordinator task, so the two plans run in parallel and the two trajectories execute simultaneously.
+
+If `wait_plan()` returns `False` in a bimanual flow, inspect `plan_status()` before resetting; one arm may have succeeded while the other failed, but the module intentionally requires `reset()` before any further planning.
 
 #### Example session — Cartesian target
 
