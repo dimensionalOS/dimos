@@ -2,11 +2,7 @@ name: ci
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
   pull_request:
-    paths-ignore:
-      - '**.md'
 
 concurrency:
   # Cancels runs from previous pushes in a PR.
