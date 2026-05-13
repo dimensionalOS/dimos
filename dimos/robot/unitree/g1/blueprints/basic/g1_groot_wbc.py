@@ -114,8 +114,8 @@ _disable_lidar = os.environ.get("DIMOS_DISABLE_LIDAR", "0") not in {"", "0"}
 _sim_mjcf_path = _mjcf_path
 if _scene_mesh_path and _scene_mesh_collision:
     try:
-        from dimos.mapping.mesh_scene import SceneMeshAlignment
-        from dimos.mapping.scene_mesh_to_mjcf import bake_scene_mjcf
+        from dimos.simulation.mujoco.mesh_scene import SceneMeshAlignment
+        from dimos.simulation.mujoco.scene_mesh_to_mjcf import bake_scene_mjcf
 
         _sim_mjcf_path = str(
             bake_scene_mjcf(

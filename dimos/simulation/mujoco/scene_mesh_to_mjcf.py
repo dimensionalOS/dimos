@@ -25,7 +25,7 @@ from typing import Any
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.mapping.mesh_scene import SceneMeshAlignment, load_scene_prims
+from dimos.simulation.mujoco.mesh_scene import SceneMeshAlignment, load_scene_prims
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -304,7 +304,7 @@ def cli_main() -> None:
         args.remove("--view")
     if len(args) < 2:
         print(
-            "usage: python -m dimos.mapping.scene_mesh_to_mjcf <scene_path> <robot_mjcf> [scale] [--view]"
+            "usage: python -m dimos.simulation.mujoco.scene_mesh_to_mjcf <scene_path> <robot_mjcf> [scale] [--view]"
         )
         sys.exit(2)
     scene = Path(args[0])
