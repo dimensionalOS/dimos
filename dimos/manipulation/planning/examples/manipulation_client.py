@@ -26,11 +26,13 @@ Available functions:
     joints()              Get current joint positions
     ee()                  Get end-effector pose
     state()               Get module state (IDLE, PLANNING, EXECUTING, ...)
-    plan(joints)          Plan to joint configuration, e.g. plan([0.1]*7)
-    plan_pose(x,y,z)      Plan to Cartesian pose
-    preview(duration)     Preview planned path in Meshcat
+    plan(joints)          Submit plan to joint configuration (returns True if accepted)
+    plan_pose(x,y,z)      Submit plan to Cartesian pose (returns True if accepted)
+    wait_plan(timeout)    Block until planning job(s) finish; returns True on success
+    plan_status(robot)    Get per-robot planning job status dict
+    preview(duration)     Preview planned path in Meshcat (must wait_plan first)
     execute()             Execute planned trajectory via coordinator
-    home()                Move to home position
+    home()                Plan and execute move to home position
     url()                 Get Meshcat visualization URL
     robots()              List configured robots
     info(robot)           Get robot config details
@@ -72,7 +74,12 @@ def state() -> str:
 
 
 def plan(target_joints: list[float], robot_name: str | None = None) -> bool:
-    """Plan to joint configuration. e.g. plan([0.1]*7)"""
+    """Submit a joint-space plan. Returns True if accepted (not when finished).
+
+    Planning is asynchronous: True means the request was queued. Call
+    wait_plan() before preview() / execute().
+    e.g. plan([0.1]*7); wait_plan(); preview(); execute()
+    """
     from dimos.msgs.sensor_msgs.JointState import JointState
 
     js = JointState(position=target_joints)
@@ -88,7 +95,12 @@ def plan_pose(
     yaw: float | None = None,
     robot_name: str | None = None,
 ) -> bool:
-    """Plan to Cartesian pose. Preserves current orientation if rpy not given."""
+    """Submit a Cartesian plan. Returns True if accepted (not when finished).
+
+    Planning is asynchronous: True means the request was queued. Call
+    wait_plan() before preview() / execute(). Preserves current orientation
+    if rpy not given.
+    """
     if roll is not None or pitch is not None or yaw is not None:
         orientation = Quaternion.from_euler(Vector3(x=roll or 0, y=pitch or 0, z=yaw or 0))
     else:
@@ -97,6 +109,25 @@ def plan_pose(
         orientation = current.orientation if current else Quaternion(0, 0, 0, 1)
     target = Pose(position=Vector3(x=x, y=y, z=z), orientation=orientation)
     return _client.plan_to_pose(target, robot_name)
+
+
+def wait_plan(timeout: float = 30.0, robot_name: str | None = None) -> bool:
+    """Block until planning finishes; return True if it succeeded.
+
+    With robot_name=None, waits on every active planning job. Returns False
+    if the wait timed out or the job ended in failure.
+    """
+    if not _client.wait_for_planning_completion(robot_name, timeout):
+        return False
+    status = _client.get_planning_status(robot_name)
+    if robot_name is None:
+        return all(s.get("success") is True for s in status.values()) if status else True
+    return bool(status.get("success"))
+
+
+def plan_status(robot_name: str | None = None) -> dict[str, Any]:
+    """Get planning job status. Per-robot dict, or map keyed by robot name."""
+    return _client.get_planning_status(robot_name)
 
 
 def preview(duration: float = 3.0, robot_name: str | None = None) -> bool:
@@ -109,15 +140,16 @@ def execute(robot_name: str | None = None) -> bool:
     return _client.execute(robot_name)
 
 
-def home(robot_name: str | None = None) -> bool:
+def home(robot_name: str | None = None, timeout: float = 30.0) -> bool:
     """Plan and execute move to home position."""
     from dimos.msgs.sensor_msgs.JointState import JointState
 
     home_joints = _client.get_robot_info(robot_name).get("home_joints", [0.0] * 7)
-    success = _client.plan_to_joints(JointState(position=home_joints), robot_name)
-    if success:
-        return _client.execute(robot_name)
-    return False
+    if not _client.plan_to_joints(JointState(position=home_joints), robot_name):
+        return False
+    if not wait_plan(timeout, robot_name):
+        return False
+    return _client.execute(robot_name)
 
 
 def url() -> str | None:
@@ -189,4 +221,4 @@ def stop() -> None:
 if __name__ == "__main__":
     print("Manipulation RPC client ready.")
     print("Type commands() for available functions.")
-    print("Try: joints(), plan([0.1]*7), preview(), execute()")
+    print("Try: joints(), plan([0.1]*7), wait_plan(), preview(), execute()")
