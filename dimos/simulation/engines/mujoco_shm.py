@@ -40,8 +40,8 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Upper bound on joint count per sim. Arms + gripper are typically <= 10.
-MAX_JOINTS = 16
+# Upper bound on joint count per sim. G1 is 29 DoF; leave room for hands.
+MAX_JOINTS = 64
 _FLOAT_BYTES = 8  # float64
 _INT32_BYTES = 4
 
@@ -132,13 +132,13 @@ class ManipShmSet:
         for buffer_name, size in _shm_sizes.items():
             name = _buffer_name(key, buffer_name)
             try:
-                stale = _unregister(SharedMemory(name=name))
-                stale.close()
+                stale = SharedMemory(name=name)
                 try:
                     stale.unlink()
                     logger.info("ManipShmSet: unlinked stale SHM", name=name)
                 except FileNotFoundError:
                     pass
+                stale.close()
             except FileNotFoundError:
                 pass
             buffers[buffer_name] = SharedMemory(create=True, size=size, name=name)

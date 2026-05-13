@@ -205,13 +205,6 @@ class WebsocketVisModule(Module):
         if self._uvicorn_server:
             self._uvicorn_server.should_exit = True
 
-        if self.sio and self._broadcast_loop and not self._broadcast_loop.is_closed():
-
-            async def _disconnect_all() -> None:
-                await self.sio.disconnect()
-
-            asyncio.run_coroutine_threadsafe(_disconnect_all(), self._broadcast_loop)
-
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             self._broadcast_loop.call_soon_threadsafe(self._broadcast_loop.stop)
 

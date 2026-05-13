@@ -32,16 +32,22 @@ import threading
 import time
 from typing import Any
 
+import mujoco
+import numpy as np
+import open3d as o3d
 from pydantic import Field
 import reactivex as rx
+from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation as R
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -75,6 +81,7 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     """Configuration for the unified MuJoCo simulation module."""
 
     address: str = ""
+    meshdir: str | None = None
     headless: bool = False
     dof: int = 7
 
@@ -86,10 +93,16 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     base_frame_id: str = "link7"
     base_transform: Transform | None = Field(default_factory=_default_identity_transform)
     align_depth_to_color: bool = True
+    enable_color: bool = True
     enable_depth: bool = True
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    lidar_camera_names: list[str] = Field(default_factory=list)
+    lidar_camera_width: int = 640
+    lidar_camera_height: int = 360
+    lidar_voxel_size: float = 0.05
+    enable_kinematic_base_control: bool = False
 
 
 class MujocoSimModule(
@@ -111,6 +124,9 @@ class MujocoSimModule(
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
+    joint_state: Out[JointState]
+    odom: Out[PoseStamped]
+    cmd_vel: In[Twist]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -122,6 +138,14 @@ class MujocoSimModule(
         self._stop_event = threading.Event()
         self._publish_thread: threading.Thread | None = None
         self._camera_info_base: CameraInfo | None = None
+        self._cmd_vel_lock = threading.Lock()
+        self._cmd_vel = Twist.zero()
+        self._last_cmd_vel_time = 0.0
+        self._kinematic_base_z: float | None = None
+
+    @property
+    def _camera_enabled(self) -> bool:
+        return self.config.enable_color or self.config.enable_depth or self.config.enable_pointcloud
 
     @property
     def _camera_link(self) -> str:
@@ -168,18 +192,50 @@ class MujocoSimModule(
         shm_key = shm_key_from_path(self.config.address)
         self._shm = ManipShmWriter(shm_key)
 
-        # Build engine with SHM hooks installed.
-        self._engine = MujocoEngine(
-            config_path=Path(self.config.address),
-            headless=self.config.headless,
-            cameras=[
+        camera_configs: list[CameraConfig] = []
+        primary_needed = (
+            self.config.enable_color
+            or self.config.enable_depth
+            or (self.config.enable_pointcloud and not self.config.lidar_camera_names)
+        )
+        if primary_needed:
+            camera_configs.append(
                 CameraConfig(
                     name=self.config.camera_name,
                     width=self.config.width,
                     height=self.config.height,
                     fps=float(self.config.fps),
                 )
-            ],
+            )
+
+        lidar_scene_option = mujoco.MjvOption()
+        lidar_scene_option.geomgroup[0] = 0
+        lidar_scene_option.geomgroup[1] = 0
+        lidar_scene_option.geomgroup[2] = 1
+        lidar_scene_option.geomgroup[3] = 1
+        lidar_scene_option.geomgroup[4] = 0
+        lidar_scene_option.geomgroup[5] = 0
+        for lidar_name in self.config.lidar_camera_names:
+            if lidar_name == self.config.camera_name and primary_needed:
+                continue
+            camera_configs.append(
+                CameraConfig(
+                    name=lidar_name,
+                    width=self.config.lidar_camera_width,
+                    height=self.config.lidar_camera_height,
+                    fps=float(self.config.pointcloud_fps),
+                    scene_option=lidar_scene_option,
+                )
+            )
+
+        # Build engine with SHM hooks installed. Camera configs are optional:
+        # physics and SHM state exchange must keep working in headless/no-render
+        # deployments.
+        self._engine = MujocoEngine(
+            config_path=Path(self.config.address),
+            headless=self.config.headless,
+            cameras=camera_configs,
+            meshdir=self.config.meshdir,
             on_before_step=self._apply_shm_commands,
             on_after_step=self._publish_shm_state,
         )
@@ -208,26 +264,35 @@ class MujocoSimModule(
 
         self._shm.signal_ready(num_joints=len(joint_names))
 
-        # Camera intrinsics.
-        self._build_camera_info()
-
         self._stop_event.clear()
-        self._publish_thread = threading.Thread(
-            target=self._publish_loop, daemon=True, name="MujocoSimPublish"
-        )
-        self._publish_thread.start()
 
-        # Periodic camera_info publishing.
-        interval_sec = 1.0 / self.config.camera_info_fps
-        self.register_disposable(
-            rx.interval(interval_sec).subscribe(
-                on_next=lambda _: self._publish_camera_info(),
-                on_error=lambda e: logger.error("CameraInfo publish error", error=str(e)),
+        if self.config.enable_kinematic_base_control:
+            if not self._engine.has_root_freejoint:
+                logger.warning("Kinematic base control requested, but MJCF has no freejoint root")
+            root_pose = self._engine.get_root_pose()
+            self._kinematic_base_z = None if root_pose is None else float(root_pose[0][2])
+            self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
+
+        if primary_needed:
+            # Camera intrinsics.
+            self._build_camera_info()
+
+            self._publish_thread = threading.Thread(
+                target=self._publish_loop, daemon=True, name="MujocoSimPublish"
             )
-        )
+            self._publish_thread.start()
+
+            # Periodic camera_info publishing.
+            interval_sec = 1.0 / self.config.camera_info_fps
+            self.register_disposable(
+                rx.interval(interval_sec).subscribe(
+                    on_next=lambda _: self._publish_camera_info(),
+                    on_error=lambda e: logger.error("CameraInfo publish error", error=str(e)),
+                )
+            )
 
         # Optional pointcloud generation.
-        if self.config.enable_pointcloud and self.config.enable_depth:
+        if self.config.enable_pointcloud and (primary_needed or self.config.lidar_camera_names):
             pc_interval = 1.0 / self.config.pointcloud_fps
             self.register_disposable(
                 rx.interval(pc_interval).subscribe(
@@ -241,6 +306,7 @@ class MujocoSimModule(
             address=self.config.address,
             dof=dof,
             camera=self.config.camera_name,
+            camera_enabled=self._camera_enabled,
             shm_key=shm_key,
         )
 
@@ -296,8 +362,30 @@ class MujocoSimModule(
                 ctrl_value = self._gripper_joint_to_ctrl(gripper_cmd)
                 engine.set_position_target(self._gripper_idx, ctrl_value)
 
+    def _on_cmd_vel(self, msg: Twist) -> None:
+        with self._cmd_vel_lock:
+            self._cmd_vel = Twist(msg)
+            self._last_cmd_vel_time = time.monotonic()
+
+    def _apply_cmd_vel(self, engine: MujocoEngine) -> None:
+        if not self.config.enable_kinematic_base_control:
+            return
+        with self._cmd_vel_lock:
+            cmd = Twist(self._cmd_vel)
+            age = time.monotonic() - self._last_cmd_vel_time
+        if age > 0.5:
+            cmd = Twist.zero()
+        engine.apply_root_twist(
+            cmd.linear.x,
+            cmd.linear.y,
+            cmd.angular.z,
+            fixed_z=self._kinematic_base_z,
+        )
+
     def _publish_shm_state(self, engine: MujocoEngine) -> None:
         """Post-step hook: publish joint state to SHM."""
+        self._apply_cmd_vel(engine)
+
         shm = self._shm
         if shm is None:
             return
@@ -306,6 +394,26 @@ class MujocoSimModule(
             velocities=engine.joint_velocities,
             efforts=engine.joint_efforts,
         )
+        self.joint_state.publish(
+            JointState(
+                frame_id="mujoco",
+                name=engine.joint_names,
+                position=engine.joint_positions,
+                velocity=engine.joint_velocities,
+                effort=engine.joint_efforts,
+            )
+        )
+        root_pose = engine.get_root_pose()
+        if root_pose is not None:
+            position, quat_xyzw = root_pose
+            self.odom.publish(
+                PoseStamped(
+                    ts=time.time(),
+                    frame_id="world",
+                    position=Vector3(position),
+                    orientation=Quaternion(quat_xyzw),
+                )
+            )
         if self._gripper_idx is not None:
             positions = engine.joint_positions
             if self._gripper_idx < len(positions):
@@ -382,13 +490,14 @@ class MujocoSimModule(
             last_timestamp = frame.timestamp
             ts = time.time()
 
-            color_img = Image(
-                data=frame.rgb,
-                format=ImageFormat.RGB,
-                frame_id=self._color_optical_frame,
-                ts=ts,
-            )
-            self.color_image.publish(color_img)
+            if self.config.enable_color:
+                color_img = Image(
+                    data=frame.rgb,
+                    format=ImageFormat.RGB,
+                    frame_id=self._color_optical_frame,
+                    ts=ts,
+                )
+                self.color_image.publish(color_img)
 
             if self.config.enable_depth:
                 depth_img = Image(
@@ -469,7 +578,12 @@ class MujocoSimModule(
         )
 
     def _generate_pointcloud(self) -> None:
-        if self._engine is None or self._camera_info_base is None:
+        if self._engine is None:
+            return
+        if self.config.lidar_camera_names:
+            self._generate_lidar_pointcloud()
+            return
+        if self._camera_info_base is None:
             return
         frame = self._engine.read_camera(self.config.camera_name)
         if frame is None:
@@ -497,6 +611,38 @@ class MujocoSimModule(
             self.pointcloud.publish(pcd)
         except Exception as exc:
             logger.error("Pointcloud generation error", error=str(exc))
+
+    def _generate_lidar_pointcloud(self) -> None:
+        if self._engine is None:
+            return
+        try:
+            from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud
+
+            all_points: list[np.ndarray] = []
+            latest_ts = 0.0
+            for camera_name in self.config.lidar_camera_names:
+                frame = self._engine.read_camera(camera_name)
+                if frame is None:
+                    continue
+                points = depth_image_to_point_cloud(
+                    frame.depth,
+                    frame.cam_pos,
+                    frame.cam_mat.reshape(3, 3),
+                    fov_degrees=frame.fovy,
+                )
+                if points.size:
+                    all_points.append(points)
+                latest_ts = max(latest_ts, frame.timestamp)
+            if not all_points:
+                return
+            cloud = o3d.geometry.PointCloud()
+            cloud.points = o3d.utility.Vector3dVector(np.vstack(all_points))
+            cloud = cloud.voxel_down_sample(self.config.lidar_voxel_size)
+            self.pointcloud.publish(
+                PointCloud2(pointcloud=cloud, ts=latest_ts or time.time(), frame_id="world")
+            )
+        except Exception as exc:
+            logger.error("Multi-camera lidar fusion error", error=str(exc))
 
 
 __all__ = ["MujocoSimModule", "MujocoSimModuleConfig"]

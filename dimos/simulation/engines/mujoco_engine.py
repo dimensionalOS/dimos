@@ -18,10 +18,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import threading
 import time
 from typing import TYPE_CHECKING
+import xml.etree.ElementTree as ET
 
 import mujoco
 import mujoco.viewer as viewer  # type: ignore[import-untyped]
@@ -48,6 +50,7 @@ class CameraConfig:
     width: int = 640
     height: int = 480
     fps: float = 15.0
+    scene_option: mujoco.MjvOption | None = None
 
 
 @dataclass
@@ -84,6 +87,7 @@ class MujocoEngine(SimulationEngine):
         config_path: Path,
         headless: bool,
         cameras: list[CameraConfig] | None = None,
+        meshdir: str | Path | None = None,
         on_before_step: StepHook | None = None,
         on_after_step: StepHook | None = None,
     ) -> None:
@@ -92,7 +96,7 @@ class MujocoEngine(SimulationEngine):
         self._on_after_step: StepHook | None = on_after_step
 
         xml_path = self._resolve_xml_path(config_path)
-        self._model = mujoco.MjModel.from_xml_path(str(xml_path))
+        self._model = self._load_model(xml_path, meshdir=meshdir)
         self._xml_path = xml_path
 
         self._data = mujoco.MjData(self._model)
@@ -101,6 +105,13 @@ class MujocoEngine(SimulationEngine):
         self._num_joints = len(self._joint_names)
         timestep = float(self._model.opt.timestep)
         self._control_frequency = 1.0 / timestep if timestep > 0.0 else 100.0
+        self._root_free_qpos_adr: int | None = None
+        self._root_free_qvel_adr: int | None = None
+        for joint_id in range(self._model.njnt):
+            if self._model.jnt_type[joint_id] == mujoco.mjtJoint.mjJNT_FREE:
+                self._root_free_qpos_adr = int(self._model.jnt_qposadr[joint_id])
+                self._root_free_qvel_adr = int(self._model.jnt_dofadr[joint_id])
+                break
 
         self._connected = False
         self._lock = threading.Lock()
@@ -133,6 +144,22 @@ class MujocoEngine(SimulationEngine):
         if not xml_path.exists():
             raise FileNotFoundError(f"MuJoCo XML not found: {xml_path}")
         return xml_path
+
+    def _load_model(self, xml_path: Path, *, meshdir: str | Path | None) -> mujoco.MjModel:
+        if meshdir is None:
+            return mujoco.MjModel.from_xml_path(str(xml_path))
+
+        root = ET.parse(xml_path).getroot()
+        compiler = root.find("compiler")
+        if compiler is None:
+            compiler = ET.Element("compiler")
+            root.insert(0, compiler)
+        compiler.set("meshdir", str(Path(meshdir).expanduser().resolve()))
+        for include in root.iter("include"):
+            include_file = include.get("file")
+            if include_file and not Path(include_file).is_absolute():
+                include.set("file", str((xml_path.parent / include_file).resolve()))
+        return mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
 
     def _current_position(self, mapping: JointMapping) -> float:
         if mapping.joint_id is not None and mapping.qpos_adr is not None:
@@ -250,10 +277,24 @@ class MujocoEngine(SimulationEngine):
                 continue
             state.last_render_time = now
 
-            state.rgb_renderer.update_scene(self._data, camera=state.cam_id)
+            if state.cfg.scene_option is None:
+                state.rgb_renderer.update_scene(self._data, camera=state.cam_id)
+            else:
+                state.rgb_renderer.update_scene(
+                    self._data,
+                    camera=state.cam_id,
+                    scene_option=state.cfg.scene_option,
+                )
             rgb = state.rgb_renderer.render().copy()
 
-            state.depth_renderer.update_scene(self._data, camera=state.cam_id)
+            if state.cfg.scene_option is None:
+                state.depth_renderer.update_scene(self._data, camera=state.cam_id)
+            else:
+                state.depth_renderer.update_scene(
+                    self._data,
+                    camera=state.cam_id,
+                    scene_option=state.cfg.scene_option,
+                )
             depth = state.depth_renderer.render().copy()
 
             frame = CameraFrame(
@@ -417,6 +458,59 @@ class MujocoEngine(SimulationEngine):
             for i, mapping in enumerate(self._joint_mappings):
                 self._joint_position_targets[i] = self._current_position(mapping)
 
+    @property
+    def has_root_freejoint(self) -> bool:
+        return self._root_free_qpos_adr is not None
+
+    def apply_root_twist(
+        self,
+        linear_x: float,
+        linear_y: float,
+        angular_z: float,
+        *,
+        fixed_z: float | None = None,
+    ) -> bool:
+        """Integrate planar velocity onto the first freejoint root."""
+        qpos_adr = self._root_free_qpos_adr
+        if qpos_adr is None:
+            return False
+
+        dt = 1.0 / self._control_frequency
+        with self._lock:
+            qpos = self._data.qpos
+            qw, qx, qy, qz = qpos[qpos_adr + 3 : qpos_adr + 7]
+            yaw = math.atan2(
+                2.0 * (qw * qz + qx * qy),
+                1.0 - 2.0 * (qy * qy + qz * qz),
+            )
+
+            qpos[qpos_adr] += (math.cos(yaw) * linear_x - math.sin(yaw) * linear_y) * dt
+            qpos[qpos_adr + 1] += (math.sin(yaw) * linear_x + math.cos(yaw) * linear_y) * dt
+            if fixed_z is not None:
+                qpos[qpos_adr + 2] = fixed_z
+
+            yaw += angular_z * dt
+            qpos[qpos_adr + 3 : qpos_adr + 7] = [
+                math.cos(yaw * 0.5),
+                0.0,
+                0.0,
+                math.sin(yaw * 0.5),
+            ]
+
+            qvel_adr = self._root_free_qvel_adr
+            if qvel_adr is not None:
+                self._data.qvel[qvel_adr : qvel_adr + 6] = 0.0
+        return True
+
+    def get_root_pose(self) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
+        qpos_adr = self._root_free_qpos_adr
+        if qpos_adr is None:
+            return None
+        with self._lock:
+            position = self._data.qpos[qpos_adr : qpos_adr + 3].copy()
+            qw, qx, qy, qz = self._data.qpos[qpos_adr + 3 : qpos_adr + 7].copy()
+        return position, np.array([qx, qy, qz, qw], dtype=np.float64)
+
     def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:
         mapping = self._joint_mappings[joint_index]
         if mapping.actuator_id is None:
@@ -456,6 +550,15 @@ class MujocoEngine(SimulationEngine):
         if cam_id < 0:
             return None
         return float(self._model.cam_fovy[cam_id])
+
+    def get_camera_pose(
+        self, camera_name: str
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
+        """Get a named camera's latest world pose from MuJoCo data."""
+        cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+        if cam_id < 0:
+            return None
+        return self._data.cam_xpos[cam_id].copy(), self._data.cam_xmat[cam_id].copy()
 
 
 __all__ = [
