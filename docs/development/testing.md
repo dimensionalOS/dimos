@@ -5,7 +5,7 @@
 Self-hosted tests need the heavy optional extras (LFS data, perception models, simulation, hardware SDKs, …). Sync them explicitly before running:
 
 ```bash
-uv sync --all-extras              # everything the resolver supports for your platform
+uv sync --all-groups              # all dependency groups (tests-self-hosted, lint, …)
 uv sync --group tests-self-hosted # just what CI installs on the self-hosted runner
 ```
 

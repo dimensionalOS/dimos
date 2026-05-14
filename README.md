@@ -316,8 +316,8 @@ export GIT_LFS_SKIP_SMUDGE=1
 git clone https://github.com/dimensionalOS/dimos.git
 cd dimos
 
-# Run the default test suite (uv run syncs deps on demand; --all-extras
-# only needed for the self-hosted tests — see docs/development/testing.md)
+# Run the default test suite (uv run syncs deps on demand; --all-groups
+# only needed for self-hosted tests / mypy — see docs/development/testing.md)
 uv run pytest --numprocesses=auto dimos
 ```
 
