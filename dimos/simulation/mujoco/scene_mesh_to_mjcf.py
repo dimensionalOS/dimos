@@ -88,6 +88,8 @@ logger = setup_logger()
 
 
 CACHE_DIR = Path.home() / ".cache" / "dimos" / "scene_meshes"
+_MUJOCO_FROM_BINARY_PATH = "from_binary_path"
+_MUJOCO_SAVE_MODEL = "mj_saveModel"
 
 
 # ``<include>`` comes BEFORE ``<compiler>`` so the wrapper's absolute
@@ -355,11 +357,11 @@ def load_or_bake(
     robot_mjcf_path = _resolve_existing_file(robot_mjcf_path, "robot MJCF")
     load_binary_model = cast(
         "Callable[[str], Any]",
-        mujoco.MjModel.from_binary_path,
+        getattr(mujoco.MjModel, _MUJOCO_FROM_BINARY_PATH),
     )
     save_model = cast(
         "Callable[[Any, str], None]",
-        mujoco.mj_saveModel,
+        getattr(mujoco, _MUJOCO_SAVE_MODEL),
     )
 
     if not rebake:

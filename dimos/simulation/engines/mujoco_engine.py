@@ -42,6 +42,7 @@ logger = setup_logger()
 
 # Step hook signature: called with the engine instance inside the sim thread.
 StepHook = Callable[["MujocoEngine"], None]
+_MUJOCO_FROM_BINARY_PATH = "from_binary_path"
 
 
 @dataclass
@@ -171,7 +172,7 @@ class MujocoEngine(SimulationEngine):
     def _load_binary_model(model_path: Path) -> mujoco.MjModel:
         load_binary_model = cast(
             "Callable[[str], mujoco.MjModel]",
-            mujoco.MjModel.from_binary_path,
+            getattr(mujoco.MjModel, _MUJOCO_FROM_BINARY_PATH),
         )
         return load_binary_model(str(model_path))
 
