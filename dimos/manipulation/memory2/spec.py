@@ -9,35 +9,39 @@ Architecture
     camera
       |
       v
-    RGBDCameraRecorder  ==>  color_image  ──auto-subscribe──┐
-                        ==>  depth_image                    |
-                        ==>  camera_info                    v
-                                                      SemanticSearch
-                                                      (continuous CLIP,
-                                                       brightness/sharpness
-                                                       filtered)
-                                                            |
-                                                            v
-                                                     color_image_embedded
-                                                            |
-              ┌──────────── pulled on trigger ──────────────┘
-              v
-    LazyPerceptionModule
-      | @skill find_objects(prompt)
+    RGBDCameraRecorder
+      ├── records: color_image, depth_image, camera_info
+      └── continuous CLIP embed (brightness/sharpness filtered)
+                → color_image_embedded
+              |
+              ┌──────────── pulled on trigger (read-only) ──┐
+              v                                             |
+    LazyPerceptionModule                                    |
+      | @skill find_objects(prompt)                         |
       |        .search(vec).filter(sim>=thr).order_by("ts", desc).first()
-      |        → VLM detect → 3D project
-      | @skill find_objects_near(prompt, x, y, z, radius)
-      |        .near((x,y,z), r).search(vec).filter(sim>=thr).order_by("ts", desc).first()
-      |        → VLM detect → 3D project
-      | @skill recall(name)
-      |        .search(vec).order_by("ts", desc).first()
+      |        → VLM detect → 3D project                    |
+      | @skill find_objects_near(prompt, x, y, z, radius)   |
+      |        .near((x,y,z), r).search(vec).filter(...).order_by(...).first()
+      |        → VLM detect → 3D project                    |
+      | @skill recall(name)                                 |
+      |        .search(vec).filter(sim>=thr).order_by("ts", desc).first()
       |        → return camera pose + timestamp (no VLM, cheaper)
-      |
-      | latest_detections: Out[list[DetObject]]
-      v
-    PickAndPlaceModule   (manipulation — reads latest_detections)
+      |                                                     |
+      | objects: Out[list[DetObject]]                       |
+      v                                                     |
+    PickAndPlaceModule  (manipulation — In[objects])        |
+                                                            |
+    Shared SQLite store (recording.db) ─────────────────────┘
+    Recorder writes; LazyPerceptionModule opens its own SqliteStore
+    on the same file (read-only via WAL).
 
-    All streams live in one shared SQLite store (recording.db).
+    Why recording + embedding in ONE module: memory2's SubjectNotifier
+    is in-memory per-store, so a separate-module embedder couldn't
+    receive .live() notifications from the recorder's writes even on
+    the same db_path. Keeping them in one module = one store = one
+    notifier = live pipeline works. The LazyPerceptionModule reads
+    only at skill-call time (no .live()), so cross-instance SQLite
+    reads (WAL) are sufficient there.
 
 
 Three skills, three query shapes
@@ -52,12 +56,16 @@ is whatever memory2 has most recently.
 - ``find_objects(prompt)`` — **semantic + most recent**. Search the
   embedding stream, filter to confident matches, take the most recent.
   Run VLM + 3D projection on that frame. Returns ``list[Object]`` (via
-  ``latest_detections``) plus formatted summary with timestamp.
+  the ``objects`` port) plus formatted summary with timestamp.
 
 - ``find_objects_near(prompt, x, y, z, radius)`` — **spatial + semantic
-  + most recent**. Same as ``find_objects`` but pre-filters via
-  memory2's R*Tree index to frames recorded when the camera pose was
-  within ``radius`` of ``(x, y, z)``.
+  + most recent**. Same as ``find_objects`` plus a camera-pose proximity
+  filter. NOTE on indexing: memory2 currently runs vector ``.search()``
+  as a top-K vec0 query and applies the spatial ``.near()`` predicate in
+  Python afterward — the R*Tree index does NOT pre-filter the embedding
+  search. Correct results, but for very long recordings the top-K cap
+  can elide spatially-near low-similarity frames. Pushing R*Tree
+  pre-filtering through ``Backend._vector_search`` is a memory2 follow-up.
 
 - ``recall(name)`` — **cheaper cousin of find_objects**. Same query
   shape but skips VLM detection and 3D projection; returns the camera
@@ -78,8 +86,10 @@ All three skills share the same shape:
 
 2. Build a memory2 query on ``color_image_embedded`` by composing the
    relevant filters (``.near`` / ``.search`` / ``.filter`` /
-   ``.order_by``). All filters push down to SQL / R*Tree / vec0
-   indexes via memory2's store backend.
+   ``.order_by``). ``.search`` pushes through the vec0 vector index;
+   tag/time/SQL-expressible filters push to SQL. ``.near`` runs as a
+   Python post-filter after vector search (R*Tree pre-gating of vector
+   search is a memory2 follow-up).
 
 3. Take ``.first()`` — the most recent confident match. Single
    observation.
@@ -90,11 +100,21 @@ All three skills share the same shape:
    ``Object.from_2d_to_list`` (camera→world transform from the
    recorder's pose).
 
-5. Publish ``list[Object]`` on ``latest_detections``. Return a
-   formatted summary that **includes the observation timestamp** so
-   the agent can read freshness.
+5. Publish ``list[Object]`` on ``objects``. Return a formatted summary
+   that **includes the observation timestamp** so the agent can read
+   freshness.
 
-``PickAndPlaceModule`` reads ``latest_detections`` to act on named
+**Snapshot contract.** Every publish on ``objects`` replaces
+``PickAndPlaceModule._detection_snapshot`` — the cache ``pick`` /
+``place`` read. So:
+
+- A successful ``find_objects("cup")`` → snapshot = [cup objects]; ``pick("cup")`` works.
+- An interleaved ``find_objects("apple")`` returning 0 matches → snapshot = []; later
+  ``pick("cup")`` fails ("not found"). Re-query before acting.
+- This is intentional. Each ``find_objects`` call is a fresh world model, not an
+  accumulating one. The agent prompt makes this explicit.
+
+``PickAndPlaceModule`` reads ``objects`` to act on named
 targets. Multiple instances in the result are handled either by
 prompt qualifiers ("cup on the right" → VLM returns one detection in
 the frame) or by the agent reading the returned positions and
@@ -110,7 +130,8 @@ Streams (recorded continuously)
     depth_image            depth frames (one row per camera tick)
     camera_info            intrinsics (rarely change, .last() suffices)
     color_image_embedded   CLIP vector + image bytes, vec0-indexed
-                           for similarity search (populated by SemanticSearch)
+                           for similarity search (populated by the
+                           recorder's continuous embed pipeline)
 
 
 Open vocab + cross-session memory
@@ -120,8 +141,9 @@ The agent passes any natural-language description to ``find_objects``
 or ``find_objects_near`` (``"red mug with handle"``,
 ``"the screwdriver near the laptop"``). The VLM handles visual
 disambiguation; the agent can encode spatial qualifiers in the prompt,
-or call ``find_objects_near`` to use memory2's R*Tree index for
-camera-pose-bounded queries.
+or call ``find_objects_near`` for camera-pose-bounded queries (Python
+spatial post-filter; see the ``find_objects_near`` note above for the
+indexing limitation).
 
 Cross-session memory is implicit: memory2 persists every observation
 in ``recording.db``. Skills query the full embedding history regardless
@@ -129,6 +151,12 @@ of when the current process started — no replay logic, no bespoke
 loaders. ``recall(name)`` returning "(seen 3 hours ago)" is normal and
 correct after a process restart; the agent reads the timestamp and
 decides.
+
+``RGBDCameraRecorder`` uses **resume-if-exists**: it opens ``recording.db``
+if the file is there (cross-session memory works out of the box) and
+creates it fresh if it isn't. ``RecorderConfig.overwrite`` is inert in
+this subclass — see ``recorder.py``. Users wanting a clean slate delete
+the file manually before launching.
 
 """
 
@@ -157,14 +185,15 @@ if TYPE_CHECKING:
 
 
 class RGBDCameraRecorderConfig(RecorderConfig):
-    """Config for the generic RGBD-camera recorder."""
+    """Config for the RGBD-camera recorder + continuous embedder."""
 
     db_path: str | Path = "recording.db"
+    embedding_model: type[EmbeddingModel] = CLIPModel
 
 
 @runtime_checkable
 class RGBDCameraRecorderSpec(Protocol):
-    """Protocol for the generic RGBD-camera recorder."""
+    """Protocol for the RGBD-camera recorder + continuous embedder."""
 
     config: RGBDCameraRecorderConfig
 
@@ -191,6 +220,11 @@ class LazyPerceptionModuleConfig(MemoryModuleConfig):
     # confident match for find_objects / find_objects_near.
     min_similarity: float = 0.20
 
+    # 3D projection knobs threaded into ``Object.from_2d_to_list``.
+    max_distance: float = 1.0
+    use_aabb: bool = True
+    max_obstacle_width: float = 0.06
+
 
 @runtime_checkable
 class LazyPerceptionModuleSpec(Protocol):
@@ -198,11 +232,12 @@ class LazyPerceptionModuleSpec(Protocol):
 
     config: LazyPerceptionModuleConfig
 
-    latest_detections: Out[list[DetObject]]
-    """Wired by the blueprint to the manipulation stack
-    (e.g., ``PickAndPlaceModule.objects``). Cache of the most recent
-    ``find_objects`` / ``find_objects_near`` result. Manipulation
-    reads from here to act on the named target."""
+    objects: Out[list[DetObject]]
+    """Wired by the blueprint to ``PickAndPlaceModule.objects``. Cache
+    of the most recent ``find_objects`` / ``find_objects_near`` result.
+    Manipulation reads from here to act on the named target. Named
+    ``objects`` to match the existing manipulation In port for
+    autoconnect-by-name."""
 
     def find_objects(self, prompt: str) -> str:
         """Find objects matching ``prompt``. Returns the most recent
@@ -213,7 +248,7 @@ class LazyPerceptionModuleSpec(Protocol):
         ``.order_by("ts", desc=True)`` + ``.first()`` over
         ``color_image_embedded``, then runs VLM detection on the
         matching frame and projects to 3D. Publishes ``list[Object]``
-        on ``latest_detections``.
+        on the ``objects`` port.
 
         Open-vocab: ``prompt`` can be any natural language
         (``"red mug"``, ``"the cup on the right"``). Comma-separated
@@ -240,10 +275,11 @@ class LazyPerceptionModuleSpec(Protocol):
         the camera was within ``radius`` meters of ``(x, y, z)``.
 
         Decorated ``@skill`` in the implementation. Same query shape
-        as ``find_objects`` but with an extra ``.near((x, y, z), radius)``
-        filter that uses memory2's R*Tree spatial index. Otherwise
-        identical: take most recent confident match → VLM → 3D project
-        → publish on ``latest_detections``.
+        as ``find_objects`` plus an extra ``.near((x, y, z), radius)``
+        predicate. ``.near()`` runs as a Python post-filter today —
+        memory2's R*Tree index does not pre-gate the vector search.
+        Take most recent confident match → VLM → 3D project → publish
+        on the ``objects`` port.
 
         ``.near()`` filters by the camera's pose at record time, NOT
         by the detected object's position. Use for "frames captured

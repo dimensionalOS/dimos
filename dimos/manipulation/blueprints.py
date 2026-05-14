@@ -37,6 +37,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.memory2 import LazyPerceptionModule, RGBDCameraRecorder
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -338,8 +339,178 @@ xarm_perception_sim_agent = autoconnect(
 )
 
 
+# ============================================================================
+# XArm6 perception — memory2-native pipeline (open-vocab VLM, no tracker)
+# ============================================================================
+# Mirrors the xArm7 xarm_perception blueprint but uses the new memory2-native
+# perception modules (RGBDCameraRecorder + LazyPerceptionModule) in place of
+# ObjectSceneRegistrationModule. RGBDCameraRecorder also runs the continuous
+# CLIP embed pipeline (no separate SemanticSearch module — see spec.py for the
+# "why one module" reasoning). The PickAndPlaceModule API is unchanged — its
+# `objects: In[list[Object]]` port is now fed by LazyPerceptionModule.objects.
+#
+# TF chain: world → link6 (ManipulationModule) → camera_link (RealSense)
+# Usage: launch coordinator-xarm6 in one terminal, then xarm6-perception-agent in another:
+#   Terminal 1:  XARM6_IP=<ip> dimos run coordinator-xarm6
+#   Terminal 2:  XARM6_IP=<ip> dimos run xarm6-perception-agent
+# Without the coordinator the arm won't actually move (joint_state LCM transport
+# expects an external coordinator publisher).
+#
+# Camera transform: PLACEHOLDER reusing xArm7 values. Replace with measured
+# hand-eye calibration for the xArm6 mount on first hardware run if positions
+# returned by find_objects are off by a consistent offset.
+_XARM6_PERCEPTION_CAMERA_TRANSFORM = Transform(
+    translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
+    rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
+)
+
+_xarm6_perception_cfg = _catalog_xarm6(
+    name="arm",
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+    pitch=math.radians(45),
+    add_gripper=True,
+    tf_extra_links=["link6"],
+)
+
+xarm6_perception = (
+    autoconnect(
+        PickAndPlaceModule.blueprint(
+            robots=[_xarm6_perception_cfg.to_robot_model_config()],
+            planning_timeout=10.0,
+            enable_viz=True,
+            floor_z=-0.02,
+        ),
+        RealSenseCamera.blueprint(
+            base_frame_id="link6",
+            base_transform=_XARM6_PERCEPTION_CAMERA_TRANSFORM,
+        ),
+        # Memory2-native perception pipeline — replaces ObjectSceneRegistrationModule.
+        # RGBDCameraRecorder records color/depth/intrinsics AND continuously
+        # CLIP-embeds color frames into color_image_embedded.
+        # db_path is xArm6-specific to silo from other memory2 users and to avoid
+        # picking up stale embeddings from a different camera mount.
+        # Resume-if-exists: delete recording_xarm6.db manually for a clean slate.
+        RGBDCameraRecorder.blueprint(db_path="recording_xarm6.db"),
+        LazyPerceptionModule.blueprint(db_path="recording_xarm6.db"),
+        vis_module("foxglove"),
+    )
+    .transports(
+        {
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        }
+    )
+    .global_config(n_workers=4)
+)
+
+
+# XArm6 perception + LLM agent. Three perception skills (find_objects,
+# find_objects_near, recall) replace the previous look / scan_objects from
+# the tracker-based pipeline. The agent reads the (seen Ns ago) timestamp
+# in each response and decides whether to re-query before acting.
+# Usage: launch coordinator-xarm6 in one terminal, then xarm6-perception-agent in another:
+#   Terminal 1:  XARM6_IP=<ip> dimos run coordinator-xarm6
+#   Terminal 2:  XARM6_IP=<ip> dimos run xarm6-perception-agent
+# Without the coordinator the arm won't actually move (joint_state LCM transport
+# expects an external coordinator publisher).
+_MANIPULATION_AGENT_SYSTEM_PROMPT_XARM6 = """\
+You are a robotic manipulation assistant controlling an xArm6 robot arm with an \
+eye-in-hand RealSense camera and a gripper.
+
+# Skills
+
+## Perception
+- **find_objects <prompt>**: Find objects matching the prompt in the current scene. \
+Returns 3D positions and a "(seen Ns ago)" timestamp so you can judge freshness. \
+Prompt is any natural language — use spatial qualifiers ("the cup on the right") \
+or attributes ("the red mug") to disambiguate when multiple instances exist. \
+Example: "what cups are there?" → find_objects("cup"); "find the red mug" → \
+find_objects("red mug").
+
+- **find_objects_near <prompt> <x> <y> <z> [radius]**: Same as find_objects but \
+narrows to frames captured when the camera was within `radius` meters of (x, y, z). \
+Use when you know which workspace area to scan — cheaper than full-scene query. \
+Example: "find a screwdriver near the workbench at 1.0, 0.5, 0.8" → \
+find_objects_near("screwdriver", 1.0, 0.5, 0.8, 0.5).
+
+- **recall <name>**: Where did I last see something matching <name>? Cheaper than \
+find_objects (no VLM, returns camera pose at the matching frame plus timestamp), \
+across full session history including previous process runs. Use for "where was the \
+cup earlier?" / "have I ever seen a wrench?" type questions.
+
+## Pick & Place
+- **pick <object_name>**: Pick up an object that find_objects most recently \
+detected. Use the EXACT name from find_objects output. When multiple instances \
+match, add a spatial or attribute qualifier in your find_objects prompt ("cup on \
+the right") so VLM returns just one — then pick operates unambiguously.
+- **place <x> <y> <z>**: Place a held object at explicit world-frame coordinates. \
+Example: "place it at 0.4, 0.3, 0.1"
+- **drop_on <object_name>**: Drop a held object onto another detected object. \
+Automatically compensates for camera occlusion. Example: "drop it in the bowl".
+- **place_back**: Return a held object to its original pick position.
+- **pick_and_place <object_name> <x> <y> <z>**: Pick then place in one command.
+
+## Motion
+- **move_to_pose <x> <y> <z> [roll pitch yaw]**: Move end-effector to an absolute \
+world-frame pose (meters / radians).
+- **move_to_joints <j1, j2, ..., j6>**: Move to a 6-DOF joint configuration (radians).
+- **go_home**: Move to the home/observe position.
+- **go_init**: Return to startup position. Use after pick/place as a safe rest pose.
+
+## Gripper
+- **open_gripper / close_gripper / set_gripper**: Direct gripper control.
+
+## Status & Recovery
+- **get_robot_state**: Current joint positions, end-effector pose, gripper state.
+- **get_scene_info**: Latest detection snapshot (from the most recent find_objects call).
+- **reset**: Clear a FAULT state and return to IDLE.
+- **clear_perception_obstacles**: Remove detected obstacles from the planning world. \
+Use when planning fails with COLLISION_AT_START.
+
+# Freshness and re-querying
+- Every find_objects / find_objects_near response includes "(seen Ns ago)".
+- A few seconds old → fresh, safe to act on.
+- Minutes old → scene may have changed; re-query before acting.
+- If you just picked or placed an object, the scene changed — re-query before the \
+next action.
+
+# Disambiguation (multiple instances)
+- If find_objects returns multiple positions, either:
+  1. Re-query with a spatial/attribute qualifier ("cup on the right", "red cup"), or
+  2. Read the positions yourself and choose by reasoning (e.g., "right" = larger Y; \
+"closest" = smallest distance from gripper).
+- Don't rely on identity across calls — find_objects always reflects the most recent \
+detection. The same name in two calls may be the same physical object or different ones.
+
+# Rules
+- Use the EXACT object name from find_objects output. Do NOT substitute similar names.
+- "drop it in/on [object]" → use **drop_on**. "place it at [coords]" → use **place**.
+- "bring it back" → pick, then **go_init**.
+- "bring it to me" / "hand it over" → pick, then move toward user (≈ X=0, Y=0.5).
+- NEVER open the gripper while holding an object unless executing place / drop_on / \
+when the user explicitly asks.
+- After pick or place, return to init with **go_init** unless another action follows.
+
+# Coordinate System
+World frame (meters): X = forward, Y = left, Z = up. Z = 0 is robot base.
+Typical working area: X 0.3–0.7, Y −0.5 to 0.5, Z 0.05–0.5.
+
+# Error Recovery
+If planning fails with COLLISION_AT_START: call **clear_perception_obstacles**, then \
+**reset**, then retry.
+"""
+
+xarm6_perception_agent = autoconnect(
+    xarm6_perception,
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT_XARM6),
+)
+
+
 __all__ = [
     "dual_xarm6_planner",
+    "xarm6_perception",
+    "xarm6_perception_agent",
     "xarm6_planner_only",
     "xarm7_planner_coordinator",
     "xarm7_planner_coordinator_agent",

@@ -130,8 +130,24 @@ class PickAndPlaceModule(ManipulationModule):
         logger.info("PickAndPlaceModule started")
 
     def _on_objects(self, objects: list[DetObject]) -> None:
-        """Callback when objects received from perception (runs on RxPY thread pool)."""
+        """Callback when objects received from perception (runs on RxPY thread pool).
+
+        Also writes ``_detection_snapshot`` so ``pick``/``place`` can act on
+        publish-driven detections (e.g., LazyPerceptionModule.find_objects)
+        without an explicit refresh_obstacles()/look() cycle.
+
+        Snapshot has TWO writers now:
+        - this callback (publish-driven, xArm6-style continuous flow)
+        - ``refresh_obstacles()`` (scan-driven, xArm7-style episodic flow)
+        For the xArm7 path with ObjectSceneRegistrationModule (publishes
+        only non-empty ``all_permanent``, monotonically), the callback
+        keeps the snapshot self-healed to the latest cached set — strictly
+        additive vs the previous scan→freeze semantics. The previous
+        "freeze at refresh time" was a workaround for cache volatility,
+        not a hard contract.
+        """
         try:
+            self._detection_snapshot = list(objects)
             if self._world_monitor is not None:
                 self._world_monitor.on_objects(objects)
         except Exception as e:
