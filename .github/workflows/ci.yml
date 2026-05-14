@@ -146,6 +146,11 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+      # Write blueprint logs into the workspace dir; workspace is bind-mounted
+      # from the self-hosted host into the container, so logs survive container
+      # death and are reachable via SSH even when GH Actions can't run the
+      # upload step.
+      DIMOS_E2E_LOG_DIR: ${{ github.workspace }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -203,13 +208,18 @@ jobs:
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
       - name: Run tests
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not (tool or mujoco)'
+        # --timeout-method=signal so the 600s pytest timeout raises in the test
+        # thread instead of calling os._exit() — that lets fixture teardown run,
+        # which kills the dimos subprocess. Thread mode leaks orphans into the
+        # container and wedges later steps so badly that even `if: always()`
+        # cleanup never runs.
+        run: uv run pytest --timeout-method=signal --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not (tool or mujoco)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not (tool or mujoco)' && exit 1
+          uv run pytest --timeout-method=signal --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not (tool or mujoco)' && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
@@ -254,7 +264,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: blueprint-logs
-          path: /tmp/dimos-e2e-logs/
+          path: ${{ github.workspace }}/dimos-e2e-logs/
           if-no-files-found: ignore
           retention-days: 7
       - name: Check disk space
