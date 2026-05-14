@@ -1,0 +1,19 @@
+{
+  "name": "go-to-tv",
+  "environment": "apt",
+  "task": "Go to the TV",
+  "startPose": {
+    "x": 0,
+    "y": 0.5,
+    "z": 3,
+    "yaw": 0
+  },
+  "timeoutSec": 30,
+  "successCriteria": {
+    "objectDistance": {
+      "object": "agent",
+      "target": "television",
+      "thresholdM": 2.0
+    }
+  }
+}

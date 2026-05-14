@@ -1,0 +1,30 @@
+{
+  "name": "dimsim",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Standalone 3D simulation runner for SimStudio scenes",
+  "scripts": {
+    "dev": "vite --force",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server.js",
+    "sync": "bash copy-sources.sh",
+    "parity:check": "bash check-parity.sh",
+    "update-sims": "bash update-sims.sh",
+    "dimos": "deno run --allow-all dimos-cli/cli.ts eval",
+    "dimos:headless": "deno run --allow-all dimos-cli/cli.ts eval --headless",
+    "dimos:dev": "deno run --allow-all dimos-cli/cli.ts dev"
+  },
+  "dependencies": {
+    "@sparkjsdev/spark": "latest",
+    "@dimforge/rapier3d-compat": "^0.14.0",
+    "three": "^0.168.0",
+    "express": "^4.21.0",
+    "cors": "^2.8.5",
+    "openai": "^4.77.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10"
+  }
+}

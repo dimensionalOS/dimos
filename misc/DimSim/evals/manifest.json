@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "environments": [
+    {
+      "name": "apt",
+      "scene": "apt",
+      "workflows": [
+        "go-to-tv",
+        "go-to-couch",
+        "go-to-kitchen",
+        "television"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "television",
+  "environment": "apt",
+  "task": "Go to the Television",
+  "startPose": {
+    "x": 0,
+    "y": 0.5,
+    "z": 3,
+    "yaw": 0
+  },
+  "timeoutSec": 60,
+  "successCriteria": {
+    "objectDistance": {
+      "object": "agent",
+      "target": "television",
+      "thresholdM": 2
+    }
+  }
+}

@@ -19,7 +19,6 @@ import threading
 import time
 from typing import IO
 
-from dimos.constants import STATE_DIR
 from dimos.core.global_config import GlobalConfig
 from dimos.simulation.dimsim.deno_utils import ensure_deno, ensure_playwright_chromium
 from dimos.utils.logging_config import setup_logger
@@ -28,8 +27,7 @@ logger = setup_logger()
 
 _VIDEO_RATE = 50
 _LIDAR_RATE = 1000
-_DIMSIM_REPO_URL = "https://github.com/paul-nechifor/DimSim.git"
-_DIMSIM_REPO_BRANCH = "run-from-repo"
+_DIMSIM_DIR = Path(__file__).resolve().parents[3] / "misc" / "DimSim"
 
 
 class DimSimProcess:
@@ -39,20 +37,17 @@ class DimSimProcess:
 
     def start(self) -> None:
         deno_path = ensure_deno()
-        repo_dir = _ensure_repo()
-        base_cmd = _deno_cmd(deno_path, repo_dir)
+        base_cmd = _deno_cmd(deno_path, _DIMSIM_DIR)
 
         scene = self.global_config.dimsim_scene
         port = self.global_config.dimsim_port
-        headless = self.global_config.dimsim_headless
 
-        if headless:
-            ensure_playwright_chromium(deno_path)
+        ensure_playwright_chromium(deno_path)
         _kill_port_holder(port)
 
-        render = os.environ.get("DIMSIM_RENDER", "").strip()
-        if not render:
-            render = "cpu" if os.environ.get("CI") else "gpu"
+        render = os.environ.get("DIMSIM_RENDER", "gpu").strip()
+        if os.environ.get("CI"):
+            render = "cpu"
 
         cmd = [
             *base_cmd,
@@ -62,7 +57,7 @@ class DimSimProcess:
             "--port",
             str(port),
             "--no-depth",
-            *(("--headless",) if headless else ()),
+            "--headless",
             "--render",
             render,
             "--image-rate",
@@ -70,11 +65,6 @@ class DimSimProcess:
             "--lidar-rate",
             str(_LIDAR_RATE),
         ]
-
-        if not headless:
-            logger.info(
-                f"Open http://localhost:{port} in your browser; sensors won't publish until that tab is loaded."
-            )
 
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -131,47 +121,6 @@ def _kill_port_holder(port: int) -> None:
             time.sleep(0.5)
     except Exception as e:
         logger.warning(f"Failed to check/kill port {port}: {e}")
-
-
-def _ensure_repo() -> Path:
-    # DIMSIM_LOCAL — point at a local DimSim checkout instead of cloning.
-    #   DIMSIM_LOCAL=1            → ../DimSim sibling of the dimos repo
-    #   DIMSIM_LOCAL=/some/path   → that path
-    local = os.environ.get("DIMSIM_LOCAL", "").strip()
-    if local:
-        if local == "1":
-            # Walk up from this file to the dimos repo root, then to sibling DimSim
-            dimos_root = Path(__file__).resolve().parents[3]
-            path = dimos_root.parent / "DimSim"
-        else:
-            path = Path(local).expanduser().resolve()
-        if not (path / "dimos-cli" / "cli.ts").exists():
-            raise RuntimeError(
-                f"DIMSIM_LOCAL={local} resolved to {path}, but "
-                f"{path}/dimos-cli/cli.ts does not exist"
-            )
-        logger.info(f"Using local DimSim from {path}")
-        return path
-
-    repo_dir = STATE_DIR / "dimsim_repo"
-    if (repo_dir / ".git").exists():
-        return repo_dir
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Cloning DimSim into {repo_dir}")
-    subprocess.run(
-        [
-            "git",
-            "clone",
-            "--depth",
-            "1",
-            "--branch",
-            _DIMSIM_REPO_BRANCH,
-            _DIMSIM_REPO_URL,
-            str(repo_dir),
-        ],
-        check=True,
-    )
-    return repo_dir
 
 
 def _deno_cmd(deno_path: str, repo_dir: Path) -> list[str]:

@@ -656,4 +656,7 @@ ignore = [
     "*/package-lock.json",
     "*/Cargo.lock",
     "dimos/web/dimos_interface/themes.json",
+    "misc/DimSim/src/AiAvatar.js",
+    "misc/DimSim/src/style.css",
+    "misc/DimSim/src/engine.js",
 ]

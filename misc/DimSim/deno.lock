@@ -1,0 +1,122 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@antim/dimsim@*": "0.1.3",
+    "jsr:@antim/dimsim@0.1.28": "0.1.28",
+    "jsr:@antim/dimsim@0.1.29": "0.1.29",
+    "jsr:@dimos/lcm@*": "0.2.0",
+    "jsr:@dimos/lcm@0.2.0": "0.2.0",
+    "jsr:@dimos/msgs@0.1.4": "0.1.4",
+    "jsr:@dimos/msgs@~0.1.4": "0.1.4",
+    "jsr:@std/assert@*": "1.0.19",
+    "jsr:@std/cli@^1.0.28": "1.0.28",
+    "jsr:@std/encoding@^1.0.10": "1.0.10",
+    "jsr:@std/fmt@^1.0.9": "1.0.9",
+    "jsr:@std/fs@^1.0.23": "1.0.23",
+    "jsr:@std/html@^1.0.5": "1.0.5",
+    "jsr:@std/http@1": "1.0.25",
+    "jsr:@std/internal@^1.0.12": "1.0.12",
+    "jsr:@std/media-types@^1.1.0": "1.1.0",
+    "jsr:@std/net@^1.0.6": "1.0.6",
+    "jsr:@std/path@1": "1.1.4",
+    "jsr:@std/path@^1.1.4": "1.1.4",
+    "jsr:@std/streams@^1.0.17": "1.0.17"
+  },
+  "jsr": {
+    "@antim/dimsim@0.1.3": {
+      "integrity": "b145e83a4545ba03004ccfcd0c14afad3cb9af3258f8174b0f0a8cc64b9949da",
+      "dependencies": [
+        "jsr:@std/http",
+        "jsr:@std/path@1"
+      ]
+    },
+    "@antim/dimsim@0.1.28": {
+      "integrity": "ad194c3c478a403d31b9320df6fe14d52783a26fa6c8c25a6ea57863926513a4",
+      "dependencies": [
+        "jsr:@dimos/msgs@~0.1.4",
+        "jsr:@std/http",
+        "jsr:@std/path@1"
+      ]
+    },
+    "@antim/dimsim@0.1.29": {
+      "integrity": "b8d6c2edc8bf82c6b83ac01fa8cc24f16332aadbf8b1e46733bcdf9c7d9e77b6",
+      "dependencies": [
+        "jsr:@dimos/msgs@~0.1.4",
+        "jsr:@std/http",
+        "jsr:@std/path@1"
+      ]
+    },
+    "@dimos/lcm@0.2.0": {
+      "integrity": "03399f5e4800f28a0c294981e0210d784232fc65a57707de19052ad805bd5fea"
+    },
+    "@dimos/msgs@0.1.4": {
+      "integrity": "564bc30b4bc41a562c296c257a15055283ca0cbd66d0627991ede5295832d0c4"
+    },
+    "@std/assert@1.0.19": {
+      "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/cli@1.0.28": {
+      "integrity": "74ef9b976db59ca6b23a5283469c9072be6276853807a83ec6c7ce412135c70a"
+    },
+    "@std/encoding@1.0.10": {
+      "integrity": "8783c6384a2d13abd5e9e87a7ae0520a30e9f56aeeaa3bdf910a3eaaf5c811a1"
+    },
+    "@std/fmt@1.0.9": {
+      "integrity": "2487343e8899fb2be5d0e3d35013e54477ada198854e52dd05ed0422eddcabe0"
+    },
+    "@std/fs@1.0.23": {
+      "integrity": "3ecbae4ce4fee03b180fa710caff36bb5adb66631c46a6460aaad49515565a37"
+    },
+    "@std/html@1.0.5": {
+      "integrity": "4e2d693f474cae8c16a920fa5e15a3b72267b94b84667f11a50c6dd1cb18d35e"
+    },
+    "@std/http@1.0.25": {
+      "integrity": "577b4252290af1097132812b339fffdd55fb0f4aeb98ff11bdbf67998aa17193",
+      "dependencies": [
+        "jsr:@std/cli",
+        "jsr:@std/encoding",
+        "jsr:@std/fmt",
+        "jsr:@std/fs",
+        "jsr:@std/html",
+        "jsr:@std/media-types",
+        "jsr:@std/net",
+        "jsr:@std/path@^1.1.4",
+        "jsr:@std/streams"
+      ]
+    },
+    "@std/internal@1.0.12": {
+      "integrity": "972a634fd5bc34b242024402972cd5143eac68d8dffaca5eaa4dba30ce17b027"
+    },
+    "@std/media-types@1.1.0": {
+      "integrity": "c9d093f0c05c3512932b330e3cc1fe1d627b301db33a4c2c2185c02471d6eaa4"
+    },
+    "@std/net@1.0.6": {
+      "integrity": "110735f93e95bb9feb95790a8b1d1bf69ec0dc74f3f97a00a76ea5efea25500c"
+    },
+    "@std/path@1.1.4": {
+      "integrity": "1d2d43f39efb1b42f0b1882a25486647cb851481862dc7313390b2bb044314b5",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    },
+    "@std/streams@1.0.17": {
+      "integrity": "7859f3d9deed83cf4b41f19223d4a67661b3d3819e9fc117698f493bf5992140"
+    }
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@dimforge/rapier3d-compat@0.14",
+        "npm:@sparkjsdev/spark@latest",
+        "npm:cors@^2.8.5",
+        "npm:express@^4.21.0",
+        "npm:openai@^4.77.0",
+        "npm:three@0.168",
+        "npm:vite@^5.4.10"
+      ]
+    }
+  }
+}
