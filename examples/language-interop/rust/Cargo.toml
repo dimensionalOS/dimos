@@ -1,0 +1,10 @@
+[package]
+name = "robot-control"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# TODO: switch to version once dimos-lcm#20 merges
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "474b25d0f9f88b8430753df2453fd2c988a514d1" }
+# TODO: switch to version once dimos-lcm#20 merges
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "474b25d0f9f88b8430753df2453fd2c988a514d1" }
