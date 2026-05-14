@@ -23,6 +23,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.pubsub.impl.shmpubsub import ShmSubset
 from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
@@ -32,7 +33,7 @@ from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 # TODO need a global transport toggle on blueprints/global config
 _mac_transports: dict[tuple[str, type], pSHMTransport[Image]] = {
     ("color_image", Image): pSHMTransport(
-        "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        "/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     ),
 }
 
@@ -97,11 +98,14 @@ def _go2_rerun_blueprint() -> Any:
     )
 
 
-rerun_config = {
+rerun_config: dict[str, Any] = {
     "blueprint": _go2_rerun_blueprint,
     # any pubsub that supports subscribe_all and topic that supports str(topic)
     # is acceptable here
-    "pubsubs": [LCM()],
+    "pubsubs": [
+        LCM(),
+        ShmSubset(topics=[("/color_image", DEFAULT_CAPACITY_COLOR_IMAGE, "pickle")]),
+    ],
     # Custom converters for specific rerun entity paths
     # Normally all these would be specified in their respectative modules
     # Until this is implemented we have central overrides here

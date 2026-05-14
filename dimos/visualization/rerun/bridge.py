@@ -265,6 +265,8 @@ class RerunBridgeModule(Module):
         topic_str = getattr(topic, "name", None) or str(topic)
         # Strip everything after # (LCM topic suffix)
         topic_str = topic_str.split("#")[0]
+        # Ensure / separator between prefix and topic
+        assert topic_str.startswith("/"), f"{topic_str} doesn't start with slash"
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:

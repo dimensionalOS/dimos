@@ -163,12 +163,17 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
 class pSHMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, topic: str, *, default_capacity: int | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(topic)
-        self.shm = PickleSharedMemory(**kwargs)
+        self._default_capacity = default_capacity
+        self.shm = PickleSharedMemory(default_capacity=default_capacity, **kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (pSHMTransport, (self.topic,))
+        return (pSHMTransport, (self.topic,), {"default_capacity": self._default_capacity})
+
+    def __setstate__(self, state: dict[str, Any]) -> None:  # type: ignore[no-untyped-def]
+        self._default_capacity = state.get("default_capacity")
+        self.shm = PickleSharedMemory(default_capacity=self._default_capacity)
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
@@ -193,12 +198,17 @@ class pSHMTransport(PubSubTransport[T]):
 class SHMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, topic: str, *, default_capacity: int | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(topic)
-        self.shm = BytesSharedMemory(**kwargs)
+        self._default_capacity = default_capacity
+        self.shm = BytesSharedMemory(default_capacity=default_capacity, **kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (SHMTransport, (self.topic,))
+        return (SHMTransport, (self.topic,), {"default_capacity": self._default_capacity})
+
+    def __setstate__(self, state: dict[str, Any]) -> None:  # type: ignore[no-untyped-def]
+        self._default_capacity = state.get("default_capacity")
+        self.shm = BytesSharedMemory(default_capacity=self._default_capacity)
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
