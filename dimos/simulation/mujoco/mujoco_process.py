@@ -78,7 +78,7 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     if robot_name == "unitree_go2":
         robot_name = "unitree_go1"
     if robot_name == "drone":
-        robot_name = "bitcraze_crazyflie_2"
+        robot_name = "cf2"
 
     controller = MockController(shm)
     model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
@@ -91,7 +91,7 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
             z = 0.3
         case "unitree_g1":
             z = 0.8
-        case "bitcraze_crazyflie_2":
+        case "cf2":
             z = 0.5
         case _:
             z = 0
@@ -160,14 +160,14 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
             current_time = time.time()
 
             # Video rendering
-            if current_time - last_video_time >= video_interval:
+            if camera_id != -1 and current_time - last_video_time >= video_interval:
                 rgb_renderer.update_scene(data, camera=camera_id, scene_option=scene_option)
                 pixels = rgb_renderer.render()
                 shm.write_video(pixels)
                 last_video_time = current_time
 
             # Lidar/depth rendering
-            if current_time - last_lidar_time >= lidar_interval:
+            if lidar_camera_id != -1 and current_time - last_lidar_time >= lidar_interval:
                 # Render all depth cameras
                 depth_renderer.update_scene(data, camera=lidar_camera_id, scene_option=scene_option)
                 depth_front = depth_renderer.render()
