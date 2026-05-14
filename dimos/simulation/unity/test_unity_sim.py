@@ -54,6 +54,8 @@ from dimos.utils.ros1 import (
 _is_linux_x86 = platform.system() == "Linux" and platform.machine() in ("x86_64", "AMD64")
 _has_display = bool(os.environ.get("DISPLAY"))
 
+pytestmark = pytest.mark.self_hosted
+
 
 class _MockTransport:
     def __init__(self):

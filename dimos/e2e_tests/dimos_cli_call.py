@@ -22,6 +22,7 @@ class DimosCliCall:
     process: subprocess.Popen[bytes] | None
     demo_args: list[str] | None = None
     mcp_port: int | None = None
+    simulator: str = "mujoco"
 
     def __init__(self) -> None:
         self.process = None
@@ -48,7 +49,14 @@ class DimosCliCall:
             ]
 
         self.process = subprocess.Popen(
-            ["dimos", *global_overrides, "--simulation", *args, *blueprint_overrides],
+            [
+                "dimos",
+                *global_overrides,
+                "--simulation",
+                self.simulator,
+                *args,
+                *blueprint_overrides,
+            ],
             start_new_session=True,
         )
 

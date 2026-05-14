@@ -20,19 +20,27 @@ import platform
 import tempfile
 import threading
 
-# Pick a per-xdist-worker bucket and pin env vars *before* any dimos
-# module is imported. ``LCMConfig`` captures ``LCM_DEFAULT_URL`` at import
-# time; ``GlobalConfig`` captures ``MCP_PORT``; ``run_registry`` captures
-# ``XDG_STATE_HOME``. ``LCM_DEFAULT_URL`` in particular has to be an env
-# var (not just a fixture) because subprocess workers spawned by
+# With pytest-xdist, pick a per-worker bucket and pin env vars *before*
+# any dimos module is imported, so parallel workers don't share LCM bus,
+# MCP port, or state directory. ``LCMConfig`` captures ``LCM_DEFAULT_URL``
+# at import time; ``GlobalConfig`` captures ``MCP_PORT``; ``run_registry``
+# captures ``XDG_STATE_HOME``. ``LCM_DEFAULT_URL`` in particular has to be
+# an env var (not just a fixture) because subprocess workers spawned by
 # ``ModuleCoordinator`` create their own ``LCMConfig`` / ``LCMRPC``
 # instances internally and can't receive a fixture value — they inherit
 # our env at fork time.
-_worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
-_BUCKET = int.from_bytes(hashlib.blake2b(_worker.encode(), digest_size=2).digest(), "big") % 5000
-os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
-os.environ["MCP_PORT"] = str(20000 + _BUCKET)
-os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
+#
+# Single-worker runs (no xdist) keep the defaults, so external processes
+# with hard-coded ports (e.g. the dimsim Deno bridge, which binds to LCM
+# 7667) can still talk to the test bus.
+_worker = os.environ.get("PYTEST_XDIST_WORKER")
+if _worker:
+    _BUCKET = (
+        int.from_bytes(hashlib.blake2b(_worker.encode(), digest_size=2).digest(), "big") % 5000
+    )
+    os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
+    os.environ["MCP_PORT"] = str(20000 + _BUCKET)
+    os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
 
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
@@ -77,6 +85,7 @@ def pytest_configure(config):
         "self_hosted: tests that need the self-hosted runner (LFS, ROS, CUDA, etc.)",
     )
     config.addinivalue_line("markers", "mujoco: tests which open mujoco")
+    config.addinivalue_line("markers", "dimsim: tests which require dimsim")
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
@@ -90,20 +99,20 @@ def pytest_configure(config):
 
 @pytest.fixture(scope="session")
 def mcp_port() -> int:
-    """The MCP server port pinned for this xdist worker."""
-    return 20000 + _BUCKET
+    """The MCP server port pinned for this xdist worker (or the default)."""
+    return int(os.environ.get("MCP_PORT", "9990"))
 
 
 @pytest.fixture(scope="session")
 def mcp_url(mcp_port: int) -> str:
-    """The MCP server URL pinned for this xdist worker."""
+    """The MCP server URL pinned for this xdist worker (or the default)."""
     return f"http://localhost:{mcp_port}/mcp"
 
 
 @pytest.fixture(scope="session")
 def lcm_url() -> str:
-    """The LCM bus URL pinned for this xdist worker."""
-    return f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
+    """The LCM bus URL pinned for this xdist worker (or the default)."""
+    return os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
 
 
 @pytest.hookimpl(tryfirst=True)

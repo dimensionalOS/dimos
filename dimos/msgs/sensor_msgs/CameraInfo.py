@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from typing import TYPE_CHECKING
 
@@ -119,6 +120,41 @@ class CameraInfo(Timestamped):
             D=[0.0, 0.0, 0.0, 0.0, 0.0],
             K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
             P=[fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
+            frame_id=frame_id,
+        )
+
+    @classmethod
+    def from_fov(
+        cls,
+        fov_deg: float,
+        width: int,
+        height: int,
+        axis: str = "vertical",
+        frame_id: str = "",
+    ) -> CameraInfo:
+        """Create CameraInfo from field of view and image dimensions.
+
+        Args:
+            fov_deg: Field of view in degrees along ``axis``
+            width: Image width (pixels)
+            height: Image height (pixels)
+            axis: Which image axis ``fov_deg`` refers to ("vertical" or "horizontal")
+            frame_id: Frame ID
+        """
+        fov_rad = math.radians(fov_deg)
+        if axis == "vertical":
+            f = (height / 2) / math.tan(fov_rad / 2)
+        elif axis == "horizontal":
+            f = (width / 2) / math.tan(fov_rad / 2)
+        else:
+            raise ValueError(f"axis must be 'vertical' or 'horizontal', got {axis!r}")
+        return cls.from_intrinsics(
+            fx=f,
+            fy=f,
+            cx=width / 2.0,
+            cy=height / 2.0,
+            width=width,
+            height=height,
             frame_id=frame_id,
         )
 
