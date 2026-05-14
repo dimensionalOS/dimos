@@ -38,6 +38,19 @@ from dimos.protocol.service.system_configurator.lcm import (
 )
 from dimos.utils import prompt
 
+# Named constants for test readability (buffer sizes, powers of 2)
+_1MiB = 2**20
+_8MiB = 8 * 2**20
+_16MiB = 16 * 2**20
+_32MiB = 32 * 2**20
+_64MiB = 64 * 2**20
+
+# Named constants for file descriptor limits
+_FD_TARGET = MaxFileConfiguratorMacOS.TARGET_FILE_COUNT_LIMIT  # 65536
+_FD_LOW_SOFT = 256
+_FD_LOW_HARD = 10_240
+_FD_HIGH_HARD = 1_048_576
+
 # Helper function tests
 
 
@@ -60,15 +73,17 @@ class TestSudoRun:
 class TestReadSysctlInt:
     def test_reads_value_with_equals_sign(self) -> None:
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="net.core.rmem_max = 67108864")
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout=f"net.core.rmem_max = {IDEAL_RMEM_SIZE}"
+            )
             result = _read_sysctl_int("net.core.rmem_max")
-            assert result == 67108864
+            assert result == IDEAL_RMEM_SIZE
 
     def test_reads_value_with_colon(self) -> None:
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="kern.ipc.maxsockbuf: 8388608")
+            mock_run.return_value = MagicMock(returncode=0, stdout=f"kern.ipc.maxsockbuf: {_8MiB}")
             result = _read_sysctl_int("kern.ipc.maxsockbuf")
-            assert result == 8388608
+            assert result == _8MiB
 
     def test_returns_none_on_nonzero_returncode(self) -> None:
         with patch("subprocess.run") as mock_run:
@@ -93,9 +108,9 @@ class TestWriteSysctlInt:
         with patch("os.geteuid", return_value=1000):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
-                _write_sysctl_int("net.core.rmem_max", 67108864)
+                _write_sysctl_int("net.core.rmem_max", IDEAL_RMEM_SIZE)
                 mock_run.assert_called_once_with(
-                    ["sudo", "sysctl", "-w", "net.core.rmem_max=67108864"],
+                    ["sudo", "sysctl", "-w", f"net.core.rmem_max={IDEAL_RMEM_SIZE}"],
                     check=True,
                     text=True,
                     capture_output=True,
@@ -303,7 +318,7 @@ class TestBufferConfiguratorLinux:
     def test_check_returns_false_when_rmem_max_low(self) -> None:
         configurator = BufferConfiguratorLinux()
         with patch("dimos.protocol.service.system_configurator.lcm._read_sysctl_int") as mock_read:
-            mock_read.side_effect = [1048576, IDEAL_RMEM_SIZE]  # rmem_max low
+            mock_read.side_effect = [_1MiB, IDEAL_RMEM_SIZE]  # rmem_max low
             assert configurator.check() is False
             assert len(configurator.needs) == 1
             assert configurator.needs[0][0] == "net.core.rmem_max"
@@ -311,7 +326,7 @@ class TestBufferConfiguratorLinux:
     def test_check_returns_false_when_both_low(self) -> None:
         configurator = BufferConfiguratorLinux()
         with patch("dimos.protocol.service.system_configurator.lcm._read_sysctl_int") as mock_read:
-            mock_read.return_value = 1048576  # Both low
+            mock_read.return_value = _1MiB  # Both low
             assert configurator.check() is False
             assert len(configurator.needs) == 2
 
@@ -356,8 +371,7 @@ class TestBufferConfiguratorMacOS:
 
     def test_check_uses_saved_config_as_target(self, tmp_path) -> None:
         conf = tmp_path / "sysctl.json"
-        user_limit = 32 * 2**20  # 32 MiB
-        conf.write_text(json.dumps({"kern.ipc.maxsockbuf": user_limit}))
+        conf.write_text(json.dumps({"kern.ipc.maxsockbuf": _32MiB}))
         configurator = BufferConfiguratorMacOS()
         with (
             patch("dimos.protocol.service.system_configurator.lcm._SYSCTL_CONF", conf),
@@ -365,7 +379,7 @@ class TestBufferConfiguratorMacOS:
         ):
             # maxsockbuf: saved target is 32M, current is 32M → ok
             # recvspace/maxdgram: no saved value → uses IDEAL (64M) → needs fix
-            mock_read.side_effect = [user_limit] * 3
+            mock_read.side_effect = [_32MiB] * 3
             assert configurator.check() is False
             assert len(configurator.needs) == 2
             # maxsockbuf should not be in needs
@@ -396,12 +410,12 @@ class TestBufferConfiguratorMacOS:
     def test_fix_halves_on_failure_and_saves(self, tmp_path) -> None:
         conf = tmp_path / "sysctl.json"
         configurator = BufferConfiguratorMacOS()
-        configurator.needs = [("kern.ipc.maxsockbuf", 64000000, 0)]
+        configurator.needs = [("kern.ipc.maxsockbuf", _64MiB, 0)]
         with (
             patch("dimos.protocol.service.system_configurator.lcm._SYSCTL_CONF", conf),
             patch("dimos.protocol.service.system_configurator.lcm._write_sysctl_int") as mock_write,
         ):
-            # Fail at 64M, fail at 32M, succeed at 16M
+            # Fail at 64MiB, fail at 32MiB, succeed at 16MiB
             mock_write.side_effect = [
                 subprocess.CalledProcessError(1, "sysctl"),
                 subprocess.CalledProcessError(1, "sysctl"),
@@ -409,23 +423,29 @@ class TestBufferConfiguratorMacOS:
             ]
             configurator.fix()
             assert mock_write.call_count == 3
-            mock_write.assert_called_with("kern.ipc.maxsockbuf", 16000000)
-            # Saved value should be 16M
+            mock_write.assert_called_with("kern.ipc.maxsockbuf", _16MiB)
+            # Saved value should be 16MiB
             saved = json.loads(conf.read_text())
-            assert saved["kern.ipc.maxsockbuf"] == 16000000
+            assert saved["kern.ipc.maxsockbuf"] == _16MiB
 
-    def test_fix_stops_at_current_value(self) -> None:
+    def test_fix_tries_current_value_then_stops(self, tmp_path) -> None:
+        conf = tmp_path / "sysctl.json"
         configurator = BufferConfiguratorMacOS()
-        configurator.needs = [("kern.ipc.maxsockbuf", 64000000, 32000000)]
+        configurator.needs = [("kern.ipc.maxsockbuf", _64MiB, _32MiB)]
         with (
+            patch("dimos.protocol.service.system_configurator.lcm._SYSCTL_CONF", conf),
             patch("dimos.protocol.service.system_configurator.lcm._write_sysctl_int") as mock_write,
-            patch("dimos.protocol.service.system_configurator.lcm._save_sysctl_conf"),
         ):
-            # All attempts fail — should stop when halved below current (32M)
-            mock_write.side_effect = subprocess.CalledProcessError(1, "sysctl")
+            # 64MiB fails, 32MiB (== current) succeeds
+            mock_write.side_effect = [
+                subprocess.CalledProcessError(1, "sysctl"),
+                None,
+            ]
             configurator.fix()
-            # 64M fails, 32M == current → stops
-            assert mock_write.call_count == 1
+            assert mock_write.call_count == 2
+            mock_write.assert_called_with("kern.ipc.maxsockbuf", _32MiB)
+            saved = json.loads(conf.read_text())
+            assert saved["kern.ipc.maxsockbuf"] == _32MiB
 
 
 # MaxFileConfiguratorMacOS tests
@@ -433,70 +453,72 @@ class TestBufferConfiguratorMacOS:
 
 class TestMaxFileConfiguratorMacOS:
     def test_check_returns_true_when_soft_limit_sufficient(self) -> None:
-        configurator = MaxFileConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=_FD_TARGET)
         with patch("resource.getrlimit") as mock_getrlimit:
-            mock_getrlimit.return_value = (65536, 1048576)
+            mock_getrlimit.return_value = (_FD_TARGET, _FD_HIGH_HARD)
             assert configurator.check() is True
-            assert configurator.current_soft == 65536
-            assert configurator.current_hard == 1048576
+            assert configurator.current_soft == _FD_TARGET
+            assert configurator.current_hard == _FD_HIGH_HARD
 
     def test_check_returns_false_when_soft_limit_low(self) -> None:
-        configurator = MaxFileConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=_FD_TARGET)
         with patch("resource.getrlimit") as mock_getrlimit:
-            mock_getrlimit.return_value = (256, 1048576)
+            mock_getrlimit.return_value = (_FD_LOW_SOFT, _FD_HIGH_HARD)
             assert configurator.check() is False
             assert configurator.can_fix_without_sudo is True
 
     def test_check_returns_false_when_both_limits_low(self) -> None:
-        configurator = MaxFileConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=_FD_TARGET)
         with patch("resource.getrlimit") as mock_getrlimit:
-            mock_getrlimit.return_value = (256, 10240)
+            mock_getrlimit.return_value = (_FD_LOW_SOFT, _FD_LOW_HARD)
             assert configurator.check() is False
             assert configurator.can_fix_without_sudo is False
 
     def test_check_returns_false_on_exception(self) -> None:
-        configurator = MaxFileConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=_FD_TARGET)
         with patch("resource.getrlimit", side_effect=Exception("error")):
             assert configurator.check() is False
 
     def test_explanation_when_sudo_not_needed(self) -> None:
-        configurator = MaxFileConfiguratorMacOS(target=65536)
-        configurator.current_soft = 256
-        configurator.current_hard = 1048576
+        configurator = MaxFileConfiguratorMacOS(target=_FD_TARGET)
+        configurator.current_soft = _FD_LOW_SOFT
+        configurator.current_hard = _FD_HIGH_HARD
         configurator.can_fix_without_sudo = True
         explanation = configurator.explanation()
-        assert "65536" in explanation
+        assert str(_FD_TARGET) in explanation
         assert "no sudo" in explanation.lower() or "Raise soft" in explanation
 
     def test_explanation_when_sudo_needed(self) -> None:
-        configurator = MaxFileConfiguratorMacOS(target=65536)
-        configurator.current_soft = 256
-        configurator.current_hard = 10240
+        configurator = MaxFileConfiguratorMacOS(target=_FD_TARGET)
+        configurator.current_soft = _FD_LOW_SOFT
+        configurator.current_hard = _FD_LOW_HARD
         configurator.can_fix_without_sudo = False
         explanation = configurator.explanation()
         assert "launchctl" in explanation
 
     def test_fix_raises_soft_limit_without_sudo(self) -> None:
-        configurator = MaxFileConfiguratorMacOS(target=65536)
-        configurator.current_soft = 256
-        configurator.current_hard = 1048576
+        configurator = MaxFileConfiguratorMacOS(target=_FD_TARGET)
+        configurator.current_soft = _FD_LOW_SOFT
+        configurator.current_hard = _FD_HIGH_HARD
         configurator.can_fix_without_sudo = True
         with patch("resource.setrlimit") as mock_setrlimit:
             configurator.fix()
-            mock_setrlimit.assert_called_once_with(resource.RLIMIT_NOFILE, (65536, 1048576))
+            mock_setrlimit.assert_called_once_with(
+                resource.RLIMIT_NOFILE, (_FD_TARGET, _FD_HIGH_HARD)
+            )
 
     def test_fix_does_nothing_when_already_sufficient(self) -> None:
-        configurator = MaxFileConfiguratorMacOS(target=65536)
-        configurator.current_soft = 65536
-        configurator.current_hard = 1048576
+        configurator = MaxFileConfiguratorMacOS(target=_FD_TARGET)
+        configurator.current_soft = _FD_TARGET
+        configurator.current_hard = _FD_HIGH_HARD
         with patch("resource.setrlimit") as mock_setrlimit:
             configurator.fix()
             mock_setrlimit.assert_not_called()
 
     def test_fix_uses_launchctl_when_hard_limit_low(self) -> None:
-        configurator = MaxFileConfiguratorMacOS(target=65536)
-        configurator.current_soft = 256
-        configurator.current_hard = 10240
+        configurator = MaxFileConfiguratorMacOS(target=_FD_TARGET)
+        configurator.current_soft = _FD_LOW_SOFT
+        configurator.current_hard = _FD_LOW_HARD
         configurator.can_fix_without_sudo = False
         with patch("os.geteuid", return_value=0):
             with patch("subprocess.run") as mock_run:
@@ -509,9 +531,9 @@ class TestMaxFileConfiguratorMacOS:
                     assert "maxfiles" in args
 
     def test_fix_raises_on_setrlimit_error(self) -> None:
-        configurator = MaxFileConfiguratorMacOS(target=65536)
-        configurator.current_soft = 256
-        configurator.current_hard = 1048576
+        configurator = MaxFileConfiguratorMacOS(target=_FD_TARGET)
+        configurator.current_soft = _FD_LOW_SOFT
+        configurator.current_hard = _FD_HIGH_HARD
         configurator.can_fix_without_sudo = True
         with patch("resource.setrlimit", side_effect=ValueError("test error")):
             with pytest.raises(ValueError):
