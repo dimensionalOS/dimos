@@ -155,7 +155,7 @@ jobs:
             # GitHub Actions only honours `container:` on Linux runners.
             container:
               image: ghcr.io/dimensionalos/ros-dev:dev
-            markers: "self_hosted or skipif_no_ros"
+            markers: "self_hosted or skipif_no_ros or dimsim"
             experimental: false
           - runner: [self-hosted, macos, arm64]
             container: null  # run on host — `container:` is Linux-only
