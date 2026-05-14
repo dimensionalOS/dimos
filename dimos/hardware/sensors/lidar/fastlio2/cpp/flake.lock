@@ -37,17 +37,17 @@
     "fast-lio": {
       "flake": false,
       "locked": {
-        "lastModified": 1770976391,
-        "narHash": "sha256-OjSHk6qs3oCZ7XNjDyq4/K/Rb1VhqyADtra2q3F8V5U=",
-        "owner": "leshy",
-        "repo": "FAST-LIO-NON-ROS",
-        "rev": "47606ac6bbafcae9231936b4662b94c84fe87339",
+        "lastModified": 1777587130,
+        "narHash": "sha256-H8MLnsBiS7lNTQSJxngo4MZeHUTJdZTAbObFvMNZHNQ=",
+        "owner": "dimensionalOS",
+        "repo": "dimos-module-fastlio2",
+        "rev": "c661fe81b0a5682aeb06ce03d9a3af5d9741466e",
         "type": "github"
       },
       "original": {
-        "owner": "leshy",
-        "ref": "dimos-integration",
-        "repo": "FAST-LIO-NON-ROS",
+        "owner": "dimensionalOS",
+        "ref": "main",
+        "repo": "dimos-module-fastlio2",
         "type": "github"
       }
     },
@@ -69,11 +69,37 @@
         "type": "github"
       }
     },
+    "lcm-extended": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1774902379,
+        "narHash": "sha256-gRFvEkbXCEoG4jEmsT+i0bMZ5kDHOtAaPsrbStXjdu4=",
+        "owner": "jeff-hykin",
+        "repo": "lcm_extended",
+        "rev": "7d12ad8546d3daae30528a6c28f2c9ff5b10baf7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jeff-hykin",
+        "repo": "lcm_extended",
+        "type": "github"
+      }
+    },
     "livox-sdk": {
       "inputs": {
         "dimos-lcm": "dimos-lcm_2",
         "flake-utils": [
           "flake-utils"
+        ],
+        "lcm-extended": [
+          "lcm-extended"
         ],
         "nixpkgs": [
           "nixpkgs"
@@ -110,6 +136,7 @@
         "dimos-lcm": "dimos-lcm",
         "fast-lio": "fast-lio",
         "flake-utils": "flake-utils",
+        "lcm-extended": "lcm-extended",
         "livox-sdk": "livox-sdk",
         "nixpkgs": "nixpkgs"
       }

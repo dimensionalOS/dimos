@@ -127,11 +127,13 @@ class MockConfigurator(SystemConfigurator):
 
 class TestConfigureSystem:
     @pytest.fixture(autouse=True)
-    def non_ci_env(self, mocker):
-        mocker.patch.dict(os.environ, {"CI": ""}, clear=False)
+    def non_pytest_env(self, mocker):
+        # configure_system short-circuits when PYTEST_VERSION is set; clear
+        # it so the test exercises the real prompt/fix branches.
+        mocker.patch.dict(os.environ, {"PYTEST_VERSION": ""}, clear=False)
 
-    def test_skips_in_ci_environment(self, mocker) -> None:
-        mocker.patch.dict(os.environ, {"CI": "true"})
+    def test_skips_in_pytest_environment(self, mocker) -> None:
+        mocker.patch.dict(os.environ, {"PYTEST_VERSION": "8.3.5"})
         mock_check = MockConfigurator(passes=False)
         configure_system([mock_check])
         assert not mock_check.fix_called

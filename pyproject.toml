@@ -23,7 +23,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.11"
+version = "0.0.12"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -54,7 +54,7 @@ dependencies = [
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",
-    "pin>=3.3.0",  # Pinocchio IK library
+    "pin>=3.3.0", # Pinocchio IK library
     "reactivex",
     "sortedcontainers==2.4.0",
     "pydantic",
@@ -68,7 +68,7 @@ dependencies = [
     "colorlog==6.9.0",
     # Core Msgs
     "opencv-python",
-    "open3d-unofficial-arm; platform_system == 'Linux' and platform_machine == 'aarch64'",
+    "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
     "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
     # CLI
     "pydantic-settings>=2.11.0,<3",
@@ -77,18 +77,20 @@ dependencies = [
     "typer>=0.19.2,<1",
     "plotext==5.3.2",
     # Used for calculating the occupancy map.
-    "numba>=0.60.0",    # First version supporting Python 3.12
+    "numba>=0.60.0", # First version supporting Python 3.12
     "llvmlite>=0.42.0", # Required by numba 0.60+
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
     "rerun-sdk>=0.20.0",
-    "dimos-viewer>=0.30.0a2",
+    "dimos-viewer==0.30.0a6.dev99",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
     "sqlite-vec>=0.1.6",
     "lz4>=4.4.5",
     "rpyc>=6.0.0",
+    "bleak>=3.0.2",
+    "cryptography>=46.0.5",
 ]
 
 
@@ -101,7 +103,6 @@ dimos = "dimos.robot.cli.dimos:main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.utils.docs.doclinks:main"
 dtop = "dimos.utils.cli.dtop:main"
-dtop-plot = "dimos.utils.cli.dtop_plot:main"
 
 [project.urls]
 Homepage = "https://dimensionalos.com"
@@ -132,7 +133,6 @@ misc = [
     "scikit-learn",
     "timm>=1.0.15",
     "edgetam-dimos",
-    "opencv-contrib-python==4.10.0.84",
 
     # embedding models
     "open_clip_torch==3.2.0",
@@ -240,57 +240,8 @@ cuda = [
     "cupy-cuda12x==13.6.0; platform_machine == 'x86_64'",
     "nvidia-nvimgcodec-cu12[all]; platform_machine == 'x86_64'",
     "onnxruntime-gpu>=1.17.1; platform_machine == 'x86_64'", # Only versions supporting both cuda11 and cuda12
-    "ctransformers[cuda]==0.2.27",
+    "ctransformers[cuda]==0.2.27; sys_platform != 'darwin'",
     "xformers>=0.0.20; platform_machine == 'x86_64'",
-]
-
-dev = [
-    "ruff==0.14.3",
-    "mypy==1.19.0",
-    "pre_commit==4.2.0",
-    "pytest==8.3.5",
-    "pytest-asyncio==0.26.0",
-    "pytest-mock==3.15.0",
-    "pytest-env==1.1.5",
-    "pytest-timeout==2.4.0",
-    "coverage>=7.0",
-    "requests-mock==1.12.1",
-    "terminaltexteffects==0.12.2",
-    "watchdog>=3.0.0",
-    "openai-whisper",
-
-    # docs
-    "md-babel-py==1.1.5",
-
-    # LSP
-    "python-lsp-server[all]==1.14.0",
-    "python-lsp-ruff==2.3.0",
-
-    # Types
-    "lxml-stubs>=0.5.1,<1",
-    "pandas-stubs>=2.3.2.250926,<3",
-    "scipy-stubs>=1.15.0",
-    "types-PySocks>=1.7.1.20251001,<2",
-    "types-PyYAML>=6.0.12.20250915,<7",
-    "types-colorama>=0.4.15.20250801,<1",
-    "types-defusedxml>=0.7.0.20250822,<1",
-    "types-gevent>=25.4.0.20250915,<26",
-    "types-greenlet>=3.2.0.20250915,<4",
-    "types-jmespath>=1.0.2.20250809,<2",
-    "types-requests>=2.32.4.20260107,<3",
-    "types-jsonschema>=4.25.1.20251009,<5",
-    "types-networkx>=3.5.0.20251001,<4",
-    "types-protobuf>=6.32.1.20250918,<7",
-    "types-psutil>=7.2.2.20260130,<8",
-    "types-psycopg2>=2.9.21.20251012",
-    "types-pytz>=2025.2.0.20250809,<2026",
-    "types-simplejson>=3.20.0.20250822,<4",
-    "types-tabulate>=0.9.0.20241207,<1",
-    "types-tensorflow>=2.18.0.20251008,<3",
-    "types-tqdm>=4.67.0.20250809,<5",
-
-    # Tools
-    "py-spy",
 ]
 
 psql = [
@@ -302,6 +253,10 @@ sim = [
     "mujoco>=3.3.4",
     "playground>=0.0.5",
     "pygame>=2.6.1",
+]
+
+navigation = [
+    "gtsam-extended>=4.3a1.post1",
 ]
 
 # NOTE: jetson-jp6-cuda126 extra is disabled due to 404 errors from wheel URLs
@@ -339,12 +294,128 @@ docker = [
     "sortedcontainers",
     "PyTurboJPEG",
     "rerun-sdk",
-    "open3d-unofficial-arm; platform_system == 'Linux' and platform_machine == 'aarch64'",
+    "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
     "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
 ]
 
 base = [
     "dimos[agents,web,visualization]",
+]
+
+# All extras except dds and unitree-dds (which require special system setup).
+apriltag = [
+    "opencv-contrib-python==4.10.0.84",
+    "reportlab>=4.5.0",
+]
+
+all = [
+    "dimos[agents,apriltag,base,cpu,cuda,docker,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
+]
+
+[dependency-groups]
+# For autofix.yml
+autofix = ["ruff==0.14.3"]
+
+# Project deps shared by `tests` and `lint`.
+project-deps = [
+    "dimos[web,visualization]",
+    "torch",
+    "langchain==1.2.3",
+    "langchain-core==1.3.3",
+    "googlemaps>=4.10.0",
+    "transformers[torch]==4.53.3",
+    "ultralytics>=8.3.70",
+    "hydra-core>=1.3.0",
+    "open_clip_torch==3.2.0",
+    "openai",
+    "moondream",
+    "torchreid==0.2.5",
+    "gdown==6.0.0",
+    "tensorboard==2.20.0",
+    "xacro",
+    "lap>=0.5.12",
+    "langchain-openai>=1,<2",
+    "ollama>=0.6.0",
+]
+
+tests = [
+    # Test runner
+    "pytest==8.3.5",
+    "pytest-asyncio==0.26.0",
+    "pytest-mock==3.15.0",
+    "pytest-env==1.1.5",
+    "pytest-timeout==2.4.0",
+    "pytest-xdist>=3.5.0",
+    "pytest-cov>=5.0",
+    "coverage>=7.0",
+    "requests-mock==1.12.1",
+
+    # Misc dev tools
+    "pre_commit==4.2.0",
+    "watchdog>=3.0.0",
+    "md-babel-py>=1.1.4",
+    "py-spy",
+
+    # LSP
+    "python-lsp-server[all]==1.14.0",
+    "python-lsp-ruff==2.3.0",
+
+    # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
+    # the real packages are needed at test time, stubs cover mypy.
+    "dimos[apriltag,psql,drone,cpu]",
+    "mujoco>=3.3.4",
+    "pygame>=2.6.1",
+    "python-can>=4",
+    "langchain-chroma>=1,<2",
+    "unitree-webrtc-connect-leshy>=2.0.7",
+
+    {include-group = "project-deps"},
+]
+
+# Lint / format / type-check tooling for the dedicated `lint` CI job.
+lint = [
+    # Lint / format / type-check
+    "ruff==0.14.3",
+    "mypy==1.19.0",
+
+    "aiortc>=1.14.0",
+    "anthropic>=0.19.0",
+    "ipython",
+    "openai-whisper",
+    "pytest==8.3.5",
+    "python-can>=4",
+    "python-socketio>=5.16.1",
+    "sounddevice>=0.5.5",
+    "trimesh>=4.12",
+    "watchdog>=3.0.0",
+
+    "pandas-stubs>=2.3.2.250926,<3",
+    "types-pyaudio",
+    "types-psycopg2>=2.9.21.20251012",
+    "types-PyYAML>=6.0.12.20250915,<7",
+    "types-reportlab>=4.5.0",
+    "types-requests>=2.32.4.20260107,<3",
+
+    {include-group = "project-deps"},
+]
+
+# Full CI test group for the self-hosted runner. Inherits `tests` and adds
+# the heavy ML/perception/sim extras needed for self_hosted-marked tests (LFS,
+# GPU, ROS-dependent integration tests, simulation).
+tests-self-hosted = [
+    {include-group = "tests"},
+    "dimos[agents,perception,manipulation,sim,unitree,misc]",
+    # Needed to compile the in-tree extensions.
+    "pybind11>=2.12",
+]
+
+[tool.uv]
+default-groups = ["tests"]
+override-dependencies = [
+    # moondream pins pillow<11 but we need >=12.2.0 for security fixes
+    # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
+    "pillow>=12.2.0",
+    "pytest==8.3.5", # because gtsam screwed up their dev dependencies
 ]
 
 [tool.ruff]
@@ -367,6 +438,9 @@ exclude = [
     "src"
 ]
 
+[tool.ruff.format]
+line-ending = "lf"
+
 [tool.ruff.lint]
 extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH"]
 ignore = [
@@ -378,6 +452,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "dimos/models/Detic/*" = ["ALL"]
+# Naming needs to match the actual libraries.
+"stubs/*.pyi" = ["N801", "N802", "N803", "N815", "N816", "N818"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["dimos"]
@@ -388,6 +464,8 @@ force-sort-within-sections = true
 runtime-evaluated-base-classes = ["dimos.core.module.Module"]
 
 [tool.mypy]
+files = ["dimos/"]
+mypy_path = "stubs/"
 python_version = "3.12"
 incremental = true
 strict = true
@@ -438,6 +516,7 @@ module = [
     "ultralytics.*",
     "unitree_sdk2py.*",
     "unitree_webrtc_connect.*",
+    "websocket",
     "xarm.*",
     "ament_index_python.*",
 ]
@@ -461,15 +540,13 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "-s -v -r a -p no:warnings -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or slow or mujoco)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or self_hosted or mujoco or dimsim)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 branch = true
 source = ["dimos"]
-parallel = true
-sigterm = true
 concurrency = ["multiprocessing", "thread"]
 
 [tool.coverage.report]
@@ -489,4 +566,6 @@ ignore = [
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
+    "dimos/navigation/nav_stack/modules/*/main.cpp",
+    "dimos/navigation/nav_stack/common/*.hpp",
 ]

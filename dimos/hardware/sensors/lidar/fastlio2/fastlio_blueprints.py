@@ -24,7 +24,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.testing.replay import timed_playback
-from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.vis_module import vis_module
 
 
 class FastlioMemoryConfig(RecorderConfig):
@@ -93,56 +93,67 @@ class FastlioReplay(MemoryModule):
         )
 
 
-mid360_fastlio = autoconnect(
-    FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
-    RerunBridgeModule.blueprint(),
-).global_config(n_workers=2, robot_model="mid360_fastlio2")
-
-mid360_fastlio_memory = autoconnect(
-    FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
-    RerunBridgeModule.blueprint(),
-    FastlioMemory.blueprint(),
-).global_config(n_workers=3, robot_model="mid360_fastlio2_memory")
-
-
 def _convert_global_map(msg: PointCloud2):
     return msg.to_rerun(mode="boxes", voxel_size=voxel_size)
 
 
+mid360_fastlio = autoconnect(
+    FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
+    vis_module("rerun"),
+).global_config(n_workers=2, robot_model="mid360_fastlio2")
+
+mid360_fastlio_memory = autoconnect(
+    FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
+    vis_module("rerun"),
+    FastlioMemory.blueprint(),
+).global_config(n_workers=3, robot_model="mid360_fastlio2_memory")
+
 mid360_fastlio_voxels = autoconnect(
     FastLio2.blueprint(),
-    VoxelGridMapper.blueprint(voxel_size=voxel_size, carve_columns=True),
-    RerunBridgeModule.blueprint(
-        visual_override={
-            "world/global_map": _convert_global_map,
-        }
+    VoxelGridMapper.blueprint(voxel_size=voxel_size, carve_columns=False),
+    vis_module(
+        "rerun",
+        rerun_config={
+            "visual_override": {
+                "world/lidar": None,
+            },
+        },
     ),
 ).global_config(n_workers=3, robot_model="mid360_fastlio2_voxels")
 
 mid360_fastlio_replay = autoconnect(
     FastlioReplay.blueprint(),
-    RerunBridgeModule.blueprint(
-        visual_override={
-            "world/global_map": _convert_global_map,
-        }
+    vis_module(
+        "rerun",
+        rerun_config={
+            "visual_override": {
+                "world/global_map": _convert_global_map,
+            },
+        },
     ),
 ).global_config(n_workers=2, robot_model="mid360_fastlio2_replay")
 
 mid360_fastlio_replay_voxels = autoconnect(
     FastlioReplay.blueprint(),
     VoxelGridMapper.blueprint(voxel_size=voxel_size, carve_columns=True),
-    RerunBridgeModule.blueprint(
-        visual_override={
-            "world/global_map": _convert_global_map,
-        }
+    vis_module(
+        "rerun",
+        rerun_config={
+            "visual_override": {
+                "world/global_map": _convert_global_map,
+            },
+        },
     ),
 ).global_config(n_workers=2, robot_model="mid360_fastlio2_replay")
 
 mid360_fastlio_voxels_native = autoconnect(
     FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=3.0),
-    RerunBridgeModule.blueprint(
-        visual_override={
-            "world/global_map": _convert_global_map,
-        }
+    vis_module(
+        "rerun",
+        rerun_config={
+            "visual_override": {
+                "world/lidar": None,
+            },
+        },
     ),
 ).global_config(n_workers=2, robot_model="mid360_fastlio2")

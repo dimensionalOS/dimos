@@ -10,7 +10,7 @@ The agentic operating system for generalist robotics. `Modules` communicate via 
 
 ```bash
 # Install
-uv sync --all-extras --no-extra dds
+uv sync --extra all
 
 # List all runnable blueprints
 dimos list
@@ -339,7 +339,7 @@ uv run pytest dimos/core/test_blueprints.py -v
 uv run mypy dimos/
 ```
 
-`uv run pytest` excludes `slow`, `tool`, and `mujoco` markers. CI (`./bin/pytest-slow`) includes slow, excludes tool and mujoco. See `docs/development/testing.md`.
+`uv run pytest` excludes `self_hosted`, `tool`, and `mujoco` markers. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs/development/testing.md`.
 
 ---
 

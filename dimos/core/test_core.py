@@ -92,7 +92,6 @@ def test_classmethods() -> None:
     nav._close_module()
 
 
-@pytest.mark.slow
 @pytest.mark.skipif_in_ci
 def test_basic_deployment(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)

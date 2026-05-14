@@ -146,7 +146,6 @@ def test_wait_for_pid_exit_returns_when_pid_gone():
     assert time.monotonic() - start < 0.5
 
 
-@pytest.mark.slow
 def test_spawn_watchdog_sweeps_on_parent_death(spawn_tagged, run_id):
     # The sleeper is tagged with run_id and should be swept by the watchdog
     # once the helper (acting as "main") dies.

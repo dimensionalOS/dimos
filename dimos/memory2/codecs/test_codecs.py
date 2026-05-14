@@ -128,13 +128,13 @@ def _jpeg_case() -> Case | None:
         from turbojpeg import TurboJPEG
 
         TurboJPEG()  # fail fast if native lib is missing
-
-        from dimos.memory2.store.sqlite import SqliteStore
-        from dimos.utils.data import get_data
-
-        db_path = get_data("go2_short.db")
     except (ImportError, RuntimeError):
         return None
+
+    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.utils.data import get_data
+
+    db_path = get_data("go2_short.db")
 
     with SqliteStore(path=str(db_path)) as store:
         video = store.stream("color_image", Image)

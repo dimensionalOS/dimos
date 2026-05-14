@@ -3,4 +3,4 @@
 set -euo pipefail
 
 . .venv/bin/activate
-exec pytest "$@" dimos
+exec pytest --numprocesses=auto "$@" dimos

@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Execute md-babel-py on Markdown documentation (see docs/agents/docs/codeblocks.md).
+# CI uses --ci (python, shell, Node only) so native diagram toolchains are not required on runners.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+LANG_FILTER="python,sh,node"
+# md-babel-py 1.1.4+: isolated block subprocess limit (default upstream is 60).
+USE_CACHE=1
+declare -a USER_PATHS=()
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: bin/run-doc-codeblocks [options] [path ...]
+
+  --ci          Same as --lang python,sh,node (default; for CI runners).
+  --lang LIST   Comma-separated languages for md-babel-py (default: python,sh,node).
+  --all-langs   Run all block languages (requires local native tools; see codeblocks.md).
+  --no-cache    Re-execute all blocks instead of reusing md-babel cache.
+
+On macOS this script does nothing and exits 0 (md-babel is intended for Linux/CI).
+To run md-babel on a Mac anyway, set RUN_DOC_CODEBLOCKS_FORCE=1 or invoke
+"uv run md-babel-py" yourself (see docs/agents/docs/codeblocks.md).
+
+With no paths: runs on ./docs (recursive) and ./README.md when present.
+
+Examples:
+  bin/run-doc-codeblocks --ci
+  bin/run-doc-codeblocks --all-langs docs/agents/docs/index.md
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --ci)
+      LANG_FILTER="python,sh,node"
+      shift
+      ;;
+    --lang)
+      LANG_FILTER="${2:?--lang requires a value}"
+      shift 2
+      ;;
+    --all-langs)
+      LANG_FILTER=""
+      shift
+      ;;
+    --no-cache)
+      USE_CACHE=0
+      shift
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 2
+      ;;
+    *)
+      USER_PATHS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# Doc code blocks are executed in Linux CI; this script is a no-op on macOS so
+# local development does not require GPU/CUDA stacks. Override with
+# RUN_DOC_CODEBLOCKS_FORCE=1 to run md-babel here, or call md-babel-py directly.
+if [[ "$(uname -s)" == "Darwin" && -z "${RUN_DOC_CODEBLOCKS_FORCE:-}" ]]; then
+  echo "run-doc-codeblocks: skipping on macOS (set RUN_DOC_CODEBLOCKS_FORCE=1 to run)." >&2
+  exit 0
+fi
+
+resolve_md_babel() {
+  # Prefer project env so md-babel-py version matches pyproject (needs >= 1.1.4 for --execution-timeout).
+  if command -v uv &>/dev/null && [[ -f pyproject.toml ]]; then
+    MB=(uv run md-babel-py)
+  elif [[ -x .venv/bin/md-babel-py ]]; then
+    MB=(.venv/bin/md-babel-py)
+  elif [[ -x .venv/bin/python ]]; then
+    MB=(.venv/bin/python -m md_babel_py.cli)
+  elif command -v md-babel-py &>/dev/null; then
+    MB=(md-babel-py)
+  else
+    echo "Error: md-babel-py not found. Install project deps (e.g. uv sync --extra dev or uv sync --all-extras)." >&2
+    exit 1
+  fi
+}
+
+resolve_md_babel
+
+run_one_target() {
+  local target=$1
+  local -a cmd=("${MB[@]}" run --execution-timeout 120)
+  if [[ "$USE_CACHE" -eq 0 ]]; then
+    cmd+=(--no-cache)
+  fi
+  if [[ -n "$LANG_FILTER" ]]; then
+    cmd+=(--lang "$LANG_FILTER")
+  fi
+  if [[ -d "$target" ]]; then
+    cmd+=("$target" --recursive)
+  else
+    cmd+=("$target")
+  fi
+  "${cmd[@]}"
+}
+
+if [[ ${#USER_PATHS[@]} -gt 0 ]]; then
+  for p in "${USER_PATHS[@]}"; do
+    if [[ -d "$p" ]] || [[ -f "$p" ]]; then
+      run_one_target "$p"
+    else
+      echo "Error: not a file or directory: $p" >&2
+      exit 1
+    fi
+  done
+else
+  run_one_target ./docs
+  [[ -f README.md ]] && run_one_target README.md
+fi

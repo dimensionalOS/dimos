@@ -243,6 +243,13 @@ class SemanticSearch(MemoryModule):
         return results.transform(peaks(key=_similarity, distance=1.0)).last().pose_stamped
 
 
+class RecorderConfig(MemoryModuleConfig):
+    overwrite: bool = True
+    default_frame_id: str = "base_link"
+    tf_tolerance: float = 0.5
+    db_path: str | Path = "recording.db"
+
+
 class Recorder(MemoryModule):
     """Records all ``In`` ports to a memory2 SQLite database.
 
