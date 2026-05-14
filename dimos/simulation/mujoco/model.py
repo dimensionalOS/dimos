@@ -27,7 +27,12 @@ from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.simulation.mujoco.input_controller import InputController
-from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController, DroneController
+from dimos.simulation.mujoco.policy import (
+    DroneController,
+    G1OnnxController,
+    Go1OnnxController,
+    OnnxController,
+)
 from dimos.utils.data import get_data
 
 
@@ -82,8 +87,8 @@ def load_model(
 
     if robot == "cf2":
         keyframe_name = "hover"
-    else: # For unitree_go1 and unitree_g1 -- default 
-        keyframe_name = "home" 
+    else:  # For unitree_go1 and unitree_g1 -- default
+        keyframe_name = "home"
 
     params = {
         "policy_path": (_get_data_dir() / f"{robot}_policy.onnx").as_posix(),

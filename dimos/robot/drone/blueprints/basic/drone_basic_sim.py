@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 
-""" Basic Drone Sim Blueprint with sim connection and visualization"""
-
-from typing import TYPE_CHECKING
+"""Basic Drone Sim Blueprint with sim connection and visualization"""
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.drone.blueprints.primitive.drone_primitive_no_nav import (
     drone_primitive_no_nav,

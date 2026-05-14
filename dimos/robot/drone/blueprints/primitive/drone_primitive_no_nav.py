@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-""" Minimal Drone Stack without navigation. An attempt to create a minimal stack"""
+"""Minimal Drone Stack without navigation. An attempt to create a minimal stack"""
 
 from typing import Any
 
@@ -9,33 +9,38 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
+
 # from dimos.hardware.sensors.camera.module import CameraModule
 # from dimos.hardware.sensors.camera.webcam import Webcam
 # from dimos.hardware.sensors.camera.zed import compat as zed
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
 # from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 # from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
+
 # from dimos.msgs.geometry_msgs.Vector3 import Vector3
 # from dimos.msgs.nav_msgs.Odometry import Odometry
 # from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
 # from dimos.msgs.std_msgs.Bool import Bool
 # from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
 #     WavefrontFrontierExplorer,
 # )
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.vis_module import vis_module
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+
 
 def _convert_camera_info(camera_info: Any) -> Any:
     return camera_info.to_rerun(
         image_topic="/world/color_image",
         optical_frame="camera_optical",
     )
+
 
 def _convert_navigation_costmap(grid: Any) -> Any:
     return grid.to_rerun(
@@ -44,6 +49,7 @@ def _convert_navigation_costmap(grid: Any) -> Any:
         opacity=0.2,
         background="#484981",
     )
+
 
 def _static_base_link(rr: Any) -> list[Any]:
     return [
@@ -54,6 +60,7 @@ def _static_base_link(rr: Any) -> list[Any]:
         ),
         rr.Transform3D(parent_frame="tf#/base_link"),
     ]
+
 
 def _drone_rerun_blueprint() -> Any:
     """Same as the G1 rerun blueprint but with a different base link visualization."""
@@ -75,6 +82,7 @@ def _drone_rerun_blueprint() -> Any:
         ),
     )
 
+
 rerun_config = {
     "blueprint": _drone_rerun_blueprint,
     "visual_override": {
@@ -83,7 +91,7 @@ rerun_config = {
     },
     "static": {
         "world/tf/base_link": _static_base_link,
-    }
+    },
 }
 
 _with_vis = vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config)
@@ -93,13 +101,13 @@ drone_primitive_no_nav = (
         _with_vis,
         VoxelGridMapper.blueprint(),
         CostMapper.blueprint(),
-        #Visualization
+        # Visualization
         WebsocketVisModule.blueprint(),
     )
     .global_config(n_workers=4, robot_model="drone", mujoco_room="empty")
     .transports(
-        {   
-            # Movement command 
+        {
+            # Movement command
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
             # Odometry output from ROSNavigationModule
             ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
