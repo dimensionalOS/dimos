@@ -49,11 +49,13 @@ repos:
         args: [--fix=lf]
         exclude: \.patch$  # keep patch files byte-identical to upstream diffs
       - id: check-json
+        exclude: ^misc/DimSim/public/sims/  # LFS-tracked
       - id: check-toml
       - id: check-yaml
       - id: pretty-format-json
         name: format json
         args: [ --autofix, --no-sort-keys ]
+        exclude: ^misc/DimSim/public/sims/  # LFS-tracked
 
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 3.4.1
