@@ -239,14 +239,20 @@ where
 
     module.setup().await;
 
-    tokio::select! {
-        _ = module.handle() => {}
-        _ = tokio::signal::ctrl_c() => {}
-        res = &mut recv_handle => propagate_task_failure("recv", res),
-        res = &mut pub_handle => propagate_task_failure("publish", res),
-    }
+    // record whatever resolves first, then teardown unconditionally
+    let failure = tokio::select! {
+        _ = module.handle() => None,
+        _ = tokio::signal::ctrl_c() => None,
+        res = &mut recv_handle => Some(("recv", res)),
+        res = &mut pub_handle => Some(("publish", res)),
+    };
 
     module.teardown().await;
+
+    // if the result was an error, handle it here
+    if let Some((name, res)) = failure {
+        propagate_task_failure(name, res);
+    }
 
     Ok(())
 }
