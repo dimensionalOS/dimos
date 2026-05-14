@@ -22,205 +22,120 @@ Architecture
                                                             |
               ┌──────────── pulled on trigger ──────────────┘
               v
-    LazyPerceptionModule  ◀── watched_names: set[str] ──┐
-      | @skill find_objects(prompts)                    |
-      | + startup scan (one-time on boot)               |
-      | + 10s heartbeat:                                |
-      |     scan(default_prompts + watched_names)       |
-      | composes: CLIP search → peaks → VLM → 3D        |
-      |                                                 |
-      | raw_detections: list[DetObject]                 |
-      v                                                 |
-    ObjectMemoryTracker ─────────────────────────────────┘
-      | object_observations (private)
-      | object_events       (public API)
+    LazyPerceptionModule
+      | @skill find_objects(prompt)
+      |        .search(vec).filter(sim>=thr).order_by("ts", desc).first()
+      |        → VLM detect → 3D project
+      | @skill find_objects_near(prompt, x, y, z, radius)
+      |        .near((x,y,z), r).search(vec).filter(sim>=thr).order_by("ts", desc).first()
+      |        → VLM detect → 3D project
+      | @skill recall(name)
+      |        .search(vec).order_by("ts", desc).first()
+      |        → return camera pose + timestamp (no VLM, cheaper)
       |
+      | latest_detections: Out[list[DetObject]]
       v
-    tracked_objects: list[DetObject]
-      |
-      v
-    PickAndPlaceModule   (manipulation — no API change)
-
-    events ─→ @skill recall(name)
+    PickAndPlaceModule   (manipulation — reads latest_detections)
 
     All streams live in one shared SQLite store (recording.db).
 
 
-The lazy pipeline (LazyPerceptionModule)
-----------------------------------------
+Three skills, three query shapes
+--------------------------------
 
-Inside ``find_objects(prompts)``, the heartbeat callback, and the
-one-time startup scan:
+Each skill is a one-line composition of memory2 primitives. Every
+skill returns the **most recent confident match** along with its
+timestamp — the agent sees how fresh the data is and decides if it's
+fresh enough to act on. No time-window parameter on the API; "current"
+is whatever memory2 has most recently.
 
-1. Split comma-separated prompts → run one class at a time. Moondream's
-   ``query_detections`` sets every detection's ``.name`` to the query
-   string, so per-class is required for correct labeling.
+- ``find_objects(prompt)`` — **semantic + most recent**. Search the
+  embedding stream, filter to confident matches, take the most recent.
+  Run VLM + 3D projection on that frame. Returns ``list[Object]`` (via
+  ``latest_detections``) plus formatted summary with timestamp.
 
-2. CLIP-embed the prompt → query vector.
+- ``find_objects_near(prompt, x, y, z, radius)`` — **spatial + semantic
+  + most recent**. Same as ``find_objects`` but pre-filters via
+  memory2's R*Tree index to frames recorded when the camera pose was
+  within ``radius`` of ``(x, y, z)``.
 
-3. ``color_image_embedded.search(query_vec).order_by("ts").materialize()``
-   — pull a similarity-ranked, time-sorted result set.
+- ``recall(name)`` — **cheaper cousin of find_objects**. Same query
+  shape but skips VLM detection and 3D projection; returns the camera
+  pose at the matching frame plus timestamp. Use for "where was I when
+  I saw X" questions where exact 3D object pose isn't needed.
 
-4. ``.transform(peaks(...))`` — extract temporal *peaks* (local maxima
-   of similarity over time), so the VLM gets diverse candidate frames
-   rather than near-duplicates of the same scene.
+**Freshness contract is in the response.** Every result includes
+``(seen N seconds ago)`` so the agent can reason: "2 seconds is fresh
+— act"; "5 minutes is stale — re-query or skip."
 
-5. Filter peaks by ``lookback_window_s`` and ``min_peak_score``, cap
-   at ``max_frames_per_call``.
 
-6. For each surviving peak frame: pull aligned depth and the latest
-   camera_info, run VLM detection, project via
+The lazy pipeline
+------------------
+
+All three skills share the same shape:
+
+1. CLIP-embed the prompt → query vector.
+
+2. Build a memory2 query on ``color_image_embedded`` by composing the
+   relevant filters (``.near`` / ``.search`` / ``.filter`` /
+   ``.order_by``). All filters push down to SQL / R*Tree / vec0
+   indexes via memory2's store backend.
+
+3. Take ``.first()`` — the most recent confident match. Single
+   observation.
+
+4. (find_objects / find_objects_near only:) Pull aligned depth via
+   ``.at(obs.ts, tolerance)`` and latest intrinsics via ``.last()``.
+   Run VLM detection on the color frame, project via
    ``Object.from_2d_to_list`` (camera→world transform from the
    recorder's pose).
 
-7. Publish the resulting ``list[Object]`` on ``detections_out``.
+5. Publish ``list[Object]`` on ``latest_detections``. Return a
+   formatted summary that **includes the observation timestamp** so
+   the agent can read freshness.
+
+``PickAndPlaceModule`` reads ``latest_detections`` to act on named
+targets. Multiple instances in the result are handled either by
+prompt qualifiers ("cup on the right" → VLM returns one detection in
+the frame) or by the agent reading the returned positions and
+choosing.
 
 
-Startup workspace scan + dynamic watch list
--------------------------------------------
+Streams (recorded continuously)
+-------------------------------
 
-Two mechanisms keep the tracker's lifecycle model coherent for any
-object in the scene, not just the ones the agent happens to query for.
-
-**1. Startup scan (one-time on boot).** Shortly after ``start()``
-(default ~5s, to let SemanticSearch populate the embedding index),
-``LazyPerceptionModule`` runs a one-time scan with
-``startup_prompts``. Each prompt is processed through the same lazy
-pipeline. Detected objects flow into the tracker → seed identities
-appear in ``tracked_objects`` immediately, without waiting for the
-agent to ask.
-
-``startup_prompts`` is blueprint-configured (curated for the
-workspace, e.g. ``["cup", "bowl", "plate", "fork", "knife"]`` for a
-kitchen setup). With an empty list, the startup scan is skipped.
-
-**2. Dynamic watch list (every heartbeat).** The tracker publishes
-``watched_names: Out[set[str]]`` — the union of voted names in
-``_state`` (currently tracked) and ``_lost`` (within
-``recent_lost_window_s``). ``LazyPerceptionModule`` subscribes via
-its ``watched_names_in`` port and caches the latest set.
-
-Each heartbeat scans the union ``default_prompts ∪ watched_names``.
-So once any object enters the tracker — via agent call, startup
-scan, or earlier heartbeat — its name is automatically added to the
-heartbeat's watch list. LOST events fire when objects actually leave
-the scene (heartbeat scanned and didn't find them), not just because
-they fell off the static prompt list.
-
-**Why this matters.** Without these two mechanisms, the lifecycle
-model is technically there but operationally broken for any object
-outside ``default_prompts``. The agent calls ``find_objects("fork")``,
-fork appears, ~45s later LOST fires as a false negative because
-nothing was looking for the fork anymore. The dynamic watch list
-closes that gap; the startup scan ensures the tracker isn't empty on
-boot.
-
-
-The tracker (ObjectMemoryTracker) 
------------------------------------------------------
-
-The tracker is **detector-agnostic** — anything publishing
-``list[DetObject]`` on ``raw_detections`` works. ``LazyPerceptionModule``
-is what plugs in front of it here; the contract doesn't depend on
-which detector is used.
-
-**Belief model.** For each tracked object::
-
-    confidence(now) = exp(-(now - last_seen_ts) / time_constant_s)
-
-Pure function of time since the last detection. Three bands::
-
-    confident   c >= active_threshold (0.5)  -> in published snapshot
-    tentative   match_threshold <= c < active -> still match-eligible
-                                                  (occlusion robustness)
-    lost        c < lost_threshold    (0.1)  -> emit LOST event,
-                                                  move to _lost bucket
-
-With ``time_constant_s = 15`` and ``background_scan_period_s = 10``:
-LOST fires roughly ``tau * ln(10) + heartbeat_period ≈ 45s`` after an
-object actually disappears, gated by ``lookback_window_s`` (the lazy
-pipeline's recency filter on peak frames).
-
-**Four-tier match.** Per detection, the matcher tries in order:
-
-1. ``track-id`` — O(1) lookup against the detector's tracker id, if
-   it assigns one. VLM-based detection does not (``track_id = -1``),
-   so this tier is mostly inert under the current pipeline; legacy
-   detectors that supply ids would still use it.
-2. ``tight spatial`` — within ``distance_threshold``, name-agnostic.
-   Absorbs label flicker.
-3. ``drift`` — wider ``reacquire_radius``, same voted name, against
-   ``_state``. Silent (no event). Handles "object moved while
-   watched."
-4. ``re-acquisition`` — wider radius, same voted name, against
-   ``_lost``. Emits ``MOVED``. Handles "object briefly disappeared
-   and came back somewhere else."
-
-No match → ``APPEARED`` event, new identity.
-
-
-Streams — six total in one shared SQLite store
-----------------------------------------------
-
-Sensor streams (recorder writes, lazy reads, everyone replays):
+::
 
     color_image            JPEG-encoded RGB frames + world pose
     depth_image            depth frames (one row per camera tick)
     camera_info            intrinsics (rarely change, .last() suffices)
-
-Embedding stream (SemanticSearch writes, lazy reads):
-
-    color_image_embedded   CLIP vector + the image bytes, vec0-indexed
-                           for similarity search
-
-Tracker streams:
-
-    object_observations    private — one row per matched detection,
-                           drives the voted-name histogram and the
-                           cache rebuild on restart
-    object_events          public API — APPEARED / PROMOTED /
-                           LABEL_CHANGED / MOVED / LOST. Consumed by
-                           recall(name), audit, monitoring.
+    color_image_embedded   CLIP vector + image bytes, vec0-indexed
+                           for similarity search (populated by SemanticSearch)
 
 
 Open vocab + cross-session memory
 ---------------------------------
 
-The system is fully open-vocab. The agent passes any natural-language
-description to ``find_objects``; the VLM handles it. The system is
-*reactively* open-vocab on the agent side, and *proactively* open-vocab
-on the heartbeat side once an object has entered the tracker (via the
-dynamic watch list described above).
+The agent passes any natural-language description to ``find_objects``
+or ``find_objects_near`` (``"red mug with handle"``,
+``"the screwdriver near the laptop"``). The VLM handles visual
+disambiguation; the agent can encode spatial qualifiers in the prompt,
+or call ``find_objects_near`` to use memory2's R*Tree index for
+camera-pose-bounded queries.
 
-Three sources of prompts feed the lazy pipeline:
-
-- **Agent-supplied** (per-call) — argument to ``find_objects``.
-- **Static seed** — ``default_prompts`` from the blueprint config;
-  scanned by every heartbeat regardless of tracker state. Use this
-  for objects you want monitored even before they've been seen
-  (alerting use cases).
-- **Dynamic** — names currently in the tracker (``watched_names``);
-  automatically added once an object is observed. Use this for
-  "keep tracking whatever the agent discovered."
-
-Cross-session memory: ``tracker.start()`` synchronously replays both
-tracker streams (``stream.to_list()``) before accepting new detections.
-The tracker recovers all identities, lost-bucket state, and label
-histograms from the durable record. ``recall(name)`` queries
-``object_events.tags(name=name).last()`` directly — works after
-process restart because memory2 is the source of truth. After replay,
-the tracker re-publishes ``watched_names`` so the heartbeat picks up
-where the previous session left off.
-
+Cross-session memory is implicit: memory2 persists every observation
+in ``recording.db``. Skills query the full embedding history regardless
+of when the current process started — no replay logic, no bespoke
+loaders. ``recall(name)`` returning "(seen 3 hours ago)" is normal and
+correct after a process restart; the agent reads the timestamp and
+decides.
 
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
-
-from pydantic import Field
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.memory2.module import MemoryModuleConfig, RecorderConfig
 from dimos.models.embedding.base import EmbeddingModel
@@ -229,49 +144,11 @@ from dimos.models.vl.base import VlModel
 from dimos.models.vl.moondream import MoondreamVlModel
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from dimos.agents.annotation import skill  # noqa: F401  (referenced in docstrings)
     from dimos.core.stream import In, Out
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.detection.type.detection3d.object import Object as DetObject
-
-
-EventKind = Literal["APPEARED", "PROMOTED", "LABEL_CHANGED", "MOVED", "LOST"]
-
-
-# --------------------------------------------------------------------- streams
-
-STREAM_OBSERVATIONS = "object_observations"
-STREAM_EVENTS = "object_events"
-
-
-# ----------------------------------------------------------------- data shapes
-
-
-@dataclass
-class ObjectObservation:
-    """Payload of one observation in the ``object_observations`` stream. 
-    **Private, internal for ObjectMemoryTracker**
-    """
-
-    object_id: str           # tracker's identity (NOT detection.object_id)
-    detection: DetObject     # perception Object — stored as-is
-
-
-@dataclass
-class ObjectEvent:
-    """Payload of one lifecycle event in the ``object_events`` stream.
-
-    **Public API**
-    """
-
-    kind: EventKind
-    object_id: str           # tracker's identity
-    name: str                # voted name at the time of the event
-    detection: DetObject     # snapshot of the relevant Object — stored as-is
-    details: dict[str, Any] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -297,41 +174,22 @@ class RGBDCameraRecorderSpec(Protocol):
 
 
 # =============================================================================
-#  LazyPerceptionModule — agent-callable lazy detector + heartbeat
+#  LazyPerceptionModule — agent-callable open-vocab perception
 # =============================================================================
 
 
 class LazyPerceptionModuleConfig(MemoryModuleConfig):
     """Config for the lazy perception module."""
 
-    db_path: str | Path = "recording.db"     # shared with Recorder + SemanticSearch
+    db_path: str | Path = "recording.db"
 
     # Models (blueprint can override)
     vlm_provider: type[VlModel] = MoondreamVlModel
     embedding_model: type[EmbeddingModel] = CLIPModel
 
-    # Heartbeat — gives lifecycle events real-world timing.
-    # Set to 0 to disable; lifecycle then fires only on agent calls.
-    background_scan_period_s: float = 10.0
-
-    # Static seed prompts the heartbeat ALWAYS scans for, regardless of
-    # tracker state. Use for "alert me if X appears" patterns. The
-    # heartbeat also scans tracker.watched_names dynamically, so curated
-    # objects appearing in the scene get tracked even if not in this list.
-    default_prompts: list[str] = Field(default_factory=list)
-
-    # Startup workspace scan — runs once after start() to seed the tracker
-    # with whatever is already in view. Disabled if startup_prompts is empty.
-    startup_workspace_scan: bool = True
-    startup_prompts: list[str] = Field(default_factory=list)
-    startup_delay_s: float = 5.0             # wait this long after start() for SemanticSearch
-
-    # Lazy pipeline tuning
-    lookback_window_s: float = 60.0          # peaks must be within this recent window
-    peak_distance: float = 1.0               # peaks() distance kwarg (seconds)
-    peak_prominence: float = 0.02            # peaks() prominence kwarg
-    min_peak_score: float = 0.20             # absolute floor on peak similarity
-    max_frames_per_call: int = 2             # cap VLM calls per (scan × prompt class)
+    # Similarity threshold — observations below this don't count as a
+    # confident match for find_objects / find_objects_near.
+    min_similarity: float = 0.20
 
 
 @runtime_checkable
@@ -340,106 +198,77 @@ class LazyPerceptionModuleSpec(Protocol):
 
     config: LazyPerceptionModuleConfig
 
-    # Inputs
-    watched_names_in: In[set[str]]
-    """Subscribed to ``ObjectMemoryTracker.watched_names``. Cached
-    locally; on each heartbeat the latest cached set is unioned with
-    ``default_prompts`` to determine what to scan for. Initial state
-    is empty (heartbeat only scans ``default_prompts``) until the
-    tracker publishes its first update."""
+    latest_detections: Out[list[DetObject]]
+    """Wired by the blueprint to the manipulation stack
+    (e.g., ``PickAndPlaceModule.objects``). Cache of the most recent
+    ``find_objects`` / ``find_objects_near`` result. Manipulation
+    reads from here to act on the named target."""
 
-    # Outputs
-    detections_out: Out[list[DetObject]]
-    """Wired by the blueprint to ``ObjectMemoryTracker.raw_detections``."""
+    def find_objects(self, prompt: str) -> str:
+        """Find objects matching ``prompt``. Returns the most recent
+        confident match with timestamp.
 
-    def find_objects(self, prompts: str) -> str:
-        """Run the lazy detection pipeline.
+        Decorated ``@skill`` in the implementation. Composes
+        ``.search()`` + ``.filter(similarity >= min_similarity)`` +
+        ``.order_by("ts", desc=True)`` + ``.first()`` over
+        ``color_image_embedded``, then runs VLM detection on the
+        matching frame and projects to 3D. Publishes ``list[Object]``
+        on ``latest_detections``.
 
-        Decorated ``@skill`` in the implementation. ``prompts`` is a
-        comma-separated list of natural-language object classes; the
-        pipeline splits, embeds, searches, peaks, VLM-detects, and
-        publishes ``list[Object]`` for the tracker.
+        Open-vocab: ``prompt`` can be any natural language
+        (``"red mug"``, ``"the cup on the right"``). Comma-separated
+        prompts are split and processed per class because VLM
+        ``query_detections`` labels every result with the literal
+        query string.
 
-        Returns a human-readable summary string. Bounded to recent
-        frames by ``lookback_window_s`` — for older lookups use the
-        tracker's ``recall(name)`` skill.
+        Returns a human-readable summary including the observation
+        timestamp (``"(seen 3s ago)"``) so the agent can judge
+        freshness. Returns a no-match message when no observation
+        meets ``min_similarity``.
         """
         ...
 
+    def find_objects_near(
+        self,
+        prompt: str,
+        x: float,
+        y: float,
+        z: float,
+        radius: float = 1.0,
+    ) -> str:
+        """Find objects matching ``prompt``, in frames recorded when
+        the camera was within ``radius`` meters of ``(x, y, z)``.
 
-# =============================================================================
-#  ObjectMemoryTracker — identity, lifecycle events, watched_names port
-# =============================================================================
+        Decorated ``@skill`` in the implementation. Same query shape
+        as ``find_objects`` but with an extra ``.near((x, y, z), radius)``
+        filter that uses memory2's R*Tree spatial index. Otherwise
+        identical: take most recent confident match → VLM → 3D project
+        → publish on ``latest_detections``.
 
-
-class ObjectMemoryTrackerConfig(MemoryModuleConfig):
-    """Config for the object lifecycle tracker."""
-
-    # Spatial matching
-    distance_threshold: float = 0.2          # Tier 2 match radius (m)
-    reacquire_radius: float = 1.0            # Tier 3 & 4 match radius (m)
-
-    # Identity promotion
-    min_detections_for_permanent: int = 6    # observations before PROMOTED fires
-
-    # Continuous-belief existence model
-    time_constant_s: float = 15.0            # decay time-constant in confidence(now) = exp(-Δt/τ)
-    active_threshold: float = 0.5            # ≥ this: published in tracked_objects
-    match_threshold: float = 0.2             # ≥ this: still match-eligible (tentative band)
-    lost_threshold: float = 0.1              # < this: emit LOST, move to _lost
-    recent_lost_window_s: float = 60.0       # how long _lost is searchable for reacquire
-
-    # Persistence
-    db_path: str | Path = Field(default="recording.db")
-
-
-@runtime_checkable
-class ObjectMemoryTrackerSpec(Protocol):
-    """Protocol for the memory2-backed object lifecycle tracker.
-
-    On start, opens two memory2 streams (observations + events),
-    rebuilds its in-RAM cache via synchronous replay, and begins
-    consuming raw detections. Publishes confident objects to
-    manipulation, exposes cross-session recall as an agent skill, and
-    publishes the union of currently-tracked and recently-lost voted
-    names so the upstream detector can scan for them automatically.
-
-    Detector-agnostic: anything publishing ``list[DetObject]`` on
-    ``raw_detections`` works.
-    """
-
-    config: ObjectMemoryTrackerConfig
-
-    # Inputs
-    raw_detections: In[list[DetObject]]
-    """Per-scan batch of detections."""
-
-    # Outputs
-    tracked_objects: Out[list[DetObject]]
-    """Confident objects (confidence ≥ ``active_threshold``) published
-    per scan."""
-
-    object_events: Out[ObjectEvent]
-    """Live lifecycle events."""
-
-    watched_names: Out[set[str]]
-    """Union of voted names in ``_state`` (currently tracked) and
-    ``_lost`` (within ``recent_lost_window_s``). Re-published on every
-    cache update so subscribers (e.g., ``LazyPerceptionModule``'s
-    heartbeat) automatically scan for newly-discovered objects.
-    Republished once after the start-time replay so the heartbeat
-    picks up cross-session state."""
+        ``.near()`` filters by the camera's pose at record time, NOT
+        by the detected object's position. Use for "frames captured
+        while looking at this workspace area"; object-position
+        filtering is downstream of detection.
+        """
+        ...
 
     def recall(self, name: str) -> str:
-        """Where did I last see something I labelled <name>?
+        """Where did I last see something matching ``name``?
 
-        Decorated ``@skill`` in the implementation. Queries
-        ``object_events.tags(name=name).last()`` — works after process
-        restart because memory2 is the source of truth, not the
-        in-RAM cache. Unbounded recency (full event history).
+        Decorated ``@skill`` in the implementation. Cheaper cousin of
+        ``find_objects``: composes ``.search()`` +
+        ``.order_by("ts", desc=True)`` + ``.first()`` over
+        ``color_image_embedded`` — returns the most recent confident
+        semantic match across the full embedding history, but **does
+        not run VLM**. Returns the camera pose at the matching frame
+        plus timestamp.
 
-        Returns a human-readable summary, or
-        ``"I have no memory of any <name>."`` when the events stream
-        has no matching entry.
+        Works after process restart because memory2's SQLite store is
+        the persistence layer; the query touches the same db that
+        previous sessions wrote.
+
+        Returns a human-readable summary with timestamp
+        (``"Last saw 'cup' near (1.0, 0.5, 0.9) (seen 3min ago)"``), or
+        ``"No memory of <name>."`` when nothing matches.
         """
         ...
