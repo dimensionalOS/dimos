@@ -15,6 +15,8 @@ import pytest
 
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
+pytestmark = pytest.mark.self_hosted
+
 
 def test_from_ros_detection2d_array(get_moment_2d) -> None:
     moment = get_moment_2d()

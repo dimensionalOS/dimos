@@ -22,14 +22,13 @@ shared `follow_points` fixture in dimos/e2e_tests/conftest.py (which uses
 
 from __future__ import annotations
 
+import asyncio
 import math
 from pathlib import Path
-import threading
 import time
 
 import lcm as lcmlib
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -76,13 +75,11 @@ def _clear_precomputed_paths() -> None:
             path.unlink(missing_ok=True)
 
 
-def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None = None) -> None:
-    """Build the coordinator, drive the cross-wall waypoint sequence, tear down."""
+async def _run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None) -> None:
     _clear_precomputed_paths()
 
     coordinator = ModuleCoordinator.build(blueprint)
 
-    lock = threading.Lock()
     odom_count = 0
     robot_x = 0.0
     robot_y = 0.0
@@ -94,52 +91,43 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
     def _odom_handler(_channel: str, data: bytes) -> None:
         nonlocal odom_count, robot_x, robot_y, robot_z, max_z_seen
         msg = Odometry.lcm_decode(data)
-        with lock:
-            odom_count += 1
-            robot_x = msg.x
-            robot_y = msg.y
-            robot_z = msg.pose.position.z
-            if robot_z > max_z_seen:
-                max_z_seen = robot_z
+        odom_count += 1
+        robot_x = msg.x
+        robot_y = msg.y
+        robot_z = msg.pose.position.z
+        if robot_z > max_z_seen:
+            max_z_seen = robot_z
 
     subscription = lcm.subscribe(ODOM_TOPIC, _odom_handler)
 
-    lcm_stop = threading.Event()
+    loop = asyncio.get_running_loop()
+    lcm_fd = lcm.fileno()
 
-    def _lcm_loop() -> None:
-        while not lcm_stop.is_set():
-            try:
-                lcm.handle_timeout(100)
-            except Exception:
-                # Don't spin forever waiting on odom that will never arrive.
-                logger.exception("LCM handle_timeout failed; stopping loop")
-                lcm_stop.set()
-                return
+    def _on_lcm_readable() -> None:
+        try:
+            lcm.handle()
+        except Exception:
+            logger.exception("LCM handle failed; removing reader to stop further polling")
+            loop.remove_reader(lcm_fd)
 
-    lcm_thread = threading.Thread(target=_lcm_loop, daemon=True)
-    lcm_thread.start()
+    loop.add_reader(lcm_fd, _on_lcm_readable)
 
     try:
         logger.info(f"[{label}] Blueprint started, waiting for odom…")
 
         deadline = time.monotonic() + ODOM_WAIT_SEC
-        while time.monotonic() < deadline:
-            with lock:
-                if odom_count > 0:
-                    break
-            time.sleep(0.5)
+        while time.monotonic() < deadline and odom_count == 0:
+            await asyncio.sleep(0.5)
 
-        with lock:
-            assert odom_count > 0, f"No odometry received after {ODOM_WAIT_SEC}s — sim not running?"
-            initial_x, initial_y = robot_x, robot_y
+        assert odom_count > 0, f"No odometry received after {ODOM_WAIT_SEC}s — sim not running?"
+        initial_x, initial_y = robot_x, robot_y
 
         logger.info(f"[{label}] Odom online. Robot at ({initial_x:.2f}, {initial_y:.2f})")
         logger.info(f"[{label}] Warming up for {WARMUP_SEC}s…")
-        time.sleep(WARMUP_SEC)
+        await asyncio.sleep(WARMUP_SEC)
 
         for name, goal_x, goal_y, goal_z, timeout_sec, threshold in CROSS_WALL_WAYPOINTS:
-            with lock:
-                start_x, start_y = robot_x, robot_y
+            start_x, start_y = robot_x, robot_y
 
             logger.info(
                 f"[{label}] === {name}: goal ({goal_x}, {goal_y}) | "
@@ -156,10 +144,9 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
             current_x, current_y = start_x, start_y
             distance = _distance(current_x, current_y, goal_x, goal_y)
             while True:
-                with lock:
-                    current_x, current_y = robot_x, robot_y
-                    current_z = robot_z
-                    current_max_z = max_z_seen
+                current_x, current_y = robot_x, robot_y
+                current_z = robot_z
+                current_max_z = max_z_seen
 
                 if max_z is not None:
                     assert current_z <= max_z, (
@@ -176,7 +163,7 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
                     break
                 if elapsed >= timeout_sec:
                     break
-                time.sleep(GOAL_POLL_INTERVAL_SEC)
+                await asyncio.sleep(GOAL_POLL_INTERVAL_SEC)
 
             assert reached, (
                 f"{name}: robot did not reach ({goal_x}, {goal_y}) within {timeout_sec}s. "
@@ -184,16 +171,17 @@ def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None
             )
 
         if max_z is not None:
-            with lock:
-                final_max_z = max_z_seen
-            assert final_max_z <= max_z, (
-                f"Robot z peaked at {final_max_z:.2f}m during the run "
+            assert max_z_seen <= max_z, (
+                f"Robot z peaked at {max_z_seen:.2f}m during the run "
                 f"(limit {max_z}m) — went through the ceiling"
             )
 
     finally:
-        lcm_stop.set()
-        lcm_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        assert not lcm_thread.is_alive(), "LCM loop thread didn't exit cleanly"
+        loop.remove_reader(lcm_fd)
         lcm.unsubscribe(subscription)
         coordinator.stop()
+
+
+def run_cross_wall_test(blueprint: Blueprint, *, label: str, max_z: float | None = None) -> None:
+    """Build the coordinator, drive the cross-wall waypoint sequence, tear down."""
+    asyncio.run(_run_cross_wall_test(blueprint, label=label, max_z=max_z))
