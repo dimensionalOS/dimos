@@ -2,11 +2,7 @@ name: ci
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
   pull_request:
-    paths-ignore:
-      - '**.md'
 
 concurrency:
   # Cancels runs from previous pushes in a PR.
@@ -15,14 +11,16 @@ concurrency:
 
 permissions: {}
 
+env:
+  # Disable default package installs. Each job should explicitly install a group.
+  UV_NO_SYNC: "1"
+
 jobs:
   lint:
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
-    env:
-      UV_NO_SYNC: "1"  # Disable installing default packages on `uv run`
 
     steps:
       - name: Checkout
@@ -76,9 +74,6 @@ jobs:
           - os: ubuntu
             pyver: "3.14t"
             experimental: false
-          - os: ubuntu
-            pyver: "3.15"
-            experimental: true
       fail-fast: true
     runs-on: ${{ matrix.os }}-latest
     continue-on-error: ${{ matrix.experimental }}
@@ -111,14 +106,16 @@ jobs:
       - name: Set PYTHON_GIL=0 for free-threading builds
         if: ${{ endsWith(matrix.pyver, 't') }}
         run: echo "PYTHON_GIL=0" >> $GITHUB_ENV
+      - name: Install dependencies
+        run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (tool or self_hosted or mujoco)'
+        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (tool or self_hosted or mujoco or dimsim)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (tool or self_hosted or mujoco)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (tool or self_hosted or mujoco or dimsim)' && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
@@ -146,7 +143,6 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository
       )
     env:
-      UV_NO_SYNC: "1"  # Disable installing default packages on `uv run`
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
