@@ -67,7 +67,6 @@ def get_collected_letters():
     uppercase_transport.stop()
 
 
-@pytest.mark.slow
 def test_async_module_process_observable(get_collected_letters, start_module):
     """
     Tests that process_observable correctly processes items from an observable

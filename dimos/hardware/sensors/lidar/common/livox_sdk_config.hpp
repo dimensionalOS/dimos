@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <utility>
 
@@ -40,16 +41,44 @@ struct SdkPorts {
     int host_log_data   = 56501;
 };
 
-// Write Livox SDK JSON config to an in-memory file (memfd_create).
+// Write Livox SDK JSON config to an in-memory (or ephemeral) file.
 // Returns {fd, path} — caller must close(fd) after LivoxLidarSdkInit reads it.
+//
+// Linux: memfd_create gives us a pure anonymous in-memory file, reached via
+//        /proc/self/fd/<fd>.
+// macOS: no memfd_create and no procfs.  We fall back to mkstemp() in /tmp
+//        and immediately unlink() the directory entry, so the inode lives
+//        only as long as the fd is open.  The SDK reaches it via /dev/fd/<fd>
+//        (Darwin's equivalent of /proc/self/fd).
 inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
                                                      const std::string& lidar_ip,
                                                      const SdkPorts& ports) {
+#ifdef __linux__
     int fd = memfd_create("livox_sdk_config", 0);
     if (fd < 0) {
         perror("memfd_create");
         return {-1, ""};
     }
+#elif defined(__APPLE__) && defined(__MACH__)
+    // mkstemp replaces the 6 X's in place — e.g. livox_sdk_config.aB3xY9.
+    // Honor $TMPDIR when set (sandboxed macOS apps and CI runners point
+    // it at a per-process scratch dir); fall back to /tmp.
+    const char* tmpdir = std::getenv("TMPDIR");
+    if (tmpdir == nullptr || tmpdir[0] == '\0') {
+        tmpdir = "/tmp";
+    }
+    char tmpl[256];
+    snprintf(tmpl, sizeof(tmpl), "%s/livox_sdk_config.XXXXXX", tmpdir);
+    int fd = mkstemp(tmpl);
+    if (fd < 0) {
+        perror("mkstemp");
+        return {-1, ""};
+    }
+    // Drop the directory entry — the inode stays alive via the fd.
+    unlink(tmpl);
+#else
+#error "livox_sdk_config: unsupported platform (need Linux memfd_create or Apple mkstemp)"
+#endif
 
     FILE* fp = fdopen(fd, "w");
     if (!fp) {
@@ -89,7 +118,16 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
     fflush(fp);  // flush but don't fclose — that would close fd
 
     char path[64];
+#ifdef __linux__
     snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+#elif defined(__APPLE__) && defined(__MACH__)
+    // Darwin's /dev/fd/<fd> may share the underlying open file description,
+    // so rewind before the SDK reads from the path.
+    lseek(fd, 0, SEEK_SET);
+    snprintf(path, sizeof(path), "/dev/fd/%d", fd);
+#else
+    #error "Unsupported platform: expected Linux or macOS"
+#endif
     return {fd, path};
 }
 

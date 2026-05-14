@@ -18,11 +18,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import signal
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+import xml.etree.ElementTree as ET
 
 import mujoco
 import mujoco.viewer as viewer  # type: ignore[import-untyped]
@@ -48,6 +50,7 @@ logger = setup_logger()
 
 # Step hook signature: called with the engine instance inside the sim thread.
 StepHook = Callable[["MujocoEngine"], None]
+_MUJOCO_FROM_BINARY_PATH = "from_binary_path"
 
 
 @dataclass
@@ -56,12 +59,6 @@ class CameraConfig:
     width: int = 640
     height: int = 480
     fps: float = 15.0
-    # Per-camera ``mjvOption`` applied during ``update_scene``.  Lets a
-    # caller render the same scene through different geom-group masks
-    # — e.g. lidar cameras that should only see the static scene mesh
-    # (group 3) and ignore the robot (groups 0-2), so the lidar
-    # pointcloud doesn't pick up the robot's own hands/torso/legs as
-    # phantom obstacles.  ``None`` keeps MuJoCo's default (all groups).
     scene_option: mujoco.MjvOption | None = None
 
 
@@ -99,6 +96,7 @@ class MujocoEngine(SimulationEngine):
         config_path: Path,
         headless: bool,
         cameras: list[CameraConfig] | None = None,
+        meshdir: str | Path | None = None,
         on_before_step: StepHook | None = None,
         on_after_step: StepHook | None = None,
         assets: dict[str, bytes] | None = None,
@@ -108,15 +106,7 @@ class MujocoEngine(SimulationEngine):
         self._on_after_step: StepHook | None = on_after_step
 
         xml_path = self._resolve_xml_path(config_path)
-        if assets is not None:
-            # MJCFs that reference meshes by bare filename (e.g. menagerie
-            # G1) need the mesh bytes injected by name; from_xml_path can't
-            # find them on disk.
-            with open(xml_path) as f:
-                xml_str = f.read()
-            self._model = mujoco.MjModel.from_xml_string(xml_str, assets=assets)
-        else:
-            self._model = mujoco.MjModel.from_xml_path(str(xml_path))
+        self._model = self._load_model(xml_path, meshdir=meshdir, assets=assets)
         self._xml_path = xml_path
 
         self._data = mujoco.MjData(self._model)
@@ -125,6 +115,16 @@ class MujocoEngine(SimulationEngine):
         self._num_joints = len(self._joint_names)
         timestep = float(self._model.opt.timestep)
         self._control_frequency = 1.0 / timestep if timestep > 0.0 else 100.0
+        self._root_free_qpos_adr: int | None = None
+        self._root_free_qvel_adr: int | None = None
+        self._root_kinematic_pose: tuple[float, float, float] | None = None
+        self._scene_body_ids = self._collect_body_ids("dimos_scene")
+        free_joint = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
+        for joint_id in range(self._model.njnt):
+            if self._model.jnt_type[joint_id] == free_joint:
+                self._root_free_qpos_adr = int(self._model.jnt_qposadr[joint_id])
+                self._root_free_qvel_adr = int(self._model.jnt_dofadr[joint_id])
+                break
 
         self._connected = False
         self._lock = threading.Lock()
@@ -155,8 +155,46 @@ class MujocoEngine(SimulationEngine):
         resolved = config_path.expanduser()
         xml_path = resolved / "scene.xml" if resolved.is_dir() else resolved
         if not xml_path.exists():
-            raise FileNotFoundError(f"MuJoCo XML not found: {xml_path}")
+            raise FileNotFoundError(f"MuJoCo model not found: {xml_path}")
         return xml_path
+
+    def _load_model(
+        self,
+        xml_path: Path,
+        *,
+        meshdir: str | Path | None,
+        assets: dict[str, bytes] | None,
+    ) -> mujoco.MjModel:
+        if xml_path.suffix.lower() == ".mjb":
+            return self._load_binary_model(xml_path)
+
+        if assets is not None:
+            with open(xml_path) as file:
+                xml_str = file.read()
+            return mujoco.MjModel.from_xml_string(xml_str, assets=assets)
+
+        if meshdir is None:
+            return mujoco.MjModel.from_xml_path(str(xml_path))
+
+        root = ET.parse(xml_path).getroot()
+        compiler = root.find("compiler")
+        if compiler is None:
+            compiler = ET.Element("compiler")
+            root.insert(0, compiler)
+        compiler.set("meshdir", str(Path(meshdir).expanduser().resolve()))
+        for include in root.iter("include"):
+            include_file = include.get("file")
+            if include_file and not Path(include_file).is_absolute():
+                include.set("file", str((xml_path.parent / include_file).resolve()))
+        return mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
+
+    @staticmethod
+    def _load_binary_model(model_path: Path) -> mujoco.MjModel:
+        load_binary_model = cast(
+            "Callable[[str], mujoco.MjModel]",
+            getattr(mujoco.MjModel, _MUJOCO_FROM_BINARY_PATH),
+        )
+        return load_binary_model(str(model_path))
 
     def _current_position(self, mapping: JointMapping) -> float:
         if mapping.joint_id is not None and mapping.qpos_adr is not None:
@@ -169,6 +207,46 @@ class MujocoEngine(SimulationEngine):
         if mapping.actuator_id is not None:
             return float(self._data.actuator_length[mapping.actuator_id])
         return 0.0
+
+    def _collect_body_ids(self, root_name: str) -> set[int]:
+        root_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, root_name)
+        if root_id < 0:
+            return set()
+        body_ids = {root_id}
+        changed = True
+        while changed:
+            changed = False
+            for body_id in range(self._model.nbody):
+                parent_id = int(self._model.body_parentid[body_id])
+                if parent_id in body_ids and body_id not in body_ids:
+                    body_ids.add(body_id)
+                    changed = True
+        return body_ids
+
+    def _is_scene_geom(self, geom_id: int) -> bool:
+        if geom_id < 0 or not self._scene_body_ids:
+            return False
+        return int(self._model.geom_bodyid[geom_id]) in self._scene_body_ids
+
+    def _has_blocking_scene_contact(self) -> bool:
+        """Return true for non-floor contacts between robot and baked scene."""
+        if not self._scene_body_ids:
+            return False
+        for contact_idx in range(self._data.ncon):
+            contact = self._data.contact[contact_idx]
+            geom1 = int(contact.geom1)
+            geom2 = int(contact.geom2)
+            geom1_is_scene = self._is_scene_geom(geom1)
+            geom2_is_scene = self._is_scene_geom(geom2)
+            if geom1_is_scene == geom2_is_scene:
+                continue
+            if float(contact.dist) > 1e-4:
+                continue
+            normal = contact.frame[:3]
+            if abs(float(normal[2])) > 0.75:
+                continue
+            return True
+        return False
 
     def _apply_control(self) -> None:
         with self._lock:
@@ -233,12 +311,6 @@ class MujocoEngine(SimulationEngine):
             return False
 
     def run_blocking(self, on_started: Callable[[], None] | None = None) -> None:
-        """Run the simulation loop on the current thread until stopped.
-
-        This is used by the subprocess entry point so ``mujoco.viewer`` runs
-        on that process's main thread. The normal Module path still uses
-        ``connect()``, which starts the loop on a worker thread.
-        """
         logger.info("run_blocking()", cls=self.__class__.__name__)
         with self._lock:
             self._connected = True
@@ -250,7 +322,6 @@ class MujocoEngine(SimulationEngine):
                 self._connected = False
 
     def request_stop(self) -> None:
-        """Ask the sim loop to stop without joining a thread."""
         with self._lock:
             self._connected = False
         self._stop_event.set()
@@ -295,21 +366,25 @@ class MujocoEngine(SimulationEngine):
                 continue
             state.last_render_time = now
 
-            scene_option = state.cfg.scene_option
-            if scene_option is not None:
-                state.rgb_renderer.update_scene(
-                    self._data, camera=state.cam_id, scene_option=scene_option
-                )
-                rgb = state.rgb_renderer.render().copy()
-                state.depth_renderer.update_scene(
-                    self._data, camera=state.cam_id, scene_option=scene_option
-                )
-                depth = state.depth_renderer.render().copy()
-            else:
+            if state.cfg.scene_option is None:
                 state.rgb_renderer.update_scene(self._data, camera=state.cam_id)
-                rgb = state.rgb_renderer.render().copy()
+            else:
+                state.rgb_renderer.update_scene(
+                    self._data,
+                    camera=state.cam_id,
+                    scene_option=state.cfg.scene_option,
+                )
+            rgb = state.rgb_renderer.render().copy()
+
+            if state.cfg.scene_option is None:
                 state.depth_renderer.update_scene(self._data, camera=state.cam_id)
-                depth = state.depth_renderer.render().copy()
+            else:
+                state.depth_renderer.update_scene(
+                    self._data,
+                    camera=state.cam_id,
+                    scene_option=state.cfg.scene_option,
+                )
+            depth = state.depth_renderer.render().copy()
 
             frame = CameraFrame(
                 rgb=rgb,
@@ -395,10 +470,6 @@ class MujocoEngine(SimulationEngine):
 
     @property
     def data(self) -> mujoco.MjData:
-        """Live MjData. In-process consumers (sensors, PD hooks) read it
-        directly; physics integration in the sim thread mutates it under
-        ``self._lock`` so reads inside the same MujocoEngine instance are
-        coherent without extra locking."""
         return self._data
 
     @property
@@ -485,21 +556,112 @@ class MujocoEngine(SimulationEngine):
                 self._joint_position_targets[i] = self._current_position(mapping)
 
     def reset(self) -> None:
-        """Reset the sim to keyframe 0 (the ``home`` keyframe).
-
-        Snaps qpos / qvel / actuator state back to the home pose, zeros
-        velocities, and re-arms the position-target latches so the
-        controller doesn't immediately yank the robot back where it was.
-        Held under ``self._lock`` so it's safe to call from any thread
-        while ``_sim_loop`` is stepping.
-        """
         with self._lock:
             mujoco.mj_resetDataKeyframe(self._model, self._data, 0)
             mujoco.mj_forward(self._model, self._data)
-            # Re-seed position targets to the new home pose so the next
-            # tick's PD doesn't pull toward the pre-reset target.
             for i, mapping in enumerate(self._joint_mappings):
                 self._joint_position_targets[i] = self._current_position(mapping)
+
+    def enforce_position_targets(self) -> None:
+        """Pin modeled joints to their current position targets.
+
+        This is a development stub for stacks that do not yet run a real
+        whole-body controller. It leaves the floating base alone, but prevents
+        contact impulses from folding the articulated joints.
+        """
+        with self._lock:
+            for i, mapping in enumerate(self._joint_mappings):
+                target = self._joint_position_targets[i]
+                if mapping.qpos_adr is not None:
+                    self._data.qpos[mapping.qpos_adr] = target
+                    self._joint_positions[i] = target
+                if mapping.dof_adr is not None:
+                    self._data.qvel[mapping.dof_adr] = 0.0
+                    self._joint_velocities[i] = 0.0
+            mujoco.mj_forward(self._model, self._data)
+
+    @property
+    def has_root_freejoint(self) -> bool:
+        return self._root_free_qpos_adr is not None
+
+    def apply_root_twist(
+        self,
+        linear_x: float,
+        linear_y: float,
+        angular_z: float,
+        *,
+        fixed_z: float | None = None,
+    ) -> bool:
+        """Integrate planar velocity onto the first freejoint root.
+
+        The root is treated as kinematic once this method is used: we
+        maintain an internal desired x/y/yaw and write it back every tick.
+        That prevents contact impulses or gravity settling from slowly
+        walking the floating base when the commanded twist is zero.
+        """
+        qpos_adr = self._root_free_qpos_adr
+        if qpos_adr is None:
+            return False
+
+        dt = 1.0 / self._control_frequency
+        with self._lock:
+            qpos = self._data.qpos
+            if self._root_kinematic_pose is None:
+                qw, qx, qy, qz = qpos[qpos_adr + 3 : qpos_adr + 7]
+                yaw = math.atan2(
+                    2.0 * (qw * qz + qx * qy),
+                    1.0 - 2.0 * (qy * qy + qz * qz),
+                )
+                self._root_kinematic_pose = (
+                    float(qpos[qpos_adr]),
+                    float(qpos[qpos_adr + 1]),
+                    yaw,
+                )
+
+            old_x, old_y, old_yaw = self._root_kinematic_pose
+            new_x = old_x + (math.cos(old_yaw) * linear_x - math.sin(old_yaw) * linear_y) * dt
+            new_y = old_y + (math.sin(old_yaw) * linear_x + math.cos(old_yaw) * linear_y) * dt
+            new_yaw = old_yaw + angular_z * dt
+
+            qpos[qpos_adr] = new_x
+            qpos[qpos_adr + 1] = new_y
+            if fixed_z is not None:
+                qpos[qpos_adr + 2] = fixed_z
+
+            qpos[qpos_adr + 3 : qpos_adr + 7] = [
+                math.cos(new_yaw * 0.5),
+                0.0,
+                0.0,
+                math.sin(new_yaw * 0.5),
+            ]
+            mujoco.mj_forward(self._model, self._data)
+
+            if self._has_blocking_scene_contact():
+                qpos[qpos_adr] = old_x
+                qpos[qpos_adr + 1] = old_y
+                qpos[qpos_adr + 3 : qpos_adr + 7] = [
+                    math.cos(old_yaw * 0.5),
+                    0.0,
+                    0.0,
+                    math.sin(old_yaw * 0.5),
+                ]
+                mujoco.mj_forward(self._model, self._data)
+            else:
+                self._root_kinematic_pose = (new_x, new_y, new_yaw)
+
+            qvel_adr = self._root_free_qvel_adr
+            if qvel_adr is not None:
+                self._data.qvel[qvel_adr : qvel_adr + 6] = 0.0
+        return True
+
+    def get_root_pose(self) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
+        qpos_adr = self._root_free_qpos_adr
+        if qpos_adr is None:
+            return None
+        with self._lock:
+            position = self._data.qpos[qpos_adr : qpos_adr + 3].copy()
+            qw, qx, qy, qz = self._data.qpos[qpos_adr + 3 : qpos_adr + 7].copy()
+        return position, np.array([qx, qy, qz, qw], dtype=np.float64)
 
     def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:
         mapping = self._joint_mappings[joint_index]
@@ -541,23 +703,14 @@ class MujocoEngine(SimulationEngine):
             return None
         return float(self._model.cam_fovy[cam_id])
 
-    def get_camera_pose(self, camera_name: str) -> tuple[np.ndarray, np.ndarray] | None:
-        """World pose of a named camera, regardless of whether it renders.
-
-        Returns ``(cam_pos (3,), cam_mat (3, 3))`` from the latest physics
-        step.  ``cam_xpos`` / ``cam_xmat`` are populated for every MJCF
-        camera at every step, so this works even when the camera isn't in
-        the ``cameras`` list passed to MujocoEngine — useful for publishing
-        TF for cameras that exist in the model purely as mount points
-        (e.g. head_color when only the lidar render is consumed).
-        """
+    def get_camera_pose(
+        self, camera_name: str
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
+        """Get a named camera's latest world pose from MuJoCo data."""
         cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
         if cam_id < 0:
             return None
-        return (
-            self._data.cam_xpos[cam_id].copy(),
-            self._data.cam_xmat[cam_id].copy().reshape(3, 3),
-        )
+        return self._data.cam_xpos[cam_id].copy(), self._data.cam_xmat[cam_id].copy()
 
 
 def engine_main(
@@ -582,66 +735,44 @@ def engine_main(
         "imu_accel",
     ),
 ) -> None:
-    """Standalone whole-body sim entry point.
-
-    Runs an in-process MuJoCo engine + the whole-body SHM bridge + (optionally)
-    a passive viewer, all on the main thread. ``MujocoSimModule`` spawns this
-    as a subprocess when ``engine_mode='subprocess'`` is set — that way MuJoCo
-    can render with ``viewer.launch_passive`` on macOS (which requires main
-    thread) while dimos workers remain free to be daemonic.
-
-    SHM layout matches ``ManipShmWriter`` so the same
-    ``WholeBodyAdapter`` (sim_mujoco_g1) reads commands + writes states from
-    the dimos side. The /odom + /imu LCM publishes mirror what
-    ``MujocoSimModule`` does in thread mode.
-    """
-    # SHM writer that mirrors the in-process module's layout — the
-    # dimos-side adapter reads the same buffers either way.
     shm = ManipShmWriter(shm_key)
 
-    # Engine + asset injection (mirrors MujocoSimModule.start()).
     assets: dict[str, bytes] | None = None
     if inject_legacy_assets:
         try:
             from dimos.simulation.mujoco.model import get_assets
 
             assets = get_assets()
-        except Exception as e:  # pragma: no cover - bare MJCFs don't need this
-            logger.warning(f"engine_main: asset injection skipped: {e}")
-    eng = MujocoEngine(
+        except Exception as exc:  # pragma: no cover - bare MJCFs do not need this
+            logger.warning(f"engine_main: asset injection skipped: {exc}")
+
+    engine = MujocoEngine(
         config_path=Path(mjcf_path),
         headless=headless,
         cameras=[],
         assets=assets,
     )
 
-    # Resolve IMU sensors + base-qpos slice once.
-    imu_gyro_slice = _find_sensor_slice_inline(eng.model, imu_gyro_sensor_names)
-    imu_accel_slice = _find_sensor_slice_inline(eng.model, imu_accel_sensor_names)
+    imu_gyro_slice = _find_sensor_slice_inline(engine.model, imu_gyro_sensor_names)
+    imu_accel_slice = _find_sensor_slice_inline(engine.model, imu_accel_sensor_names)
     has_freejoint = bool(
-        eng.model.njnt > 0 and int(eng.model.jnt_type[0]) == int(mujoco.mjtJoint.mjJNT_FREE)
+        engine.model.njnt > 0 and int(engine.model.jnt_type[0]) == int(mujoco.mjtJoint.mjJNT_FREE)
     )
-
-    # SHM bridge — runs in the engine's sim loop.
     hooks = WholeBodySimHooks(shm, dof=dof)
 
-    # LCM publishers (started lazily; .start() spawns the LCM thread).
     odom_tx: LCMTransport[PoseStamped] = LCMTransport(odom_topic, PoseStamped)
     odom_tx.start()
     imu_tx: LCMTransport[Imu] = LCMTransport(imu_topic, Imu)
     imu_tx.start()
 
-    def _on_after_step(engine: MujocoEngine) -> None:
-        """Composite post-step: SHM writes + LCM publishes."""
-        hooks.post_step(engine)
+    def _on_after_step(step_engine: MujocoEngine) -> None:
+        hooks.post_step(step_engine)
 
-        data = engine.data
+        data = step_engine.data
         ts = time.time()
-
-        # Base pose (qpos[0:7]) → /odom
         if has_freejoint:
             pos = data.qpos[0:3]
-            quat = data.qpos[3:7]  # (w, x, y, z) MuJoCo convention
+            quat = data.qpos[3:7]
             odom_tx.publish(
                 PoseStamped(
                     ts=ts,
@@ -653,7 +784,6 @@ def engine_main(
                 )
             )
 
-        # IMU sensors → SHM + /imu
         if imu_gyro_slice is None and imu_accel_slice is None and not has_freejoint:
             return
         quat_tup = (
@@ -687,18 +817,18 @@ def engine_main(
             )
         )
 
-    eng._on_before_step = hooks.pre_step  # type: ignore[attr-defined]
-    eng._on_after_step = _on_after_step  # type: ignore[attr-defined]
+    engine._on_before_step = hooks.pre_step
+    engine._on_after_step = _on_after_step
 
     def _handle_sig(signum: int, frame: object) -> None:
         logger.info(f"engine_main: signal {signum} received, stopping")
-        eng.request_stop()
+        engine.request_stop()
 
     signal.signal(signal.SIGINT, _handle_sig)
     signal.signal(signal.SIGTERM, _handle_sig)
 
     def _mark_ready() -> None:
-        shm.signal_ready(num_joints=eng.num_joints)
+        shm.signal_ready(num_joints=engine.num_joints)
         logger.info(
             "engine_main: ready",
             mjcf=mjcf_path,
@@ -708,17 +838,14 @@ def engine_main(
         )
 
     try:
-        eng.run_blocking(on_started=_mark_ready)
+        engine.run_blocking(on_started=_mark_ready)
     finally:
-        try:
-            eng.request_stop()
-        except Exception as e:
-            logger.warning(f"engine_main: request_stop raised: {e}")
+        engine.request_stop()
         try:
             shm.signal_stop()
             shm.cleanup()
-        except Exception as e:
-            logger.warning(f"engine_main: shm cleanup raised: {e}")
+        except Exception as exc:
+            logger.warning(f"engine_main: shm cleanup raised: {exc}")
         odom_tx.stop()
         imu_tx.stop()
 
@@ -726,11 +853,11 @@ def engine_main(
 def _find_sensor_slice_inline(
     model: mujoco.MjModel, names: tuple[str, ...], dim: int = 3
 ) -> slice | None:
-    for n in names:
-        sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, n)
-        if sid >= 0:
-            adr = int(model.sensor_adr[sid])
-            return slice(adr, adr + dim)
+    for name in names:
+        sensor_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, name)
+        if sensor_id >= 0:
+            address = int(model.sensor_adr[sensor_id])
+            return slice(address, address + dim)
     return None
 
 
@@ -746,18 +873,18 @@ __all__ = [
 if __name__ == "__main__":
     import argparse
 
-    p = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         description="Standalone MuJoCo whole-body sim subprocess.",
         prog="python -m dimos.simulation.engines.mujoco_engine",
     )
-    p.add_argument("mjcf", help="Path to MJCF XML")
-    p.add_argument("shm_key", help="SHM key (matches the dimos-side adapter)")
-    p.add_argument("dof", type=int, help="Number of motor DOFs")
-    p.add_argument("--view", action="store_true", help="Launch passive viewer")
-    p.add_argument("--no-asset-inject", action="store_true", help="Skip menagerie asset injection")
-    p.add_argument("--odom-topic", default="/odom")
-    p.add_argument("--imu-topic", default="/imu")
-    args = p.parse_args()
+    parser.add_argument("mjcf", help="Path to MJCF XML")
+    parser.add_argument("shm_key", help="SHM key matching the dimos-side adapter")
+    parser.add_argument("dof", type=int, help="Number of motor DOFs")
+    parser.add_argument("--view", action="store_true", help="Launch passive viewer")
+    parser.add_argument("--no-asset-inject", action="store_true", help="Skip asset injection")
+    parser.add_argument("--odom-topic", default="/odom")
+    parser.add_argument("--imu-topic", default="/imu")
+    args = parser.parse_args()
 
     engine_main(
         mjcf_path=args.mjcf,

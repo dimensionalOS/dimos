@@ -22,6 +22,8 @@ from dimos.mapping.occupancy.path_map import make_navigation_map
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.utils.data import get_data
 
+pytestmark = pytest.mark.self_hosted
+
 
 @pytest.mark.parametrize("strategy", ["simple", "mixed"])
 def test_make_navigation_map(occupancy, strategy) -> None:

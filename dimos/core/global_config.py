@@ -13,13 +13,17 @@
 # limitations under the License.
 
 import re
-from typing import Literal, TypeAlias
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from dimos.constants import DEFAULT_BUILD_NATIVE
 from dimos.models.vl.types import VlModelName
-
-ViewerBackend: TypeAlias = Literal["rerun", "rerun-web", "rerun-connect", "foxglove", "none"]
+from dimos.visualization.rerun.constants import (
+    RERUN_ENABLE_WEB,
+    RERUN_OPEN_DEFAULT,
+    RerunOpenOption,
+    ViewerBackend,
+)
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -32,11 +36,15 @@ class GlobalConfig(BaseSettings):
     xarm7_ip: str | None = None
     xarm6_ip: str | None = None
     can_port: str | None = None
-    simulation: bool = False
+    simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"
     new_memory: bool = False
     viewer: ViewerBackend = "rerun"
+    rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
+    rerun_web: bool = RERUN_ENABLE_WEB
+    rerun_host: str | None = None
+    rerun_websocket_server_port: int = 3030
     n_workers: int = 2
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None
@@ -53,10 +61,13 @@ class GlobalConfig(BaseSettings):
     planner_robot_speed: float | None = None
     mcp_port: int = 9990
     viser_port: int = 8082
+    build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = False
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
     listen_host: str = "127.0.0.1"
+    dimsim_scene: str = "apt"
+    dimsim_port: int = 8090
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -76,7 +87,7 @@ class GlobalConfig(BaseSettings):
         if self.replay:
             return "replay"
         if self.simulation:
-            return "mujoco"
+            return self.simulation
         return "webrtc"
 
     @property

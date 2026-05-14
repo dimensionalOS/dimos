@@ -13,15 +13,54 @@
 # limitations under the License.
 
 import asyncio
+from contextlib import suppress
+import hashlib
 import os
 import platform
+import tempfile
 import threading
+
+# With pytest-xdist, pick a per-worker bucket and pin env vars *before*
+# any dimos module is imported, so parallel workers don't share LCM bus,
+# MCP port, or state directory. ``LCMConfig`` captures ``LCM_DEFAULT_URL``
+# at import time; ``GlobalConfig`` captures ``MCP_PORT``; ``run_registry``
+# captures ``XDG_STATE_HOME``. ``LCM_DEFAULT_URL`` in particular has to be
+# an env var (not just a fixture) because subprocess workers spawned by
+# ``ModuleCoordinator`` create their own ``LCMConfig`` / ``LCMRPC``
+# instances internally and can't receive a fixture value — they inherit
+# our env at fork time.
+#
+# Single-worker runs (no xdist) keep the defaults, so external processes
+# with hard-coded ports (e.g. the dimsim Deno bridge, which binds to LCM
+# 7667) can still talk to the test bus.
+_worker = os.environ.get("PYTEST_XDIST_WORKER")
+if _worker:
+    _BUCKET = (
+        int.from_bytes(hashlib.blake2b(_worker.encode(), digest_size=2).digest(), "big") % 5000
+    )
+    os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
+    os.environ["MCP_PORT"] = str(20000 + _BUCKET)
+    os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
+
+# Raise the open-file limit. Each LCM transport opens at least one
+# multicast socket; with pytest-xdist workers running many in parallel,
+# the macOS default soft cap (~256) gets exhausted and tests fail with
+# `OSError: [Errno 24] Too many open files`. The autoconf path normally
+# bumps this via `MaxFileConfiguratorMacOS` (sudo launchctl), but we
+# disable autoconf for tests, so do it directly here against the per-
+# process limit (no sudo required up to the hard cap).
+with suppress(ImportError, ValueError, OSError):
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    target = min(65536, hard)
+    if soft < target:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
 from dotenv import load_dotenv
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.protocol.service.lcmservice import autoconf
 
 load_dotenv()
 
@@ -41,20 +80,42 @@ def _is_macos() -> bool:
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "tool: dev tooling")
-    config.addinivalue_line("markers", "slow: tests that are too slow for the fast loop")
+    config.addinivalue_line(
+        "markers",
+        "self_hosted: tests that need the self-hosted runner (LFS, ROS, CUDA, etc.)",
+    )
     config.addinivalue_line("markers", "mujoco: tests which open mujoco")
+    config.addinivalue_line("markers", "dimsim: tests which require dimsim")
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
+    config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
 
-    # Propagate coverage collection to subprocesses.
-    if os.environ.get("_DIMOS_COV"):
+    if config.pluginmanager.hasplugin("_cov"):
         os.environ["COVERAGE_PROCESS_START"] = str(config.rootpath / "pyproject.toml")
 
 
-@pytest.hookimpl()
+@pytest.fixture(scope="session")
+def mcp_port() -> int:
+    """The MCP server port pinned for this xdist worker (or the default)."""
+    return int(os.environ.get("MCP_PORT", "9990"))
+
+
+@pytest.fixture(scope="session")
+def mcp_url(mcp_port: int) -> str:
+    """The MCP server URL pinned for this xdist worker (or the default)."""
+    return f"http://localhost:{mcp_port}/mcp"
+
+
+@pytest.fixture(scope="session")
+def lcm_url() -> str:
+    """The LCM bus URL pinned for this xdist worker (or the default)."""
+    return os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     _skipif_markers = {
         "skipif_in_ci": (bool(os.getenv("CI")), "Skipped in CI"),
@@ -62,6 +123,7 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
+        "skipif_macos": (_is_macos(), "Not intended to run on macOS"),
     }
     for marker_name, (condition, reason) in _skipif_markers.items():
         if condition:
@@ -76,18 +138,6 @@ def event_loop():
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _autoconf(request):
-    """Run autoconf() before all tests with capture suspended so people see `sudo` commands."""
-
-    capman = request.config.pluginmanager.getplugin("capturemanager")
-    capman.suspend_global_capture(in_=True)
-    try:
-        autoconf()
-    finally:
-        capman.resume_global_capture()
 
 
 _session_threads = set()
@@ -160,6 +210,10 @@ def monitor_threads(request):
             # HuggingFace safetensors conversion thread - no user cleanup API
             # https://github.com/huggingface/transformers/issues/29513
             "Thread-auto_conversion",
+            # rpyc spawns per-call response threads inside the connection's
+            # SpawnThread protocol. They get cleaned up when the connection
+            # is closed (in the rpyc client's teardown), not per-test.
+            "RpycSpawnThread-",
         ]
         new_threads = [
             t

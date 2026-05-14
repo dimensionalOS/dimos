@@ -52,7 +52,7 @@ When `start()` is called, NativeModule:
 
 For the example above, the launched command would look like:
 
-```sh
+```sh skip
 ./build/my_lidar \
     --pointcloud '/pointcloud#sensor_msgs.PointCloud2' \
     --imu '/imu#sensor_msgs.Imu' \

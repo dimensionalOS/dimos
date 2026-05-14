@@ -45,7 +45,7 @@ class _ActuatorSpec:
 
 
 def build_joint_mappings(xml_path: Path, model: mujoco.MjModel) -> list[JointMapping]:
-    specs = _parse_actuator_specs(xml_path)
+    specs = _parse_actuator_specs(xml_path) if xml_path.suffix.lower() != ".mjb" else []
     if specs:
         return _build_joint_mappings_from_specs(specs, model)
     if int(model.nu) > 0:

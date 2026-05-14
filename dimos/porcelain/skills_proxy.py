@@ -18,9 +18,12 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from dimos.porcelain.module_source import ModuleSource
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.module import SkillInfo
+
+logger = setup_logger()
 
 
 class _SkillCallable:
@@ -48,6 +51,7 @@ class SkillsProxy:
         self._source = source
         self._cache: dict[str, list[tuple[str, Any, SkillInfo]]] | None = None
         self._cache_key: frozenset[str] | None = None
+        self._errors: dict[str, BaseException] = {}
 
     def _build_cache(self) -> None:
         names = self._source.list_module_names()
@@ -56,17 +60,21 @@ class SkillsProxy:
             return
 
         skill_map: dict[str, list[tuple[str, Any, SkillInfo]]] = {}
+        errors: dict[str, BaseException] = {}
         for name in names:
             try:
                 module_proxy = self._source.get_rpyc_module(name)
                 skills = list(module_proxy.get_skills())
-            except Exception:
+            except Exception as e:
+                logger.warning("Failed to enumerate skills for module %s", name, exc_info=True)
+                errors[name] = e
                 continue
             for info in skills:
                 skill_map.setdefault(info.func_name, []).append((name, module_proxy, info))
 
         self._cache = skill_map
         self._cache_key = modules_key
+        self._errors = errors
 
     def __getattr__(self, name: str) -> _SkillCallable:
         if name.startswith("_"):
@@ -75,6 +83,11 @@ class SkillsProxy:
         assert self._cache is not None
 
         if name not in self._cache:
+            if self._errors:
+                detail = ", ".join(f"{n}: {e!r}" for n, e in self._errors.items())
+                raise AttributeError(
+                    f"No skill named {name!r}. Skill discovery failed for: {detail}"
+                )
             raise AttributeError(f"No skill named {name!r}")
 
         entries = self._cache[name]

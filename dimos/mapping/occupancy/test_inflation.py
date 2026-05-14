@@ -16,10 +16,13 @@
 
 import cv2
 import numpy as np
+import pytest
 
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.utils.data import get_data
+
+pytestmark = pytest.mark.self_hosted
 
 
 def test_inflation(occupancy) -> None:

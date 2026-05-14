@@ -115,6 +115,7 @@ class WavefrontFrontierExplorer(Module):
     goal_reached: In[Bool]
     explore_cmd: In[Bool]
     stop_explore_cmd: In[Bool]
+    stop_movement: In[Bool]
 
     # LCM outputs
     goal_request: Out[PoseStamped]
@@ -171,6 +172,10 @@ class WavefrontFrontierExplorer(Module):
             unsub = self.stop_explore_cmd.subscribe(self._on_stop_explore_cmd)
             self.register_disposable(Disposable(unsub))
 
+        if self.stop_movement.transport is not None:
+            unsub = self.stop_movement.subscribe(self._on_stop_movement)
+            self.register_disposable(Disposable(unsub))
+
     @rpc
     def stop(self) -> None:
         self.stop_exploration()
@@ -199,6 +204,12 @@ class WavefrontFrontierExplorer(Module):
         """Handle stop exploration command messages."""
         if msg.data:
             logger.info("Received exploration stop command via LCM")
+            self.stop_exploration()
+
+    def _on_stop_movement(self, msg: Bool) -> None:
+        """Handle stop movement from teleop — cancel active exploration."""
+        if msg.data and self.exploration_active:
+            logger.info("WavefrontFrontierExplorer: stop_movement received, stopping exploration")
             self.stop_exploration()
 
     def _count_costmap_information(self, costmap: OccupancyGrid) -> int:

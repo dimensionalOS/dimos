@@ -24,6 +24,8 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
 
+pytestmark = pytest.mark.self_hosted
+
 # Captured actual response from Qwen API for cafe.jpg with query "humans"
 # Added garbage around JSON to ensure we are robustly extracting it
 MOCK_QWEN_RESPONSE = """

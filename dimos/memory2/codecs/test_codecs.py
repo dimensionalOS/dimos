@@ -30,7 +30,6 @@ from dimos.memory2.codecs.lcm import LcmCodec
 from dimos.memory2.codecs.pickle import PickleCodec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.utils.testing.replay import TimedSensorReplay
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -129,16 +128,24 @@ def _jpeg_case() -> Case | None:
         from turbojpeg import TurboJPEG
 
         TurboJPEG()  # fail fast if native lib is missing
-
-        replay = TimedSensorReplay("go2_bigoffice/color_image")
-        frames = [replay.find_closest_seek(float(i)) for i in range(1, 4)]
-        codec = JpegCodec(quality=95)
     except (ImportError, RuntimeError):
+        return None
+
+    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.utils.data import get_data
+
+    db_path = get_data("go2_short.db")
+
+    with SqliteStore(path=str(db_path)) as store:
+        video = store.stream("color_image", Image)
+        frames = [obs.data for obs in video.limit(3).to_list()]
+
+    if not frames:
         return None
 
     return Case(
         name="jpeg",
-        codec=codec,
+        codec=JpegCodec(quality=95),
         values=frames,
         eq=_jpeg_eq,
     )

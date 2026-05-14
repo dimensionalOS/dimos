@@ -78,14 +78,18 @@ class PersonFollowSkillContainer(Module):
         self._should_stop: Event = Event()
         self._lock = RLock()
 
-        # Use MuJoCo camera intrinsics in simulation mode
+        # Use simulator camera intrinsics in simulation mode
         camera_info = self.config.camera_info
-        if self.config.g.simulation:
+        if self.config.g.simulation == "mujoco":
             from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
             camera_info = MujocoConnection.camera_info_static
+        elif self.config.g.simulation == "dimsim":
+            from dimos.robot.unitree.dimsim_connection import DimSimConnection
 
-        self._visual_servo = VisualServoing2D(camera_info, self.config.g.simulation)
+            camera_info = DimSimConnection.camera_info_static
+
+        self._visual_servo = VisualServoing2D(camera_info, bool(self.config.g.simulation))
         self._detection_navigation = DetectionNavigation(self.tf, camera_info)
 
     @rpc

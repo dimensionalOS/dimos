@@ -14,7 +14,7 @@ Dimos uses reactive streams (RxPY) to handle sensor data. This approach naturall
 
 ## Quick Example
 
-```python
+```python skip
 from reactivex import operators as ops
 from dimos.utils.reactive import backpressure
 from dimos.types.timestamped import align_timestamped

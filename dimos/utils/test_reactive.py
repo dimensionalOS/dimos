@@ -85,7 +85,6 @@ def dispose_spy(source: rx.Observable[T]) -> rx.Observable[T]:
     return proxy
 
 
-@pytest.mark.slow
 def test_backpressure_handling() -> None:
     # Create a dedicated scheduler for this test to avoid thread leaks
     test_scheduler = ThreadPoolScheduler(max_workers=8)
@@ -146,7 +145,6 @@ def test_backpressure_handling() -> None:
         test_scheduler.executor.shutdown(wait=True)
 
 
-@pytest.mark.slow
 def test_getter_streaming_blocking() -> None:
     source = dispose_spy(
         rx.interval(0.2).pipe(ops.map(lambda i: np.array([i, i + 1, i + 2])), ops.take(50))
@@ -172,6 +170,7 @@ def test_getter_streaming_blocking() -> None:
     assert source.is_disposed(), "Observable should be disposed"
 
 
+@pytest.mark.skipif_macos_bug
 def test_getter_streaming_blocking_timeout() -> None:
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     with pytest.raises(Exception):
@@ -181,7 +180,6 @@ def test_getter_streaming_blocking_timeout() -> None:
     assert source.is_disposed()
 
 
-@pytest.mark.slow
 def test_getter_streaming_nonblocking() -> None:
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
 

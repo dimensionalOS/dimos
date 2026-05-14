@@ -18,7 +18,9 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
 | `--replay-db` | TEXT | `go2_bigoffice` | Replay memory2 SQLite database name |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
-| `--viewer` | `rerun\|rerun-web\|rerun-connect\|foxglove\|none` | `rerun` | Visualization backend |
+| `--viewer` | `rerun\|foxglove\|none` | `rerun` | Visualization backend |
+| `--rerun-open` | `native\|web\|both\|none` | `native` | How to open the Rerun viewer |
+| `--rerun-web` / `--no-rerun-web` | bool | `False` | Serve the Rerun web viewer |
 | `--n-workers` | INT | `2` | Number of forkserver workers |
 | `--memory-limit` | TEXT | `auto` | Rerun viewer memory limit |
 | `--mcp-port` | INT | `9990` | MCP server port |
@@ -214,12 +216,14 @@ To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tool
 ```python
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.core.coordination.blueprints import autoconnect
 
+# Example wiring (replace # -ed with your stack and skill):
 my_mcp_blueprint = autoconnect(
-    my_robot_stack,
+    # my_robot_stack,
     McpServer.blueprint(),
     McpClient.blueprint(),
-    my_skill_containers,
+    # my_skill_containers,
 )
 ```
 

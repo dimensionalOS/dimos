@@ -156,7 +156,7 @@ This gives you an interactive Python prompt with these functions:
 
 #### Example session — simple joint moves
 
-```python
+```python skip
 >>> robots()
 ['left_arm', 'right_arm']
 
@@ -175,14 +175,14 @@ True
 
 If you ever get stuck in a `FAULT` state (e.g. an invalid plan was sent), reset the state machine:
 
-```python
+```python skip
 >>> _client.reset()
 'Reset to IDLE — ready for new commands'
 ```
 
 #### Example session — bimanual
 
-```python
+```python skip
 >>> # Move both arms to mirrored poses
 >>> plan([0.5, 0, 0, 0, 0, 0, 0], robot_name="left_arm") and execute(robot_name="left_arm")
 True
@@ -194,7 +194,7 @@ Each arm plans and executes independently — the coordinator runs both trajecto
 
 #### Example session — Cartesian target
 
-```python
+```python skip
 >>> ee(robot_name="left_arm")           # see where the EE currently is
 >>> plan_pose(0.1, 0.3, 0.5, robot_name="left_arm") and preview(robot_name="left_arm")
 True
@@ -206,7 +206,7 @@ If you don't know which Cartesian targets are reachable, check first with the wo
 
 #### Adding obstacles
 
-```python
+```python skip
 >>> add_box("table", 0.4, 0.0, 0.1, w=0.6, h=0.4, d=0.05)  # rectangular obstacle
 >>> add_sphere("ball", 0.3, 0.2, 0.4, radius=0.05)
 >>> plan_pose(0.4, 0.0, 0.3, robot_name="left_arm")         # now plans around it
