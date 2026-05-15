@@ -16,18 +16,24 @@
 
 `TestPolicy` requires no model files, no GPU, and no third-party
 robot-learning packages. It produces joint position commands that follow
-``center + amplitude * sin(2π · frequency · t + phase)`` per joint.
+``center + amplitude * sin(2π · frequency · t + phase - phase_offset)``
+per joint.
 
 The backend's "time" is the wall-clock elapsed since the most recent
 `reset()` (or `initialize()`), so calling `reset()` deterministically
 restarts the trajectory from phase 0.
 
 When `center` is not provided at construction, the backend captures the
-current joint positions from the next `select_action()` observation and
-uses them as the sinusoid center. This avoids the "snap to zero" jump
-that an absolute open-loop policy would otherwise produce on every
-reset (rollout start, teleop disengage, etc.). Re-captures on every
-`reset()` so the trajectory always replans from the live pose.
+current joint positions on the next `select_action()` and uses them as
+the sinusoid center; the configured per-joint phase is also captured as
+a `phase_offset` so the effective phase at the capture moment is zero.
+This means the wave starts at the live pose (no jump) AND oscillates
+symmetrically around it in `[pose - amplitude, pose + amplitude]`,
+rather than sweeping a full `2 · amplitude` to one side as the naive
+offset-only fix would. Re-captures on every `reset()` so the
+trajectory always replans from the live pose. The configured
+per-joint phases therefore only seed the initial swing direction;
+after the first capture all joints are phase-aligned at sin=0.
 """
 
 from __future__ import annotations
@@ -84,6 +90,12 @@ class TestPolicy:
         center_seq: float | Sequence[float] = 0.0 if center is None else center
         self._center: tuple[float, ...] = self._broadcast(center_seq, n, "center")
         self._center_dirty: bool = self._center_from_observation
+        # Per-joint phase offset captured on each reset (auto-capture mode
+        # only). Subtracted from the configured phase so the effective phase
+        # at the capture moment is zero — the wave starts at the live pose
+        # AND stays symmetric around it. Stays at zero in explicit-center
+        # mode so caller-provided phases keep their meaning.
+        self._phase_offset: tuple[float, ...] = tuple(0.0 for _ in range(n))
 
         self._t0: float = time.monotonic()
 
@@ -113,6 +125,15 @@ class TestPolicy:
             captured = self._capture_center_from_observation(observation)
             if captured is not None:
                 self._center = captured
+                # Zero out the effective phase at capture so the first
+                # sample equals `center == captured_pose` AND the wave
+                # then oscillates symmetrically around it. Without this,
+                # the wave would still START at the pose (because the
+                # captured center compensates), but would sweep a full
+                # `2·amplitude` to one side as it walks through
+                # `sin(2π·f·t + phase)` from its non-zero starting phase
+                # — that's the "extreme motion" failure mode.
+                self._phase_offset = self._phase
                 self._center_dirty = False
                 # Restart the phase clock at the moment of capture so the
                 # first sample corresponds to t≈0 (within a few µs) and
@@ -131,33 +152,36 @@ class TestPolicy:
     def _capture_center_from_observation(
         self, observation: PolicyObservation
     ) -> tuple[float, ...] | None:
-        """Capture the joint state as the sinusoid center.
+        """Snapshot the joint state as the per-joint sinusoid center.
 
-        Returns centers adjusted by ``-amplitude * sin(phase)`` per joint so
-        that ``position(t=0) = center + amplitude*sin(phase)`` collapses to
-        the captured pose. This guarantees a jump-free start regardless of
-        the configured phases — the policy "continues from where teleop left
-        off" on every reset.
+        Pairs with the `_phase_offset` capture in `select_action` so that
+        ``position(t=0) = center + amplitude·sin(phase - phase) = center =
+        captured pose`` AND ``position(t>0) ∈ [pose - amplitude, pose +
+        amplitude]`` — symmetric around the live pose, no jump.
         """
         js = observation.joint_state
         if js is None or not js.name or not js.position:
             return None
         index_by_name = {n: i for i, n in enumerate(js.name)}
         centers: list[float] = []
-        for joint, amp, phase in zip(self._joint_names, self._amplitude, self._phase, strict=True):
+        for joint in self._joint_names:
             idx = index_by_name.get(joint)
             if idx is None or idx >= len(js.position):
                 return None
-            pose = float(js.position[idx])
-            centers.append(pose - amp * math.sin(phase))
+            centers.append(float(js.position[idx]))
         return tuple(centers)
 
     def _sample_at(self, t: float) -> tuple[float, ...]:
         two_pi = 2.0 * math.pi
         return tuple(
-            c + a * math.sin(two_pi * f * t + p)
-            for c, a, f, p in zip(
-                self._center, self._amplitude, self._frequency, self._phase, strict=True
+            c + a * math.sin(two_pi * f * t + p - po)
+            for c, a, f, p, po in zip(
+                self._center,
+                self._amplitude,
+                self._frequency,
+                self._phase,
+                self._phase_offset,
+                strict=True,
             )
         )
 

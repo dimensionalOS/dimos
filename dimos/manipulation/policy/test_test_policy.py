@@ -179,6 +179,27 @@ def test_first_sample_after_reset_equals_post_reset_observation_pose():
     assert cmd.positions[0] == pytest.approx(0.85, abs=1e-3)
 
 
+def test_wave_oscillates_symmetrically_around_captured_pose():
+    """Regression for the "extreme motion" failure: without the captured
+    `phase_offset`, the wave would start at the captured pose (good) but
+    then sweep a full `2·amplitude` to one side as it walked through the
+    configured phase (bad — joint with phase=π/2 oscillates entirely
+    below the captured pose, not symmetrically around it).
+    """
+    # `phase=π/2` is the worst case: sin(phase)=1, so the un-shifted
+    # formula would emit `center + amp` at t=0 and `center - amp` at the
+    # opposite extreme — a peak-to-trough swing of `2·amp` ENTIRELY below
+    # `pose`. With the phase-offset capture, the swing is centered on pose.
+    policy = TestPolicy(joint_names=["j"], amplitude=0.5, frequency=1.0, phase=math.pi / 2)
+    policy.select_action(_obs(["j"], [1.0]))  # capture pose = 1.0
+
+    # Sample across a full period at fine resolution and confirm the
+    # extremes are at pose±amp, not pose and pose-2·amp.
+    samples = [policy.sample_at(t)["j"] for t in [i * 0.01 for i in range(101)]]
+    assert max(samples) == pytest.approx(1.0 + 0.5, abs=1e-3)
+    assert min(samples) == pytest.approx(1.0 - 0.5, abs=1e-3)
+
+
 def test_center_capture_falls_back_when_joint_missing_from_state():
     """Observation present but missing one of the configured joints →
     stay dirty, emit zero for that joint (rather than raise)."""

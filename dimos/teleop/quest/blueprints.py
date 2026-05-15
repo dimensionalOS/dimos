@@ -250,8 +250,12 @@ teleop_quest_piper_policy = (
 # Useful for verifying the full pipeline (teleop preempt, rollout toggle,
 # camera plumbing, coordinator arbitration) without loading a model or
 # requiring lerobot/torch. The sinusoid auto-captures the live joint pose
-# on each reset so engage/disengage handoff stays jump-free; staggered
-# phases produce a visible wave across the 6 arm joints.
+# AND its configured phase on each reset, so the wave starts at the live
+# pose (jump-free) and then oscillates symmetrically in
+# `[pose - amplitude, pose + amplitude]` rather than sweeping the full
+# `2·amplitude` to one side. Per-joint phase configuration only seeds the
+# initial swing direction at module construction; after the first reset
+# all joints are phase-aligned.
 teleop_quest_piper_policy_test = (
     autoconnect(
         *_PIPER_POLICY_SHARED_ATOMS,
