@@ -410,6 +410,12 @@ int main(int argc, char** argv) {
     int frame_id = 0;
     const int timer_period_ms = 30;
     std::map<int, CachedWorldCloud> world_cloud_cache;
+    // Negative ids identify non-keyframe scans whose local grid we still
+    // integrate into the OctoMap, so dynamic changes (hole in the floor,
+    // moved object) propagate on every frame, not only on keyframes.
+    int transient_grid_id = 0;
+    std::map<int, rtabmap::Transform> transient_grid_poses;
+    constexpr int kTransientGridLimit = 30;
 
     while (g_running.load()) {
         // Block waiting for at least one LCM event (or shutdown). When a scan
@@ -450,40 +456,69 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Push the just-processed keyframe's local grid into the OctoMap cache
-        // — but only when rtabmap admitted the frame as a new keyframe.
-        const rtabmap::Signature* sig =
-            processed && rtab.getMemory() ? rtab.getMemory()->getLastWorkingSignature() : nullptr;
-        if (sig) {
-            // Compute the local occupancy grid ourselves. In lidar-only
-            // mode rtabmap doesn't populate gridGround/Obstacle/EmptyCells
-            // on the signature automatically — LocalGridMaker is the seam.
-            // The (LaserScan, pose) overload uses the scan we just sent,
-            // bypassing any signature-side scan stripping done by rtabmap's
-            // memory manager.
-            cv::Mat ground, obstacles, empty;
-            cv::Point3f view_point(0, 0, 0);
-            grid_maker.createLocalMap(
-                laser_scan, frame.odom_pose, ground, obstacles, empty, view_point);
-            if (!ground.empty() || !obstacles.empty() || !empty.empty()) {
-                grid_cache.add(
-                    sig->id(), ground, obstacles, empty,
-                    grid_maker.getCellSize(), view_point);
+        // Compute and integrate a local occupancy grid for EVERY scan
+        // (not gated on keyframe admission), so dynamic obstacle changes
+        // — a hole opening up in the floor, an object that wasn't there
+        // last pass — show up via OctoMap's log-odds raycasting clearing.
+        // Keyframes get rtabmap's own signature id (so loop-closure
+        // optimization shifts them); non-keyframe scans get a private,
+        // monotonically-decreasing negative id and a transient pose.
+        cv::Mat ground, obstacles, empty;
+        cv::Point3f view_point(0, 0, 0);
+        grid_maker.createLocalMap(
+            laser_scan, frame.odom_pose, ground, obstacles, empty, view_point);
+
+        int local_grid_id = 0;
+        rtabmap::Transform local_grid_pose;
+        bool added_to_cache = false;
+        if (!ground.empty() || !obstacles.empty() || !empty.empty()) {
+            const rtabmap::Signature* sig =
+                processed && rtab.getMemory()
+                    ? rtab.getMemory()->getLastWorkingSignature()
+                    : nullptr;
+            if (sig) {
+                local_grid_id = sig->id();
+                local_grid_pose = frame.odom_pose;
+            } else {
+                local_grid_id = --transient_grid_id;
+                local_grid_pose = rtab.getMapCorrection() * frame.odom_pose;
+                transient_grid_poses[local_grid_id] = local_grid_pose;
+                // FIFO-evict older transient grids so the cache doesn't
+                // grow unboundedly across the session.
+                while (
+                    static_cast<int>(transient_grid_poses.size())
+                    > kTransientGridLimit) {
+                    int oldest = transient_grid_poses.begin()->first;
+                    transient_grid_poses.erase(transient_grid_poses.begin());
+                }
             }
-            if (debug) {
-                fprintf(stderr,
-                        "[rtab DEBUG]   sig #%d localmap g=%d o=%d e=%d cellSize=%.3f cache=%zu\n",
-                        sig->id(), ground.cols, obstacles.cols, empty.cols,
-                        grid_maker.getCellSize(), grid_cache.size());
-            }
+            grid_cache.add(
+                local_grid_id, ground, obstacles, empty,
+                grid_maker.getCellSize(), view_point);
+            added_to_cache = true;
+        }
+        if (debug && added_to_cache) {
+            fprintf(stderr,
+                    "[rtab DEBUG]   localmap id=%d kf=%d g=%d o=%d e=%d cellSize=%.3f cache=%zu transient=%zu\n",
+                    local_grid_id, processed ? 1 : 0,
+                    ground.cols, obstacles.cols, empty.cols,
+                    grid_maker.getCellSize(),
+                    grid_cache.size(), transient_grid_poses.size());
         }
 
-        // Update OctoMap against current optimized poses (only on keyframes
-        // — new poses can't appear without one).
+        // Update OctoMap against the current optimized poses + our
+        // transient (non-keyframe) poses. The OctoMap's log-odds
+        // accumulation gives us dynamic-obstacle behavior across passes:
+        // a voxel that the latest scan rays through gets cleared even if
+        // an earlier scan marked it occupied.
         const std::map<int, rtabmap::Transform>& opt_poses =
             rtab.getLocalOptimizedPoses();
-        if (processed && !opt_poses.empty()) {
-            octomap.update(opt_poses);
+        if (!opt_poses.empty() || !transient_grid_poses.empty()) {
+            std::map<int, rtabmap::Transform> combined_poses(opt_poses);
+            for (const auto& kv : transient_grid_poses) {
+                combined_poses.insert(kv);
+            }
+            octomap.update(combined_poses);
         }
 
         // Publish corrected odometry and map->odom correction every frame.
