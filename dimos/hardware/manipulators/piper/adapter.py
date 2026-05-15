@@ -42,9 +42,14 @@ MM_TO_M = 0.001  # mm -> meters
 
 # Hardware specs
 GRIPPER_MAX_OPENING_M = 0.08  # Max gripper opening in meters
+GRIPPER_STROKE_UNITS_PER_M = 1_000_000  # SDK stroke units are 0.001 mm
 
 # Default configurable parameters
 DEFAULT_GRIPPER_SPEED = 1000
+PIPER_SHUTDOWN_JOINT_TOLERANCE_RAD = 0.03
+PIPER_SHUTDOWN_POLL_INTERVAL_S = 0.05
+PIPER_SHUTDOWN_SPEED_RATE = 30
+PIPER_SHUTDOWN_TIMEOUT_S = 5.0
 
 
 class PiperAdapter(ManipulatorAdapter):
@@ -74,6 +79,7 @@ class PiperAdapter(ManipulatorAdapter):
         self._connected: bool = False
         self._enabled: bool = False
         self._control_mode: ControlMode = ControlMode.POSITION
+        self._gripper_initialized: bool = False
 
     def connect(self) -> bool:
         """Connect to Piper via CAN bus."""
@@ -115,14 +121,59 @@ class PiperAdapter(ManipulatorAdapter):
         if self._sdk:
             try:
                 if self._enabled:
-                    self._sdk.DisablePiper()
-                    self._enabled = False
-                self._sdk.DisconnectPort()
-            except Exception:
-                pass
+                    self._move_to_zero_position()
+                    self._deactivate_gripper()
+                    try:
+                        self._sdk.DisablePiper()
+                    finally:
+                        self._enabled = False
             finally:
+                try:
+                    self._sdk.DisconnectPort()
+                except Exception:
+                    pass
                 self._sdk = None
                 self._connected = False
+                self._gripper_initialized = False
+
+    def _deactivate_gripper(self) -> None:
+        """Disable gripper and clear errors prior to arm shutdown."""
+        if not self._sdk or not hasattr(self._sdk, "GripperCtrl"):
+            return
+        try:
+            # SDK status code 0x02: disable and clear errors.
+            self._sdk.GripperCtrl(0, self._gripper_speed, 0x02, 0)
+        except Exception:
+            pass
+        self._gripper_initialized = False
+
+    def _move_to_zero_position(self) -> None:
+        """Move arm joints to zero before normal shutdown."""
+        if not self._sdk:
+            return
+
+        try:
+            self._sdk.MotionCtrl_2(
+                ctrl_mode=0x01,
+                move_mode=0x01,
+                move_spd_rate_ctrl=PIPER_SHUTDOWN_SPEED_RATE,
+                is_mit_mode=0x00,
+            )
+            self._sdk.JointCtrl(0, 0, 0, 0, 0, 0)
+        except Exception:
+            return
+
+        deadline = time.monotonic() + PIPER_SHUTDOWN_TIMEOUT_S
+        while time.monotonic() < deadline:
+            try:
+                positions = self.read_joint_positions()
+            except Exception:
+                return
+
+            if all(abs(position) <= PIPER_SHUTDOWN_JOINT_TOLERANCE_RAD for position in positions):
+                return
+
+            time.sleep(PIPER_SHUTDOWN_POLL_INTERVAL_S)
 
     def is_connected(self) -> bool:
         """Check if connected to Piper."""
@@ -376,8 +427,10 @@ class PiperAdapter(ManipulatorAdapter):
                     return True
                 return False
             else:
+                self._deactivate_gripper()
                 self._sdk.DisablePiper()
                 self._enabled = False
+                self._gripper_initialized = False
                 return True
         except Exception:
             return False
@@ -443,7 +496,7 @@ class PiperAdapter(ManipulatorAdapter):
         return False
 
     def read_gripper_position(self) -> float | None:
-        """Read gripper position (percentage -> meters)."""
+        """Read gripper position (0.001 mm units -> meters)."""
         if not self._sdk:
             return None
 
@@ -451,25 +504,33 @@ class PiperAdapter(ManipulatorAdapter):
             if hasattr(self._sdk, "GetArmGripperMsgs"):
                 gripper_msgs = self._sdk.GetArmGripperMsgs()
                 if gripper_msgs and gripper_msgs.gripper_state:
-                    # Piper gripper position is 0-100 percentage
-                    pos: float = gripper_msgs.gripper_state.grippers_angle
-                    return (pos / 100.0) * GRIPPER_MAX_OPENING_M
+                    # SDK reports stroke in 0.001 mm units.
+                    pos_units: float = gripper_msgs.gripper_state.grippers_angle
+                    pos_m = pos_units / GRIPPER_STROKE_UNITS_PER_M
+                    return max(0.0, min(pos_m, GRIPPER_MAX_OPENING_M))
         except Exception:
             pass
 
         return None
 
     def write_gripper_position(self, position: float) -> bool:
-        """Write gripper position (meters -> percentage)."""
+        """Write gripper position (meters -> 0.001 mm units)."""
         if not self._sdk:
             return False
 
         try:
             if hasattr(self._sdk, "GripperCtrl"):
-                # Convert meters to percentage (0-100)
-                percentage = int((position / GRIPPER_MAX_OPENING_M) * 100)
-                percentage = max(0, min(100, percentage))
-                self._sdk.GripperCtrl(percentage, self._gripper_speed, 0x01, 0)
+                if not self._gripper_initialized:
+                    # Follow SDK demo init sequence after enable:
+                    # GripperCtrl(..., 0x02, 0) then GripperCtrl(..., 0x01, 0).
+                    self._sdk.GripperCtrl(0, self._gripper_speed, 0x02, 0)
+                    self._sdk.GripperCtrl(0, self._gripper_speed, 0x01, 0)
+                    self._gripper_initialized = True
+
+                # Convert meters to SDK stroke units (0.001 mm).
+                clamped_m = max(0.0, min(position, GRIPPER_MAX_OPENING_M))
+                stroke_units = round(clamped_m * GRIPPER_STROKE_UNITS_PER_M)
+                self._sdk.GripperCtrl(stroke_units, self._gripper_speed, 0x01, 0)
                 return True
         except Exception:
             pass

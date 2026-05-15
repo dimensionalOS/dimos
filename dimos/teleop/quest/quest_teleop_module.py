@@ -116,7 +116,10 @@ class QuestTeleopModule(Module):
         self._stop_event = threading.Event()
 
         # Embedded web server — RobotWebInterface provides FastAPI app + run()/shutdown()
-        self._web_server = RobotWebInterface(port=self.config.server_port)
+        self._web_server = RobotWebInterface(
+            host=self.config.g.listen_host,
+            port=self.config.server_port,
+        )
         self._web_server_thread: threading.Thread | None = None
 
         # Fingerprint-based message dispatch table
@@ -246,7 +249,9 @@ class QuestTeleopModule(Module):
             name="QuestTeleopWebServer",
         )
         self._web_server_thread.start()
-        logger.info(f"Quest teleop web server started on https://0.0.0.0:{self.config.server_port}")
+        logger.info(
+            f"Quest teleop web server started on https://{self._web_server.host}:{self.config.server_port}"
+        )
 
     def _stop_server(self) -> None:
         """Shutdown the embedded web server."""

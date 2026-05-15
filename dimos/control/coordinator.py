@@ -68,6 +68,20 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+CARTESIAN_TARGET_TASK_TYPES = (
+    "cartesian_ik",
+    "teleop_ik",
+    "single_arm_pink_ik",
+    "piper_pink_ik",
+    "xarm7_pink_ik",
+)
+TELEOP_BUTTON_TASK_TYPES = (
+    "teleop_ik",
+    "single_arm_pink_ik",
+    "piper_pink_ik",
+    "xarm7_pink_ik",
+)
+
 
 @dataclass
 class TaskConfig:
@@ -75,7 +89,7 @@ class TaskConfig:
 
     Attributes:
         name: Task name (e.g., "traj_arm")
-        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik", "teleop_ik")
+        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik", "teleop_ik", "single_arm_pink_ik", "piper_pink_ik", "xarm7_pink_ik")
         joint_names: List of joint names this task controls
         priority: Task priority (higher wins arbitration)
         model_path: Path to URDF/MJCF for IK solver (cartesian_ik/teleop_ik only)
@@ -84,6 +98,9 @@ class TaskConfig:
         gripper_joint: Joint name for gripper virtual joint
         gripper_open_pos: Gripper position at trigger 0.0
         gripper_closed_pos: Gripper position at trigger 1.0
+        max_joint_delta_deg: Maximum allowed per-tick IK joint delta in degrees
+        timeout: Teleop target timeout in seconds
+        end_effector_frame: Pinocchio frame name for Pink single-arm IK
     """
 
     name: str
@@ -98,6 +115,10 @@ class TaskConfig:
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
+    max_joint_delta_deg: float = 5.0
+    timeout: float = 0.5
+    # Pink IK specific route/model selection. Cost defaults live on concrete task configs.
+    end_effector_frame: str | None = None
 
 
 class ControlCoordinatorConfig(ModuleConfig):
@@ -152,6 +173,9 @@ class ControlCoordinator(Module):
 
     # Output: Aggregated joint state for external consumers
     joint_state: Out[JointState]
+
+    # Output: Post-arbitration desired joint action for data collection
+    desired_joint_action: Out[JointState]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -359,6 +383,91 @@ class ControlCoordinator(Module):
                 ),
             )
 
+        elif task_type in ("single_arm_pink_ik", "piper_pink_ik", "xarm7_pink_ik"):
+            from dimos.control.tasks.pink_teleop_task import (
+                PiperPinkIKTask,
+                PiperPinkIKTaskConfig,
+                SingleArmPinkIKTask,
+                SingleArmPinkIKTaskConfig,
+                XArm7IKTask,
+                XArm7IKTaskConfig,
+            )
+
+            def _single_arm_builder(config: TaskConfig) -> ControlTask:
+                if config.model_path is None:
+                    raise ValueError(
+                        f"SingleArmPinkIKTask '{config.name}' requires model_path in TaskConfig"
+                    )
+                if not config.end_effector_frame:
+                    raise ValueError(
+                        f"SingleArmPinkIKTask '{config.name}' requires end_effector_frame in TaskConfig"
+                    )
+                return SingleArmPinkIKTask(
+                    config.name,
+                    SingleArmPinkIKTaskConfig(
+                        joint_names=config.joint_names,
+                        model_path=config.model_path,
+                        end_effector_frame=config.end_effector_frame,
+                        priority=config.priority,
+                        timeout=config.timeout,
+                        max_joint_delta_deg=config.max_joint_delta_deg,
+                        hand=config.hand,
+                        gripper_joint=config.gripper_joint,
+                        gripper_open_pos=config.gripper_open_pos,
+                        gripper_closed_pos=config.gripper_closed_pos,
+                    ),
+                )
+
+            def _piper_builder(config: TaskConfig) -> ControlTask:
+                model_path = config.model_path
+                if model_path is None:
+                    from dimos.robot.catalog.piper import PIPER_FK_MODEL
+
+                    model_path = PIPER_FK_MODEL
+                return PiperPinkIKTask(
+                    config.name,
+                    PiperPinkIKTaskConfig(
+                        joint_names=config.joint_names,
+                        model_path=model_path,
+                        priority=config.priority,
+                        timeout=config.timeout,
+                        max_joint_delta_deg=config.max_joint_delta_deg,
+                        hand=config.hand,
+                        gripper_joint=config.gripper_joint,
+                        gripper_open_pos=config.gripper_open_pos,
+                        gripper_closed_pos=config.gripper_closed_pos,
+                    ),
+                )
+
+            def _xarm7_builder(config: TaskConfig) -> ControlTask:
+                model_path = config.model_path
+                if model_path is None:
+                    from dimos.robot.catalog.ufactory import XARM7_FK_MODEL
+
+                    model_path = XARM7_FK_MODEL
+                return XArm7IKTask(
+                    config.name,
+                    XArm7IKTaskConfig(
+                        joint_names=config.joint_names,
+                        model_path=model_path,
+                        priority=config.priority,
+                        timeout=config.timeout,
+                        max_joint_delta_deg=config.max_joint_delta_deg,
+                        hand=config.hand,
+                        gripper_joint=config.gripper_joint,
+                        gripper_open_pos=config.gripper_open_pos,
+                        gripper_closed_pos=config.gripper_closed_pos,
+                    ),
+                )
+
+            pink_task_registry: dict[str, Any] = {
+                "single_arm_pink_ik": _single_arm_builder,
+                "piper_pink_ik": _piper_builder,
+                "xarm7_pink_ik": _xarm7_builder,
+            }
+
+            return pink_task_registry[task_type](cfg)
+
         else:
             raise ValueError(f"Unknown task type: {task_type}")
 
@@ -560,11 +669,18 @@ class ControlCoordinator(Module):
 
         with self._task_lock:
             task = self._tasks.get(task_name)
-            if task is None:
-                logger.warning(f"Cartesian command for unknown task: {task_name}")
+            if task is not None:
+                task.on_cartesian_command(msg, t_now)
+                logger.debug(f"Routed cartesian command to task: {task_name}")
                 return
 
-            task.on_cartesian_command(msg, t_now)
+            for task in self._tasks.values():
+                target_names = getattr(task, "target_task_names", ())
+                if task_name in target_names and task.on_cartesian_command(msg, t_now):
+                    logger.debug(f"Routed cartesian command to task target: {task_name}")
+                    return
+
+            logger.warning(f"Cartesian command for unknown task: {task_name}")
 
     def _on_twist_command(self, msg: Twist) -> None:
         """Convert Twist → virtual joint velocities and route via _on_joint_command.
@@ -679,6 +795,7 @@ class ControlCoordinator(Module):
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
+            desired_action_callback=self.desired_joint_action.publish,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,
         )
@@ -697,17 +814,16 @@ class ControlCoordinator(Module):
                     "Use task_invoke RPC or set transport via blueprint."
                 )
 
-        # Subscribe to cartesian commands if any cartesian_ik tasks configured
-        has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
-        if has_cartesian_ik:
+        # Subscribe to cartesian commands if any cartesian target tasks configured
+        if self._has_cartesian_target_task():
             try:
                 self._cartesian_command_unsub = self.cartesian_command.subscribe(
                     self._on_cartesian_command
                 )
-                logger.info("Subscribed to cartesian_command for CartesianIK/TeleopIK tasks")
+                logger.info("Subscribed to cartesian_command for cartesian target tasks")
             except Exception:
                 logger.warning(
-                    "CartesianIK/TeleopIK tasks configured but could not subscribe to cartesian_command. "
+                    "Cartesian target tasks configured but could not subscribe to cartesian_command. "
                     "Use task_invoke RPC or set transport via blueprint."
                 )
 
@@ -723,13 +839,18 @@ class ControlCoordinator(Module):
                     "Use task_invoke RPC or set transport via blueprint."
                 )
 
-        # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
-        has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
-        if has_teleop_ik:
+        # Subscribe to buttons if any teleop tasks configured (engage/disengage)
+        if self._has_teleop_task():
             self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
             logger.info("Subscribed to buttons for engage/disengage")
 
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
+
+    def _has_cartesian_target_task(self) -> bool:
+        return any(t.type in CARTESIAN_TARGET_TASK_TYPES for t in self.config.tasks)
+
+    def _has_teleop_task(self) -> bool:
+        return any(t.type in TELEOP_BUTTON_TASK_TYPES for t in self.config.tasks)
 
     @rpc
     def stop(self) -> None:

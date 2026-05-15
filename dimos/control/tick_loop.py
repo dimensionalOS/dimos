@@ -39,6 +39,7 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
+from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
@@ -47,7 +48,6 @@ if TYPE_CHECKING:
 
     from dimos.control.components import HardwareId, JointName, TaskName
     from dimos.control.hardware_interface import ConnectedHardware
-    from dimos.hardware.manipulators.spec import ControlMode
 
 logger = setup_logger()
 
@@ -80,7 +80,8 @@ class TickLoop:
         tasks: Dict of task_name -> ControlTask
         task_lock: Lock protecting tasks dict
         joint_to_hardware: Dict mapping joint_name -> hardware_id
-        publish_callback: Optional callback to publish JointState
+        publish_callback: Optional callback to publish measured JointState
+        desired_action_callback: Optional callback to publish desired joint action JointState
         frame_id: Frame ID for published JointState
         log_ticks: Whether to log tick information
     """
@@ -94,6 +95,7 @@ class TickLoop:
         task_lock: threading.Lock,
         joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
+        desired_action_callback: Callable[[JointState], None] | None = None,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
     ) -> None:
@@ -104,6 +106,7 @@ class TickLoop:
         self._task_lock = task_lock
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
+        self._desired_action_callback = desired_action_callback
         self._frame_id = frame_id
         self._log_ticks = log_ticks
 
@@ -179,6 +182,9 @@ class TickLoop:
         commands = self._compute_all_tasks(state)
 
         joint_commands, preemptions = self._arbitrate(commands)
+
+        if self._desired_action_callback:
+            self._publish_desired_joint_action(joint_commands)
 
         self._notify_preemptions(preemptions)
 
@@ -389,6 +395,37 @@ class TickLoop:
         )
         if self._publish_callback:
             self._publish_callback(msg)
+
+    def _publish_desired_joint_action(
+        self,
+        joint_commands: dict[str, tuple[float, ControlMode, str]],
+    ) -> None:
+        """Publish post-arbitration joint commands for data collection."""
+        names = list(joint_commands.keys())
+        position: list[float] = []
+        velocity: list[float] = []
+        effort: list[float] = []
+
+        for name in names:
+            value, mode, _ = joint_commands[name]
+            match mode:
+                case ControlMode.POSITION | ControlMode.SERVO_POSITION:
+                    position.append(value)
+                case ControlMode.VELOCITY:
+                    velocity.append(value)
+                case ControlMode.TORQUE:
+                    effort.append(value)
+
+        msg = JointState(
+            ts=time.time(),
+            frame_id=f"{self._frame_id}/desired_action",
+            name=names,
+            position=position,
+            velocity=velocity,
+            effort=effort,
+        )
+        if self._desired_action_callback:
+            self._desired_action_callback(msg)
 
 
 __all__ = ["TickLoop"]

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.robot.all_blueprints import all_modules
 from dimos.robot.get_all_blueprints import get_by_name
 
 
@@ -32,3 +33,7 @@ def test_resolve_string_module():
 def test_resolve_unknown_name():
     with pytest.raises(ValueError, match="Unknown blueprint or module"):
         get_by_name("nonexistent-blueprint-xyz")
+
+
+def test_viser_simulator_module_is_not_registered():
+    assert "viser-urdf-sim-module" not in all_modules

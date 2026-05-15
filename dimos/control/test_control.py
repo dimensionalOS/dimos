@@ -464,6 +464,62 @@ class TestTickLoop:
 
         assert mock_task.compute.call_count > 0
 
+    def test_tick_loop_publishes_desired_action_after_arbitration(self, mock_adapter):
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+        )
+        hw = ConnectedHardware(mock_adapter, component)
+        hardware = {"arm": hw}
+
+        low_task = MagicMock()
+        low_task.name = "low_task"
+        low_task.is_active.return_value = True
+        low_task.claim.return_value = ResourceClaim(
+            joints=frozenset({"arm/joint1"}),
+            priority=10,
+        )
+        low_task.compute.return_value = JointCommandOutput(
+            joint_names=["arm/joint1"],
+            positions=[0.25],
+            mode=ControlMode.POSITION,
+        )
+
+        high_task = MagicMock()
+        high_task.name = "high_task"
+        high_task.is_active.return_value = True
+        high_task.claim.return_value = ResourceClaim(
+            joints=frozenset({"arm/joint1"}),
+            priority=100,
+        )
+        high_task.compute.return_value = JointCommandOutput(
+            joint_names=["arm/joint1"],
+            positions=[0.5],
+            mode=ControlMode.POSITION,
+        )
+
+        measured_states = []
+        desired_actions = []
+        tick_loop = TickLoop(
+            tick_rate=100.0,
+            hardware=hardware,
+            hardware_lock=threading.Lock(),
+            tasks={"low_task": low_task, "high_task": high_task},
+            task_lock=threading.Lock(),
+            joint_to_hardware={f"arm/joint{i + 1}": "arm" for i in range(6)},
+            publish_callback=measured_states.append,
+            desired_action_callback=desired_actions.append,
+        )
+
+        tick_loop._tick()
+
+        assert measured_states[0].name == [f"arm/joint{i + 1}" for i in range(6)]
+        assert measured_states[0].position == [0.0] * 6
+        assert desired_actions[0].name == ["arm/joint1"]
+        assert desired_actions[0].position == [0.5]
+        assert desired_actions[0].frame_id == "coordinator/desired_action"
+
 
 class TestIntegration:
     def test_full_trajectory_execution(self, mock_adapter):

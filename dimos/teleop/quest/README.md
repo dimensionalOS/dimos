@@ -13,7 +13,9 @@ Quest Browser  ──WebSocket──→  Embedded HTTPS Server  ──→  Quest
 
 ```bash
 dimos run teleop-quest-rerun    # Quest teleop + Rerun viz
-dimos run teleop-quest-xarm7   # XArm7
+dimos --listen-host 0.0.0.0 run teleop-quest-xarm7  # XArm7 mock hardware + Meshcat preview
+dimos --xarm7-ip <ip> run teleop-quest-xarm7        # XArm7 real hardware
+dimos --simulation run teleop-quest-xarm7           # XArm7 MuJoCo simulation
 dimos run teleop-quest-piper   # Piper
 dimos run teleop-quest-dual    # Dual arm
 ```

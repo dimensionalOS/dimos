@@ -155,10 +155,39 @@ def xarm6(
     return RobotConfig(**defaults)
 
 
+def xarm7_single_arm_pink_task_config(
+    cfg: RobotConfig,
+    *,
+    task_name: str = "teleop_xarm",
+    hand: str = "right",
+) -> Any:
+    """Build a catalog-backed single-arm Pink teleop task config for xArm7."""
+    gripper_joint: str | None = None
+    gripper_open_pos = 0.0
+    gripper_closed_pos = 0.0
+    if cfg.gripper and cfg.gripper.joints:
+        joint_prefix = cfg.joint_prefix if cfg.joint_prefix is not None else f"{cfg.name}/"
+        gripper_joint = f"{joint_prefix}{cfg.gripper.joints[0]}"
+        gripper_open_pos = cfg.gripper.open_position
+        gripper_closed_pos = cfg.gripper.close_position
+
+    return cfg.to_task_config(
+        task_type="single_arm_pink_ik",
+        task_name=task_name,
+        model_path=XARM7_FK_MODEL,
+        end_effector_frame="link7",
+        hand=hand,
+        gripper_joint=gripper_joint,
+        gripper_open_pos=gripper_open_pos,
+        gripper_closed_pos=gripper_closed_pos,
+    )
+
+
 __all__ = [
     "XARM6_FK_MODEL",
     "XARM7_FK_MODEL",
     "XARM_GRIPPER_COLLISION_EXCLUSIONS",
     "xarm6",
     "xarm7",
+    "xarm7_single_arm_pink_task_config",
 ]
