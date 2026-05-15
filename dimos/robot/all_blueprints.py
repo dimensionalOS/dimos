@@ -56,6 +56,7 @@ all_blueprints = {
     "drone-agentic": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic",
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
     "dual-xarm6-planner": "dimos.manipulation.blueprints:dual_xarm6_planner",
+    "g1-groot-wbc": "dimos.robot.unitree.g1.blueprints.basic.g1_groot_wbc:g1_groot_wbc",
     "keyboard-teleop-openarm": "dimos.robot.manipulators.openarm.blueprints:keyboard_teleop_openarm",
     "keyboard-teleop-openarm-mock": "dimos.robot.manipulators.openarm.blueprints:keyboard_teleop_openarm_mock",
     "keyboard-teleop-piper": "dimos.robot.manipulators.piper.blueprints:keyboard_teleop_piper",

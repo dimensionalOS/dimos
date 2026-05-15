@@ -18,10 +18,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+import xml.etree.ElementTree as ET
 
 import mujoco
 import mujoco.viewer as viewer  # type: ignore[import-untyped]
@@ -40,6 +42,7 @@ logger = setup_logger()
 
 # Step hook signature: called with the engine instance inside the sim thread.
 StepHook = Callable[["MujocoEngine"], None]
+_MUJOCO_FROM_BINARY_PATH = "from_binary_path"
 
 
 @dataclass
@@ -48,6 +51,7 @@ class CameraConfig:
     width: int = 640
     height: int = 480
     fps: float = 15.0
+    scene_option: mujoco.MjvOption | None = None
 
 
 @dataclass
@@ -84,6 +88,7 @@ class MujocoEngine(SimulationEngine):
         config_path: Path,
         headless: bool,
         cameras: list[CameraConfig] | None = None,
+        meshdir: str | Path | None = None,
         on_before_step: StepHook | None = None,
         on_after_step: StepHook | None = None,
     ) -> None:
@@ -92,7 +97,7 @@ class MujocoEngine(SimulationEngine):
         self._on_after_step: StepHook | None = on_after_step
 
         xml_path = self._resolve_xml_path(config_path)
-        self._model = mujoco.MjModel.from_xml_path(str(xml_path))
+        self._model = self._load_model(xml_path, meshdir=meshdir)
         self._xml_path = xml_path
 
         self._data = mujoco.MjData(self._model)
@@ -101,6 +106,16 @@ class MujocoEngine(SimulationEngine):
         self._num_joints = len(self._joint_names)
         timestep = float(self._model.opt.timestep)
         self._control_frequency = 1.0 / timestep if timestep > 0.0 else 100.0
+        self._root_free_qpos_adr: int | None = None
+        self._root_free_qvel_adr: int | None = None
+        self._root_kinematic_pose: tuple[float, float, float] | None = None
+        self._scene_body_ids = self._collect_body_ids("dimos_scene")
+        free_joint = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
+        for joint_id in range(self._model.njnt):
+            if self._model.jnt_type[joint_id] == free_joint:
+                self._root_free_qpos_adr = int(self._model.jnt_qposadr[joint_id])
+                self._root_free_qvel_adr = int(self._model.jnt_dofadr[joint_id])
+                break
 
         self._connected = False
         self._lock = threading.Lock()
@@ -131,8 +146,35 @@ class MujocoEngine(SimulationEngine):
         resolved = config_path.expanduser()
         xml_path = resolved / "scene.xml" if resolved.is_dir() else resolved
         if not xml_path.exists():
-            raise FileNotFoundError(f"MuJoCo XML not found: {xml_path}")
+            raise FileNotFoundError(f"MuJoCo model not found: {xml_path}")
         return xml_path
+
+    def _load_model(self, xml_path: Path, *, meshdir: str | Path | None) -> mujoco.MjModel:
+        if xml_path.suffix.lower() == ".mjb":
+            return self._load_binary_model(xml_path)
+
+        if meshdir is None:
+            return mujoco.MjModel.from_xml_path(str(xml_path))
+
+        root = ET.parse(xml_path).getroot()
+        compiler = root.find("compiler")
+        if compiler is None:
+            compiler = ET.Element("compiler")
+            root.insert(0, compiler)
+        compiler.set("meshdir", str(Path(meshdir).expanduser().resolve()))
+        for include in root.iter("include"):
+            include_file = include.get("file")
+            if include_file and not Path(include_file).is_absolute():
+                include.set("file", str((xml_path.parent / include_file).resolve()))
+        return mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
+
+    @staticmethod
+    def _load_binary_model(model_path: Path) -> mujoco.MjModel:
+        load_binary_model = cast(
+            "Callable[[str], mujoco.MjModel]",
+            getattr(mujoco.MjModel, _MUJOCO_FROM_BINARY_PATH),
+        )
+        return load_binary_model(str(model_path))
 
     def _current_position(self, mapping: JointMapping) -> float:
         if mapping.joint_id is not None and mapping.qpos_adr is not None:
@@ -145,6 +187,46 @@ class MujocoEngine(SimulationEngine):
         if mapping.actuator_id is not None:
             return float(self._data.actuator_length[mapping.actuator_id])
         return 0.0
+
+    def _collect_body_ids(self, root_name: str) -> set[int]:
+        root_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, root_name)
+        if root_id < 0:
+            return set()
+        body_ids = {root_id}
+        changed = True
+        while changed:
+            changed = False
+            for body_id in range(self._model.nbody):
+                parent_id = int(self._model.body_parentid[body_id])
+                if parent_id in body_ids and body_id not in body_ids:
+                    body_ids.add(body_id)
+                    changed = True
+        return body_ids
+
+    def _is_scene_geom(self, geom_id: int) -> bool:
+        if geom_id < 0 or not self._scene_body_ids:
+            return False
+        return int(self._model.geom_bodyid[geom_id]) in self._scene_body_ids
+
+    def _has_blocking_scene_contact(self) -> bool:
+        """Return true for non-floor contacts between robot and baked scene."""
+        if not self._scene_body_ids:
+            return False
+        for contact_idx in range(self._data.ncon):
+            contact = self._data.contact[contact_idx]
+            geom1 = int(contact.geom1)
+            geom2 = int(contact.geom2)
+            geom1_is_scene = self._is_scene_geom(geom1)
+            geom2_is_scene = self._is_scene_geom(geom2)
+            if geom1_is_scene == geom2_is_scene:
+                continue
+            if float(contact.dist) > 1e-4:
+                continue
+            normal = contact.frame[:3]
+            if abs(float(normal[2])) > 0.75:
+                continue
+            return True
+        return False
 
     def _apply_control(self) -> None:
         with self._lock:
@@ -250,10 +332,24 @@ class MujocoEngine(SimulationEngine):
                 continue
             state.last_render_time = now
 
-            state.rgb_renderer.update_scene(self._data, camera=state.cam_id)
+            if state.cfg.scene_option is None:
+                state.rgb_renderer.update_scene(self._data, camera=state.cam_id)
+            else:
+                state.rgb_renderer.update_scene(
+                    self._data,
+                    camera=state.cam_id,
+                    scene_option=state.cfg.scene_option,
+                )
             rgb = state.rgb_renderer.render().copy()
 
-            state.depth_renderer.update_scene(self._data, camera=state.cam_id)
+            if state.cfg.scene_option is None:
+                state.depth_renderer.update_scene(self._data, camera=state.cam_id)
+            else:
+                state.depth_renderer.update_scene(
+                    self._data,
+                    camera=state.cam_id,
+                    scene_option=state.cfg.scene_option,
+                )
             depth = state.depth_renderer.render().copy()
 
             frame = CameraFrame(
@@ -417,6 +513,107 @@ class MujocoEngine(SimulationEngine):
             for i, mapping in enumerate(self._joint_mappings):
                 self._joint_position_targets[i] = self._current_position(mapping)
 
+    def enforce_position_targets(self) -> None:
+        """Pin modeled joints to their current position targets.
+
+        This is a development stub for stacks that do not yet run a real
+        whole-body controller. It leaves the floating base alone, but prevents
+        contact impulses from folding the articulated joints.
+        """
+        with self._lock:
+            for i, mapping in enumerate(self._joint_mappings):
+                target = self._joint_position_targets[i]
+                if mapping.qpos_adr is not None:
+                    self._data.qpos[mapping.qpos_adr] = target
+                    self._joint_positions[i] = target
+                if mapping.dof_adr is not None:
+                    self._data.qvel[mapping.dof_adr] = 0.0
+                    self._joint_velocities[i] = 0.0
+            mujoco.mj_forward(self._model, self._data)
+
+    @property
+    def has_root_freejoint(self) -> bool:
+        return self._root_free_qpos_adr is not None
+
+    def apply_root_twist(
+        self,
+        linear_x: float,
+        linear_y: float,
+        angular_z: float,
+        *,
+        fixed_z: float | None = None,
+    ) -> bool:
+        """Integrate planar velocity onto the first freejoint root.
+
+        The root is treated as kinematic once this method is used: we
+        maintain an internal desired x/y/yaw and write it back every tick.
+        That prevents contact impulses or gravity settling from slowly
+        walking the floating base when the commanded twist is zero.
+        """
+        qpos_adr = self._root_free_qpos_adr
+        if qpos_adr is None:
+            return False
+
+        dt = 1.0 / self._control_frequency
+        with self._lock:
+            qpos = self._data.qpos
+            if self._root_kinematic_pose is None:
+                qw, qx, qy, qz = qpos[qpos_adr + 3 : qpos_adr + 7]
+                yaw = math.atan2(
+                    2.0 * (qw * qz + qx * qy),
+                    1.0 - 2.0 * (qy * qy + qz * qz),
+                )
+                self._root_kinematic_pose = (
+                    float(qpos[qpos_adr]),
+                    float(qpos[qpos_adr + 1]),
+                    yaw,
+                )
+
+            old_x, old_y, old_yaw = self._root_kinematic_pose
+            new_x = old_x + (math.cos(old_yaw) * linear_x - math.sin(old_yaw) * linear_y) * dt
+            new_y = old_y + (math.sin(old_yaw) * linear_x + math.cos(old_yaw) * linear_y) * dt
+            new_yaw = old_yaw + angular_z * dt
+
+            qpos[qpos_adr] = new_x
+            qpos[qpos_adr + 1] = new_y
+            if fixed_z is not None:
+                qpos[qpos_adr + 2] = fixed_z
+
+            qpos[qpos_adr + 3 : qpos_adr + 7] = [
+                math.cos(new_yaw * 0.5),
+                0.0,
+                0.0,
+                math.sin(new_yaw * 0.5),
+            ]
+            mujoco.mj_forward(self._model, self._data)
+
+            if self._has_blocking_scene_contact():
+                qpos[qpos_adr] = old_x
+                qpos[qpos_adr + 1] = old_y
+                qpos[qpos_adr + 3 : qpos_adr + 7] = [
+                    math.cos(old_yaw * 0.5),
+                    0.0,
+                    0.0,
+                    math.sin(old_yaw * 0.5),
+                ]
+                mujoco.mj_forward(self._model, self._data)
+            else:
+                self._root_kinematic_pose = (new_x, new_y, new_yaw)
+
+            qvel_adr = self._root_free_qvel_adr
+            if qvel_adr is not None:
+                self._data.qvel[qvel_adr : qvel_adr + 6] = 0.0
+        return True
+
+    def get_root_pose(self) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
+        qpos_adr = self._root_free_qpos_adr
+        if qpos_adr is None:
+            return None
+        with self._lock:
+            position = self._data.qpos[qpos_adr : qpos_adr + 3].copy()
+            qw, qx, qy, qz = self._data.qpos[qpos_adr + 3 : qpos_adr + 7].copy()
+        return position, np.array([qx, qy, qz, qw], dtype=np.float64)
+
     def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:
         mapping = self._joint_mappings[joint_index]
         if mapping.actuator_id is None:
@@ -456,6 +653,15 @@ class MujocoEngine(SimulationEngine):
         if cam_id < 0:
             return None
         return float(self._model.cam_fovy[cam_id])
+
+    def get_camera_pose(
+        self, camera_name: str
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
+        """Get a named camera's latest world pose from MuJoCo data."""
+        cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+        if cam_id < 0:
+            return None
+        return self._data.cam_xpos[cam_id].copy(), self._data.cam_xmat[cam_id].copy()
 
 
 __all__ = [

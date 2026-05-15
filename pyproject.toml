@@ -176,6 +176,7 @@ agents = [
 
 web = [
     "fastapi>=0.115.6",
+    "python-socketio>=5.11.0,<6",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
     "jinja2>=3.1.6",
@@ -253,6 +254,10 @@ sim = [
     "mujoco>=3.3.4",
     "playground>=0.0.5",
     "pygame>=2.6.1",
+    "trimesh",
+    "usd-core>=24.0",
+    "vhacdx",
+    "coacd>=1.0.11", # CoACD decomposer for scene_mesh_to_mjcf bake
 ]
 
 navigation = [
