@@ -72,6 +72,15 @@ _TALL_OBJECT_MIN_HEIGHT = 0.06
 class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     """Configuration for PickAndPlaceModule (adds GraspGen settings)."""
 
+    # When True, each detection published on the `objects` port is promoted
+    # into the Drake planning world (visible in Meshcat, used by the planner)
+    # via refresh_obstacles() — the same call xArm7 makes through scan_objects,
+    # just driven by the publish instead of a scan cycle. Default False so
+    # xArm7/OSR (high-frequency publishes) keeps its explicit scan→refresh
+    # workflow and is unaffected. Enable only on the memory2-native xArm6 path
+    # where find_objects publishes at low (agent-call) frequency.
+    auto_refresh_obstacles: bool = False
+
     # GraspGen Docker settings
     graspgen_docker_image: str = "dimos-graspgen:latest"
     graspgen_gripper_type: str = "robotiq_2f_140"
@@ -150,6 +159,12 @@ class PickAndPlaceModule(ManipulationModule):
             self._detection_snapshot = list(objects)
             if self._world_monitor is not None:
                 self._world_monitor.on_objects(objects)
+                # Promote into the Drake world so detections show in Meshcat and
+                # the planner treats them as collision geometry. refresh_obstacles
+                # is a full sync (remove-all-then-re-add-from-cache) — no
+                # accumulation. Opt-in: xArm6 (low agent-call publish rate) only.
+                if self.config.auto_refresh_obstacles:
+                    self._world_monitor.refresh_obstacles()
         except Exception as e:
             logger.error(f"Exception in _on_objects: {e}")
 

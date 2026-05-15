@@ -395,6 +395,9 @@ xarm6_perception = (
             planning_timeout=10.0,
             enable_viz=True,
             floor_z=0.11,  # measured desk surface height (robot base frame, m)
+            # Show find_objects detections in Meshcat + give the planner their
+            # geometry (same refresh_obstacles() path xArm7 uses, agent-call rate).
+            auto_refresh_obstacles=True,
         ),
         RealSenseCamera.blueprint(
             base_frame_id="link6",
