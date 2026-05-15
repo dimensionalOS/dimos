@@ -102,12 +102,9 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         super().stop()
 
     def _on_stop_movement(self, msg: Bool) -> None:
-        if not msg.data:
-            return
-        if self._planner.get_state() == "idle":
-            return
-        logger.info("ReplanningAStarPlanner: stop_movement received, cancelling goal")
-        self.cancel_goal()
+        if msg.data:
+            logger.info("ReplanningAStarPlanner: stop_movement received, cancelling goal")
+            self.cancel_goal()
 
     @rpc
     def set_goal(self, goal: PoseStamped) -> bool:
