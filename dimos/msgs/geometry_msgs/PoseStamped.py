@@ -86,16 +86,19 @@ class PoseStamped(Pose, Timestamped):
         """Render the pose for an LLM agent.
 
         Returns a flat dict with ``frame_id``, ``x``, ``y``, ``z``,
-        ``yaw_deg``. Pass these straight into navigation skills (e.g.
-        ``navigate_to_position``) to act on the pose. To reason about
-        the pose relative to the robot, the agent should fetch its own
-        pose (e.g. via ``current_pose``) and combine the two.
+        ``roll_deg``, ``pitch_deg``, ``yaw_deg``. Pass these straight
+        into navigation skills (e.g. ``navigate_to_position``) to act
+        on the pose. To reason about the pose relative to the robot,
+        the agent should fetch its own pose (e.g. via ``current_pose``)
+        and combine the two.
         """
         return {
             "frame_id": self.frame_id,
             "x": round(self.x, 3),
             "y": round(self.y, 3),
             "z": round(self.z, 3),
+            "roll_deg": round(math.degrees(self.roll), 1),
+            "pitch_deg": round(math.degrees(self.pitch), 1),
             "yaw_deg": round(math.degrees(self.yaw), 1),
         }
 
