@@ -103,7 +103,7 @@ _xarm6_cfg = _catalog_xarm6(
 coordinator_xarm6 = autoconnect(
     ControlCoordinator.blueprint(
         hardware=[_xarm6_cfg.to_hardware_component()],
-        tasks=[_xarm6_cfg.to_task_config(task_name="traj_xarm")],
+        tasks=[_xarm6_cfg.to_task_config()],
     ),
     *_mujoco_if_sim(str(XARM6_SIM_PATH), _xarm6_cfg.dof),
 ).transports(
