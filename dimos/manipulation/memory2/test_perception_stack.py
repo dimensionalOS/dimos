@@ -23,6 +23,12 @@ import sys
 import time
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.perception.detection.type.detection3d.object import Object as DetObject
 
 LOG = Path("perception_diag.log").resolve()
 
@@ -303,13 +309,105 @@ def run(prompt: str, db_path: str) -> None:
         except Exception as e:
             print(f"find_objects replication failed at projection: {e}")
 
+    hr("G. LOCALIZATION accuracy — why the pick position is off")
+    print("Moondream gives a rectangular bbox (no mask). from_2d_to_list builds a")
+    print("rectangular depth mask -> pointcloud = object + background behind it.")
+    print("use_aabb=True -> center = midpoint of (object .. background) -> too deep.")
+    print()
+    try:
+        d0 = dets_2d.detections[0]
+        x1, y1, x2, y2 = (int(v) for v in d0.bbox)
+        # mm->m converted depth (same as the fix)
+        dcv = depth_obs.data.to_opencv()
+        if depth_obs.data.format == ImageFormat.DEPTH16:
+            dcv = dcv.astype(np.float32) / 1000.0
+        h, w = dcv.shape[:2]
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w, x2), min(h, y2)
+        roi = dcv[y1:y2, x1:x2]
+        valid = roi[(roi > 0.05) & np.isfinite(roi)]
+        if valid.size:
+            pcts = np.percentile(valid, [5, 10, 25, 50, 75, 90, 95])
+            print(f"bbox depth (meters) percentiles:")
+            print(f"   5%={pcts[0]:.3f}  10%={pcts[1]:.3f}  25%={pcts[2]:.3f}")
+            print(f"  50%={pcts[3]:.3f}  75%={pcts[4]:.3f}  90%={pcts[5]:.3f}  95%={pcts[6]:.3f}")
+            near = float(np.percentile(valid, 15))
+            band = valid[(valid >= near - 0.05) & (valid <= near + 0.10)]
+            print()
+            print(f"  AABB-center depth (current behavior)  ≈ {(valid.min()+valid.max())/2:.3f} m")
+            print(f"  nearest-cluster depth (the object)    ≈ {band.mean() if band.size else near:.3f} m")
+            print(f"  delta (how far the pick target is off)≈ "
+                  f"{abs((valid.min()+valid.max())/2 - (band.mean() if band.size else near)):.3f} m")
+            spread = pcts[6] - pcts[0]
+            if spread > 0.20:
+                print()
+                print(f"  -> bbox depth spans {spread:.2f} m (5%→95%). The box captures the")
+                print("     object AND background. AABB center is dragged ~halfway back.")
+                print("     THIS is the localization error. Fix: foreground depth-band filter")
+                print("     in lazy_perception before projection (keep only the near cluster).")
+            else:
+                print()
+                print(f"  -> bbox depth spread only {spread:.2f} m — fairly tight. If the pick")
+                print("     is still off, suspect hand-eye calibration")
+                print("     (_XARM6_PERCEPTION_CAMERA_TRANSFORM) instead.")
+        else:
+            print("  no valid depth in bbox — different problem (sensor/exposure)")
+    except Exception as e:
+        print(f"localization analysis failed: {e}")
+
+    hr("G2. world-frame position (what the AGENT actually receives to pick)")
+    print("Section F used camera_transform=None (camera frame). The real find_objects")
+    print("applies the recorded pose -> world/base frame. This is the number the arm")
+    print("plans to. Compare it against where the object ACTUALLY is on your bench.")
+    try:
+        m = LazyPerceptionModule.__new__(LazyPerceptionModule)
+        ct = m._camera_transform_from_pose(most_recent.pose)
+        print(f"recorded pose (7-tuple): {most_recent.pose}")
+        print(f"reconstructed camera_transform: {ct}")
+        if ct is not None and dets_2d.detections:
+            world_objs = DetObject.from_2d_to_list(
+                detections_2d=dets_2d,
+                color_image=most_recent.data,
+                depth_image=_depth_m_for_world(depth_obs),
+                camera_info=info_obs.data,
+                camera_transform=ct,
+                max_distance=0.0,           # disable filter so we SEE the raw world pos
+                use_aabb=True,
+                max_obstacle_width=0.06,
+            )
+            print(f"WORLD-frame objects (max_distance disabled to see raw position):")
+            for o in world_objs:
+                print(f"  {o.name} at world ({o.center.x:.3f}, {o.center.y:.3f}, {o.center.z:.3f})")
+            print()
+            print("  Compare these XYZ to the object's real position in the robot base")
+            print("  frame. If consistently offset by a fixed vector -> hand-eye calibration.")
+            print("  If Z is ~0.2-0.3m too far -> the bbox-background bias from section G.")
+        else:
+            print("  (no pose on the matched obs, or no detections — can't world-project)")
+    except Exception as e:
+        print(f"world-frame projection failed: {e}")
+
     print()
     print("READ THIS:")
     print("  Section B  -> CLIP semantic search proven (similarity numbers)")
     print("  Section D  -> Moondream VLM proven (bbox detections)")
     print("  Section E  -> depth integrity post-codec-fix (coherent values = fix worked)")
-    print("  Section F  -> the EXACT find_objects path. If F returns objects but HumanCLI")
-    print("               says nothing, it's 100% an agent-prompting issue, not the stack.")
+    print("  Section F  -> exact find_objects path (camera frame)")
+    print("  Section G  -> localization error source: bbox-background bias vs calibration")
+    print("  Section G2 -> the WORLD position the agent picks; compare to ground truth")
+
+
+def _depth_m_for_world(depth_obs: Any):
+    """mm->m converted depth Image (same conversion as the lazy_perception fix)."""
+    dcv = depth_obs.data.to_opencv()
+    if depth_obs.data.format == ImageFormat.DEPTH16:
+        dcv = dcv.astype(np.float32) / 1000.0
+    elif dcv.dtype != np.float32:
+        dcv = dcv.astype(np.float32)
+    return Image(
+        data=dcv, format=ImageFormat.DEPTH,
+        frame_id=depth_obs.data.frame_id, ts=depth_obs.data.ts,
+    )
 
 
 def main() -> None:
