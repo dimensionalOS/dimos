@@ -353,7 +353,7 @@ tests = [
     # Misc dev tools
     "pre_commit==4.2.0",
     "watchdog>=3.0.0",
-    "md-babel-py>=1.1.4",
+    "md-babel-py>=1.2.0",
     "py-spy",
 
     # LSP

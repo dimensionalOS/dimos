@@ -43,8 +43,7 @@ from dimos.hardware.sensors.camera.module import CameraModule
 print(CameraModule.io())
 ```
 
-<!--Result:-->
-```
+```results
 ┌┴─────────────┐
 │ CameraModule │
 └┬─────────────┘
