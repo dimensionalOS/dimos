@@ -149,7 +149,7 @@ class GlobalPlanner(Resource):
         # return silently so we don't flood the logs.
         with self._lock:
             no_goal = self._current_goal is None
-        if no_goal and self._local_planner.get_state() == "idle":
+        if no_goal and self._local_planner.get_state() == NavigationState.IDLE:
             return
 
         logger.info("Cancelling goal.", but_will_try_again=but_will_try_again, arrived=arrived)
