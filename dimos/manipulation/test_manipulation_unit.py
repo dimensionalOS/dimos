@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dimos.agents.skill_result import CommonSkillError
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
@@ -119,8 +120,6 @@ class TestStateMachine:
 
     def test_reset_not_during_execution(self):
         """Reset works in any state except EXECUTING."""
-        from dimos.agents.skill_result import CommonSkillError
-
         module = _make_module()
 
         module._state = ManipulationState.FAULT

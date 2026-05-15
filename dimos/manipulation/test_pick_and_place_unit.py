@@ -23,6 +23,7 @@ import pytest
 
 from dimos.core.module import ModuleBase
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.skill_errors import ManipulationError
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
@@ -152,8 +153,6 @@ class TestPlaceBack:
     """Test place_back guard logic."""
 
     def test_place_back_no_pick_pose_errors(self, module):
-        from dimos.manipulation.skill_errors import ManipulationError
-
         module._last_pick_pose = None
 
         result = module.place_back()
