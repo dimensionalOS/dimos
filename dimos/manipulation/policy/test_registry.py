@@ -28,7 +28,6 @@ from dimos.manipulation.policy.registry import (
     is_registered,
     register_backend,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 def test_builtin_backends_are_registered():
@@ -40,8 +39,7 @@ def test_builtin_backends_are_registered():
 def test_create_known_backend_returns_instance():
     backend = create_backend("test", joint_names=["a", "b"], amplitude=0.5, frequency=1.0)
     backend.initialize()
-    obs = PolicyObservation(joint_state=JointState(name=["a", "b"], position=[0.0, 0.0]))
-    cmd = backend.select_action(obs)
+    cmd = backend.select_action(PolicyObservation())
     assert isinstance(cmd, JointPositionCommand)
     assert cmd.joint_names == ("a", "b")
 
