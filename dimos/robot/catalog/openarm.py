@@ -31,8 +31,7 @@ OPENARM_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
 
 # LFS-backed: data/.lfs/openarm_description.tar.gz extracts to data/openarm_description/
 _OPENARM_PKG = LfsPath("openarm_description")
-OPENARM_V10_BIMANUAL_FK_MODEL = _OPENARM_PKG / "urdf/robot/openarm_v10_bimanual.urdf"
-_OPENARM_MODEL_PATH = OPENARM_V10_BIMANUAL_FK_MODEL
+_OPENARM_MODEL_PATH = _OPENARM_PKG / "urdf/robot/openarm_v10_bimanual.urdf"
 # Per-side URDFs: extracted from bimanual expansion, only one arm + torso each.
 # Avoids phantom-arm collisions when Drake loads both sides into one world.
 _OPENARM_LEFT_MODEL = _OPENARM_PKG / "urdf/robot/openarm_v10_left.urdf"
@@ -118,4 +117,4 @@ def openarm_single(
     return RobotConfig(**defaults)
 
 
-__all__ = ["OPENARM_V10_BIMANUAL_FK_MODEL", "OPENARM_V10_FK_MODEL", "openarm_arm", "openarm_single"]
+__all__ = ["OPENARM_V10_FK_MODEL", "openarm_arm", "openarm_single"]
