@@ -66,10 +66,6 @@ class PGOConfig(NativeModuleConfig):
     global_map_voxel_size: float = 0.1
     global_map_publish_rate: float = 1.0
 
-    # When true the native binary prints its startup topic banner, the
-    # per-keyframe `PGO: keyframe N at (x, y, z)` diagnostic, and the
-    # shutdown line. Also lets the Python wrapper log its startup line.
-    # Default off — only real errors print.
     debug: bool = False
 
 
