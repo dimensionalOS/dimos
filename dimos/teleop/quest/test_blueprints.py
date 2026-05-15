@@ -285,7 +285,7 @@ def test_piper_data_collection_episode_boundary_targets_recorder() -> None:
         bp = quest_blueprints.teleop_quest_piper_data_collection
         atom = _atom_for(bp, "EpisodeBoundary")
         ref_targets = {ref.name: ref.spec for ref in atom.module_refs}
-        from dimos.visualization.rerun.recorder import RerunDataRecorder
+        from dimos.manipulation.data_collection.recorder import RerunDataRecorder
 
         assert ref_targets.get("recorder") is RerunDataRecorder
 
@@ -298,7 +298,10 @@ def test_recorder_does_not_import_bridge_logic_beyond_types() -> None:
     import re
 
     src = (
-        Path(__file__).resolve().parent.parent.parent / "visualization" / "rerun" / "recorder.py"
+        Path(__file__).resolve().parent.parent.parent
+        / "manipulation"
+        / "data_collection"
+        / "recorder.py"
     ).read_text()
     bridge_imports = re.findall(r"from dimos\.visualization\.rerun\.bridge import [^\n]+", src)
     assert len(bridge_imports) == 1, bridge_imports

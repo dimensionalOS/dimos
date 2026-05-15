@@ -31,14 +31,14 @@ import numpy as np
 import pytest
 import rerun_bindings as rb
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.teleop.quest.data_collection_vis import (
+from dimos.manipulation.data_collection.piper_blueprint_config import (
     CAMERA_TOPIC,
     piper_data_collection_joint_short_names,
     piper_data_collection_rerun_config,
 )
-from dimos.visualization.rerun.recorder import RerunDataRecorder
+from dimos.manipulation.data_collection.recorder import RerunDataRecorder
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class _FakePubSub:

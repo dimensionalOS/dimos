@@ -31,9 +31,9 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.manipulation.data_collection.recorder import RerunDataRecorder
 from dimos.teleop.quest.quest_types import Buttons
 from dimos.utils.logging_config import setup_logger
-from dimos.visualization.rerun.recorder import RerunDataRecorder
 
 logger = setup_logger()
 

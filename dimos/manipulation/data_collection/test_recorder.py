@@ -32,8 +32,8 @@ import rerun_bindings as rb
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.manipulation.data_collection.recorder import RerunDataRecorder
 from dimos.visualization.rerun.bridge import RerunBridgeModule
-from dimos.visualization.rerun.recorder import RerunDataRecorder
 
 # ── Fakes ────────────────────────────────────────────────────────────────────
 

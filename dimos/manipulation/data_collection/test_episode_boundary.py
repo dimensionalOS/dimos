@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from dimos.teleop.quest.episode_boundary import EpisodeBoundary
+from dimos.manipulation.data_collection.episode_boundary import EpisodeBoundary
 from dimos.teleop.quest.quest_types import Buttons
 
 

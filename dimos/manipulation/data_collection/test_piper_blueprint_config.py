@@ -23,8 +23,7 @@ import pytest
 import rerun as rr
 import rerun.blueprint as rrb
 
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.teleop.quest.data_collection_vis import (
+from dimos.manipulation.data_collection.piper_blueprint_config import (
     CAMERA_RECORDED_ENTITY_PATH,
     CAMERA_TOPIC,
     _piper_data_collection_topic_to_entity,
@@ -37,6 +36,7 @@ from dimos.teleop.quest.data_collection_vis import (
     piper_data_collection_rerun_config,
     piper_episode_metadata,
 )
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 def _walk(node: Any) -> list[Any]:
