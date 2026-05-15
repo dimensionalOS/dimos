@@ -97,7 +97,7 @@ def _synthetic_tag_image(
     color = cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
     img = Image.from_opencv(color)
     img.frame_id = "camera_optical"
-    img.ts = 0.0
+    img.ts = 1.0
     return img
 
 
