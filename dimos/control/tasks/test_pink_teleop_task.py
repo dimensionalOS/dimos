@@ -577,10 +577,13 @@ def test_coordinator_creates_xarm7_pink_task_with_teleop_route_key() -> None:
     task = coordinator._create_task_from_config(
         TaskConfig(
             name="teleop_xarm",
-            type="xarm7_pink_ik",
+            type="single_arm_pink_ik",
             joint_names=XARM7_JOINTS,
-            model_path=XARM7_FK_MODEL,
-            hand="right",
+            pink_config=XArm7IKTaskConfig(
+                joint_names=XARM7_JOINTS,
+                model_path=XARM7_FK_MODEL,
+                hand="right",
+            ),
         )
     )
 
@@ -589,21 +592,17 @@ def test_coordinator_creates_xarm7_pink_task_with_teleop_route_key() -> None:
     assert task._config.end_effector_frame == "link7"
 
 
-def test_coordinator_requires_end_effector_frame_for_single_arm_pink_task() -> None:
+def test_coordinator_requires_pink_config_for_single_arm_pink_task() -> None:
     coordinator = ControlCoordinator.__new__(ControlCoordinator)
 
-    for end_effector_frame in (None, ""):
-        with pytest.raises(ValueError, match="end_effector_frame"):
-            coordinator._create_task_from_config(
-                TaskConfig(
-                    name="teleop_piper",
-                    type="single_arm_pink_ik",
-                    joint_names=PIPER_JOINTS,
-                    model_path=PIPER_FK_MODEL,
-                    end_effector_frame=end_effector_frame,
-                    hand="left",
-                )
+    with pytest.raises(ValueError, match="pink_config"):
+        coordinator._create_task_from_config(
+            TaskConfig(
+                name="teleop_piper",
+                type="single_arm_pink_ik",
+                joint_names=PIPER_JOINTS,
             )
+        )
 
 
 def test_coordinator_creates_xarm7_pink_task_with_task_local_defaults() -> None:
@@ -612,10 +611,13 @@ def test_coordinator_creates_xarm7_pink_task_with_task_local_defaults() -> None:
     task = coordinator._create_task_from_config(
         TaskConfig(
             name="teleop_xarm",
-            type="xarm7_pink_ik",
+            type="single_arm_pink_ik",
             joint_names=XARM7_JOINTS,
-            model_path=XARM7_FK_MODEL,
-            hand="right",
+            pink_config=XArm7IKTaskConfig(
+                joint_names=XARM7_JOINTS,
+                model_path=XARM7_FK_MODEL,
+                hand="right",
+            ),
         )
     )
 
@@ -653,10 +655,13 @@ def test_xarm7_pink_task_requests_cartesian_and_button_subscriptions() -> None:
         tasks=[
             TaskConfig(
                 name="teleop_xarm",
-                type="xarm7_pink_ik",
+                type="single_arm_pink_ik",
                 joint_names=XARM7_JOINTS,
-                model_path=XARM7_FK_MODEL,
-                hand="right",
+                pink_config=XArm7IKTaskConfig(
+                    joint_names=XARM7_JOINTS,
+                    model_path=XARM7_FK_MODEL,
+                    hand="right",
+                ),
             )
         ]
     )
@@ -671,10 +676,13 @@ def test_single_arm_pink_task_requests_cartesian_and_button_subscriptions() -> N
         tasks=[
             TaskConfig(
                 name="teleop_piper",
-                type="piper_pink_ik",
+                type="single_arm_pink_ik",
                 joint_names=PIPER_JOINTS,
-                model_path=PIPER_FK_MODEL,
-                hand="right",
+                pink_config=PiperPinkIKTaskConfig(
+                    joint_names=PIPER_JOINTS,
+                    model_path=PIPER_FK_MODEL,
+                    hand="right",
+                ),
             )
         ]
     )

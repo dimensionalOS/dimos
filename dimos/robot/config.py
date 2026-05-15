@@ -257,7 +257,6 @@ class RobotConfig(BaseModel):
         task_type: str | None = None,
         task_name: str | None = None,
         priority: int | None = None,
-        end_effector_frame: str | None = None,
         **task_kwargs: Any,
     ) -> TaskConfig:
         """Generate TaskConfig for ControlCoordinator.
@@ -266,16 +265,15 @@ class RobotConfig(BaseModel):
             task_type: Override task type (default: self.task_type).
             task_name: Override task name (default: self.coordinator_task_name).
             priority: Override priority (default: self.task_priority).
-            end_effector_frame: Optional Pink IK end-effector frame override.
             **task_kwargs: Extra fields passed to TaskConfig (e.g., model_path,
-                ee_joint_id, hand, gripper_joint, gripper_open_pos, gripper_closed_pos).
+                ee_joint_id, hand, gripper_joint, gripper_open_pos, gripper_closed_pos,
+                pink_config).
         """
         return TaskConfig(
             name=task_name if task_name is not None else self.coordinator_task_name,
             type=task_type if task_type is not None else self.task_type,
             joint_names=self.coordinator_joint_names,
             priority=priority if priority is not None else self.task_priority,
-            end_effector_frame=end_effector_frame,
             **task_kwargs,
         )
 

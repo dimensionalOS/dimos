@@ -66,20 +66,18 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from dimos.control.tasks.pink_teleop_task import SingleArmPinkIKTaskConfig
+
 logger = setup_logger()
 
 CARTESIAN_TARGET_TASK_TYPES = (
     "cartesian_ik",
     "teleop_ik",
     "single_arm_pink_ik",
-    "piper_pink_ik",
-    "xarm7_pink_ik",
 )
 TELEOP_BUTTON_TASK_TYPES = (
     "teleop_ik",
     "single_arm_pink_ik",
-    "piper_pink_ik",
-    "xarm7_pink_ik",
 )
 
 
@@ -89,7 +87,7 @@ class TaskConfig:
 
     Attributes:
         name: Task name (e.g., "traj_arm")
-        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik", "teleop_ik", "single_arm_pink_ik", "piper_pink_ik", "xarm7_pink_ik")
+        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik", "teleop_ik", "single_arm_pink_ik")
         joint_names: List of joint names this task controls
         priority: Task priority (higher wins arbitration)
         model_path: Path to URDF/MJCF for IK solver (cartesian_ik/teleop_ik only)
@@ -98,9 +96,7 @@ class TaskConfig:
         gripper_joint: Joint name for gripper virtual joint
         gripper_open_pos: Gripper position at trigger 0.0
         gripper_closed_pos: Gripper position at trigger 1.0
-        max_joint_delta_deg: Maximum allowed per-tick IK joint delta in degrees
-        timeout: Teleop target timeout in seconds
-        end_effector_frame: Pinocchio frame name for Pink single-arm IK
+        pink_config: Fully-specified Pink IK config (single_arm_pink_ik only)
     """
 
     name: str
@@ -115,10 +111,8 @@ class TaskConfig:
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
-    max_joint_delta_deg: float = 5.0
-    timeout: float = 0.5
-    # Pink IK specific route/model selection. Cost defaults live on concrete task configs.
-    end_effector_frame: str | None = None
+    # Pink IK specific: the catalog hands a fully-formed config to the coordinator.
+    pink_config: "SingleArmPinkIKTaskConfig | None" = None
 
 
 class ControlCoordinatorConfig(ModuleConfig):
@@ -383,90 +377,14 @@ class ControlCoordinator(Module):
                 ),
             )
 
-        elif task_type in ("single_arm_pink_ik", "piper_pink_ik", "xarm7_pink_ik"):
-            from dimos.control.tasks.pink_teleop_task import (
-                PiperPinkIKTask,
-                PiperPinkIKTaskConfig,
-                SingleArmPinkIKTask,
-                SingleArmPinkIKTaskConfig,
-                XArm7IKTask,
-                XArm7IKTaskConfig,
-            )
+        elif task_type == "single_arm_pink_ik":
+            from dimos.control.tasks.pink_teleop_task import SingleArmPinkIKTask
 
-            def _single_arm_builder(config: TaskConfig) -> ControlTask:
-                if config.model_path is None:
-                    raise ValueError(
-                        f"SingleArmPinkIKTask '{config.name}' requires model_path in TaskConfig"
-                    )
-                if not config.end_effector_frame:
-                    raise ValueError(
-                        f"SingleArmPinkIKTask '{config.name}' requires end_effector_frame in TaskConfig"
-                    )
-                return SingleArmPinkIKTask(
-                    config.name,
-                    SingleArmPinkIKTaskConfig(
-                        joint_names=config.joint_names,
-                        model_path=config.model_path,
-                        end_effector_frame=config.end_effector_frame,
-                        priority=config.priority,
-                        timeout=config.timeout,
-                        max_joint_delta_deg=config.max_joint_delta_deg,
-                        hand=config.hand,
-                        gripper_joint=config.gripper_joint,
-                        gripper_open_pos=config.gripper_open_pos,
-                        gripper_closed_pos=config.gripper_closed_pos,
-                    ),
+            if cfg.pink_config is None:
+                raise ValueError(
+                    f"single_arm_pink_ik task '{cfg.name}' requires pink_config"
                 )
-
-            def _piper_builder(config: TaskConfig) -> ControlTask:
-                model_path = config.model_path
-                if model_path is None:
-                    from dimos.robot.catalog.piper import PIPER_FK_MODEL
-
-                    model_path = PIPER_FK_MODEL
-                return PiperPinkIKTask(
-                    config.name,
-                    PiperPinkIKTaskConfig(
-                        joint_names=config.joint_names,
-                        model_path=model_path,
-                        priority=config.priority,
-                        timeout=config.timeout,
-                        max_joint_delta_deg=config.max_joint_delta_deg,
-                        hand=config.hand,
-                        gripper_joint=config.gripper_joint,
-                        gripper_open_pos=config.gripper_open_pos,
-                        gripper_closed_pos=config.gripper_closed_pos,
-                    ),
-                )
-
-            def _xarm7_builder(config: TaskConfig) -> ControlTask:
-                model_path = config.model_path
-                if model_path is None:
-                    from dimos.robot.catalog.ufactory import XARM7_FK_MODEL
-
-                    model_path = XARM7_FK_MODEL
-                return XArm7IKTask(
-                    config.name,
-                    XArm7IKTaskConfig(
-                        joint_names=config.joint_names,
-                        model_path=model_path,
-                        priority=config.priority,
-                        timeout=config.timeout,
-                        max_joint_delta_deg=config.max_joint_delta_deg,
-                        hand=config.hand,
-                        gripper_joint=config.gripper_joint,
-                        gripper_open_pos=config.gripper_open_pos,
-                        gripper_closed_pos=config.gripper_closed_pos,
-                    ),
-                )
-
-            pink_task_registry: dict[str, Any] = {
-                "single_arm_pink_ik": _single_arm_builder,
-                "piper_pink_ik": _piper_builder,
-                "xarm7_pink_ik": _xarm7_builder,
-            }
-
-            return pink_task_registry[task_type](cfg)
+            return SingleArmPinkIKTask(cfg.name, cfg.pink_config)
 
         else:
             raise ValueError(f"Unknown task type: {task_type}")

@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from dimos.robot.config import GripperConfig, RobotConfig
 from dimos.utils.data import LfsPath
@@ -94,9 +94,11 @@ def piper_single_arm_pink_task_config(
     cfg: RobotConfig,
     *,
     task_name: str = "teleop_piper",
-    hand: str = "right",
+    hand: Literal["left", "right"] = "right",
 ) -> Any:
     """Build a catalog-backed single-arm Pink teleop task config for Piper."""
+    from dimos.control.tasks.pink_teleop_task import PiperPinkIKTaskConfig
+
     gripper_joint: str | None = None
     gripper_open_pos = 0.0
     gripper_closed_pos = 0.0
@@ -109,12 +111,15 @@ def piper_single_arm_pink_task_config(
     return cfg.to_task_config(
         task_type="single_arm_pink_ik",
         task_name=task_name,
-        model_path=PIPER_FK_MODEL,
-        end_effector_frame=cfg.end_effector_link,
-        hand=hand,
-        gripper_joint=gripper_joint,
-        gripper_open_pos=gripper_open_pos,
-        gripper_closed_pos=gripper_closed_pos,
+        pink_config=PiperPinkIKTaskConfig(
+            joint_names=cfg.coordinator_joint_names,
+            model_path=PIPER_FK_MODEL,
+            end_effector_frame=cfg.end_effector_link,
+            hand=hand,
+            gripper_joint=gripper_joint,
+            gripper_open_pos=gripper_open_pos,
+            gripper_closed_pos=gripper_closed_pos,
+        ),
     )
 
 
