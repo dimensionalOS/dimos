@@ -21,7 +21,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.navigation.base import NavigationState
-from dimos.robot.unitree.unitree_skill_container import _UNITREE_COMMANDS, UnitreeSkillContainer
+from dimos.robot.unitree.unitree_tool_container import _UNITREE_COMMANDS, UnitreeToolContainer
 
 
 class StubNavigation(Module):
@@ -48,14 +48,14 @@ class StubGO2Connection(Module):
         return {}
 
 
-class MockedUnitreeSkill(UnitreeSkillContainer):
+class MockedUnitreeTool(UnitreeToolContainer):
     pass
 
 
 def test_pounce(agent_setup) -> None:
     history = agent_setup(
         blueprints=[
-            MockedUnitreeSkill.blueprint(),
+            MockedUnitreeTool.blueprint(),
             StubNavigation.blueprint(),
             StubGO2Connection.blueprint(),
         ],

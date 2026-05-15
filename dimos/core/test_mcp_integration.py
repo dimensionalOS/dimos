@@ -117,7 +117,7 @@ class TestMCPLifecycle:
         result = adapter.call("initialize")
         assert result["result"]["serverInfo"]["name"] == "dimensional"
 
-    def test_tools_list_includes_stress_skills(
+    def test_tools_list_includes_stress_tools(
         self, mcp_shared: ModuleCoordinator, adapter: McpAdapter
     ) -> None:
         """tools/list should include echo, ping, slow, info from StressTestModule."""
@@ -127,7 +127,7 @@ class TestMCPLifecycle:
         assert "ping" in tool_names
         assert "slow" in tool_names
         assert "info" in tool_names
-        # McpServer introspection skills
+        # McpServer introspection tools
         assert "server_status" in tool_names
         assert "list_modules" in tool_names
         assert "agent_send" in tool_names
@@ -159,16 +159,16 @@ class TestMCPLifecycle:
         assert "pid=" in text
 
     def test_server_status_tool(self, mcp_shared: ModuleCoordinator, adapter: McpAdapter) -> None:
-        """server_status tool should return module and skill info."""
+        """server_status tool should return module and tool info."""
         text = adapter.call_tool_text("server_status")
         data = json.loads(text)
         assert "pid" in data
         assert "modules" in data
-        assert "skills" in data
+        assert "tools" in data
         assert "StressTestModule" in data["modules"]
 
     def test_list_modules_tool(self, mcp_shared: ModuleCoordinator, adapter: McpAdapter) -> None:
-        """list_modules tool should group skills by module."""
+        """list_modules tool should group tools by module."""
         text = adapter.call_tool_text("list_modules")
         modules = json.loads(text)["modules"]
         assert "StressTestModule" in modules
@@ -201,7 +201,7 @@ class TestMCPCLICommands:
         assert "StressTestModule" in data["modules"]
 
     def test_cli_mcp_modules(self, mcp_shared: ModuleCoordinator) -> None:
-        """dimos mcp modules should show module-skill mapping."""
+        """dimos mcp modules should show module-tool mapping."""
         result = CliRunner().invoke(main, ["mcp", "modules"])
         assert result.exit_code == 0
         data = json.loads(result.output)

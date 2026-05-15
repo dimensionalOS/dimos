@@ -21,8 +21,8 @@ from typing import Any
 
 # Internal RPCs to hide from io() output
 INTERNAL_RPCS = {
-    "dynamic_skills",
-    "skills",
+    "dynamic_tools",
+    "tools",
     "_io_instance",
 }
 
@@ -54,8 +54,8 @@ class RpcInfo:
 
 
 @dataclass
-class SkillInfo:
-    """Information about a skill."""
+class ToolInfo:
+    """Information about a tool."""
 
     name: str
     stream: str | None = None  # None means "none"
@@ -71,7 +71,7 @@ class ModuleInfo:
     inputs: list[StreamInfo] = field(default_factory=list)
     outputs: list[StreamInfo] = field(default_factory=list)
     rpcs: list[RpcInfo] = field(default_factory=list)
-    skills: list[SkillInfo] = field(default_factory=list)
+    tools: list[ToolInfo] = field(default_factory=list)
 
 
 def extract_rpc_info(fn: Callable) -> RpcInfo:  # type: ignore[type-arg]
@@ -97,16 +97,16 @@ def extract_rpc_info(fn: Callable) -> RpcInfo:  # type: ignore[type-arg]
     return RpcInfo(name=fn.__name__, params=params, return_type=return_type)
 
 
-def extract_skill_info(fn: Callable) -> SkillInfo:  # type: ignore[type-arg]
-    """Extract skill information from a skill-decorated callable."""
-    cfg = fn._skill_config  # type: ignore[attr-defined]
+def extract_tool_info(fn: Callable) -> ToolInfo:  # type: ignore[type-arg]
+    """Extract tool information from a tool-decorated callable."""
+    cfg = fn._tool_config  # type: ignore[attr-defined]
 
     stream = cfg.stream.name if cfg.stream.name != "none" else None
     reducer_name = getattr(cfg.reducer, "__name__", str(cfg.reducer))
     reducer = reducer_name if reducer_name != "latest" else None
     output = cfg.output.name if cfg.output.name != "standard" else None
 
-    return SkillInfo(name=fn.__name__, stream=stream, reducer=reducer, output=output)
+    return ToolInfo(name=fn.__name__, stream=stream, reducer=reducer, output=output)
 
 
 def extract_module_info(
@@ -145,15 +145,15 @@ def extract_module_info(
     input_infos = [stream_info(s, n) for n, s in inputs.items()]
     output_infos = [stream_info(s, n) for n, s in outputs.items()]
 
-    # Separate skills from regular RPCs, filtering internal ones
+    # Separate tools from regular RPCs, filtering internal ones
     rpc_infos = []
-    skill_infos = []
+    tool_infos = []
 
     for rpc_name, rpc_fn in rpcs.items():
         if rpc_name in INTERNAL_RPCS:
             continue
-        if hasattr(rpc_fn, "_skill_config"):
-            skill_infos.append(extract_skill_info(rpc_fn))
+        if hasattr(rpc_fn, "_tool_config"):
+            tool_infos.append(extract_tool_info(rpc_fn))
         else:
             rpc_infos.append(extract_rpc_info(rpc_fn))
 
@@ -162,5 +162,5 @@ def extract_module_info(
         inputs=input_infos,
         outputs=output_infos,
         rpcs=rpc_infos,
-        skills=skill_infos,
+        tools=tool_infos,
     )

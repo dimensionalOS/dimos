@@ -14,7 +14,7 @@
 
 from langchain_core.messages import HumanMessage
 
-from dimos.agents.skills.gps_nav_skill import GpsNavSkillContainer
+from dimos.agents.tools.gps_nav_tool import GpsNavToolContainer
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
@@ -22,7 +22,7 @@ from dimos.mapping.models import LatLon
 
 
 class FakeGPS(Module):
-    """Provides a gps_location output so GpsNavSkillContainer's input port gets a transport."""
+    """Provides a gps_location output so GpsNavToolContainer's input port gets a transport."""
 
     gps_location: Out[LatLon]
 
@@ -33,7 +33,7 @@ class StubWebsocketVis(Module):
         pass
 
 
-class MockedGpsNavSkill(GpsNavSkillContainer):
+class MockedGpsNavTool(GpsNavToolContainer):
     _latest_location = LatLon(lat=37.782654, lon=-122.413273)
     _started = True
     _max_valid_distance = 50000
@@ -43,7 +43,7 @@ def test_set_gps_travel_points(agent_setup) -> None:
     history = agent_setup(
         blueprints=[
             FakeGPS.blueprint(),
-            MockedGpsNavSkill.blueprint(),
+            MockedGpsNavTool.blueprint(),
             StubWebsocketVis.blueprint(),
         ],
         messages=[
@@ -61,7 +61,7 @@ def test_set_gps_travel_points_multiple(agent_setup) -> None:
     history = agent_setup(
         blueprints=[
             FakeGPS.blueprint(),
-            MockedGpsNavSkill.blueprint(),
+            MockedGpsNavTool.blueprint(),
             StubWebsocketVis.blueprint(),
         ],
         messages=[

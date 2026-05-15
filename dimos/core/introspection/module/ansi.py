@@ -18,8 +18,8 @@ from dimos.core.introspection.module.info import (
     ModuleInfo,
     ParamInfo,
     RpcInfo,
-    SkillInfo,
     StreamInfo,
+    ToolInfo,
 )
 from dimos.utils import colors
 
@@ -65,16 +65,16 @@ def render(info: ModuleInfo, color: bool = True) -> str:
             result += " -> " + _green(rpc.return_type)
         return result
 
-    def format_skill(skill: SkillInfo) -> str:
+    def format_tool(tool: ToolInfo) -> str:
         info_parts = []
-        if skill.stream:
-            info_parts.append(f"stream={skill.stream}")
-        if skill.reducer:
-            info_parts.append(f"reducer={skill.reducer}")
-        if skill.output:
-            info_parts.append(f"output={skill.output}")
+        if tool.stream:
+            info_parts.append(f"stream={tool.stream}")
+        if tool.reducer:
+            info_parts.append(f"reducer={tool.reducer}")
+        if tool.output:
+            info_parts.append(f"output={tool.output}")
         info = f" ({', '.join(info_parts)})" if info_parts else ""
-        return _cyan(skill.name) + info
+        return _cyan(tool.name) + info
 
     # Build output
     lines = [
@@ -88,9 +88,9 @@ def render(info: ModuleInfo, color: bool = True) -> str:
         for rpc in info.rpcs:
             lines.append(f" ├─ RPC {format_rpc(rpc)}")
 
-    if info.skills:
+    if info.tools:
         lines.append(" │")
-        for skill in info.skills:
-            lines.append(f" ├─ Skill {format_skill(skill)}")
+        for tool in info.tools:
+            lines.append(f" ├─ Tool {format_tool(tool)}")
 
     return "\n".join(lines)

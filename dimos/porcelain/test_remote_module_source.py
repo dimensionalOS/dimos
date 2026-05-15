@@ -28,12 +28,12 @@ def test_connect_no_running_system(tmp_path, monkeypatch):
         Dimos.connect()
 
 
-def test_connect_via_host_port_skill_call(running_app, client):
-    assert client.skills.ping() == "pong"
-    assert client.skills.echo(message="hello") == "hello"
+def test_connect_via_host_port_tool_call(running_app, client):
+    assert client.tools.ping() == "pong"
+    assert client.tools.echo(message="hello") == "hello"
     client.stop()
     assert running_app.is_running
-    assert running_app.skills.ping() == "pong"
+    assert running_app.tools.ping() == "pong"
 
 
 def test_connect_attribute_access(client):
@@ -47,7 +47,7 @@ def test_connect_restart_invalidates_cache(client):
     client.restart(StressTestModule, reload_source=False)
     m_after = source.get_rpyc_module("StressTestModule")
     assert m_before is not m_after
-    assert client.skills.ping() == "pong"
+    assert client.tools.ping() == "pong"
 
 
 def test_connect_run_by_name_adds_module(running_app, client):
@@ -66,7 +66,7 @@ def test_connect_stop_does_not_kill_remote(running_app, client):
     client.stop()
     assert not client.is_running
     assert running_app.is_running
-    assert running_app.skills.ping() == "pong"
+    assert running_app.tools.ping() == "pong"
 
 
 def test_connect_list_module_names(client):

@@ -11,9 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Grasping skill module
+"""Grasping tool module
 
-Provides @skill interface for agents and orchestrates the grasp generation pipeline:
+Provides @tool interface for agents and orchestrates the grasp generation pipeline:
 perception (get pointcloud) to graspgen (generate grasps in Docker) to output grasps
 """
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
@@ -38,7 +38,7 @@ logger = setup_logger()
 
 
 class GraspingModule(Module):
-    """Grasping skill and orchestrator module"""
+    """Grasping tool and orchestrator module"""
 
     grasps: Out[PoseArray]
 
@@ -55,7 +55,7 @@ class GraspingModule(Module):
         super().stop()
         logger.info("GraspingModule stopped")
 
-    @skill
+    @tool
     def generate_grasps(
         self,
         object_name: str = "object",

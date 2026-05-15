@@ -17,14 +17,14 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 import pytest
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.module import Module
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
 
 class Adder(Module):
-    @skill
+    @tool
     def add(self, x: int, y: int) -> str:
         """adds x and y."""
         return str(x + y)
@@ -43,7 +43,7 @@ class UserRegistration(Module):
     _first_call = True
     _use_upper = False
 
-    @skill
+    @tool
     def register_user(self, name: str) -> str:
         """registers a user by name."""
 
@@ -80,7 +80,7 @@ class MultipleTools(Module):
         super().__init__(**kwargs)
         self._people = {"Ben": "office", "Bob": "garage"}
 
-    @skill
+    @tool
     def register_person(self, name: str) -> str:
         """Registers a person by name."""
         if name.lower() == "john":
@@ -89,7 +89,7 @@ class MultipleTools(Module):
             self._people[name] = "living room"
         return f"'{name}' has been registered."
 
-    @skill
+    @tool
     def locate_person(self, name: str) -> str:
         """Locates a person by name."""
         if name not in self._people:
@@ -102,8 +102,8 @@ class MultipleTools(Module):
         return f"'{name}' is located at '{self._people[name]}'."
 
 
-class NavigationSkill(Module):
-    @skill
+class NavigationTool(Module):
+    @tool
     def go_to_location(self, description: str) -> str:
         """Go to a location by a description."""
         if description.strip().lower() not in ["kitchen", "living room"]:
@@ -113,7 +113,7 @@ class NavigationSkill(Module):
 
 def test_multiple_tool_calls_with_multiple_messages(agent_setup):
     history = agent_setup(
-        blueprints=[MultipleTools.blueprint(), NavigationSkill.blueprint()],
+        blueprints=[MultipleTools.blueprint(), NavigationTool.blueprint()],
         messages=[
             HumanMessage(
                 "You are a robot assistant. Move to the location where John is. Don't ask me for feedback, just go there."
@@ -175,7 +175,7 @@ def test_prompt(agent_setup):
 
 
 class Visualizer(Module):
-    @skill
+    @tool
     def take_a_picture(self) -> Image:
         """Takes a picture."""
         return Image.from_file(get_data("cafe-smol.jpg")).to_rgb()

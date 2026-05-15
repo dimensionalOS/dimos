@@ -18,7 +18,7 @@ import time
 from pydantic import Field
 import reactivex as rx
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
@@ -105,7 +105,7 @@ class CameraModule(Module, perception.Camera):
 
         self.tf.publish(camera_link, camera_optical)
 
-    @skill
+    @tool
     def take_a_picture(self) -> Image:
         """Grabs and returns the latest image from the camera."""
         if self._latest_image is None:

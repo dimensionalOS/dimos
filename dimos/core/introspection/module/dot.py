@@ -17,7 +17,7 @@
 from dimos.core.introspection.module.info import ModuleInfo
 from dimos.core.introspection.utils import (
     RPC_COLOR,
-    SKILL_COLOR,
+    TOOL_COLOR,
     TYPE_COLORS,
     color_for_string,
     sanitize_id,
@@ -119,30 +119,30 @@ def render(info: ModuleInfo) -> str:
         lines.append("    }")
         lines.append("")
 
-    # Skill nodes (in subgraph)
-    if info.skills:
-        lines.append("    // Skills")
-        lines.append("    subgraph cluster_skills {")
-        lines.append('        label="Skills";')
+    # Tool nodes (in subgraph)
+    if info.tools:
+        lines.append("    // Tools")
+        lines.append("    subgraph cluster_tools {")
+        lines.append('        label="Tools";')
         lines.append("        labeljust=l;")
         lines.append("        fontname=fixed;")
         lines.append("        fontsize=14;")
         lines.append(f'        fontcolor="{theme.FOREGROUND}";')
         lines.append('        style="filled,dashed";')
-        lines.append(f'        color="{SKILL_COLOR}";')
+        lines.append(f'        color="{TOOL_COLOR}";')
         lines.append("        penwidth=1;")
-        lines.append(f'        fillcolor="{SKILL_COLOR}20";')
-        for skill in info.skills:
-            parts = [skill.name]
-            if skill.stream:
-                parts.append(f"stream={skill.stream}")
-            if skill.reducer:
-                parts.append(f"reducer={skill.reducer}")
+        lines.append(f'        fillcolor="{TOOL_COLOR}20";')
+        for tool in info.tools:
+            parts = [tool.name]
+            if tool.stream:
+                parts.append(f"stream={tool.stream}")
+            if tool.reducer:
+                parts.append(f"reducer={tool.reducer}")
             label = " ".join(parts)
-            node_id = sanitize_id(f"skill_{skill.name}")
+            node_id = sanitize_id(f"tool_{tool.name}")
             lines.append(
                 f'        {node_id} [label="{label}", shape=cds, style=filled, '
-                f'fillcolor="{SKILL_COLOR}35", color="{SKILL_COLOR}", '
+                f'fillcolor="{TOOL_COLOR}35", color="{TOOL_COLOR}", '
                 f'width=0, height=0, margin="0.1,0.05", fontsize=9];'
             )
         lines.append("    }")
@@ -171,12 +171,12 @@ def render(info: ModuleInfo) -> str:
             f'color="{RPC_COLOR}", arrowhead=none];'
         )
 
-    # Edge: module -> Skills cluster (dashed, no arrow)
-    if info.skills:
-        first_skill_id = sanitize_id(f"skill_{info.skills[0].name}")
+    # Edge: module -> Tools cluster (dashed, no arrow)
+    if info.tools:
+        first_tool_id = sanitize_id(f"tool_{info.tools[0].name}")
         lines.append(
-            f"    {module_id} -> {first_skill_id} [lhead=cluster_skills, style=filled, weight=3"
-            f'color="{SKILL_COLOR}", arrowhead=none];'
+            f"    {module_id} -> {first_tool_id} [lhead=cluster_tools, style=filled, weight=3"
+            f'color="{TOOL_COLOR}", arrowhead=none];'
         )
 
     lines.append("}")

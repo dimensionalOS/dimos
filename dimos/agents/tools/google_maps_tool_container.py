@@ -17,7 +17,7 @@ from typing import Any
 
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
@@ -28,7 +28,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class GoogleMapsSkillContainer(Module):
+class GoogleMapsToolContainer(Module):
     _latest_location: LatLon | None = None
     _client: GoogleMaps
 
@@ -41,9 +41,7 @@ class GoogleMapsSkillContainer(Module):
         except ValueError:
             from dimos.utils.logging_config import setup_logger
 
-            setup_logger().warning(
-                "GOOGLE_MAPS_API_KEY not set — GoogleMapsSkillContainer disabled"
-            )
+            setup_logger().warning("GOOGLE_MAPS_API_KEY not set — GoogleMapsToolContainer disabled")
             self._client = None  # type: ignore[assignment]
         self._started = True
         self._max_valid_distance = 20000  # meters
@@ -65,9 +63,9 @@ class GoogleMapsSkillContainer(Module):
             raise ValueError("The position has not been set yet.")
         return self._latest_location
 
-    @skill
+    @tool
     def where_am_i(self, context_radius: int = 200) -> str:
-        """This skill returns information about what street/locality/city/etc
+        """This tool returns information about what street/locality/city/etc
         you are in. It also gives you nearby landmarks.
 
         Example:
@@ -93,7 +91,7 @@ class GoogleMapsSkillContainer(Module):
 
         return result.model_dump_json()
 
-    @skill
+    @tool
     def get_gps_position_for_queries(self, queries: list[str]) -> str:
         """Get the GPS position (latitude/longitude) from Google Maps for know landmarks or searchable locations.
            This includes anything that wouldn't be viewable on a physical OSM map including intersections (5th and Natoma)

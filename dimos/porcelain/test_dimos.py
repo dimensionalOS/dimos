@@ -87,9 +87,9 @@ def test_repr_when_stopped(app):
     assert "stopped" in repr(app)
 
 
-def test_skills_before_run(app):
+def test_tools_before_run(app):
     with pytest.raises(RuntimeError, match="No modules are running"):
-        _ = app.skills
+        _ = app.tools
 
 
 def test_peek_stream_before_run(app):
@@ -174,13 +174,13 @@ def test_dir_lists_modules(running_app):
 
 def test_restart_no_reload(running_app):
     running_app.restart(StressTestModule, reload_source=False)
-    result = running_app.skills.ping()
+    result = running_app.tools.ping()
     assert result == "pong"
 
 
-def test_skills_accessible(running_app):
-    skills = running_app.skills
-    assert "ping" in dir(skills)
+def test_tools_accessible(running_app):
+    tools = running_app.tools
+    assert "ping" in dir(tools)
 
 
 def test_connected_run_by_name_adds_module(running_app, client):
@@ -201,7 +201,7 @@ def test_connected_run_by_blueprint_object(client):
 
 def test_connected_restart_no_reload(client):
     client.restart(StressTestModule, reload_source=False)
-    assert client.skills.ping() == "pong"
+    assert client.tools.ping() == "pong"
 
 
 def test_connected_repr(client):
@@ -214,6 +214,6 @@ def test_connected_dir(client):
     assert "StressTestModule" in d
 
 
-def test_connected_skills(client):
-    result = client.skills.ping()
+def test_connected_tools(client):
+    result = client.tools.ping()
     assert result == "pong"

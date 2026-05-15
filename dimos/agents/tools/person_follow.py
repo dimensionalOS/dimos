@@ -21,7 +21,7 @@ import numpy as np
 from reactivex.disposable import Disposable
 from turbojpeg import TurboJPEG
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -48,10 +48,10 @@ class Config(ModuleConfig):
     use_3d_navigation: bool = False
 
 
-class PersonFollowSkillContainer(Module):
-    """Skill container for following a person.
+class PersonFollowToolContainer(Module):
+    """Tool container for following a person.
 
-    This skill uses:
+    This tool uses:
     - A VL model (QwenVlModel) to initially detect a person from a text description.
     - EdgeTAM for continuous tracking across frames.
     - Visual servoing OR 3D navigation to control robot movement towards the person.
@@ -116,7 +116,7 @@ class PersonFollowSkillContainer(Module):
         self._vl_model.stop()
         super().stop()
 
-    @skill
+    @tool
     def follow_person(
         self,
         query: str,
@@ -181,7 +181,7 @@ class PersonFollowSkillContainer(Module):
 
         return self._follow_person(query, bbox, detection_image)
 
-    @skill
+    @tool
     def stop_following(self) -> str:
         """Stop following the current person.
 

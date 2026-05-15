@@ -1,11 +1,11 @@
 # Agents
 
-LLM agents run as native DimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through skills.
+LLM agents run as native DimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through tools.
 
 ## Architecture
 
 ```
-Human Input ──→ Agent ──→ Skill Calls ──→ Robot
+Human Input ──→ Agent ──→ Tool Calls ──→ Robot
   (text/voice)     │         (RPC)
                    │
           subscribes to streams:
@@ -17,18 +17,18 @@ Human Input ──→ Agent ──→ Skill Calls ──→ Robot
 - `agent: Out[BaseMessage]`: publishes agent responses (text, tool calls, images)
 - `agent_idle: Out[bool]`: signals when the agent is waiting for input
 
-The agent uses LangGraph with a configurable LLM. The default is `gpt-4o` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.
+The agent uses LangGraph with a configurable LLM. The default is `gpt-4o` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@tool`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.
 
-## Skills
+## Tools
 
-Skills are methods decorated with `@skill` on any `Module`. The agent discovers them automatically at startup.
+Tools are methods decorated with `@tool` on any `Module`. The agent discovers them automatically at startup.
 
 ```python
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.module import Module
 
-class MySkillContainer(Module):
-    @skill
+class MyToolContainer(Module):
+    @tool
     def wave_hello(self) -> str:
         """Wave at the nearest person."""
         # ... robot control logic ...
@@ -40,37 +40,37 @@ class MySkillContainer(Module):
 - Docstrings become the tool description the LLM sees. Write them clearly so the agent has sufficent context.
 - The function must return a string or image which with be used by the agent to decide what to do next.
 
-### Built-in Skills
+### Built-in Tools
 
-| Skill | Module | Description |
+| Tool | Module | Description |
 |-------|--------|-------------|
-| `relative_move(forward, left, degrees)` | `UnitreeSkillContainer` | Move robot relative to current position |
-| `execute_sport_command(command_name)` | `UnitreeSkillContainer` | Unitree sport commands (sit, stand, flip, etc.) |
-| `wait(seconds)` | `UnitreeSkillContainer` | Pause execution |
+| `relative_move(forward, left, degrees)` | `UnitreeToolContainer` | Move robot relative to current position |
+| `execute_sport_command(command_name)` | `UnitreeToolContainer` | Unitree sport commands (sit, stand, flip, etc.) |
+| `wait(seconds)` | `UnitreeToolContainer` | Pause execution |
 | `observe()` | `GO2Connection` | Capture and return current camera frame |
-| `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description |
-| `tag_location(name)` | `NavigationSkillContainer` | Tag current position for later recall |
-| `stop_navigation()` | `NavigationSkillContainer` | Cancel current navigation goal |
-| `follow_person(query)` | `PersonFollowSkill` | Visual servoing to follow a described person |
-| `stop_following()` | `PersonFollowSkill` | Stop person following |
-| `speak(text)` | `SpeakSkill` | Text-to-speech through robot speakers |
-| `where_am_i()` | `GoogleMapsSkillContainer` | Current street/area from GPS |
-| `get_gps_position_for_queries(queries)` | `GoogleMapsSkillContainer` | Look up GPS coordinates |
-| `set_gps_travel_points(points)` | `GPSNavSkill` | Navigate via GPS waypoints |
-| `map_query(query)` | `OsmSkill` | Search OpenStreetMap with VLM |
+| `navigate_with_text(query)` | `NavigationToolContainer` | Navigate to a location by description |
+| `tag_location(name)` | `NavigationToolContainer` | Tag current position for later recall |
+| `stop_navigation()` | `NavigationToolContainer` | Cancel current navigation goal |
+| `follow_person(query)` | `PersonFollowTool` | Visual servoing to follow a described person |
+| `stop_following()` | `PersonFollowTool` | Stop person following |
+| `speak(text)` | `SpeakTool` | Text-to-speech through robot speakers |
+| `where_am_i()` | `GoogleMapsToolContainer` | Current street/area from GPS |
+| `get_gps_position_for_queries(queries)` | `GoogleMapsToolContainer` | Look up GPS coordinates |
+| `set_gps_travel_points(points)` | `GPSNavTool` | Navigate via GPS waypoints |
+| `map_query(query)` | `OsmTool` | Search OpenStreetMap with VLM |
 
 ## MCP
 
 All agentic blueprints use two modules: `McpServer` and `McpClient`.
 
-* `McpServer` exposes the methods annotated with `@skill` as MCP tools. Any external client can connect to the server to use the MCP tools.
+* `McpServer` exposes the methods annotated with `@tool` as MCP tools. Any external client can connect to the server to use the MCP tools.
 * `McpClient` has a LangGraph LLM which calls MCP tools from `McpServer`.
 
 CLI access:
 
 ```bash
-dimos mcp list-tools                                # List available skills
-dimos mcp call relative_move --arg forward=0.5      # Call a skill
+dimos mcp list-tools                                # List available tools
+dimos mcp call relative_move --arg forward=0.5      # Call a tool
 dimos mcp status                                    # Server status
 ```
 

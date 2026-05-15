@@ -16,12 +16,12 @@
 """Agentic G1 sim stack."""
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.g1.blueprints.agentic._agentic_skills import _agentic_skills
+from dimos.robot.unitree.g1.blueprints.agentic._agentic_tools import _agentic_tools
 from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1_sim import unitree_g1_sim
 
 unitree_g1_agentic_sim = autoconnect(
     unitree_g1_sim,
-    _agentic_skills,
+    _agentic_tools,
 )
 
 __all__ = ["unitree_g1_agentic_sim"]

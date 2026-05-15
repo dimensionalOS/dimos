@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.module import Module
 
 
-class DemoCalculatorSkill(Module):
+class DemoCalculatorTool(Module):
     def start(self) -> None:
         super().start()
 
     def stop(self) -> None:
         super().stop()
 
-    @skill
+    @tool
     def sum_numbers(self, n1: int, n2: int, *args: int, **kwargs: int) -> str:
-        """This skill adds two numbers. Always use this tool. Never add up numbers yourself.
+        """This tool adds two numbers. Always use this tool. Never add up numbers yourself.
 
         Example:
 

@@ -428,7 +428,7 @@ def _get_adapter() -> McpAdapter:
 
 @mcp_app.command("list-tools")
 def mcp_list_tools() -> None:
-    """List available MCP tools (skills)."""
+    """List available MCP tools (tools)."""
     try:
         tools = _get_adapter().list_tools()
     except requests.ConnectionError:
@@ -496,7 +496,7 @@ def mcp_call_tool(
 
 @mcp_app.command("status")
 def mcp_status() -> None:
-    """Show MCP server status (modules, skills)."""
+    """Show MCP server status (modules, tools)."""
     try:
         data = _get_adapter().call_tool_text("server_status")
     except requests.ConnectionError:
@@ -514,7 +514,7 @@ def mcp_status() -> None:
 
 @mcp_app.command("modules")
 def mcp_modules() -> None:
-    """List deployed modules and their skills."""
+    """List deployed modules and their tools."""
     try:
         data = _get_adapter().call_tool_text("list_modules")
     except requests.ConnectionError:

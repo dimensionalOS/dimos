@@ -440,7 +440,7 @@ class DockerModuleProxy(ModuleProxyProtocol):
 
             try:
                 self.rpc.call_sync(
-                    f"{self.remote_name}/get_skills",
+                    f"{self.remote_name}/get_tools",
                     ([], {}),
                     rpc_timeout=3.0,  # short timeout for polling readiness
                 )

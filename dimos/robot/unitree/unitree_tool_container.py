@@ -21,7 +21,7 @@ import time
 
 from unitree_webrtc_connect.constants import RTC_TOPIC
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -55,7 +55,7 @@ UNITREE_WEBRTC_CONTROLS: list[tuple[str, int, str]] = [
     (
         "RecoveryStand",
         1006,
-        "Recovers the robot to a state from which it can take more commands. Useful to run after multiple dynamic commands like front flips, Must run after skills like sit and jump and standup.",
+        "Recovers the robot to a state from which it can take more commands. Useful to run after multiple dynamic commands like front flips, Must run after tools like sit and jump and standup.",
     ),
     ("Sit", 1009, "Commands the robot to sit down from a standing or moving stance."),
     (
@@ -191,8 +191,8 @@ _UNITREE_COMMANDS = {
 }
 
 
-class UnitreeSkillContainer(Module):
-    """Container for Unitree Go2 robot skills using the new framework."""
+class UnitreeToolContainer(Module):
+    """Container for Unitree Go2 robot tools using the new framework."""
 
     _navigation: NavigationInterfaceSpec
     _connection: GO2ConnectionSpec
@@ -207,7 +207,7 @@ class UnitreeSkillContainer(Module):
     def stop(self) -> None:
         super().stop()
 
-    @skill
+    @tool
     def relative_move(self, forward: float = 0.0, left: float = 0.0, degrees: float = 0.0) -> str:
         """Move the robot relative to its current position.
 
@@ -268,7 +268,7 @@ class UnitreeSkillContainer(Module):
 
         return PoseStamped(position=goal_position, orientation=goal_orientation)
 
-    @skill
+    @tool
     def wait(self, seconds: float) -> str:
         """Wait for a specified amount of time.
 
@@ -278,12 +278,12 @@ class UnitreeSkillContainer(Module):
         time.sleep(seconds)
         return f"Wait completed with length={seconds}s"
 
-    @skill
+    @tool
     def current_time(self) -> str:
         """Provides current time."""
         return str(datetime.datetime.now())
 
-    @skill
+    @tool
     def execute_sport_command(self, command_name: str) -> str:
         if command_name not in _UNITREE_COMMANDS:
             suggestions = difflib.get_close_matches(
@@ -305,7 +305,7 @@ _commands = "\n".join(
     [f'- "{name}": {description}' for name, (_, description) in _UNITREE_COMMANDS.items()]
 )
 
-UnitreeSkillContainer.execute_sport_command.__doc__ = f"""Execute a Unitree sport command.
+UnitreeToolContainer.execute_sport_command.__doc__ = f"""Execute a Unitree sport command.
 
 Example usage:
 

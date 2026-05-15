@@ -20,7 +20,7 @@ import numpy as np
 from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
@@ -238,7 +238,7 @@ class ObjectSceneRegistrationModule(Module):
 
         return pc
 
-    @skill
+    @tool
     def detect(self, *prompts: str) -> str:
         """Detect objects matching the given text prompts.
 
@@ -270,7 +270,7 @@ class ObjectSceneRegistrationModule(Module):
         obj_list = [f"  - {obj['name']} (object_id='{obj['object_id']}')" for obj in detected]
         return f"Detected {len(detected)} object(s):\n" + "\n".join(obj_list)
 
-    @skill
+    @tool
     def select(self, track_id: int) -> str:
         """Select an object by track_id and promote it to permanent.
 

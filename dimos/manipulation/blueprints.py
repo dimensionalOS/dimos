@@ -122,13 +122,13 @@ xarm7_planner_coordinator = autoconnect(
 )
 
 
-# XArm7 planner + LLM agent for testing base ManipulationModule skills
-# No perception — uses the base module's planning + gripper skills only.
+# XArm7 planner + LLM agent for testing base ManipulationModule tools
+# No perception — uses the base module's planning + gripper tools only.
 # Usage: dimos run coordinator-mock, then dimos run xarm7-planner-coordinator-agent
 _BASE_MANIPULATION_AGENT_SYSTEM_PROMPT = """\
 You are a robotic manipulation assistant controlling an xArm7 robot arm.
 
-Available skills:
+Available tools:
 - get_robot_state: Get current joint positions, end-effector pose, and gripper state.
 - move_to_pose: Move end-effector to ABSOLUTE x, y, z (meters) with optional roll, pitch, yaw (radians).
 - move_to_joints: Move to a joint configuration (comma-separated radians).
@@ -209,13 +209,13 @@ xarm_perception = (
 
 
 # XArm7 perception + LLM agent for agentic manipulation.
-# Skills (pick, place, move_to_pose, etc.) auto-register with the agent's SkillCoordinator.
+# Tools (pick, place, move_to_pose, etc.) auto-register with the agent's ToolCoordinator.
 # Usage: XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 _MANIPULATION_AGENT_SYSTEM_PROMPT = """\
 You are a robotic manipulation assistant controlling an xArm7 robot arm with an \
 eye-in-hand RealSense camera and a gripper.
 
-# Skills
+# Tools
 
 ## Perception
 - **look**: Quick snapshot of objects visible from the current camera pose. Does NOT \
@@ -249,7 +249,7 @@ world-frame pose (meters / radians).
 ## Status & Recovery
 - **get_robot_state**: Current joint positions, end-effector pose, and gripper state.
 - **get_scene_info**: Full robot state, detected objects, and scene overview.
-- **reset**: Clear a FAULT state and return to IDLE. Available as both a skill and RPC.
+- **reset**: Clear a FAULT state and return to IDLE. Available as both a tool and RPC.
 - **clear_perception_obstacles**: Remove detected obstacles from the planning world. \
 Use when planning fails with COLLISION_AT_START.
 

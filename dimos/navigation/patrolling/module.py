@@ -18,7 +18,7 @@ from collections.abc import AsyncGenerator
 
 from dimos_lcm.std_msgs import Bool
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
@@ -69,7 +69,7 @@ class PatrollingModule(Module):
     async def handle_goal_reached(self, _msg: Bool) -> None:
         self._goal_reached_event.set()
 
-    @skill
+    @tool
     async def start_patrol(self) -> str:
         """Start patrolling the known area. The robot will continuously pick patrol goals from the router and navigate to them until `stop_patrol` is called."""
         if self._patrol_task is not None and not self._patrol_task.done():
@@ -87,7 +87,7 @@ class PatrollingModule(Module):
     def is_patrolling(self) -> bool:
         return self._patrol_task is not None and not self._patrol_task.done()
 
-    @skill
+    @tool
     async def stop_patrol(self) -> str:
         """Stop the ongoing patrol."""
         await self._stop_patrolling()

@@ -1,6 +1,6 @@
 # DimOS MCP Server
 
-Expose DimOS robot skills to Claude Code via Model Context Protocol.
+Expose DimOS robot tools to Claude Code via Model Context Protocol.
 
 ## Setup
 
@@ -41,7 +41,7 @@ Change **Transport Type** to "Streamable HTTP", change **URL** to `http://localh
 uv run dimos run unitree-go2-agentic
 ```
 
-**Claude Code** - Use robot skills:
+**Claude Code** - Use robot tools:
 ```
 > move forward 1 meter
 > go to the kitchen
@@ -52,4 +52,4 @@ uv run dimos run unitree-go2-agentic
 
 1. `McpServer` in the blueprint starts a FastAPI server on port 9990
 2. Claude Code connects directly to `http://localhost:9990/mcp`
-3. Skills are exposed as MCP tools (e.g., `relative_move`, `navigate_with_text`)
+3. Tools are exposed as MCP tools (e.g., `relative_move`, `navigate_with_text`)

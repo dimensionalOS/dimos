@@ -65,7 +65,7 @@ else:
 
 
 @dataclass(frozen=True)
-class SkillInfo:
+class ToolInfo:
     class_name: str
     func_name: str
     args_schema: str
@@ -413,20 +413,18 @@ class ModuleBase(Configurable, CompositeResource):
         setattr(self, name, module_ref)
 
     @rpc
-    def get_skills(self) -> list[SkillInfo]:
+    def get_tools(self) -> list[ToolInfo]:
         from langchain_core.tools import tool  # ~170ms: deferred to avoid CLI startup cost
 
-        skills: list[SkillInfo] = []
+        tools: list[ToolInfo] = []
         for name in dir(self):
             attr = getattr(self, name)
-            if callable(attr) and hasattr(attr, "__skill__"):
+            if callable(attr) and hasattr(attr, "__tool__"):
                 schema = json.dumps(tool(attr).args_schema.model_json_schema())
-                skills.append(
-                    SkillInfo(
-                        class_name=self.__class__.__name__, func_name=name, args_schema=schema
-                    )
+                tools.append(
+                    ToolInfo(class_name=self.__class__.__name__, func_name=name, args_schema=schema)
                 )
-        return skills
+        return tools
 
     def spawn(self, coro: Any) -> Any:
         """
@@ -466,7 +464,7 @@ class ModuleBase(Configurable, CompositeResource):
     def start_tool(self, name: str) -> None:
         """Open a tool-stream channel named `name` for this module.
 
-        Must be called from inside a `@skill` method's main thread. The caller's
+        Must be called from inside a `@tool` method's main thread. The caller's
         `progressToken` is captured at this moment so later updates can be
         routed as `notifications/progress` frames bound to the originating
         `tools/call`.

@@ -23,7 +23,7 @@ is using DimOS for the first time:
 3. dimos mcp list-tools            (discover tools)
 4. dimos mcp call echo             (call a tool)
 5. dimos mcp status                (module info)
-6. dimos mcp modules               (module-skill mapping)
+6. dimos mcp modules               (module-tool mapping)
 7. dimos agent-send "hello"        (send to agent)
 8. Check logs for responses
 9. dimos stop                     (clean shutdown)
@@ -172,7 +172,7 @@ def main() -> None:
         try:
             data = json.loads(result.stdout)
             p(
-                f"Status: pid={data.get('pid')}, {data.get('skill_count', '?')} skills, modules={data.get('modules', [])}"
+                f"Status: pid={data.get('pid')}, {data.get('tool_count', '?')} tools, modules={data.get('modules', [])}"
             )
         except json.JSONDecodeError:
             p(f"Non-JSON output: {result.stdout[:100]}", ok=False)
@@ -186,8 +186,8 @@ def main() -> None:
     if result.returncode == 0:
         try:
             data = json.loads(result.stdout)
-            for mod_name, skills in data.get("modules", {}).items():
-                p(f"Module {mod_name}: {', '.join(skills)}")
+            for mod_name, tools in data.get("modules", {}).items():
+                p(f"Module {mod_name}: {', '.join(tools)}")
         except json.JSONDecodeError:
             p(f"Non-JSON output: {result.stdout[:100]}", ok=False)
             failures += 1

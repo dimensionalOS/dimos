@@ -30,7 +30,7 @@ Connection + camera + visualization. The foundation layer.
 
 | Module | Purpose |
 |--------|---------|
-| `DroneConnectionModule` | MAVLink communication, movement skills |
+| `DroneConnectionModule` | MAVLink communication, movement tools |
 | `DroneCameraModule` | Camera intrinsics, image processing |
 | `WebsocketVisModule` | Web-based visualization |
 | `RerunBridgeModule` / `FoxgloveBridge` | 3D viewer (selected by `--viewer`) |
@@ -43,8 +43,8 @@ Composes on top of `drone-basic`, adding autonomous capabilities:
 | Module | Purpose |
 |--------|---------|
 | `DroneTrackingModule` | Visual servoing & object tracking |
-| `GoogleMapsSkillContainer` | GPS-based navigation skills |
-| `OsmSkill` | OpenStreetMap queries |
+| `GoogleMapsToolContainer` | GPS-based navigation tools |
+| `OsmTool` | OpenStreetMap queries |
 | `McpServer` + `McpClient` | LLM agent (default: GPT-4o) via MCP |
 | `WebInput` | Web/CLI interface for human commands |
 
@@ -72,7 +72,7 @@ sudo apt-get install liblcm-dev
 export OPENAI_API_KEY=sk-...
 
 # Optional
-export GOOGLE_MAPS_API_KEY=...  # For GoogleMapsSkillContainer
+export GOOGLE_MAPS_API_KEY=...  # For GoogleMapsToolContainer
 ```
 
 ## RosettaDrone Setup (Critical)
@@ -140,7 +140,7 @@ dimos/robot/drone/
 ├── blueprints/
 │   ├── basic/drone_basic.py              # Base blueprint (connection + camera + vis)
 │   └── agentic/drone_agentic.py          # Agentic blueprint (composes on basic)
-├── connection_module.py                   # MAVLink communication & skills
+├── connection_module.py                   # MAVLink communication & tools
 ├── camera_module.py                       # Camera processing & intrinsics
 ├── drone_tracking_module.py               # Visual servoing & object tracking
 ├── drone_visual_servoing_controller.py    # PID-based visual servoing
@@ -198,9 +198,9 @@ Parameters: `(Kp, Ki, Kd, (min_output, max_output), integral_limit, deadband_pix
 4. Velocity commands sent via LCM stream
 5. Connection module converts to MAVLink commands
 
-## Available Skills
+## Available Tools
 
-All skills are exposed to the LLM agent via the `@skill` decorator on `DroneConnectionModule`:
+All tools are exposed to the LLM agent via the `@tool` decorator on `DroneConnectionModule`:
 
 ### Movement & Control
 - `move(x, y, z, duration)` — Move with velocity (m/s)

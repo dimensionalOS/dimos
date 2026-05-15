@@ -70,9 +70,9 @@ GROUP_COLORS = [
     "#AA96DA",  # lavender
 ]
 
-# Colors for RPCs/Skills
+# Colors for RPCs/Tools
 RPC_COLOR = "#7986CB"  # indigo
-SKILL_COLOR = "#4ECDC4"  # teal
+TOOL_COLOR = "#4ECDC4"  # teal
 
 
 def color_for_string(colors: list[str], s: str) -> str:

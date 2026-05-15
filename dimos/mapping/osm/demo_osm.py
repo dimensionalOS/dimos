@@ -15,13 +15,13 @@
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.agents.skills.demo_robot import DemoRobot
-from dimos.agents.skills.osm import OsmSkill
+from dimos.agents.tools.demo_robot import DemoRobot
+from dimos.agents.tools.osm import OsmTool
 from dimos.core.coordination.blueprints import autoconnect
 
 demo_osm = autoconnect(
     DemoRobot.blueprint(),
-    OsmSkill.blueprint(),
+    OsmTool.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(),
 )

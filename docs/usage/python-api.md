@@ -17,11 +17,11 @@ app = Dimos(n_workers=8)
 # Run a blueprint by name.
 app.run("unitree-go2-agentic")
 
-# Call skills.
-app.skills.relative_move(forward=2.0)
+# Call tools.
+app.tools.relative_move(forward=2.0)
 
-# List all available skills.
-print(app.skills)
+# List all available tools.
+print(app.tools)
 
 # Access a module directly.
 app.ReplanningAStarPlanner
@@ -75,8 +75,8 @@ app = Dimos.connect()
 
 # Everything works the same as local mode
 print(app)                     # <Dimos(remote=True, modules=[...])>
-print(app.skills)              # list all skills
-app.skills.relative_move(forward=2.0)
+print(app.tools)              # list all tools
+app.tools.relative_move(forward=2.0)
 app.stop()  # closes the connection (does NOT stop the remote process)
 ```
 

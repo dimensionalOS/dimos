@@ -27,7 +27,7 @@ from dimos.core.run_registry import get_most_recent_rpyc_port
 from dimos.porcelain.local_module_source import LocalModuleSource
 from dimos.porcelain.module_source import ModuleSource
 from dimos.porcelain.remote_module_source import RemoteModuleSource
-from dimos.porcelain.skills_proxy import SkillsProxy
+from dimos.porcelain.tools_proxy import ToolsProxy
 from dimos.robot.all_blueprints import all_modules
 from dimos.robot.get_all_blueprints import class_name_to_registry_key, get_by_name
 
@@ -112,7 +112,7 @@ class Dimos:
         registry and connects to its coordinator RPyC endpoint. Use `run_id=` to
         select a specific run, or `host=` + `port=` to bypass the registry.
 
-        Returns a `Dimos` instance in read/call mode: `skills`, attribute
+        Returns a `Dimos` instance in read/call mode: `tools`, attribute
         access, `__repr__` and `__dir__` work, but `run()` and `restart()` raise
         `NotImplementedError`. `stop()` closes the connection without
         terminating the remote process.
@@ -128,18 +128,18 @@ class Dimos:
         return instance
 
     @property
-    def skills(self) -> SkillsProxy:
-        """Access skills from all running modules.
+    def tools(self) -> ToolsProxy:
+        """Access tools from all running modules.
 
         Returns a proxy that supports attribute access and pretty-printing::
 
-            app.skills.relative_move(forward=2.0)
-            print(app.skills)
+            app.tools.relative_move(forward=2.0)
+            print(app.tools)
         """
         with self._lock:
             if self._source is None:
                 raise RuntimeError("No modules are running")
-            return SkillsProxy(self._source)
+            return ToolsProxy(self._source)
 
     def peek_stream(self, name: str, timeout: float = 1.0) -> Any:
         """Fetch the next message from a named stream on any running module.

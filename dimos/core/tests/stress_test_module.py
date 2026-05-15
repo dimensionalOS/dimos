@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lightweight test module with MCP-callable skills for stress testing.
+"""Lightweight test module with MCP-callable tools for stress testing.
 
 Used by e2e tests to verify MCP lifecycle, agent CLI, and daemon robustness.
 No hardware, no LFS, no replay files needed.
@@ -22,30 +22,30 @@ from __future__ import annotations
 
 import time
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.module import Module
 
 
 class StressTestModule(Module):
-    """Minimal module exposing test skills via MCP."""
+    """Minimal module exposing test tools via MCP."""
 
-    @skill
+    @tool
     def echo(self, message: str) -> str:
         """Echo back the given message. Used for latency and connectivity tests."""
         return message
 
-    @skill
+    @tool
     def ping(self) -> str:
         """Simple health check. Returns 'pong'."""
         return "pong"
 
-    @skill
+    @tool
     def slow(self, seconds: float = 1.0) -> str:
         """Sleep for the given duration then return. Used for timeout tests."""
         time.sleep(seconds)
         return f"slept {seconds}s"
 
-    @skill
+    @tool
     def info(self) -> str:
         """Return module runtime info."""
         import os

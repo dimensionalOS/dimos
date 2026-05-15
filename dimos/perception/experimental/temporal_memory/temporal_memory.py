@@ -32,7 +32,7 @@ from typing import Any
 from reactivex import Subject, interval
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -495,11 +495,11 @@ class TemporalMemory(Module):
             )
             logger.info(f"[temporal-memory] SUMMARY: {sr.summary_text[:300]}")
 
-    @skill
+    @tool
     def query(self, question: str) -> str:
         """Answer a question about the video stream using temporal memory and graph knowledge.
 
-        This skill analyzes the current video stream and temporal memory state
+        This tool analyzes the current video stream and temporal memory state
         to answer questions about what is happening, what entities are present,
         recent events, spatial relationships, and conceptual knowledge.
 

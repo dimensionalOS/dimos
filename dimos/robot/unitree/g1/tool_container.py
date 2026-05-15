@@ -13,13 +13,13 @@
 # limitations under the License.
 
 """
-Unitree G1 skill container for the new agents framework.
-Dynamically generates skills for G1 humanoid robot including arm controls and movement modes.
+Unitree G1 tool container for the new agents framework.
+Dynamically generates tools for G1 humanoid robot including arm controls and movement modes.
 """
 
 import difflib
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -63,7 +63,7 @@ _MODE_COMMANDS: dict[str, tuple[int, str]] = {
 }
 
 
-class UnitreeG1SkillContainer(Module):
+class UnitreeG1ToolContainer(Module):
     _connection: G1ConnectionSpec
 
     @rpc
@@ -74,7 +74,7 @@ class UnitreeG1SkillContainer(Module):
     def stop(self) -> None:
         super().stop()
 
-    @skill
+    @tool
     def move(self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0) -> str:
         """Move the robot using direct velocity commands. Determine duration required based on user distance instructions.
 
@@ -93,11 +93,11 @@ class UnitreeG1SkillContainer(Module):
         self._connection.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 
-    @skill
+    @tool
     def execute_arm_command(self, command_name: str) -> str:
         return self._execute_g1_command(_ARM_COMMANDS, 7106, "rt/api/arm/request", command_name)
 
-    @skill
+    @tool
     def execute_mode_command(self, command_name: str) -> str:
         return self._execute_g1_command(_MODE_COMMANDS, 7101, "rt/api/sport/request", command_name)
 
@@ -128,7 +128,7 @@ _arm_commands = "\n".join(
     [f'- "{name}": {description}' for name, (_, description) in _ARM_COMMANDS.items()]
 )
 
-UnitreeG1SkillContainer.execute_arm_command.__doc__ = f"""Execute a Unitree G1 arm command.
+UnitreeG1ToolContainer.execute_arm_command.__doc__ = f"""Execute a Unitree G1 arm command.
 
 Example usage:
 
@@ -143,7 +143,7 @@ _mode_commands = "\n".join(
     [f'- "{name}": {description}' for name, (_, description) in _MODE_COMMANDS.items()]
 )
 
-UnitreeG1SkillContainer.execute_mode_command.__doc__ = f"""Execute a Unitree G1 mode command.
+UnitreeG1ToolContainer.execute_mode_command.__doc__ = f"""Execute a Unitree G1 mode command.
 
 Example usage:
 

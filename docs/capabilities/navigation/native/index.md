@@ -118,7 +118,7 @@ All visualization layers shown together
 
 ## Patrolling
 
-The patrolling system drives the robot to systematically cover a **known** area. It is exposed as an agent skill. An LLM agent can call `start_patrol` and `stop_patrol` to control it. Note that the area has to be explored first.
+The patrolling system drives the robot to systematically cover a **known** area. It is exposed as an agent tool. An LLM agent can call `start_patrol` and `stop_patrol` to control it. Note that the area has to be explored first.
 
 ### How it works
 

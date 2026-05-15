@@ -15,7 +15,7 @@
 
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.mapping.models import LatLon
@@ -27,7 +27,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class OsmSkill(Module):
+class OsmTool(Module):
     _latest_location: LatLon | None
     _current_location_map: CurrentLocationMap
 
@@ -44,7 +44,7 @@ class OsmSkill(Module):
             self.register_disposable(Disposable(self.gps_location.subscribe(self._on_gps_location)))
         else:
             logger.warning(
-                "OsmSkill: gps_location stream does not support direct subscribe (RemoteIn)"
+                "OsmTool: gps_location stream does not support direct subscribe (RemoteIn)"
             )
 
     def stop(self) -> None:
@@ -53,9 +53,9 @@ class OsmSkill(Module):
     def _on_gps_location(self, location: LatLon) -> None:
         self._latest_location = location
 
-    @skill
+    @tool
     def map_query(self, query_sentence: str) -> str:
-        """This skill uses a vision language model to find something on the map
+        """This tool uses a vision language model to find something on the map
         based on the query sentence. You can query it with something like "Where
         can I find a coffee shop?" and it returns the latitude and longitude.
 

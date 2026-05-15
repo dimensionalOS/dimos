@@ -21,7 +21,7 @@ from langchain_core.messages import HumanMessage
 import pytest
 
 from dimos.agents import annotation as annotation_module
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.mcp.tool_stream import (
@@ -49,7 +49,7 @@ class StreamingModule(Module):
         self._stream_threads: list[Thread] = []
         self._stop_streaming = Event()
 
-    @skill
+    @tool
     def start_streaming(self, count: int) -> str:
         """Starts streaming count updates back to the agent."""
         self.start_tool("start_streaming")
@@ -238,30 +238,30 @@ def test_tool_stream_agent(agent_setup) -> None:
 
 
 @pytest.fixture()
-def skill_context():
-    """Save/restore `_SKILL_CONTEXT.context` around a test.
+def tool_context():
+    """Save/restore `_TOOL_CONTEXT.context` around a test.
 
     On entry the context is set to `{}` so the body runs inside a simulated
-    @skill call with no progress token (the most common case). The yielded
-    setter lets tests override that. Pass `None` for "outside any skill" or a
+    @tool call with no progress token (the most common case). The yielded
+    setter lets tests override that. Pass `None` for "outside any tool" or a
     dict with a `progress_token` for the progress-notification path.
     """
-    previous = getattr(annotation_module._SKILL_CONTEXT, "context", None)
-    annotation_module._SKILL_CONTEXT.context = {}
+    previous = getattr(annotation_module._TOOL_CONTEXT, "context", None)
+    annotation_module._TOOL_CONTEXT.context = {}
 
     def set_context(value):
-        annotation_module._SKILL_CONTEXT.context = value
+        annotation_module._TOOL_CONTEXT.context = value
 
     yield set_context
 
-    annotation_module._SKILL_CONTEXT.context = previous
+    annotation_module._TOOL_CONTEXT.context = previous
 
 
 @pytest.fixture()
-def stream_with_transport_mock(mocker, skill_context):
+def stream_with_transport_mock(mocker, tool_context):
     """ToolStream wired to a mock pLCMTransport so unit tests can inspect publishes.
 
-    Constructs the stream inside a simulated `@skill` context with no progress
+    Constructs the stream inside a simulated `@tool` context with no progress
     token, so the strict-construction rule is satisfied and the stream takes the
     `notifications/message` fallback path.
     """
@@ -271,10 +271,10 @@ def stream_with_transport_mock(mocker, skill_context):
     return stream, mock_transport
 
 
-def test_tool_stream_outside_skill_raises(skill_context) -> None:
-    """Constructing a ToolStream outside any @skill call raises RuntimeError."""
-    skill_context(None)
-    with pytest.raises(RuntimeError, match="must be constructed inside a @skill"):
+def test_tool_stream_outside_tool_raises(tool_context) -> None:
+    """Constructing a ToolStream outside any @tool call raises RuntimeError."""
+    tool_context(None)
+    with pytest.raises(RuntimeError, match="must be constructed inside a @tool"):
         ToolStream("out_of_context")
 
 
@@ -345,11 +345,11 @@ def test_make_progress_notification_shape() -> None:
 
 
 @pytest.fixture()
-def stream_with_progress_context(mocker, skill_context):
-    """ToolStream constructed with a skill-context progress_token set."""
+def stream_with_progress_context(mocker, tool_context):
+    """ToolStream constructed with a tool-context progress_token set."""
     mock_transport = mocker.MagicMock()
     mocker.patch("dimos.agents.mcp.tool_stream.pLCMTransport", return_value=mock_transport)
-    skill_context({"progress_token": "pt-unit-1"})
+    tool_context({"progress_token": "pt-unit-1"})
     stream = ToolStream("progress_tool")
     return stream, mock_transport
 
@@ -381,71 +381,71 @@ def test_send_without_progress_token_falls_back_to_message(
     assert frame["params"]["logger"] == "test_tool"
 
 
-def test_skill_wrapper_sets_and_restores_context() -> None:
-    """The @skill wrapper pops _mcp_context and save/restores the thread-local."""
+def test_tool_wrapper_sets_and_restores_context() -> None:
+    """The @tool wrapper pops _mcp_context and save/restores the thread-local."""
     observed: list[dict | None] = []
 
-    @skill
+    @tool
     def inner() -> str:
-        observed.append(annotation_module.current_skill_context())
+        observed.append(annotation_module.current_tool_context())
         return "ok"
 
-    assert annotation_module.current_skill_context() is None
+    assert annotation_module.current_tool_context() is None
     assert inner(_mcp_context={"progress_token": "pt-X"}) == "ok"
     assert observed == [{"progress_token": "pt-X"}]
     # Restored to None after the call.
-    assert annotation_module.current_skill_context() is None
+    assert annotation_module.current_tool_context() is None
 
 
-def test_skill_wrapper_without_context_still_sets_empty_dict() -> None:
+def test_tool_wrapper_without_context_still_sets_empty_dict() -> None:
     """Even without an _mcp_context kwarg, inside the call the context is {}.
 
-    This lets ToolStream distinguish "inside a skill with no client token"
+    This lets ToolStream distinguish "inside a tool with no client token"
     (construct OK, fall back to notifications/message) from "outside any
-    skill entirely" (RuntimeError).
+    tool entirely" (RuntimeError).
     """
     observed: list[dict | None] = []
 
-    @skill
+    @tool
     def inner() -> None:
-        observed.append(annotation_module.current_skill_context())
+        observed.append(annotation_module.current_tool_context())
 
-    assert annotation_module.current_skill_context() is None
+    assert annotation_module.current_tool_context() is None
     inner()
     assert observed == [{}]
-    assert annotation_module.current_skill_context() is None
+    assert annotation_module.current_tool_context() is None
 
 
-def test_skill_wrapper_nested_calls_restore_outer_context() -> None:
-    """Nested @skill calls on the same thread must not clobber the outer frame."""
+def test_tool_wrapper_nested_calls_restore_outer_context() -> None:
+    """Nested @tool calls on the same thread must not clobber the outer frame."""
     outer_seen: list[dict | None] = []
 
-    @skill
-    def inner_skill() -> None:
+    @tool
+    def inner_tool() -> None:
         pass
 
-    @skill
-    def outer_skill() -> None:
-        inner_skill(_mcp_context={"progress_token": "inner"})
-        outer_seen.append(annotation_module.current_skill_context())
+    @tool
+    def outer_tool() -> None:
+        inner_tool(_mcp_context={"progress_token": "inner"})
+        outer_seen.append(annotation_module.current_tool_context())
 
-    outer_skill(_mcp_context={"progress_token": "outer"})
+    outer_tool(_mcp_context={"progress_token": "outer"})
     assert outer_seen == [{"progress_token": "outer"}]
 
 
 class _ToolHelperTestModule(Module):
     """A minimal module used to exercise the start_tool/tool_update/stop_tool helpers.
 
-    The `@skill` wrapper establishes the `_SKILL_CONTEXT` for the duration
+    The `@tool` wrapper establishes the `_TOOL_CONTEXT` for the duration
     of the call, so `self.start_tool(...)` runs under a live context.
     """
 
-    @skill
+    @tool
     def start(self, name: str) -> str:
         self.start_tool(name)
         return "started"
 
-    @skill
+    @tool
     def double_start(self, name: str) -> str:
         self.start_tool(name)
         self.start_tool(name)  # should raise
@@ -471,7 +471,7 @@ def tool_helper_module(mocker):
     module._close_all_tools()
 
 
-def test_start_tool_duplicate_raises(tool_helper_module, skill_context) -> None:
+def test_start_tool_duplicate_raises(tool_helper_module, tool_context) -> None:
     module, _ = tool_helper_module
     module.start_tool("job")
     with pytest.raises(RuntimeError, match="already active"):
@@ -492,7 +492,7 @@ def test_stop_tool_without_start_is_noop(tool_helper_module) -> None:
     mock_transport.stop.assert_not_called()
 
 
-def test_tool_update_routes_to_registered_stream(tool_helper_module, skill_context) -> None:
+def test_tool_update_routes_to_registered_stream(tool_helper_module, tool_context) -> None:
     module, mock_transport = tool_helper_module
     module.start_tool("job")
     module.tool_update("job", "progress 1")
@@ -503,7 +503,7 @@ def test_tool_update_routes_to_registered_stream(tool_helper_module, skill_conte
     assert texts == ["progress 1", "progress 2"]
 
 
-def test_stop_tool_pops_from_registry(tool_helper_module, skill_context) -> None:
+def test_stop_tool_pops_from_registry(tool_helper_module, tool_context) -> None:
     module, mock_transport = tool_helper_module
     module.start_tool("job")
     # A send is required for ToolStream to lazily construct the transport;
@@ -515,7 +515,7 @@ def test_stop_tool_pops_from_registry(tool_helper_module, skill_context) -> None
     mock_transport.stop.assert_called_once()
 
 
-def test_close_all_tools_stops_outstanding(tool_helper_module, skill_context) -> None:
+def test_close_all_tools_stops_outstanding(tool_helper_module, tool_context) -> None:
     module, mock_transport = tool_helper_module
     module.start_tool("a")
     module.tool_update("a", "kick a")

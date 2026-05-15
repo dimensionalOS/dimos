@@ -38,7 +38,7 @@ def render_module_io(
         color: Whether to include ANSI color codes.
 
     Returns:
-        ASCII diagram showing module inputs, outputs, RPCs, and skills.
+        ASCII diagram showing module inputs, outputs, RPCs, and tools.
     """
     info = extract_module_info(name, inputs, outputs, rpcs)
     return ansi.render(info, color=color)

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 from pydantic import field_validator
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -217,7 +217,7 @@ class SemanticSearch(MemoryModule):
            .drain_thread()
         # fmt: on
 
-    @skill
+    @tool
     def search(self, query: str) -> PoseStamped:
         from dimos.memory2.transform import peaks
 

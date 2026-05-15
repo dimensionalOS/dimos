@@ -2,7 +2,7 @@
 
 ## What is DimOS
 
-The agentic operating system for generalist robotics. `Modules` communicate via typed streams over LCM, ROS2, DDS, or other transports. `Blueprints` compose modules into runnable robot stacks. `Skills` give agents the ability to execute physical on-hardware functions like `grab()`, `follow_object()`, or `jump()`.
+The agentic operating system for generalist robotics. `Modules` communicate via typed streams over LCM, ROS2, DDS, or other transports. `Blueprints` compose modules into runnable robot stacks. `Tools` give agents the ability to execute physical on-hardware functions like `grab()`, `follow_object()`, or `jump()`.
 
 ---
 
@@ -18,11 +18,11 @@ dimos list
 # --- Go2 quadruped ---
 dimos --replay run unitree-go2                  # perception + mapping, replay data
 dimos --replay run unitree-go2 --daemon         # same, backgrounded
-dimos --replay run unitree-go2-agentic          # + LLM agent (GPT-4o) + skills + MCP server
+dimos --replay run unitree-go2-agentic          # + LLM agent (GPT-4o) + tools + MCP server
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161  # real Go2 hardware
 
 # --- G1 humanoid ---
-dimos --simulation run unitree-g1-agentic-sim   # G1 in MuJoCo sim + agent + skills
+dimos --simulation run unitree-g1-agentic-sim   # G1 in MuJoCo sim + agent + tools
 dimos run unitree-g1-agentic --robot-ip 192.168.123.161   # real G1 hardware
 
 # --- Inspect & control ---
@@ -59,11 +59,11 @@ Run `dimos list` for the full list.
 dimos --replay run unitree-go2-agentic --daemon
 
 # Then use MCP tools:
-dimos mcp list-tools                                              # all available skills as JSON
+dimos mcp list-tools                                              # all available tools as JSON
 dimos mcp call move --arg x=0.5 --arg duration=2.0               # call by key=value args
 dimos mcp call move --json-args '{"x": 0.5, "duration": 2.0}'    # call by JSON
-dimos mcp status      # PID, module list, skill list
-dimos mcp modules     # module → skills mapping
+dimos mcp status      # PID, module list, tool list
+dimos mcp modules     # module → tools mapping
 
 # Send a message to the running agent (works without McpServer too):
 dimos agent-send "walk forward 2 meters then wave"
@@ -81,9 +81,9 @@ from dimos.agents.mcp.mcp_server import McpServer
 
 unitree_go2_agentic = autoconnect(
     unitree_go2_spatial,   # robot stack
-    McpServer.blueprint(), # HTTP MCP server — exposes all @skill methods on port 9990
+    McpServer.blueprint(), # HTTP MCP server — exposes all @tool methods on port 9990
     McpClient.blueprint(), # LLM agent — fetches tools from McpServer
-    _common_agentic,       # skill containers
+    _common_agentic,       # tool containers
 )
 ```
 
@@ -111,9 +111,9 @@ dimos/
 │   ├── cli/dimos.py         # CLI entry point (typer)
 │   ├── all_blueprints.py    # Auto-generated blueprint registry (DO NOT EDIT MANUALLY)
 │   ├── unitree/             # Unitree robot implementations (Go2, G1, B1)
-│   │   ├── unitree_skill_container.py  # Go2 @skill methods
+│   │   ├── unitree_tool_container.py  # Go2 @tool methods
 │   │   ├── go2/             # Go2 blueprints and connection
-│   │   └── g1/              # G1 blueprints, connection, sim, skills
+│   │   └── g1/              # G1 blueprints, connection, sim, tools
 │   └── drone/               # Drone implementations (MAVLink + DJI)
 │       ├── connection_module.py        # MAVLink connection
 │       ├── camera_module.py            # DJI video stream
@@ -122,9 +122,9 @@ dimos/
 ├── agents/
 │   ├── agent.py             # Agent module (LangGraph-based)
 │   ├── system_prompt.py     # Default Go2 system prompt
-│   ├── annotation.py        # @skill decorator
+│   ├── annotation.py        # @tool decorator
 │   ├── mcp/                 # McpServer, McpClient, McpAdapter
-│   └── skills/              # NavigationSkillContainer, SpeakSkill, etc.
+│   └── tools/              # NavigationToolContainer, SpeakTool, etc.
 ├── navigation/              # Path planning, frontier exploration
 ├── perception/              # Object detection, tracking, memory
 ├── visualization/rerun/     # Rerun bridge
@@ -230,32 +230,32 @@ Run registry: `~/.local/state/dimos/runs/<run-id>.json`
 
 ## Agent System
 
-### The `@skill` Decorator
+### The `@tool` Decorator
 
-`dimos/agents/annotation.py`. Sets `__rpc__ = True` and `__skill__ = True`.
+`dimos/agents/annotation.py`. Sets `__rpc__ = True` and `__tool__ = True`.
 
 - `@rpc` alone: callable via RPC, not exposed to LLM
-- `@skill`: implies `@rpc` AND exposes method to the LLM as a tool. **Do not stack both.**
+- `@tool`: implies `@rpc` AND exposes method to the LLM as a tool. **Do not stack both.**
 
 #### Schema generation rules
 
 | Rule | What happens if you break it |
 |------|------------------------------|
-| **Docstring is mandatory** | `ValueError` at startup — module fails to register, all skills disappear |
+| **Docstring is mandatory** | `ValueError` at startup — module fails to register, all tools disappear |
 | **Type-annotate every param** | Missing annotation → no `"type"` in schema — LLM has no type info |
 | **Return `str`** | `None` return → agent hears "It has started. You will be updated later." |
 | **Full docstring verbatim in `description`** | Keep `Args:` block concise — it appears in every tool-call prompt |
 
 Supported param types: `str`, `int`, `float`, `bool`, `list[str]`, `list[float]`. Avoid complex nested types.
 
-#### Minimal correct skill
+#### Minimal correct tool
 
 ```python
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.core import rpc
 from dimos.core.module import Module
 
-class MySkillContainer(Module):
+class MyToolContainer(Module):
     @rpc
     def start(self) -> None:
         super().start()
@@ -264,7 +264,7 @@ class MySkillContainer(Module):
     def stop(self) -> None:
         super().stop()
 
-    @skill
+    @tool
     def move(self, x: float, duration: float = 2.0) -> str:
         """Move the robot forward or backward.
 
@@ -274,7 +274,7 @@ class MySkillContainer(Module):
         """
         return f"Moving at {x} m/s for {duration}s"
 
-my_skill_container = MySkillContainer.blueprint
+my_tool_container = MyToolContainer.blueprint
 ```
 
 ### System Prompts
@@ -284,7 +284,7 @@ my_skill_container = MySkillContainer.blueprint
 | Go2 (default) | `dimos/agents/system_prompt.py` | `SYSTEM_PROMPT` |
 | G1 humanoid | `dimos/robot/unitree/g1/system_prompt.py` | `G1_SYSTEM_PROMPT` |
 
-Pass the robot-specific prompt: `McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on G1 causes hallucinated skills.
+Pass the robot-specific prompt: `McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on G1 causes hallucinated tools.
 
 ### RPC Wiring
 
@@ -299,11 +299,11 @@ class NavigatorSpec(Spec, Protocol):
     def set_goal(self, goal: PoseStamped) -> bool: ...
     def cancel_goal(self) -> bool: ...
 
-# my_skill_container.py
-class MySkillContainer(Module):
+# my_tool_container.py
+class MyToolContainer(Module):
     _navigator: NavigatorSpec   # injected by blueprint at build time
 
-    @skill
+    @tool
     def go_to(self, x: float, y: float) -> str:
         """Navigate to a position."""
         self._navigator.set_goal(make_pose(x, y))
@@ -312,14 +312,14 @@ class MySkillContainer(Module):
 
 If multiple modules match the spec, use `.remappings()` to resolve. Source: `dimos/spec/utils.py`, `dimos/core/coordination/blueprints.py`.
 
-### Adding a New Skill
+### Adding a New Tool
 
-1. Pick the right container (robot-specific or `dimos/agents/skills/`).
-2. `@skill` + mandatory docstring + type annotations on all params.
+1. Pick the right container (robot-specific or `dimos/agents/tools/`).
+2. `@tool` + mandatory docstring + type annotations on all params.
 3. If it needs another module's RPC, use the Spec pattern.
 4. Return a descriptive `str`.
-5. Update the system prompt — add to the `# AVAILABLE SKILLS` section.
-6. Expose as `my_container = MySkillContainer.blueprint` and include in the agentic blueprint.
+5. Update the system prompt — add to the `# AVAILABLE TOOLS` section.
+6. Expose as `my_container = MyToolContainer.blueprint` and include in the agentic blueprint.
 
 ---
 

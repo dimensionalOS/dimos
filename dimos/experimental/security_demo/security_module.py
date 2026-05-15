@@ -24,7 +24,7 @@ import numpy as np
 from dimos_lcm.std_msgs import String, Bool
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.experimental.security_demo.depth_estimator import DepthEstimator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
@@ -40,7 +40,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.patrolling.routers.patrol_router import PatrolRouter
-from dimos.agents.skills.speak_skill_spec import SpeakSkillSpec
+from dimos.agents.tools.speak_tool_spec import SpeakToolSpec
 from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
 from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.perception.common.utils import draw_bounding_box
@@ -148,7 +148,7 @@ class SecurityModule(Module):
     cmd_vel: Out[Twist]
 
     _planner_spec: ReplanningAStarPlannerSpec
-    _speak_skill: SpeakSkillSpec
+    _speak_tool: SpeakToolSpec
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -188,7 +188,7 @@ class SecurityModule(Module):
         self._tracker.stop()
         super().stop()
 
-    @skill
+    @tool
     def start_security_patrol(self) -> str:
         """
         Start the security patrol behavior. The robot will patrol, detect
@@ -222,7 +222,7 @@ class SecurityModule(Module):
             "persons automatically. Use `stop_security_patrol` to stop."
         )
 
-    @skill
+    @tool
     def stop_security_patrol(self) -> str:
         """Stop the security patrol behavior entirely."""
         self._stop_security_patrol_internal()
@@ -314,7 +314,7 @@ class SecurityModule(Module):
 
         self._cancel_current_goal()
         self._has_active_goal = False
-        self._speak_skill.speak("Intruder detected", blocking=False)
+        self._speak_tool.speak("Intruder detected", blocking=False)
         self._transition_to("FOLLOWING")
 
     def _follow_step(self) -> None:
@@ -330,7 +330,7 @@ class SecurityModule(Module):
 
         if len(detections) == 0:
             self.cmd_vel.publish(Twist.zero())
-            self._speak_skill.speak("Lost sight of intruder, resuming patrol", blocking=False)
+            self._speak_tool.speak("Lost sight of intruder, resuming patrol", blocking=False)
             self._router.reset()
             self._has_active_goal = False
             self._transition_to("PATROLLING")

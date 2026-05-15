@@ -74,7 +74,7 @@ def _mock_post(url: str, **kwargs: object) -> MagicMock:
         elif name == "greet":
             text = f"Hello, {args.get('name', 'world')}!"
         else:
-            text = "Skill not found"
+            text = "Tool not found"
         result = {"content": [{"type": "text", "text": text}]}
     else:
         resp = MagicMock()

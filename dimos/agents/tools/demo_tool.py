@@ -15,11 +15,11 @@
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.agents.skills.demo_calculator_skill import DemoCalculatorSkill
+from dimos.agents.tools.demo_calculator_tool import DemoCalculatorTool
 from dimos.core.coordination.blueprints import autoconnect
 
-demo_skill = autoconnect(
-    DemoCalculatorSkill.blueprint(),
+demo_tool = autoconnect(
+    DemoCalculatorTool.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(),
 )

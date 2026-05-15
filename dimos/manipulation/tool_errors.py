@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Manipulation-domain failure codes for ``SkillResult``.
+"""Manipulation-domain failure codes for ``ToolResult``.
 
 Cross-domain codes (``ROBOT_NOT_FOUND``, ``INVALID_INPUT``, ``EXECUTION_FAILED``,
-``EXECUTION_TIMEOUT``, ...) live in ``dimos.agents.skill_result.CommonSkillError``.
-This module owns codes specific to manipulation skills.
+``EXECUTION_TIMEOUT``, ...) live in ``dimos.agents.tool_result.CommonToolError``.
+This module owns codes specific to manipulation tools.
 
 Both aliases are plain ``Literal`` types — strings at runtime, constrained by
-the type checker. Use ``SkillResult[ManipulationSkillError]`` on a skill to
+the type checker. Use ``ToolResult[ManipulationToolError]`` on a tool to
 allow either common or manipulation codes.
 """
 
 from typing import Literal
 
-from dimos.agents.skill_result import CommonSkillError
+from dimos.agents.tool_result import CommonToolError
 
 ManipulationError = Literal[
     "NO_PRIOR_POSE",
@@ -39,5 +39,5 @@ ManipulationError = Literal[
     "WORLD_MONITOR_UNAVAILABLE",
 ]
 
-# Union of codes a manipulation skill may emit (common + manipulation-specific).
-ManipulationSkillError = CommonSkillError | ManipulationError
+# Union of codes a manipulation tool may emit (common + manipulation-specific).
+ManipulationToolError = CommonToolError | ManipulationError

@@ -16,7 +16,7 @@ from typing import Any
 
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
@@ -99,7 +99,7 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
         assert self.connection is not None
         return self.connection.liedown()
 
-    @skill
+    @tool
     def move_velocity(
         self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0
     ) -> str:
@@ -113,7 +113,7 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
         self.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 
-    @skill
+    @tool
     def execute_arm_command(self, command_name: str) -> str:
         """Execute a Unitree G1 arm command."""
         return execute_g1_command(
@@ -131,7 +131,7 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
         {ARM_COMMANDS_DOC}
         """
 
-    @skill
+    @tool
     def execute_mode_command(self, command_name: str) -> str:
         """Execute a Unitree G1 mode command."""
         return execute_g1_command(

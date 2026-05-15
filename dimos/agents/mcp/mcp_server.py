@@ -28,7 +28,7 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 import uvicorn
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.agents.mcp import tool_stream
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -36,7 +36,7 @@ from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.module import SkillInfo
+    from dimos.core.module import ToolInfo
 
 logger = setup_logger()
 
@@ -50,7 +50,7 @@ app.add_middleware(
     allow_methods=["POST", "GET"],
     allow_headers=["*"],
 )
-app.state.skills = []
+app.state.tools = []
 app.state.rpc_calls = {}
 app.state.sse_queues = []
 app.state.event_loop = None
@@ -79,10 +79,10 @@ def _handle_initialize(req_id: Any) -> dict[str, Any]:
     )
 
 
-def _handle_tools_list(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
+def _handle_tools_list(req_id: Any, tool_infos: list[ToolInfo]) -> dict[str, Any]:
     tools = []
 
-    for s in skills:
+    for s in tool_infos:
         schema = json.loads(s.args_schema)
         description = schema.pop("description", None)
         schema.pop("title", None)
@@ -110,8 +110,8 @@ async def _handle_tools_call(
     logger.info("MCP tool call", tool=name, args=args, progress_token=progress_token)
     t0 = time.monotonic()
 
-    # _mcp_context is a reserved kwarg consumed by the `@skill` wrapper;
-    # it never reaches the user-visible skill signature.
+    # _mcp_context is a reserved kwarg consumed by the `@tool` wrapper;
+    # it never reaches the user-visible tool signature.
     call_kwargs = dict(args)
     if progress_token is not None:
         call_kwargs["_mcp_context"] = {"progress_token": progress_token}
@@ -137,7 +137,7 @@ async def _handle_tools_call(
 
 async def handle_request(
     request: dict[str, Any],
-    skills: list[SkillInfo],
+    tool_infos: list[ToolInfo],
     rpc_calls: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Handle a single MCP JSON-RPC request.
@@ -156,7 +156,7 @@ async def handle_request(
     if method == "initialize":
         return _handle_initialize(req_id)
     if method == "tools/list":
-        return _handle_tools_list(req_id, skills)
+        return _handle_tools_list(req_id, tool_infos)
     if method == "tools/call":
         return await _handle_tools_call(req_id, params, rpc_calls)
     return _jsonrpc_error(req_id, -32601, f"Unknown: {method}")
@@ -174,7 +174,7 @@ async def mcp_endpoint(request: Request) -> Response:
             status_code=400,
         )
 
-    result = await handle_request(body, request.app.state.skills, request.app.state.rpc_calls)
+    result = await handle_request(body, request.app.state.tools, request.app.state.rpc_calls)
 
     if result is None:
         return Response(status_code=204)
@@ -279,43 +279,43 @@ class McpServer(Module):
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
-        app.state.skills = [
-            skill_info for module in modules for skill_info in (module.get_skills() or [])
+        app.state.tools = [
+            tool_info for module in modules for tool_info in (module.get_tools() or [])
         ]
         app.state.rpc_calls = {
-            skill_info.func_name: RpcCall(
-                None, self.rpc, skill_info.func_name, skill_info.class_name, []
+            tool_info.func_name: RpcCall(
+                None, self.rpc, tool_info.func_name, tool_info.class_name, []
             )
-            for skill_info in app.state.skills
+            for tool_info in app.state.tools
         }
 
-    @skill
+    @tool
     def server_status(self) -> str:
-        """Get MCP server status: main process PID, deployed modules, and skill count."""
+        """Get MCP server status: main process PID, deployed modules, and tool count."""
         from dimos.core.run_registry import get_most_recent
 
-        skills: list[SkillInfo] = app.state.skills
-        modules = list(dict.fromkeys(s.class_name for s in skills))
+        tool_infos: list[ToolInfo] = app.state.tools
+        modules = list(dict.fromkeys(s.class_name for s in tool_infos))
         entry = get_most_recent()
         pid = entry.pid if entry else os.getpid()
         return json.dumps(
             {
                 "pid": pid,
                 "modules": modules,
-                "skills": [s.func_name for s in skills],
+                "tools": [s.func_name for s in tool_infos],
             }
         )
 
-    @skill
+    @tool
     def list_modules(self) -> str:
-        """List deployed modules and their skills."""
-        skills: list[SkillInfo] = app.state.skills
+        """List deployed modules and their tools."""
+        tool_infos: list[ToolInfo] = app.state.tools
         modules: dict[str, list[str]] = {}
-        for s in skills:
+        for s in tool_infos:
             modules.setdefault(s.class_name, []).append(s.func_name)
         return json.dumps({"modules": modules})
 
-    @skill
+    @tool
     def agent_send(self, message: str) -> str:
         """Send a message to the running DimOS agent via LCM."""
         if not message:

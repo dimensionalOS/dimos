@@ -23,7 +23,7 @@ from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 import rerun.blueprint as rrb
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
@@ -357,11 +357,11 @@ class GO2Connection(Module, Camera, Pointcloud):
         """
         return self.connection.publish_request(topic, data)
 
-    @skill
+    @tool
     def observe(self) -> Image | None:
-        """Returns the latest video frame from the robot camera. Use this skill for any visual world queries.
+        """Returns the latest video frame from the robot camera. Use this tool for any visual world queries.
 
-        This skill provides the current camera view for perception tasks.
+        This tool provides the current camera view for perception tasks.
         Returns None if no frame has been captured yet.
         """
         return self._latest_video_frame

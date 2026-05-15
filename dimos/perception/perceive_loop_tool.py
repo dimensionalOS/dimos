@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 import cv2
 
 from dimos.agents.agent_spec import AgentSpec
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-class PerceiveLoopSkill(Module):
+class PerceiveLoopTool(Module):
     color_image: In[Image]
 
     _agent_spec: AgentSpec
@@ -66,7 +66,7 @@ class PerceiveLoopSkill(Module):
         self._stop_lookout()
         super().stop()
 
-    @skill
+    @tool
     def look_out_for(
         self, description_of_things: list[str], then: dict[str, Any] | None = None
     ) -> str:
@@ -130,7 +130,7 @@ class PerceiveLoopSkill(Module):
             "need to use it in order to save resources."
         )
 
-    @skill
+    @tool
     def stop_looking_out(self) -> str:
         """Stop looking out. Use this to end `look_out_for` tool calls."""
         with self._lock:

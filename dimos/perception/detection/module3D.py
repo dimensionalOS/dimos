@@ -22,7 +22,7 @@ from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
@@ -115,7 +115,7 @@ class Detection3DModule(Detection2DModule):
         # Camera optical frame: X right, Y down, Z forward
         return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)
 
-    @skill
+    @tool
     def ask_vlm(self, question: str) -> str:
         """asks a visual model about the view of the robot, for example
         is the bannana in the trunk?
@@ -126,7 +126,7 @@ class Detection3DModule(Detection2DModule):
         image = self.color_image.get_next()
         return model.query(image, question)
 
-    # @skill
+    # @tool
     @rpc
     def nav_vlm(self, question: str) -> str:
         """

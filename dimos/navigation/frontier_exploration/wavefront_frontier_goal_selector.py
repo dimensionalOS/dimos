@@ -29,7 +29,7 @@ from dimos_lcm.std_msgs import Bool
 import numpy as np
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -833,22 +833,22 @@ class WavefrontFrontierExplorer(Module):
                     )
                     threading.Event().wait(2.0)
 
-    @skill
+    @tool
     def begin_exploration(self) -> str:
         """Command the robot to move around and explore the area. Cancelled with end_exploration."""
         started = self.explore()
         if not started:
-            return "Exploration skill is already active. Use end_exploration to stop before starting again."
+            return "Exploration tool is already active. Use end_exploration to stop before starting again."
         return (
-            "Started exploration skill. The robot is now moving. Use end_exploration "
+            "Started exploration tool. The robot is now moving. Use end_exploration "
             "to stop. You also need to cancel before starting a new movement tool."
         )
 
-    @skill
+    @tool
     def end_exploration(self) -> str:
         """Cancel the exploration. The robot will stop moving and remain where it is."""
         stopped = self.stop_exploration()
         if stopped:
             return "Stopped exploration. The robot has stopped moving."
         else:
-            return "Exploration skill was not active, so nothing was stopped."
+            return "Exploration tool was not active, so nothing was stopped."

@@ -16,7 +16,7 @@ import json
 
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
@@ -28,7 +28,7 @@ from dimos.web.websocket_vis_spec import WebsocketVisSpec
 logger = setup_logger()
 
 
-class GpsNavSkillContainer(Module):
+class GpsNavToolContainer(Module):
     _latest_location: LatLon | None = None
     _max_valid_distance: int = 50000
 
@@ -54,9 +54,9 @@ class GpsNavSkillContainer(Module):
             raise ValueError("The position has not been set yet.")
         return self._latest_location
 
-    @skill
+    @tool
     def set_gps_travel_points(self, points: list[dict[str, float]]) -> str:
-        """Define the movement path determined by GPS coordinates. Requires at least one. You can get the coordinates by using the `get_gps_position_for_queries` skill.
+        """Define the movement path determined by GPS coordinates. Requires at least one. You can get the coordinates by using the `get_gps_position_for_queries` tool.
 
         Example:
 

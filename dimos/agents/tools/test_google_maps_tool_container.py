@@ -17,7 +17,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
-from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
+from dimos.agents.tools.google_maps_tool_container import GoogleMapsToolContainer
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.mapping.google_maps.models import Coordinates, LocationContext, Position
@@ -25,7 +25,7 @@ from dimos.mapping.models import LatLon
 
 
 class FakeGPS(Module):
-    """Provides a gps_location output so GoogleMapsSkillContainer's input port gets a transport."""
+    """Provides a gps_location output so GoogleMapsToolContainer's input port gets a transport."""
 
     gps_location: Out[LatLon]
 
@@ -38,9 +38,9 @@ class FakeLocationClient:
         )
 
 
-class MockedWhereAmISkill(GoogleMapsSkillContainer):
+class MockedWhereAmITool(GoogleMapsToolContainer):
     def __init__(self, **kwargs: Any):
-        Module.__init__(self, **kwargs)  # Skip GoogleMapsSkillContainer's __init__.
+        Module.__init__(self, **kwargs)  # Skip GoogleMapsToolContainer's __init__.
         self._client = FakeLocationClient()
         self._latest_location = LatLon(lat=37.782654, lon=-122.413273)
         self._started = True
@@ -61,7 +61,7 @@ class FakePositionClient:
         return next(self._positions)
 
 
-class MockedPositionSkill(GoogleMapsSkillContainer):
+class MockedPositionTool(GoogleMapsToolContainer):
     def __init__(self, **kwargs: Any):
         Module.__init__(self, **kwargs)
         self._client = FakePositionClient()
@@ -72,7 +72,7 @@ class MockedPositionSkill(GoogleMapsSkillContainer):
 
 def test_where_am_i(agent_setup) -> None:
     history = agent_setup(
-        blueprints=[FakeGPS.blueprint(), MockedWhereAmISkill.blueprint()],
+        blueprints=[FakeGPS.blueprint(), MockedWhereAmITool.blueprint()],
         messages=[HumanMessage("What street am I on? Use the where_am_i tool.")],
     )
 
@@ -81,7 +81,7 @@ def test_where_am_i(agent_setup) -> None:
 
 def test_get_gps_position_for_queries(agent_setup) -> None:
     history = agent_setup(
-        blueprints=[FakeGPS.blueprint(), MockedPositionSkill.blueprint()],
+        blueprints=[FakeGPS.blueprint(), MockedPositionTool.blueprint()],
         messages=[
             HumanMessage(
                 "What are the lat/lon for hyde park, regent park, russell park? "

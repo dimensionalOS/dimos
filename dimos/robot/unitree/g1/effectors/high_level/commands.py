@@ -78,7 +78,7 @@ def execute_g1_command(
 ) -> str:
     """Dispatch a named G1 arm/mode command via ``publish_request``.
 
-    Returns a human-readable status string (mirrors the previous skill
+    Returns a human-readable status string (mirrors the previous tool
     behaviour where the LLM consumed the return value).
     """
     if command_name not in command_dict:

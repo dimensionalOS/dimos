@@ -358,20 +358,20 @@ class ModuleC(Module):
         return self.device.get_time()
 ```
 
-## Defining skills
+## Defining tools
 
-Skills are methods on a `Module` decorated with `@skill`. The agent automatically discovers all skills from launched modules at startup.
+Tools are methods on a `Module` decorated with `@tool`. The agent automatically discovers all tools from launched modules at startup.
 
 ```python session=blueprint-ex4
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 
-class SomeSkill(Module):
+class SomeTool(Module):
 
-    @skill
-    def some_skill(self) -> str:
-        """Description of the skill for the LLM."""
+    @tool
+    def some_tool(self) -> str:
+        """Description of the tool for the LLM."""
         return "result"
 ```
 
@@ -382,7 +382,7 @@ All you have to do to build a blueprint is call:
 ```python skip session=blueprint-ex4
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
-module_coordinator = ModuleCoordinator.build(SomeSkill.blueprint())
+module_coordinator = ModuleCoordinator.build(SomeTool.blueprint())
 module_coordinator.stop()
 ```
 

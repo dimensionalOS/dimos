@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,15 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.mcp.mcp_client import McpClient
-from dimos.agents.mcp.mcp_server import McpServer
-from dimos.agents.skills.demo_robot import DemoRobot
-from dimos.agents.skills.gps_nav_skill import GpsNavSkillContainer
-from dimos.core.coordination.blueprints import autoconnect
+from typing import Protocol
 
-demo_gps_nav = autoconnect(
-    DemoRobot.blueprint(),
-    GpsNavSkillContainer.blueprint(),
-    McpServer.blueprint(),
-    McpClient.blueprint(),
-)
+from dimos.spec.utils import Spec
+
+
+class SpeakToolSpec(Spec, Protocol):
+    def speak(self, text: str, blocking: bool = True) -> str: ...

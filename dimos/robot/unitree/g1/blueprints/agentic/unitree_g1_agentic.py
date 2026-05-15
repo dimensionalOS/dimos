@@ -13,15 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Full G1 stack with agentic skills."""
+"""Full G1 stack with agentic tools."""
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.g1.blueprints.agentic._agentic_skills import _agentic_skills
+from dimos.robot.unitree.g1.blueprints.agentic._agentic_tools import _agentic_tools
 from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1 import unitree_g1
 
 unitree_g1_agentic = autoconnect(
     unitree_g1,
-    _agentic_skills,
+    _agentic_tools,
 )
 
 __all__ = ["unitree_g1_agentic"]

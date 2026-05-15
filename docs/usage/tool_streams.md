@@ -3,7 +3,7 @@
 Some tools return quickly but keep doing work in the background. For example,
 `look_out_for` starts a perception loop and waits minutes for a match;
 `follow_person` returns "started following" right away and then keeps publishing
-status until the target is lost or the skill is cancelled.
+status until the target is lost or the tool is cancelled.
 
 Tool streams are the channel those background updates travel on. Every update is
 routed to the MCP client that made the original `tools/call` so it can display
@@ -18,7 +18,7 @@ about it. If a client didn't send a `progressToken` (raw curl, older tools), the
 stream falls back to `notifications/message` log frames so updates still arrive,
 just without the per-call UI affordance.
 
-Skills never touch the wire format. `Module` exposes three helpers:
+Tools never touch the wire format. `Module` exposes three helpers:
 `start_tool`, `tool_update`, `stop_tool`. The framework handles the rest.
 
 ## Quick example: inline updates
@@ -26,12 +26,12 @@ Skills never touch the wire format. `Module` exposes three helpers:
 ```python
 import time
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.module import Module
 
 
 class Counter(Module):
-    @skill
+    @tool
     def count_to(self, n: int) -> str:
         """Count to `n`, streaming a status update per step."""
         self.start_tool("count_to")
@@ -43,13 +43,13 @@ class Counter(Module):
 ```
 
 Each `tool_update` shows up in the MCP client as a progress notification bound
-to the original `count_to` call. The skill's return value is still the final
+to the original `count_to` call. The tool's return value is still the final
 `tools/call` result; the streamed updates are *in addition* to it, not *instead
 of* it.
 
 ## Background-thread example
 
-Most real skills don't block their `tools/call` response. They kick off
+Most real tools don't block their `tools/call` response. They kick off
 background work and return immediately. The background thread publishes updates
 for as long as the work is running. This is the `follow_person` / `look_out_for`
 shape.
@@ -58,12 +58,12 @@ shape.
 import time
 from threading import Thread
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.module import Module
 
 
 class Streamer(Module):
-    @skill
+    @tool
     def start_streaming(self, count: int) -> str:
         """Kick off `count` updates from a background thread."""
         self.start_tool("start_streaming")
@@ -81,15 +81,15 @@ class Streamer(Module):
         return f"Started streaming {count} updates."
 ```
 
-The skill returns right away with `"Started streaming 3 updates."`. The
+The tool returns right away with `"Started streaming 3 updates."`. The
 background loop then fires `tool_update` calls from a worker thread, and each
 one reaches the client as a progress frame attached to the original call. When
 the loop finishes (or errors), `stop_tool` tears the channel down.
 
 ## The rules
 
-- **`start_tool` must run on the skill's main thread.** The `@skill` wrapper
-establishes a per-call context on the thread where the skill is invoked;
+- **`start_tool` must run on the tool's main thread.** The `@tool` wrapper
+establishes a per-call context on the thread where the tool is invoked;
 `start_tool` reads that context to capture the caller's `progressToken`.
 Constructing a tool stream from a detached thread raises `RuntimeError` with a
 message that names the invariant.

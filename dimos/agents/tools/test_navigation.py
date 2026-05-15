@@ -16,7 +16,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
-from dimos.agents.skills.navigation import NavigationSkillContainer
+from dimos.agents.tools.navigation import NavigationToolContainer
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
@@ -87,15 +87,15 @@ _STUB_BLUEPRINTS = [
 ]
 
 
-class MockedStopNavSkill(NavigationSkillContainer):
-    _skill_started = True
+class MockedStopNavTool(NavigationToolContainer):
+    _tool_started = True
 
     def _cancel_goal_and_stop(self):
         pass
 
 
-class MockedExploreNavSkill(NavigationSkillContainer):
-    _skill_started = True
+class MockedExploreNavTool(NavigationToolContainer):
+    _tool_started = True
 
     def _start_exploration(self, timeout):
         return "Exploration completed successfuly"
@@ -104,8 +104,8 @@ class MockedExploreNavSkill(NavigationSkillContainer):
         pass
 
 
-class MockedSemanticNavSkill(NavigationSkillContainer):
-    _skill_started = True
+class MockedSemanticNavTool(NavigationToolContainer):
+    _tool_started = True
 
     def _navigate_by_tagged_location(self, query):
         return None
@@ -122,7 +122,7 @@ def test_stop_movement(agent_setup) -> None:
         blueprints=[
             FakeCamera.blueprint(),
             FakeOdom.blueprint(),
-            MockedStopNavSkill.blueprint(),
+            MockedStopNavTool.blueprint(),
             *_STUB_BLUEPRINTS,
         ],
         messages=[HumanMessage("Stop moving. Use the stop_movement tool.")],
@@ -136,7 +136,7 @@ def test_start_exploration(agent_setup) -> None:
         blueprints=[
             FakeCamera.blueprint(),
             FakeOdom.blueprint(),
-            MockedExploreNavSkill.blueprint(),
+            MockedExploreNavTool.blueprint(),
             *_STUB_BLUEPRINTS,
         ],
         messages=[
@@ -152,7 +152,7 @@ def test_go_to_semantic_location(agent_setup) -> None:
         blueprints=[
             FakeCamera.blueprint(),
             FakeOdom.blueprint(),
-            MockedSemanticNavSkill.blueprint(),
+            MockedSemanticNavTool.blueprint(),
             *_STUB_BLUEPRINTS,
         ],
         messages=[HumanMessage("Go to the bookshelf. Use the navigate_with_text tool.")],

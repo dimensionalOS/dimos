@@ -16,10 +16,10 @@
 
 Base module providing core manipulation infrastructure:
 - @rpc: Low-level building blocks (plan_to_pose, plan_to_joints, preview_path, execute)
-- @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home, go_init)
+- @tool (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home, go_init)
 
 Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integration
-(scan_objects, get_scene_info) and long-horizon skills (pick, place, pick_and_place).
+(scan_objects, get_scene_info) and long-horizon tools (pick, place, pick_and_place).
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import Field
 
-from dimos.agents.annotation import skill
-from dimos.agents.skill_result import SkillResult
+from dimos.agents.annotation import tool
+from dimos.agents.tool_result import ToolResult
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -46,7 +46,7 @@ from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSp
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
 )
-from dimos.manipulation.skill_errors import ManipulationSkillError
+from dimos.manipulation.tool_errors import ManipulationToolError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -101,9 +101,9 @@ class ManipulationModule(Module):
     """Base motion planning module with ControlCoordinator execution.
 
     - @rpc: Low-level building blocks (plan, execute, gripper)
-    - @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home)
+    - @tool (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home)
 
-    Subclass PickAndPlaceModule adds perception integration and long-horizon skills.
+    Subclass PickAndPlaceModule adds perception integration and long-horizon tools.
     """
 
     config: ManipulationModuleConfig
@@ -355,21 +355,21 @@ class ManipulationModule(Module):
         return True
 
     @rpc
-    @skill
-    def reset(self) -> SkillResult[ManipulationSkillError]:
+    @tool
+    def reset(self) -> ToolResult[ManipulationToolError]:
         """Reset the robot module to IDLE state, clearing any fault.
 
         Use this after an error or fault to allow new commands.
         Cannot reset while a motion is executing — cancel first.
         """
         if self._state == ManipulationState.EXECUTING:
-            return SkillResult.fail(
+            return ToolResult.fail(
                 "INVALID_STATE",
                 "Cannot reset while executing — cancel the motion first",
             )
         self._state = ManipulationState.IDLE
         self._error_message = ""
-        return SkillResult.ok("Reset to IDLE — ready for new commands")
+        return ToolResult.ok("Reset to IDLE — ready for new commands")
 
     @rpc
     def get_current_joints(self, robot_name: RobotName | None = None) -> list[float] | None:
@@ -888,10 +888,10 @@ class ManipulationModule(Module):
         result = client.get_gripper_position(hw_id)
         return float(result) if result is not None else None
 
-    @skill
+    @tool
     def set_gripper(
         self, position: float, robot_name: str | None = None
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> ToolResult[ManipulationToolError]:
         """Set gripper to a specific opening in meters.
 
         Args:
@@ -899,30 +899,30 @@ class ManipulationModule(Module):
             robot_name: Robot to control (only needed for multi-arm setups).
         """
         if self._set_gripper_position(position, robot_name):
-            return SkillResult.ok(f"Gripper set to {position:.3f}m")
-        return SkillResult.fail("GRIPPER_FAILED", "Failed to set gripper position")
+            return ToolResult.ok(f"Gripper set to {position:.3f}m")
+        return ToolResult.fail("GRIPPER_FAILED", "Failed to set gripper position")
 
-    @skill
-    def open_gripper(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    @tool
+    def open_gripper(self, robot_name: str | None = None) -> ToolResult[ManipulationToolError]:
         """Open the robot gripper fully.
 
         Args:
             robot_name: Robot to control (only needed for multi-arm setups).
         """
         if self._set_gripper_position(0.85, robot_name):
-            return SkillResult.ok("Gripper opened")
-        return SkillResult.fail("GRIPPER_FAILED", "Failed to open gripper")
+            return ToolResult.ok("Gripper opened")
+        return ToolResult.fail("GRIPPER_FAILED", "Failed to open gripper")
 
-    @skill
-    def close_gripper(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    @tool
+    def close_gripper(self, robot_name: str | None = None) -> ToolResult[ManipulationToolError]:
         """Close the robot gripper fully.
 
         Args:
             robot_name: Robot to control (only needed for multi-arm setups).
         """
         if self._set_gripper_position(0.0, robot_name):
-            return SkillResult.ok("Gripper closed")
-        return SkillResult.fail("GRIPPER_FAILED", "Failed to close gripper")
+            return ToolResult.ok("Gripper closed")
+        return ToolResult.fail("GRIPPER_FAILED", "Failed to close gripper")
 
     def _wait_for_trajectory_completion(
         self, robot_name: RobotName | None = None, timeout: float = 60.0, poll_interval: float = 0.2
@@ -987,17 +987,17 @@ class ManipulationModule(Module):
 
     def _lift_if_low(
         self, robot_name: RobotName | None = None, min_z: float = 0.05
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> ToolResult[ManipulationToolError]:
         """If the end-effector is below *min_z*, plan and execute a short lift."""
         ee = self.get_ee_pose(robot_name)
         if ee is None or ee.position.z >= min_z:
-            return SkillResult.ok()
+            return ToolResult.ok()
 
         lift_z = min_z + 0.05
         logger.info(f"EE z={ee.position.z:.3f} < {min_z}, lifting to z={lift_z:.3f}")
         lift_pose = Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
         if not self.plan_to_pose(lift_pose, robot_name):
-            return SkillResult.fail(
+            return ToolResult.fail(
                 "PLANNING_FAILED",
                 f"Failed to plan lift from z={ee.position.z:.3f}",
             )
@@ -1005,7 +1005,7 @@ class ManipulationModule(Module):
 
     def _preview_execute_wait(
         self, robot_name: RobotName | None = None, preview_duration: float = 0.5
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> ToolResult[ManipulationToolError]:
         """Preview planned path, execute, and wait for completion.
 
         Args:
@@ -1017,15 +1017,15 @@ class ManipulationModule(Module):
 
         logger.info("Executing trajectory...")
         if not self.execute(robot_name):
-            return SkillResult.fail("EXECUTION_FAILED", "Trajectory execution failed")
+            return ToolResult.fail("EXECUTION_FAILED", "Trajectory execution failed")
 
         if not self._wait_for_trajectory_completion(robot_name):
-            return SkillResult.fail("EXECUTION_TIMEOUT", "Trajectory execution timed out")
+            return ToolResult.fail("EXECUTION_TIMEOUT", "Trajectory execution timed out")
 
-        return SkillResult.ok()
+        return ToolResult.ok()
 
-    @skill
-    def get_robot_state(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    @tool
+    def get_robot_state(self, robot_name: str | None = None) -> ToolResult[ManipulationToolError]:
         """Get current robot state: joint positions, end-effector pose, and gripper.
 
         Args:
@@ -1054,9 +1054,9 @@ class ManipulationModule(Module):
 
         lines.append(f"State: {self.get_state()}")
 
-        return SkillResult.ok("\n".join(lines))
+        return ToolResult.ok("\n".join(lines))
 
-    @skill
+    @tool
     def move_to_pose(
         self,
         x: float,
@@ -1066,7 +1066,7 @@ class ManipulationModule(Module):
         pitch: float | None = None,
         yaw: float | None = None,
         robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> ToolResult[ManipulationToolError]:
         """Move the robot end-effector to a target pose.
 
         Plans a collision-free trajectory and executes it.
@@ -1113,7 +1113,7 @@ class ManipulationModule(Module):
             return lift
 
         if not self.plan_to_pose(pose, robot_name):
-            return SkillResult.fail(
+            return ToolResult.fail(
                 "PLANNING_FAILED",
                 f"Pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision",
             )
@@ -1122,14 +1122,14 @@ class ManipulationModule(Module):
         if not exec_result.is_success():
             return exec_result
 
-        return SkillResult.ok(f"Reached target pose ({x:.3f}, {y:.3f}, {z:.3f})")
+        return ToolResult.ok(f"Reached target pose ({x:.3f}, {y:.3f}, {z:.3f})")
 
-    @skill
+    @tool
     def move_to_joints(
         self,
         joints: str,
         robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> ToolResult[ManipulationToolError]:
         """Move the robot to a target joint configuration.
 
         Plans a collision-free trajectory and executes it.
@@ -1141,20 +1141,20 @@ class ManipulationModule(Module):
         try:
             joint_values = [float(j.strip()) for j in joints.split(",")]
         except ValueError:
-            return SkillResult.fail(
+            return ToolResult.fail(
                 "INVALID_INPUT",
                 f"Invalid joints format '{joints}'. Expected comma-separated floats.",
             )
 
         robot = self._get_robot(robot_name)
         if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+            return ToolResult.fail("ROBOT_NOT_FOUND", "Robot not found")
         rname, _, config, _ = robot
         goal = JointState(name=config.joint_names, position=joint_values)
 
         logger.info(f"Planning motion to joints [{', '.join(f'{j:.3f}' for j in joint_values)}]...")
         if not self.plan_to_joints(goal, rname):
-            return SkillResult.fail(
+            return ToolResult.fail(
                 "PLANNING_FAILED",
                 "Joint configuration may be unreachable or in collision",
             )
@@ -1163,10 +1163,10 @@ class ManipulationModule(Module):
         if not exec_result.is_success():
             return exec_result
 
-        return SkillResult.ok("Reached target joint configuration")
+        return ToolResult.ok("Reached target joint configuration")
 
-    @skill
-    def go_home(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    @tool
+    def go_home(self, robot_name: str | None = None) -> ToolResult[ManipulationToolError]:
         """Move the robot to its home/observe joint configuration.
 
         Opens the gripper and moves to the predefined home position.
@@ -1176,11 +1176,11 @@ class ManipulationModule(Module):
         """
         robot = self._get_robot(robot_name)
         if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+            return ToolResult.fail("ROBOT_NOT_FOUND", "Robot not found")
         rname, _, config, _ = robot
 
         if config.home_joints is None:
-            return SkillResult.fail(
+            return ToolResult.fail(
                 "NOT_CONFIGURED",
                 "No home_joints configured for this robot",
             )
@@ -1192,16 +1192,16 @@ class ManipulationModule(Module):
         goal = JointState(name=config.joint_names, position=config.home_joints)
         logger.info("Planning motion to home position...")
         if not self.plan_to_joints(goal, rname):
-            return SkillResult.fail("PLANNING_FAILED", "Failed to plan path to home position")
+            return ToolResult.fail("PLANNING_FAILED", "Failed to plan path to home position")
 
         exec_result = self._preview_execute_wait(robot_name)
         if not exec_result.is_success():
             return exec_result
 
-        return SkillResult.ok("Reached home position")
+        return ToolResult.ok("Reached home position")
 
-    @skill
-    def go_init(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    @tool
+    def go_init(self, robot_name: str | None = None) -> ToolResult[ManipulationToolError]:
         """Move the robot to its init position (captured at startup or set manually).
 
         The init position is the joint configuration the robot was in when the
@@ -1212,12 +1212,12 @@ class ManipulationModule(Module):
         """
         robot = self._get_robot(robot_name)
         if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+            return ToolResult.fail("ROBOT_NOT_FOUND", "Robot not found")
         rname, robot_id, _, _ = robot
 
         init = self._init_joints.get(rname)
         if init is None:
-            return SkillResult.fail(
+            return ToolResult.fail(
                 "NOT_CONFIGURED",
                 "No init joints captured — robot may not have reported joint state yet",
             )
@@ -1251,13 +1251,13 @@ class ManipulationModule(Module):
             f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in init.position)}]..."
         )
         if not self.plan_to_joints(init, robot_name):
-            return SkillResult.fail("PLANNING_FAILED", "Failed to plan path to init position")
+            return ToolResult.fail("PLANNING_FAILED", "Failed to plan path to init position")
 
         exec_result = self._preview_execute_wait(robot_name)
         if not exec_result.is_success():
             return exec_result
 
-        return SkillResult.ok("Reached init position")
+        return ToolResult.ok("Reached init position")
 
     @rpc
     def stop(self) -> None:

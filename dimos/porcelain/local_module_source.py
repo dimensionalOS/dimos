@@ -31,7 +31,7 @@ logger = setup_logger()
 class LocalModuleSource(ModuleSource):
     """Module source backed by an in-process `ModuleCoordinator`.
 
-    Uses per-worker RPyC servers for both attribute access and skill calls,
+    Uses per-worker RPyC servers for both attribute access and tool calls,
     so the wire path is identical to `RemoteModuleSource`.
     """
 

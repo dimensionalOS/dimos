@@ -13,16 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Full featured G1 stack with agentic skills and teleop."""
+"""Full featured G1 stack with agentic tools and teleop."""
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.g1.blueprints.agentic._agentic_skills import _agentic_skills
+from dimos.robot.unitree.g1.blueprints.agentic._agentic_tools import _agentic_tools
 from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1_shm import unitree_g1_shm
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
 unitree_g1_full = autoconnect(
     unitree_g1_shm,
-    _agentic_skills,
+    _agentic_tools,
     KeyboardTeleop.blueprint(),
 )
 

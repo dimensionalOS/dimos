@@ -14,12 +14,12 @@
 
 """Server-initiated tool-stream notifications.
 
-A skill uses `ToolStream` to push text updates out to any connected MCP client
-(Claude Code, our own `McpClient`, curl, ...) while the skill's background work is
+A tool uses `ToolStream` to push text updates out to any connected MCP client
+(Claude Code, our own `McpClient`, curl, ...) while the tool's background work is
 still running.
 
 Transport: each `ToolStream.send` publishes a ready-made JSON-RPC
-`notifications/message` frame on the shared `/tool_streams` LCM topic. Skill
+`notifications/message` frame on the shared `/tool_streams` LCM topic. Tool
 workers and the `McpServer` process typically live in different workers, so we
 lean on LCM's local-multicast bus to cross that boundary. `McpServer` subscribes
 to the topic once, forwards each frame to every connected `GET /mcp` SSE client,
@@ -27,7 +27,7 @@ and drops frames when nobody is listening.
 
 Each `ToolStream` instance owns its own `pLCMTransport`, created lazily on the
 first `send` and torn down by `stop`. There is no module-level or process-level
-state. The stream's lifetime is exactly the owning skill's lifetime.
+state. The stream's lifetime is exactly the owning tool's lifetime.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ import threading
 from typing import Any
 import uuid
 
-from dimos.agents.annotation import current_skill_context
+from dimos.agents.annotation import current_tool_context
 from dimos.core.transport import pLCMTransport
 from dimos.utils.logging_config import setup_logger
 
@@ -101,16 +101,16 @@ def subscribe(callback: ToolStreamCallback) -> Callable[[], None]:
 
 
 class ToolStream:
-    """A streaming channel for pushing updates from a skill to the agent.
+    """A streaming channel for pushing updates from a tool to the agent.
 
     Each `ToolStream` is tied to a single logical tool invocation.  It **must**
-    be constructed inside a `@skill` call on the skill's own thread. That's
+    be constructed inside a `@tool` call on the tool's own thread. That's
     where the per-call context (including the caller's `progressToken`) lives
-    and can be captured. Constructing a `ToolStream` outside a `@skill` call
+    and can be captured. Constructing a `ToolStream` outside a `@tool` call
     raises `RuntimeError`.
 
     Once constructed, the instance is free-threaded: background threads
-    spawned by the skill can call `send` and `stop` safely because
+    spawned by the tool can call `send` and `stop` safely because
     the progress token is already captured on the instance.
 
     If the client that made the `tools/call` request did not supply a
@@ -128,12 +128,12 @@ class ToolStream:
         self._closed: threading.Event = threading.Event()
         self._lock = threading.Lock()
         self._transport: pLCMTransport[dict[str, Any]] | None = None
-        context = current_skill_context()
+        context = current_tool_context()
         if context is None:
             raise RuntimeError(
-                f"ToolStream({tool_name!r}) must be constructed inside a @skill "
+                f"ToolStream({tool_name!r}) must be constructed inside a @tool "
                 f"call so the caller's progress token can be captured. Construct "
-                f"it in the skill method's main thread, not in __init__ or a "
+                f"it in the tool method's main thread, not in __init__ or a "
                 f"detached background thread."
             )
         self._progress_token: str | int | None = context.get("progress_token")

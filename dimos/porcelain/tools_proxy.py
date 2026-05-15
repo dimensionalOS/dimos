@@ -21,15 +21,15 @@ from dimos.porcelain.module_source import ModuleSource
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.module import SkillInfo
+    from dimos.core.module import ToolInfo
 
 logger = setup_logger()
 
 
-class _SkillCallable:
-    """Callable wrapper around a remote skill method."""
+class _ToolCallable:
+    """Callable wrapper around a remote tool method."""
 
-    def __init__(self, module_proxy: Any, name: str, info: SkillInfo) -> None:
+    def __init__(self, module_proxy: Any, name: str, info: ToolInfo) -> None:
         self._module_proxy = module_proxy
         self._name = name
         self._info = info
@@ -41,15 +41,15 @@ class _SkillCallable:
     def __repr__(self) -> str:
         schema = json.loads(self._info.args_schema)
         params = _format_params(schema)
-        return f"Skill: {self._info.class_name}.{self._name}({params})"
+        return f"Tool: {self._info.class_name}.{self._name}({params})"
 
 
-class SkillsProxy:
-    """Attribute-access proxy that discovers and exposes skills from all deployed modules."""
+class ToolsProxy:
+    """Attribute-access proxy that discovers and exposes tools from all deployed modules."""
 
     def __init__(self, source: ModuleSource) -> None:
         self._source = source
-        self._cache: dict[str, list[tuple[str, Any, SkillInfo]]] | None = None
+        self._cache: dict[str, list[tuple[str, Any, ToolInfo]]] | None = None
         self._cache_key: frozenset[str] | None = None
         self._errors: dict[str, BaseException] = {}
 
@@ -59,24 +59,24 @@ class SkillsProxy:
         if self._cache_key == modules_key and self._cache is not None:
             return
 
-        skill_map: dict[str, list[tuple[str, Any, SkillInfo]]] = {}
+        tool_map: dict[str, list[tuple[str, Any, ToolInfo]]] = {}
         errors: dict[str, BaseException] = {}
         for name in names:
             try:
                 module_proxy = self._source.get_rpyc_module(name)
-                skills = list(module_proxy.get_skills())
+                tools = list(module_proxy.get_tools())
             except Exception as e:
-                logger.warning("Failed to enumerate skills for module %s", name, exc_info=True)
+                logger.warning("Failed to enumerate tools for module %s", name, exc_info=True)
                 errors[name] = e
                 continue
-            for info in skills:
-                skill_map.setdefault(info.func_name, []).append((name, module_proxy, info))
+            for info in tools:
+                tool_map.setdefault(info.func_name, []).append((name, module_proxy, info))
 
-        self._cache = skill_map
+        self._cache = tool_map
         self._cache_key = modules_key
         self._errors = errors
 
-    def __getattr__(self, name: str) -> _SkillCallable:
+    def __getattr__(self, name: str) -> _ToolCallable:
         if name.startswith("_"):
             raise AttributeError(name)
         self._build_cache()
@@ -85,29 +85,27 @@ class SkillsProxy:
         if name not in self._cache:
             if self._errors:
                 detail = ", ".join(f"{n}: {e!r}" for n, e in self._errors.items())
-                raise AttributeError(
-                    f"No skill named {name!r}. Skill discovery failed for: {detail}"
-                )
-            raise AttributeError(f"No skill named {name!r}")
+                raise AttributeError(f"No tool named {name!r}. Tool discovery failed for: {detail}")
+            raise AttributeError(f"No tool named {name!r}")
 
         entries = self._cache[name]
         if len(entries) > 1:
             modules = [cls_name for cls_name, _, _ in entries]
             raise AttributeError(
-                f"Ambiguous skill {name!r} found in modules: {modules}. "
+                f"Ambiguous tool {name!r} found in modules: {modules}. "
                 f"Call via module directly: app.{modules[0]}.{name}()"
             )
         _cls_name, module_proxy, info = entries[0]
-        return _SkillCallable(module_proxy, name, info)
+        return _ToolCallable(module_proxy, name, info)
 
     def __repr__(self) -> str:
         self._build_cache()
         assert self._cache is not None
 
         if not self._cache:
-            return "Skills: (none)"
+            return "Tools: (none)"
 
-        lines = ["Skills:"]
+        lines = ["Tools:"]
         for name in sorted(self._cache):
             for cls_name, _, info in self._cache[name]:
                 schema = json.loads(info.args_schema)

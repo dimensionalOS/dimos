@@ -42,7 +42,7 @@ WHITELIST = [
     ),
     ("dimos/core/test_async_module_main.py", 'target = logging.getLogger("dimos/core/module.py")'),
     (
-        "dimos/agents/test_skill_result.py",
+        "dimos/agents/test_tool_result.py",
         "lg = logging.getLogger(_ANNOTATION_LOGGER)",
     ),
     (

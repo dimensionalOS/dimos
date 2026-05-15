@@ -14,10 +14,10 @@
 
 """Pick-and-place manipulation module.
 
-Extends ManipulationModule with perception integration and long-horizon skills:
+Extends ManipulationModule with perception integration and long-horizon tools:
 - Perception: objects port, obstacle monitor, scan_objects, get_scene_info
 - @rpc: generate_grasps (GraspGen Docker), refresh_obstacles, perception status
-- @skill: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
+- @tool: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.agents.annotation import skill
-from dimos.agents.skill_result import SkillResult
+from dimos.agents.annotation import tool
+from dimos.agents.tool_result import ToolResult
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.docker_module import DockerModuleProxy as DockerRunner
@@ -38,7 +38,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
-from dimos.manipulation.skill_errors import ManipulationSkillError
+from dimos.manipulation.tool_errors import ManipulationToolError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -88,12 +88,12 @@ class PickAndPlaceModuleConfig(ManipulationModuleConfig):
 
 
 class PickAndPlaceModule(ManipulationModule):
-    """Manipulation module with perception integration and pick-and-place skills.
+    """Manipulation module with perception integration and pick-and-place tools.
 
     Extends ManipulationModule with:
     - Perception: objects port, obstacle monitor, scan_objects, get_scene_info
     - @rpc: generate_grasps (GraspGen Docker), refresh_obstacles, perception status
-    - @skill: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
+    - @tool: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
     """
 
     config: PickAndPlaceModuleConfig
@@ -153,21 +153,21 @@ class PickAndPlaceModule(ManipulationModule):
         logger.info(f"Detection snapshot: {[d.name for d in self._detection_snapshot]}")
         return result
 
-    @skill
-    def clear_perception_obstacles(self) -> SkillResult[ManipulationSkillError]:
+    @tool
+    def clear_perception_obstacles(self) -> ToolResult[ManipulationToolError]:
         """Clear all perception obstacles from the planning world.
 
         Use this when the planner reports COLLISION_AT_START — detected objects
         may overlap the robot's current position and block planning.
         """
         if self._world_monitor is None:
-            return SkillResult.fail(
+            return ToolResult.fail(
                 "WORLD_MONITOR_UNAVAILABLE",
                 "No world monitor available",
             )
         count = self._world_monitor.clear_perception_obstacles()
         self._detection_snapshot = []
-        return SkillResult.ok(f"Cleared {count} perception obstacle(s) from planning world")
+        return ToolResult.ok(f"Cleared {count} perception obstacle(s) from planning world")
 
     @rpc
     def get_perception_status(self) -> dict[str, int]:
@@ -414,8 +414,8 @@ class PickAndPlaceModule(ManipulationModule):
             return None
         return det.center.x, det.center.y, det.center.z
 
-    @skill
-    def get_scene_info(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    @tool
+    def get_scene_info(self, robot_name: str | None = None) -> ToolResult[ManipulationToolError]:
         """Get current robot state, detected objects, and scene information.
 
         Returns a summary of the robot's joint positions, end-effector pose,
@@ -471,10 +471,10 @@ class PickAndPlaceModule(ManipulationModule):
         # State
         lines.append(f"State: {self.get_state()}")
 
-        return SkillResult.ok("\n".join(lines))
+        return ToolResult.ok("\n".join(lines))
 
-    @skill
-    def look(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    @tool
+    def look(self, robot_name: str | None = None) -> ToolResult[ManipulationToolError]:
         """Quick check of what objects are visible from the current camera position.
 
         Does NOT move the arm. Returns objects currently detected in the camera view.
@@ -486,7 +486,7 @@ class PickAndPlaceModule(ManipulationModule):
 
         detections = self._detection_snapshot
         if not detections:
-            return SkillResult.ok("No objects visible from current position")
+            return ToolResult.ok("No objects visible from current position")
 
         lines = [f"Currently see {len(detections)} object(s):"]
         for det in detections:
@@ -498,14 +498,14 @@ class PickAndPlaceModule(ManipulationModule):
         if obstacles:
             lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
 
-        return SkillResult.ok("\n".join(lines))
+        return ToolResult.ok("\n".join(lines))
 
-    @skill
+    @tool
     def scan_objects(
         self,
         min_duration: float = 0.0,
         robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> ToolResult[ManipulationToolError]:
         """Scan for objects — moves to init position first for a clear camera view, \
 then refreshes perception obstacles.
 
@@ -525,7 +525,7 @@ then refreshes perception obstacles.
         detections = self._detection_snapshot
         if not detections:
             # See look(): an empty scan is a valid observation, not a failure.
-            return SkillResult.ok("No objects detected in scene")
+            return ToolResult.ok("No objects detected in scene")
 
         lines = [f"Detected {len(detections)} object(s):"]
         for det in detections:
@@ -537,15 +537,15 @@ then refreshes perception obstacles.
         if obstacles:
             lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
 
-        return SkillResult.ok("\n".join(lines))
+        return ToolResult.ok("\n".join(lines))
 
-    @skill
+    @tool
     def pick(
         self,
         object_name: str,
         object_id: str | None = None,
         robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> ToolResult[ManipulationToolError]:
         """Pick up an object by name using grasp planning and motion execution.
 
         Generates grasp poses, plans collision-free approach/grasp/retract motions,
@@ -558,7 +558,7 @@ then refreshes perception obstacles.
         """
         robot = self._get_robot(robot_name)
         if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+            return ToolResult.fail("ROBOT_NOT_FOUND", "Robot not found")
         rname, _, config, _ = robot
         pre_grasp_offset = config.pre_grasp_offset
 
@@ -566,7 +566,7 @@ then refreshes perception obstacles.
         logger.info(f"Generating grasp poses for '{object_name}'...")
         grasp_poses = self._generate_grasps_for_pick(object_name, object_id)
         if not grasp_poses:
-            return SkillResult.fail(
+            return ToolResult.fail(
                 "GRASP_GENERATION_FAILED",
                 f"No grasp poses found for '{object_name}'. Object may not be detected.",
             )
@@ -603,7 +603,7 @@ then refreshes perception obstacles.
             # 5. Move to grasp pose
             logger.info("Moving to grasp position...")
             if not self.plan_to_pose(grasp_pose, rname):
-                return SkillResult.fail("PLANNING_FAILED", "Grasp pose planning failed")
+                return ToolResult.fail("PLANNING_FAILED", "Grasp pose planning failed")
             exec_result = self._preview_execute_wait(rname)
             if not exec_result.is_success():
                 return exec_result
@@ -616,7 +616,7 @@ then refreshes perception obstacles.
             # 7. Retract to pre-grasp
             logger.info("Retracting with object...")
             if not self.plan_to_pose(pre_grasp_pose, rname):
-                return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
+                return ToolResult.fail("PLANNING_FAILED", "Retract planning failed")
             exec_result = self._preview_execute_wait(rname)
             if not exec_result.is_success():
                 return exec_result
@@ -624,21 +624,21 @@ then refreshes perception obstacles.
             # Store pick pose so place_back() can return with same orientation
             self._last_pick_pose = grasp_pose
 
-            return SkillResult.ok(f"Pick complete — grasped '{object_name}' successfully")
+            return ToolResult.ok(f"Pick complete — grasped '{object_name}' successfully")
 
-        return SkillResult.fail(
+        return ToolResult.fail(
             "GRASP_ATTEMPTS_EXHAUSTED",
             f"All {max_attempts} grasp attempts failed for '{object_name}'",
         )
 
-    @skill
+    @tool
     def place(
         self,
         x: float,
         y: float,
         z: float,
         robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> ToolResult[ManipulationToolError]:
         """Place a held object at the specified position.
 
         Plans and executes an approach, lowers to the target, releases the gripper,
@@ -661,11 +661,11 @@ then refreshes perception obstacles.
         z: float,
         orientation: Quaternion,
         robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> ToolResult[ManipulationToolError]:
         """Internal place with explicit orientation."""
         robot = self._get_robot(robot_name)
         if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+            return ToolResult.fail("ROBOT_NOT_FOUND", "Robot not found")
         rname, _, config, _ = robot
         pre_place_offset = config.pre_grasp_offset
 
@@ -685,7 +685,7 @@ then refreshes perception obstacles.
         # 1. Move to pre-place
         logger.info(f"Planning approach to place position ({x:.3f}, {y:.3f}, {z:.3f})...")
         if not self.plan_to_pose(pre_place_pose, rname):
-            return SkillResult.fail("PLANNING_FAILED", "Pre-place approach planning failed")
+            return ToolResult.fail("PLANNING_FAILED", "Pre-place approach planning failed")
 
         exec_result = self._preview_execute_wait(rname)
         if not exec_result.is_success():
@@ -694,7 +694,7 @@ then refreshes perception obstacles.
         # 2. Lower to place position
         logger.info("Lowering to place position...")
         if not self.plan_to_pose(place_pose, rname):
-            return SkillResult.fail("PLANNING_FAILED", "Place pose planning failed")
+            return ToolResult.fail("PLANNING_FAILED", "Place pose planning failed")
         exec_result = self._preview_execute_wait(rname)
         if not exec_result.is_success():
             return exec_result
@@ -707,15 +707,15 @@ then refreshes perception obstacles.
         # 4. Retract
         logger.info("Retracting...")
         if not self.plan_to_pose(pre_place_pose, rname):
-            return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
+            return ToolResult.fail("PLANNING_FAILED", "Retract planning failed")
         exec_result = self._preview_execute_wait(rname)
         if not exec_result.is_success():
             return exec_result
 
-        return SkillResult.ok(f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})")
+        return ToolResult.ok(f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})")
 
-    @skill
-    def place_back(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
+    @tool
+    def place_back(self, robot_name: str | None = None) -> ToolResult[ManipulationToolError]:
         """Place the held object back at its original pick position.
 
         Uses the position stored from the last successful pick operation.
@@ -724,7 +724,7 @@ then refreshes perception obstacles.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
         if self._last_pick_pose is None:
-            return SkillResult.fail(
+            return ToolResult.fail(
                 "NO_PRIOR_POSE",
                 "No previous pick position stored — run pick() first",
             )
@@ -734,13 +734,13 @@ then refreshes perception obstacles.
         logger.info(f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})...")
         return self._place_with_orientation(p.x, p.y, p.z, o, robot_name)
 
-    @skill
+    @tool
     def drop_on(
         self,
         target_object_name: str,
         z_offset: float = 0.1,
         robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> ToolResult[ManipulationToolError]:
         """Drop a held object on top of a detected object.
 
         Resolves the target object's position with occlusion correction and
@@ -753,7 +753,7 @@ then refreshes perception obstacles.
         """
         pos = self._resolve_object_position(target_object_name)
         if pos is None:
-            return SkillResult.fail(
+            return ToolResult.fail(
                 "OBJECT_NOT_DETECTED",
                 f"Target object '{target_object_name}' not found in detections",
             )
@@ -764,7 +764,7 @@ then refreshes perception obstacles.
         )
         return self.place(x, y, z, robot_name)
 
-    @skill
+    @tool
     def pick_and_place(
         self,
         object_name: str,
@@ -773,10 +773,10 @@ then refreshes perception obstacles.
         place_z: float,
         object_id: str | None = None,
         robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> ToolResult[ManipulationToolError]:
         """Pick up an object and place it at a target location.
 
-        Combines the pick and place skills into a single end-to-end operation.
+        Combines the pick and place tools into a single end-to-end operation.
 
         Args:
             object_name: Name of the object to pick (e.g. "cup", "bottle").

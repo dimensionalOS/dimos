@@ -90,7 +90,7 @@ dimos run unitree-go2-agentic --robot-ip 192.168.123.161
 dimos run unitree-go2 keyboard-teleop
 
 # Disable specific modules
-dimos run unitree-go2-agentic --disable OsmSkill WebInput
+dimos run unitree-go2-agentic --disable OsmTool WebInput
 ```
 
 When `--daemon` is used, the process:
@@ -211,25 +211,25 @@ Works with any agentic blueprint — does not require MCP. Publishes directly to
 
 Interact with the running MCP server. **Requires a blueprint that includes `McpServer`** — for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
 
-To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
+To add MCP to a blueprint, include both `McpServer` (exposes tools as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
 
 ```python
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 
-# Example wiring (replace # -ed with your stack and skill):
+# Example wiring (replace # -ed with your stack and tool):
 my_mcp_blueprint = autoconnect(
     # my_robot_stack,
     McpServer.blueprint(),
     McpClient.blueprint(),
-    # my_skill_containers,
+    # my_tool_containers,
 )
 ```
 
 #### `dimos mcp list-tools`
 
-List all available skills exposed by the MCP server.
+List all available tools exposed by the MCP server.
 
 ```bash
 dimos mcp list-tools
@@ -239,7 +239,7 @@ Returns JSON with tool names, descriptions, and parameter schemas.
 
 #### `dimos mcp call`
 
-Call a skill by name.
+Call a tool by name.
 
 ```bash
 dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}']
@@ -259,7 +259,7 @@ dimos mcp call land
 
 #### `dimos mcp status`
 
-Show MCP server status — PID, uptime, deployed modules, skill count.
+Show MCP server status — PID, uptime, deployed modules, tool count.
 
 ```bash
 dimos mcp status
@@ -267,7 +267,7 @@ dimos mcp status
 
 #### `dimos mcp modules`
 
-List deployed modules and their skills.
+List deployed modules and their tools.
 
 ```bash
 dimos mcp modules

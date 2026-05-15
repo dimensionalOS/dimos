@@ -17,22 +17,22 @@ from __future__ import annotations
 import threading
 
 
-def test_skills_discovery(running_app):
-    skills = running_app.skills
-    assert "echo" in dir(skills)
-    assert "ping" in dir(skills)
-    rep = repr(skills)
+def test_tools_discovery(running_app):
+    tools = running_app.tools
+    assert "echo" in dir(tools)
+    assert "ping" in dir(tools)
+    rep = repr(tools)
     assert "echo" in rep
     assert "ping" in rep
 
 
-def test_skill_call(running_app):
-    result = running_app.skills.echo(message="hello")
+def test_tool_call(running_app):
+    result = running_app.tools.echo(message="hello")
     assert result == "hello"
 
 
-def test_skill_ping(running_app):
-    result = running_app.skills.ping()
+def test_tool_ping(running_app):
+    result = running_app.tools.ping()
     assert result == "pong"
 
 
@@ -40,14 +40,14 @@ def test_thread_safety(running_app):
     results: list[str] = []
     errors: list[Exception] = []
 
-    def call_skill():
+    def call_tool():
         try:
-            r = running_app.skills.ping()
+            r = running_app.tools.ping()
             results.append(r)
         except Exception as e:
             errors.append(e)
 
-    threads = [threading.Thread(target=call_skill) for _ in range(5)]
+    threads = [threading.Thread(target=call_tool) for _ in range(5)]
     for t in threads:
         t.start()
     for t in threads:

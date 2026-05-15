@@ -195,7 +195,7 @@ dimos run unitree-go2
 | `dimos --simulation run unitree-go2-agentic` | Quadruped agentic + MCP server in simulation |
 | `dimos --simulation run unitree-g1` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video + telemetry replay |
-| `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay) |
+| `dimos --replay run drone-agentic` | Drone + LLM agent with flight tools (replay) |
 | `dimos run demo-camera` | Webcam demo — no hardware needed |
 | `dimos run keyboard-teleop-xarm7` | Keyboard teleop with mock xArm7 (requires `dimos[manipulation]` extra) |
 | `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agentic with local LLM (requires [Ollama](https://ollama.com) + `ollama serve`) |
@@ -204,15 +204,15 @@ dimos run unitree-go2
 
 # Agent CLI and MCP
 
-The `dimos` CLI manages the full lifecycle — run blueprints, inspect state, interact with agents, and call skills via MCP.
+The `dimos` CLI manages the full lifecycle — run blueprints, inspect state, interact with agents, and call tools via MCP.
 
 ```bash
 dimos run unitree-go2-agentic --daemon   # Start in background
 dimos status                              # Check what's running
 dimos log -f                              # Follow logs
 dimos agent-send "explore the room"       # Send agent a command
-dimos mcp list-tools                      # List available MCP skills
-dimos mcp call relative_move --arg forward=0.5  # Call a skill directly
+dimos mcp list-tools                      # List available MCP tools
+dimos mcp call relative_move --arg forward=0.5  # Call a tool directly
 dimos stop                                # Shut down
 ```
 

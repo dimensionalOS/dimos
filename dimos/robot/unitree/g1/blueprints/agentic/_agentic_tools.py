@@ -13,15 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Agentic tools used by higher-level G1 blueprints."""
+
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.agents.skills.demo_robot import DemoRobot
-from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
+from dimos.agents.tools.navigation import NavigationToolContainer
+from dimos.agents.tools.speak_tool import SpeakTool
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.unitree.g1.system_prompt import G1_SYSTEM_PROMPT
+from dimos.robot.unitree.g1.tool_container import UnitreeG1ToolContainer
 
-demo_google_maps_skill = autoconnect(
-    DemoRobot.blueprint(),
-    GoogleMapsSkillContainer.blueprint(),
+_agentic_tools = autoconnect(
     McpServer.blueprint(),
-    McpClient.blueprint(),
+    McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT),
+    NavigationToolContainer.blueprint(),
+    SpeakTool.blueprint(),
+    UnitreeG1ToolContainer.blueprint(),
 )
+
+__all__ = ["_agentic_tools"]

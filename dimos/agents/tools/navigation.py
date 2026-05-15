@@ -17,7 +17,7 @@ from typing import Any
 
 from reactivex.disposable import Disposable
 
-from dimos.agents.annotation import skill
+from dimos.agents.annotation import tool
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
@@ -37,10 +37,10 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class NavigationSkillContainer(Module):
+class NavigationToolContainer(Module):
     _latest_image: Image | None = None
     _latest_odom: PoseStamped | None = None
-    _skill_started: bool = False
+    _tool_started: bool = False
     _similarity_threshold: float = 0.23
 
     _spatial_memory: SpatialMemorySpec
@@ -52,7 +52,7 @@ class NavigationSkillContainer(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._skill_started = False
+        self._tool_started = False
 
         # Here to prevent unwanted imports in the file.
         from dimos.models.vl.qwen import QwenVlModel
@@ -64,7 +64,7 @@ class NavigationSkillContainer(Module):
         super().start()
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
         self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
-        self._skill_started = True
+        self._tool_started = True
 
     @rpc
     def stop(self) -> None:
@@ -76,7 +76,7 @@ class NavigationSkillContainer(Module):
     def _on_odom(self, odom: PoseStamped) -> None:
         self._latest_odom = odom
 
-    @skill
+    @tool
     def tag_location(self, location_name: str) -> str:
         """Tag this location in the spatial memory with a name.
 
@@ -89,7 +89,7 @@ class NavigationSkillContainer(Module):
             str: the outcome
         """
 
-        if not self._skill_started:
+        if not self._tool_started:
             raise ValueError(f"{self} has not been started.")
 
         if not self._latest_odom:
@@ -110,20 +110,20 @@ class NavigationSkillContainer(Module):
         logger.info(f"Tagged {location}")
         return f"Tagged '{location_name}': ({position.x},{position.y})."
 
-    @skill
+    @tool
     def navigate_with_text(self, query: str) -> str:
         """Navigate to a location by querying the existing semantic map using natural language.
 
         First attempts to locate an object in the robot's camera view using vision.
         If the object is found, navigates to it. If not, falls back to querying the
         semantic map for a location matching the description.
-        CALL THIS SKILL FOR ONE SUBJECT AT A TIME. For example: "Go to the person wearing a blue shirt in the living room",
-        you should call this skill twice, once for the person wearing a blue shirt and once for the living room.
+        CALL THIS TOOL FOR ONE SUBJECT AT A TIME. For example: "Go to the person wearing a blue shirt in the living room",
+        you should call this tool twice, once for the person wearing a blue shirt and once for the living room.
         Args:
             query: Text query to search for in the semantic map
         """
 
-        if not self._skill_started:
+        if not self._tool_started:
             raise ValueError(f"{self} has not been started.")
         success_msg = self._navigate_by_tagged_location(query)
         if success_msg:
@@ -243,11 +243,11 @@ class NavigationSkillContainer(Module):
         message = f"Found a location in the semantic map matching '{query}'."
         return self._navigate_to(goal_pose, message)
 
-    @skill
+    @tool
     def stop_navigation(self) -> str:
         """Immediatly stop moving."""
 
-        if not self._skill_started:
+        if not self._tool_started:
             raise ValueError(f"{self} has not been started.")
 
         self._cancel_goal_and_stop()

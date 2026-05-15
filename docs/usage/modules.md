@@ -52,7 +52,7 @@ print(CameraModule.io())
  ├─ camera_info: CameraInfo
  │
  ├─ RPC build() -> None
- ├─ RPC get_skills() -> list
+ ├─ RPC get_tools() -> list
  ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
  ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start() -> None
@@ -67,7 +67,7 @@ We can see that the camera module outputs two streams:
 
 It offers two RPC calls: `start()` and `stop()` (lifecycle methods).
 
-It also exposes an agentic [skill](/docs/usage/blueprints.md#defining-skills) called `take_a_picture` (more on skills in the Blueprints guide).
+It also exposes an agentic [tool](/docs/usage/blueprints.md#defining-tools) called `take_a_picture` (more on tools in the Blueprints guide).
 
 We can start this module and explore the output of its streams in real time (this will use your webcam).
 
@@ -123,7 +123,7 @@ print(Detection2DModule.io())
  ├─ detected_image_2: Image
  │
  ├─ RPC build() -> None
- ├─ RPC get_skills() -> list
+ ├─ RPC get_tools() -> list
  ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
  ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start() -> None
@@ -353,7 +353,7 @@ def create(name: str) -> Any:
     return _Model()
 
 
-class PersonFollowSkillContainer(Module):
+class PersonFollowToolContainer(Module):
     async def main(self) -> AsyncIterator[None]:
         # setup
         self._vl_model = create("qwen")

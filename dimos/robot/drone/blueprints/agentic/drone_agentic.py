@@ -17,13 +17,13 @@
 """Agentic drone blueprint — autonomous drone with LLM agent control.
 
 Composes on top of drone_basic (connection + camera + vis) and adds
-tracking, mapping skills, and an LLM agent.
+tracking, mapping tools, and an LLM agent.
 """
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
-from dimos.agents.skills.osm import OsmSkill
+from dimos.agents.tools.google_maps_tool_container import GoogleMapsToolContainer
+from dimos.agents.tools.osm import OsmTool
 from dimos.agents.web_human_input import WebInput
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.drone.blueprints.basic.drone_basic import drone_basic
@@ -31,8 +31,8 @@ from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
 
 DRONE_SYSTEM_PROMPT = """\
 You are controlling a DJI drone with MAVLink interface.
-You have access to drone control skills you are already flying so only run move_twist, set_mode, and fly_to.
-When the user gives commands, use the appropriate skills to control the drone.
+You have access to drone control tools you are already flying so only run move_twist, set_mode, and fly_to.
+When the user gives commands, use the appropriate tools to control the drone.
 Always confirm actions and report results. Send fly_to commands only at above 200 meters altitude to be safe.
 Here are some GPS locations to remember
 6th and Natoma intersection: 37.78019978319006, -122.40770815020853,
@@ -43,8 +43,8 @@ Here are some GPS locations to remember
 drone_agentic = autoconnect(
     drone_basic,
     DroneTrackingModule.blueprint(outdoor=False),
-    GoogleMapsSkillContainer.blueprint(),
-    OsmSkill.blueprint(),
+    GoogleMapsToolContainer.blueprint(),
+    OsmTool.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o"),
     WebInput.blueprint(),
