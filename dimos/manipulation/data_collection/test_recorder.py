@@ -351,6 +351,63 @@ def test_toggle_is_safe_when_factory_absent(tmp_path: Path) -> None:
         recorder.stop()
 
 
+def test_typed_color_image_slot_logs_under_camera_entity_path(tmp_path: Path) -> None:
+    """Frames received on the typed `color_image: In[Image]` slot are logged
+    at `config.camera_entity_path`, independent of `topic_to_entity` and
+    `visual_override`."""
+    pubsub = FakePubSub()
+    recorder = RerunDataRecorder(
+        pubsubs=[pubsub],
+        record_path_factory=_path_factory(tmp_path),
+        camera_entity_path="/observation/camera/usb",
+    )
+    recorder.start()
+    recorder.toggle_recording()
+    for i in range(3):
+        recorder._on_color_image(_make_image(value=i))
+    recorder.stop()
+
+    rec = rb.load_recording(str(tmp_path / "episode_001.rrd"))
+    assert _has_entity(rec, "/observation/camera/usb")
+
+
+def test_typed_color_image_slot_respects_idle_state(tmp_path: Path) -> None:
+    """Frames received on the typed slot while the recorder is IDLE are
+    dropped on the floor; no file is opened, no log lands anywhere."""
+    pubsub = FakePubSub()
+    recorder = RerunDataRecorder(
+        pubsubs=[pubsub],
+        record_path_factory=_path_factory(tmp_path),
+        camera_entity_path="/observation/camera/usb",
+    )
+    recorder.start()
+    # Recorder is IDLE — push some frames anyway.
+    for i in range(5):
+        recorder._on_color_image(_make_image(value=i))
+    recorder.stop()
+    assert not (tmp_path / "episode_001.rrd").exists()
+
+
+def test_typed_color_image_slot_honors_custom_entity_path(tmp_path: Path) -> None:
+    """`camera_entity_path` controls the entity name under which typed
+    frames are logged."""
+    pubsub = FakePubSub()
+    recorder = RerunDataRecorder(
+        pubsubs=[pubsub],
+        record_path_factory=_path_factory(tmp_path),
+        camera_entity_path="/observation/images.wrist",
+    )
+    recorder.start()
+    recorder.toggle_recording()
+    recorder._on_color_image(_make_image(value=42))
+    recorder.stop()
+
+    rec = rb.load_recording(str(tmp_path / "episode_001.rrd"))
+    assert _has_entity(rec, "/observation/images.wrist")
+    # The default path is NOT used.
+    assert not _has_entity(rec, "/observation/camera/usb")
+
+
 def test_recorder_isolated_from_viewer_failures(tmp_path: Path) -> None:
     """Recorder writes .rrd regardless of whether a bridge is running.
 

@@ -116,6 +116,7 @@ _DATA_COLLECTION_RECORDER_KEYS = (
     "visual_override",
     "entity_prefix",
     "topic_to_entity",
+    "camera_entity_path",
     "record_path_factory",
     "recording_id_factory",
     "episode_metadata",

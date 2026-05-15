@@ -21,6 +21,13 @@ pubsubs the live-viewer bridge does, runs the same converter contract
 and is otherwise independent of the bridge — a viewer failure does not affect
 recording, a recorder failure does not affect viewing.
 
+Camera path: the camera image arrives through the typed
+``color_image: In[Image]`` stream slot and is logged under
+``RerunDataRecorderConfig.camera_entity_path``. This typed path skips the
+``pubsubs`` / ``topic_to_entity`` / ``visual_override`` machinery entirely
+— blueprints route exactly one of the two paths for the camera, never
+both, to avoid double-logging the same frame.
+
 Bridge ``bridge.py`` is **not** modified by this module. Only already
 module-level types (``RerunMulti``, ``RerunData``, ``RerunConvertible``,
 ``is_rerun_multi``) are imported. The small composition logic
@@ -44,6 +51,8 @@ from toolz import pipe  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
@@ -66,6 +75,10 @@ class RerunDataRecorderConfig(ModuleConfig):
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
 
+    # Camera typed-input path. Frames arriving on `RerunDataRecorder.color_image`
+    # are logged under this entity path, bypassing pubsubs / topic_to_entity.
+    camera_entity_path: str = "/observation/camera/usb"
+
     record_path_factory: Callable[[], Path] | None = None
     recording_id_factory: Callable[[Path], str] | None = None
     episode_metadata: Callable[[int], dict[str, str]] | None = None
@@ -82,9 +95,17 @@ class RerunDataRecorder(Module):
 
     One recorder instance writes a sequence of episodes to disk under a session
     directory. Episode boundaries are operator-driven via ``rotate_recording()``.
+
+    The camera image arrives through the typed ``color_image: In[Image]``
+    stream slot and is logged under ``config.camera_entity_path``. All other
+    streams (joint scalars, action scalars, episode metadata) come through
+    the generic ``config.pubsubs`` + ``topic_to_entity`` /
+    ``visual_override`` flow.
     """
 
     config: RerunDataRecorderConfig
+
+    color_image: In[Image]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -247,7 +268,36 @@ class RerunDataRecorder(Module):
             if hasattr(pubsub, "stop"):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
+        # `color_image` may not be wired to a transport in standalone unit
+        # tests (no blueprint, no autoconnect). Drive the typed handler
+        # directly via `_on_color_image(...)` in that case.
+        try:
+            self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
+        except AttributeError:
+            logger.debug(
+                "RerunDataRecorder: color_image not connected to a transport — "
+                "typed camera path will only fire via direct _on_color_image() calls"
+            )
+
         logger.info("RerunDataRecorder: idle — press the toggle button to start recording")
+
+    def _on_color_image(self, image: Image) -> None:
+        """Log a typed camera frame under ``config.camera_entity_path``.
+
+        Bypasses ``topic_to_entity`` / ``visual_override`` — the typed slot
+        is the authoritative camera path. A frame received here while the
+        recorder is IDLE is dropped on the floor, same as messages on the
+        generic pubsub path.
+        """
+        archetype = image.to_rerun()
+        if archetype is None:
+            return
+        with self._record_lock:
+            stream = self._record_stream
+            if stream is None:
+                return
+            rr.log(self.config.camera_entity_path, archetype, recording=stream)
+            self._current_nonempty = True
 
     def _on_message(self, msg: Any, topic: Any) -> None:
         entity_path = self._get_entity_path(topic)

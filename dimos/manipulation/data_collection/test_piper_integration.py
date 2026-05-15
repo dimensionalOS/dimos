@@ -32,7 +32,6 @@ import pytest
 import rerun_bindings as rb
 
 from dimos.manipulation.data_collection.piper_blueprint_config import (
-    CAMERA_TOPIC,
     piper_data_collection_joint_short_names,
     piper_data_collection_rerun_config,
 )
@@ -92,6 +91,7 @@ def _recorder_kwargs(
         "visual_override": cfg["visual_override"],
         "entity_prefix": cfg["entity_prefix"],
         "topic_to_entity": cfg["topic_to_entity"],
+        "camera_entity_path": cfg["camera_entity_path"],
         "record_path_factory": record_path_factory,
         "recording_id_factory": cfg["recording_id_factory"],
         "episode_metadata": cfg["episode_metadata"],
@@ -129,7 +129,7 @@ def _drive_session(
     # Operator presses the toggle to begin episode_001 (recorder defaults to IDLE).
     recorder.toggle_recording()
     for _ in range(first_batch_size):
-        pubsub.push(_Topic(CAMERA_TOPIC), _make_image())
+        recorder._on_color_image(_make_image())
         pubsub.push(_Topic("/coordinator/joint_state"), _make_joint_state())
         pubsub.push(_Topic("/coordinator/desired_joint_action"), _make_joint_state())
     if toggle_between_batches:
@@ -139,7 +139,7 @@ def _drive_session(
         # Resume.
         recorder.toggle_recording()
     for _ in range(second_batch_size):
-        pubsub.push(_Topic(CAMERA_TOPIC), _make_image())
+        recorder._on_color_image(_make_image())
         pubsub.push(_Topic("/coordinator/joint_state"), _make_joint_state())
         pubsub.push(_Topic("/coordinator/desired_joint_action"), _make_joint_state())
     recorder.stop()
@@ -203,14 +203,14 @@ def test_messages_during_idle_gap_are_not_persisted(tmp_path: Path) -> None:
     recorder.start()
     # Operator toggles on (recorder is IDLE by default).
     recorder.toggle_recording()
-    pubsub.push(_Topic(CAMERA_TOPIC), _make_image())
+    recorder._on_color_image(_make_image())
 
     # Toggle off: the operator is resetting the scene.
     assert recorder.toggle_recording() is None
 
     # While IDLE, push messages on every recorded topic — none should land.
     for _ in range(10):
-        pubsub.push(_Topic(CAMERA_TOPIC), _make_image())
+        recorder._on_color_image(_make_image())
         pubsub.push(_Topic("/coordinator/joint_state"), _make_joint_state())
         pubsub.push(_Topic("/coordinator/desired_joint_action"), _make_joint_state())
 
@@ -220,7 +220,7 @@ def test_messages_during_idle_gap_are_not_persisted(tmp_path: Path) -> None:
     # Toggle on: resumes into episode_002.
     new_path = recorder.toggle_recording()
     assert new_path == tmp_path / "episode_002.rrd"
-    pubsub.push(_Topic(CAMERA_TOPIC), _make_image())
+    recorder._on_color_image(_make_image())
     recorder.stop()
 
     # Both files exist; both contain the camera entity from their own batches,

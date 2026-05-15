@@ -24,8 +24,7 @@ import rerun as rr
 import rerun.blueprint as rrb
 
 from dimos.manipulation.data_collection.piper_blueprint_config import (
-    CAMERA_RECORDED_ENTITY_PATH,
-    CAMERA_TOPIC,
+    _CAMERA_ENTITY_PATH,
     _piper_data_collection_topic_to_entity,
     default_episode_path_factory,
     default_recording_id_factory,
@@ -110,27 +109,33 @@ def test_joint_state_to_rerun_scalars_skips_missing_joints() -> None:
     ]
 
 
-def test_camera_topic_maps_to_observation_namespace() -> None:
-    """The shared topic_to_entity callback rewrites the camera LCM topic
-    onto the LeRobot-aligned recorded entity path."""
+def test_topic_to_entity_strips_lcm_suffix_for_non_camera_topics() -> None:
+    """The shared topic_to_entity callback maps every pubsub topic to its bare
+    topic name (LCM ``#Type`` suffix stripped). The camera topic is intentionally
+    NOT routed through this callback in the single-camera baseline — it arrives
+    through the recorder's typed ``color_image`` slot instead."""
 
     class _Topic:
         def __init__(self, name: str) -> None:
             self.name = name
 
-    assert _piper_data_collection_topic_to_entity(_Topic(CAMERA_TOPIC)) == (
-        CAMERA_RECORDED_ENTITY_PATH
-    )
-    # LCM "#Type" suffix is stripped.
-    assert (
-        _piper_data_collection_topic_to_entity(
-            _Topic("/piper_data_collection/color_image#sensor_msgs.Image")
-        )
-        == CAMERA_RECORDED_ENTITY_PATH
-    )
-    # Joint state topics fall through to the bare topic name.
+    # Joint state topic falls through to its bare name.
     assert _piper_data_collection_topic_to_entity(_Topic("/coordinator/joint_state")) == (
         "/coordinator/joint_state"
+    )
+    # LCM "#Type" suffix is stripped from joint topics.
+    assert (
+        _piper_data_collection_topic_to_entity(
+            _Topic("/coordinator/joint_state#sensor_msgs.JointState")
+        )
+        == "/coordinator/joint_state"
+    )
+    # The camera LCM topic is no longer special-cased — it would just fall
+    # through to its bare topic name if anyone passed it. The recorder
+    # ignores it via the typed-slot path.
+    assert (
+        _piper_data_collection_topic_to_entity(_Topic("/piper_data_collection/color_image"))
+        == "/piper_data_collection/color_image"
     )
 
 
@@ -159,7 +164,7 @@ def test_preset_factory_returns_blueprint_with_one_view_per_joint() -> None:
 
     # Camera Spatial2DView uses the LeRobot-aligned recorded entity path.
     assert len(spatial_views) == 1
-    assert str(spatial_views[0].origin) == CAMERA_RECORDED_ENTITY_PATH
+    assert str(spatial_views[0].origin) == _CAMERA_ENTITY_PATH
 
 
 def test_rerun_config_is_picklable() -> None:
@@ -253,3 +258,6 @@ def test_piper_data_collection_rerun_config_exposes_recorder_fields() -> None:
     assert callable(cfg["episode_metadata"])
     assert cfg["entity_prefix"] == ""
     assert callable(cfg["topic_to_entity"])
+    # Camera entity path is shipped through the recorder-config dict so the
+    # blueprint can pass it to `RerunDataRecorder` without re-declaring it.
+    assert cfg["camera_entity_path"] == "/observation/camera/usb"
