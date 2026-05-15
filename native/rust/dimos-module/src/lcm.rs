@@ -22,7 +22,7 @@ impl Transport for LcmTransport {
         self.0.publish(channel, data).await
     }
 
-    async fn recv(&mut self) -> io::Result<(String, Vec<u8>)> {
+    async fn recv(&self) -> io::Result<(String, Vec<u8>)> {
         let msg = self.0.recv().await?;
         Ok((msg.channel, msg.data))
     }
