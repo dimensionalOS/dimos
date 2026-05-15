@@ -260,6 +260,61 @@ coordinator_teleop_piper = autoconnect(
     }
 )
 
+
+# Piper teleop coordinator with a paired low-priority policy servo task.
+#
+# The servo task claims every joint controlled by the Piper teleop task
+# (arm joints + gripper). Its priority is derived by
+# `policy_servo_task_config` to be strictly less than the Pink IK task's
+# priority, satisfying the teleop-preempts invariant. The policy module's
+# `joint_command` output drives this servo task through the coordinator's
+# existing `_on_joint_command` routing.
+from dimos.manipulation.policy import policy_servo_task_config
+
+_piper_teleop_pink_task = piper_single_arm_pink_task_config(_piper_teleop_cfg, hand="right")
+_piper_hw_for_policy = _piper_teleop_cfg.to_hardware_component()
+_piper_full_joint_names = _piper_hw_for_policy.all_joints
+_piper_policy_servo_task = policy_servo_task_config(
+    name="policy_servo_arm",
+    joint_names=_piper_full_joint_names,
+    teleop_tasks=[_piper_teleop_pink_task],
+)
+
+coordinator_teleop_piper_with_policy = autoconnect(
+    ControlCoordinator.blueprint(
+        hardware=[_piper_hw_for_policy],
+        tasks=[
+            _piper_teleop_pink_task,
+            _piper_teleop_cfg.to_task_config(task_name="traj_arm"),
+            _piper_policy_servo_task,
+        ],
+    ),
+    *_mujoco_if_sim(str(PIPER_SIM_PATH), _piper_teleop_cfg.dof),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+    }
+)
+
+
+def piper_policy_joint_names() -> list[str]:
+    """Return the Piper full joint set used by the policy servo task.
+
+    Catalog-derived (arm joints + gripper, with the `arm/` prefix) so the
+    deployment blueprint and tests share one source of truth.
+    """
+    return list(_piper_full_joint_names)
+
+
+def piper_policy_overlapping_teleop_tasks() -> tuple:
+    """Return the teleop tasks the policy must yield to on the Piper coordinator."""
+    return (_piper_teleop_pink_task,)
+
+
 # Dual arm teleop: XArm6 + Piper with TeleopIK (real-only)
 _xarm6_dual_cfg = _catalog_xarm6(
     name="xarm_arm", adapter_type="xarm", address=global_config.xarm6_ip
@@ -304,9 +359,12 @@ __all__ = [
     "coordinator_servo_xarm6",
     "coordinator_teleop_dual",
     "coordinator_teleop_piper",
+    "coordinator_teleop_piper_with_policy",
     "coordinator_teleop_xarm6",
     "coordinator_teleop_xarm7",
     "coordinator_velocity_xarm6",
+    "piper_policy_joint_names",
+    "piper_policy_overlapping_teleop_tasks",
     "piper_teleop_robot_model_config",
     "xarm7_teleop_robot_model_config",
 ]

@@ -233,6 +233,9 @@ manipulation = [
     # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
+
+    # Policy training/inference (requires Python>=3.12)
+    "lerobot>=0.5.1; python_version >= '3.12'",
 ]
 
 
@@ -357,9 +360,14 @@ base = [
     "dimos[agents,web,visualization]",
 ]
 
-# All extras except dds and unitree-dds (which require special system setup).
+# All extras except dds, unitree-dds, perception, and manipulation (which require
+# special system setup or have mutually exclusive dependencies). `perception` and
+# `manipulation` conflict because lerobot needs huggingface-hub>=1.0 while transformers<4.54
+# (used by perception) needs huggingface-hub<1.0 — install one alongside `all`:
+#   uv sync --extra all --extra perception
+#   uv sync --extra all --extra manipulation
 all = [
-    "dimos[agents,base,cpu,cuda,dev,docker,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
+    "dimos[agents,base,cpu,cuda,dev,docker,drone,misc,psql,sim,unitree,visualization,web]",
 ]
 
 [tool.uv]
@@ -368,6 +376,12 @@ override-dependencies = [
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
     "pillow>=12.2.0",
     "pytest==8.3.5", # because gtsam screwed up their dev dependencies
+]
+conflicts = [
+    [
+        { extra = "perception" },
+        { extra = "manipulation" },
+    ]
 ]
 
 [tool.ruff]
