@@ -165,6 +165,30 @@ class TestSkillDecoratorTiming:
         assert len(msgs) == 1
         assert msgs[0].startswith("SKILL boom result=EXCEPTION duration_ms=")
 
+    def test_failed_result_without_code_logs_failed_not_ok(self, captured_logs):
+        """success=False is authoritative even when error_code is unset."""
+
+        @skill
+        def half_broken() -> SkillResult:
+            return SkillResult(success=False)  # no error_code set
+
+        half_broken()
+        msgs = [m for m in captured_logs.messages if "SKILL half_broken" in m]
+        assert len(msgs) == 1
+        assert "result=FAILED" in msgs[0]
+
+    def test_non_skillresult_return_logs_unknown(self, captured_logs):
+        """A bare string return can't be verified — don't claim result=OK."""
+
+        @skill
+        def legacy() -> str:
+            return "Error: something the decorator can't interpret"
+
+        legacy()
+        msgs = [m for m in captured_logs.messages if "SKILL legacy" in m]
+        assert len(msgs) == 1
+        assert "result=UNKNOWN" in msgs[0]
+
     def test_decorator_does_not_mutate_returned_skillresult(self):
         """The decorator returns a fresh SkillResult instance — the body's return
         object keeps its original duration_ms (whatever it was before)."""

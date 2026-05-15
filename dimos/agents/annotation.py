@@ -54,10 +54,15 @@ def _stamp_and_log(func_name: str, result: Any, elapsed_ms: float) -> Any:
 
     if isinstance(result, SkillResult):
         result = replace(result, duration_ms=elapsed_ms)
-        code = result.error_code if result.error_code is not None else "OK"
+        if result.success:
+            code = "OK"
+        else:
+            # success=False is authoritative; error_code may be unset.
+            code = result.error_code if result.error_code is not None else "FAILED"
     else:
-        code = "OK"
-    logger.info(f"SKILL {func_name} result={code} duration_ms={elapsed_ms:.1f}")
+        # Not a SkillResult — we can't verify the outcome, so don't claim "OK".
+        code = "UNKNOWN"
+    logger.info("SKILL %s result=%s duration_ms=%.1f", func_name, code, elapsed_ms)
     return result
 
 
@@ -74,7 +79,7 @@ def skill(func: F) -> F:
                 result = await func(*args, **kwargs)
             except BaseException:
                 elapsed_ms = (time.monotonic() - t0) * 1000.0
-                logger.info(f"SKILL {func.__name__} result=EXCEPTION duration_ms={elapsed_ms:.1f}")
+                logger.info("SKILL %s result=EXCEPTION duration_ms=%.1f", func.__name__, elapsed_ms)
                 raise
             finally:
                 _SKILL_CONTEXT.context = previous
@@ -93,7 +98,7 @@ def skill(func: F) -> F:
                 result = func(*args, **kwargs)
             except BaseException:
                 elapsed_ms = (time.monotonic() - t0) * 1000.0
-                logger.info(f"SKILL {func.__name__} result=EXCEPTION duration_ms={elapsed_ms:.1f}")
+                logger.info("SKILL %s result=EXCEPTION duration_ms=%.1f", func.__name__, elapsed_ms)
                 raise
             finally:
                 _SKILL_CONTEXT.context = previous
