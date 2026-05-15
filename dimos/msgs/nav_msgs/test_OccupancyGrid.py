@@ -170,6 +170,7 @@ def test_invalid_grid_dimensions() -> None:
         OccupancyGrid(grid=np.zeros(10), resolution=0.1)
 
 
+@pytest.mark.self_hosted
 def test_from_pointcloud() -> None:
     """Test creating OccupancyGrid from PointCloud2."""
     file_path = get_data("lcm_msgs") / "sensor_msgs/PointCloud2.pickle"

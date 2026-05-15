@@ -24,6 +24,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -189,6 +190,7 @@ class TestMavlinkProcessing(unittest.TestCase):
         self.assertAlmostEqual(conn._position["y"], -4.0 * dt, places=2)
 
 
+@pytest.mark.self_hosted
 class TestReplayMode(unittest.TestCase):
     """Test replay mode functionality."""
 

@@ -19,6 +19,8 @@ import pytest
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.testing.replay import SensorReplay
 
+pytestmark = pytest.mark.self_hosted
+
 _EXPECTED_TOTAL_RAD = -4.05212
 
 

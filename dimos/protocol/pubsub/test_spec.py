@@ -231,7 +231,6 @@ def test_multiple_messages(
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-@pytest.mark.asyncio
 async def test_async_iterator(
     pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
 ) -> None:
@@ -282,7 +281,7 @@ async def test_async_iterator(
         assert received_messages == messages_to_send
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_macos_bug
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 def test_high_volume_messages(

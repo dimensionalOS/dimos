@@ -5,9 +5,9 @@ use std::io;
 ///
 /// New transport protocols should implement this trait.
 /// `NativeModule` is generic over any transport
-pub trait Transport: Send + 'static {
+pub trait Transport: Send + Sync + 'static {
     /// Send `data` on `channel`.
     fn publish(&self, channel: &str, data: &[u8]) -> impl Future<Output = io::Result<()>> + Send;
     /// Block until the next inbound message, returning `(channel, data)`.
-    fn recv(&mut self) -> impl Future<Output = io::Result<(String, Vec<u8>)>> + Send;
+    fn recv(&self) -> impl Future<Output = io::Result<(String, Vec<u8>)>> + Send;
 }

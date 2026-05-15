@@ -28,6 +28,8 @@ from dimos.robot.unitree.type.lidar import (
 from dimos.types.timestamped import Timestamped
 from dimos.utils.testing.replay import SensorReplay
 
+pytestmark = pytest.mark.self_hosted
+
 
 def test_init() -> None:
     lidar = SensorReplay("office_lidar")

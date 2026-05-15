@@ -90,9 +90,9 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         case _:
             z = 0
 
-    pos = config.mujoco_start_pos_float
+    start_pos = config.mujoco_start_pos_float
 
-    data.qpos[0:3] = [pos[0], pos[1], z]
+    data.qpos[0:3] = [start_pos[0], start_pos[1], z]
 
     mujoco.mj_forward(model, data)
 

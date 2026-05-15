@@ -19,6 +19,7 @@ import tempfile
 import uuid
 
 import pytest
+from reactivex import operators as ops
 
 from dimos.memory.timeseries.base import TimeSeriesStore
 from dimos.memory.timeseries.inmemory import InMemoryStore
@@ -363,21 +364,12 @@ class TestTimeSeriesStore:
         assert len(items) == 2
         assert items[0] == (2.0, SampleData("b", 2.0))
 
-    def test_stream_basic(self, store_factory, store_name, temp_dir):
+    async def test_stream_basic(self, store_factory, store_name, temp_dir):
         store = store_factory(temp_dir)
         store.save(SampleData("a", 1.0), SampleData("b", 2.0), SampleData("c", 3.0))
 
         # Stream at high speed (essentially instant)
-        results: list[SampleData] = []
-        store.stream(speed=1000.0).subscribe(
-            on_next=results.append,
-            on_completed=lambda: None,
-        )
-
-        # Give it a moment to complete
-        import time
-
-        time.sleep(0.1)
+        results = await store.stream(speed=1000.0).pipe(ops.to_list())
 
         assert results == [
             SampleData("a", 1.0),
