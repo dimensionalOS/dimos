@@ -14,6 +14,7 @@
 
 
 import pickle
+from types import MappingProxyType
 from typing import Protocol, get_type_hints
 
 from pydantic import ValidationError
@@ -224,6 +225,24 @@ def test_disabled_module_proxy_pickle_roundtrip() -> None:
 
     assert repr(restored) == "<DisabledModuleProxy spec=SomeSpec>"
     assert restored.any_method(1, 2, 3) is None
+
+
+def test_blueprint_pickle_roundtrip() -> None:
+    blueprint = (
+        autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+        .global_config(option1=True, option2=42)
+        .remappings([(ModuleA, "module_a", ModuleB)])
+    )
+
+    restored = pickle.loads(pickle.dumps(blueprint))
+
+    assert restored == blueprint
+    for name in ("transport_map", "global_config_overrides", "remapping_map"):
+        assert isinstance(getattr(restored, name), MappingProxyType)
+    assert dict(restored.global_config_overrides) == {"option1": True, "option2": 42}
+    assert restored.remapping_map[(ModuleA, "module_a")] is ModuleB
+    with pytest.raises(TypeError):
+        restored.global_config_overrides["x"] = 1
 
 
 def test_active_blueprints_filters_disabled() -> None:

@@ -210,10 +210,6 @@ def monitor_threads(request):
             # HuggingFace safetensors conversion thread - no user cleanup API
             # https://github.com/huggingface/transformers/issues/29513
             "Thread-auto_conversion",
-            # rpyc spawns per-call response threads inside the connection's
-            # SpawnThread protocol. They get cleaned up when the connection
-            # is closed (in the rpyc client's teardown), not per-test.
-            "RpycSpawnThread-",
         ]
         new_threads = [
             t

@@ -22,8 +22,8 @@ from typing import Any
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
-from dimos.core.module import ModuleBase
-from dimos.core.run_registry import get_most_recent_rpyc_port
+from dimos.core.module import ModuleBase, PeekNotFound
+from dimos.core.run_registry import get_most_recent
 from dimos.porcelain.local_module_source import LocalModuleSource
 from dimos.porcelain.module_source import ModuleSource
 from dimos.porcelain.remote_module_source import RemoteModuleSource
@@ -99,30 +99,22 @@ class Dimos:
             self._coordinator.restart_module(module_class, reload_source=reload_source)
 
     @classmethod
-    def connect(
-        cls,
-        *,
-        run_id: str | None = None,
-        host: str | None = None,
-        port: int | None = None,
-    ) -> Dimos:
-        """Connect to an already-running DimOS instance.
+    def connect(cls, *, timeout: float = 5.0) -> Dimos:
+        """Connect to the running DimOS daemon on the current LCM bus.
 
-        With no arguments, finds the most recent alive `RunEntry` in the
-        registry and connects to its coordinator RPyC endpoint. Use `run_id=` to
-        select a specific run, or `host=` + `port=` to bypass the registry.
+        One daemon serves the bus identified by `LCM_DEFAULT_URL`. To target
+        a different daemon (e.g. a different host), point `LCM_DEFAULT_URL`
+        at its bus before calling.
 
         Returns a `Dimos` instance in read/call mode: `skills`, attribute
-        access, `__repr__` and `__dir__` work, but `run()` and `restart()` raise
-        `NotImplementedError`. `stop()` closes the connection without
-        terminating the remote process.
+        access, `__repr__` and `__dir__` work, but only methods marked with
+        `@rpc` (and `@skill`, which implies `@rpc`) on a module are callable.
+        `stop()` closes the connection without terminating the remote process.
         """
-        if host is not None and port is not None:
-            source: ModuleSource = RemoteModuleSource(host, port)
-        else:
-            rpyc_port = get_most_recent_rpyc_port(run_id=run_id)
-            source = RemoteModuleSource("localhost", rpyc_port)
+        if get_most_recent(alive_only=True) is None:
+            raise RuntimeError("No running DimOS instance. Start one with `dimos run <blueprint>`.")
 
+        source = RemoteModuleSource(timeout=timeout)
         instance = cls()
         instance._source = source
         return instance
@@ -149,46 +141,38 @@ class Dimos:
 
         Args:
             name: Stream attribute name (e.g. "color_image").
-            timeout: Max seconds to wait. Capped internally at 25s to stay
-                under the rpyc sync request timeout.
+            timeout: Max seconds to wait.
         """
-        effective_timeout = min(timeout, 25.0)
 
         with self._lock:
             source = self._source
             if source is None:
                 raise RuntimeError("No modules are running")
 
-        stream = None
-        for module_name in source.list_module_names():
+        module_names = source.list_module_names()
+        for module_name in module_names:
             try:
-                module = source.get_rpyc_module(module_name)
-                if name in module.outputs:
-                    stream = module.outputs[name]
-                    break
-                if name in module.inputs:
-                    stream = module.inputs[name]
-                    break
+                module = source.get_module(module_name)
+                peek = getattr(module, "peek_stream", None)
+                if peek is None:
+                    continue
+                result = peek(name, timeout)
             except Exception:
                 continue
+            if isinstance(result, PeekNotFound):
+                continue
+            return result
 
-        if stream is None:
-            raise LookupError(
-                f"No running module exposes a stream named {name!r}. "
-                f"Running modules: {source.list_module_names()}"
-            )
-
-        try:
-            return stream.get_next(effective_timeout)
-        except Exception:
-            return None
+        raise LookupError(
+            f"No running module exposes a stream named {name!r}. Running modules: {module_names}"
+        )
 
     def stop(self) -> None:
         """Stop all modules and clean up resources.
 
         On a locally-driven `Dimos`, stops the coordinator and workers.
-        On a connected `Dimos` (from `Dimos.connect()`), closes RPyC
-        connections without terminating the remote process.
+        On a connected `Dimos` (from `Dimos.connect()`), closes the LCM RPC
+        client without terminating the remote process.
         """
         with self._lock:
             if self._stopped:
@@ -221,7 +205,7 @@ class Dimos:
                 raise RuntimeError("No modules are running")
 
         try:
-            return source.get_rpyc_module(name)
+            return source.get_module(name)
         except KeyError:
             pass
 
@@ -257,10 +241,10 @@ def _run_remote(target: str | Blueprint | type[ModuleBase], source: RemoteModule
         if key in all_modules:
             source.load_blueprint_by_name(key)
         else:
-            source.load_blueprint_pickled(target.blueprint())
+            source.load_blueprint(target.blueprint())
         return
     if isinstance(target, Blueprint):
-        source.load_blueprint_pickled(target)
+        source.load_blueprint(target)
         return
     raise TypeError(
         f"run() expects a blueprint name (str), Blueprint, or Module class, "

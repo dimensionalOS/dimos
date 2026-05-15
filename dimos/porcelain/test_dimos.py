@@ -159,10 +159,9 @@ def test_run_blueprint_object(app):
     assert app.is_running
 
 
-def test_rpyc_module_access(running_app):
+def test_module_rpc_call(running_app):
     module = running_app.StressTestModule
-    # Access an attribute from ModuleBase
-    assert module._module_closed is False
+    assert module.ping() == "pong"
 
 
 def test_dir_lists_modules(running_app):
