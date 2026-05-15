@@ -394,7 +394,7 @@ xarm6_perception = (
             robots=[_xarm6_perception_cfg.to_robot_model_config()],
             planning_timeout=10.0,
             enable_viz=True,
-            floor_z=-0.02,
+            floor_z=0.11,  # measured desk surface height (robot base frame, m)
         ),
         RealSenseCamera.blueprint(
             base_frame_id="link6",
