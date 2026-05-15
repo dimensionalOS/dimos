@@ -249,6 +249,21 @@ class LazyPerceptionModuleConfig(MemoryModuleConfig):
     use_aabb: bool = True
     max_obstacle_width: float = 0.06
 
+    # Foreground depth clustering. Moondream returns a loose rectangular bbox
+    # (no segmentation mask), so the bbox captures the object PLUS background.
+    # Without filtering, from_2d_to_list's AABB center is dragged ~halfway to
+    # the background (measured ~0.24 m bias — the arm plans to empty space).
+    # Before projecting, within each bbox we histogram the depths and keep the
+    # NEAREST DOMINANT cluster at its *actual* extent (grown until a real empty
+    # gap to the background). No fixed band: a tall object viewed top-down
+    # keeps its full depth extent; a thin object side-on keeps its small
+    # extent; camera distance is irrelevant (bins come from observed depths).
+    # Fundamental limit (heuristic, not a mask): an object physically touching
+    # the wall has no depth gap — SAM-on-bbox is the only true fix there.
+    foreground_bin_size: float = 0.02   # histogram resolution (meters)
+    foreground_gap: float = 0.10        # empty-depth span that ends the cluster
+    foreground_min_points: int = 50     # below this, skip filtering (keep all)
+
 
 @runtime_checkable
 class LazyPerceptionModuleSpec(Protocol):

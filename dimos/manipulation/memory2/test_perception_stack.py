@@ -267,19 +267,8 @@ def run(prompt: str, db_path: str) -> None:
             dets = vlm2.query_detections(chosen.data, prompt)
             print(f"VLM on chosen frame: {len(dets.detections)} detections")
             if dets.detections:
-                # Replicate the FIXED lazy_perception.py mm->m depth conversion
-                from dimos.msgs.sensor_msgs.Image import Image as _Img
-                from dimos.msgs.sensor_msgs.Image import ImageFormat as _Fmt
-
-                _dc = d_obs.data.to_opencv()
-                if d_obs.data.format == _Fmt.DEPTH16:
-                    _dc = _dc.astype(np.float32) / 1000.0
-                elif _dc.dtype != np.float32:
-                    _dc = _dc.astype(np.float32)
-                _depth_m = _Img(
-                    data=_dc, format=_Fmt.DEPTH,
-                    frame_id=d_obs.data.frame_id, ts=d_obs.data.ts,
-                )
+                # Mirror the FIXED lazy_perception path: mm->m + foreground band
+                _depth_m = _depth_m_for_world(d_obs, detections=dets)
                 objs = DetObject.from_2d_to_list(
                     detections_2d=dets,
                     color_image=chosen.data,
@@ -331,25 +320,29 @@ def run(prompt: str, db_path: str) -> None:
             print(f"bbox depth (meters) percentiles:")
             print(f"   5%={pcts[0]:.3f}  10%={pcts[1]:.3f}  25%={pcts[2]:.3f}")
             print(f"  50%={pcts[3]:.3f}  75%={pcts[4]:.3f}  90%={pcts[5]:.3f}  95%={pcts[6]:.3f}")
-            near = float(np.percentile(valid, 15))
-            band = valid[(valid >= near - 0.05) & (valid <= near + 0.10)]
+            raw_aabb_center = (valid.min() + valid.max()) / 2.0
+            bounds = _nearest_cluster_bounds(valid)
             print()
-            print(f"  AABB-center depth (current behavior)  ≈ {(valid.min()+valid.max())/2:.3f} m")
-            print(f"  nearest-cluster depth (the object)    ≈ {band.mean() if band.size else near:.3f} m")
-            print(f"  delta (how far the pick target is off)≈ "
-                  f"{abs((valid.min()+valid.max())/2 - (band.mean() if band.size else near)):.3f} m")
-            spread = pcts[6] - pcts[0]
-            if spread > 0.20:
+            print(f"  RAW (no filter) AABB-center depth ≈ {raw_aabb_center:.3f} m  "
+                  f"(spans {valid.min():.3f}–{valid.max():.3f})")
+            if bounds is not None:
+                near, far = bounds
+                cluster = valid[(valid >= near) & (valid <= far)]
+                cl_center = (cluster.min() + cluster.max()) / 2.0 if cluster.size else near
+                print(f"  CLUSTER kept: [{near:.3f}, {far:.3f}] m  "
+                      f"(extent {far - near:.3f} m, {cluster.size} pts)")
+                print(f"  CLUSTER AABB-center depth ≈ {cl_center:.3f} m  <-- what find_objects now uses")
+                print(f"  correction applied ≈ {abs(raw_aabb_center - cl_center):.3f} m")
                 print()
-                print(f"  -> bbox depth spans {spread:.2f} m (5%→95%). The box captures the")
-                print("     object AND background. AABB center is dragged ~halfway back.")
-                print("     THIS is the localization error. Fix: foreground depth-band filter")
-                print("     in lazy_perception before projection (keep only the near cluster).")
+                print("  The cluster extent ADAPTS — it is whatever the object's actual")
+                print("  depth span is (tall object top-down = large extent kept; thin")
+                print("  object side-on = small extent). No fixed band, no hardcoded depth.")
             else:
-                print()
-                print(f"  -> bbox depth spread only {spread:.2f} m — fairly tight. If the pick")
-                print("     is still off, suspect hand-eye calibration")
-                print("     (_XARM6_PERCEPTION_CAMERA_TRANSFORM) instead.")
+                print("  cluster filter skipped (too few points) — projection uses raw bbox")
+            spread = pcts[6] - pcts[0]
+            print()
+            print(f"  (bbox 5%→95% depth spread = {spread:.2f} m; "
+                  f"large spread = lots of background the cluster filter removes)")
         else:
             print("  no valid depth in bbox — different problem (sensor/exposure)")
     except Exception as e:
@@ -360,6 +353,8 @@ def run(prompt: str, db_path: str) -> None:
     print("applies the recorded pose -> world/base frame. This is the number the arm")
     print("plans to. Compare it against where the object ACTUALLY is on your bench.")
     try:
+        from dimos.manipulation.memory2 import LazyPerceptionModule
+
         m = LazyPerceptionModule.__new__(LazyPerceptionModule)
         ct = m._camera_transform_from_pose(most_recent.pose)
         print(f"recorded pose (7-tuple): {most_recent.pose}")
@@ -368,7 +363,7 @@ def run(prompt: str, db_path: str) -> None:
             world_objs = DetObject.from_2d_to_list(
                 detections_2d=dets_2d,
                 color_image=most_recent.data,
-                depth_image=_depth_m_for_world(depth_obs),
+                depth_image=_depth_m_for_world(depth_obs, detections=dets_2d),
                 camera_info=info_obs.data,
                 camera_transform=ct,
                 max_distance=0.0,           # disable filter so we SEE the raw world pos
@@ -397,13 +392,59 @@ def run(prompt: str, db_path: str) -> None:
     print("  Section G2 -> the WORLD position the agent picks; compare to ground truth")
 
 
-def _depth_m_for_world(depth_obs: Any):
-    """mm->m converted depth Image (same conversion as the lazy_perception fix)."""
+def _nearest_cluster_bounds(depths, bin_size=0.02, gap=0.10, min_points=50):
+    """Mirror of lazy_perception._nearest_cluster_bounds for the diagnostic."""
+    if depths.size < min_points:
+        return None
+    lo = float(np.percentile(depths, 1))
+    hi = float(np.percentile(depths, 99))
+    if hi <= lo:
+        return None
+    nbins = max(1, int(np.ceil((hi - lo) / bin_size)))
+    hist, edges = np.histogram(depths, bins=nbins, range=(lo, hi))
+    occ_thresh = max(3, int(0.005 * depths.size))
+    occupied = hist >= occ_thresh
+    if not occupied.any():
+        return None
+    first = int(np.argmax(occupied))
+    gap_bins = max(1, int(np.ceil(gap / bin_size)))
+    end, empty_run = first, 0
+    for b in range(first, nbins):
+        if occupied[b]:
+            end, empty_run = b, 0
+        else:
+            empty_run += 1
+            if empty_run >= gap_bins:
+                break
+    return float(edges[first]), float(edges[end + 1])
+
+
+def _depth_m_for_world(depth_obs: Any, detections: Any = None):
+    """mm->m converted depth + foreground CLUSTER filter — mirrors the fixed
+    lazy_perception._detect_and_project_one path so the diagnostic reflects
+    real find_objects behavior."""
     dcv = depth_obs.data.to_opencv()
     if depth_obs.data.format == ImageFormat.DEPTH16:
         dcv = dcv.astype(np.float32) / 1000.0
     elif dcv.dtype != np.float32:
         dcv = dcv.astype(np.float32)
+    dcv = dcv.copy()
+    if detections is not None:
+        h, w = dcv.shape[:2]
+        for det in detections.detections:
+            try:
+                x1, y1, x2, y2 = (int(v) for v in det.bbox)
+            except (TypeError, ValueError):
+                continue
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            roi = dcv[y1:y2, x1:x2]
+            b = _nearest_cluster_bounds(roi[(roi > 0.05) & np.isfinite(roi)])
+            if b is None:
+                continue
+            roi[(roi < b[0]) | (roi > b[1])] = 0.0
     return Image(
         data=dcv, format=ImageFormat.DEPTH,
         frame_id=depth_obs.data.frame_id, ts=depth_obs.data.ts,

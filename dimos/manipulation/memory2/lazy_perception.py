@@ -246,6 +246,33 @@ class LazyPerceptionModule(MemoryModule):
             depth_cv = depth_cv.astype(np.float32) / 1000.0
         elif depth_cv.dtype != np.float32:
             depth_cv = depth_cv.astype(np.float32)
+
+        # Foreground depth clustering. Moondream returns a rectangular bbox
+        # (no segmentation mask), so from_2d_to_list's rectangular depth mask
+        # captures the object PLUS background; the AABB center then sits
+        # ~halfway to the wall (measured ~0.24m bias — the arm plans to empty
+        # space). Per bbox: histogram the depths, keep the NEAREST DOMINANT
+        # cluster at its actual extent (grown until a real empty gap to the
+        # background). Adapts to object size + camera angle + distance; no
+        # fixed band. Heuristic limit: object touching the wall has no gap.
+        depth_cv = depth_cv.copy()
+        h, w = depth_cv.shape[:2]
+        for det in dets_2d.detections:
+            try:
+                bx1, by1, bx2, by2 = (int(v) for v in det.bbox)
+            except (TypeError, ValueError):
+                continue
+            bx1, by1 = max(0, bx1), max(0, by1)
+            bx2, by2 = min(w, bx2), min(h, by2)
+            if bx2 <= bx1 or by2 <= by1:
+                continue
+            roi = depth_cv[by1:by2, bx1:bx2]
+            bounds = self._nearest_cluster_bounds(roi[(roi > 0.05) & np.isfinite(roi)])
+            if bounds is None:
+                continue
+            near, far = bounds
+            roi[(roi < near) | (roi > far)] = 0.0
+
         depth_m = Image(
             data=depth_cv,
             format=ImageFormat.DEPTH,
@@ -272,6 +299,45 @@ class LazyPerceptionModule(MemoryModule):
         except Exception as e:
             logger.warning("from_2d_to_list failed at ts=%.3f: %s", color_obs.ts, e)
             return []
+
+    def _nearest_cluster_bounds(self, depths: Any) -> tuple[float, float] | None:
+        """Nearest dominant depth cluster within a bbox, at its actual extent.
+
+        Histograms the bbox's valid depths, finds the closest occupied bin, and
+        grows the cluster forward until an empty span >= ``foreground_gap``
+        (the object↔background separation). Returns (near, far) meter bounds, or
+        ``None`` to skip filtering (too few points / degenerate). No fixed band:
+        the cluster keeps whatever depth extent it actually has, so it adapts to
+        object size, camera viewing angle, and distance.
+        """
+        if depths.size < self.config.foreground_min_points:
+            return None
+        lo = float(np.percentile(depths, 1))   # drop near speckle
+        hi = float(np.percentile(depths, 99))  # drop far flyers
+        if hi <= lo:
+            return None
+        bin_size = self.config.foreground_bin_size
+        nbins = max(1, int(np.ceil((hi - lo) / bin_size)))
+        hist, edges = np.histogram(depths, bins=nbins, range=(lo, hi))
+        # "Occupied" = holds a meaningful fraction of points; filters sparse
+        # noise bins that would otherwise bridge object→background.
+        occ_thresh = max(3, int(0.005 * depths.size))
+        occupied = hist >= occ_thresh
+        if not occupied.any():
+            return None
+        first = int(np.argmax(occupied))
+        gap_bins = max(1, int(np.ceil(self.config.foreground_gap / bin_size)))
+        end = first
+        empty_run = 0
+        for b in range(first, nbins):
+            if occupied[b]:
+                end = b
+                empty_run = 0
+            else:
+                empty_run += 1
+                if empty_run >= gap_bins:
+                    break
+        return float(edges[first]), float(edges[end + 1])
 
     def _camera_transform_from_pose(self, pose: Any) -> Transform | None:
         """Build a Transform from the recorder's pose-stamped observation.
