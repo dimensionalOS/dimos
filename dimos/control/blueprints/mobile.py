@@ -132,14 +132,9 @@ coordinator_flowbase_keyboard_teleop = autoconnect(
     }
 )
 
-# FlowBase + Livox MID-360 + FastLio2 SLAM + nav stack with click-to-drive in Rerun.
-# Mirrors unitree-g1-nav-onboard: MovementManager forwards Rerun clicks to the
-# planner's goal and muxes nav_cmd_vel ⊕ tele_cmd_vel into cmd_vel. The velocity
-# sink is ControlCoordinator + FlowBaseAdapter instead of G1HighLevelDdsSdk.
-#
-# Override LIDAR network at runtime: LIDAR_HOST_IP=<your-ip> LIDAR_IP=<lidar-ip>.
-# MID-360 mount: 20cm forward (+x), 20cm right (-y in ROS), 10cm above base center (+z).
-# Identity orientation assumes level mount; refine quaternion if tilted.
+# FlowBase + Livox MID-360 + FastLio2 SLAM + nav stack with click-to-drive in Rerun. The velocity
+# sink is ControlCoordinator + FlowBaseAdapter
+
 _flowbase_mid360_mount = Pose(0.20, -0.20, 0.10, *Quaternion.from_euler(Vector3(0, 0, 0)))
 
 coordinator_flowbase_nav = (
@@ -192,10 +187,6 @@ coordinator_flowbase_nav = (
                 ),
             ],
         ),
-        # Rerun directly (no vis_module helper — no WebsocketVisModule dashboard).
-        # rerun_open="native": only spawn the native viewer; no web viewer auto-launch.
-        # RerunWebSocketServer is the click bridge — it republishes click events
-        # from the native dimos-viewer onto LCM /clicked_point.
         RerunBridgeModule.blueprint(
             **nav_stack_rerun_config({"memory_limit": "1GB"}, vis_throttle=0.5),
             rerun_open="native",
