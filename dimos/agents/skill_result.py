@@ -101,10 +101,6 @@ class SkillResult:
 def skill_timing(name: str | None = None) -> Iterator[Callable[[SkillResult], SkillResult]]:
     """Stamp a ``SkillResult`` with the elapsed wall time at exit, and log it.
 
-    If ``name`` is supplied, a structured ``logger.info`` line is emitted on
-    every ``stamp(...)`` call (i.e. every skill return point) with the skill
-    name, the outcome code, and the elapsed duration. Pass the skill's own
-    method name so the log is greppable.
 
     Usage::
 
@@ -121,4 +117,10 @@ def skill_timing(name: str | None = None) -> Iterator[Callable[[SkillResult], Sk
             logger.info(f"SKILL {name} result={code} duration_ms={result.duration_ms:.1f}")
         return result
 
-    yield stamp
+    try:
+        yield stamp
+    except BaseException:
+        if name is not None:
+            duration_ms = (time.monotonic() - t0) * 1000.0
+            logger.info(f"SKILL {name} result=EXCEPTION duration_ms={duration_ms:.1f}")
+        raise

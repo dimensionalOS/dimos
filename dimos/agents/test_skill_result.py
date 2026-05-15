@@ -20,6 +20,8 @@ from enum import Enum, auto
 import json
 import time
 
+import pytest
+
 from dimos.agents.skill_result import CommonSkillError, SkillResult, skill_timing
 
 
@@ -156,3 +158,19 @@ class TestSkillTimingLogging:
             stamp(SkillResult.ok("first"))
             stamp(SkillResult.fail(CommonSkillError.EXECUTION_FAILED, "second"))
         assert len(handler.messages) == 2
+
+    def test_exception_path_logs_and_reraises(self, monkeypatch):
+        """An uncaught exception in the skill body emits ``result=EXCEPTION`` and re-raises."""
+        handler = _patch_logger(monkeypatch)
+        with pytest.raises(RuntimeError, match="boom"), skill_timing("pick"):
+            raise RuntimeError("boom")
+        msgs = [m for m in handler.messages if "SKILL pick" in m]
+        assert len(msgs) == 1
+        assert msgs[0].startswith("SKILL pick result=EXCEPTION duration_ms=")
+
+    def test_exception_path_silent_when_name_omitted(self, monkeypatch):
+        """Anonymous timing still emits no log on exception — preserves opt-in API."""
+        handler = _patch_logger(monkeypatch)
+        with pytest.raises(ValueError), skill_timing():
+            raise ValueError("crash")
+        assert handler.messages == []
