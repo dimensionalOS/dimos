@@ -93,6 +93,13 @@ class RtabMapConfig(NativeModuleConfig):
     global_map_publish_period: float = 1.0
     global_map_voxel_size: float = 0.15
 
+    # Size of the rolling scan window used to rebuild the published
+    # OctoMap each frame. Larger = denser dynamic-obstacle map but
+    # heavier per-frame rebuild; smaller = lighter rebuild but more
+    # gaps when the sensor doesn't see the same region twice within
+    # the window. 10 scans ≈ 1 s at 10 Hz scan rate.
+    rolling_window_size: int = 10
+
     # Input handling.
     # Input scans arrive in the world (map) frame; the binary undoes the
     # current odom transform so rtabmap sees body-frame scans.
