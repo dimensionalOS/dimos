@@ -150,8 +150,9 @@ class LazyPerceptionModule(MemoryModule):
 
         Cheaper than ``find_objects``: no VLM, no 3D projection. Returns
         the camera pose at the most recent confident semantic match plus
-        timestamp. Works across process restarts because memory2's SQLite
-        store is the persistence layer.
+        timestamp.   # furutre work might need to make it work not on the
+        latest confident semantic search but rather initiate a search on
+        CLIP embeddings history
         """
         if self._clip is None:
             return f"No memory of '{name}'."
@@ -161,7 +162,7 @@ class LazyPerceptionModule(MemoryModule):
                 self.store.streams.color_image_embedded
                     .search(vec)
                     .filter(lambda o: (o.similarity or 0) >= self.config.min_similarity)
-                    .order_by("ts", desc=True)
+                    .order_by("similarity", desc=True)
                     .first()
             )
         except (AttributeError, LookupError):
@@ -188,24 +189,63 @@ class LazyPerceptionModule(MemoryModule):
         Returns (objects, observation_ts). ``build_query`` is a callable
         ``(stream, query_vec) -> filtered Stream`` so find_objects /
         find_objects_near can share the rest of the pipeline.
+
+        Uses a two-pass strategy when ``recency_window > 0``:
+        1. Search only frames from the last ``recency_window`` seconds.
+        2. If no confident match, fall back to the full history.
+        This prevents old high-similarity frames from shadowing current
+        scene observations (e.g. camera moved, object at different angle).
         """
         if self._clip is None:
             return [], None
         try:
             vec = self._clip.embed_text(prompt)
-            obs = (
-                build_query(self.store.streams.color_image_embedded, vec)
+            stream = self.store.streams.color_image_embedded
+
+            # Helper to try candidates
+            def _try_candidates(candidates_iter: Any) -> tuple[list[DetObject], float | None]:
+                # Sort best matches by recency so we still prefer newer valid frames
+                for candidate_obs in sorted(list(candidates_iter), key=lambda o: o.ts, reverse=True):
+                    dets = self._detect_and_project_one(candidate_obs, prompt)
+                    if dets:
+                        return dets, candidate_obs.ts
+                return [], None
+
+            # Pass 1: recent frames only (prefer current scene)
+            if self.config.recency_window > 0:
+                cutoff = time.time() - self.config.recency_window
+                try:
+                    candidates = (
+                        build_query(stream, vec)
+                            .after(cutoff)
+                            .filter(lambda o: (o.similarity or 0) >= self.config.min_similarity)
+                            .order_by("similarity", desc=True)
+                            .limit(3)
+                    )
+                    dets, ts = _try_candidates(candidates)
+                    if dets:
+                        return dets, ts
+                except LookupError:
+                    pass  # no recent confident match, fall through
+
+            # Pass 2: full history fallback
+            candidates = (
+                build_query(stream, vec)
                     .filter(lambda o: (o.similarity or 0) >= self.config.min_similarity)
-                    .order_by("ts", desc=True)
-                    .first()
+                    .order_by("similarity", desc=True)
+                    .limit(5)
             )
+            dets, ts = _try_candidates(candidates)
+            if dets:
+                return dets, ts
+
         except (AttributeError, LookupError):
             return [], None
         except Exception as e:
             logger.warning("_find_and_project(%r): %s", prompt, e)
             return [], None
 
-        return self._detect_and_project_one(obs, prompt), obs.ts
+        return [], None
 
     def _detect_and_project_one(self, color_obs: Any, prompt: str) -> list[DetObject]:
         """VLM detection + 3D projection for ONE peak frame, ONE prompt class."""
@@ -301,15 +341,7 @@ class LazyPerceptionModule(MemoryModule):
             return []
 
     def _nearest_cluster_bounds(self, depths: Any) -> tuple[float, float] | None:
-        """Nearest dominant depth cluster within a bbox, at its actual extent.
-
-        Histograms the bbox's valid depths, finds the closest occupied bin, and
-        grows the cluster forward until an empty span >= ``foreground_gap``
-        (the object↔background separation). Returns (near, far) meter bounds, or
-        ``None`` to skip filtering (too few points / degenerate). No fixed band:
-        the cluster keeps whatever depth extent it actually has, so it adapts to
-        object size, camera viewing angle, and distance.
-        """
+        """Nearest dominant depth cluster within a bbox, at its actual extent."""
         if depths.size < self.config.foreground_min_points:
             return None
         lo = float(np.percentile(depths, 1))   # drop near speckle
@@ -340,14 +372,7 @@ class LazyPerceptionModule(MemoryModule):
         return float(edges[first]), float(edges[end + 1])
 
     def _camera_transform_from_pose(self, pose: Any) -> Transform | None:
-        """Build a Transform from the recorder's pose-stamped observation.
-
-        Observation.pose is always a 7-tuple (x, y, z, qx, qy, qz, qw) or None
-        (memory2/observationstore/sqlite.py:_decompose_pose).
-        Object.from_2d_to_list(camera_transform=T) applies T to a camera-frame
-        pointcloud to produce world-frame output — T is camera→world; the
-        recorder's pose-in-world IS that. NO .inverse().
-        """
+        """Build a Transform from the recorder's pose-stamped observation."""
         if pose is None:
             return None
         try:

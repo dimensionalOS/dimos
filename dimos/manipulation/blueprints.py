@@ -495,8 +495,13 @@ world-frame pose (meters / radians).
 Use when planning fails with COLLISION_AT_START.
 
 # Freshness and re-querying
+- **ALWAYS call find_objects when the user asks about the current scene**, even if \
+you already have results from a previous call. Phrases like "right now", \
+"at the moment", "currently", "do you see", "what's there now", or any repeated \
+perception question MUST trigger a new find_objects call — NEVER answer from \
+conversation history alone. The scene can change at any time.
 - Every find_objects / find_objects_near response includes "(seen Ns ago)".
-- A few seconds old → fresh, safe to act on.
+- A few seconds old → fresh enough to act on for pick/place.
 - Minutes old → scene may have changed; re-query before acting.
 - If you just picked or placed an object, the scene changed — re-query before the \
 next action.

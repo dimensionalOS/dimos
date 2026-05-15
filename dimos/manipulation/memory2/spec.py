@@ -91,6 +91,16 @@ All three skills share the same shape:
    Python post-filter after vector search (R*Tree pre-gating of vector
    search is a memory2 follow-up).
 
+2b. **Recency-first pass** (``recency_window > 0``, default 30 s).
+    ``find_objects`` / ``find_objects_near`` first restrict the query to
+    frames from the last ``recency_window`` seconds via ``.after(cutoff)``.
+    If no confident match is found in the recent window, a second pass
+    searches the full history (original behaviour). This prevents old
+    high-similarity frames (e.g. camera was pointed right at the object
+    5 min ago) from shadowing the current scene when the camera is at a
+    different angle. ``recall`` skips this — it intentionally queries
+    across all history.
+
 3. Take ``.first()`` — the most recent confident match. Single
    observation.
 
@@ -244,6 +254,15 @@ class LazyPerceptionModuleConfig(MemoryModuleConfig):
     # confident match for find_objects / find_objects_near.
     min_similarity: float = 0.20
 
+    # Recency window (seconds).  find_objects uses a two-pass strategy:
+    #   1. Search only frames from the last ``recency_window`` seconds.
+    #   2. If no confident match, fall back to the full history.
+    # This ensures "what do you see right now?" queries prefer the current
+    # scene instead of always returning an old high-similarity frame from
+    # when the camera was pointed directly at the object minutes ago.
+    # Set to 0 to disable the recency-first pass (pure similarity ranking).
+    recency_window: float = 10.0
+
     # 3D projection knobs threaded into ``Object.from_2d_to_list``.
     max_distance: float = 1.0
     use_aabb: bool = True
@@ -272,11 +291,6 @@ class LazyPerceptionModuleSpec(Protocol):
     config: LazyPerceptionModuleConfig
 
     objects: Out[list[DetObject]]
-    """Wired by the blueprint to ``PickAndPlaceModule.objects``. Cache
-    of the most recent ``find_objects`` / ``find_objects_near`` result.
-    Manipulation reads from here to act on the named target. Named
-    ``objects`` to match the existing manipulation In port for
-    autoconnect-by-name."""
 
     def find_objects(self, prompt: str) -> str:
         """Find objects matching ``prompt``. Returns the most recent
@@ -329,18 +343,6 @@ class LazyPerceptionModuleSpec(Protocol):
 
     def recall(self, name: str) -> str:
         """Where did I last see something matching ``name``?
-
-        Decorated ``@skill`` in the implementation. Cheaper cousin of
-        ``find_objects``: composes ``.search()`` +
-        ``.order_by("ts", desc=True)`` + ``.first()`` over
-        ``color_image_embedded`` — returns the most recent confident
-        semantic match across the full embedding history, but **does
-        not run VLM**. Returns the camera pose at the matching frame
-        plus timestamp.
-
-        Works after process restart because memory2's SQLite store is
-        the persistence layer; the query touches the same db that
-        previous sessions wrote.
 
         Returns a human-readable summary with timestamp
         (``"Last saw 'cup' near (1.0, 0.5, 0.9) (seen 3min ago)"``), or

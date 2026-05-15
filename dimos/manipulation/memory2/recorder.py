@@ -1,7 +1,6 @@
 """RGBDCameraRecorder — Recorder + continuous CLIP embed for RGBD streams.
 
-Two things this module does on top of the base ``Recorder`` pattern at
-``dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py:49-53``:
+Two things this module does on top of the base ``Recorder`` pattern 
 
 1. **Continuous CLIP embed pipeline.** Same logic as ``memory2.SemanticSearch``,
    but co-located here so it shares the recorder's store. See ``spec.py`` for
@@ -88,8 +87,15 @@ class RGBDCameraRecorder(Recorder):
         self._embedding_model.start()
         self._embeddings = self.store.stream("color_image_embedded", Image)
 
+        # Find the timestamp of the last embedded frame so we don't re-embed history
+        try:
+            last_embedded_ts = self._embeddings.last().ts
+        except LookupError:
+            last_embedded_ts = 0.0
+
         # fmt: off
         self.store.streams.color_image \
+            .after(last_embedded_ts) \
             .live() \
             .filter(lambda obs: obs.data.brightness > 0.1) \
             .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
