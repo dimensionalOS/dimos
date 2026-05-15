@@ -25,6 +25,7 @@ from dimos.visualization.rerun.constants import (
     ViewerBackend,
 )
 
+
 def _get_all_numbers(s: str) -> list[float]:
     return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
 

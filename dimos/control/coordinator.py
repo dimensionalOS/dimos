@@ -381,9 +381,7 @@ class ControlCoordinator(Module):
             from dimos.control.tasks.pink_teleop_task import SingleArmPinkIKTask
 
             if cfg.pink_config is None:
-                raise ValueError(
-                    f"single_arm_pink_ik task '{cfg.name}' requires pink_config"
-                )
+                raise ValueError(f"single_arm_pink_ik task '{cfg.name}' requires pink_config")
             return SingleArmPinkIKTask(cfg.name, cfg.pink_config)
 
         else:

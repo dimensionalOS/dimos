@@ -31,15 +31,15 @@ from dimos.control.blueprints.teleop import (
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.manipulation.data_collection.episode_boundary import EpisodeBoundary
 from dimos.manipulation.data_collection.piper_blueprint_config import (
     piper_data_collection_rerun_config,
 )
 from dimos.manipulation.data_collection.recorder import RerunDataRecorder
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 from dimos.teleop.quest.quest_types import Buttons
 from dimos.visualization.vis_module import vis_module
