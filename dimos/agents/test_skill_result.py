@@ -101,6 +101,25 @@ class TestSkillTiming:
         assert result.duration_ms >= sleep_ms
         assert result.duration_ms < sleep_ms * 10  # sanity: not absurdly large
 
+    def test_stamp_does_not_mutate_input(self):
+        """Stamping returns a new instance; the input keeps its original duration.
+
+        Critical for composed skills (``drop_on``, ``pick_and_place``) that
+        stamp a result produced by an inner skill — mutating in place would
+        silently overwrite the inner skill's ``duration_ms``.
+        """
+        sentinel_duration = 1234.5
+        inner = SkillResult.ok("inner")
+        inner.duration_ms = sentinel_duration  # simulate inner skill already stamped
+
+        with skill_timing() as stamp:
+            outer = stamp(inner)
+
+        assert outer is not inner
+        assert inner.duration_ms == sentinel_duration  # untouched
+        # The outer stamp computes a real elapsed (very small) — distinct from the sentinel.
+        assert outer.duration_ms != sentinel_duration
+
 
 class _ListHandler:
     """Captures ``logger.info`` calls.

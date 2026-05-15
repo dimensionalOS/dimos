@@ -27,7 +27,6 @@ class ManipulationError(Enum):
 
     NO_PRIOR_POSE = auto()
     OBJECT_NOT_DETECTED = auto()
-    NO_OBJECTS_VISIBLE = auto()
     IK_FAILED = auto()
     PLANNING_FAILED = auto()
     COLLISION_AT_START = auto()

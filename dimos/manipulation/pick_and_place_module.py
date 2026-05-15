@@ -493,12 +493,7 @@ class PickAndPlaceModule(ManipulationModule):
 
             detections = self._detection_snapshot
             if not detections:
-                return stamp(
-                    SkillResult.fail(
-                        ManipulationError.NO_OBJECTS_VISIBLE,
-                        "No objects visible from current position",
-                    )
-                )
+                return stamp(SkillResult.ok("No objects visible from current position"))
 
             lines = [f"Currently see {len(detections)} object(s):"]
             for det in detections:
@@ -537,11 +532,8 @@ then refreshes perception obstacles.
 
             detections = self._detection_snapshot
             if not detections:
-                return stamp(
-                    SkillResult.fail(
-                        ManipulationError.NO_OBJECTS_VISIBLE, "No objects detected in scene"
-                    )
-                )
+                # See look(): an empty scan is a valid observation, not a failure.
+                return stamp(SkillResult.ok("No objects detected in scene"))
 
             lines = [f"Detected {len(detections)} object(s):"]
             for det in detections:

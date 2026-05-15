@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 import json
 import time
@@ -111,11 +111,11 @@ def skill_timing(name: str | None = None) -> Iterator[Callable[[SkillResult], Sk
     t0 = time.monotonic()
 
     def stamp(result: SkillResult) -> SkillResult:
-        result.duration_ms = (time.monotonic() - t0) * 1000.0
+        stamped = replace(result, duration_ms=(time.monotonic() - t0) * 1000.0)
         if name is not None:
-            code = result.error_code.name if result.error_code is not None else "OK"
-            logger.info(f"SKILL {name} result={code} duration_ms={result.duration_ms:.1f}")
-        return result
+            code = stamped.error_code.name if stamped.error_code is not None else "OK"
+            logger.info(f"SKILL {name} result={code} duration_ms={stamped.duration_ms:.1f}")
+        return stamped
 
     try:
         yield stamp
