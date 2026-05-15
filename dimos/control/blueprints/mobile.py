@@ -63,9 +63,12 @@ def _mock_twist_base(hw_id: str = "base") -> HardwareComponent:
 
 def _flowbase_twist_base(
     hw_id: str = "base",
-    address: str = "172.6.2.20:11323",
+    address: str | None = None,
 ) -> HardwareComponent:
-    """FlowBase holonomic platform via Portal RPC (3-DOF: vx, vy, wz)."""
+    """FlowBase holonomic platform via Portal RPC (3-DOF: vx, vy, wz).
+
+    Address defaults to ``FlowBaseAdapter.DEFAULT_ADDRESS`` when ``None``.
+    """
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.BASE,

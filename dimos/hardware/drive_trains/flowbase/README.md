@@ -5,11 +5,21 @@ driver runs on the i2rt base.
 
 ## External system
 
-![external system](figures/diagram_1.svg)
+```mermaid
+flowchart LR
+    MID["Livox MID-360<br/>(off-NUC)"] -->|Ethernet / point cloud| NUC
+    subgraph NUC["Dev NUC"]
+        direction TB
+        F["FastLio2"] --> NS["nav stack"]
+        NS --> CC["ControlCoordinator"]
+        F --> R["Rerun viewer"]
+        NS --> R
+    end
+    NUC <-->|"Portal RPC @ 172.6.2.20:11323<br/>set_target_velocity / get_odometry"| PI["FlowBase Pi<br/>(driver as systemd, off-NUC)"]
+```
 
 Sensor and base driver are both off-NUC. The dev NUC runs everything in
-between (FastLio2, nav stack, ControlCoordinator, Rerun viewer). See
-[DESIGN.md](DESIGN.md) for the full module graph and dataflow.
+between (FastLio2, nav stack, ControlCoordinator, Rerun viewer).
 
 ## 1. FlowBase driver
 
@@ -63,8 +73,7 @@ publish/subscribe on LCM `/cmd_vel` + `/coordinator/joint_state`.
   forwarding and tele/nav velocity mux) + `ControlCoordinator` with the
   FlowBase adapter as the driver. Mirrors `unitree-g1-nav-onboard` for the
   perception/planning half. Click anywhere on the floor in the Rerun 3D
-  viewer → robot navigates there. Architectural deep-dive in
-  [DESIGN.md](DESIGN.md).
+  viewer → robot navigates there.
 - **`coordinator-flowbase-keyboard-teleop`** opens a small pygame window —
   **focus that window** to drive. Controls: W/S forward-back · Q/E strafe ·
   A/D turn · Shift boost · Ctrl slow · Space stop · ESC quit.
