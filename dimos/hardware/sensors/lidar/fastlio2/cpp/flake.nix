@@ -13,7 +13,7 @@
       flake = false;
     };
     fast-lio = {
-      url = "github:dimensionalOS/dimos-module-fastlio2/jeff/fix/logs";
+      url = "github:dimensionalOS/dimos-module-fastlio2/v0.3.0-quiet-logs";
       flake = false;
     };
     lcm-extended = {

@@ -46,7 +46,7 @@
       },
       "original": {
         "owner": "dimensionalOS",
-        "ref": "jeff/fix/logs",
+        "ref": "v0.3.0-quiet-logs",
         "repo": "dimos-module-fastlio2",
         "type": "github"
       }
