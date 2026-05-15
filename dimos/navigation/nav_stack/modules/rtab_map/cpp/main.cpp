@@ -110,7 +110,13 @@ public:
         std::lock_guard<std::mutex> lock(odom_mutex_);
         latest_odom_ = odom_from_lcm(*msg);
         latest_odom_ts_ = ts;
+        bool first = !has_odom_;
         has_odom_ = true;
+        if (debug_ && (first || (++odom_count_ % 50 == 0))) {
+            fprintf(stderr,
+                    "[rtab DEBUG] odom #%d ts=%.3f pos=(%.2f,%.2f,%.2f)\n",
+                    odom_count_, ts, latest_odom_.x(), latest_odom_.y(), latest_odom_.z());
+        }
     }
 
     void on_registered_scan(
@@ -123,7 +129,13 @@ public:
         double odom_ts = 0.0;
         {
             std::lock_guard<std::mutex> lock(odom_mutex_);
-            if (!has_odom_) return;
+            if (!has_odom_) {
+                if (debug_) {
+                    fprintf(stderr,
+                            "[rtab DEBUG] scan dropped — no odometry received yet (waiting on odom topic)\n");
+                }
+                return;
+            }
             odom_pose = latest_odom_;
             odom_ts = latest_odom_ts_;
         }
@@ -132,6 +144,11 @@ public:
         // ICP is sensitive to scan/odom misalignment and pairing a stale odom
         // with a fresh scan produces silently-bad corrections.
         if (scan_ts > 0.0 && std::abs(scan_ts - odom_ts) > scan_odom_max_dt_) {
+            if (debug_) {
+                fprintf(stderr,
+                        "[rtab DEBUG] scan dropped — |scan_ts %.3f - odom_ts %.3f| = %.3f > %.3f\n",
+                        scan_ts, odom_ts, std::abs(scan_ts - odom_ts), scan_odom_max_dt_);
+            }
             return;
         }
 
@@ -155,6 +172,13 @@ public:
 
         std::lock_guard<std::mutex> lock(buffer_mutex_);
         buffer_.push(frame);
+        if (debug_ && (++scan_count_ % 20 == 1)) {
+            fprintf(stderr,
+                    "[rtab DEBUG] scan #%d queued — pts=%zu odom_pos=(%.2f,%.2f,%.2f) ts=%.3f buffer=%zu\n",
+                    scan_count_, frame.cloud_body->size(),
+                    frame.odom_pose.x(), frame.odom_pose.y(), frame.odom_pose.z(),
+                    frame.timestamp, buffer_.size());
+        }
     }
 
     // Pop one buffered frame; returns false if the buffer is empty.
@@ -168,6 +192,7 @@ public:
 
     bool unregister_input_ = true;
     double scan_odom_max_dt_ = 0.2;  // seconds
+    bool debug_ = false;
 
 private:
     std::mutex buffer_mutex_;
@@ -177,6 +202,9 @@ private:
     rtabmap::Transform latest_odom_;
     bool has_odom_ = false;
     double latest_odom_ts_ = 0.0;
+
+    int odom_count_ = 0;
+    int scan_count_ = 0;
 };
 
 struct CachedWorldCloud {
@@ -258,6 +286,7 @@ int main(int argc, char** argv) {
     signal(SIGINT, signal_handler);
 
     dimos::NativeModule mod(argc, argv);
+    const bool debug = mod.arg_bool("debug", false);
 
     // LCM port topics.
     const std::string scan_topic = mod.topic("registered_scan");
@@ -339,6 +368,7 @@ int main(int argc, char** argv) {
     Handlers handlers;
     handlers.unregister_input_ = mod.arg_bool("unregister_input", true);
     handlers.scan_odom_max_dt_ = std::stod(mod.arg("scan_odom_max_dt", "0.2"));
+    handlers.debug_ = debug;
     lcm.subscribe(odom_topic, &Handlers::on_odometry, &handlers);
     lcm.subscribe(scan_topic, &Handlers::on_registered_scan, &handlers);
 
@@ -389,7 +419,18 @@ int main(int argc, char** argv) {
         bool processed = rtab.process(data, frame.odom_pose);
         if (!processed) {
             // Frame rejected by rtabmap (e.g. too close to last keyframe).
+            if (debug) {
+                fprintf(stderr,
+                        "[rtab DEBUG] frame #%d rejected by rtab.process (not a keyframe)\n",
+                        frame_id);
+            }
             continue;
+        }
+        if (debug) {
+            fprintf(stderr,
+                    "[rtab DEBUG] frame #%d processed — odom_pos=(%.2f,%.2f,%.2f) ts=%.3f\n",
+                    frame_id, frame.odom_pose.x(), frame.odom_pose.y(),
+                    frame.odom_pose.z(), frame.timestamp);
         }
 
         // Push the just-processed keyframe's local grid into the OctoMap cache.
@@ -411,6 +452,12 @@ int main(int argc, char** argv) {
                 grid_cache.add(
                     sig->id(), ground, obstacles, empty,
                     grid_maker.getCellSize(), view_point);
+            }
+            if (debug) {
+                fprintf(stderr,
+                        "[rtab DEBUG]   sig #%d localmap g=%d o=%d e=%d cellSize=%.3f cache=%zu\n",
+                        sig->id(), ground.cols, obstacles.cols, empty.cols,
+                        grid_maker.getCellSize(), grid_cache.size());
             }
         }
 
@@ -473,6 +520,11 @@ int main(int argc, char** argv) {
             }
             publish_pointcloud(
                 lcm, proj2d_topic, proj_points, world_frame, frame.timestamp);
+            if (debug) {
+                fprintf(stderr,
+                        "[rtab DEBUG] published octomap — voxels=%zu proj2d=%zu\n",
+                        octo_points.size(), proj_points.size());
+            }
         }
 
         // Publish accumulated global cloud (throttled).
@@ -509,6 +561,12 @@ int main(int argc, char** argv) {
             sensor_msgs::PointCloud2 gmsg =
                 smartnav::from_pcl(*global_cloud, world_frame, frame.timestamp);
             lcm.publish(global_map_topic, &gmsg);
+            if (debug) {
+                fprintf(stderr,
+                        "[rtab DEBUG] published global_map — pts=%zu poses=%zu cache=%zu topic=%s\n",
+                        global_cloud->size(), opt_poses.size(), world_cloud_cache.size(),
+                        global_map_topic.c_str());
+            }
         }
     }
 

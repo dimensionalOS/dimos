@@ -41,6 +41,7 @@ unitree_g1_nav_onboard = (
         ),
         create_nav_stack(
             planner="simple",
+            slam_choice="rtab",
             vehicle_height=G1.height_clearance,
             max_speed=0.6,
             far_planner={
@@ -62,6 +63,12 @@ unitree_g1_nav_onboard = (
                 "lookahead_distance": 2.0,
                 "replan_rate": 5.0,
                 "replan_cooldown": 2.0,
+            },
+            rtab_map={
+                # Enable verbose stderr logging from the C++ binary while we
+                # diagnose why `global_map_slam` isn't updating on the real
+                # robot. Look for `[rtab DEBUG]` lines in the dimos run log.
+                "debug": True,
             },
         ),
         MovementManager.blueprint(),

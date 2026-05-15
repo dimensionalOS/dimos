@@ -82,6 +82,13 @@ class RtabMapConfig(NativeModuleConfig):
     # geometric (scan-based) loop closure in lidar-only mode.
     rgbd_proximity_path_max_neighbors: int = 10
 
+    # Verbose per-frame stderr diagnostics from the C++ binary. Useful for
+    # debugging things like "global_map_slam isn't updating": surfaces
+    # whether scans are queueing, whether rtabmap admits each frame as a
+    # keyframe, what LocalGridMaker produces, when global_map / octomap
+    # publish events fire and to which topics.
+    debug: bool = False
+
     # Publishing cadence.
     octomap_publish_period: float = 0.5
     global_map_publish_period: float = 1.0
