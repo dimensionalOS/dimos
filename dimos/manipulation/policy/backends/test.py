@@ -42,7 +42,11 @@ from collections.abc import Mapping, Sequence
 import math
 import time
 
-from dimos.manipulation.policy.command import JointPositionCommand, PolicyCommand
+from dimos.manipulation.policy.command import (
+    JointPositionCommand,
+    NoOpCommand,
+    PolicyCommand,
+)
 from dimos.manipulation.policy.observation import PolicyObservation
 
 
@@ -115,35 +119,45 @@ class TestPolicy:
         return self._joint_names
 
     def initialize(self) -> None:
-        """Reset the phase clock so the first inference starts at t=0."""
-        self._t0 = time.monotonic()
-        if self._center_from_observation:
-            self._center_dirty = True
+        """Mark the trajectory dirty so the next select_action regenerates it.
+
+        See `reset()` — same semantics; `initialize()` is just the lifecycle
+        entry that runs once on `PolicyModule.start()`.
+        """
+        self._mark_dirty()
 
     def select_action(self, observation: PolicyObservation) -> PolicyCommand:
-        if self._center_dirty and self._center_from_observation:
-            captured = self._capture_center_from_observation(observation)
-            if captured is not None:
+        if self._center_dirty:
+            if not self._center_from_observation:
+                # Explicit-center mode: no pose to capture; just anchor the
+                # phase clock now and start sampling.
+                self._t0 = time.monotonic()
+                self._center_dirty = False
+            else:
+                captured = self._capture_center_from_observation(observation)
+                if captured is None:
+                    # No live joint state yet (or one of the configured
+                    # joints is missing from it). Decline this tick rather
+                    # than commanding the arm to a stale-trajectory pose;
+                    # we'll retry on the next inference call.
+                    return NoOpCommand(
+                        reason="TestPolicy: awaiting joint_state to anchor trajectory"
+                    )
                 self._center = captured
-                # Zero out the effective phase at capture so the first
-                # sample equals `center == captured_pose` AND the wave
-                # then oscillates symmetrically around it. Without this,
-                # the wave would still START at the pose (because the
-                # captured center compensates), but would sweep a full
-                # `2·amplitude` to one side as it walks through
-                # `sin(2π·f·t + phase)` from its non-zero starting phase
-                # — that's the "extreme motion" failure mode.
+                # Zero out the effective phase at the capture moment so the
+                # first sample equals `center == captured_pose` AND the wave
+                # then oscillates symmetrically around it. Without this, the
+                # wave would still START at the pose (because the captured
+                # center compensates) but would sweep a full `2·amplitude`
+                # to one side as it walked through `sin(2π·f·t + phase)`
+                # from its non-zero starting phase — the "extreme motion"
+                # failure mode.
                 self._phase_offset = self._phase
                 self._center_dirty = False
-                # Restart the phase clock at the moment of capture so the
-                # first sample corresponds to t≈0 (within a few µs) and
-                # equals the live joint pose. Without this, t accumulates
-                # during the teleop-engaged window and the policy would
-                # resume at an arbitrary point along the sinusoid.
+                # Anchor the phase clock to the same moment as the capture,
+                # so the first sample lands at t≈0 (within a few µs) and
+                # equals the live joint pose.
                 self._t0 = time.monotonic()
-            # If capture failed (no joint_state yet, or missing joints), stay
-            # dirty and try again on the next tick; the sinusoid temporarily
-            # oscillates around the previous center.
         return JointPositionCommand(
             joint_names=self._joint_names,
             positions=self._sample_at(time.monotonic() - self._t0),
@@ -193,16 +207,21 @@ class TestPolicy:
         return dict(zip(self._joint_names, self._sample_at(t), strict=True))
 
     def reset(self) -> None:
-        """Restart the sinusoid phase clock from zero.
+        """Mark the trajectory dirty so the next `select_action()` regenerates it.
 
-        When the center was constructed as auto-from-observation, also
-        marks the center dirty so the next `select_action()` re-captures
-        it from the live joint state — the policy "replans from here"
-        after every rollout start / teleop handoff.
+        The trajectory state — center, phase_offset, and `_t0` — is
+        recomputed inside the next `select_action()` from the live joint
+        observation, NOT from any state captured at `reset()` time. The
+        arm can move between a `reset()` call (e.g., teleop engage,
+        rollout start) and the inference tick that consumes it; anchoring
+        the trajectory at the inference tick guarantees the wave starts
+        at the arm's pose at that moment, not at the pose from when
+        reset was called.
         """
-        self._t0 = time.monotonic()
-        if self._center_from_observation:
-            self._center_dirty = True
+        self._mark_dirty()
+
+    def _mark_dirty(self) -> None:
+        self._center_dirty = True
 
     def close(self) -> None:
         """No-op — `TestPolicy` holds no external resources."""

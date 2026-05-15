@@ -21,7 +21,7 @@ import math
 import pytest
 
 from dimos.manipulation.policy import TestPolicy, create_backend
-from dimos.manipulation.policy.command import JointPositionCommand
+from dimos.manipulation.policy.command import JointPositionCommand, NoOpCommand
 from dimos.manipulation.policy.observation import PolicyObservation
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -66,7 +66,7 @@ def test_center_offsets_each_joint():
 def test_select_action_returns_joint_position_command():
     policy = TestPolicy(joint_names=["j1", "j2"], amplitude=0.1, frequency=1.0)
     policy.initialize()
-    cmd = policy.select_action(PolicyObservation())
+    cmd = policy.select_action(_obs(["j1", "j2"], [0.0, 0.0]))
     assert isinstance(cmd, JointPositionCommand)
     assert cmd.joint_names == ("j1", "j2")
     assert len(cmd.positions) == 2
@@ -78,14 +78,14 @@ def test_reset_restarts_phase_clock_without_error():
     # Multiple resets must succeed and remain idempotent.
     policy.reset()
     policy.reset()
-    cmd = policy.select_action(PolicyObservation())
+    cmd = policy.select_action(_obs(["j"], [0.0]))
     assert isinstance(cmd, JointPositionCommand)
 
 
 def test_test_policy_uses_registry_path():
     backend = create_backend("test", joint_names=["a", "b"], amplitude=0.3, frequency=0.5)
     backend.initialize()
-    cmd = backend.select_action(PolicyObservation())
+    cmd = backend.select_action(_obs(["a", "b"], [0.0, 0.0]))
     assert isinstance(cmd, JointPositionCommand)
     assert cmd.joint_names == ("a", "b")
 
@@ -133,14 +133,17 @@ def test_center_not_recaptured_when_explicit_center_provided():
     assert cmd.positions == pytest.approx((0.1,), abs=1e-9)
 
 
-def test_center_capture_falls_back_when_joint_state_missing():
-    """No `joint_state` in the observation → stay dirty, emit zero center
-    (the pre-capture default) without raising."""
+def test_capture_failure_returns_noop_until_observation_arrives():
+    """No `joint_state` in the observation → emit `NoOpCommand` rather
+    than command the arm to a stale-trajectory pose. Once a real
+    observation arrives, the trajectory anchors and a real command
+    flows."""
     policy = TestPolicy(joint_names=["j1"], amplitude=0.0, frequency=1.0)
     cmd = policy.select_action(PolicyObservation())  # no joint_state
-    assert cmd.positions == pytest.approx((0.0,), abs=1e-9)
+    assert isinstance(cmd, NoOpCommand)
     # Once a real observation arrives, the center is captured.
     cmd2 = policy.select_action(_obs(["j1"], [0.42]))
+    assert isinstance(cmd2, JointPositionCommand)
     assert cmd2.positions == pytest.approx((0.42,), abs=1e-9)
 
 
@@ -179,6 +182,25 @@ def test_first_sample_after_reset_equals_post_reset_observation_pose():
     assert cmd.positions[0] == pytest.approx(0.85, abs=1e-3)
 
 
+def test_trajectory_anchors_to_select_action_pose_not_reset_pose():
+    """The trajectory must be generated at the next `select_action()`,
+    not at `reset()`, since the arm can move between the two — e.g.,
+    between a teleop disengage and the next policy inference tick.
+    Reset captures the pose at the moment the policy resumes, not the
+    pose at the moment reset was called.
+    """
+    policy = TestPolicy(joint_names=["j"], amplitude=0.1, frequency=1.0, phase=math.pi / 4)
+    # Initial capture at pose=0.0.
+    policy.select_action(_obs(["j"], [0.0]))
+    # Reset (teleop engage). At this moment the arm is at 0.0.
+    policy.reset()
+    # Simulate the arm moving during the engaged window (operator drags
+    # it to 1.2). The next select_action must anchor to 1.2, not 0.0.
+    cmd = policy.select_action(_obs(["j"], [1.2]))
+    assert isinstance(cmd, JointPositionCommand)
+    assert cmd.positions[0] == pytest.approx(1.2, abs=1e-3)
+
+
 def test_wave_oscillates_symmetrically_around_captured_pose():
     """Regression for the "extreme motion" failure: without the captured
     `phase_offset`, the wave would start at the captured pose (good) but
@@ -200,12 +222,15 @@ def test_wave_oscillates_symmetrically_around_captured_pose():
     assert min(samples) == pytest.approx(1.0 - 0.5, abs=1e-3)
 
 
-def test_center_capture_falls_back_when_joint_missing_from_state():
+def test_partial_observation_returns_noop_until_all_joints_present():
     """Observation present but missing one of the configured joints →
-    stay dirty, emit zero for that joint (rather than raise)."""
+    emit `NoOpCommand` rather than partially anchoring the trajectory.
+    Once all joints are present, capture succeeds and a real command
+    flows."""
     policy = TestPolicy(joint_names=["j1", "j2"], amplitude=0.0, frequency=1.0)
     cmd = policy.select_action(_obs(["j1"], [0.3]))  # j2 missing
-    assert cmd.positions == pytest.approx((0.0, 0.0), abs=1e-9)
+    assert isinstance(cmd, NoOpCommand)
     # Once both joints are present, both centers are captured.
     cmd2 = policy.select_action(_obs(["j1", "j2"], [0.3, -0.1]))
+    assert isinstance(cmd2, JointPositionCommand)
     assert cmd2.positions == pytest.approx((0.3, -0.1), abs=1e-9)
