@@ -381,6 +381,14 @@ int main(int argc, char** argv) {
     // the rtabmap-side knob to 0 here just to keep its internal state
     // matching ours.
     params["Rtabmap/DetectionRate"] = "0";
+    // LOAD-BEARING ZERO. Not a perf knob — it's what keeps dynamic
+    // clearing alive on a stationary robot. With a non-zero motion gate
+    // rtabmap admits no keyframes while the robot stands still, the
+    // OctoMap stops getting fresh empty-cell observations, and a chair
+    // that rolls away never gets cleared. If you ever add a wrapper-side
+    // motion gate to bound stationary keyframe accumulation (the
+    // "memory bomb" follow-up), you MUST pair it with a force-refresh
+    // timer or this clearing story dies silently.
     params["RGBD/LinearUpdate"] = mod.arg("rgbd_linear_update", "0");
     params["RGBD/AngularUpdate"] = mod.arg("rgbd_angular_update", "0");
     // Keep signatures around so their local grids stay in memory and can
@@ -533,6 +541,23 @@ int main(int argc, char** argv) {
         // sync_signature_grids. No duplicate external createLocalMap call.
         bool processed = rtab.process(data, frame.odom_pose);
         sync_signature_grids(rtab, octomap_grid_cache, max_synced_id);
+        // Canary for the stationary-robot keyframe-accumulation issue.
+        // rtabmap doesn't dedup redundant keyframes in lidar-only mode,
+        // so an idle robot with motion gate disabled accumulates ~2
+        // signatures/sec in working memory. 5000 ≈ 40 minutes of idle —
+        // long enough to be worth flagging but well short of OOM. One
+        // warning per crossing.
+        if (rtab.getMemory() && rtab.getMemory()->getWorkingMem().size() > 5000) {
+            static bool warned_wm_size = false;
+            if (!warned_wm_size) {
+                fprintf(stderr,
+                        "[rtab WARN] working memory exceeded 5000 signatures (%zu) — "
+                        "long stationary session may exhaust memory. Consider "
+                        "setting rgbd_linear_update > 0 if stationary clearing isn't required.\n",
+                        rtab.getMemory()->getWorkingMem().size());
+                warned_wm_size = true;
+            }
+        }
         if (debug) {
             fprintf(stderr,
                     "[rtab DEBUG] frame #%d %s ts=%.3f odom_pos=(%.2f,%.2f,%.2f) opt_poses=%zu cache=%zu\n",
