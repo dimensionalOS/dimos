@@ -461,10 +461,19 @@ int main(int argc, char** argv) {
         }
 
         // Compute a local occupancy grid for every scan (keyframe or not).
+        // Pass the *map-frame* pose (mapCorrection * odom) so that
+        // segmentation's MapFrameProjection translation uses the same
+        // z that the cells will be placed at by OctoMap::assemble. With
+        // raw odom_pose, after a loop closure shifts mapCorrection.z
+        // the segmentation reference plane drifts from the placement
+        // plane and ground/obstacle classification disagrees with where
+        // cells actually land.
         cv::Mat ground, obstacles, empty;
         cv::Point3f view_point(0, 0, 0);
+        const rtabmap::Transform map_pose =
+            rtab.getMapCorrection() * frame.odom_pose;
         grid_maker.createLocalMap(
-            laser_scan, frame.odom_pose, ground, obstacles, empty, view_point);
+            laser_scan, map_pose, ground, obstacles, empty, view_point);
         const float cell_size = grid_maker.getCellSize();
 
         // Add the scan's local grid to the rtabmap cache + our private
@@ -476,7 +485,7 @@ int main(int argc, char** argv) {
         if (!ground.empty() || !obstacles.empty() || !empty.empty()) {
             int id = octomap_next_id++;
             global_grid_cache.add(id, ground, obstacles, empty, cell_size, view_point);
-            octomap_poses[id] = rtab.getMapCorrection() * frame.odom_pose;
+            octomap_poses[id] = map_pose;
             scan_history[id] = ScanEntry{
                 ground, obstacles, empty, view_point, cell_size, frame.timestamp,
             };
