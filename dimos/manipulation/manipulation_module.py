@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from pydantic import Field
 
 from dimos.agents.annotation import skill
-from dimos.agents.skill_result import SkillResult, skill_timing
+from dimos.agents.skill_result import SkillResult
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -362,17 +362,14 @@ class ManipulationModule(Module):
         Use this after an error or fault to allow new commands.
         Cannot reset while a motion is executing — cancel first.
         """
-        with skill_timing("reset") as stamp:
-            if self._state == ManipulationState.EXECUTING:
-                return stamp(
-                    SkillResult.fail(
-                        "INVALID_STATE",
-                        "Cannot reset while executing — cancel the motion first",
-                    )
-                )
-            self._state = ManipulationState.IDLE
-            self._error_message = ""
-            return stamp(SkillResult.ok("Reset to IDLE — ready for new commands"))
+        if self._state == ManipulationState.EXECUTING:
+            return SkillResult.fail(
+                "INVALID_STATE",
+                "Cannot reset while executing — cancel the motion first",
+            )
+        self._state = ManipulationState.IDLE
+        self._error_message = ""
+        return SkillResult.ok("Reset to IDLE — ready for new commands")
 
     @rpc
     def get_current_joints(self, robot_name: RobotName | None = None) -> list[float] | None:
@@ -901,10 +898,9 @@ class ManipulationModule(Module):
             position: Gripper opening in meters (0.0 = closed, 0.85 = fully open).
             robot_name: Robot to control (only needed for multi-arm setups).
         """
-        with skill_timing("set_gripper") as stamp:
-            if self._set_gripper_position(position, robot_name):
-                return stamp(SkillResult.ok(f"Gripper set to {position:.3f}m"))
-            return stamp(SkillResult.fail("GRIPPER_FAILED", "Failed to set gripper position"))
+        if self._set_gripper_position(position, robot_name):
+            return SkillResult.ok(f"Gripper set to {position:.3f}m")
+        return SkillResult.fail("GRIPPER_FAILED", "Failed to set gripper position")
 
     @skill
     def open_gripper(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
@@ -913,10 +909,9 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to control (only needed for multi-arm setups).
         """
-        with skill_timing("open_gripper") as stamp:
-            if self._set_gripper_position(0.85, robot_name):
-                return stamp(SkillResult.ok("Gripper opened"))
-            return stamp(SkillResult.fail("GRIPPER_FAILED", "Failed to open gripper"))
+        if self._set_gripper_position(0.85, robot_name):
+            return SkillResult.ok("Gripper opened")
+        return SkillResult.fail("GRIPPER_FAILED", "Failed to open gripper")
 
     @skill
     def close_gripper(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
@@ -925,10 +920,9 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to control (only needed for multi-arm setups).
         """
-        with skill_timing("close_gripper") as stamp:
-            if self._set_gripper_position(0.0, robot_name):
-                return stamp(SkillResult.ok("Gripper closed"))
-            return stamp(SkillResult.fail("GRIPPER_FAILED", "Failed to close gripper"))
+        if self._set_gripper_position(0.0, robot_name):
+            return SkillResult.ok("Gripper closed")
+        return SkillResult.fail("GRIPPER_FAILED", "Failed to close gripper")
 
     def _wait_for_trajectory_completion(
         self, robot_name: RobotName | None = None, timeout: float = 60.0, poll_interval: float = 0.2
@@ -1037,31 +1031,30 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to query (only needed for multi-arm setups).
         """
-        with skill_timing("get_robot_state") as stamp:
-            lines: list[str] = []
+        lines: list[str] = []
 
-            joints = self.get_current_joints(robot_name)
-            if joints is not None:
-                lines.append(f"Joints: [{', '.join(f'{j:.3f}' for j in joints)}]")
-            else:
-                lines.append("Joints: unavailable (no state received)")
+        joints = self.get_current_joints(robot_name)
+        if joints is not None:
+            lines.append(f"Joints: [{', '.join(f'{j:.3f}' for j in joints)}]")
+        else:
+            lines.append("Joints: unavailable (no state received)")
 
-            ee_pose = self.get_ee_pose(robot_name)
-            if ee_pose is not None:
-                p = ee_pose.position
-                lines.append(f"EE pose: ({p.x:.4f}, {p.y:.4f}, {p.z:.4f})")
-            else:
-                lines.append("EE pose: unavailable")
+        ee_pose = self.get_ee_pose(robot_name)
+        if ee_pose is not None:
+            p = ee_pose.position
+            lines.append(f"EE pose: ({p.x:.4f}, {p.y:.4f}, {p.z:.4f})")
+        else:
+            lines.append("EE pose: unavailable")
 
-            gripper_pos = self.get_gripper(robot_name)
-            if gripper_pos is not None:
-                lines.append(f"Gripper: {gripper_pos:.3f}m")
-            else:
-                lines.append("Gripper: not configured")
+        gripper_pos = self.get_gripper(robot_name)
+        if gripper_pos is not None:
+            lines.append(f"Gripper: {gripper_pos:.3f}m")
+        else:
+            lines.append("Gripper: not configured")
 
-            lines.append(f"State: {self.get_state()}")
+        lines.append(f"State: {self.get_state()}")
 
-            return stamp(SkillResult.ok("\n".join(lines)))
+        return SkillResult.ok("\n".join(lines))
 
     @skill
     def move_to_pose(
@@ -1088,53 +1081,48 @@ class ManipulationModule(Module):
             yaw: Target yaw in radians (omit to keep current orientation).
             robot_name: Robot to move (only needed for multi-arm setups).
         """
-        with skill_timing("move_to_pose") as stamp:
-            logger.info(f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})...")
+        logger.info(f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})...")
 
-            # If no orientation specified, preserve the current EE orientation.
-            # If partially specified, fill unspecified angles from current orientation.
-            if roll is None and pitch is None and yaw is None:
-                current_pose = self.get_ee_pose(robot_name)
-                if current_pose is not None:
-                    orientation = current_pose.orientation
-                else:
-                    orientation = Quaternion(0, 0, 0, 1)  # identity fallback
+        # If no orientation specified, preserve the current EE orientation.
+        # If partially specified, fill unspecified angles from current orientation.
+        if roll is None and pitch is None and yaw is None:
+            current_pose = self.get_ee_pose(robot_name)
+            if current_pose is not None:
+                orientation = current_pose.orientation
             else:
-                current_pose = self.get_ee_pose(robot_name)
-                if current_pose is not None:
-                    current_euler = current_pose.orientation.to_euler()
-                    orientation = Quaternion.from_euler(
-                        Vector3(
-                            roll if roll is not None else current_euler.x,
-                            pitch if pitch is not None else current_euler.y,
-                            yaw if yaw is not None else current_euler.z,
-                        )
-                    )
-                else:
-                    orientation = Quaternion.from_euler(
-                        Vector3(roll or 0.0, pitch or 0.0, yaw or 0.0)
-                    )
-
-            pose = Pose(Vector3(x, y, z), orientation)
-
-            # If EE is low, lift up first to clear obstacles
-            lift = self._lift_if_low(robot_name)
-            if not lift.is_success():
-                return stamp(lift)
-
-            if not self.plan_to_pose(pose, robot_name):
-                return stamp(
-                    SkillResult.fail(
-                        "PLANNING_FAILED",
-                        f"Pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision",
+                orientation = Quaternion(0, 0, 0, 1)  # identity fallback
+        else:
+            current_pose = self.get_ee_pose(robot_name)
+            if current_pose is not None:
+                current_euler = current_pose.orientation.to_euler()
+                orientation = Quaternion.from_euler(
+                    Vector3(
+                        roll if roll is not None else current_euler.x,
+                        pitch if pitch is not None else current_euler.y,
+                        yaw if yaw is not None else current_euler.z,
                     )
                 )
+            else:
+                orientation = Quaternion.from_euler(Vector3(roll or 0.0, pitch or 0.0, yaw or 0.0))
 
-            exec_result = self._preview_execute_wait(robot_name)
-            if not exec_result.is_success():
-                return stamp(exec_result)
+        pose = Pose(Vector3(x, y, z), orientation)
 
-            return stamp(SkillResult.ok(f"Reached target pose ({x:.3f}, {y:.3f}, {z:.3f})"))
+        # If EE is low, lift up first to clear obstacles
+        lift = self._lift_if_low(robot_name)
+        if not lift.is_success():
+            return lift
+
+        if not self.plan_to_pose(pose, robot_name):
+            return SkillResult.fail(
+                "PLANNING_FAILED",
+                f"Pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision",
+            )
+
+        exec_result = self._preview_execute_wait(robot_name)
+        if not exec_result.is_success():
+            return exec_result
+
+        return SkillResult.ok(f"Reached target pose ({x:.3f}, {y:.3f}, {z:.3f})")
 
     @skill
     def move_to_joints(
@@ -1150,39 +1138,32 @@ class ManipulationModule(Module):
             joints: Comma-separated joint positions in radians, e.g. "0.1, -0.5, 1.2, 0.0, 0.3, -0.1".
             robot_name: Robot to move (only needed for multi-arm setups).
         """
-        with skill_timing("move_to_joints") as stamp:
-            try:
-                joint_values = [float(j.strip()) for j in joints.split(",")]
-            except ValueError:
-                return stamp(
-                    SkillResult.fail(
-                        "INVALID_INPUT",
-                        f"Invalid joints format '{joints}'. Expected comma-separated floats.",
-                    )
-                )
-
-            robot = self._get_robot(robot_name)
-            if robot is None:
-                return stamp(SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found"))
-            rname, _, config, _ = robot
-            goal = JointState(name=config.joint_names, position=joint_values)
-
-            logger.info(
-                f"Planning motion to joints [{', '.join(f'{j:.3f}' for j in joint_values)}]..."
+        try:
+            joint_values = [float(j.strip()) for j in joints.split(",")]
+        except ValueError:
+            return SkillResult.fail(
+                "INVALID_INPUT",
+                f"Invalid joints format '{joints}'. Expected comma-separated floats.",
             )
-            if not self.plan_to_joints(goal, rname):
-                return stamp(
-                    SkillResult.fail(
-                        "PLANNING_FAILED",
-                        "Joint configuration may be unreachable or in collision",
-                    )
-                )
 
-            exec_result = self._preview_execute_wait(robot_name)
-            if not exec_result.is_success():
-                return stamp(exec_result)
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+        rname, _, config, _ = robot
+        goal = JointState(name=config.joint_names, position=joint_values)
 
-            return stamp(SkillResult.ok("Reached target joint configuration"))
+        logger.info(f"Planning motion to joints [{', '.join(f'{j:.3f}' for j in joint_values)}]...")
+        if not self.plan_to_joints(goal, rname):
+            return SkillResult.fail(
+                "PLANNING_FAILED",
+                "Joint configuration may be unreachable or in collision",
+            )
+
+        exec_result = self._preview_execute_wait(robot_name)
+        if not exec_result.is_success():
+            return exec_result
+
+        return SkillResult.ok("Reached target joint configuration")
 
     @skill
     def go_home(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
@@ -1193,36 +1174,31 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to move (only needed for multi-arm setups).
         """
-        with skill_timing("go_home") as stamp:
-            robot = self._get_robot(robot_name)
-            if robot is None:
-                return stamp(SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found"))
-            rname, _, config, _ = robot
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+        rname, _, config, _ = robot
 
-            if config.home_joints is None:
-                return stamp(
-                    SkillResult.fail(
-                        "NOT_CONFIGURED",
-                        "No home_joints configured for this robot",
-                    )
-                )
+        if config.home_joints is None:
+            return SkillResult.fail(
+                "NOT_CONFIGURED",
+                "No home_joints configured for this robot",
+            )
 
-            logger.info("Opening gripper...")
-            self._set_gripper_position(0.85, rname)
-            time.sleep(0.5)
+        logger.info("Opening gripper...")
+        self._set_gripper_position(0.85, rname)
+        time.sleep(0.5)
 
-            goal = JointState(name=config.joint_names, position=config.home_joints)
-            logger.info("Planning motion to home position...")
-            if not self.plan_to_joints(goal, rname):
-                return stamp(
-                    SkillResult.fail("PLANNING_FAILED", "Failed to plan path to home position")
-                )
+        goal = JointState(name=config.joint_names, position=config.home_joints)
+        logger.info("Planning motion to home position...")
+        if not self.plan_to_joints(goal, rname):
+            return SkillResult.fail("PLANNING_FAILED", "Failed to plan path to home position")
 
-            exec_result = self._preview_execute_wait(robot_name)
-            if not exec_result.is_success():
-                return stamp(exec_result)
+        exec_result = self._preview_execute_wait(robot_name)
+        if not exec_result.is_success():
+            return exec_result
 
-            return stamp(SkillResult.ok("Reached home position"))
+        return SkillResult.ok("Reached home position")
 
     @skill
     def go_init(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
@@ -1234,59 +1210,54 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to move (only needed for multi-arm setups).
         """
-        with skill_timing("go_init") as stamp:
-            robot = self._get_robot(robot_name)
-            if robot is None:
-                return stamp(SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found"))
-            rname, robot_id, _, _ = robot
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+        rname, robot_id, _, _ = robot
 
-            init = self._init_joints.get(rname)
-            if init is None:
-                return stamp(
-                    SkillResult.fail(
-                        "NOT_CONFIGURED",
-                        "No init joints captured — robot may not have reported joint state yet",
-                    )
-                )
-
-            # Lift if EE is low before moving to init
-            lift = self._lift_if_low(robot_name)
-            if not lift.is_success():
-                return stamp(lift)
-
-            # Move through a safe waypoint: 10cm above and 5cm in front of init pose.
-            # This avoids direct paths through the workspace that could collide with objects.
-            if self._world_monitor is not None:
-                init_ee = self._world_monitor.get_ee_pose(robot_id, joint_state=init)
-                if init_ee is not None:
-                    wp = Pose(
-                        Vector3(
-                            init_ee.position.x + 0.05,
-                            init_ee.position.y,
-                            init_ee.position.z + 0.10,
-                        ),
-                        init_ee.orientation,
-                    )
-                    if self.plan_to_pose(wp, robot_name):
-                        wp_result = self._preview_execute_wait(robot_name)
-                        if not wp_result.is_success():
-                            return stamp(wp_result)
-                    else:
-                        logger.warning("Safe waypoint unreachable, going directly to init")
-
-            logger.info(
-                f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in init.position)}]..."
+        init = self._init_joints.get(rname)
+        if init is None:
+            return SkillResult.fail(
+                "NOT_CONFIGURED",
+                "No init joints captured — robot may not have reported joint state yet",
             )
-            if not self.plan_to_joints(init, robot_name):
-                return stamp(
-                    SkillResult.fail("PLANNING_FAILED", "Failed to plan path to init position")
+
+        # Lift if EE is low before moving to init
+        lift = self._lift_if_low(robot_name)
+        if not lift.is_success():
+            return lift
+
+        # Move through a safe waypoint: 10cm above and 5cm in front of init pose.
+        # This avoids direct paths through the workspace that could collide with objects.
+        if self._world_monitor is not None:
+            init_ee = self._world_monitor.get_ee_pose(robot_id, joint_state=init)
+            if init_ee is not None:
+                wp = Pose(
+                    Vector3(
+                        init_ee.position.x + 0.05,
+                        init_ee.position.y,
+                        init_ee.position.z + 0.10,
+                    ),
+                    init_ee.orientation,
                 )
+                if self.plan_to_pose(wp, robot_name):
+                    wp_result = self._preview_execute_wait(robot_name)
+                    if not wp_result.is_success():
+                        return wp_result
+                else:
+                    logger.warning("Safe waypoint unreachable, going directly to init")
 
-            exec_result = self._preview_execute_wait(robot_name)
-            if not exec_result.is_success():
-                return stamp(exec_result)
+        logger.info(
+            f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in init.position)}]..."
+        )
+        if not self.plan_to_joints(init, robot_name):
+            return SkillResult.fail("PLANNING_FAILED", "Failed to plan path to init position")
 
-            return stamp(SkillResult.ok("Reached init position"))
+        exec_result = self._preview_execute_wait(robot_name)
+        if not exec_result.is_success():
+            return exec_result
+
+        return SkillResult.ok("Reached init position")
 
     @rpc
     def stop(self) -> None:

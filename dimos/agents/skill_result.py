@@ -31,20 +31,12 @@ any domain might emit.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 import json
-import time
 from typing import Any, Generic, Literal
 
 # typing_extensions for PEP 696 TypeVar default support on Python < 3.13.
 from typing_extensions import TypeVar
-
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
-
 
 CommonSkillError = Literal[
     "ROBOT_NOT_FOUND",
@@ -101,34 +93,3 @@ class SkillResult(Generic[E]):
             return f"OK: {self.message}" if self.message else "OK"
         code = self.error_code if self.error_code is not None else "ERROR"
         return f"{code}: {self.message}" if self.message else code
-
-
-@contextmanager
-def skill_timing(name: str | None = None) -> Iterator[Callable[[SkillResult[E]], SkillResult[E]]]:
-    """Stamp a ``SkillResult`` with the elapsed wall time at exit, and log it.
-
-    Usage::
-
-        with skill_timing("set_gripper") as stamp:
-            ...
-            return stamp(SkillResult.ok("done"))
-    """
-    t0 = time.monotonic()
-
-    def stamp(result: SkillResult[E]) -> SkillResult[E]:
-        stamped = replace(result, duration_ms=(time.monotonic() - t0) * 1000.0)
-        if name is not None:
-            code = stamped.error_code if stamped.error_code is not None else "OK"
-            logger.info(f"SKILL {name} result={code} duration_ms={stamped.duration_ms:.1f}")
-        return stamped
-
-    try:
-        yield stamp
-    except BaseException:
-        # BaseException covers KeyboardInterrupt / SystemExit too. We re-raise;
-        # the caller (typically the MCP server) handles the traceback. This
-        # log line just makes every skill entry produce one structured record.
-        if name is not None:
-            duration_ms = (time.monotonic() - t0) * 1000.0
-            logger.info(f"SKILL {name} result=EXCEPTION duration_ms={duration_ms:.1f}")
-        raise

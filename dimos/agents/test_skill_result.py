@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for SkillResult, the agent_encode wire contract, and skill_timing."""
+"""Tests for SkillResult, the agent_encode wire contract, and the @skill decorator's
+auto-timing/logging behavior.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +23,8 @@ import time
 
 import pytest
 
-from dimos.agents.skill_result import SkillResult, skill_timing
+from dimos.agents.annotation import skill
+from dimos.agents.skill_result import SkillResult
 
 
 class TestFactories:
@@ -78,45 +81,12 @@ class TestAgentEncode:
         assert "metadata" not in payload
 
 
-class TestSkillTiming:
-    def test_duration_reflects_real_elapsed_time(self):
-        """`skill_timing` measures wall time — not just stamps a fixed value."""
-        sleep_ms = 50
-
-        with skill_timing() as stamp:
-            time.sleep(sleep_ms / 1000.0)
-            result = stamp(SkillResult.ok())
-
-        # Lower bound: sleep guarantees at least sleep_ms elapsed.
-        # Upper bound is intentionally loose to avoid CI flakiness.
-        assert result.duration_ms >= sleep_ms
-        assert result.duration_ms < sleep_ms * 10  # sanity: not absurdly large
-
-    def test_stamp_does_not_mutate_input(self):
-        """Stamping returns a new instance; the input keeps its original duration.
-
-        Critical for composed skills (``drop_on``, ``pick_and_place``) that
-        stamp a result produced by an inner skill — mutating in place would
-        silently overwrite the inner skill's ``duration_ms``.
-        """
-        sentinel_duration = 1234.5
-        inner = SkillResult.ok("inner")
-        inner.duration_ms = sentinel_duration
-
-        with skill_timing() as stamp:
-            outer = stamp(inner)
-
-        assert outer is not inner
-        assert inner.duration_ms == sentinel_duration  # untouched
-        assert outer.duration_ms != sentinel_duration
-
-
 class _ListHandler:
     """Captures ``logger.info`` calls.
 
     The dimos logger sets ``propagate=False``, so pytest's ``caplog`` fixture
     can't see its records via the root logger. Instead we monkeypatch the
-    logger's ``info`` method with this collector.
+    annotation module's logger info method with this collector.
     """
 
     def __init__(self) -> None:
@@ -127,59 +97,90 @@ class _ListHandler:
 
 
 def _patch_logger(monkeypatch) -> _ListHandler:
-    from dimos.agents import skill_result as sr
+    from dimos.agents import annotation
 
     handler = _ListHandler()
-    monkeypatch.setattr(sr.logger, "info", handler)
+    monkeypatch.setattr(annotation.logger, "info", handler)
     return handler
 
 
-class TestSkillTimingLogging:
-    def test_no_log_when_name_omitted(self, monkeypatch):
-        """Anonymous timing stays quiet — preserves the original opt-in API."""
-        handler = _patch_logger(monkeypatch)
-        with skill_timing() as stamp:
-            stamp(SkillResult.ok())
-        assert handler.messages == []
+class TestSkillDecoratorTiming:
+    """The ``@skill`` decorator auto-stamps ``duration_ms`` and logs.
 
-    def test_log_format_on_success(self, monkeypatch):
-        """Successful stamp emits `SKILL <name> result=OK duration_ms=<n.n>`."""
-        handler = _patch_logger(monkeypatch)
-        with skill_timing("set_gripper") as stamp:
-            stamp(SkillResult.ok("done"))
-        assert len(handler.messages) == 1
-        msg = handler.messages[0]
-        assert msg.startswith("SKILL set_gripper result=OK duration_ms=")
+    These tests run synthetic ``@skill``-decorated functions to verify the
+    decorator's contract without touching manipulation infrastructure.
+    """
 
-    def test_log_format_on_failure(self, monkeypatch):
-        """Failure stamp emits the error_code string verbatim."""
-        handler = _patch_logger(monkeypatch)
-        with skill_timing("pick") as stamp:
-            stamp(SkillResult.fail("ROBOT_NOT_FOUND", "x"))
-        assert len(handler.messages) == 1
-        msg = handler.messages[0]
-        assert msg.startswith("SKILL pick result=ROBOT_NOT_FOUND duration_ms=")
+    def test_decorator_stamps_duration_ms_on_skillresult(self):
+        @skill
+        def my_skill() -> SkillResult:
+            time.sleep(0.05)
+            return SkillResult.ok("done")
 
-    def test_each_stamp_call_logs_separately(self, monkeypatch):
-        """One log line per return point — important for skills that branch."""
-        handler = _patch_logger(monkeypatch)
-        with skill_timing("move_to_pose") as stamp:
-            stamp(SkillResult.ok("first"))
-            stamp(SkillResult.fail("EXECUTION_FAILED", "second"))
-        assert len(handler.messages) == 2
+        result = my_skill()
+        assert isinstance(result, SkillResult)
+        assert result.duration_ms >= 50
 
-    def test_exception_path_logs_and_reraises(self, monkeypatch):
-        """An uncaught exception in the skill body emits ``result=EXCEPTION`` and re-raises."""
+    def test_decorator_does_not_modify_non_skillresult_returns(self):
+        """Skills returning non-SkillResult values still log, but the return is untouched."""
+
+        @skill
+        def my_skill() -> str:
+            return "plain string"
+
+        assert my_skill() == "plain string"
+
+    def test_logs_success_with_function_name(self, monkeypatch):
         handler = _patch_logger(monkeypatch)
-        with pytest.raises(RuntimeError, match="boom"), skill_timing("pick"):
-            raise RuntimeError("boom")
+
+        @skill
+        def set_gripper() -> SkillResult:
+            return SkillResult.ok("done")
+
+        set_gripper()
+        msgs = [m for m in handler.messages if "SKILL" in m]
+        assert len(msgs) == 1
+        assert msgs[0].startswith("SKILL set_gripper result=OK duration_ms=")
+
+    def test_logs_failure_with_error_code(self, monkeypatch):
+        handler = _patch_logger(monkeypatch)
+
+        @skill
+        def pick() -> SkillResult:
+            return SkillResult.fail("ROBOT_NOT_FOUND", "x")
+
+        pick()
         msgs = [m for m in handler.messages if "SKILL pick" in m]
         assert len(msgs) == 1
-        assert msgs[0].startswith("SKILL pick result=EXCEPTION duration_ms=")
+        assert msgs[0].startswith("SKILL pick result=ROBOT_NOT_FOUND duration_ms=")
 
-    def test_exception_path_silent_when_name_omitted(self, monkeypatch):
-        """Anonymous timing still emits no log on exception — preserves opt-in API."""
+    def test_exception_path_logs_and_reraises(self, monkeypatch):
+        """An uncaught exception emits ``result=EXCEPTION`` and re-raises."""
         handler = _patch_logger(monkeypatch)
-        with pytest.raises(ValueError), skill_timing():
-            raise ValueError("crash")
-        assert handler.messages == []
+
+        @skill
+        def boom() -> SkillResult:
+            raise RuntimeError("nope")
+
+        with pytest.raises(RuntimeError, match="nope"):
+            boom()
+
+        msgs = [m for m in handler.messages if "SKILL boom" in m]
+        assert len(msgs) == 1
+        assert msgs[0].startswith("SKILL boom result=EXCEPTION duration_ms=")
+
+    def test_decorator_does_not_mutate_returned_skillresult(self):
+        """The decorator returns a fresh SkillResult instance — the body's return
+        object keeps its original duration_ms (whatever it was before)."""
+        sentinel = SkillResult.ok("done")
+        sentinel.duration_ms = 999.0
+
+        @skill
+        def my_skill() -> SkillResult:
+            return sentinel
+
+        result = my_skill()
+        assert result is not sentinel
+        assert sentinel.duration_ms == 999.0  # untouched
+        # Decorator overwrites with actual measured elapsed (very small).
+        assert result.duration_ms != 999.0

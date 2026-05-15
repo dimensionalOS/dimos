@@ -28,7 +28,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.agents.annotation import skill
-from dimos.agents.skill_result import SkillResult, skill_timing
+from dimos.agents.skill_result import SkillResult
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.docker_module import DockerModuleProxy as DockerRunner
@@ -160,19 +160,14 @@ class PickAndPlaceModule(ManipulationModule):
         Use this when the planner reports COLLISION_AT_START — detected objects
         may overlap the robot's current position and block planning.
         """
-        with skill_timing("clear_perception_obstacles") as stamp:
-            if self._world_monitor is None:
-                return stamp(
-                    SkillResult.fail(
-                        "WORLD_MONITOR_UNAVAILABLE",
-                        "No world monitor available",
-                    )
-                )
-            count = self._world_monitor.clear_perception_obstacles()
-            self._detection_snapshot = []
-            return stamp(
-                SkillResult.ok(f"Cleared {count} perception obstacle(s) from planning world")
+        if self._world_monitor is None:
+            return SkillResult.fail(
+                "WORLD_MONITOR_UNAVAILABLE",
+                "No world monitor available",
             )
+        count = self._world_monitor.clear_perception_obstacles()
+        self._detection_snapshot = []
+        return SkillResult.ok(f"Cleared {count} perception obstacle(s) from planning world")
 
     @rpc
     def get_perception_status(self) -> dict[str, int]:
@@ -429,55 +424,54 @@ class PickAndPlaceModule(ManipulationModule):
         Args:
             robot_name: Robot to query (only needed for multi-arm setups).
         """
-        with skill_timing("get_scene_info") as stamp:
-            lines: list[str] = []
+        lines: list[str] = []
 
-            # Robot state
-            joints = self.get_current_joints(robot_name)
-            if joints is not None:
-                lines.append(f"Joints: [{', '.join(f'{j:.3f}' for j in joints)}]")
-            else:
-                lines.append("Joints: unavailable (no state received)")
+        # Robot state
+        joints = self.get_current_joints(robot_name)
+        if joints is not None:
+            lines.append(f"Joints: [{', '.join(f'{j:.3f}' for j in joints)}]")
+        else:
+            lines.append("Joints: unavailable (no state received)")
 
-            ee_pose = self.get_ee_pose(robot_name)
-            if ee_pose is not None:
-                p = ee_pose.position
-                lines.append(f"EE pose: ({p.x:.4f}, {p.y:.4f}, {p.z:.4f})")
-            else:
-                lines.append("EE pose: unavailable")
+        ee_pose = self.get_ee_pose(robot_name)
+        if ee_pose is not None:
+            p = ee_pose.position
+            lines.append(f"EE pose: ({p.x:.4f}, {p.y:.4f}, {p.z:.4f})")
+        else:
+            lines.append("EE pose: unavailable")
 
-            # Gripper
-            gripper_pos = self.get_gripper(robot_name)
-            if gripper_pos is not None:
-                lines.append(f"Gripper: {gripper_pos:.3f}m")
-            else:
-                lines.append("Gripper: not configured")
+        # Gripper
+        gripper_pos = self.get_gripper(robot_name)
+        if gripper_pos is not None:
+            lines.append(f"Gripper: {gripper_pos:.3f}m")
+        else:
+            lines.append("Gripper: not configured")
 
-            # Perception
-            perception = self.get_perception_status()
-            lines.append(
-                f"Perception: {perception.get('cached', 0)} cached, "
-                f"{perception.get('added', 0)} obstacles added"
-            )
+        # Perception
+        perception = self.get_perception_status()
+        lines.append(
+            f"Perception: {perception.get('cached', 0)} cached, "
+            f"{perception.get('added', 0)} obstacles added"
+        )
 
-            detections = self._detection_snapshot
-            if detections:
-                lines.append(f"Detected objects ({len(detections)}):")
-                for det in detections:
-                    c = det.center
-                    lines.append(f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
-            else:
-                lines.append("Detected objects: none")
+        detections = self._detection_snapshot
+        if detections:
+            lines.append(f"Detected objects ({len(detections)}):")
+            for det in detections:
+                c = det.center
+                lines.append(f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
+        else:
+            lines.append("Detected objects: none")
 
-            # Visualization
-            url = self.get_visualization_url()
-            if url:
-                lines.append(f"Visualization: {url}")
+        # Visualization
+        url = self.get_visualization_url()
+        if url:
+            lines.append(f"Visualization: {url}")
 
-            # State
-            lines.append(f"State: {self.get_state()}")
+        # State
+        lines.append(f"State: {self.get_state()}")
 
-            return stamp(SkillResult.ok("\n".join(lines)))
+        return SkillResult.ok("\n".join(lines))
 
     @skill
     def look(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
@@ -488,24 +482,23 @@ class PickAndPlaceModule(ManipulationModule):
         Args:
             robot_name: Robot context (only needed for multi-arm setups).
         """
-        with skill_timing("look") as stamp:
-            obstacles = self.refresh_obstacles(0.0)
+        obstacles = self.refresh_obstacles(0.0)
 
-            detections = self._detection_snapshot
-            if not detections:
-                return stamp(SkillResult.ok("No objects visible from current position"))
+        detections = self._detection_snapshot
+        if not detections:
+            return SkillResult.ok("No objects visible from current position")
 
-            lines = [f"Currently see {len(detections)} object(s):"]
-            for det in detections:
-                c = det.center
-                lines.append(
-                    f"  - {det.name} [id={det.object_id[:8]}]: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})"
-                )
+        lines = [f"Currently see {len(detections)} object(s):"]
+        for det in detections:
+            c = det.center
+            lines.append(
+                f"  - {det.name} [id={det.object_id[:8]}]: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})"
+            )
 
-            if obstacles:
-                lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
+        if obstacles:
+            lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
 
-            return stamp(SkillResult.ok("\n".join(lines)))
+        return SkillResult.ok("\n".join(lines))
 
     @skill
     def scan_objects(
@@ -522,31 +515,29 @@ then refreshes perception obstacles.
             min_duration: Minimum time an object must be seen to be included.
             robot_name: Robot context (only needed for multi-arm setups).
         """
-        with skill_timing("scan_objects") as stamp:
-            # Go to init for a clear camera view
-            init_result = self.go_init(robot_name)
-            if not init_result.is_success():
-                return stamp(init_result)
+        # Go to init for a clear camera view
+        init_result = self.go_init(robot_name)
+        if not init_result.is_success():
+            return init_result
 
-            obstacles = self.refresh_obstacles(min_duration)
+        obstacles = self.refresh_obstacles(min_duration)
 
-            detections = self._detection_snapshot
-            if not detections:
-                # See look(): an empty scan is a valid observation, not a failure.
-                return stamp(SkillResult.ok("No objects detected in scene"))
+        detections = self._detection_snapshot
+        if not detections:
+            # See look(): an empty scan is a valid observation, not a failure.
+            return SkillResult.ok("No objects detected in scene")
 
-            lines = [f"Detected {len(detections)} object(s):"]
-            for det in detections:
-                c = det.center
-                lines.append(
-                    f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f}) "
-                    f"[{det.detections_count} views]"
-                )
+        lines = [f"Detected {len(detections)} object(s):"]
+        for det in detections:
+            c = det.center
+            lines.append(
+                f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f}) [{det.detections_count} views]"
+            )
 
-            if obstacles:
-                lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
+        if obstacles:
+            lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
 
-            return stamp(SkillResult.ok("\n".join(lines)))
+        return SkillResult.ok("\n".join(lines))
 
     @skill
     def pick(
@@ -565,87 +556,80 @@ then refreshes perception obstacles.
             object_id: Optional unique object ID from perception for precise identification.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
-        with skill_timing("pick") as stamp:
-            robot = self._get_robot(robot_name)
-            if robot is None:
-                return stamp(SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found"))
-            rname, _, config, _ = robot
-            pre_grasp_offset = config.pre_grasp_offset
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
+        rname, _, config, _ = robot
+        pre_grasp_offset = config.pre_grasp_offset
 
-            # 1. Generate grasps (uses already-cached detections — call scan_objects first)
-            logger.info(f"Generating grasp poses for '{object_name}'...")
-            grasp_poses = self._generate_grasps_for_pick(object_name, object_id)
-            if not grasp_poses:
-                return stamp(
-                    SkillResult.fail(
-                        "GRASP_GENERATION_FAILED",
-                        f"No grasp poses found for '{object_name}'. Object may not be detected.",
-                    )
-                )
-
-            # Lift if EE is low before approaching
-            lift = self._lift_if_low(rname)
-            if not lift.is_success():
-                return stamp(lift)
-
-            # 2. Try each grasp candidate
-            max_attempts = min(len(grasp_poses), 5)
-            for i, grasp_pose in enumerate(grasp_poses[:max_attempts]):
-                # Reduce pre-grasp height for far objects (arm can't reach high + far)
-                gp = grasp_pose.position
-                xy_dist = (gp.x**2 + gp.y**2) ** 0.5
-                offset = pre_grasp_offset if xy_dist < _FAR_REACH_XY_THRESHOLD else 0.05
-                pre_grasp_pose = self._compute_pre_grasp_pose(grasp_pose, offset)
-
-                logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
-                if not self.plan_to_pose(pre_grasp_pose, rname):
-                    logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
-                    continue  # Try next candidate
-
-                # 3. Open gripper before approach
-                logger.info("Opening gripper...")
-                self._set_gripper_position(0.85, rname)
-                time.sleep(0.5)
-
-                # 4. Execute approach to pre-grasp
-                exec_result = self._preview_execute_wait(rname)
-                if not exec_result.is_success():
-                    return stamp(exec_result)
-
-                # 5. Move to grasp pose
-                logger.info("Moving to grasp position...")
-                if not self.plan_to_pose(grasp_pose, rname):
-                    return stamp(SkillResult.fail("PLANNING_FAILED", "Grasp pose planning failed"))
-                exec_result = self._preview_execute_wait(rname)
-                if not exec_result.is_success():
-                    return stamp(exec_result)
-
-                # 6. Close gripper
-                logger.info("Closing gripper...")
-                self._set_gripper_position(0.0, rname)
-                time.sleep(1.5)  # Wait for gripper to close
-
-                # 7. Retract to pre-grasp
-                logger.info("Retracting with object...")
-                if not self.plan_to_pose(pre_grasp_pose, rname):
-                    return stamp(SkillResult.fail("PLANNING_FAILED", "Retract planning failed"))
-                exec_result = self._preview_execute_wait(rname)
-                if not exec_result.is_success():
-                    return stamp(exec_result)
-
-                # Store pick pose so place_back() can return with same orientation
-                self._last_pick_pose = grasp_pose
-
-                return stamp(
-                    SkillResult.ok(f"Pick complete — grasped '{object_name}' successfully")
-                )
-
-            return stamp(
-                SkillResult.fail(
-                    "GRASP_ATTEMPTS_EXHAUSTED",
-                    f"All {max_attempts} grasp attempts failed for '{object_name}'",
-                )
+        # 1. Generate grasps (uses already-cached detections — call scan_objects first)
+        logger.info(f"Generating grasp poses for '{object_name}'...")
+        grasp_poses = self._generate_grasps_for_pick(object_name, object_id)
+        if not grasp_poses:
+            return SkillResult.fail(
+                "GRASP_GENERATION_FAILED",
+                f"No grasp poses found for '{object_name}'. Object may not be detected.",
             )
+
+        # Lift if EE is low before approaching
+        lift = self._lift_if_low(rname)
+        if not lift.is_success():
+            return lift
+
+        # 2. Try each grasp candidate
+        max_attempts = min(len(grasp_poses), 5)
+        for i, grasp_pose in enumerate(grasp_poses[:max_attempts]):
+            # Reduce pre-grasp height for far objects (arm can't reach high + far)
+            gp = grasp_pose.position
+            xy_dist = (gp.x**2 + gp.y**2) ** 0.5
+            offset = pre_grasp_offset if xy_dist < _FAR_REACH_XY_THRESHOLD else 0.05
+            pre_grasp_pose = self._compute_pre_grasp_pose(grasp_pose, offset)
+
+            logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
+            if not self.plan_to_pose(pre_grasp_pose, rname):
+                logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
+                continue  # Try next candidate
+
+            # 3. Open gripper before approach
+            logger.info("Opening gripper...")
+            self._set_gripper_position(0.85, rname)
+            time.sleep(0.5)
+
+            # 4. Execute approach to pre-grasp
+            exec_result = self._preview_execute_wait(rname)
+            if not exec_result.is_success():
+                return exec_result
+
+            # 5. Move to grasp pose
+            logger.info("Moving to grasp position...")
+            if not self.plan_to_pose(grasp_pose, rname):
+                return SkillResult.fail("PLANNING_FAILED", "Grasp pose planning failed")
+            exec_result = self._preview_execute_wait(rname)
+            if not exec_result.is_success():
+                return exec_result
+
+            # 6. Close gripper
+            logger.info("Closing gripper...")
+            self._set_gripper_position(0.0, rname)
+            time.sleep(1.5)  # Wait for gripper to close
+
+            # 7. Retract to pre-grasp
+            logger.info("Retracting with object...")
+            if not self.plan_to_pose(pre_grasp_pose, rname):
+                return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
+            exec_result = self._preview_execute_wait(rname)
+            if not exec_result.is_success():
+                return exec_result
+
+            # Store pick pose so place_back() can return with same orientation
+            self._last_pick_pose = grasp_pose
+
+            return SkillResult.ok(f"Pick complete — grasped '{object_name}' successfully")
+
+        return SkillResult.fail(
+            "GRASP_ATTEMPTS_EXHAUSTED",
+            f"All {max_attempts} grasp attempts failed for '{object_name}'",
+        )
 
     @skill
     def place(
@@ -666,10 +650,9 @@ then refreshes perception obstacles.
             z: Target Z position in meters.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
-        with skill_timing("place") as stamp:
-            xy_dist = (x**2 + y**2) ** 0.5
-            orientation = self._grasp_orientation(x, y, xy_dist)
-            return stamp(self._place_with_orientation(x, y, z, orientation, robot_name))
+        xy_dist = (x**2 + y**2) ** 0.5
+        orientation = self._grasp_orientation(x, y, xy_dist)
+        return self._place_with_orientation(x, y, z, orientation, robot_name)
 
     def _place_with_orientation(
         self,
@@ -740,19 +723,16 @@ then refreshes perception obstacles.
         Args:
             robot_name: Robot to use (only needed for multi-arm setups).
         """
-        with skill_timing("place_back") as stamp:
-            if self._last_pick_pose is None:
-                return stamp(
-                    SkillResult.fail(
-                        "NO_PRIOR_POSE",
-                        "No previous pick position stored — run pick() first",
-                    )
-                )
+        if self._last_pick_pose is None:
+            return SkillResult.fail(
+                "NO_PRIOR_POSE",
+                "No previous pick position stored — run pick() first",
+            )
 
-            p = self._last_pick_pose.position
-            o = self._last_pick_pose.orientation
-            logger.info(f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})...")
-            return stamp(self._place_with_orientation(p.x, p.y, p.z, o, robot_name))
+        p = self._last_pick_pose.position
+        o = self._last_pick_pose.orientation
+        logger.info(f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})...")
+        return self._place_with_orientation(p.x, p.y, p.z, o, robot_name)
 
     @skill
     def drop_on(
@@ -771,22 +751,18 @@ then refreshes perception obstacles.
             z_offset: Height above the target object's center to release (meters).
             robot_name: Robot to use (only needed for multi-arm setups).
         """
-        with skill_timing("drop_on") as stamp:
-            pos = self._resolve_object_position(target_object_name)
-            if pos is None:
-                return stamp(
-                    SkillResult.fail(
-                        "OBJECT_NOT_DETECTED",
-                        f"Target object '{target_object_name}' not found in detections",
-                    )
-                )
-            x, y, z = pos
-            z += z_offset
-            logger.info(
-                f"Dropping on '{target_object_name}' at corrected position "
-                f"({x:.3f}, {y:.3f}, {z:.3f})"
+        pos = self._resolve_object_position(target_object_name)
+        if pos is None:
+            return SkillResult.fail(
+                "OBJECT_NOT_DETECTED",
+                f"Target object '{target_object_name}' not found in detections",
             )
-            return stamp(self.place(x, y, z, robot_name))
+        x, y, z = pos
+        z += z_offset
+        logger.info(
+            f"Dropping on '{target_object_name}' at corrected position ({x:.3f}, {y:.3f}, {z:.3f})"
+        )
+        return self.place(x, y, z, robot_name)
 
     @skill
     def pick_and_place(
@@ -810,19 +786,18 @@ then refreshes perception obstacles.
             object_id: Optional unique object ID from perception.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
-        with skill_timing("pick_and_place") as stamp:
-            logger.info(
-                f"Starting pick and place: pick '{object_name}' → place at "
-                f"({place_x:.3f}, {place_y:.3f}, {place_z:.3f})"
-            )
+        logger.info(
+            f"Starting pick and place: pick '{object_name}' → place at "
+            f"({place_x:.3f}, {place_y:.3f}, {place_z:.3f})"
+        )
 
-            # Pick phase
-            pick_result = self.pick(object_name, object_id, robot_name)
-            if not pick_result.is_success():
-                return stamp(pick_result)
+        # Pick phase
+        pick_result = self.pick(object_name, object_id, robot_name)
+        if not pick_result.is_success():
+            return pick_result
 
-            # Place phase
-            return stamp(self.place(place_x, place_y, place_z, robot_name))
+        # Place phase
+        return self.place(place_x, place_y, place_z, robot_name)
 
     @rpc
     def stop(self) -> None:
