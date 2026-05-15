@@ -198,6 +198,11 @@ class RobotConfig(BaseModel):
                 f"RobotConfig '{self.name}' has no end_effector_link — "
                 "cannot generate RobotModelConfig for manipulation."
             )
+        if self.model_path is None:
+            raise ValueError(
+                f"RobotConfig '{self.name}' has no model_path — "
+                "cannot generate RobotModelConfig for manipulation."
+            )
         bp = self.base_pose
         base_pose = PoseStamped(
             position=Vector3(x=bp[0], y=bp[1], z=bp[2]),
