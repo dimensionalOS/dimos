@@ -23,6 +23,7 @@ import time
 
 import pytest
 
+from dimos.agents import annotation
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 
@@ -96,9 +97,9 @@ class _ListHandler:
         self.messages.append(msg if not args else msg % args)
 
 
-def _patch_logger(monkeypatch) -> _ListHandler:
-    from dimos.agents import annotation
-
+@pytest.fixture
+def captured_logs(monkeypatch) -> _ListHandler:
+    """Capture ``logger.info`` calls from ``dimos.agents.annotation``."""
     handler = _ListHandler()
     monkeypatch.setattr(annotation.logger, "info", handler)
     return handler
@@ -130,33 +131,28 @@ class TestSkillDecoratorTiming:
 
         assert my_skill() == "plain string"
 
-    def test_logs_success_with_function_name(self, monkeypatch):
-        handler = _patch_logger(monkeypatch)
-
+    def test_logs_success_with_function_name(self, captured_logs):
         @skill
         def set_gripper() -> SkillResult:
             return SkillResult.ok("done")
 
         set_gripper()
-        msgs = [m for m in handler.messages if "SKILL" in m]
+        msgs = [m for m in captured_logs.messages if "SKILL" in m]
         assert len(msgs) == 1
         assert msgs[0].startswith("SKILL set_gripper result=OK duration_ms=")
 
-    def test_logs_failure_with_error_code(self, monkeypatch):
-        handler = _patch_logger(monkeypatch)
-
+    def test_logs_failure_with_error_code(self, captured_logs):
         @skill
         def pick() -> SkillResult:
             return SkillResult.fail("ROBOT_NOT_FOUND", "x")
 
         pick()
-        msgs = [m for m in handler.messages if "SKILL pick" in m]
+        msgs = [m for m in captured_logs.messages if "SKILL pick" in m]
         assert len(msgs) == 1
         assert msgs[0].startswith("SKILL pick result=ROBOT_NOT_FOUND duration_ms=")
 
-    def test_exception_path_logs_and_reraises(self, monkeypatch):
+    def test_exception_path_logs_and_reraises(self, captured_logs):
         """An uncaught exception emits ``result=EXCEPTION`` and re-raises."""
-        handler = _patch_logger(monkeypatch)
 
         @skill
         def boom() -> SkillResult:
@@ -165,7 +161,7 @@ class TestSkillDecoratorTiming:
         with pytest.raises(RuntimeError, match="nope"):
             boom()
 
-        msgs = [m for m in handler.messages if "SKILL boom" in m]
+        msgs = [m for m in captured_logs.messages if "SKILL boom" in m]
         assert len(msgs) == 1
         assert msgs[0].startswith("SKILL boom result=EXCEPTION duration_ms=")
 
