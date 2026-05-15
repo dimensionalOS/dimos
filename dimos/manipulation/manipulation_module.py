@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from pydantic import Field
 
 from dimos.agents.annotation import skill
-from dimos.agents.skill_result import CommonSkillError, SkillResult, skill_timing
+from dimos.agents.skill_result import SkillResult, skill_timing
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -46,7 +46,7 @@ from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSp
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
 )
-from dimos.manipulation.skill_errors import ManipulationError
+from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -356,7 +356,7 @@ class ManipulationModule(Module):
 
     @rpc
     @skill
-    def reset(self) -> SkillResult:
+    def reset(self) -> SkillResult[ManipulationSkillError]:
         """Reset the robot module to IDLE state, clearing any fault.
 
         Use this after an error or fault to allow new commands.
@@ -366,7 +366,7 @@ class ManipulationModule(Module):
             if self._state == ManipulationState.EXECUTING:
                 return stamp(
                     SkillResult.fail(
-                        CommonSkillError.INVALID_STATE,
+                        "INVALID_STATE",
                         "Cannot reset while executing — cancel the motion first",
                     )
                 )
@@ -892,7 +892,9 @@ class ManipulationModule(Module):
         return float(result) if result is not None else None
 
     @skill
-    def set_gripper(self, position: float, robot_name: str | None = None) -> SkillResult:
+    def set_gripper(
+        self, position: float, robot_name: str | None = None
+    ) -> SkillResult[ManipulationSkillError]:
         """Set gripper to a specific opening in meters.
 
         Args:
@@ -902,12 +904,10 @@ class ManipulationModule(Module):
         with skill_timing("set_gripper") as stamp:
             if self._set_gripper_position(position, robot_name):
                 return stamp(SkillResult.ok(f"Gripper set to {position:.3f}m"))
-            return stamp(
-                SkillResult.fail(ManipulationError.GRIPPER_FAILED, "Failed to set gripper position")
-            )
+            return stamp(SkillResult.fail("GRIPPER_FAILED", "Failed to set gripper position"))
 
     @skill
-    def open_gripper(self, robot_name: str | None = None) -> SkillResult:
+    def open_gripper(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Open the robot gripper fully.
 
         Args:
@@ -916,12 +916,10 @@ class ManipulationModule(Module):
         with skill_timing("open_gripper") as stamp:
             if self._set_gripper_position(0.85, robot_name):
                 return stamp(SkillResult.ok("Gripper opened"))
-            return stamp(
-                SkillResult.fail(ManipulationError.GRIPPER_FAILED, "Failed to open gripper")
-            )
+            return stamp(SkillResult.fail("GRIPPER_FAILED", "Failed to open gripper"))
 
     @skill
-    def close_gripper(self, robot_name: str | None = None) -> SkillResult:
+    def close_gripper(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Close the robot gripper fully.
 
         Args:
@@ -930,9 +928,7 @@ class ManipulationModule(Module):
         with skill_timing("close_gripper") as stamp:
             if self._set_gripper_position(0.0, robot_name):
                 return stamp(SkillResult.ok("Gripper closed"))
-            return stamp(
-                SkillResult.fail(ManipulationError.GRIPPER_FAILED, "Failed to close gripper")
-            )
+            return stamp(SkillResult.fail("GRIPPER_FAILED", "Failed to close gripper"))
 
     def _wait_for_trajectory_completion(
         self, robot_name: RobotName | None = None, timeout: float = 60.0, poll_interval: float = 0.2
@@ -995,7 +991,9 @@ class ManipulationModule(Module):
         logger.warning(f"Trajectory execution timed out after {timeout}s")
         return False
 
-    def _lift_if_low(self, robot_name: RobotName | None = None, min_z: float = 0.05) -> SkillResult:
+    def _lift_if_low(
+        self, robot_name: RobotName | None = None, min_z: float = 0.05
+    ) -> SkillResult[ManipulationSkillError]:
         """If the end-effector is below *min_z*, plan and execute a short lift."""
         ee = self.get_ee_pose(robot_name)
         if ee is None or ee.position.z >= min_z:
@@ -1006,14 +1004,14 @@ class ManipulationModule(Module):
         lift_pose = Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
         if not self.plan_to_pose(lift_pose, robot_name):
             return SkillResult.fail(
-                ManipulationError.PLANNING_FAILED,
+                "PLANNING_FAILED",
                 f"Failed to plan lift from z={ee.position.z:.3f}",
             )
         return self._preview_execute_wait(robot_name)
 
     def _preview_execute_wait(
         self, robot_name: RobotName | None = None, preview_duration: float = 0.5
-    ) -> SkillResult:
+    ) -> SkillResult[ManipulationSkillError]:
         """Preview planned path, execute, and wait for completion.
 
         Args:
@@ -1025,19 +1023,15 @@ class ManipulationModule(Module):
 
         logger.info("Executing trajectory...")
         if not self.execute(robot_name):
-            return SkillResult.fail(
-                CommonSkillError.EXECUTION_FAILED, "Trajectory execution failed"
-            )
+            return SkillResult.fail("EXECUTION_FAILED", "Trajectory execution failed")
 
         if not self._wait_for_trajectory_completion(robot_name):
-            return SkillResult.fail(
-                CommonSkillError.EXECUTION_TIMEOUT, "Trajectory execution timed out"
-            )
+            return SkillResult.fail("EXECUTION_TIMEOUT", "Trajectory execution timed out")
 
         return SkillResult.ok()
 
     @skill
-    def get_robot_state(self, robot_name: str | None = None) -> SkillResult:
+    def get_robot_state(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Get current robot state: joint positions, end-effector pose, and gripper.
 
         Args:
@@ -1079,7 +1073,7 @@ class ManipulationModule(Module):
         pitch: float | None = None,
         yaw: float | None = None,
         robot_name: str | None = None,
-    ) -> SkillResult:
+    ) -> SkillResult[ManipulationSkillError]:
         """Move the robot end-effector to a target pose.
 
         Plans a collision-free trajectory and executes it.
@@ -1131,7 +1125,7 @@ class ManipulationModule(Module):
             if not self.plan_to_pose(pose, robot_name):
                 return stamp(
                     SkillResult.fail(
-                        ManipulationError.PLANNING_FAILED,
+                        "PLANNING_FAILED",
                         f"Pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision",
                     )
                 )
@@ -1147,7 +1141,7 @@ class ManipulationModule(Module):
         self,
         joints: str,
         robot_name: str | None = None,
-    ) -> SkillResult:
+    ) -> SkillResult[ManipulationSkillError]:
         """Move the robot to a target joint configuration.
 
         Plans a collision-free trajectory and executes it.
@@ -1162,14 +1156,14 @@ class ManipulationModule(Module):
             except ValueError:
                 return stamp(
                     SkillResult.fail(
-                        CommonSkillError.INVALID_INPUT,
+                        "INVALID_INPUT",
                         f"Invalid joints format '{joints}'. Expected comma-separated floats.",
                     )
                 )
 
             robot = self._get_robot(robot_name)
             if robot is None:
-                return stamp(SkillResult.fail(CommonSkillError.ROBOT_NOT_FOUND, "Robot not found"))
+                return stamp(SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found"))
             rname, _, config, _ = robot
             goal = JointState(name=config.joint_names, position=joint_values)
 
@@ -1179,7 +1173,7 @@ class ManipulationModule(Module):
             if not self.plan_to_joints(goal, rname):
                 return stamp(
                     SkillResult.fail(
-                        ManipulationError.PLANNING_FAILED,
+                        "PLANNING_FAILED",
                         "Joint configuration may be unreachable or in collision",
                     )
                 )
@@ -1191,7 +1185,7 @@ class ManipulationModule(Module):
             return stamp(SkillResult.ok("Reached target joint configuration"))
 
     @skill
-    def go_home(self, robot_name: str | None = None) -> SkillResult:
+    def go_home(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Move the robot to its home/observe joint configuration.
 
         Opens the gripper and moves to the predefined home position.
@@ -1202,13 +1196,13 @@ class ManipulationModule(Module):
         with skill_timing("go_home") as stamp:
             robot = self._get_robot(robot_name)
             if robot is None:
-                return stamp(SkillResult.fail(CommonSkillError.ROBOT_NOT_FOUND, "Robot not found"))
+                return stamp(SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found"))
             rname, _, config, _ = robot
 
             if config.home_joints is None:
                 return stamp(
                     SkillResult.fail(
-                        CommonSkillError.NOT_CONFIGURED,
+                        "NOT_CONFIGURED",
                         "No home_joints configured for this robot",
                     )
                 )
@@ -1221,9 +1215,7 @@ class ManipulationModule(Module):
             logger.info("Planning motion to home position...")
             if not self.plan_to_joints(goal, rname):
                 return stamp(
-                    SkillResult.fail(
-                        ManipulationError.PLANNING_FAILED, "Failed to plan path to home position"
-                    )
+                    SkillResult.fail("PLANNING_FAILED", "Failed to plan path to home position")
                 )
 
             exec_result = self._preview_execute_wait(robot_name)
@@ -1233,7 +1225,7 @@ class ManipulationModule(Module):
             return stamp(SkillResult.ok("Reached home position"))
 
     @skill
-    def go_init(self, robot_name: str | None = None) -> SkillResult:
+    def go_init(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Move the robot to its init position (captured at startup or set manually).
 
         The init position is the joint configuration the robot was in when the
@@ -1245,14 +1237,14 @@ class ManipulationModule(Module):
         with skill_timing("go_init") as stamp:
             robot = self._get_robot(robot_name)
             if robot is None:
-                return stamp(SkillResult.fail(CommonSkillError.ROBOT_NOT_FOUND, "Robot not found"))
+                return stamp(SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found"))
             rname, robot_id, _, _ = robot
 
             init = self._init_joints.get(rname)
             if init is None:
                 return stamp(
                     SkillResult.fail(
-                        CommonSkillError.NOT_CONFIGURED,
+                        "NOT_CONFIGURED",
                         "No init joints captured — robot may not have reported joint state yet",
                     )
                 )
@@ -1287,9 +1279,7 @@ class ManipulationModule(Module):
             )
             if not self.plan_to_joints(init, robot_name):
                 return stamp(
-                    SkillResult.fail(
-                        ManipulationError.PLANNING_FAILED, "Failed to plan path to init position"
-                    )
+                    SkillResult.fail("PLANNING_FAILED", "Failed to plan path to init position")
                 )
 
             exec_result = self._preview_execute_wait(robot_name)

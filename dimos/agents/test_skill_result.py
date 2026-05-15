@@ -16,22 +16,12 @@
 
 from __future__ import annotations
 
-from enum import Enum, auto
 import json
 import time
 
 import pytest
 
-from dimos.agents.skill_result import CommonSkillError, SkillResult, skill_timing
-
-
-class _DomainError(Enum):
-    """Stand-in for a domain-specific error namespace (e.g. `ManipulationError`).
-
-    Used to verify ``SkillResult`` is not coupled to ``CommonSkillError``.
-    """
-
-    SOMETHING_BROKE = auto()
+from dimos.agents.skill_result import SkillResult, skill_timing
 
 
 class TestFactories:
@@ -40,11 +30,12 @@ class TestFactories:
         result = SkillResult.ok("done", planning_ms=12.3, attempts=2)
         assert result.metadata == {"planning_ms": 12.3, "attempts": 2}
 
-    def test_fail_accepts_arbitrary_enum(self):
-        """`error_code` is typed `Enum`, not `CommonSkillError`, so domains can BYO."""
-        result = SkillResult.fail(_DomainError.SOMETHING_BROKE, "boom")
-        assert result.error_code is _DomainError.SOMETHING_BROKE
+    def test_fail_stores_string_code(self):
+        """`fail` accepts a plain string; codes are Literal strings at runtime."""
+        result = SkillResult.fail("ROBOT_NOT_FOUND", "no arm")
         assert not result.is_success()
+        assert result.error_code == "ROBOT_NOT_FOUND"
+        assert result.message == "no arm"
 
 
 class TestAgentEncode:
@@ -66,14 +57,14 @@ class TestAgentEncode:
             "duration_ms": 123.5,
         }
 
-    def test_failure_serializes_enum_via_name_cross_domain(self):
-        """Failure encodes ``error_code.name`` (not ``.value``) and accepts foreign enums."""
-        result = SkillResult.fail(_DomainError.SOMETHING_BROKE, "x")
+    def test_failure_payload_carries_code_string_verbatim(self):
+        """Failure encodes ``error_code`` straight into the JSON — no conversion ceremony."""
+        result = SkillResult.fail("EXECUTION_TIMEOUT", "took too long")
 
         payload = json.loads(result.agent_encode()[0]["text"])
         assert payload["success"] is False
-        assert payload["error_code"] == "SOMETHING_BROKE"
-        assert payload["message"] == "x"
+        assert payload["error_code"] == "EXECUTION_TIMEOUT"
+        assert payload["message"] == "took too long"
 
     def test_metadata_included_when_present(self):
         result = SkillResult.ok("done", attempts=3)
@@ -110,14 +101,13 @@ class TestSkillTiming:
         """
         sentinel_duration = 1234.5
         inner = SkillResult.ok("inner")
-        inner.duration_ms = sentinel_duration  # simulate inner skill already stamped
+        inner.duration_ms = sentinel_duration
 
         with skill_timing() as stamp:
             outer = stamp(inner)
 
         assert outer is not inner
         assert inner.duration_ms == sentinel_duration  # untouched
-        # The outer stamp computes a real elapsed (very small) — distinct from the sentinel.
         assert outer.duration_ms != sentinel_duration
 
 
@@ -162,10 +152,10 @@ class TestSkillTimingLogging:
         assert msg.startswith("SKILL set_gripper result=OK duration_ms=")
 
     def test_log_format_on_failure(self, monkeypatch):
-        """Failure stamp emits the error_code's name (not OK, not a string repr)."""
+        """Failure stamp emits the error_code string verbatim."""
         handler = _patch_logger(monkeypatch)
         with skill_timing("pick") as stamp:
-            stamp(SkillResult.fail(CommonSkillError.ROBOT_NOT_FOUND, "x"))
+            stamp(SkillResult.fail("ROBOT_NOT_FOUND", "x"))
         assert len(handler.messages) == 1
         msg = handler.messages[0]
         assert msg.startswith("SKILL pick result=ROBOT_NOT_FOUND duration_ms=")
@@ -175,7 +165,7 @@ class TestSkillTimingLogging:
         handler = _patch_logger(monkeypatch)
         with skill_timing("move_to_pose") as stamp:
             stamp(SkillResult.ok("first"))
-            stamp(SkillResult.fail(CommonSkillError.EXECUTION_FAILED, "second"))
+            stamp(SkillResult.fail("EXECUTION_FAILED", "second"))
         assert len(handler.messages) == 2
 
     def test_exception_path_logs_and_reraises(self, monkeypatch):

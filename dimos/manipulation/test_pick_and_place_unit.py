@@ -23,7 +23,6 @@ import pytest
 
 from dimos.core.module import ModuleBase
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.manipulation.skill_errors import ManipulationError
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
@@ -157,5 +156,5 @@ class TestPlaceBack:
 
         result = module.place_back()
         assert not result.is_success()
-        assert result.error_code is ManipulationError.NO_PRIOR_POSE
+        assert result.error_code == "NO_PRIOR_POSE"
         assert "pick" in result.message.lower()

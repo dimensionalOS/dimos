@@ -16,21 +16,28 @@
 
 Cross-domain codes (``ROBOT_NOT_FOUND``, ``INVALID_INPUT``, ``EXECUTION_FAILED``,
 ``EXECUTION_TIMEOUT``, ...) live in ``dimos.agents.skill_result.CommonSkillError``.
-This module owns codes that are specific to manipulation skills.
+This module owns codes specific to manipulation skills.
+
+Both aliases are plain ``Literal`` types — strings at runtime, constrained by
+the type checker. Use ``SkillResult[ManipulationSkillError]`` on a skill to
+allow either common or manipulation codes.
 """
 
-from enum import Enum, auto
+from typing import Literal
 
+from dimos.agents.skill_result import CommonSkillError
 
-class ManipulationError(Enum):
-    """Manipulation-specific skill failure modes."""
+ManipulationError = Literal[
+    "NO_PRIOR_POSE",
+    "OBJECT_NOT_DETECTED",
+    "IK_FAILED",
+    "PLANNING_FAILED",
+    "COLLISION_AT_START",
+    "GRASP_GENERATION_FAILED",
+    "GRASP_ATTEMPTS_EXHAUSTED",
+    "GRIPPER_FAILED",
+    "WORLD_MONITOR_UNAVAILABLE",
+]
 
-    NO_PRIOR_POSE = auto()
-    OBJECT_NOT_DETECTED = auto()
-    IK_FAILED = auto()
-    PLANNING_FAILED = auto()
-    COLLISION_AT_START = auto()
-    GRASP_GENERATION_FAILED = auto()
-    GRASP_ATTEMPTS_EXHAUSTED = auto()
-    GRIPPER_FAILED = auto()
-    WORLD_MONITOR_UNAVAILABLE = auto()
+# Union of codes a manipulation skill may emit (common + manipulation-specific).
+ManipulationSkillError = CommonSkillError | ManipulationError

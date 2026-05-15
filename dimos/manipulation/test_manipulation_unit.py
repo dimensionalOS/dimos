@@ -22,7 +22,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dimos.agents.skill_result import CommonSkillError
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
@@ -132,7 +131,7 @@ class TestStateMachine:
         module._state = ManipulationState.EXECUTING
         result = module.reset()
         assert not result.is_success()
-        assert result.error_code is CommonSkillError.INVALID_STATE
+        assert result.error_code == "INVALID_STATE"
 
     def test_fail_sets_fault_state(self):
         """_fail helper sets FAULT state and message."""
