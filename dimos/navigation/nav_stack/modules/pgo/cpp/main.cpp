@@ -147,16 +147,8 @@ int main(int argc, char** argv)
     // Unregister mode: transform world-frame scans to body-frame
     bool unregister_input = mod.arg_bool("unregister_input", true);
 
-    // Verbose logging — default off. Turn on with `--debug true` (the
-    // Python config exposes this as `debug: bool`) to bring back the
-    // startup banner and per-keyframe diagnostic. Real errors are not
-    // gated.
     bool debug = mod.arg_bool("debug", false);
 
-    // Suppress PCL ICP runtime spam (Iteration N/M, MSE, ...) but keep
-    // L_ERROR / L_ALWAYS so real PCL problems still surface. Restoring
-    // to L_INFO (the PCL default) brings the per-iteration logs back
-    // when the user asks for them.
     pcl::console::setVerbosityLevel(
         debug ? pcl::console::L_INFO : pcl::console::L_ERROR);
 
