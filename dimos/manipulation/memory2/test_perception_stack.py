@@ -261,10 +261,23 @@ def run(prompt: str, db_path: str) -> None:
             dets = vlm2.query_detections(chosen.data, prompt)
             print(f"VLM on chosen frame: {len(dets.detections)} detections")
             if dets.detections:
+                # Replicate the FIXED lazy_perception.py mm->m depth conversion
+                from dimos.msgs.sensor_msgs.Image import Image as _Img
+                from dimos.msgs.sensor_msgs.Image import ImageFormat as _Fmt
+
+                _dc = d_obs.data.to_opencv()
+                if d_obs.data.format == _Fmt.DEPTH16:
+                    _dc = _dc.astype(np.float32) / 1000.0
+                elif _dc.dtype != np.float32:
+                    _dc = _dc.astype(np.float32)
+                _depth_m = _Img(
+                    data=_dc, format=_Fmt.DEPTH,
+                    frame_id=d_obs.data.frame_id, ts=d_obs.data.ts,
+                )
                 objs = DetObject.from_2d_to_list(
                     detections_2d=dets,
                     color_image=chosen.data,
-                    depth_image=d_obs.data,
+                    depth_image=_depth_m,
                     camera_info=i_obs.data,
                     camera_transform=None,
                     max_distance=1.0,

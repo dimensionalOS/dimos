@@ -145,6 +145,18 @@ is persisted per-stream in the SQLite registry, so an existing
 recording created before this fix keeps its JPEG depth — delete the
 db file once to recreate the stream with the lossless codec.
 
+**depth_image must be converted mm→m before projection.** RealSense
+publishes ``DEPTH16`` (uint16 millimeters). The live OSR path converts
+to float32 meters inline before ``from_2d_to_list``
+(``object_scene_registration.py:295-301``). The memory2-native path
+replays the *raw recorded* ``DEPTH16``, so ``LazyPerceptionModule``
+replicates that exact conversion (format-aware: only ``DEPTH16`` is
+divided by 1000) before projecting. Skipping it makes every point
+exceed ``depth_trunc`` → empty pointcloud → ``find_objects`` returns
+nothing. This is the replay-path analogue of the codec issue: anything
+OSR does inline on live frames, the memory2-native path must redo on
+replayed frames.
+
 
 Open vocab + cross-session memory
 ---------------------------------

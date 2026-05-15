@@ -10,6 +10,8 @@ from collections.abc import Callable
 import time
 from typing import Any
 
+import numpy as np
+
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.stream import Out
@@ -20,6 +22,7 @@ from dimos.models.vl.base import VlModel
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.type.detection3d.object import Object as DetObject
 from dimos.utils.logging_config import setup_logger
 
@@ -231,6 +234,25 @@ class LazyPerceptionModule(MemoryModule):
         if not dets_2d.detections:
             return []
 
+        # RealSense publishes depth as DEPTH16 (uint16 millimeters). The recorder
+        # persists it raw; from_2d_to_list expects meters (depth_scale=1.0). The
+        # live OSR path converts mm->m inline (object_scene_registration.py:295-301)
+        # but the memory2-native path replays raw recorded DEPTH16, so we must do
+        # the same conversion here or every point exceeds depth_trunc and projects
+        # to nothing. Format-aware: only DEPTH16 is divided.
+        depth_img = depth_obs.data
+        depth_cv = depth_img.to_opencv()
+        if depth_img.format == ImageFormat.DEPTH16:
+            depth_cv = depth_cv.astype(np.float32) / 1000.0
+        elif depth_cv.dtype != np.float32:
+            depth_cv = depth_cv.astype(np.float32)
+        depth_m = Image(
+            data=depth_cv,
+            format=ImageFormat.DEPTH,
+            frame_id=depth_img.frame_id,
+            ts=depth_img.ts,
+        )
+
         camera_transform = self._camera_transform_from_pose(color_obs.pose)
         try:
             # from_2d_to_list's annotation says ImageDetections2D[Detection2DSeg]
@@ -240,7 +262,7 @@ class LazyPerceptionModule(MemoryModule):
             return DetObject.from_2d_to_list(
                 detections_2d=dets_2d,  # type: ignore[arg-type]
                 color_image=color_obs.data,
-                depth_image=depth_obs.data,
+                depth_image=depth_m,
                 camera_info=info_obs.data,
                 camera_transform=camera_transform,
                 max_distance=self.config.max_distance,
