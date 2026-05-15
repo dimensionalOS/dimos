@@ -156,6 +156,11 @@ class LocalPlanner(Resource):
             self.cmd_vel.on_next(Twist())
 
     def _change_state(self, new_state: PlannerState) -> None:
+        # _reset_state() re-asserts "idle" on every cancel path; when teleop
+        # bursts stop_movement at ~30 Hz this would log "changed state state=idle"
+        # repeatedly. Treat no-op transitions as nothing happened.
+        if new_state == self._state:
+            return
         self._state = new_state
         self._state_unique_id += 1
         logger.info("changed state", state=new_state)

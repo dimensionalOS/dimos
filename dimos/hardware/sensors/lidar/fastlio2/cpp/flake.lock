@@ -37,16 +37,16 @@
     "fast-lio": {
       "flake": false,
       "locked": {
-        "lastModified": 1777587130,
-        "narHash": "sha256-H8MLnsBiS7lNTQSJxngo4MZeHUTJdZTAbObFvMNZHNQ=",
+        "lastModified": 1778784133,
+        "narHash": "sha256-bZEmIJlrzcqrHLxCiXXXf7fgi2yjVRuad8z08HN1eMU=",
         "owner": "dimensionalOS",
         "repo": "dimos-module-fastlio2",
-        "rev": "c661fe81b0a5682aeb06ce03d9a3af5d9741466e",
+        "rev": "d93bc6795babe9e63cc77d2bf2b72294d9afa839",
         "type": "github"
       },
       "original": {
         "owner": "dimensionalOS",
-        "ref": "main",
+        "ref": "jeff/fix/logs",
         "repo": "dimos-module-fastlio2",
         "type": "github"
       }

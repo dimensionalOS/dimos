@@ -113,6 +113,12 @@ class FastLio2Config(NativeModuleConfig):
         Path, validate_as(...).transform(lambda p: p if p.is_absolute() else _CONFIG_DIR / p)
     ] = Path("mid360.yaml")
 
+    # When true, the native binary prints its verbose [fastlio2] startup
+    # info, the FAST-LIO core's diagnostic logs (IMU/lidar sync, ikd-tree
+    # thread lifecycle, etc.) and device-connect events. Default off — the
+    # binary is otherwise silent except for real errors.
+    debug: bool = False
+
     # SDK port configuration (see livox/ports.py for defaults)
     cmd_data_port: int = SDK_CMD_DATA_PORT
     push_msg_port: int = SDK_PUSH_MSG_PORT

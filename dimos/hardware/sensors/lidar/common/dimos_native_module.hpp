@@ -67,6 +67,15 @@ public:
         return it != args_.end() ? std::stoi(it->second) : default_val;
     }
 
+    /// Get a bool arg value, or a default if not present.
+    bool arg_bool(const std::string& key, bool default_val = false) const {
+        auto it = args_.find(key);
+        if (it == args_.end()) return default_val;
+        // Explicitly handle "false" and "0" as false, otherwise check for true
+        if (it->second == "false" || it->second == "0") return false;
+        return it->second == "true" || it->second == "1";
+    }
+
     /// Check if a port/arg was provided.
     bool has(const std::string& key) const {
         return args_.count(key) > 0;

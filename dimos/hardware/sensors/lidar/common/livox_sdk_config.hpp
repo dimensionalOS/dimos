@@ -133,9 +133,21 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
 
 // Initialize Livox SDK from in-memory config.
 // Returns true on success. Handles fd lifecycle internally.
+//
+// `debug` controls the SDK's own bundled spdlog console sink. The SDK
+// emits `[YYYY-MM-DD HH:MM:SS] [console] [info] ...` lines from
+// parse_cfg_file, data_handler, device_manager, and runtime command/ack
+// paths. With `debug=false` we disable that sink before init so nothing
+// from the SDK reaches the console. Real SDK init failures still go to
+// our own stderr below.
 inline bool init_livox_sdk(const std::string& host_ip,
                            const std::string& lidar_ip,
-                           const SdkPorts& ports) {
+                           const SdkPorts& ports,
+                           bool debug = false) {
+    if (!debug) {
+        DisableLivoxSdkConsoleLogger();
+    }
+
     auto [fd, path] = write_sdk_config(host_ip, lidar_ip, ports);
     if (fd < 0) {
         fprintf(stderr, "Error: failed to write SDK config\n");
