@@ -64,8 +64,22 @@ class RGBDCameraRecorder(Recorder):
 
         # Replicate Recorder.start()'s port-to-stream registration. Touching
         # self.store lazily opens the SqliteStore at db_path (existing file or new).
+        #
+        # depth_image MUST use a lossless codec. memory2's codec auto-dispatch
+        # maps every `Image`-typed stream to JpegCodec (lossy 8-bit DCT) — correct
+        # for color RGB, catastrophic for uint16 depth (millimeters get shredded,
+        # then 3D projection finds no coherent points and find_objects returns
+        # nothing). We use memory2's documented per-stream `codec=` override
+        # (store/base.py: "Per-stream overrides ... codec=") to record depth as
+        # lossless lz4+lcm (raw Image.lcm_encode, no pixel loss). Color stays
+        # JPEG — lossy is fine for RGB and keeps the DB small.
         for name, port in self.inputs.items():
-            stream: MemoryStream[Any] = self.store.stream(name, port.type)
+            if name == "depth_image":
+                stream: MemoryStream[Any] = self.store.stream(
+                    name, port.type, codec="lz4+lcm"
+                )
+            else:
+                stream = self.store.stream(name, port.type)
             self._port_to_stream(name, port, stream)
             logger.info("Recording %s (%s)", name, port.type.__name__)
 

@@ -27,6 +27,7 @@ Quick start:
     python -i -m dimos.manipulation.planning.examples.manipulation_client
 """
 
+from typing import Any
 import math
 
 from dimos.agents.mcp.mcp_client import McpClient
@@ -42,6 +43,7 @@ from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
@@ -350,11 +352,12 @@ xarm_perception_sim_agent = autoconnect(
 # `objects: In[list[Object]]` port is now fed by LazyPerceptionModule.objects.
 #
 # TF chain: world → link6 (ManipulationModule) → camera_link (RealSense)
-# Usage: launch coordinator-xarm6 in one terminal, then xarm6-perception-agent in another:
-#   Terminal 1:  XARM6_IP=<ip> dimos run coordinator-xarm6
-#   Terminal 2:  XARM6_IP=<ip> dimos run xarm6-perception-agent
-# Without the coordinator the arm won't actually move (joint_state LCM transport
-# expects an external coordinator publisher).
+# Usage: chain coordinator + agent in ONE dimos invocation. dimos's CLI takes
+# multiple blueprint names and autoconnect()s them into one process — separate
+# invocations conflict on dimos's internal port reservation (check_port_conflicts).
+#   XARM6_IP=<ip> OPENAI_API_KEY=<key> dimos run coordinator-xarm6 xarm6-perception-agent
+# Without the coordinator the arm won't actually move (joint_state stream has no
+# producer otherwise).
 #
 # Camera transform: PLACEHOLDER reusing xArm7 values. Replace with measured
 # hand-eye calibration for the xArm6 mount on first hardware run if positions
@@ -368,10 +371,22 @@ _xarm6_perception_cfg = _catalog_xarm6(
     name="arm",
     adapter_type="xarm" if global_config.xarm6_ip else "mock",
     address=global_config.xarm6_ip,
-    pitch=math.radians(45),
+    pitch=math.radians(0),
     add_gripper=True,
     tf_extra_links=["link6"],
 )
+
+def _convert_color_camera_info(ci: CameraInfo):
+    return ci.to_rerun(
+        image_topic="world/color_image",
+        optical_frame="camera_color_optical_frame",
+    )
+
+def _convert_depth_camera_info(ci: CameraInfo):
+    return ci.to_rerun(
+        image_topic="world/depth_image",
+        optical_frame="camera_depth_optical_frame",
+    )
 
 xarm6_perception = (
     autoconnect(
@@ -393,7 +408,15 @@ xarm6_perception = (
         # Resume-if-exists: delete recording_xarm6.db manually for a clean slate.
         RGBDCameraRecorder.blueprint(db_path="recording_xarm6.db"),
         LazyPerceptionModule.blueprint(db_path="recording_xarm6.db"),
-        vis_module("foxglove"),
+        vis_module(
+            global_config.viewer,
+            rerun_config={
+                "visual_override": {
+                    "world/camera_info": _convert_color_camera_info,
+                    "world/depth_camera_info": _convert_depth_camera_info,
+                }
+            },
+        ),
     )
     .transports(
         {
@@ -408,11 +431,12 @@ xarm6_perception = (
 # find_objects_near, recall) replace the previous look / scan_objects from
 # the tracker-based pipeline. The agent reads the (seen Ns ago) timestamp
 # in each response and decides whether to re-query before acting.
-# Usage: launch coordinator-xarm6 in one terminal, then xarm6-perception-agent in another:
-#   Terminal 1:  XARM6_IP=<ip> dimos run coordinator-xarm6
-#   Terminal 2:  XARM6_IP=<ip> dimos run xarm6-perception-agent
-# Without the coordinator the arm won't actually move (joint_state LCM transport
-# expects an external coordinator publisher).
+# Usage: chain coordinator + agent in ONE dimos invocation. dimos's CLI takes
+# multiple blueprint names and autoconnect()s them into one process — separate
+# invocations conflict on dimos's internal port reservation (check_port_conflicts).
+#   XARM6_IP=<ip> OPENAI_API_KEY=<key> dimos run coordinator-xarm6 xarm6-perception-agent
+# Without the coordinator the arm won't actually move (joint_state stream has no
+# producer otherwise).
 _MANIPULATION_AGENT_SYSTEM_PROMPT_XARM6 = """\
 You are a robotic manipulation assistant controlling an xArm6 robot arm with an \
 eye-in-hand RealSense camera and a gripper.

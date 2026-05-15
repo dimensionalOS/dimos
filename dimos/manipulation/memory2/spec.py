@@ -127,11 +127,23 @@ Streams (recorded continuously)
 ::
 
     color_image            JPEG-encoded RGB frames + world pose
-    depth_image            depth frames (one row per camera tick)
+    depth_image            depth frames, LOSSLESS lz4+lcm codec
     camera_info            intrinsics (rarely change, .last() suffices)
     color_image_embedded   CLIP vector + image bytes, vec0-indexed
                            for similarity search (populated by the
                            recorder's continuous embed pipeline)
+
+**depth_image MUST be recorded losslessly.** memory2's codec
+auto-dispatch maps every ``Image``-typed stream to ``JpegCodec``
+(lossy 8-bit DCT) — correct for RGB color, but it shreds uint16
+depth (millimeters). JPEG'd depth → no coherent 3D points →
+``from_2d_to_list`` returns ``[]`` → ``find_objects`` silently
+returns nothing even though CLIP + VLM succeeded. ``RGBDCameraRecorder``
+overrides the depth stream's codec to ``lz4+lcm`` via memory2's
+public per-stream ``codec=`` override (no memory2 changes). The codec
+is persisted per-stream in the SQLite registry, so an existing
+recording created before this fix keeps its JPEG depth — delete the
+db file once to recreate the stream with the lossless codec.
 
 
 Open vocab + cross-session memory
