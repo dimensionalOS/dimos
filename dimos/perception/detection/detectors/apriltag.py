@@ -171,14 +171,18 @@ class AprilTagDetector:
             raise ValueError("tag_size_m must be > 0")
 
         dict_id = _FAMILIES[family]
-        self._dictionary = cv2.aruco.getPredefinedDictionary(dict_id)
-        self._params = detector_params or _DEFAULT_DETECTOR_PARAMS
-        self._refinement = _DEFAULT_REFINEMENT_PARAMS
-        self._detector = cv2.aruco.ArucoDetector(
-            self._dictionary,
-            self._params,
-            refineParams=self._refinement,
-        )
+        self._dictionary = cv2.aruco.getPredefinedDictionary(family_dict_cv[family])
+        self._params: cv2.aruco.DetectorParameters = cv2.aruco.DetectorParameters()
+        self._refinement: cv2.aruco.RefineParameters = cv2.aruco.RefineParameters()
+        try:
+            self._detector = cv2.aruco.ArucoDetector(
+                self._dictionary,
+                self._params,
+                refineParams=self._refinement,
+            )
+        except TypeError:
+            # Graceful fallback for OpenCV builds that omit RefineParameters
+            self._detector = cv2.aruco.ArucoDetector(self._dictionary, self._params)
 
         # Pre-compute object coordinates for a square marker centred at origin.
         # The 3D points represent the four corners in the marker's local frame:
