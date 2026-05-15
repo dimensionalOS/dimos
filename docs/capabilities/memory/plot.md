@@ -199,7 +199,7 @@ Looks better, these are some very obvious peaks, I'm curious let's see what was 
 
 Let's auto-detect the peaks, extract images from those moments, and run a 2D detector
 
-```python session=robotdata
+```python skip session=robotdata
 from dimos.mapping.voxels import VoxelMapTransformer
 from dimos.memory2.vis.space.space import Space
 from dimos.memory2.transform import peaks
@@ -276,7 +276,7 @@ We got 15 peaks back, we ran a detector on all of them so we can start projectin
 
 Once we put the surviving peaks on the timeline we get two very obvious plants.
 
-```python session=robotdata
+```python skip session=robotdata
 from dimos.memory2.transform import significant
 
 plot = Plot()
@@ -310,7 +310,7 @@ Let's focus on those two peaks. load all images in the vicinity of a detection,
 
 We'll also pull all lidar frames in their vicinity and reconstruct global maps for those areas.
 
-```python session=robotdata
+```python skip session=robotdata
 
 from dimos.memory2.vis.space.elements import Point
 from dimos.memory2.transform import QualityWindow
@@ -357,7 +357,7 @@ m.data.save("assets/plants_peak_detections.png")
 
 ## 3D Projection
 
-```python session=robotdata output=none
+```python skip session=robotdata output=none
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import (
     ImageDetections3DPC,
 )

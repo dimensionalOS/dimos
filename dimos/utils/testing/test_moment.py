@@ -13,6 +13,8 @@
 # limitations under the License.
 import time
 
+import pytest
+
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -24,7 +26,9 @@ from dimos.robot.unitree.go2 import connection
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import Moment, SensorMoment
 
-data_dir = get_data("unitree_go2_office_walk2")
+pytestmark = pytest.mark.self_hosted
+
+_DATA_DIR_NAME = "unitree_go2_office_walk2"
 
 
 class Go2Moment(Moment):
@@ -33,6 +37,7 @@ class Go2Moment(Moment):
     odom: SensorMoment[PoseStamped]
 
     def __init__(self) -> None:
+        data_dir = get_data(_DATA_DIR_NAME)
         self.lidar = SensorMoment(f"{data_dir}/lidar", LCMTransport("/lidar", PointCloud2))
         self.video = SensorMoment(f"{data_dir}/video", LCMTransport("/color_image", Image))
         self.odom = SensorMoment(f"{data_dir}/odom", LCMTransport("/odom", PoseStamped))

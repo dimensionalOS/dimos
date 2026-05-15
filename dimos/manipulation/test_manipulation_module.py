@@ -38,6 +38,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.data import get_data
 
+pytestmark = pytest.mark.self_hosted
+
 
 def _drake_available() -> bool:
     return importlib.util.find_spec("pydrake") is not None

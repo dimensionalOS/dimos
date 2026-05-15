@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Generator
+from collections.abc import Iterator
 import time
 from typing import Any
 
@@ -29,14 +29,10 @@ from dimos.protocol.pubsub.impl.lcmpubsub import (
 )
 from dimos.utils.testing.collector import CallbackCollector
 
-# Isolated multicast group so stale messages from other tests
-# (which use the default 239.255.76.67:7667) don't leak in.
-_ISOLATED_LCM_URL = "udpm://239.255.76.98:7698?ttl=0"
-
 
 @pytest.fixture
-def lcm_pub_sub_base() -> Generator[LCMPubSubBase, None, None]:
-    lcm = LCMPubSubBase(url=_ISOLATED_LCM_URL)
+def lcm_pub_sub_base(lcm_url: str) -> Iterator[LCMPubSubBase]:
+    lcm = LCMPubSubBase(url=lcm_url)
     lcm.start()
     time.sleep(0.05)  # let the handler thread enter the LCM loop
     yield lcm
@@ -44,8 +40,8 @@ def lcm_pub_sub_base() -> Generator[LCMPubSubBase, None, None]:
 
 
 @pytest.fixture
-def pickle_lcm() -> Generator[PickleLCM, None, None]:
-    lcm = PickleLCM(url=_ISOLATED_LCM_URL)
+def pickle_lcm(lcm_url: str) -> Iterator[PickleLCM]:
+    lcm = PickleLCM(url=lcm_url)
     lcm.start()
     time.sleep(0.05)  # let the handler thread enter the LCM loop
     yield lcm
@@ -53,8 +49,8 @@ def pickle_lcm() -> Generator[PickleLCM, None, None]:
 
 
 @pytest.fixture
-def lcm() -> Generator[LCM, None, None]:
-    lcm = LCM(url=_ISOLATED_LCM_URL)
+def lcm(lcm_url: str) -> Iterator[LCM]:
+    lcm = LCM(url=lcm_url)
     lcm.start()
     time.sleep(0.05)  # let the handler thread enter the LCM loop
     yield lcm

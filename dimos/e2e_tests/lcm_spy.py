@@ -73,25 +73,21 @@ class LcmSpy(LCMService):
         with self._saved_topics_lock:
             self._saved_topics.add(topic)
 
-    def register_topic_listener(self, topic: str, listener: Callable[[bytes], None]) -> int:
+    def register_topic_listener(self, topic: str, listener: Callable[[bytes], None]) -> None:
         with self._topic_listeners_lock:
-            listeners = self._topic_listeners.setdefault(topic, [])
-            listener_index = len(listeners)
-            listeners.append(listener)
-            return listener_index
+            self._topic_listeners.setdefault(topic, []).append(listener)
 
-    def unregister_topic_listener(self, topic: str, listener_index: int) -> None:
+    def unregister_topic_listener(self, topic: str, listener: Callable[[bytes], None]) -> None:
         with self._topic_listeners_lock:
-            listeners = self._topic_listeners[topic]
-            listeners.pop(listener_index)
+            self._topic_listeners[topic].remove(listener)
 
     @contextmanager
     def topic_listener(self, topic: str, listener: Callable[[bytes], None]) -> Iterator[None]:
-        listener_index = self.register_topic_listener(topic, listener)
+        self.register_topic_listener(topic, listener)
         try:
             yield
         finally:
-            self.unregister_topic_listener(topic, listener_index)
+            self.unregister_topic_listener(topic, listener)
 
     def wait_until(
         self,

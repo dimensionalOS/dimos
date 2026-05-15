@@ -26,7 +26,10 @@ import sys
 
 import cv2
 import numpy as np
+import onnxruntime as ort
 from PIL import Image
+from transformers.modeling_utils import PreTrainedModel
+from transformers.processing_utils import ProcessorMixin
 
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -47,14 +50,14 @@ class ImageEmbeddingProvider:
         Initialize the image embedding provider.
 
         Args:
-            model_name: Name of the embedding model to use ("clip", "resnet", etc.)
+            model_name: Name of the embedding model to use ("clip", "resnet").
             dimensions: Dimensions of the embedding vectors
         """
         self.model_name = model_name
         self.dimensions = dimensions
-        self.model = None
-        self.processor = None
-        self.model_path = None
+        self.model: ort.InferenceSession | PreTrainedModel | None = None
+        self.processor: ProcessorMixin | None = None
+        self.model_path: str | None = None
 
         self._initialize_model()  # type: ignore[no-untyped-call]
 
@@ -121,10 +124,12 @@ class ImageEmbeddingProvider:
 
         pil_image = self._prepare_image(image)
 
+        embedding: np.ndarray
         try:
             import torch
 
             if self.model_name == "clip":
+                assert isinstance(self.model, ort.InferenceSession)
                 inputs = self.processor(images=pil_image, return_tensors="np")
 
                 with torch.no_grad():
@@ -156,6 +161,7 @@ class ImageEmbeddingProvider:
                 embedding = embedding[0]
 
             elif self.model_name == "resnet":
+                assert isinstance(self.model, PreTrainedModel)
                 inputs = self.processor(images=pil_image, return_tensors="pt")
 
                 with torch.no_grad():
@@ -200,6 +206,7 @@ class ImageEmbeddingProvider:
         try:
             import torch
 
+            assert isinstance(self.model, ort.InferenceSession)
             inputs = self.processor(text=[text], return_tensors="np", padding=True)
 
             with torch.no_grad():
@@ -225,7 +232,7 @@ class ImageEmbeddingProvider:
                 # Determine correct output (usually 'last_hidden_state' or 'text_embeds')
                 output_names = [o.name for o in self.model.get_outputs()]
                 if "text_embeds" in output_names:
-                    text_embedding = ort_outputs[output_names.index("text_embeds")]
+                    text_embedding: np.ndarray = ort_outputs[output_names.index("text_embeds")]
                 else:
                     text_embedding = ort_outputs[0]  # fallback to first output
 

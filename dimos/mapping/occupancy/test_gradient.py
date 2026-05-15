@@ -20,6 +20,8 @@ from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
+pytestmark = pytest.mark.self_hosted
+
 
 @pytest.mark.parametrize("method", ["simple", "voronoi"])
 def test_gradient(occupancy, method) -> None:

@@ -17,6 +17,8 @@ import pytest
 from dimos.perception.detection.moduleDB import Object3D
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 
+pytestmark = pytest.mark.self_hosted
+
 
 def test_first_object(first_object) -> None:
     # def test_object3d_properties(first_object):

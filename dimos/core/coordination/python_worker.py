@@ -18,8 +18,10 @@ import logging
 import multiprocessing
 from multiprocessing.connection import Connection
 import os
+import signal
 import sys
 import threading
+import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
@@ -337,14 +339,25 @@ class _WorkerState:
 
 def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
     apply_library_config()
+    signal.signal(signal.SIGINT, signal.SIG_IGN)  # coordinator handles shutdown
     state = _WorkerState(instances={}, worker_id=worker_id)
 
     try:
         _worker_loop(conn, state)
-    except KeyboardInterrupt:
-        logger.info("Worker got KeyboardInterrupt.", worker_id=worker_id)
     except Exception as e:
-        logger.error(f"Worker process error: {e}", exc_info=True)
+        # `f"... {e}"` is often empty (some exceptions stringify to "")
+        # and structlog's `exc_info` rendering may be elided in captured
+        # CI logs. Always emit the full traceback to stderr so the cause
+        # is visible regardless of the structured-log handler config.
+        traceback.print_exception(e, file=sys.stderr)
+        sys.stderr.flush()
+        logger.error(
+            "Worker process error",
+            worker_id=worker_id,
+            error_type=type(e).__name__,
+            error_repr=repr(e),
+            exc_info=True,
+        )
     finally:
         for module_id, instance in reversed(list(state.instances.items())):
             try:
@@ -360,12 +373,6 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
                     module=type(instance).__name__,
                     worker_id=worker_id,
                     module_id=module_id,
-                )
-            except KeyboardInterrupt:
-                logger.warning(
-                    "KeyboardInterrupt during worker stop",
-                    module=type(instance).__name__,
-                    worker_id=worker_id,
                 )
             except Exception:
                 logger.error("Error during worker shutdown", exc_info=True)
@@ -412,8 +419,19 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
                     "allow_pickle": True,
                 },
             )
+            # `ThreadedServer.__init__` binds the socket but `listen()` only
+            # runs once `start()` executes on the thread, which sets
+            # `active=True` immediately after. Wait on that flag so callers
+            # never see a Connection refused before the accept loop is live.
             state.rpyc_thread = threading.Thread(target=state.rpyc_server.start, daemon=True)
             state.rpyc_thread.start()
+            deadline = time.monotonic() + 5.0
+            while not state.rpyc_server.active:
+                if not state.rpyc_thread.is_alive():
+                    raise RuntimeError("rpyc server thread died before listening")
+                if time.monotonic() > deadline:
+                    raise RuntimeError("rpyc server failed to start listening within 5s")
+                time.sleep(0.001)
             return WorkerResponse(result=state.rpyc_server.port)
 
         case ShutdownRequest():
@@ -434,7 +452,7 @@ def _worker_loop(conn: Connection, state: _WorkerState) -> None:
             if not conn.poll(timeout=0.1):
                 continue
             request = conn.recv()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             break
 
         try:

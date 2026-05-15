@@ -17,6 +17,7 @@ from __future__ import annotations
 import inspect
 import os
 from pathlib import Path
+import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from pydantic import field_validator
@@ -63,11 +64,6 @@ def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
         on_next=lambda obs: out.publish(obs.data),
         on_error=_on_error,
     )
-
-
-def port_to_stream(in_: In[T], stream: Stream[T]) -> DisposableBase:
-    """Append each message received on a Module ``In`` port to *stream*."""
-    return Disposable(in_.subscribe(stream.append))
 
 
 class StreamModule(Module, Generic[TIn, TOut]):
@@ -124,7 +120,7 @@ class StreamModule(Module, Generic[TIn, TOut]):
         stream: Stream[TIn] = store.stream(in_name, in_port.type)
 
         # we push input into the stream
-        self.register_disposable(port_to_stream(in_port, stream))
+        self.register_disposable(Disposable(in_port.subscribe(stream.append)))
 
         # and we push stream output to the output port
         self.register_disposable(stream_to_port(self._apply_pipeline(stream.live()), out_port))
@@ -169,10 +165,6 @@ class MemoryModuleConfig(ModuleConfig):
         if not p.is_absolute():
             p = DIMOS_PROJECT_ROOT / p
         return p
-
-
-class RecorderConfig(MemoryModuleConfig):
-    overwrite: bool = True
 
 
 class MemoryModule(Module):
@@ -245,6 +237,13 @@ class SemanticSearch(MemoryModule):
         return results.transform(peaks(key=_similarity, distance=1.0)).last().pose_stamped
 
 
+class RecorderConfig(MemoryModuleConfig):
+    overwrite: bool = True
+    default_frame_id: str = "base_link"
+    tf_tolerance: float = 0.5
+    db_path: str | Path = "recording.db"
+
+
 class Recorder(MemoryModule):
     """Records all ``In`` ports to a memory2 SQLite database.
 
@@ -287,6 +286,37 @@ class Recorder(MemoryModule):
 
         for name, port in self.inputs.items():
             stream: Stream[Any] = self.store.stream(name, port.type)
-            self.register_disposable(port_to_stream(port, stream))
+            self._port_to_stream(name, port, stream)
             logger.info("Recording %s (%s)", name, port.type.__name__)
-            logger.info("Recording %s (%s)", name, port.type.__name__)
+
+    def _port_to_stream(self, name: str, input_topic: In[Any], stream: Stream[Any]) -> None:
+        """Append each message from *input_topic* to *stream*, attaching world pose via tf.
+
+        Stamped messages use their own ``.frame_id`` and ``.ts``; unstamped
+        messages (or ones whose frame isn't in the tf graph, e.g. a payload
+        already in world coords) fall back to ``config.default_frame_id`` —
+        so every observation gets a robot-pose anchor when tf is publishing.
+
+        Registers the subscription as a disposable on this module.
+        """
+
+        default_frame_id = self.config.default_frame_id
+        tf_tolerance = self.config.tf_tolerance
+
+        def on_msg(msg: Any) -> None:
+            ts = getattr(msg, "ts", None) or time.time()
+            frame_id = getattr(msg, "frame_id", None) or default_frame_id
+            transform = self.tf.get("world", frame_id, time_point=ts, time_tolerance=tf_tolerance)
+            pose = transform.to_pose() if transform is not None else None
+
+            if not pose:
+                logger.warning(
+                    "[%s] No tf available for frame '%s' at time %s (msg ts: %s), storing without pose",
+                    name,
+                    frame_id,
+                    ts,
+                    getattr(msg, "ts", None),
+                )
+            stream.append(msg, ts=ts, pose=pose)
+
+        self.register_disposable(Disposable(input_topic.subscribe(on_msg)))

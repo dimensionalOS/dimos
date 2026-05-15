@@ -133,10 +133,12 @@ class LCMTransport(PubSubTransport[T]):
 
         self.lcm.publish(self.topic, msg)
 
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
+    def subscribe(
+        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
+    ) -> Callable[[], None]:
         if not self._started:
             self.start()
-        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
+        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type]
 
 
 class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
