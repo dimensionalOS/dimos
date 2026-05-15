@@ -227,9 +227,7 @@ class AprilTagDetectionModule(Module):
 
         def _detection_stream():
             return backpressure(
-                self.color_image.pure_observable().pipe(
-                    sharpness_barrier(self.config.max_freq)
-                )
+                self.color_image.pure_observable().pipe(sharpness_barrier(self.config.max_freq))
             )
 
         _detection_stream().subscribe(lambda img: self._process_frame(img))
