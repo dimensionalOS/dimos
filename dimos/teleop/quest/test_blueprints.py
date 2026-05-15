@@ -43,7 +43,6 @@ def _teleop_blueprints(
     can_port: str | None = "can0",
 ) -> Iterator[tuple[ModuleType, ModuleType]]:
     original_simulation = global_config.simulation
-    original_simulation_backend = global_config.simulation_backend
     original_xarm7_ip = global_config.xarm7_ip
     original_can_port = global_config.can_port
     original_modules = {name: sys.modules.get(name) for name in _BLUEPRINT_MODULES}
@@ -51,7 +50,6 @@ def _teleop_blueprints(
     try:
         global_config.update(
             simulation=simulation,
-            simulation_backend="mujoco",
             xarm7_ip=xarm7_ip,
             can_port=can_port,
         )
@@ -63,7 +61,6 @@ def _teleop_blueprints(
     finally:
         global_config.update(
             simulation=original_simulation,
-            simulation_backend=original_simulation_backend,
             xarm7_ip=original_xarm7_ip,
             can_port=original_can_port,
         )

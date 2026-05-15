@@ -14,9 +14,6 @@
 
 """Tests for GlobalConfig security defaults."""
 
-from pydantic import ValidationError
-import pytest
-
 
 class TestGlobalConfigSecurityDefaults:
     """Network services must bind to localhost by default (not 0.0.0.0)."""
@@ -28,19 +25,3 @@ class TestGlobalConfigSecurityDefaults:
         assert config.listen_host == "127.0.0.1", (
             f"listen_host must default to 127.0.0.1, got {config.listen_host}"
         )
-
-
-def test_viser_simulation_backend_is_not_accepted() -> None:
-    from dimos.core.global_config import GlobalConfig
-
-    with pytest.raises(ValidationError):
-        GlobalConfig(simulation_backend="viser")
-
-
-def test_viser_global_config_fields_removed() -> None:
-    from dimos.core.global_config import GlobalConfig
-
-    fields = GlobalConfig.model_fields
-    assert "viser_port" not in fields
-    assert "viser_label" not in fields
-    assert "viser_verbose" not in fields
