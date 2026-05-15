@@ -1,0 +1,24 @@
+--- a/sdk_core/base/network/unix/network_util.cpp	2026-04-30 14:46:48
++++ b/sdk_core/base/network/unix/network_util.cpp	2026-04-30 14:46:48
+@@ -67,16 +67,16 @@
+   }
+   status = setsockopt(sock, SOL_SOCKET, SO_RCVBUF,
+ 	  (char *)&recv_buff_size, sizeof(recv_buff_size));
+-  if (status != 0) {
+-	  close(sock);
+-	  return -1;
+-  }
++  /* macOS limits SO_RCVBUF to kern.ipc.maxsockbuf (~32MB); the SDK requests
++     200MB and setsockopt returns -1.  A smaller kernel buffer is fine for
++     the control socket -- ignore the failure rather than aborting init. */
++  (void)status;
+ 
+   memset(&servaddr, 0, sizeof(servaddr));
+ 
+   // Filling server information
+   servaddr.sin_family    = AF_INET; // IPv4
+-  if (netif.empty()) {
++  if (netif.empty() || netif == "255.255.255.255") {
+     servaddr.sin_addr.s_addr = INADDR_ANY;
+   } else {
+     if(!multicast_ip.empty()){

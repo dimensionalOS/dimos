@@ -1,10 +1,10 @@
 # Navigation
+Note: in the future these will be merged into one system.
 
+## Nav Stack
 
-## Non-ROS
+- [Nav Stack](/docs/capabilities/navigation/nav_stack.md) — modular navigation stack with terrain analysis, local/global planning, PGO, and exploration
 
-- [Go2 Navigation](/docs/capabilities/navigation/native/index.md) — column-carving voxel mapping + slope-based costmap
+## Simple Nav
 
-## ROS
-
-See [ROS Transports](/docs/usage/transports/index.md) for bridging DimOS streams to ROS topics.
+- [Simple Navigation](/docs/capabilities/navigation/native/index.md) — column-carving voxel mapping + slope-based costmap

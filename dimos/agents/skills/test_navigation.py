@@ -134,7 +134,6 @@ class MockedPositionNavSkill(NavigationSkillContainer):
         return message
 
 
-@pytest.mark.slow
 def test_stop_movement(agent_setup) -> None:
     history = agent_setup(
         blueprints=[
@@ -149,7 +148,6 @@ def test_stop_movement(agent_setup) -> None:
     assert "stopped" in history[-1].content.lower()
 
 
-@pytest.mark.slow
 def test_start_exploration(agent_setup) -> None:
     history = agent_setup(
         blueprints=[
@@ -166,7 +164,6 @@ def test_start_exploration(agent_setup) -> None:
     assert "explor" in history[-1].content.lower()
 
 
-@pytest.mark.slow
 def test_go_to_semantic_location(agent_setup) -> None:
     history = agent_setup(
         blueprints=[

@@ -20,7 +20,7 @@ from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.g1.blueprints.primitive.uintree_g1_primitive_no_nav import (
     uintree_g1_primitive_no_nav,
 )
-from dimos.robot.unitree.g1.sim import G1SimConnection
+from dimos.robot.unitree.g1.mujoco_sim import G1SimConnection
 
 unitree_g1_basic_sim = autoconnect(
     uintree_g1_primitive_no_nav,

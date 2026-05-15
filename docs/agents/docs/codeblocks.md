@@ -30,6 +30,8 @@ Add flags after the language identifier:
 | `skip` | Don't execute this block |
 | `expected-error` | Block is expected to fail |
 
+Use `skip` when a block would pull in **CUDA / GPU-only** stacks (for example perception models, `VoxelGridMapper` defaults, or imports that load torch with GPU expectations), or when it is **flaky in CI** (multi-module coordinators, timing-sensitive workers, pytest-style snippets that are not meant to run as a single script). Prefer `expected-error` only when the block is supposed to fail and you want to assert that failure.
+
 ## Examples
 
 # md-babel-py
@@ -311,4 +313,7 @@ md-babel-py run document.md --lang python,sh
 
 # Dry run - show what would execute
 md-babel-py run document.md --dry-run
+
+# Longer subprocess limit (default 60s); see upstream README for MD_BABEL_EXECUTION_TIMEOUT
+md-babel-py run document.md --execution-timeout 120
 ```

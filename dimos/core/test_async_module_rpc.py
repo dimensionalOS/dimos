@@ -73,7 +73,6 @@ def cube_a_transport():
     cube_a_tr.stop()
 
 
-@pytest.mark.slow
 def test_async_module_rpc(start_cube_module, a_transport, cube_a_transport):
     queue = Queue()
     cube_a_transport.subscribe(queue.put)

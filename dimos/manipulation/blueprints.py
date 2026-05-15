@@ -44,7 +44,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
-from dimos.robot.foxglove_bridge import FoxgloveBridge  # TODO: migrate to rerun
+from dimos.visualization.vis_module import vis_module
 
 # Single XArm6 planner (standalone, no coordinator)
 _xarm6_planner_cfg = _catalog_xarm6(
@@ -196,14 +196,14 @@ xarm_perception = (
             use_aabb=True,
             max_obstacle_width=0.06,
         ),
-        FoxgloveBridge.blueprint(),  # TODO: migrate to rerun
+        vis_module("foxglove"),
     )
     .transports(
         {
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
-    .global_config(viewer="foxglove", n_workers=4)
+    .global_config(n_workers=4)
 )
 
 
@@ -289,7 +289,7 @@ xarm_perception_agent = autoconnect(
 
 from dimos.robot.catalog.ufactory import XARM7_SIM_PATH
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _xarm7_sim_cfg = _catalog_xarm7(
     name="arm",
@@ -323,7 +323,7 @@ xarm_perception_sim = autoconnect(
         hardware=[_xarm7_sim_cfg.to_hardware_component()],
         tasks=[_xarm7_sim_cfg.to_task_config()],
     ),
-    RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode()),
+    RerunBridgeModule.blueprint(),
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
