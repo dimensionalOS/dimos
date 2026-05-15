@@ -24,7 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          lfs: true
+          lfs: false
+          sparse-checkout: |
+            docs
+
+      - name: Pull docs LFS assets only
+        run: git lfs pull --include="docs/assets/**" --exclude=""
 
       - uses: actions/setup-node@v4
         with:
