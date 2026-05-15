@@ -171,8 +171,10 @@ class AprilTagDetector:
             raise ValueError("tag_size_m must be > 0")
 
         dict_id = _FAMILIES[family]
-        self._dictionary = cv2.aruco.getPredefinedDictionary(family_dict_cv[family])
-        self._params: cv2.aruco.DetectorParameters = cv2.aruco.DetectorParameters()
+        self._dictionary = cv2.aruco.getPredefinedDictionary(dict_id)
+        self._params: cv2.aruco.DetectorParameters = (
+            detector_params if detector_params is not None else cv2.aruco.DetectorParameters()
+        )
         self._refinement: cv2.aruco.RefineParameters = cv2.aruco.RefineParameters()
         try:
             self._detector = cv2.aruco.ArucoDetector(
