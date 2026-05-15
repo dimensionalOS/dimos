@@ -180,7 +180,7 @@ def test_go_to_semantic_location(agent_setup) -> None:
 
 def test_navigate_to_position_sets_goal_with_yaw() -> None:
     skill = MockedPositionNavSkill()
-    skill.navigate_to_position(x=3.0, y=4.0, yaw_deg=90.0, frame_id="map")
+    skill.navigate_to_position(x=3.0, y=4.0, yaw_deg=90.0)
 
     assert len(skill.recorded_goals) == 1
     goal = skill.recorded_goals[0]
@@ -198,7 +198,7 @@ def test_rotate_toward_position_computes_yaw_from_odom() -> None:
             frame_id="map",
         )
     )
-    skill.rotate_toward_position(x=0.0, y=1.0, frame_id="map")
+    skill.rotate_toward_position(x=0.0, y=1.0)
 
     assert len(skill.recorded_goals) == 1
     goal = skill.recorded_goals[0]
@@ -210,7 +210,7 @@ def test_rotate_toward_position_computes_yaw_from_odom() -> None:
 def test_rotate_toward_position_without_odom_returns_message() -> None:
     skill = MockedPositionNavSkill()
 
-    result = skill.rotate_toward_position(x=1.0, y=0.0, frame_id="map")
+    result = skill.rotate_toward_position(x=1.0, y=0.0)
 
     assert "no odometry" in result.lower()
     assert skill.recorded_goals == []

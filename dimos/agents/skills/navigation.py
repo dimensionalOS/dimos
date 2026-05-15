@@ -258,39 +258,35 @@ class NavigationSkillContainer(Module):
         x: float,
         y: float,
         yaw_deg: float = 0.0,
-        frame_id: str = "map",
     ) -> str:
-        """Navigate to an absolute position in the given frame.
+        """Navigate to an absolute position in the map frame.
 
-        Use this to act on a pose returned by another tool — pass its x, y, yaw_deg, and frame_id straight in.
+        Use this to act on a pose returned by another tool — pass its x, y, and yaw_deg straight in. Positions are interpreted in the map frame.
 
         Args:
             x: target x in meters
             y: target y in meters
             yaw_deg: final heading in degrees, 0 = facing +x
-            frame_id: coordinate frame
         """
         if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
 
-        goal = _make_position_goal(x, y, math.radians(yaw_deg), frame_id)
-        return self._navigate_to(goal, f"Heading to ({x:.2f}, {y:.2f}) in {frame_id}")
+        goal = _make_position_goal(x, y, math.radians(yaw_deg), "map")
+        return self._navigate_to(goal, f"Heading to ({x:.2f}, {y:.2f})")
 
     @skill
     def rotate_toward_position(
         self,
         x: float,
         y: float,
-        frame_id: str = "map",
     ) -> str:
-        """Rotate in place to face an absolute position in the given frame.
+        """Rotate in place to face an absolute position in the map frame.
 
-        Pass the target x and y from a pose's fields. Yaw is computed against the robot's current odometry.
+        Pass the target x and y from a pose's fields. Yaw is computed against the robot's current odometry. Positions are interpreted in the map frame.
 
         Args:
             x: target x in meters
             y: target y in meters
-            frame_id: coordinate frame
         """
         if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
@@ -302,8 +298,8 @@ class NavigationSkillContainer(Module):
         cur_y = self._latest_odom.position.y
         yaw_rad = math.atan2(y - cur_y, x - cur_x)
 
-        goal = _make_position_goal(cur_x, cur_y, yaw_rad, frame_id)
-        return self._navigate_to(goal, f"Rotating to face ({x:.2f}, {y:.2f}) in {frame_id}")
+        goal = _make_position_goal(cur_x, cur_y, yaw_rad, "map")
+        return self._navigate_to(goal, f"Rotating to face ({x:.2f}, {y:.2f})")
 
     @skill
     def current_pose(self) -> str:
