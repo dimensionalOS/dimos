@@ -806,3 +806,12 @@ class ControlCoordinator(Module):
     def get_tick_count(self) -> int:
         """Get the number of ticks since start."""
         return self._tick_loop.tick_count if self._tick_loop else 0
+
+
+# Deferred import so Pydantic can resolve the `SingleArmPinkIKTaskConfig`
+# forward reference on `TaskConfig.pink_config`. Imported at module-end to
+# avoid the circular chain: coordinator -> pink_teleop_task -> robot.catalog
+# -> robot.config -> coordinator.TaskConfig.
+from dimos.control.tasks.pink_teleop_task import (
+    SingleArmPinkIKTaskConfig as SingleArmPinkIKTaskConfig,
+)
