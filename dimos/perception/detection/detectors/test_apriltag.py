@@ -20,8 +20,6 @@ depend on external fixtures or hardware recordings.
 
 from __future__ import annotations
 
-import math
-
 import cv2
 import numpy as np
 import pytest
@@ -29,7 +27,6 @@ import pytest
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.apriltag import AprilTagDetector
-
 
 _TEST_FX = 500.0
 _TEST_FY = 500.0
@@ -119,7 +116,9 @@ class TestAprilTagDetector:
         assert results[0].family == "tag36h11"
         assert results[0].corner_count == 4
 
-    def test_pose_depth_is_approximate(self, detector: AprilTagDetector, camera_info: CameraInfo) -> None:
+    def test_pose_depth_is_approximate(
+        self, detector: AprilTagDetector, camera_info: CameraInfo
+    ) -> None:
         """The Z translation should be within 10 % of the synthetic depth."""
         expected_depth = 1.0
         img = _synthetic_tag_image(tag_id=7, depth_m=expected_depth)
@@ -129,7 +128,9 @@ class TestAprilTagDetector:
         z = det.pose.position.z
         assert abs(z - expected_depth) < 0.1 * expected_depth, f"Z={z}, expected {expected_depth}"
 
-    def test_pose_orientation_identity(self, detector: AprilTagDetector, camera_info: CameraInfo) -> None:
+    def test_pose_orientation_identity(
+        self, detector: AprilTagDetector, camera_info: CameraInfo
+    ) -> None:
         """A face-on tag should have rotation close to identity."""
         img = _synthetic_tag_image(tag_id=3, depth_m=1.0)
         results = detector.detect(img, camera_info)
@@ -165,7 +166,9 @@ class TestAprilTagDetector:
         ids = {r.tag_id for r in results}
         assert ids == {10, 20}
 
-    def test_wrong_family_returns_nothing(self, detector: AprilTagDetector, camera_info: CameraInfo) -> None:
+    def test_wrong_family_returns_nothing(
+        self, detector: AprilTagDetector, camera_info: CameraInfo
+    ) -> None:
         """A tag36h11 detector should not detect an aruco_4x4 marker."""
         # Generate aruco_4x4_50 marker with the aruco family.
         aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
@@ -199,7 +202,9 @@ class TestAprilTagDetectorPoseConsistency:
         return _make_test_camera_info()
 
     @pytest.mark.parametrize("depth", [0.5, 1.0, 2.0, 3.0])
-    def test_depth_scale(self, detector_small: AprilTagDetector, camera_info: CameraInfo, depth: float) -> None:
+    def test_depth_scale(
+        self, detector_small: AprilTagDetector, camera_info: CameraInfo, depth: float
+    ) -> None:
         """Estimated Z should scale approximately linearly with true depth."""
         img = _synthetic_tag_image(
             tag_id=99,

@@ -34,14 +34,13 @@ Example:
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
+import math
 from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -84,7 +83,9 @@ _DEFAULT_DETECTOR_PARAMS = cv2.aruco.DetectorParameters()
 _DEFAULT_REFINEMENT_PARAMS = cv2.aruco.RefineParameters()
 
 
-def _camera_info_to_cv_intrinsics(camera_info: CameraInfo) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def _camera_info_to_cv_intrinsics(
+    camera_info: CameraInfo,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Convert dimos CameraInfo to OpenCV cameraMatrix + distCoeffs."""
     K = np.array(camera_info.K, dtype=np.float64).reshape(3, 3)
     if camera_info.D:
@@ -162,8 +163,7 @@ class AprilTagDetector:
     ) -> None:
         if family not in _FAMILIES:
             raise ValueError(
-                f"Unknown AprilTag family {family!r}. "
-                f"Supported: {list(_FAMILIES.keys())}"
+                f"Unknown AprilTag family {family!r}. Supported: {list(_FAMILIES.keys())}"
             )
         self.family = family
         self.tag_size_m = float(tag_size_m)
