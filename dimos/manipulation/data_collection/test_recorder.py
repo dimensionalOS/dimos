@@ -14,7 +14,9 @@
 
 """Tests for the standalone Rerun data recorder.
 
-Tasks 4.1-4.7 from openspec/changes/add-rerun-data-recorder/tasks.md.
+The recorder runs entirely on typed `In[T]` stream slots (image, joint_state,
+desired_joint_action). Tests drive the handlers (`_on_image`, `_on_joint_state`,
+`_on_desired_joint_action`) directly — no fake pubsub needed.
 """
 
 from __future__ import annotations
@@ -23,64 +25,16 @@ from collections.abc import Callable
 from pathlib import Path
 import threading
 import time
-from typing import Any
 
 import numpy as np
 import pytest
-from rerun._baseclasses import Archetype
 import rerun_bindings as rb
 
 from dimos.manipulation.data_collection.recorder import RerunDataRecorder
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.visualization.rerun.bridge import RerunBridgeModule
-
-# ── Fakes ────────────────────────────────────────────────────────────────────
-
-
-class FakePubSub:
-    """Minimal subscribe_all-capable pubsub for recorder tests.
-
-    `push(topic, msg)` invokes every registered callback synchronously. No real
-    transport, no LCM, no threads.
-    """
-
-    def __init__(self) -> None:
-        self._callbacks: list[Callable[[Any, Any], None]] = []
-        self.started = False
-        self.stopped = False
-
-    def subscribe_all(self, callback: Callable[[Any, Any], None]) -> Callable[[], None]:
-        self._callbacks.append(callback)
-
-        def unsubscribe() -> None:
-            if callback in self._callbacks:
-                self._callbacks.remove(callback)
-
-        return unsubscribe
-
-    def start(self) -> None:
-        self.started = True
-
-    def stop(self) -> None:
-        self.stopped = True
-
-    def push(self, topic: Any, msg: Any) -> None:
-        for cb in list(self._callbacks):
-            cb(msg, topic)
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-class _Topic:
-    """Topic-like object that exposes ``.name`` (mirroring `Topic.__str__`)."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def __str__(self) -> str:
-        return self.name
 
 
 def _make_image(value: int = 0) -> Image:
@@ -88,7 +42,7 @@ def _make_image(value: int = 0) -> Image:
     return Image.from_numpy(arr, format=ImageFormat.RGB)
 
 
-def _make_joint_state(measured: bool, value: float) -> JointState:
+def _make_joint_state(value: float = 0.0) -> JointState:
     return JointState(
         name=["arm/joint1", "arm/gripper"],
         position=[value, value * 0.1],
@@ -117,57 +71,11 @@ def _has_entity(rec: rb.Recording, path: str) -> bool:
 # ── Tests ────────────────────────────────────────────────────────────────────
 
 
-def test_compose_converter_mirrors_bridge() -> None:
-    """Drift-detector: the recorder's `_compose_converter` must produce the
-    same (entity_path, archetype) for the same input the bridge would produce.
-
-    Per design.md Decision 5, the bridge and recorder duplicate the small
-    composition logic. This test pins them structurally so a future change to
-    one without the other fails CI.
-    """
-
-    def topic_to_entity(topic: Any) -> str:
-        return f"/observation/{topic.name.lstrip('/')}"
-
-    visual_override: dict[Any, Any] = {}
-
-    bridge = RerunBridgeModule(
-        pubsubs=[],
-        visual_override=visual_override,
-        topic_to_entity=topic_to_entity,
-    )
-    recorder = RerunDataRecorder(
-        pubsubs=[],
-        visual_override=visual_override,
-        topic_to_entity=topic_to_entity,
-        record_path_factory=lambda: Path("/tmp/__unused__.rrd"),
-    )
-    try:
-        topic = _Topic("/camera/usb")
-        msg = _make_image(value=7)
-
-        bridge_path = bridge._get_entity_path(topic)
-        recorder_path = recorder._get_entity_path(topic)
-        assert bridge_path == recorder_path == "/observation/camera/usb"
-
-        bridge_out = bridge._visual_override_for_entity_path(bridge_path)(msg)
-        recorder_out = recorder._compose_converter(recorder_path)(msg)
-
-        assert type(bridge_out) is type(recorder_out)
-        assert isinstance(bridge_out, Archetype)
-        assert isinstance(recorder_out, Archetype)
-    finally:
-        bridge.stop()
-        recorder.stop()
-
-
 def test_start_leaves_recorder_idle_until_first_toggle(tmp_path: Path) -> None:
     """Recorder boots IDLE — no `.rrd` exists until the operator presses
     the toggle button. Warmup motion / scene setup before the first demo
     never end up on disk."""
-    pubsub = FakePubSub()
     recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
         record_path_factory=_path_factory(tmp_path),
         recording_id_factory=lambda p: f"sess/{p.stem}",
         episode_metadata=lambda n: {
@@ -178,13 +86,13 @@ def test_start_leaves_recorder_idle_until_first_toggle(tmp_path: Path) -> None:
     )
     recorder.start()
     # Push a payload before any toggle — must be silently discarded.
-    pubsub.push(_Topic("/observation/camera/usb"), _make_image(value=0))
+    recorder._on_image(_make_image(value=0))
     assert not (tmp_path / "episode_001.rrd").exists()
 
     # First toggle opens episode_001.
     new_path = recorder.toggle_recording()
     assert new_path == tmp_path / "episode_001.rrd"
-    pubsub.push(_Topic("/observation/camera/usb"), _make_image(value=1))
+    recorder._on_image(_make_image(value=1))
     recorder.stop()
 
     expected = tmp_path / "episode_001.rrd"
@@ -201,17 +109,14 @@ def test_start_leaves_recorder_idle_until_first_toggle(tmp_path: Path) -> None:
 
 
 def test_payload_messages_land_in_current_episode(tmp_path: Path) -> None:
-    pubsub = FakePubSub()
     recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
         record_path_factory=_path_factory(tmp_path),
-        entity_prefix="",
     )
     recorder.start()
     recorder.toggle_recording()  # IDLE → RECORDING
     n = 5
     for i in range(n):
-        pubsub.push(_Topic("/observation/camera/usb"), _make_image(value=i))
+        recorder._on_image(_make_image(value=i))
     recorder.stop()
 
     rec = rb.load_recording(str(tmp_path / "episode_001.rrd"))
@@ -226,30 +131,27 @@ def test_toggle_off_then_on_creates_two_episodes_with_idle_gap(tmp_path: Path) -
     2. Messages pushed while IDLE are silently discarded by the recorder
     3. IDLE → press → RECORDING (new episode opened)
     """
-    pubsub = FakePubSub()
     recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
         record_path_factory=_path_factory(tmp_path),
-        entity_prefix="",
     )
     recorder.start()
     # Operator presses to begin episode_001.
     assert recorder.toggle_recording() == tmp_path / "episode_001.rrd"
     for i in range(3):
-        pubsub.push(_Topic("/observation/camera/usb"), _make_image(value=i))
+        recorder._on_image(_make_image(value=i))
 
     # 1) Toggle off — return None signals "now IDLE".
     assert recorder.toggle_recording() is None
 
     # 2) Messages during the scene reset land in NO file.
     for i in range(5):
-        pubsub.push(_Topic("/observation/camera/usb"), _make_image(value=i + 500))
+        recorder._on_image(_make_image(value=i + 500))
 
     # 3) Toggle on — returns the new episode path.
     new_path = recorder.toggle_recording()
     assert new_path == tmp_path / "episode_002.rrd"
     for i in range(2):
-        pubsub.push(_Topic("/observation/camera/usb"), _make_image(value=i + 100))
+        recorder._on_image(_make_image(value=i + 100))
     recorder.stop()
 
     first = tmp_path / "episode_001.rrd"
@@ -267,11 +169,8 @@ def test_toggle_off_then_on_creates_two_episodes_with_idle_gap(tmp_path: Path) -
 def test_toggle_off_with_empty_episode_deletes_file(tmp_path: Path) -> None:
     """Toggling off an episode that received no payload discards the empty
     file. A subsequent toggle-on opens the next slot."""
-    pubsub = FakePubSub()
     recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
         record_path_factory=_path_factory(tmp_path),
-        entity_prefix="",
     )
     recorder.start()
     # Open episode_001 with no payload logged.
@@ -281,11 +180,11 @@ def test_toggle_off_with_empty_episode_deletes_file(tmp_path: Path) -> None:
     assert not (tmp_path / "episode_001.rrd").exists()
 
     # Push during the IDLE gap; nothing lands on disk.
-    pubsub.push(_Topic("/observation/camera/usb"), _make_image(value=99))
+    recorder._on_image(_make_image(value=99))
 
     # Toggle on — opens episode_002, slot 001 is gone (honest signal).
     assert recorder.toggle_recording() == tmp_path / "episode_002.rrd"
-    pubsub.push(_Topic("/observation/camera/usb"), _make_image(value=1))
+    recorder._on_image(_make_image(value=1))
     recorder.stop()
 
     assert not (tmp_path / "episode_001.rrd").exists()
@@ -301,11 +200,8 @@ def test_toggle_off_under_message_pressure_drops_nothing_to_disk(tmp_path: Path)
 
     The recorder is IDLE between toggle-off and toggle-on; messages dispatched
     during that window are silently discarded."""
-    pubsub = FakePubSub()
     recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
         record_path_factory=_path_factory(tmp_path),
-        entity_prefix="",
     )
     recorder.start()
     recorder.toggle_recording()  # IDLE → RECORDING
@@ -314,7 +210,7 @@ def test_toggle_off_under_message_pressure_drops_nothing_to_disk(tmp_path: Path)
 
     def pusher() -> None:
         for i in range(total):
-            pubsub.push(_Topic("/observation/camera/usb"), _make_image(value=i))
+            recorder._on_image(_make_image(value=i))
             time.sleep(0.0005)
 
     t = threading.Thread(target=pusher)
@@ -330,7 +226,7 @@ def test_toggle_off_under_message_pressure_drops_nothing_to_disk(tmp_path: Path)
     # Now toggle back on and push one more before stopping.
     new_path = recorder.toggle_recording()
     assert new_path == tmp_path / "episode_002.rrd"
-    pubsub.push(_Topic("/observation/camera/usb"), _make_image(value=999))
+    recorder._on_image(_make_image(value=999))
     recorder.stop()
 
     rec2 = rb.load_recording(str(tmp_path / "episode_002.rrd"))
@@ -341,7 +237,7 @@ def test_toggle_is_safe_when_factory_absent(tmp_path: Path) -> None:
     """When `record_path_factory` is unset, `start()` raises before the
     recorder ever enters RECORDING, and `toggle_recording()` is a logged-
     warning no-op returning None."""
-    recorder = RerunDataRecorder(pubsubs=[FakePubSub()])
+    recorder = RerunDataRecorder()
     try:
         with pytest.raises(RuntimeError, match="record_path_factory"):
             recorder.start()
@@ -351,78 +247,113 @@ def test_toggle_is_safe_when_factory_absent(tmp_path: Path) -> None:
         recorder.stop()
 
 
-def test_typed_color_image_slot_logs_under_camera_entity_path(tmp_path: Path) -> None:
-    """Frames received on the typed `color_image: In[Image]` slot are logged
-    at `config.camera_entity_path`, independent of `topic_to_entity` and
-    `visual_override`."""
-    pubsub = FakePubSub()
+def test_image_slot_logs_under_configured_camera_key(tmp_path: Path) -> None:
+    """Frames received on the typed `image: In[Image]` slot are logged
+    under `/observation/camera/{camera_key}`."""
     recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
         record_path_factory=_path_factory(tmp_path),
-        camera_entity_path="/observation/camera/usb",
+        camera_key="usb",
     )
     recorder.start()
     recorder.toggle_recording()
     for i in range(3):
-        recorder._on_color_image(_make_image(value=i))
+        recorder._on_image(_make_image(value=i))
     recorder.stop()
 
     rec = rb.load_recording(str(tmp_path / "episode_001.rrd"))
     assert _has_entity(rec, "/observation/camera/usb")
 
 
-def test_typed_color_image_slot_respects_idle_state(tmp_path: Path) -> None:
+def test_image_slot_respects_idle_state(tmp_path: Path) -> None:
     """Frames received on the typed slot while the recorder is IDLE are
     dropped on the floor; no file is opened, no log lands anywhere."""
-    pubsub = FakePubSub()
     recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
         record_path_factory=_path_factory(tmp_path),
-        camera_entity_path="/observation/camera/usb",
     )
     recorder.start()
     # Recorder is IDLE — push some frames anyway.
     for i in range(5):
-        recorder._on_color_image(_make_image(value=i))
+        recorder._on_image(_make_image(value=i))
     recorder.stop()
     assert not (tmp_path / "episode_001.rrd").exists()
 
 
-def test_typed_color_image_slot_honors_custom_entity_path(tmp_path: Path) -> None:
-    """`camera_entity_path` controls the entity name under which typed
-    frames are logged."""
-    pubsub = FakePubSub()
+def test_camera_key_controls_entity_path(tmp_path: Path) -> None:
+    """`camera_key` controls the leaf segment of the camera entity path."""
     recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
         record_path_factory=_path_factory(tmp_path),
-        camera_entity_path="/observation/images.wrist",
+        camera_key="wrist",
     )
     recorder.start()
     recorder.toggle_recording()
-    recorder._on_color_image(_make_image(value=42))
+    recorder._on_image(_make_image(value=42))
     recorder.stop()
 
     rec = rb.load_recording(str(tmp_path / "episode_001.rrd"))
-    assert _has_entity(rec, "/observation/images.wrist")
-    # The default path is NOT used.
+    assert _has_entity(rec, "/observation/camera/wrist")
+    # The default key is NOT used.
     assert not _has_entity(rec, "/observation/camera/usb")
 
 
-def test_recorder_isolated_from_viewer_failures(tmp_path: Path) -> None:
+def test_joint_state_slot_logs_measured_scalars(tmp_path: Path) -> None:
+    """Frames received on `joint_state: In[JointState]` are logged as
+    per-joint scalars under `/observation/state/<joint>`."""
+    recorder = RerunDataRecorder(
+        record_path_factory=_path_factory(tmp_path),
+    )
+    recorder.start()
+    recorder.toggle_recording()
+    for i in range(3):
+        recorder._on_joint_state(_make_joint_state(value=float(i)))
+    recorder.stop()
+
+    rec = rb.load_recording(str(tmp_path / "episode_001.rrd"))
+    assert _has_entity(rec, "/observation/state/joint1")
+    assert _has_entity(rec, "/observation/state/gripper")
+
+
+def test_desired_joint_action_slot_logs_action_scalars(tmp_path: Path) -> None:
+    """Frames received on `desired_joint_action: In[JointState]` are logged
+    as per-joint scalars under `/action/<joint>`."""
+    recorder = RerunDataRecorder(
+        record_path_factory=_path_factory(tmp_path),
+    )
+    recorder.start()
+    recorder.toggle_recording()
+    for i in range(3):
+        recorder._on_desired_joint_action(_make_joint_state(value=float(i) * 0.5))
+    recorder.stop()
+
+    rec = rb.load_recording(str(tmp_path / "episode_001.rrd"))
+    assert _has_entity(rec, "/action/joint1")
+    assert _has_entity(rec, "/action/gripper")
+
+
+def test_joint_state_slots_respect_idle_state(tmp_path: Path) -> None:
+    """Joint state and desired action received while IDLE are dropped."""
+    recorder = RerunDataRecorder(
+        record_path_factory=_path_factory(tmp_path),
+    )
+    recorder.start()
+    for i in range(5):
+        recorder._on_joint_state(_make_joint_state(value=float(i)))
+        recorder._on_desired_joint_action(_make_joint_state(value=float(i)))
+    recorder.stop()
+    assert not (tmp_path / "episode_001.rrd").exists()
+
+
+def test_recorder_is_independent_of_viewer(tmp_path: Path) -> None:
     """Recorder writes .rrd regardless of whether a bridge is running.
 
-    Mirrors design.md Decision 10: viewer and recorder are orthogonal sinks.
+    Viewer and recorder are orthogonal sinks.
     """
-    pubsub = FakePubSub()
     recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
         record_path_factory=_path_factory(tmp_path),
-        entity_prefix="",
     )
     # No bridge instantiated — recorder must still record once toggled on.
     recorder.start()
     recorder.toggle_recording()
-    pubsub.push(_Topic("/observation/camera/usb"), _make_image(value=1))
+    recorder._on_image(_make_image(value=1))
     recorder.stop()
 
     rec = rb.load_recording(str(tmp_path / "episode_001.rrd"))

@@ -60,6 +60,10 @@ from dimos.manipulation.policy.contract import (
 )
 from dimos.manipulation.policy.module import PolicyModule
 from dimos.manipulation.policy.observation import PolicyObservation
+from dimos.manipulation.policy.quest_rollout_toggle import (
+    QuestRolloutToggle,
+    QuestRolloutToggleConfig,
+)
 from dimos.manipulation.policy.registry import (
     BackendFactory,
     available_backends,
@@ -67,7 +71,6 @@ from dimos.manipulation.policy.registry import (
     is_registered,
     register_backend,
 )
-from dimos.manipulation.policy.rollout_toggle import RolloutToggle, RolloutToggleConfig
 
 __all__ = [
     "BackendFactory",
@@ -81,9 +84,9 @@ __all__ = [
     "PolicyModule",
     "PolicyModuleConfig",
     "PolicyObservation",
+    "QuestRolloutToggle",
+    "QuestRolloutToggleConfig",
     "RobotContract",
-    "RolloutToggle",
-    "RolloutToggleConfig",
     "TestPolicy",
     "available_backends",
     "create_backend",

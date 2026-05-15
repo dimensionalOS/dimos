@@ -9,7 +9,7 @@ This PR lands the three pillars of an imitation-learning loop on Dimos, wired en
 
 1. **Teleop** — Pink-IK driver fed by Quest VR or keyboard, with safety guards and per-robot config presets.
 2. **Recording** — Rerun-native, per-episode `.rrd` recorder with an operator-driven episode boundary on a Quest button.
-3. **Policy learning** — `PolicyNode` that runs a learned manipulation policy on the same command surface as teleop, with a LeRobot inference backend, a per-robot `RobotContract` abstraction, and an `.rrd → LeRobotDataset v2` converter.
+3. **Policy learning** — `PolicyNode` that runs a learned manipulation policy on the same command surface as teleop, with a LeRobot inference backend, a per-robot `RobotContract` abstraction, and an `.rrd → LeRobotDataset v3.0` converter.
 
 The same robot contract (`PiperRobotContract`) is reused on both ends: when recording, it converts live Quest+camera messages into LeRobot-shaped frames; when running a trained policy, it converts the policy's action vector back into a `JointState` command on the coordinator's joint-command port. That symmetry is what closes the loop without bespoke glue at each end.
 
@@ -61,28 +61,31 @@ A new task type built on top of the [Pink](https://github.com/stephane-caron/pin
 
 End-to-end pipeline for capturing demonstrations while teleoperating, designed so that the live preview and the on-disk recording can never drift.
 
-The whole recording package on `cc/learning` lives under `dimos/manipulation/data_collection/` — recorder, episode-boundary, Piper-specific blueprint config, and tests sit side-by-side rather than being split between `dimos/visualization/rerun/` and `dimos/teleop/quest/`.
+The whole recording package on `cc/learning` lives under `dimos/manipulation/data_collection/` — recorder, Quest-specific episode boundary, Piper blueprint config, and tests sit side-by-side rather than being split between `dimos/visualization/rerun/` and `dimos/teleop/quest/`.
 
 - **Recorder** (`dimos/manipulation/data_collection/recorder.py`):
   - `RerunDataRecorder` is a standalone Module that owns its own `rr.RecordingStream` + `rr.FileSink`, independent of the live-viewer bridge. It writes **one `.rrd` per episode**.
   - State machine: starts **IDLE** (no disk writes). `toggle_recording()` flips between `RECORDING` ↔ `IDLE`. `_open_episode()` opens a fresh `.rrd`; `_close_episode()` flushes, closes, and removes empty files.
-  - **Typed camera input**: `color_image: In[Image]` slot + `camera_entity_path: str = "/observation/camera/usb"` config. Frames arriving on the typed slot are logged at the configured entity path directly, bypassing `pubsubs` / `topic_to_entity` / `visual_override`. Joint scalars and other streams continue to flow through the generic pubsub path.
-  - Subscribes to the same pubsubs as the live bridge for non-camera streams, applies the same converter contracts → guaranteed schema alignment.
-  - `_log_episode_metadata()` writes `/meta/*` entities (start time, contract id, robot name, etc.) so downstream consumers don't need out-of-band metadata.
+  - **Pure typed inputs** — every recorder input arrives on an `In[T]` stream slot, the same idiom `PolicyModule` uses:
+    - `image: In[Image]` → logged under `/observation/camera/{camera_key}`.
+    - `joint_state: In[JointState]` → logged as per-joint scalars under `/observation/state/<joint>`.
+    - `desired_joint_action: In[JointState]` → logged as per-joint scalars under `/action/<joint>`.
+  - No `pubsubs` / `topic_to_entity` / `visual_override` / `subscribe_all` machinery — the recorder no longer imports from the bridge, and blueprint wiring picks each input by slot name + type (same way `PolicyModule` is wired).
+  - `_log_episode_metadata()` writes `/meta/*` entities (episode id, session id, operator) so downstream consumers don't need out-of-band metadata.
   - Bridge failures don't affect recording; recorder failures don't affect viewing.
-- **Episode boundary** (`dimos/manipulation/data_collection/episode_boundary.py`):
-  - `EpisodeBoundary` is a Quest-specific Module that watches a configurable button field (default: `right_secondary`, i.e. the B button) and dispatches edges to `recorder.toggle_recording()` with 500 ms debounce.
-  - Keeps teleop-specific UX out of the generic recorder — the recorder remains reusable for non-teleop blueprints (e.g. a future autonomous-rollout recorder).
+- **Episode boundary** (`dimos/manipulation/data_collection/quest_episode_boundary.py`):
+  - `QuestEpisodeBoundary` is a Quest-specific Module that watches a configurable button field (default: `right_secondary`, i.e. the B button) and dispatches edges to `recorder.toggle_recording()` with 500 ms debounce.
+  - Keeps teleop-specific UX out of the generic recorder. The `Quest` prefix advertises the dependency on `dimos.teleop.quest.quest_types.Buttons`; a future non-Quest variant (`KeyboardEpisodeBoundary`, …) slots in alongside it.
 - **Live preview + recorder config** (`dimos/manipulation/data_collection/piper_blueprint_config.py`):
-  - `joint_state_to_rerun_scalars()` — per-joint scalar time-series, measured vs. commanded overlay.
+  - `joint_state_to_rerun_scalars()` — per-joint scalar time-series, measured vs. commanded overlay. The recorder calls this directly from its typed-slot handlers; the bridge still uses it via `visual_override` for live viewing.
   - `piper_data_collection_rerun_blueprint()` — camera left / joint plots right.
-  - `_piper_data_collection_topic_to_entity()` strips LCM `#Type` suffixes; it no longer special-cases the camera topic (typed-slot path handles it).
-  - **The preview and the recorder share the same `piper_data_collection_rerun_config()`** — single source of truth, now also carrying `camera_entity_path` for the recorder atom.
+  - `_piper_data_collection_topic_to_entity()` is now consumed only by the bridge — the recorder's data inputs no longer go through this callback.
+  - The shared `piper_data_collection_rerun_config()` dict carries bridge-side keys (`visual_override`, `topic_to_entity`, `blueprint`) and recorder-side keys (`camera_key`, `record_path_factory`, `recording_id_factory`, `episode_metadata`) side-by-side; each consumer picks its subset.
 - **Quest blueprints** (`dimos/teleop/quest/blueprints.py`):
-  - `teleop_quest_piper_data_collection` chains `CameraModule.blueprint()` → `RerunDataRecorder` (camera via typed slot, joints via pubsub) → live viewer → `EpisodeBoundary`.
+  - `teleop_quest_piper_data_collection` chains `CameraModule.blueprint()` → `RerunDataRecorder` (all inputs via typed slots) → live viewer → `QuestEpisodeBoundary`. A `(RerunDataRecorder, "image", "color_image")` remapping binds the recorder's `image` slot to the `color_image` transport, mirroring the policy blueprint's identical remapping for `PolicyModule.image`.
   - `teleop_quest_xarm7` / `teleop_quest_piper` include hardware viz via `ManipulationModule.blueprint()` unconditionally.
 - **README** (`dimos/teleop/quest/README.md`): documents three runtime modes — mock Meshcat (default), real hardware IP, MuJoCo (`--simulation`).
-- **Tests** (all under `dimos/manipulation/data_collection/`): `test_recorder.py` (typed camera + lifecycle), `test_episode_boundary.py`, `test_piper_integration.py`, `test_piper_blueprint_config.py`.
+- **Tests** (all under `dimos/manipulation/data_collection/`): `test_recorder.py` (typed-slot lifecycle for image/joint_state/desired_joint_action), `test_quest_episode_boundary.py`, `test_piper_integration.py`, `test_piper_blueprint_config.py`.
 
 ### Pillar 3 — Policy learning
 
@@ -92,10 +95,10 @@ A runtime policy module that swaps the teleop driver for a trained model, plus t
   - `PolicyModule` is a Module that assembles a single `image: In[Image]` slot, joint state, task description, and Quest button streams into a `PolicyObservation`, runs inference on its own thread at `PolicyModuleConfig.policy_rate`, and publishes `JointState` on the `joint_command` output — **same port shape as teleop**, so the rest of the stack doesn't know which driver is in control.
   - **One typed camera input** with a `camera_key: str = "main"` config carrying the observation-dict key the backend sees in `PolicyObservation.images`. (The multi-camera scaffolding from the original design was deliberately collapsed to a single typed slot.)
   - Key methods: `assemble_observation()`, `_inference_loop()`, `_tick_once()` (calls `backend.select_action()` → `PolicyCommand`).
-  - **Rollout gate** (`RolloutToggle` + `start_rollout()` / `stop_rollout()` / `is_rollout_active()` RPCs): publication is gated `False` at startup; an operator press on a Quest button (default `left_secondary`) toggles rollout, and both transitions reset the backend so no buffered chunk survives.
+  - **Rollout gate** (`QuestRolloutToggle` + `start_rollout()` / `stop_rollout()` / `is_rollout_active()` RPCs): publication is gated `False` at startup; an operator press on a Quest button (default `left_secondary`) toggles rollout, and both transitions reset the backend so no buffered chunk survives.
   - **Teleop preempt**: whenever any button in `teleop_engage_buttons` goes high, the backend is reset and publication pauses — buffered policy actions are dropped. Re-checks after `select_action()` returns so a button frame arriving mid-inference still drops the in-flight command.
   - **Mandatory buttons subscription** when `teleop_engage_buttons` is non-empty (failure propagates from `start()`); a **buttons grace period** (`buttons_grace_period: float = 2.0`) gates publication until the first Buttons frame is received, logging a warning if the period elapses first.
-- **Rollout toggle** (`dimos/manipulation/policy/rollout_toggle.py`):
+- **Rollout toggle** (`dimos/manipulation/policy/quest_rollout_toggle.py`):
   - Quest-button-driven Module that calls into `PolicyModule.start_rollout()` / `stop_rollout()` on a debounced rising edge. Keeps the runtime gate cleanly composable into the existing button stream.
 - **Backend registry** (`dimos/manipulation/policy/registry.py`):
   - Public API: `register_backend()`, `create_backend()`, `available_backends()`, `is_registered()`.
@@ -133,7 +136,7 @@ A runtime policy module that swaps the teleop driver for a trained model, plus t
 - **Tests** (~2300 lines under `dimos/manipulation/policy/`, 109 passing on cc/learning):
   - `test_module.py` (616L), `test_module_blueprint_wiring.py` (119L)
   - `test_blueprint.py`, `test_contract.py`, `test_contracts_registry.py`
-  - `test_piper_contract.py` (298L), `test_registry.py`, `test_rollout_toggle.py` (168L)
+  - `test_piper_contract.py` (298L), `test_registry.py`, `test_quest_rollout_toggle.py` (168L)
   - `test_test_policy.py`, `test_rrd_to_lerobot_cli.py` (171L), `test_rrd_to_lerobot_integration.py` (211L, skipped without the `manipulation` extra installed)
 
 ### Supporting — Piper hardware adapter fixes
@@ -148,7 +151,7 @@ Long-tail correctness fixes on `dimos/hardware/manipulators/piper/adapter.py` th
 ### Supporting — Module registry plumbing
 
 - `dimos/core/global_config.py` (+ `test_global_config.py`) — listen-host defaults (`simulation_backend` was reverted in a follow-on commit on `cc/learning`).
-- `dimos/robot/all_blueprints.py` (+ `test_get_all_blueprints.py`) — registers `policy-module`, `rollout-toggle`, `rerun-data-recorder`, `episode-boundary`, `teleop-quest-piper-data-collection`, `teleop-quest-piper-policy`, `teleop-quest-piper-policy-test`, and the `PIPER_ARM_FK_MODEL` rename.
+- `dimos/robot/all_blueprints.py` (+ `test_get_all_blueprints.py`) — registers `policy-module`, `quest-rollout-toggle`, `rerun-data-recorder`, `quest-episode-boundary`, `teleop-quest-piper-data-collection`, `teleop-quest-piper-policy`, `teleop-quest-piper-policy-test`, and the `PIPER_ARM_FK_MODEL` rename.
 - `dimos/robot/cli/dimos.py` — `inspect.isclass()` guard so path-typed model configs survive the arg-help/parser path.
 - `dimos/robot/config.py` — `RobotConfig.get_task_config()` accepts an `end_effector_frame` override.
 
@@ -223,7 +226,7 @@ Open questions to settle during implementation:
 Today every `Module` declares its `In[T]` / `Out[T]` ports as static class annotations and the framework instantiates them via `get_type_hints()` introspection at `__init__` time (`dimos/core/module.py`). That assumption shows up in two places that already pinch as the demo grows beyond the single-arm + single-camera Piper:
 
 - **Coordinator inputs are fixed.** `ControlCoordinator` exposes exactly four input ports — `joint_command`, `cartesian_command`, `twist_command`, `buttons` (`dimos/control/coordinator.py`). A new task type can only piggy-back on those: `single_arm_pink_ik` already overloads `cartesian_command` and uses `frame_id` as the task name to route. A dual-arm IK task, a hybrid cartesian + posture task, or anything that wants a streaming auxiliary target has to invent more in-band conventions on top of the same four ports.
-- **Cameras are hardcoded.** `CameraModule` and `RerunDataRecorder` are themselves camera-count-agnostic, but the wiring isn't: the literal `_CAMERA_ENTITY_PATH` in `dimos/manipulation/data_collection/piper_blueprint_config.py`, the single `Spatial2DView` in the live layout, the single `CameraModule.blueprint()` instance in the Quest blueprint, the single typed `color_image: In[Image]` slot on `RerunDataRecorder`, and the contract's single `/observation/camera/usb` key all assume one camera. Adding a wrist or RealSense view requires coordinated edits across all of those plus `PiperRobotContract`.
+- **Cameras are hardcoded.** `CameraModule` is camera-count-agnostic, but the wiring isn't: the literal `_CAMERA_KEY = "usb"` in `dimos/manipulation/data_collection/piper_blueprint_config.py`, the single `Spatial2DView` in the live layout, the single `CameraModule.blueprint()` instance in the Quest blueprint, the single typed `image: In[Image]` slot on `RerunDataRecorder` (and the matching slot on `PolicyModule`), and the contract's single `/observation/camera/usb` key all assume one camera. Adding a wrist or RealSense view requires coordinated edits across all of those plus `PiperRobotContract`.
 
 Two paths, picking one closes both gaps:
 
@@ -244,10 +247,10 @@ Either path also unblocks two follow-ons that are awkward today: per-task replay
 | `dimos/control/tasks/pink_teleop_task.py` | (large) | Pink IK task hierarchy — unified `SingleArmPinkIKTask` + per-robot config presets |
 | `dimos/control/tasks/test_pink_teleop_task.py` | new | Pink IK task unit tests |
 | **Pillar 2 — Recording** (all under `dimos/manipulation/data_collection/`) | | |
-| `dimos/manipulation/data_collection/recorder.py` | 357 | `RerunDataRecorder` (per-episode `.rrd`, typed `color_image` slot + `camera_entity_path`) |
+| `dimos/manipulation/data_collection/recorder.py` | 291 | `RerunDataRecorder` (per-episode `.rrd`; pure typed `image` / `joint_state` / `desired_joint_action` slots + `camera_key`) |
 | `dimos/manipulation/data_collection/test_recorder.py` | 430 | Recorder lifecycle + I/O + typed-camera tests |
-| `dimos/manipulation/data_collection/episode_boundary.py` | 106 | Quest button → `toggle_recording()` |
-| `dimos/manipulation/data_collection/test_episode_boundary.py` | 127 | Debounce + edge-detection tests |
+| `dimos/manipulation/data_collection/quest_episode_boundary.py` | 111 | `QuestEpisodeBoundary` — Quest button → `toggle_recording()` |
+| `dimos/manipulation/data_collection/test_quest_episode_boundary.py` | 127 | Debounce + edge-detection tests |
 | `dimos/manipulation/data_collection/piper_blueprint_config.py` | 292 | Live Rerun preview config + recorder atoms (single source of truth) |
 | `dimos/manipulation/data_collection/test_piper_blueprint_config.py` | 257 | Preview / config tests |
 | `dimos/manipulation/data_collection/test_piper_integration.py` | 281 | End-to-end recording integration |
@@ -259,7 +262,7 @@ Either path also unblocks two follow-ons that are awkward today: per-task replay
 | `dimos/manipulation/policy/backends/test.py` | 187 | `TestPolicy` (closed-loop sinusoid) |
 | `dimos/manipulation/policy/contract.py` | 160 | `RobotContract` ABC |
 | `dimos/manipulation/policy/blueprint.py` | 119 | `policy_servo_task_config` + `policy_engage_buttons` |
-| `dimos/manipulation/policy/rollout_toggle.py` | 116 | `RolloutToggle` Module |
+| `dimos/manipulation/policy/quest_rollout_toggle.py` | 117 | `QuestRolloutToggle` Module |
 | `dimos/manipulation/policy/config.py` | 95 | `PolicyModuleConfig` |
 | `dimos/manipulation/policy/__init__.py` | 94 | Public surface |
 | `dimos/manipulation/policy/backend.py` | 72 | Backend protocol |
@@ -273,7 +276,7 @@ Either path also unblocks two follow-ons that are awkward today: per-task replay
 | `dimos/manipulation/policy/test_rrd_to_lerobot_integration.py` | 211 | End-to-end converter test (skipped without `manipulation` extra) |
 | `dimos/manipulation/policy/test_blueprint.py` | 192 | Blueprint priority + engage-button wiring |
 | `dimos/manipulation/policy/test_test_policy.py` | 190 | TestPolicy backend (closed-loop center) |
-| `dimos/manipulation/policy/test_rollout_toggle.py` | 168 | Rollout enable/disable transitions |
+| `dimos/manipulation/policy/test_quest_rollout_toggle.py` | 168 | Rollout enable/disable transitions |
 | `dimos/manipulation/policy/test_rrd_to_lerobot_cli.py` | 171 | Converter CLI tests |
 | `dimos/manipulation/policy/test_module_blueprint_wiring.py` | 119 | Module + blueprint integration |
 | `dimos/manipulation/policy/test_contract.py` | 96 | Contract ABC |
@@ -313,7 +316,7 @@ Either path also unblocks two follow-ons that are awkward today: per-task replay
 | `dimos/hardware/manipulators/piper/adapter.py` | Gripper unit fix, graceful shutdown, init sequencing |
 | `dimos/core/global_config.py` | Listen-host config (simulation_backend reverted on cc/learning) |
 | `dimos/core/test_global_config.py` | Listen-host defaults |
-| `dimos/robot/all_blueprints.py` | Register `policy-module`, `rollout-toggle`, recorder, episode boundary, data-collection blueprint, two policy deployment blueprints |
+| `dimos/robot/all_blueprints.py` | Register `policy-module`, `quest-rollout-toggle`, recorder, `quest-episode-boundary`, data-collection blueprint, two policy deployment blueprints |
 | `dimos/robot/test_get_all_blueprints.py` | Registry smoke test |
 | `dimos/robot/cli/dimos.py` | `inspect.isclass()` guard for path-typed model configs |
 | `pyproject.toml` | New deps: `pin-pink`, `qpsolvers`, `daqp` (manipulation extra); `lerobot>=0.5.1; python_version >= '3.12'` (manipulation extra); perception/manipulation marked mutually exclusive; `manipulation` removed from `all` |
@@ -322,8 +325,8 @@ Either path also unblocks two follow-ons that are awkward today: per-task replay
 
 | File | Replaced by |
 |---|---|
-| `dimos/teleop/quest/data_collection.py` (66L) | `dimos/manipulation/data_collection/recorder.py` + `dimos/manipulation/data_collection/episode_boundary.py` |
-| `dimos/teleop/quest/test_data_collection.py` (55L) | `test_recorder.py` + `test_episode_boundary.py` + `test_piper_integration.py` (all under `dimos/manipulation/data_collection/`) |
+| `dimos/teleop/quest/data_collection.py` (66L) | `dimos/manipulation/data_collection/recorder.py` + `dimos/manipulation/data_collection/quest_episode_boundary.py` |
+| `dimos/teleop/quest/test_data_collection.py` (55L) | `test_recorder.py` + `test_quest_episode_boundary.py` + `test_piper_integration.py` (all under `dimos/manipulation/data_collection/`) |
 
 ## Test plan
 
@@ -333,7 +336,7 @@ Either path also unblocks two follow-ons that are awkward today: per-task replay
 - [ ] `uv run pytest dimos/manipulation/policy/` (full policy package suite — 109 tests passing on cc/learning)
 - [ ] `uv run pytest dimos/hardware/manipulators/piper/test_adapter.py`
 - [ ] `uv run pytest dimos/core/test_global_config.py dimos/robot/test_get_all_blueprints.py`
-- [ ] Top-level import smoke: `uv run python -c "from dimos.manipulation.policy import PolicyModule, PolicyModuleConfig, RolloutToggle"`
+- [ ] Top-level import smoke: `uv run python -c "from dimos.manipulation.policy import PolicyModule, PolicyModuleConfig, QuestRolloutToggle"`
 - [ ] Mock smoke: `uv run dimos run teleop-quest-piper` — Quest connects and drives the arm via Pink IK
 - [ ] Mock smoke: `uv run dimos run teleop-quest-piper-data-collection` — `.rrd` files appear under the recording dir on each B-button toggle; Rerun preview shows live camera + joint plots
 - [ ] xArm7 mock: `uv run dimos run teleop-quest-xarm7`

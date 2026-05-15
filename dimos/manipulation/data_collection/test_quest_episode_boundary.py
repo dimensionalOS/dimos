@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for :class:`EpisodeBoundary` — Quest-button → recorder rollover."""
+"""Tests for :class:`QuestEpisodeBoundary` — Quest-button → recorder rollover."""
 
 from __future__ import annotations
 
 import time
 from typing import Any
 
-from dimos.manipulation.data_collection.episode_boundary import EpisodeBoundary
+from dimos.manipulation.data_collection.quest_episode_boundary import QuestEpisodeBoundary
 from dimos.teleop.quest.quest_types import Buttons
 
 
@@ -47,7 +47,7 @@ def _make_buttons(**flags: bool) -> Buttons:
 
 
 def _make_boundary(button: str = "right_secondary", debounce: float = 0.5) -> Any:
-    eb = EpisodeBoundary(button=button, debounce_seconds=debounce)
+    eb = QuestEpisodeBoundary(button=button, debounce_seconds=debounce)
     eb.recorder = _FakeRecorder()
     return eb
 

@@ -258,6 +258,7 @@ def test_piper_data_collection_rerun_config_exposes_recorder_fields() -> None:
     assert callable(cfg["episode_metadata"])
     assert cfg["entity_prefix"] == ""
     assert callable(cfg["topic_to_entity"])
-    # Camera entity path is shipped through the recorder-config dict so the
+    # Camera key is shipped through the recorder-config dict so the
     # blueprint can pass it to `RerunDataRecorder` without re-declaring it.
-    assert cfg["camera_entity_path"] == "/observation/camera/usb"
+    # The recorder derives `/observation/camera/{camera_key}` internally.
+    assert cfg["camera_key"] == "usb"

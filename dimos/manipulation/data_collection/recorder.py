@@ -15,69 +15,50 @@
 """Standalone Rerun-backed data recorder for robot-learning data collection.
 
 `RerunDataRecorder` owns its own ``rr.RecordingStream`` + ``rr.FileSink`` and
-writes one ``.rrd`` per demonstration *episode*. It subscribes to the same
-pubsubs the live-viewer bridge does, runs the same converter contract
-(``visual_override`` chaining, ``entity_prefix`` derivation, ``to_rerun()``),
-and is otherwise independent of the bridge — a viewer failure does not affect
-recording, a recorder failure does not affect viewing.
+writes one ``.rrd`` per demonstration *episode*. Inputs arrive on typed
+``In[T]`` stream slots — the same idiom used by ``PolicyModule`` — so a
+blueprint connects each producer to the corresponding slot at wiring time:
 
-Camera path: the camera image arrives through the typed
-``color_image: In[Image]`` stream slot and is logged under
-``RerunDataRecorderConfig.camera_entity_path``. This typed path skips the
-``pubsubs`` / ``topic_to_entity`` / ``visual_override`` machinery entirely
-— blueprints route exactly one of the two paths for the camera, never
-both, to avoid double-logging the same frame.
+* ``image: In[Image]`` — camera frame, logged under
+  ``/observation/camera/{camera_key}``.
+* ``joint_state: In[JointState]`` — measured joint state, logged as
+  per-joint scalars under ``/observation/state/<joint>``.
+* ``desired_joint_action: In[JointState]`` — commanded joint trajectory,
+  logged as per-joint scalars under ``/action/<joint>``.
 
-Bridge ``bridge.py`` is **not** modified by this module. Only already
-module-level types (``RerunMulti``, ``RerunData``, ``RerunConvertible``,
-``is_rerun_multi``) are imported. The small composition logic
-(``_get_entity_path`` / ``_compose_converter``) is reimplemented locally —
-~20 lines, structurally mirroring the bridge — guarded by a drift-detector
-unit test in ``test_recorder.py``.
+The recorder is independent of the live-viewer bridge: a viewer failure
+does not affect recording, a recorder failure does not affect viewing.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import field
 from pathlib import Path
 import threading
-from typing import Any, cast
+from typing import Any
 
 from reactivex.disposable import Disposable
 import rerun as rr
 from rerun._baseclasses import Archetype
-from toolz import pipe  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.pubsub.patterns import Glob, pattern_matches
-from dimos.protocol.pubsub.spec import SubscribeAllCapable
-from dimos.utils.logging_config import setup_logger
-
-# Types only — bridge.py is intentionally not edited by this change.
-from dimos.visualization.rerun.bridge import (
-    RerunConvertible,
-    RerunData,
-    is_rerun_multi,
+from dimos.manipulation.data_collection.piper_blueprint_config import (
+    joint_state_to_rerun_scalars,
 )
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
 class RerunDataRecorderConfig(ModuleConfig):
-    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
-
-    visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
-    entity_prefix: str = "world"
-    topic_to_entity: Callable[[Any], str] | None = None
-
-    # Camera typed-input path. Frames arriving on `RerunDataRecorder.color_image`
-    # are logged under this entity path, bypassing pubsubs / topic_to_entity.
-    camera_entity_path: str = "/observation/camera/usb"
+    # Camera frames arriving on the `image` slot are logged under
+    # `f"/observation/camera/{camera_key}"`. Mirrors
+    # `PolicyModuleConfig.camera_key` so producer-side wiring is symmetric.
+    camera_key: str = "usb"
 
     record_path_factory: Callable[[], Path] | None = None
     recording_id_factory: Callable[[Path], str] | None = None
@@ -86,26 +67,20 @@ class RerunDataRecorderConfig(ModuleConfig):
     app_id: str = "dimos_recorder"
 
 
-RerunDataRecorderConfig.model_rebuild(_types_namespace={"Archetype": Archetype})
-
-
 class RerunDataRecorder(Module):
-    """Records pubsub messages to per-episode ``.rrd`` files via a standalone
-    ``rr.RecordingStream``.
+    """Records typed stream inputs to per-episode ``.rrd`` files via a
+    standalone ``rr.RecordingStream``.
 
-    One recorder instance writes a sequence of episodes to disk under a session
-    directory. Episode boundaries are operator-driven via ``rotate_recording()``.
-
-    The camera image arrives through the typed ``color_image: In[Image]``
-    stream slot and is logged under ``config.camera_entity_path``. All other
-    streams (joint scalars, action scalars, episode metadata) come through
-    the generic ``config.pubsubs`` + ``topic_to_entity`` /
-    ``visual_override`` flow.
+    One recorder instance writes a sequence of episodes to disk under a
+    session directory. Episode boundaries are operator-driven via
+    ``toggle_recording()``.
     """
 
     config: RerunDataRecorderConfig
 
-    color_image: In[Image]
+    image: In[Image]
+    joint_state: In[JointState]
+    desired_joint_action: In[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -114,50 +89,8 @@ class RerunDataRecorder(Module):
         self._current_nonempty: bool = False
         self._episode_index: int = 0
         self._record_lock: threading.Lock = threading.Lock()
-        self._converter_cache: dict[str, Callable[[Any], RerunData | None]] = {}
-
-    # ── Composition logic (mirrors bridge; do not import bridge logic) ──
-
-    def _get_entity_path(self, topic: Any) -> str:
-        if self.config.topic_to_entity:
-            return self.config.topic_to_entity(topic)
-        topic_str = getattr(topic, "name", None) or str(topic)
-        topic_str = topic_str.split("#")[0]
-        return f"{self.config.entity_prefix}{topic_str}"
-
-    def _compose_converter(self, entity_path: str) -> Callable[[Any], RerunData | None]:
-        cached = self._converter_cache.get(entity_path)
-        if cached is not None:
-            return cached
-
-        matches = [
-            fn
-            for pattern, fn in self.config.visual_override.items()
-            if pattern_matches(pattern, entity_path)
-        ]
-
-        if any(fn is None for fn in matches):
-
-            def suppressed(_msg: Any) -> RerunData | None:
-                return None
-
-            self._converter_cache[entity_path] = suppressed
-            return suppressed
-
-        def final_convert(msg: Any) -> RerunData | None:
-            if isinstance(msg, Archetype):
-                return msg
-            if is_rerun_multi(msg):
-                return msg
-            if isinstance(msg, RerunConvertible):
-                return msg.to_rerun()
-            return None
-
-        def composed(msg: Any) -> RerunData | None:
-            return cast("RerunData | None", pipe(msg, *matches, final_convert))
-
-        self._converter_cache[entity_path] = composed
-        return composed
+        self._measured_scalars = joint_state_to_rerun_scalars("measured")
+        self._commanded_scalars = joint_state_to_rerun_scalars("commanded")
 
     # ── Episode plumbing ──
 
@@ -240,6 +173,45 @@ class RerunDataRecorder(Module):
                 recording=stream,
             )
 
+    # ── Typed input handlers ──
+
+    def _camera_entity_path(self) -> str:
+        return f"/observation/camera/{self.config.camera_key}"
+
+    def _on_image(self, image: Image) -> None:
+        """Log a camera frame under ``/observation/camera/{camera_key}``.
+
+        A frame received while the recorder is IDLE is dropped on the floor.
+        """
+        archetype = image.to_rerun()
+        if archetype is None:
+            return
+        with self._record_lock:
+            stream = self._record_stream
+            if stream is None:
+                return
+            rr.log(self._camera_entity_path(), archetype, recording=stream)
+            self._current_nonempty = True
+
+    def _on_joint_state(self, msg: JointState) -> None:
+        """Log measured joint state as per-joint scalars."""
+        self._log_joint_scalars(self._measured_scalars(msg))
+
+    def _on_desired_joint_action(self, msg: JointState) -> None:
+        """Log commanded joint trajectory as per-joint scalars."""
+        self._log_joint_scalars(self._commanded_scalars(msg))
+
+    def _log_joint_scalars(self, scalars: list[tuple[str, Archetype]]) -> None:
+        if not scalars:
+            return
+        with self._record_lock:
+            stream = self._record_stream
+            if stream is None:
+                return
+            for path, archetype in scalars:
+                rr.log(path, archetype, recording=stream)
+            self._current_nonempty = True
+
     # ── Module lifecycle / RPCs ──
 
     @rpc
@@ -252,70 +224,33 @@ class RerunDataRecorder(Module):
         # Recorder starts in IDLE. The operator must press the toggle button
         # once to open episode_001.rrd — so warmup motion, scene setup, and
         # gripper calibration before the first demo never end up baked into a
-        # recording. See design.md Decision 7.
+        # recording.
         self._episode_index = 0
         self._record_stream = None
         self._current_path = None
         self._current_nonempty = False
 
-        for pubsub in self.config.pubsubs:
-            if hasattr(pubsub, "start"):
-                pubsub.start()
-            unsub = pubsub.subscribe_all(self._on_message)
-            self.register_disposable(Disposable(unsub))
-
-        for pubsub in self.config.pubsubs:
-            if hasattr(pubsub, "stop"):
-                self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
-
-        # `color_image` may not be wired to a transport in standalone unit
-        # tests (no blueprint, no autoconnect). Drive the typed handler
-        # directly via `_on_color_image(...)` in that case.
-        try:
-            self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
-        except AttributeError:
-            logger.debug(
-                "RerunDataRecorder: color_image not connected to a transport — "
-                "typed camera path will only fire via direct _on_color_image() calls"
-            )
+        # Typed slots may not be wired to a transport in standalone unit
+        # tests (no blueprint, no autoconnect). Drive the handlers directly
+        # via `_on_*(...)` in that case.
+        for slot_name, handler in (
+            ("image", self._on_image),
+            ("joint_state", self._on_joint_state),
+            ("desired_joint_action", self._on_desired_joint_action),
+        ):
+            slot = getattr(self, slot_name, None)
+            if slot is None:
+                continue
+            try:
+                self.register_disposable(Disposable(slot.subscribe(handler)))
+            except AttributeError:
+                logger.debug(
+                    "RerunDataRecorder: %s not connected to a transport — "
+                    "typed path will only fire via direct handler calls",
+                    slot_name,
+                )
 
         logger.info("RerunDataRecorder: idle — press the toggle button to start recording")
-
-    def _on_color_image(self, image: Image) -> None:
-        """Log a typed camera frame under ``config.camera_entity_path``.
-
-        Bypasses ``topic_to_entity`` / ``visual_override`` — the typed slot
-        is the authoritative camera path. A frame received here while the
-        recorder is IDLE is dropped on the floor, same as messages on the
-        generic pubsub path.
-        """
-        archetype = image.to_rerun()
-        if archetype is None:
-            return
-        with self._record_lock:
-            stream = self._record_stream
-            if stream is None:
-                return
-            rr.log(self.config.camera_entity_path, archetype, recording=stream)
-            self._current_nonempty = True
-
-    def _on_message(self, msg: Any, topic: Any) -> None:
-        entity_path = self._get_entity_path(topic)
-        rerun_data = self._compose_converter(entity_path)(msg)
-        if not rerun_data:
-            return
-
-        with self._record_lock:
-            stream = self._record_stream
-            if stream is None:
-                return
-
-            if is_rerun_multi(rerun_data):
-                for path, archetype in rerun_data:
-                    rr.log(path, archetype, recording=stream)
-            else:
-                rr.log(entity_path, cast("Archetype", rerun_data), recording=stream)
-            self._current_nonempty = True
 
     @rpc
     def toggle_recording(
@@ -350,7 +285,6 @@ class RerunDataRecorder(Module):
     @rpc
     def stop(self) -> None:
         self._close_episode()
-        self._converter_cache.clear()
         super().stop()
 
 

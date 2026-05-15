@@ -663,11 +663,11 @@ class PiperPinkIKTaskConfig(SingleArmPinkIKTaskConfig):
     model_path: str | Path = PIPER_FK_MODEL
     end_effector_frame: str = "gripper_base"
     hand: Literal["left", "right"] | None = "right"
-    damping_task_cost: float = 1e-4
+    damping_task_cost: float = 1e-3
     posture_cost: float = 1e-3
     max_joint_acceleration: float = 0.0
     velocity_smoothing_alpha: float = 0.8
-    manipulability_cost: float = 0.03
+    manipulability_cost: float = 0.01
 
 
 PiperPinkIKTask = SingleArmPinkIKTask

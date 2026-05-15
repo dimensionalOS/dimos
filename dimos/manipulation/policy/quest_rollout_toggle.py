@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``RolloutToggle`` — dispatch a Quest controller button edge to the
+"""``QuestRolloutToggle`` — dispatch a Quest controller button edge to the
 ``PolicyModule``'s ``start_rollout`` / ``stop_rollout`` RPCs.
 
-Mirrors `dimos.teleop.quest.episode_boundary.EpisodeBoundary`: a tiny
-module that watches one configurable digital `Buttons` field for a
+Mirrors :class:`dimos.manipulation.data_collection.quest_episode_boundary.QuestEpisodeBoundary`:
+a tiny module that watches one configurable digital `Buttons` field for a
 debounced rising edge and toggles a sibling module's state. Co-located
 under `dimos/manipulation/policy/` because it imports `PolicyModule` —
-keeping the dependency one-directional.
+keeping the dependency one-directional. The ``Quest`` prefix advertises
+the dependency on ``dimos.teleop.quest.quest_types.Buttons``.
 """
 
 from __future__ import annotations
@@ -40,26 +41,26 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class RolloutToggleConfig(ModuleConfig):
-    """Configuration for :class:`RolloutToggle`.
+class QuestRolloutToggleConfig(ModuleConfig):
+    """Configuration for :class:`QuestRolloutToggle`.
 
     ``button`` names a digital field on :class:`Buttons`. The default is
     ``left_secondary`` (the Y button on the left controller). **Do not pick
     ``right_primary`` (A)** — that is the press-and-hold engage button used by
-    teleop tasks. ``right_secondary`` (B) is taken by `EpisodeBoundary` for
-    data-collection rollover. ``*_trigger`` is taken by gripper control. Y is
-    on the opposite hand from the engage / trigger so the operator can hit it
-    without disturbing teleop state.
+    teleop tasks. ``right_secondary`` (B) is taken by `QuestEpisodeBoundary`
+    for data-collection rollover. ``*_trigger`` is taken by gripper control.
+    Y is on the opposite hand from the engage / trigger so the operator can
+    hit it without disturbing teleop state.
     """
 
     button: str = "left_secondary"
     debounce_seconds: float = 0.5
 
 
-class RolloutToggle(Module):
+class QuestRolloutToggle(Module):
     """Toggle a `PolicyModule`'s rollout state on a configurable button edge."""
 
-    config: RolloutToggleConfig
+    config: QuestRolloutToggleConfig
 
     buttons: In[Buttons]
     policy_module: PolicyModule
@@ -77,7 +78,7 @@ class RolloutToggle(Module):
         except AttributeError:
             if not self._unknown_button_logged:
                 logger.warning(
-                    "RolloutToggle: configured button %r not found on Buttons",
+                    "QuestRolloutToggle: configured button %r not found on Buttons",
                     self.config.button,
                 )
                 self._unknown_button_logged = True
@@ -96,15 +97,15 @@ class RolloutToggle(Module):
         try:
             if self.policy_module.is_rollout_active():
                 self.policy_module.stop_rollout()
-                logger.info("RolloutToggle: rollout stopped")
+                logger.info("QuestRolloutToggle: rollout stopped")
             else:
                 self.policy_module.start_rollout()
-                logger.info("RolloutToggle: rollout started")
+                logger.info("QuestRolloutToggle: rollout started")
         except Exception as exc:
             # structlog drops `logger.exception`'s traceback in our default
             # format — include the exception class+message in the message
             # itself so live debugging isn't blind.
-            logger.exception(f"RolloutToggle: dispatch raised: {type(exc).__name__}: {exc}")
+            logger.exception(f"QuestRolloutToggle: dispatch raised: {type(exc).__name__}: {exc}")
 
     @rpc
     def start(self) -> None:
@@ -113,4 +114,4 @@ class RolloutToggle(Module):
         self.register_disposable(Disposable(unsub))
 
 
-__all__ = ["RolloutToggle", "RolloutToggleConfig"]
+__all__ = ["QuestRolloutToggle", "QuestRolloutToggleConfig"]

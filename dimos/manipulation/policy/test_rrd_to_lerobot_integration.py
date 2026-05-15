@@ -14,9 +14,9 @@
 
 """End-to-end integration tests for ``scripts/datasets/rrd_to_lerobot.py``.
 
-Drives `RerunDataRecorder` against an in-memory pubsub fake to write a real
+Drives `RerunDataRecorder` through its typed-slot handlers to write a real
 multi-episode rrd session into ``tmp_path``, then runs the converter and
-asserts the LeRobot v2 dataset directory has the expected layout.
+asserts the LeRobot v3.0 dataset directory has the expected layout.
 
 Requires both ``lerobot`` and a rerun-sdk version that exposes
 ``rerun.dataframe.view().select()`` (>=0.30). Both are skipped automatically
@@ -28,7 +28,6 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import sys
-from typing import Any
 
 import numpy as np
 import pytest
@@ -75,34 +74,7 @@ def script():
     return _load_script()
 
 
-# ── Recorder driving (mirrors test_data_collection_integration.py) ────────
-
-
-class _FakePubSub:
-    def __init__(self) -> None:
-        self._cbs: list[Any] = []
-
-    def subscribe_all(self, cb):  # type: ignore[no-untyped-def]
-        self._cbs.append(cb)
-        return lambda: self._cbs.remove(cb) if cb in self._cbs else None
-
-    def start(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        pass
-
-    def push(self, topic: Any, msg: Any) -> None:
-        for cb in list(self._cbs):
-            cb(msg, topic)
-
-
-class _Topic:
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def __str__(self) -> str:
-        return self.name
+# ── Recorder driving (mirrors test_piper_integration.py) ──────────────────
 
 
 def _make_image() -> Image:
@@ -115,7 +87,6 @@ def _make_joint_state() -> JointState:
 
 
 def _drive_session(tmp_path: Path, *, n_episodes: int, frames_per_episode: int) -> list[Path]:
-    pubsub = _FakePubSub()
     cfg = piper_data_collection_rerun_config(session_name="20260514T120000Z")
 
     counter = {"n": 0}
@@ -128,11 +99,7 @@ def _drive_session(tmp_path: Path, *, n_episodes: int, frames_per_episode: int) 
         return p
 
     recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
-        visual_override=cfg["visual_override"],
-        entity_prefix=cfg["entity_prefix"],
-        topic_to_entity=cfg["topic_to_entity"],
-        camera_entity_path=cfg["camera_entity_path"],
+        camera_key=cfg["camera_key"],
         record_path_factory=factory,
         recording_id_factory=cfg["recording_id_factory"],
         episode_metadata=cfg["episode_metadata"],
@@ -141,9 +108,9 @@ def _drive_session(tmp_path: Path, *, n_episodes: int, frames_per_episode: int) 
     for _ in range(n_episodes):
         recorder.toggle_recording()
         for _ in range(frames_per_episode):
-            recorder._on_color_image(_make_image())
-            pubsub.push(_Topic("/coordinator/joint_state"), _make_joint_state())
-            pubsub.push(_Topic("/coordinator/desired_joint_action"), _make_joint_state())
+            recorder._on_image(_make_image())
+            recorder._on_joint_state(_make_joint_state())
+            recorder._on_desired_joint_action(_make_joint_state())
         recorder.toggle_recording()
     recorder.stop()
     return [p for p in paths if p.exists()]
@@ -152,7 +119,7 @@ def _drive_session(tmp_path: Path, *, n_episodes: int, frames_per_episode: int) 
 # ── End-to-end conversion ─────────────────────────────────────────────────
 
 
-def test_two_episode_session_produces_lerobot_v2_layout(tmp_path, script):
+def test_two_episode_session_produces_lerobot_v3_layout(tmp_path, script):
     rrds = _drive_session(tmp_path / "rrd", n_episodes=2, frames_per_episode=4)
     assert len(rrds) == 2
 
@@ -169,17 +136,26 @@ def test_two_episode_session_produces_lerobot_v2_layout(tmp_path, script):
     )
     assert rc == 0, "converter exited non-zero"
 
-    # LeRobot v2 layout sanity.
-    assert (output_dir / "info.json").exists()
-    assert (output_dir / "meta" / "episodes.jsonl").exists()
-    assert (output_dir / "tasks.jsonl").exists()
-    eps = (output_dir / "meta" / "episodes.jsonl").read_text().splitlines()
-    assert len([e for e in eps if e.strip()]) == 2
+    # LeRobot v3.0 layout: per-feature concatenated parquet/mp4 chunks under
+    # data/ and videos/, with episode boundaries encoded via the
+    # `episode_index` column rather than separate per-episode files.
+    import json
 
-    parquets = sorted((output_dir / "data").rglob("episode_*.parquet"))
-    assert len(parquets) == 2
-    videos = sorted((output_dir / "videos").rglob("episode_*.mp4"))
-    assert len(videos) == 2
+    import pyarrow.parquet as pq
+
+    info = json.loads((output_dir / "meta" / "info.json").read_text())
+    assert info.get("codebase_version") == "v3.0", info.get("codebase_version")
+    assert info.get("total_episodes") == 2, info.get("total_episodes")
+    assert (output_dir / "meta" / "tasks.parquet").exists()
+
+    parquets = sorted((output_dir / "data").rglob("file-*.parquet"))
+    assert parquets, list((output_dir / "data").rglob("*"))
+    table = pq.read_table(parquets[0])
+    unique_episodes = set(table.column("episode_index").to_pylist())
+    assert unique_episodes == {0, 1}, unique_episodes
+
+    videos = sorted((output_dir / "videos").rglob("file-*.mp4"))
+    assert videos, list((output_dir / "videos").rglob("*"))
 
 
 def test_empty_rrd_in_session_is_skipped_with_warning(tmp_path, script, caplog):
@@ -206,6 +182,8 @@ def test_empty_rrd_in_session_is_skipped_with_warning(tmp_path, script, caplog):
         and ("skip" in rec.message.lower() or "fail" in rec.message.lower())
         for rec in caplog.records
     ), [r.message for r in caplog.records]
-    # The valid episode still landed.
-    eps = (output_dir / "meta" / "episodes.jsonl").read_text().splitlines()
-    assert len([e for e in eps if e.strip()]) == 1
+    # The valid episode still landed (v3.0: episode count lives in meta/info.json).
+    import json
+
+    info = json.loads((output_dir / "meta" / "info.json").read_text())
+    assert info.get("total_episodes") == 1, info.get("total_episodes")

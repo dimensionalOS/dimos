@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Robot imitation learning stack · program structure</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link
+  href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Serif:ital,wght@1,500&display=swap"
+  rel="stylesheet"
+>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-1: #11161e;
+    --bg-2: #161c25;
+    --bg-3: #1c2330;
+    --line: #232c3a;
+    --line-2: #2f3a4d;
+    --ink: #e6edf3;
+    --ink-dim: #9aa6b8;
+    --ink-faint: #5a6473;
+
+    --c-teleop: #f6a85c;
+    --c-record: #74c8a3;
+    --c-policy: #8aa6ff;
+    --c-contract: #c79bf0;
+    --c-stream: #ffd060;
+    --c-coord: #ff7e8a;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1100px 600px at 90% -10%, rgba(138, 166, 255, 0.08), transparent 70%),
+      radial-gradient(900px 600px at -10% 20%, rgba(116, 200, 163, 0.06), transparent 70%),
+      var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14.5px;
+    line-height: 1.6;
+    font-feature-settings: "ss01", "cv11";
+  }
+  code, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    font-size: 12.5px;
+  }
+  code {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: #f0e3c3;
+  }
+  em { font-family: "IBM Plex Serif", Georgia, serif; font-style: italic; color: var(--ink); }
+
+  /* ─── Header ──────────────────────────────────────────────── */
+  header.page {
+    padding: 64px 56px 36px;
+    border-bottom: 1px solid var(--line);
+    position: relative;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  header.page h1 {
+    margin: 0 0 14px;
+    font-weight: 600;
+    font-size: 36px;
+    letter-spacing: -0.015em;
+    line-height: 1.15;
+    max-width: 920px;
+  }
+  header.page h1 .accent { color: var(--c-stream); font-style: italic; font-family: "IBM Plex Serif", serif; font-weight: 500; }
+  header.page p {
+    margin: 0;
+    color: var(--ink-dim);
+    max-width: 880px;
+    font-size: 15px;
+  }
+  header.page .meta {
+    margin-top: 26px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    color: var(--ink-faint);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  header.page .meta span strong { color: var(--ink); font-weight: 500; letter-spacing: 0; text-transform: none; }
+
+  .anchor-row {
+    display: flex;
+    gap: 14px;
+    margin-top: 28px;
+    flex-wrap: wrap;
+  }
+  .anchor-row a {
+    color: var(--ink);
+    text-decoration: none;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--bg-2);
+    transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+  }
+  .anchor-row a:hover { border-color: var(--c-stream); color: var(--c-stream); }
+  .anchor-row a .pill-tag { color: var(--ink-faint); margin-right: 8px; }
+
+  /* ─── Legend strip ────────────────────────────────────────── */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    padding: 18px 56px;
+    background: var(--bg-1);
+    border-bottom: 1px solid var(--line);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    color: var(--ink-dim);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    backdrop-filter: blur(6px);
+  }
+  .legend .swatch { display: inline-flex; align-items: center; gap: 8px; }
+  .legend .swatch::before {
+    content: "";
+    display: inline-block;
+    width: 12px; height: 12px;
+    border-radius: 3px;
+    background: var(--c, var(--ink-dim));
+    border: 1px solid var(--c, var(--ink-dim));
+  }
+  .legend .swatch.teleop { --c: var(--c-teleop); }
+  .legend .swatch.record { --c: var(--c-record); }
+  .legend .swatch.policy { --c: var(--c-policy); }
+  .legend .swatch.contract { --c: var(--c-contract); }
+  .legend .swatch.coord { --c: var(--c-coord); }
+  .legend .swatch.stream { --c: var(--c-stream); }
+
+  /* ─── Main ──────────────────────────────────────────────── */
+  main { padding: 36px 56px 80px; max-width: 1480px; }
+
+  section.pillar {
+    margin-bottom: 56px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg) 100%);
+    overflow: hidden;
+  }
+  section.pillar > .pillar-head {
+    padding: 24px 28px 22px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-2);
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 18px;
+    align-items: end;
+  }
+  .badge {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    font-weight: 600;
+    align-self: center;
+  }
+  section.pillar.p1 .badge { color: var(--c-teleop); }
+  section.pillar.p2 .badge { color: var(--c-record); }
+  section.pillar.p3 .badge { color: var(--c-policy); }
+  section.pillar.p4 .badge { color: var(--c-stream); }
+  section.pillar h2 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  section.pillar h2 em { color: var(--ink-dim); font-weight: 500; }
+  .pillar-head .right {
+    color: var(--ink-faint);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    text-align: right;
+  }
+
+  .pillar-body {
+    padding: 28px;
+  }
+
+  .diagram-wrap {
+    background:
+      radial-gradient(circle at 25% 0%, rgba(138, 166, 255, 0.05), transparent 60%),
+      var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 28px 22px 22px;
+    overflow-x: auto;
+  }
+  .diagram-wrap + .diagram-wrap { margin-top: 22px; }
+  .diagram-wrap > .caption {
+    margin: 18px 4px 0;
+    color: var(--ink-dim);
+    font-size: 13.5px;
+    max-width: 980px;
+  }
+  .diagram-wrap > .caption strong { color: var(--ink); font-weight: 600; }
+  .mermaid {
+    font-family: "IBM Plex Sans", sans-serif !important;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+  }
+  .mermaid > svg {
+    max-width: 100%;
+    height: auto;
+    display: block;
+  }
+  .mermaid .label, .mermaid .nodeLabel { font-family: "IBM Plex Sans", sans-serif !important; }
+  .mermaid .edgeLabel { background: #0d1117 !important; }
+  .mermaid .edgeLabel rect { fill: #0d1117 !important; }
+
+  /* Two-column sub-grid: keypoints + files */
+  .pillar-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr);
+    gap: 22px;
+    margin-top: 24px;
+  }
+  .pillar-grid.full { grid-template-columns: minmax(0, 1fr); }
+
+  .keypoints {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+  }
+  .keypoints li {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--c-stream);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 13px;
+    color: var(--ink-dim);
+  }
+  .keypoints li strong {
+    color: var(--ink);
+    display: block;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+
+  aside.files {
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+    font-size: 13px;
+    align-self: start;
+  }
+  aside.files h3 {
+    margin: 14px 0 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+  aside.files h3:first-child { margin-top: 0; }
+  aside.files ul { list-style: none; padding: 0; margin: 0 0 4px; }
+  aside.files li {
+    padding: 3px 0;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink);
+  }
+  aside.files li .dim { color: var(--ink-faint); }
+
+  .files-wide {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 24px;
+    padding: 20px 24px;
+    margin-top: 22px;
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  .files-wide h3 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+  .files-wide ul { list-style: none; padding: 0; margin: 0; }
+  .files-wide li {
+    padding: 2px 0;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink);
+  }
+  .files-wide li .dim { color: var(--ink-faint); font-size: 11.5px; }
+
+  footer.page {
+    padding: 28px 56px 60px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-faint);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+  }
+  footer.page strong { color: var(--ink-dim); font-weight: 500; }
+</style>
+</head>
+<body>
+
+<header class="page">
+  <div class="eyebrow">cc/learning · imitation learning stack on Dimos</div>
+  <h1>Three drivers, <span class="accent">one coordinator</span>: teleop, recorder, policy.</h1>
+  <p>The same Piper coordinator port shape is driven by a human (Pink IK teleop), observed by a recorder (per-episode <code>.rrd</code>), and re-driven by a learned policy (<code>PolicyModule</code> + LeRobot backend). One <code>RobotContract</code> converts both the recorded frames into training data and the policy's action vector back into a <code>JointState</code> command — that symmetry is what closes the imitation-learning loop without bespoke glue.</p>
+  <div class="meta">
+    <span>Branch <strong>cc/learning</strong></span>
+    <span>Pillar 1 · <strong>Pink IK</strong></span>
+    <span>Pillar 2 · <strong>Recording</strong></span>
+    <span>Pillar 3 · <strong>Policy</strong></span>
+  </div>
+  <div class="anchor-row">
+    <a href="#p1"><span class="pill-tag">01</span>Teleoperation</a>
+    <a href="#p2"><span class="pill-tag">02</span>Recording</a>
+    <a href="#p3"><span class="pill-tag">03</span>Policy</a>
+    <a href="#p4"><span class="pill-tag">∞</span>Integration</a>
+  </div>
+</header>
+
+<div class="legend">
+  <span class="swatch policy">Module</span>
+  <span class="swatch teleop">Coordinator task</span>
+  <span class="swatch record">Recorder / sink</span>
+  <span class="swatch contract">Contract / shared config</span>
+  <span class="swatch stream">Stream / pubsub topic</span>
+</div>
+
+<main>
+
+<!-- ═══════════════════ PILLAR 1 ═══════════════════ -->
+<section class="pillar p1" id="p1">
+  <div class="pillar-head">
+    <span class="badge">Pillar 01</span>
+    <h2>Pink IK teleoperation <em>— Quest pose → QP solve → Piper CAN</em></h2>
+    <div class="right">Hot path · 100 Hz tick · DAQP QP</div>
+  </div>
+  <div class="pillar-body">
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+flowchart LR
+  Q([Quest VR<br/>controller pose]):::input
+  ATM["ArmTeleopModule"]:::module
+  PINK["SingleArmPinkIKTask<br/>priority 10"]:::task
+  TRAJ["traj_arm<br/>fallback"]:::task
+  TICK["TickLoop @ 100 Hz<br/>arbitration + safety"]:::module
+  PA["PiperAdapter<br/>CAN write"]:::module
+  ARM([Piper arm]):::input
+
+  Q -->|"PoseStamped"| ATM
+  ATM -->|"cartesian_command"| PINK
+  ATM -->|"buttons"| PINK
+  PINK --> TICK
+  TRAJ --> TICK
+  TICK -->|"JointState"| PA
+  PA --> ARM
+
+  classDef module fill:#1d2436,stroke:#8aa6ff,stroke-width:1.4,color:#e6edf3
+  classDef task fill:#231b14,stroke:#f6a85c,stroke-width:1.4,color:#e6edf3
+  classDef input fill:#0d1117,stroke:#5a6473,stroke-width:1,stroke-dasharray:3 3,color:#9aa6b8
+      </pre>
+      <p class="caption"><strong>Hot path.</strong> Quest pose enters <code>ArmTeleopModule</code>, lands on the coordinator's <code>cartesian_command</code> port as <code>PoseStamped</code>, is arbitrated to the highest-priority claiming task, solved by a Pink IK QP, capped by a per-tick joint-delta safety, and published every 10&nbsp;ms by the tick loop as <code>JointState</code>. The Piper adapter writes to CAN with the correct gripper stroke units.</p>
+    </div>
+
+    <div class="pillar-grid">
+      <ul class="keypoints">
+        <li><strong>One QP per tick</strong>DAQP differential IK on Pinocchio's forward-kinematics model — solver swap is configurable.</li>
+        <li><strong>Per-tick safety</strong><code>max_joint_delta_deg</code> rejects wild commands; <code>timeout</code> rejects stale targets.</li>
+        <li><strong>Same arbitration as before</strong>Pink IK plugs into the existing priority-based <code>ControlCoordinator</code> — no new arbitration logic.</li>
+        <li><strong>Catalog presets</strong>One <code>SingleArmPinkIKTask</code> runtime + per-robot config presets in <code>robot/catalog/</code>.</li>
+      </ul>
+
+      <aside class="files">
+        <h3>Tasks</h3>
+        <ul>
+          <li>control/tasks/pink_teleop_task.py</li>
+          <li>control/tasks/servo_task.py</li>
+        </ul>
+        <h3>Coordinator</h3>
+        <ul>
+          <li>control/coordinator.py</li>
+          <li>control/tick_loop.py</li>
+          <li>control/blueprints/teleop.py</li>
+        </ul>
+        <h3>Catalog · input · adapter</h3>
+        <ul>
+          <li>robot/catalog/piper.py</li>
+          <li>teleop/quest/quest_extensions.py</li>
+          <li>hardware/manipulators/piper/adapter.py</li>
+        </ul>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ PILLAR 2 ═══════════════════ -->
+<section class="pillar p2" id="p2">
+  <div class="pillar-head">
+    <span class="badge">Pillar 02</span>
+    <h2>Recording <em>— typed camera · operator-driven boundary · per-episode .rrd</em></h2>
+    <div class="right">Live preview ⫶ on-disk · shared config</div>
+  </div>
+  <div class="pillar-body">
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+flowchart LR
+  CAM["CameraModule<br/>color_image"]:::module
+  COORD["ControlCoordinator<br/>joint_state · desired_joint_action"]:::ghost
+  QT["QuestTeleopModule<br/>buttons"]:::ghost
+
+  CFG_REC[/"piper_data_collection_rerun_config()<br/>camera_key · record_path_factory<br/>episode_metadata"/]:::contract
+  CFG_BR[/"piper_data_collection_rerun_config()<br/>visual_override · topic_to_entity"/]:::contract
+
+  REC["RerunDataRecorder<br/>image · joint_state · desired_joint_action<br/>state: IDLE ⇄ RECORDING"]:::recorder
+  VIS["vis_module 'rerun'<br/>live preview"]:::recorder
+  EB["QuestEpisodeBoundary<br/>right_secondary · 500 ms debounce"]:::module
+  RRD([episode_NNN.rrd]):::artifact
+
+  CAM   -->|"image (remapped)"| REC
+  COORD -->|"joint_state · desired_joint_action"| REC
+  COORD -.->|"LCM topics"| VIS
+  CFG_REC ===> REC
+  CFG_BR ===> VIS
+  QT   -->|"buttons"| EB
+  EB   ==>|"toggle_recording()"| REC
+  REC --> RRD
+
+  classDef module fill:#1d2436,stroke:#8aa6ff,stroke-width:1.4,color:#e6edf3
+  classDef recorder fill:#142a23,stroke:#74c8a3,stroke-width:1.4,color:#e6edf3
+  classDef ghost fill:#11161e,stroke:#3b4151,stroke-width:1,stroke-dasharray:4 4,color:#9aa6b8
+  classDef contract fill:#241a30,stroke:#c79bf0,stroke-width:1.4,color:#e6edf3
+  classDef artifact fill:#0d1117,stroke:#ffd060,color:#ffd060
+      </pre>
+      <p class="caption"><strong>Two sinks, two consumers of one config dict.</strong> Every recorder input is a typed <code>In[T]</code> stream slot — <code>image</code>, <code>joint_state</code>, <code>desired_joint_action</code> — mirroring how <code>PolicyModule</code> is wired. The bridge still consumes <code>visual_override</code> / <code>topic_to_entity</code> for live viewing; the recorder picks the on-disk subset (<code>camera_key</code>, path/metadata factories) from the same dict.</p>
+    </div>
+
+    <div class="pillar-grid">
+      <ul class="keypoints">
+        <li><strong>Pure typed inputs</strong>No <code>pubsubs</code>, no <code>topic_to_entity</code>, no <code>visual_override</code> on the recorder — every input arrives on an <code>In[T]</code> slot.</li>
+        <li><strong>Policy-aligned schema</strong>The recorder's <code>image</code> + <code>joint_state</code> slots match <code>PolicyModule</code>'s, so the same producer wiring feeds both.</li>
+        <li><strong>Operator boundary</strong>Quest <code>B</code> button toggles episodes; empty episodes are auto-discarded; debounce eats bounces.</li>
+        <li><strong>Failure isolation</strong>Viewer crash does not stop recording; recorder crash does not stop viewing.</li>
+      </ul>
+
+      <aside class="files">
+        <h3>Recorder · boundary · config</h3>
+        <ul>
+          <li>manipulation/data_collection/recorder.py</li>
+          <li>manipulation/data_collection/quest_episode_boundary.py</li>
+          <li>manipulation/data_collection/piper_blueprint_config.py</li>
+        </ul>
+        <h3>Blueprint</h3>
+        <ul>
+          <li>teleop/quest/blueprints.py<br/><span class="dim">→ teleop_quest_piper_data_collection</span></li>
+        </ul>
+        <h3>Tests · docs</h3>
+        <ul>
+          <li>data_collection/test_recorder.py</li>
+          <li>data_collection/test_quest_episode_boundary.py</li>
+          <li>data_collection/test_piper_integration.py</li>
+          <li>docs/usage/visualization.md</li>
+        </ul>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ PILLAR 3 ═══════════════════ -->
+<section class="pillar p3" id="p3">
+  <div class="pillar-head">
+    <span class="badge">Pillar 03</span>
+    <h2>Policy learning <em>— <code>PolicyModule</code> + LeRobot/Test backends + contracts</em></h2>
+    <div class="right">Same surface as teleop · rollout gate · preempt</div>
+  </div>
+  <div class="pillar-body">
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+flowchart LR
+  CAM["CameraModule<br/>color_image"]:::module
+  CO["ControlCoordinator<br/>joint_state"]:::ghost
+  QT["QuestTeleopModule<br/>buttons"]:::ghost
+  RT["QuestRolloutToggle"]:::module
+
+  OBS["assemble_observation()"]:::contract
+  LOOP["_inference_loop()<br/>@ policy_rate"]:::contract
+  MAP["command_to_joint_state()"]:::contract
+
+  TP["TestPolicy<br/>closed-loop sinusoid"]:::module
+  LB["LeRobotBackend<br/>ACT / Diffusion"]:::module
+  CK[/"PiperRobotContract"/]:::contract
+
+  SERVO["policy_servo_arm<br/>priority 9 (&lt; teleop)"]:::task
+
+  CAM --> OBS
+  CO --> OBS
+  QT --> OBS
+  OBS --> LOOP
+
+  LOOP -->|"select_action(obs)"| TP
+  LOOP -->|"select_action(obs)"| LB
+  TP -->|"PolicyCommand"| MAP
+  LB -->|"PolicyCommand"| MAP
+  CK -.-> LB
+  CK -.-> MAP
+
+  RT  -.->|"start/stop_rollout()"| LOOP
+  QT  -.->|"engage preempt"| LOOP
+
+  MAP -->|"joint_command · JointState"| SERVO
+
+  classDef module fill:#1d2436,stroke:#8aa6ff,stroke-width:1.4,color:#e6edf3
+  classDef contract fill:#241a30,stroke:#c79bf0,stroke-width:1.4,color:#e6edf3
+  classDef ghost fill:#11161e,stroke:#3b4151,stroke-width:1,stroke-dasharray:4 4,color:#9aa6b8
+  classDef task fill:#231b14,stroke:#f6a85c,stroke-width:1.4,color:#e6edf3
+      </pre>
+      <p class="caption"><strong>Runtime.</strong> <code>PolicyModule</code> runs inference on its own thread, assembles a <code>PolicyObservation</code> from the same streams the recorder sees, calls the configured backend, and publishes the action as <code>JointState</code> on <code>joint_command</code> — the same shape teleop produces. The low-priority <code>policy_servo_arm</code> consumes it; teleop always wins arbitration when an engage button is held.</p>
+    </div>
+
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+flowchart LR
+  REC["RerunDataRecorder<br/>session/episode_NNN.rrd"]:::recorder
+  CONV["rrd_to_lerobot.py<br/>--contract piper · --fps 30"]:::task
+  DS["LeRobotDataset v2<br/>parquet + mp4"]:::recorder
+  CK["PiperRobotContract"]:::contract
+  CKPT([Checkpoint · ACT / DP / …]):::artifact
+  PM(["PolicyModule · runtime"]):::module
+
+  REC --> CONV
+  CK -.->|"from_rerun_row()"| CONV
+  CONV --> DS
+  DS --> CKPT
+  CKPT -.->|"loaded by LeRobotBackend"| PM
+
+  classDef module fill:#1d2436,stroke:#8aa6ff,stroke-width:1.4,color:#e6edf3
+  classDef recorder fill:#142a23,stroke:#74c8a3,stroke-width:1.4,color:#e6edf3
+  classDef contract fill:#241a30,stroke:#c79bf0,stroke-width:1.4,color:#e6edf3
+  classDef task fill:#231b14,stroke:#f6a85c,stroke-width:1.4,color:#e6edf3
+  classDef artifact fill:#0d1117,stroke:#ffd060,color:#ffd060
+      </pre>
+      <p class="caption"><strong>Offline training prep.</strong> The same <code>PiperRobotContract</code> that the runtime uses to convert action vectors back into <code>JointState</code> is also what tells the offline converter how to read recorded entity paths. One contract, both directions — no train/deploy schema drift.</p>
+    </div>
+
+    <ul class="keypoints" style="margin-top: 24px;">
+      <li><strong>Same surface as teleop</strong>Downstream code can't tell whether a human or a model is in control.</li>
+      <li><strong>Mid-inference preempt</strong>Engagement re-checked <em>after</em> <code>select_action()</code> returns — buttons during long inference still preempt.</li>
+      <li><strong>Rollout gate</strong>One Quest button toggles publication; both transitions reset the backend so no buffered chunk survives.</li>
+      <li><strong>Priority-safe blueprint</strong><code>policy_servo_task_config()</code> auto-derives a priority strictly below every overlapping teleop task.</li>
+      <li><strong>Closed-loop test policy</strong>Captures the live joint pose on each <code>reset()</code> so handoff is jump-free without a model.</li>
+      <li><strong>Built-in shakedown</strong><code>teleop-quest-piper-policy-test</code> exercises the full pipeline without loading lerobot/torch.</li>
+    </ul>
+
+    <div class="files-wide">
+      <div>
+        <h3>Policy package · <code>manipulation/policy/</code></h3>
+        <ul>
+          <li>module.py · config.py · command.py</li>
+          <li>observation.py · contract.py · registry.py</li>
+          <li>blueprint.py · quest_rollout_toggle.py</li>
+          <li>backends/{test, lerobot}.py</li>
+          <li>contracts/{piper, registry}.py</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Coordinator integration</h3>
+        <ul>
+          <li>control/blueprints/teleop.py<br/><span class="dim">coordinator_teleop_piper_with_policy</span></li>
+          <li>control/tasks/servo_task.py</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Deployment blueprints</h3>
+        <ul>
+          <li>teleop/quest/blueprints.py<br/><span class="dim">teleop_quest_piper_policy</span><br/><span class="dim">teleop_quest_piper_policy_test</span></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Dataset converter + docs</h3>
+        <ul>
+          <li>scripts/datasets/rrd_to_lerobot.py</li>
+          <li>docs/usage/datasets.md</li>
+          <li>pyproject.toml<br/><span class="dim">lerobot ≥ 0.5.1 · manipulation ⊥ perception</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ PILLAR 4 — INTEGRATION ═══════════════════ -->
+<section class="pillar p4" id="p4">
+  <div class="pillar-head">
+    <span class="badge">Integration</span>
+    <h2>One coordinator surface <em>— two input ports · three drivers · one observer</em></h2>
+    <div class="right">teleop preempts policy · contract symmetric</div>
+  </div>
+  <div class="pillar-body">
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+flowchart LR
+  subgraph TEL["Pillar 01 · human"]
+    ATM["ArmTeleopModule"]:::module
+  end
+  subgraph POL["Pillar 03 · model"]
+    direction TB
+    PM["PolicyModule"]:::module
+    RTG["QuestRolloutToggle"]:::module
+  end
+  subgraph CC["ControlCoordinator (one)"]
+    direction TB
+    PINK["SingleArmPinkIKTask · priority 10"]:::task
+    TRAJ["traj_arm"]:::task
+    SERVO["policy_servo_arm · priority 9"]:::task
+  end
+  subgraph OBS["Pillar 02 · observer"]
+    direction TB
+    REC["RerunDataRecorder"]:::recorder
+    CK["PiperRobotContract"]:::contract
+  end
+
+  ATM -->|"cartesian_command"| PINK
+  PM  -->|"joint_command"| SERVO
+  RTG -.->|"start/stop_rollout()"| PM
+  ATM -.->|"engage preempt"| PM
+  PINK -.->|"joint_state · LCM"| REC
+  TRAJ -.->|"joint_state · LCM"| REC
+  SERVO -.->|"joint_state · LCM"| REC
+  CK -.-> REC
+  CK -.-> PM
+
+  classDef module fill:#1d2436,stroke:#8aa6ff,stroke-width:1.4,color:#e6edf3
+  classDef recorder fill:#142a23,stroke:#74c8a3,stroke-width:1.4,color:#e6edf3
+  classDef contract fill:#241a30,stroke:#c79bf0,stroke-width:1.4,color:#e6edf3
+  classDef task fill:#231b14,stroke:#f6a85c,stroke-width:1.4,color:#e6edf3
+      </pre>
+      <p class="caption"><strong>Why it composes.</strong> The teleop pillar produces <code>cartesian_command</code> at controller rate; the policy pillar produces <code>joint_command</code> at inference rate. Both flow into the same <code>ControlCoordinator</code>, which arbitrates by priority — the Pink IK teleop task wins whenever the operator's engage button is held. The recording pillar is a passive observer of <code>joint_state</code> + <code>color_image</code>; the same <code>PiperRobotContract</code> that converts recorded frames for training is what converts inference outputs back into a coordinator-native <code>JointState</code>. That symmetry is what closes the loop.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="page">
+  <strong>PR_DRAFT.html</strong> · generated from <code>PR_DRAFT.md</code> on <code>cc/learning</code> · diagrams rendered with mermaid 11
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      background: 'transparent',
+      primaryColor: '#1d2436',
+      primaryTextColor: '#e6edf3',
+      primaryBorderColor: '#8aa6ff',
+      lineColor: '#9aa6b8',
+      secondaryColor: '#142a23',
+      tertiaryColor: '#241a30',
+      mainBkg: '#1d2436',
+      clusterBkg: 'rgba(28, 35, 48, 0.55)',
+      clusterBorder: '#3b4151',
+      fontFamily: 'IBM Plex Sans, sans-serif',
+      fontSize: '14px',
+      edgeLabelBackground: '#0d1117',
+    },
+    flowchart: {
+      curve: 'basis',
+      htmlLabels: true,
+      useMaxWidth: true,
+      padding: 18,
+      nodeSpacing: 44,
+      rankSpacing: 56,
+    },
+    securityLevel: 'loose'
+  });
+</script>
+
+</body>
+</html>

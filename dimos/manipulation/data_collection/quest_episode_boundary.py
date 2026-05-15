@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``EpisodeBoundary`` — dispatch a Quest controller button edge to the
-``RerunDataRecorder``'s ``rotate_recording`` RPC.
+"""``QuestEpisodeBoundary`` — dispatch a Quest controller button edge to the
+``RerunDataRecorder``'s ``toggle_recording`` RPC.
 
-Keeping teleop semantics (which Buttons field, debounce) out of the generic
-recording module — the recorder stays reusable across non-teleop blueprints
-while the rollover trigger lives next to the rest of `dimos/teleop/quest/`.
+Co-located under ``dimos/manipulation/data_collection/`` because it imports
+``RerunDataRecorder`` — same convention as ``QuestRolloutToggle`` next to
+``PolicyModule``. The ``Quest`` prefix advertises the dependency on
+``dimos.teleop.quest.quest_types.Buttons``; a future non-Quest variant
+(``KeyboardEpisodeBoundary``, ``HardwareButtonEpisodeBoundary``) slots in
+alongside it.
 """
 
 from __future__ import annotations
@@ -38,8 +41,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class EpisodeBoundaryConfig(ModuleConfig):
-    """Configuration for :class:`EpisodeBoundary`.
+class QuestEpisodeBoundaryConfig(ModuleConfig):
+    """Configuration for :class:`QuestEpisodeBoundary`.
 
     ``button`` names a digital field on :class:`Buttons`. The default is
     ``right_secondary`` (the B button on the right controller). **Do not pick
@@ -54,8 +57,8 @@ class EpisodeBoundaryConfig(ModuleConfig):
     debounce_seconds: float = 0.5
 
 
-class EpisodeBoundary(Module):
-    config: EpisodeBoundaryConfig
+class QuestEpisodeBoundary(Module):
+    config: QuestEpisodeBoundaryConfig
 
     buttons: In[Buttons]
     recorder: RerunDataRecorder
@@ -71,7 +74,7 @@ class EpisodeBoundary(Module):
             pressed = bool(getattr(msg, self.config.button))
         except AttributeError:
             logger.warning(
-                "EpisodeBoundary: configured button %r not found on Buttons",
+                "QuestEpisodeBoundary: configured button %r not found on Buttons",
                 self.config.button,
             )
             return
@@ -89,12 +92,14 @@ class EpisodeBoundary(Module):
         try:
             new_path = self.recorder.toggle_recording()
         except Exception:
-            logger.exception("EpisodeBoundary: toggle_recording() raised")
+            logger.exception("QuestEpisodeBoundary: toggle_recording() raised")
             return
         if new_path is None:
-            logger.info("EpisodeBoundary: recording stopped — waiting for next press to resume")
+            logger.info(
+                "QuestEpisodeBoundary: recording stopped — waiting for next press to resume"
+            )
         else:
-            logger.info("EpisodeBoundary: recording started → %s", new_path)
+            logger.info("QuestEpisodeBoundary: recording started → %s", new_path)
 
     @rpc
     def start(self) -> None:
@@ -103,4 +108,4 @@ class EpisodeBoundary(Module):
         self.register_disposable(Disposable(unsub))
 
 
-__all__ = ["EpisodeBoundary", "EpisodeBoundaryConfig"]
+__all__ = ["QuestEpisodeBoundary", "QuestEpisodeBoundaryConfig"]

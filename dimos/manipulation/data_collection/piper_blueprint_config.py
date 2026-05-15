@@ -34,11 +34,11 @@ drift. Recorded entity paths follow a LeRobot-aligned schema —
 — so ``rerun.dataframe`` / ``rerun.experimental.dataloader`` can select
 observations and actions by entity-path prefix.
 
-The camera image path is wired through the recorder's typed
-``color_image: In[Image]`` stream slot (see ``recorder.py``), not through
-``topic_to_entity``. Joint-state and desired-action scalars continue to
-flow through the generic pubsub / ``visual_override`` mechanism this
-module configures.
+The recorder consumes camera, joint state, and desired action through
+typed ``In[T]`` stream slots (see ``recorder.py``). The
+``visual_override`` / ``topic_to_entity`` keys produced by
+``piper_data_collection_rerun_config()`` are consumed only by the bridge
+(live viewer); the recorder ignores them.
 """
 
 from __future__ import annotations
@@ -68,10 +68,13 @@ JointRole = Literal["measured", "commanded"]
 _OBSERVATION_STATE_PREFIX = "/observation/state"
 _ACTION_PREFIX = "/action"
 
-# Camera image is logged at this path by the recorder's typed `color_image`
-# stream slot (see `RerunDataRecorderConfig.camera_entity_path`). Kept here
-# only so the Rerun layout preset below can target the same path.
-_CAMERA_ENTITY_PATH = "/observation/camera/usb"
+# Camera image is logged at this path by the recorder's typed `image`
+# stream slot. The leaf segment (`_CAMERA_KEY`) is passed to the recorder
+# via `RerunDataRecorderConfig.camera_key` and to the policy module via
+# `PolicyModuleConfig.camera_key`; the bridge layout preset below targets
+# the full path.
+_CAMERA_KEY = "usb"
+_CAMERA_ENTITY_PATH = f"/observation/camera/{_CAMERA_KEY}"
 
 # Visual-override pattern keys. With the LeRobot retarget the recorder /
 # bridge use entity_prefix="" so these match the bare LCM topic names.
@@ -235,13 +238,12 @@ def piper_episode_metadata(
 
 
 def _piper_data_collection_topic_to_entity(topic: Any) -> str:
-    """Topic→entity_path callback shared by the viewer and the recorder.
+    """Topic→entity_path callback consumed by the bridge (live viewer).
 
     Maps every pubsub topic to its bare topic name (LCM ``#Type`` suffix
     stripped), so visual_override keys match the topic name directly. The
-    camera image path is **not** handled here — it arrives through the
-    recorder's typed ``color_image: In[Image]`` slot and is logged under
-    ``RerunDataRecorderConfig.camera_entity_path`` directly.
+    recorder no longer goes through this callback — all of its inputs
+    arrive through typed ``In[T]`` slots.
     """
     name = getattr(topic, "name", None) or str(topic)
     return name.split("#")[0]
@@ -287,7 +289,7 @@ def piper_data_collection_rerun_config(
         "topic_to_entity": _piper_data_collection_topic_to_entity,
         "blueprint": piper_data_collection_rerun_blueprint,
         # Recorder-only fields below; the bridge ignores them.
-        "camera_entity_path": _CAMERA_ENTITY_PATH,
+        "camera_key": _CAMERA_KEY,
         "record_path_factory": record_path_factory,
         "recording_id_factory": default_recording_id_factory,
         "episode_metadata": episode_metadata,

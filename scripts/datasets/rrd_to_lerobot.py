@@ -14,7 +14,7 @@
 # limitations under the License.
 
 """Convert per-episode `.rrd` files written by ``RerunDataRecorder`` into a
-LeRobot v2 dataset directory.
+LeRobot v3.0 dataset directory.
 
 Usage::
 
@@ -57,7 +57,7 @@ _CAMERA_GATE_ENTITY = "/observation/camera/usb"
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="rrd_to_lerobot",
-        description="Convert RerunDataRecorder .rrd files into a LeRobot v2 dataset.",
+        description="Convert RerunDataRecorder .rrd files into a LeRobot v3.0 dataset.",
     )
     p.add_argument(
         "--input",

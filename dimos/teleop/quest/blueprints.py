@@ -36,15 +36,15 @@ from dimos.control.blueprints.teleop import (
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.manipulation.data_collection.episode_boundary import EpisodeBoundary
 from dimos.manipulation.data_collection.piper_blueprint_config import (
     piper_data_collection_rerun_config,
 )
+from dimos.manipulation.data_collection.quest_episode_boundary import QuestEpisodeBoundary
 from dimos.manipulation.data_collection.recorder import RerunDataRecorder
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.policy import (
     PolicyModule,
-    RolloutToggle,
+    QuestRolloutToggle,
     policy_engage_buttons,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -109,10 +109,12 @@ teleop_quest_piper = autoconnect(
 # Piper teleop data collection: right controller -> piper arm, with USB camera
 # observation plus measured state / desired action streams. A live Rerun viewer
 # and a standalone on-disk `.rrd` recorder are wired as independent sinks that
-# share a single `piper_data_collection_rerun_config()` instance — guaranteeing
-# the viewer and the recorder cannot drift at wiring time. Rolling over to the
-# next episode within a session is operator-driven via `EpisodeBoundary`
-# (right-controller A by default), which calls `recorder.rotate_recording()`.
+# share a single `piper_data_collection_rerun_config()` instance — the bridge
+# consumes the viz-side keys (visual_override, topic_to_entity, blueprint) and
+# the recorder consumes the on-disk keys (camera_key, record_path_factory,
+# ...). Rolling over to the next episode within a session is operator-driven
+# via `QuestEpisodeBoundary` (right-controller B by default), which calls
+# `recorder.toggle_recording()`.
 _data_collection_rerun_config = piper_data_collection_rerun_config()
 # Subset of `_data_collection_rerun_config` accepted by RerunBridgeModule.Config.
 _DATA_COLLECTION_BRIDGE_KEYS = (
@@ -123,47 +125,56 @@ _DATA_COLLECTION_BRIDGE_KEYS = (
 )
 # Subset of `_data_collection_rerun_config` accepted by RerunDataRecorderConfig.
 _DATA_COLLECTION_RECORDER_KEYS = (
-    "visual_override",
-    "entity_prefix",
-    "topic_to_entity",
-    "camera_entity_path",
+    "camera_key",
     "record_path_factory",
     "recording_id_factory",
     "episode_metadata",
 )
-teleop_quest_piper_data_collection = autoconnect(
-    ArmTeleopModule.blueprint(task_names={"right": "teleop_piper"}),
-    coordinator_teleop_piper,
-    CameraModule.blueprint(),
-    RerunDataRecorder.blueprint(
-        **{k: _data_collection_rerun_config[k] for k in _DATA_COLLECTION_RECORDER_KEYS}
-    ),
-    EpisodeBoundary.blueprint(),
-    ManipulationModule.blueprint(
-        robots=[piper_teleop_robot_model_config()],
-        enable_viz=True,
-    ),
-    vis_module(
-        "rerun",
-        rerun_config={k: _data_collection_rerun_config[k] for k in _DATA_COLLECTION_BRIDGE_KEYS},
-    ),
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("desired_joint_action", JointState): LCMTransport(
-            "/coordinator/desired_joint_action", JointState
+teleop_quest_piper_data_collection = (
+    autoconnect(
+        ArmTeleopModule.blueprint(task_names={"right": "teleop_piper"}),
+        coordinator_teleop_piper,
+        CameraModule.blueprint(),
+        RerunDataRecorder.blueprint(
+            **{k: _data_collection_rerun_config[k] for k in _DATA_COLLECTION_RECORDER_KEYS}
         ),
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
+        QuestEpisodeBoundary.blueprint(),
+        ManipulationModule.blueprint(
+            robots=[piper_teleop_robot_model_config()],
+            enable_viz=True,
         ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-        ("color_image", Image): LCMTransport("/piper_data_collection/color_image", Image),
-    }
+        vis_module(
+            "rerun",
+            rerun_config={
+                k: _data_collection_rerun_config[k] for k in _DATA_COLLECTION_BRIDGE_KEYS
+            },
+        ),
+    )
+    .remappings(
+        [
+            # CameraModule publishes `color_image`; RerunDataRecorder listens
+            # on `image` (the same slot name PolicyModule uses).
+            (RerunDataRecorder, "image", "color_image"),
+        ]
+    )
+    .transports(
+        {
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+            ("desired_joint_action", JointState): LCMTransport(
+                "/coordinator/desired_joint_action", JointState
+            ),
+            ("right_controller_output", PoseStamped): LCMTransport(
+                "/coordinator/cartesian_command", PoseStamped
+            ),
+            ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+            ("color_image", Image): LCMTransport("/piper_data_collection/color_image", Image),
+        }
+    )
 )
 
 # Piper teleop + policy deployment (no data collection): right controller -> piper
 # arm via Pink IK; a low-priority servo task on the same joints accepts policy
-# joint commands. The PolicyModule is gated by `RolloutToggle` (left_secondary by
+# joint commands. The PolicyModule is gated by `QuestRolloutToggle` (left_secondary by
 # default) and preempted by `right_primary` (teleop engage). The default
 # backend is a LeRobot ACT policy loaded from the configured checkpoint;
 # swap `_PIPER_POLICY_PATH` (or the whole `backend_config` block) to point
@@ -190,7 +201,7 @@ _PIPER_POLICY_SHARED_ATOMS = (
     ArmTeleopModule.blueprint(task_names={"right": "teleop_piper"}),
     coordinator_teleop_piper_with_policy,
     CameraModule.blueprint(),
-    RolloutToggle.blueprint(),
+    QuestRolloutToggle.blueprint(),
     ManipulationModule.blueprint(
         robots=[piper_teleop_robot_model_config()],
         enable_viz=True,
@@ -250,12 +261,8 @@ teleop_quest_piper_policy = (
 # Useful for verifying the full pipeline (teleop preempt, rollout toggle,
 # camera plumbing, coordinator arbitration) without loading a model or
 # requiring lerobot/torch. The sinusoid auto-captures the live joint pose
-# AND its configured phase on each reset, so the wave starts at the live
-# pose (jump-free) and then oscillates symmetrically in
-# `[pose - amplitude, pose + amplitude]` rather than sweeping the full
-# `2·amplitude` to one side. Per-joint phase configuration only seeds the
-# initial swing direction at module construction; after the first reset
-# all joints are phase-aligned.
+# on each reset so engage/disengage handoff stays jump-free; staggered
+# phases produce a visible wave across the 6 arm joints.
 teleop_quest_piper_policy_test = (
     autoconnect(
         *_PIPER_POLICY_SHARED_ATOMS,

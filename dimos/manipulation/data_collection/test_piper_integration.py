@@ -15,10 +15,10 @@
 """End-to-end integration tests for the Piper data collection recorder.
 
 These tests drive the same ``piper_data_collection_rerun_config()`` the
-blueprint uses, against an in-memory pubsub fake. They cover the contract
-between the recorder and the data-collection-specific wiring (entity-path
-schema, episode-rollover semantics, empty-discard), and exercise the optional
-Rerun 0.32 catalog server when the SDK is new enough.
+blueprint uses, calling the recorder's typed-slot handlers directly. They
+cover the contract between the recorder and the data-collection-specific
+wiring (entity-path schema, episode-rollover semantics, empty-discard), and
+exercise the optional Rerun 0.32 catalog server when the SDK is new enough.
 """
 
 from __future__ import annotations
@@ -40,38 +40,6 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
-class _FakePubSub:
-    def __init__(self) -> None:
-        self._callbacks: list[Callable[[Any, Any], None]] = []
-
-    def subscribe_all(self, callback: Callable[[Any, Any], None]) -> Callable[[], None]:
-        self._callbacks.append(callback)
-
-        def unsub() -> None:
-            if callback in self._callbacks:
-                self._callbacks.remove(callback)
-
-        return unsub
-
-    def start(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        pass
-
-    def push(self, topic: Any, msg: Any) -> None:
-        for cb in list(self._callbacks):
-            cb(msg, topic)
-
-
-class _Topic:
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def __str__(self) -> str:
-        return self.name
-
-
 def _make_image() -> Image:
     return Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), format=ImageFormat.RGB)
 
@@ -88,10 +56,7 @@ def _recorder_kwargs(
     """Subset of the config the recorder accepts, with the path factory
     swapped to a test-local one."""
     return {
-        "visual_override": cfg["visual_override"],
-        "entity_prefix": cfg["entity_prefix"],
-        "topic_to_entity": cfg["topic_to_entity"],
-        "camera_entity_path": cfg["camera_entity_path"],
+        "camera_key": cfg["camera_key"],
         "record_path_factory": record_path_factory,
         "recording_id_factory": cfg["recording_id_factory"],
         "episode_metadata": cfg["episode_metadata"],
@@ -104,7 +69,7 @@ def _drive_session(
     toggle_between_batches: bool,
     first_batch_size: int,
     second_batch_size: int,
-) -> tuple[_FakePubSub, RerunDataRecorder]:
+) -> RerunDataRecorder:
     """Drive a session with at most two batches separated by an
     operator-style toggle-off / toggle-on cycle.
 
@@ -112,7 +77,6 @@ def _drive_session(
     in that window are silently discarded. Tests that want to exercise that
     discard behavior should push during the idle gap themselves.
     """
-    pubsub = _FakePubSub()
     cfg = piper_data_collection_rerun_config(session_name="20260514T120000Z")
 
     counter = {"n": 0}
@@ -121,17 +85,14 @@ def _drive_session(
         counter["n"] += 1
         return tmp_path / f"episode_{counter['n']:03d}.rrd"
 
-    recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
-        **_recorder_kwargs(cfg, record_path_factory=factory),
-    )
+    recorder = RerunDataRecorder(**_recorder_kwargs(cfg, record_path_factory=factory))
     recorder.start()
     # Operator presses the toggle to begin episode_001 (recorder defaults to IDLE).
     recorder.toggle_recording()
     for _ in range(first_batch_size):
-        recorder._on_color_image(_make_image())
-        pubsub.push(_Topic("/coordinator/joint_state"), _make_joint_state())
-        pubsub.push(_Topic("/coordinator/desired_joint_action"), _make_joint_state())
+        recorder._on_image(_make_image())
+        recorder._on_joint_state(_make_joint_state())
+        recorder._on_desired_joint_action(_make_joint_state())
     if toggle_between_batches:
         # Stop. The operator resets the scene here — modeled by the same
         # interface presses (no payload is required, but the recorder is IDLE).
@@ -139,11 +100,11 @@ def _drive_session(
         # Resume.
         recorder.toggle_recording()
     for _ in range(second_batch_size):
-        recorder._on_color_image(_make_image())
-        pubsub.push(_Topic("/coordinator/joint_state"), _make_joint_state())
-        pubsub.push(_Topic("/coordinator/desired_joint_action"), _make_joint_state())
+        recorder._on_image(_make_image())
+        recorder._on_joint_state(_make_joint_state())
+        recorder._on_desired_joint_action(_make_joint_state())
     recorder.stop()
-    return pubsub, recorder
+    return recorder
 
 
 def _entity_paths(rec: rb.Recording) -> list[str]:
@@ -184,11 +145,8 @@ def test_session_with_toggle_writes_two_episodes_with_lerobot_paths(
 
 def test_messages_during_idle_gap_are_not_persisted(tmp_path: Path) -> None:
     """Between toggle-off and toggle-on the recorder is IDLE — messages
-    dispatched on the bus during this window must NOT appear in either the
-    closing episode (already closed) or the next episode (not yet opened).
-
-    Uses a unique tag in the entity path so we can fail loudly if it leaks."""
-    pubsub = _FakePubSub()
+    dispatched during this window must NOT appear in either the closing
+    episode (already closed) or the next episode (not yet opened)."""
     cfg = piper_data_collection_rerun_config(session_name="20260514T120000Z")
     counter = {"n": 0}
 
@@ -196,23 +154,20 @@ def test_messages_during_idle_gap_are_not_persisted(tmp_path: Path) -> None:
         counter["n"] += 1
         return tmp_path / f"episode_{counter['n']:03d}.rrd"
 
-    recorder = RerunDataRecorder(
-        pubsubs=[pubsub],
-        **_recorder_kwargs(cfg, record_path_factory=factory),
-    )
+    recorder = RerunDataRecorder(**_recorder_kwargs(cfg, record_path_factory=factory))
     recorder.start()
     # Operator toggles on (recorder is IDLE by default).
     recorder.toggle_recording()
-    recorder._on_color_image(_make_image())
+    recorder._on_image(_make_image())
 
     # Toggle off: the operator is resetting the scene.
     assert recorder.toggle_recording() is None
 
-    # While IDLE, push messages on every recorded topic — none should land.
+    # While IDLE, push messages on every recorded slot — none should land.
     for _ in range(10):
-        recorder._on_color_image(_make_image())
-        pubsub.push(_Topic("/coordinator/joint_state"), _make_joint_state())
-        pubsub.push(_Topic("/coordinator/desired_joint_action"), _make_joint_state())
+        recorder._on_image(_make_image())
+        recorder._on_joint_state(_make_joint_state())
+        recorder._on_desired_joint_action(_make_joint_state())
 
     # Verify no new file opened during the gap.
     assert not (tmp_path / "episode_002.rrd").exists()
@@ -220,7 +175,7 @@ def test_messages_during_idle_gap_are_not_persisted(tmp_path: Path) -> None:
     # Toggle on: resumes into episode_002.
     new_path = recorder.toggle_recording()
     assert new_path == tmp_path / "episode_002.rrd"
-    recorder._on_color_image(_make_image())
+    recorder._on_image(_make_image())
     recorder.stop()
 
     # Both files exist; both contain the camera entity from their own batches,

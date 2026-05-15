@@ -3,7 +3,7 @@
 DimOS records demonstrations as per-episode `.rrd` files via
 [`RerunDataRecorder`](visualization.md#data-collection-recordings). To train a
 [LeRobot](https://github.com/huggingface/lerobot) policy on those recordings,
-convert them into a `LeRobotDataset` v2 directory using the in-tree converter.
+convert them into a `LeRobotDataset` v3.0 directory using the in-tree converter.
 
 ## Install
 

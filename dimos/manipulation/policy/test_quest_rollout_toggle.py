@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for :class:`RolloutToggle` — Quest-button → policy rollout toggle.
+"""Tests for :class:`QuestRolloutToggle` — Quest-button → policy rollout toggle.
 
-Mirrors `dimos.teleop.quest.test_episode_boundary`. We drive `_on_buttons`
-directly with a fake `PolicyModule` so the tests stay hermetic — no LCM
-transport, no inference thread, no backend.
+Mirrors `test_quest_episode_boundary`. We drive `_on_buttons` directly with
+a fake `PolicyModule` so the tests stay hermetic — no LCM transport, no
+inference thread, no backend.
 """
 
 from __future__ import annotations
@@ -24,12 +24,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from dimos.manipulation.policy.rollout_toggle import RolloutToggle
+from dimos.manipulation.policy.quest_rollout_toggle import QuestRolloutToggle
 from dimos.teleop.quest.quest_types import Buttons
 
 
 class _FakePolicyModule:
-    """Fake `PolicyModule` exposing the surface `RolloutToggle` touches.
+    """Fake `PolicyModule` exposing the surface `QuestRolloutToggle` touches.
 
     Stateful: start/stop_rollout flip an internal bit so `is_rollout_active`
     returns the new value on the next call (matches the real node)."""
@@ -59,13 +59,13 @@ def _make_buttons(**flags: bool) -> Buttons:
 
 
 def _make_toggle(button: str = "left_secondary", debounce: float = 0.5) -> Any:
-    rt = RolloutToggle(button=button, debounce_seconds=debounce)
+    rt = QuestRolloutToggle(button=button, debounce_seconds=debounce)
     rt.policy_module = _FakePolicyModule()
     return rt
 
 
 def test_default_button_is_left_secondary() -> None:
-    rt = RolloutToggle()
+    rt = QuestRolloutToggle()
     try:
         assert rt.config.button == "left_secondary"
     finally:

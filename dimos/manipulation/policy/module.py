@@ -39,7 +39,7 @@ operator must explicitly call `start_rollout()` before commands publish.
 `stop_rollout()` re-disables publication. Both transitions call
 `backend.reset()` so any buffered chunk is discarded across them.
 `is_rollout_active()` reports the current state for sibling modules
-(see `RolloutToggle`).
+(see `QuestRolloutToggle`).
 
 Mandatory buttons subscription: when `teleop_engage_buttons` is
 non-empty, the `buttons` subscription is a hard requirement of `start()`
@@ -184,7 +184,7 @@ class PolicyModule(Module):
     def is_rollout_active(self) -> bool:
         """Return whether the operator has enabled policy rollout.
 
-        Decorated `@rpc` so sibling modules (e.g., `RolloutToggle`) can
+        Decorated `@rpc` so sibling modules (e.g., `QuestRolloutToggle`) can
         read it through the cross-module proxy.
         """
         with self._engage_lock:
