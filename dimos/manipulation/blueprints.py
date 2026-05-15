@@ -27,7 +27,6 @@ Quick start:
     python -i -m dimos.manipulation.planning.examples.manipulation_client
 """
 
-from typing import Any
 import math
 
 from dimos.agents.mcp.mcp_client import McpClient
@@ -376,17 +375,20 @@ _xarm6_perception_cfg = _catalog_xarm6(
     tf_extra_links=["link6"],
 )
 
+
 def _convert_color_camera_info(ci: CameraInfo):
     return ci.to_rerun(
         image_topic="world/color_image",
         optical_frame="camera_color_optical_frame",
     )
 
+
 def _convert_depth_camera_info(ci: CameraInfo):
     return ci.to_rerun(
         image_topic="world/depth_image",
         optical_frame="camera_depth_optical_frame",
     )
+
 
 xarm6_perception = (
     autoconnect(

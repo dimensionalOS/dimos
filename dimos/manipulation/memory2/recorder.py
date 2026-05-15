@@ -1,6 +1,6 @@
 """RGBDCameraRecorder — Recorder + continuous CLIP embed for RGBD streams.
 
-Two things this module does on top of the base ``Recorder`` pattern 
+Two things this module does on top of the base ``Recorder`` pattern
 
 1. **Continuous CLIP embed pipeline.** Same logic as ``memory2.SemanticSearch``,
    but co-located here so it shares the recorder's store. See ``spec.py`` for
@@ -47,7 +47,6 @@ class RGBDCameraRecorder(Recorder):
 
     @rpc
     def start(self) -> None:
-
         super(Recorder, self).start()
 
         if self.config.g.replay:
@@ -74,9 +73,7 @@ class RGBDCameraRecorder(Recorder):
         # JPEG — lossy is fine for RGB and keeps the DB small.
         for name, port in self.inputs.items():
             if name == "depth_image":
-                stream: MemoryStream[Any] = self.store.stream(
-                    name, port.type, codec="lz4+lcm"
-                )
+                stream: MemoryStream[Any] = self.store.stream(name, port.type, codec="lz4+lcm")
             else:
                 stream = self.store.stream(name, port.type)
             self._port_to_stream(name, port, stream)

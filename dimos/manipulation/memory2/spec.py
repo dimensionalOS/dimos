@@ -1,4 +1,4 @@
-""" Memory2-native perception for manipulation.
+"""Memory2-native perception for manipulation.
 
 
 Architecture
@@ -279,9 +279,9 @@ class LazyPerceptionModuleConfig(MemoryModuleConfig):
     # extent; camera distance is irrelevant (bins come from observed depths).
     # Fundamental limit (heuristic, not a mask): an object physically touching
     # the wall has no depth gap — SAM-on-bbox is the only true fix there.
-    foreground_bin_size: float = 0.02   # histogram resolution (meters)
-    foreground_gap: float = 0.10        # empty-depth span that ends the cluster
-    foreground_min_points: int = 50     # below this, skip filtering (keep all)
+    foreground_bin_size: float = 0.02  # histogram resolution (meters)
+    foreground_gap: float = 0.10  # empty-depth span that ends the cluster
+    foreground_min_points: int = 50  # below this, skip filtering (keep all)
 
 
 @runtime_checkable

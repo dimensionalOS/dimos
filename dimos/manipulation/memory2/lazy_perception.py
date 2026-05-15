@@ -96,7 +96,10 @@ class LazyPerceptionModule(MemoryModule):
 
         age = _relative_time(most_recent_ts) if most_recent_ts is not None else "unknown age"
         lines = [self._fmt_object_line(o) for o in all_objects]
-        return f"Found {len(all_objects)} object(s) matching '{prompt}' (seen {age}):\n" + "\n".join(lines)
+        return (
+            f"Found {len(all_objects)} object(s) matching '{prompt}' (seen {age}):\n"
+            + "\n".join(lines)
+        )
 
     @skill
     def find_objects_near(
@@ -134,14 +137,15 @@ class LazyPerceptionModule(MemoryModule):
 
         self.objects.publish(all_objects)
         if not all_objects:
-            return f"No confident '{prompt}' match near ({x:.2f}, {y:.2f}, {z:.2f}) within {radius}m."
+            return (
+                f"No confident '{prompt}' match near ({x:.2f}, {y:.2f}, {z:.2f}) within {radius}m."
+            )
 
         age = _relative_time(most_recent_ts) if most_recent_ts is not None else "unknown age"
         lines = [self._fmt_object_line(o) for o in all_objects]
         return (
             f"Found {len(all_objects)} object(s) matching '{prompt}' "
-            f"near ({x:.2f}, {y:.2f}, {z:.2f}) within {radius}m (seen {age}):\n"
-            + "\n".join(lines)
+            f"near ({x:.2f}, {y:.2f}, {z:.2f}) within {radius}m (seen {age}):\n" + "\n".join(lines)
         )
 
     @skill
@@ -159,11 +163,10 @@ class LazyPerceptionModule(MemoryModule):
         try:
             vec = self._clip.embed_text(name)
             obs = (
-                self.store.streams.color_image_embedded
-                    .search(vec)
-                    .filter(lambda o: (o.similarity or 0) >= self.config.min_similarity)
-                    .order_by("similarity", desc=True)
-                    .first()
+                self.store.streams.color_image_embedded.search(vec)
+                .filter(lambda o: (o.similarity or 0) >= self.config.min_similarity)
+                .order_by("similarity", desc=True)
+                .first()
             )
         except (AttributeError, LookupError):
             return f"No memory of '{name}'."
@@ -205,7 +208,9 @@ class LazyPerceptionModule(MemoryModule):
             # Helper to try candidates
             def _try_candidates(candidates_iter: Any) -> tuple[list[DetObject], float | None]:
                 # Sort best matches by recency so we still prefer newer valid frames
-                for candidate_obs in sorted(list(candidates_iter), key=lambda o: o.ts, reverse=True):
+                for candidate_obs in sorted(
+                    list(candidates_iter), key=lambda o: o.ts, reverse=True
+                ):
                     dets = self._detect_and_project_one(candidate_obs, prompt)
                     if dets:
                         return dets, candidate_obs.ts
@@ -217,10 +222,10 @@ class LazyPerceptionModule(MemoryModule):
                 try:
                     candidates = (
                         build_query(stream, vec)
-                            .after(cutoff)
-                            .filter(lambda o: (o.similarity or 0) >= self.config.min_similarity)
-                            .order_by("similarity", desc=True)
-                            .limit(3)
+                        .after(cutoff)
+                        .filter(lambda o: (o.similarity or 0) >= self.config.min_similarity)
+                        .order_by("similarity", desc=True)
+                        .limit(3)
                     )
                     dets, ts = _try_candidates(candidates)
                     if dets:
@@ -231,9 +236,9 @@ class LazyPerceptionModule(MemoryModule):
             # Pass 2: full history fallback
             candidates = (
                 build_query(stream, vec)
-                    .filter(lambda o: (o.similarity or 0) >= self.config.min_similarity)
-                    .order_by("similarity", desc=True)
-                    .limit(5)
+                .filter(lambda o: (o.similarity or 0) >= self.config.min_similarity)
+                .order_by("similarity", desc=True)
+                .limit(5)
             )
             dets, ts = _try_candidates(candidates)
             if dets:
@@ -254,9 +259,7 @@ class LazyPerceptionModule(MemoryModule):
 
         # Aligned depth + latest intrinsics. .first()/.last() raise LookupError on empty.
         try:
-            depth_obs = self.store.streams.depth_image.at(
-                color_obs.ts, tolerance=0.1
-            ).first()
+            depth_obs = self.store.streams.depth_image.at(color_obs.ts, tolerance=0.1).first()
             info_obs = self.store.streams.camera_info.last()
         except LookupError:
             logger.warning("missing depth/info near ts=%.3f", color_obs.ts)
@@ -344,7 +347,7 @@ class LazyPerceptionModule(MemoryModule):
         """Nearest dominant depth cluster within a bbox, at its actual extent."""
         if depths.size < self.config.foreground_min_points:
             return None
-        lo = float(np.percentile(depths, 1))   # drop near speckle
+        lo = float(np.percentile(depths, 1))  # drop near speckle
         hi = float(np.percentile(depths, 99))  # drop far flyers
         if hi <= lo:
             return None
