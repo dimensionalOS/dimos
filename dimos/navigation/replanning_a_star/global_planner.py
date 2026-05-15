@@ -146,9 +146,6 @@ class GlobalPlanner(Resource):
         self._reset_safe_goal_clearance()
 
     def cancel_goal(self, *, but_will_try_again: bool = False, arrived: bool = False) -> None:
-        # Teleop's stop_movement repeats this call every ~30 ms while the
-        # cmd_vel mux holds it asserted. When there is no active goal and
-        # the local planner is already idle there is nothing to cancel —
         # return silently so we don't flood the logs.
         with self._lock:
             no_goal = self._current_goal is None
