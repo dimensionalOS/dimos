@@ -8,7 +8,7 @@ Expose DimOS robot skills to Claude Code via Model Context Protocol.
 uv sync --extra base --extra unitree
 ```
 
-Add to Claude Code (one command)
+### Add to Claude Code (one command)
 
 ```bash
 claude mcp add --transport http --scope project dimos http://localhost:9990/mcp
@@ -18,6 +18,29 @@ Verify that it was added:
 
 ```bash
 claude mcp list
+```
+
+### Add to OpenCode
+
+Add the server to your `opencode.json` (project-level) or `~/.config/opencode/opencode.json` (global):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "dimos": {
+      "type": "remote",
+      "url": "http://localhost:9990/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+Alternatively, run the interactive setup:
+
+```bash
+opencode mcp add
 ```
 
 ## MCP Inspector

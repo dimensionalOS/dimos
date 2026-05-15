@@ -130,7 +130,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 </div>
 
 > [!IMPORTANT]
-> 🤖 Direct your favorite Agent (OpenClaw, Claude Code, etc.) to [AGENTS.md](AGENTS.md) and our [CLI and MCP](#agent-cli-and-mcp) interfaces to start building powerful Dimensional applications.
+> 🤖 Direct your favorite Agent (OpenClaw, Claude Code, OpenCode, etc.) to [AGENTS.md](AGENTS.md) and our [CLI and MCP](#agent-cli-and-mcp) interfaces to start building powerful Dimensional applications.
 
 # Installation
 
