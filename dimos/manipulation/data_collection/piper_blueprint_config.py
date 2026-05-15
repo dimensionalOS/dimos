@@ -81,6 +81,14 @@ _CAMERA_ENTITY_PATH = f"/observation/camera/{_CAMERA_KEY}"
 _JOINT_STATE_ENTITY_PATH = "/coordinator/joint_state"
 _DESIRED_JOINT_ACTION_ENTITY_PATH = "/coordinator/desired_joint_action"
 
+# LCM topic that carries the USB camera frames from `CameraModule` to the
+# recorder / live viewer. The bridge re-maps this topic onto
+# `_CAMERA_ENTITY_PATH` (`/observation/camera/usb`) so the live preview
+# panel — which is anchored on that entity path — actually receives
+# frames. The recorder logs to the same path through its typed `image`
+# slot, so on-disk `.rrd` and the live viewer agree.
+_CAMERA_TOPIC = "/piper_data_collection/color_image"
+
 
 def piper_data_collection_joint_short_names() -> list[str]:
     """Ordered short joint names plotted by the data collection visualization.
@@ -240,13 +248,22 @@ def piper_episode_metadata(
 def _piper_data_collection_topic_to_entity(topic: Any) -> str:
     """Topic→entity_path callback consumed by the bridge (live viewer).
 
-    Maps every pubsub topic to its bare topic name (LCM ``#Type`` suffix
-    stripped), so visual_override keys match the topic name directly. The
-    recorder no longer goes through this callback — all of its inputs
+    - The camera LCM topic is re-targeted onto ``_CAMERA_ENTITY_PATH`` so
+      the live preview panel (anchored on ``/observation/camera/usb``)
+      actually receives frames. The recorder logs the camera to the same
+      path via its typed ``image`` slot.
+    - Every other pubsub topic maps to its bare topic name (LCM ``#Type``
+      suffix stripped), so visual_override keys match the topic name
+      directly.
+
+    The recorder no longer goes through this callback — all of its inputs
     arrive through typed ``In[T]`` slots.
     """
     name = getattr(topic, "name", None) or str(topic)
-    return name.split("#")[0]
+    bare = name.split("#")[0]
+    if bare == _CAMERA_TOPIC:
+        return _CAMERA_ENTITY_PATH
+    return bare
 
 
 def piper_data_collection_rerun_config(

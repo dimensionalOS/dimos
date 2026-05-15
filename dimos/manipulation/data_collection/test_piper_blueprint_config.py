@@ -109,11 +109,13 @@ def test_joint_state_to_rerun_scalars_skips_missing_joints() -> None:
     ]
 
 
-def test_topic_to_entity_strips_lcm_suffix_for_non_camera_topics() -> None:
-    """The shared topic_to_entity callback maps every pubsub topic to its bare
-    topic name (LCM ``#Type`` suffix stripped). The camera topic is intentionally
-    NOT routed through this callback in the single-camera baseline — it arrives
-    through the recorder's typed ``color_image`` slot instead."""
+def test_topic_to_entity_maps_camera_and_strips_lcm_suffix_otherwise() -> None:
+    """The bridge callback re-targets the camera LCM topic onto
+    `/observation/camera/usb` so the live preview panel (which is
+    anchored on that entity path) receives frames; every other pubsub
+    topic maps to its bare topic name (LCM ``#Type`` suffix stripped).
+    The recorder ignores this callback entirely and goes through its
+    typed ``image`` slot."""
 
     class _Topic:
         def __init__(self, name: str) -> None:
@@ -130,12 +132,17 @@ def test_topic_to_entity_strips_lcm_suffix_for_non_camera_topics() -> None:
         )
         == "/coordinator/joint_state"
     )
-    # The camera LCM topic is no longer special-cased — it would just fall
-    # through to its bare topic name if anyone passed it. The recorder
-    # ignores it via the typed-slot path.
+    # Camera LCM topic is re-targeted onto the live-preview entity path.
     assert (
         _piper_data_collection_topic_to_entity(_Topic("/piper_data_collection/color_image"))
-        == "/piper_data_collection/color_image"
+        == "/observation/camera/usb"
+    )
+    # Camera LCM topic with the "#Type" suffix is also re-targeted.
+    assert (
+        _piper_data_collection_topic_to_entity(
+            _Topic("/piper_data_collection/color_image#sensor_msgs.Image")
+        )
+        == "/observation/camera/usb"
     )
 
 
