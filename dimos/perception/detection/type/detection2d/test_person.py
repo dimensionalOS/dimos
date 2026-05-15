@@ -14,6 +14,7 @@
 import pytest
 
 
+@pytest.mark.self_hosted
 def test_person_ros_confidence() -> None:
     """Test that Detection2DPerson preserves confidence when converting to ROS format."""
 
