@@ -103,10 +103,11 @@ class AprilTagDetectionModule(Module):
             family=self.config.family,
             tag_size_m=self.config.tag_size_m,
         )
+        self._latest_camera_info: CameraInfo | None = None
 
     def _process_frame(self, image: Image) -> None:
         """Run detection on one image frame and publish results."""
-        camera_info = self.camera_info.get_next()
+        camera_info = self._latest_camera_info
         if camera_info is None:
             logger.debug("AprilTag module: no camera_info available yet")
             return
@@ -159,12 +160,12 @@ class AprilTagDetectionModule(Module):
             return image
 
         for det in detections:
-            corners = det.corners_image.astype(np.int32)
+            corners = det.corners_image.astype(np.int32).reshape(-1, 1, 2)
             cv2.polylines(cv_image, [corners], True, (0, 255, 0), 2)
 
-            # Draw tag ID text near top-left corner.
-            text_x = int(corners[0][0])
-            text_y = int(corners[0][1]) - 10
+            # Draw tag ID text near first detected corner.
+            text_x = int(corners[0][0][0])
+            text_y = int(corners[0][0][1]) - 10
             label = f"{det.family}:{det.tag_id}"
             # Small black background for readability.
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
@@ -232,6 +233,9 @@ class AprilTagDetectionModule(Module):
             )
 
         _detection_stream().subscribe(lambda img: self._process_frame(img))
+
+        # Cache latest camera_info so _process_frame never blocks.
+        self.camera_info.subscribe(lambda info: setattr(self, "_latest_camera_info", info))
 
     @rpc
     def stop(self) -> None:
