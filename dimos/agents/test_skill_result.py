@@ -19,13 +19,17 @@ auto-timing/logging behavior.
 from __future__ import annotations
 
 import json
+import logging
 import time
 
 import pytest
 
-from dimos.agents import annotation
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
+
+# The @skill decorator logs through this stdlib logger name (set by
+# setup_logger() from the module's file path).
+_ANNOTATION_LOGGER = "dimos/agents/annotation.py"
 
 
 class TestFactories:
@@ -82,27 +86,25 @@ class TestAgentEncode:
         assert "metadata" not in payload
 
 
-class _ListHandler:
-    """Captures ``logger.info`` calls.
-
-    The dimos logger sets ``propagate=False``, so pytest's ``caplog`` fixture
-    can't see its records via the root logger. Instead we monkeypatch the
-    annotation module's logger info method with this collector.
-    """
-
-    def __init__(self) -> None:
-        self.messages: list[str] = []
-
-    def __call__(self, msg: str, *args, **kwargs) -> None:
-        self.messages.append(msg if not args else msg % args)
-
-
 @pytest.fixture
-def captured_logs(monkeypatch) -> _ListHandler:
-    """Capture ``logger.info`` calls from ``dimos.agents.annotation``."""
-    handler = _ListHandler()
-    monkeypatch.setattr(annotation.logger, "info", handler)
-    return handler
+def skill_logs(caplog):
+    """Capture ``@skill`` decorator log lines via pytest's ``caplog``.
+
+    The dimos logger is structlog over a stdlib logger with
+    ``propagate=False``
+    """
+    lg = logging.getLogger(_ANNOTATION_LOGGER)
+    lg.addHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger=_ANNOTATION_LOGGER)
+    try:
+        yield caplog
+    finally:
+        lg.removeHandler(caplog.handler)
+
+
+def _skill_lines(caplog, needle: str) -> list[str]:
+    """Rendered log messages containing ``needle`` (e.g. 'SKILL pick')."""
+    return [r.getMessage() for r in caplog.records if needle in r.getMessage()]
 
 
 class TestSkillDecoratorTiming:
@@ -131,27 +133,27 @@ class TestSkillDecoratorTiming:
 
         assert my_skill() == "plain string"
 
-    def test_logs_success_with_function_name(self, captured_logs):
+    def test_logs_success_with_function_name(self, skill_logs):
         @skill
         def set_gripper() -> SkillResult:
             return SkillResult.ok("done")
 
         set_gripper()
-        msgs = [m for m in captured_logs.messages if "SKILL" in m]
+        msgs = _skill_lines(skill_logs, "SKILL set_gripper")
         assert len(msgs) == 1
-        assert msgs[0].startswith("SKILL set_gripper result=OK duration_ms=")
+        assert "SKILL set_gripper result=OK duration_ms=" in msgs[0]
 
-    def test_logs_failure_with_error_code(self, captured_logs):
+    def test_logs_failure_with_error_code(self, skill_logs):
         @skill
         def pick() -> SkillResult:
             return SkillResult.fail("ROBOT_NOT_FOUND", "x")
 
         pick()
-        msgs = [m for m in captured_logs.messages if "SKILL pick" in m]
+        msgs = _skill_lines(skill_logs, "SKILL pick")
         assert len(msgs) == 1
-        assert msgs[0].startswith("SKILL pick result=ROBOT_NOT_FOUND duration_ms=")
+        assert "SKILL pick result=ROBOT_NOT_FOUND duration_ms=" in msgs[0]
 
-    def test_exception_path_logs_and_reraises(self, captured_logs):
+    def test_exception_path_logs_and_reraises(self, skill_logs):
         """An uncaught exception emits ``result=EXCEPTION`` and re-raises."""
 
         @skill
@@ -161,11 +163,11 @@ class TestSkillDecoratorTiming:
         with pytest.raises(RuntimeError, match="nope"):
             boom()
 
-        msgs = [m for m in captured_logs.messages if "SKILL boom" in m]
+        msgs = _skill_lines(skill_logs, "SKILL boom")
         assert len(msgs) == 1
-        assert msgs[0].startswith("SKILL boom result=EXCEPTION duration_ms=")
+        assert "SKILL boom result=EXCEPTION duration_ms=" in msgs[0]
 
-    def test_failed_result_without_code_logs_failed_not_ok(self, captured_logs):
+    def test_failed_result_without_code_logs_failed_not_ok(self, skill_logs):
         """success=False is authoritative even when error_code is unset."""
 
         @skill
@@ -173,11 +175,11 @@ class TestSkillDecoratorTiming:
             return SkillResult(success=False)  # no error_code set
 
         half_broken()
-        msgs = [m for m in captured_logs.messages if "SKILL half_broken" in m]
+        msgs = _skill_lines(skill_logs, "SKILL half_broken")
         assert len(msgs) == 1
         assert "result=FAILED" in msgs[0]
 
-    def test_non_skillresult_return_logs_unknown(self, captured_logs):
+    def test_non_skillresult_return_logs_unknown(self, skill_logs):
         """A bare string return can't be verified — don't claim result=OK."""
 
         @skill
@@ -185,7 +187,7 @@ class TestSkillDecoratorTiming:
             return "Error: something the decorator can't interpret"
 
         legacy()
-        msgs = [m for m in captured_logs.messages if "SKILL legacy" in m]
+        msgs = _skill_lines(skill_logs, "SKILL legacy")
         assert len(msgs) == 1
         assert "result=UNKNOWN" in msgs[0]
 
