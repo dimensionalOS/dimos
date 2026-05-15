@@ -19,7 +19,6 @@ Usage:
     dimos run coordinator-mobile-manip-mock              # Mock arm + base
     dimos run coordinator-flowbase                       # FlowBase holonomic base (Portal RPC)
     dimos run coordinator-flowbase-keyboard-teleop       # FlowBase + WASD pygame teleop
-    dimos run coordinator-flowbase-vis                   # FlowBase + Rerun visualization
     dimos run coordinator-flowbase-nav                   # FlowBase + FastLio2 + nav stack (click-to-drive)
 """
 
@@ -34,7 +33,6 @@ from dimos.control.components import (
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -42,14 +40,13 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
-from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
 from dimos.robot.catalog.ufactory import xarm7 as _catalog_xarm7
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
-from dimos.visualization.vis_module import vis_module
 
 _base_joints = make_twist_base_joints("base")
 
@@ -135,40 +132,10 @@ coordinator_flowbase_keyboard_teleop = autoconnect(
     }
 )
 
-# FlowBase + Rerun + WebSocket dashboard (on-screen joystick at http://localhost:7779)
-# rerun_open="both" → native Rerun GUI + dashboard served at /. Without this, / would
-# redirect to the deprecated /command-center route, which returns "not built".
-coordinator_flowbase_vis = autoconnect(
-    ControlCoordinator.blueprint(
-        hardware=[_flowbase_twist_base()],
-        tasks=[
-            TaskConfig(
-                name="vel_base",
-                type="velocity",
-                joint_names=_base_joints,
-                priority=10,
-            ),
-        ],
-    ),
-    vis_module(
-        viewer_backend=global_config.viewer,
-        rerun_config={"rerun_open": "both"},
-    ),
-).transports(
-    {
-        ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-        # Route the dashboard joystick's Twist to the coordinator's /cmd_vel topic.
-        ("tele_cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
-)
-
 # FlowBase + Livox MID-360 + FastLio2 SLAM + nav stack with click-to-drive in Rerun.
-# Rerun's clicked_point: Out[PointStamped] (from RerunWebSocketServer) is remapped
-# straight into SimplePlanner's goal: In[PointStamped] — no MovementManager needed.
-# PathFollower.cmd_vel is renamed to "nav_cmd_vel" inside create_nav_stack; we route
-# both nav_cmd_vel and the coordinator's twist_command to LCM /cmd_vel so the existing
-# JointVelocityTask passthrough drives the FlowBase adapter.
+# Mirrors unitree-g1-nav-onboard: MovementManager forwards Rerun clicks to the
+# planner's goal and muxes nav_cmd_vel ⊕ tele_cmd_vel into cmd_vel. The velocity
+# sink is ControlCoordinator + FlowBaseAdapter instead of G1HighLevelDdsSdk.
 #
 # Override LIDAR network at runtime: LIDAR_HOST_IP=<your-ip> LIDAR_IP=<lidar-ip>.
 # MID-360 mount: 20cm forward (+x), 20cm right (-y in ROS), 10cm above base center (+z).
@@ -209,6 +176,11 @@ coordinator_flowbase_nav = (
                 "replan_cooldown": 2.0,
             },
         ),
+        # MovementManager: subscribes clicked_point + nav_cmd_vel + tele_cmd_vel,
+        # publishes muxed cmd_vel + goal (+ way_point, disconnected below).
+        MovementManager.blueprint(),
+        # FlowBase driver: ControlCoordinator with the existing JointVelocityTask
+        # passthrough; receives Twist from MovementManager on LCM /cmd_vel.
         ControlCoordinator.blueprint(
             hardware=[_flowbase_twist_base()],
             tasks=[
@@ -220,29 +192,28 @@ coordinator_flowbase_nav = (
                 ),
             ],
         ),
-        # Rerun directly (no vis_module helper — we don't want WebsocketVisModule's
-        # dashboard/command-center). RerunWebSocketServer owns the click → clicked_point
-        # bridge for clicks made inside the Rerun 3D viewer itself.
-        # rerun_open="both" → spawn the native viewer AND serve the web viewer (so the
-        # Wayland/Vulkan native path is bypassable by opening http://localhost:9878/).
+        # Rerun directly (no vis_module helper — no WebsocketVisModule dashboard).
+        # rerun_open="native": only spawn the native viewer; no web viewer auto-launch.
+        # RerunWebSocketServer is the click bridge — it republishes click events
+        # from the native dimos-viewer onto LCM /clicked_point.
         RerunBridgeModule.blueprint(
             **nav_stack_rerun_config({"memory_limit": "1GB"}, vis_throttle=0.5),
-            rerun_open="both",
+            rerun_open="native",
         ),
         RerunWebSocketServer.blueprint(),
     )
     .remappings(
         [
             (FastLio2, "lidar", "registered_scan"),
-            # Rerun click → planner goal, skipping MovementManager.
-            (SimplePlanner, "goal", "clicked_point"),
+            # SimplePlanner / FarPlanner owns way_point — disconnect MovementManager's
+            # redundant pass-through copy (matches unitree-g1-nav-onboard).
+            (MovementManager, "way_point", "_mgr_way_point_unused"),
         ]
     )
     .transports(
         {
-            # nav_cmd_vel (PathFollower output, remapped inside create_nav_stack) and
-            # coordinator's twist_command both ride /cmd_vel.
-            ("nav_cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+            # MovementManager.cmd_vel publishes to LCM /cmd_vel by default; the
+            # coordinator's twist_command listens on the same topic.
             ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
@@ -277,7 +248,6 @@ __all__ = [
     "coordinator_flowbase",
     "coordinator_flowbase_keyboard_teleop",
     "coordinator_flowbase_nav",
-    "coordinator_flowbase_vis",
     "coordinator_mobile_manip_mock",
     "coordinator_mock_twist_base",
 ]
