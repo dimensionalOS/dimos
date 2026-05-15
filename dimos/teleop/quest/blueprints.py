@@ -25,7 +25,6 @@ from dimos.control.blueprints.teleop import (
     coordinator_teleop_piper,
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
-    is_xarm7_mock_preview,
     piper_teleop_robot_model_config,
     xarm7_teleop_robot_model_config,
 )
@@ -61,15 +60,9 @@ teleop_quest_rerun = autoconnect(
 teleop_quest_xarm7 = autoconnect(
     ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_xarm7,
-    *(
-        (
-            ManipulationModule.blueprint(
-                robots=[xarm7_teleop_robot_model_config()],
-                enable_viz=True,
-            ),
-        )
-        if is_xarm7_mock_preview
-        else ()
+    ManipulationModule.blueprint(
+        robots=[xarm7_teleop_robot_model_config()],
+        enable_viz=True,
     ),
 ).transports(
     {

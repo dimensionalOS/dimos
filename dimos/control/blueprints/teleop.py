@@ -59,13 +59,10 @@ from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.teleop.quest.quest_types import Buttons
 
 _is_sim = global_config.simulation
-_is_mujoco_sim = _is_sim and global_config.simulation_backend == "mujoco"
-is_xarm7_mock_preview = not _is_sim and not global_config.xarm7_ip
-is_piper_mock_preview = not _is_sim and not global_config.can_port
 
 
 def _mujoco_if_sim(sim_path: str, dof: int) -> tuple[Blueprint, ...]:
-    if not _is_mujoco_sim:
+    if not _is_sim:
         return ()
     return (MujocoSimModule.blueprint(address=sim_path, headless=False, dof=dof),)
 
@@ -310,8 +307,6 @@ __all__ = [
     "coordinator_teleop_xarm6",
     "coordinator_teleop_xarm7",
     "coordinator_velocity_xarm6",
-    "is_piper_mock_preview",
-    "is_xarm7_mock_preview",
     "piper_teleop_robot_model_config",
     "xarm7_teleop_robot_model_config",
 ]

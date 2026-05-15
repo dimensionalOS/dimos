@@ -118,7 +118,6 @@ def test_no_ip_xarm7_teleop_uses_mock_and_manipulation_preview() -> None:
         control_blueprints,
         quest_blueprints,
     ):
-        assert control_blueprints.is_xarm7_mock_preview is True
         assert _xarm7_adapter_type(control_blueprints) == "mock"
         assert "ManipulationModule" in _module_names(quest_blueprints.teleop_quest_xarm7)
         assert (
@@ -134,7 +133,6 @@ def test_no_can_piper_teleop_uses_mock_and_manipulation_preview() -> None:
         control_blueprints,
         quest_blueprints,
     ):
-        assert control_blueprints.is_piper_mock_preview is True
         assert _piper_adapter_type(control_blueprints) == "mock"
         assert "ManipulationModule" in _module_names(quest_blueprints.teleop_quest_piper)
         assert [(task.type, task.name) for task in _piper_task_configs(control_blueprints)] == [
@@ -320,7 +318,6 @@ def test_real_can_piper_teleop_uses_hardware_with_manipulation_preview() -> None
         control_blueprints,
         quest_blueprints,
     ):
-        assert control_blueprints.is_piper_mock_preview is False
         assert _piper_adapter_type(control_blueprints) == "piper"
         assert "ManipulationModule" in _module_names(quest_blueprints.teleop_quest_piper)
 
@@ -330,28 +327,25 @@ def test_simulation_piper_teleop_uses_mujoco_with_manipulation_preview() -> None
         control_blueprints,
         quest_blueprints,
     ):
-        assert control_blueprints.is_piper_mock_preview is False
         assert _piper_adapter_type(control_blueprints) == "sim_mujoco"
         assert "MujocoSimModule" in _module_names(control_blueprints.coordinator_teleop_piper)
         assert "ManipulationModule" in _module_names(quest_blueprints.teleop_quest_piper)
 
 
-def test_real_ip_xarm7_teleop_uses_hardware_without_manipulation_preview() -> None:
+def test_real_ip_xarm7_teleop_uses_hardware_with_manipulation_preview() -> None:
     with _teleop_blueprints(simulation=False, xarm7_ip="192.168.1.10") as (
         control_blueprints,
         quest_blueprints,
     ):
-        assert control_blueprints.is_xarm7_mock_preview is False
         assert _xarm7_adapter_type(control_blueprints) == "xarm"
-        assert "ManipulationModule" not in _module_names(quest_blueprints.teleop_quest_xarm7)
+        assert "ManipulationModule" in _module_names(quest_blueprints.teleop_quest_xarm7)
 
 
-def test_simulation_xarm7_teleop_uses_mujoco_without_manipulation_preview() -> None:
+def test_simulation_xarm7_teleop_uses_mujoco_with_manipulation_preview() -> None:
     with _teleop_blueprints(simulation=True, xarm7_ip=None) as (
         control_blueprints,
         quest_blueprints,
     ):
-        assert control_blueprints.is_xarm7_mock_preview is False
         assert _xarm7_adapter_type(control_blueprints) == "sim_mujoco"
         assert "MujocoSimModule" in _module_names(control_blueprints.coordinator_teleop_xarm7)
-        assert "ManipulationModule" not in _module_names(quest_blueprints.teleop_quest_xarm7)
+        assert "ManipulationModule" in _module_names(quest_blueprints.teleop_quest_xarm7)
