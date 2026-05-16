@@ -13,19 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.go2.blueprints.layers.layer_4_world_state import (
-    _go2_spatial_world_state,
-)
-from dimos.robot.unitree.go2.blueprints.layers.layer_5_skill_interface import (
-    _go2_spatial_skill_interface,
-)
-from dimos.robot.unitree.go2.blueprints.layers.layer_6_robot_body import _go2_robot_body
+from typing import Any
 
-unitree_go2_spatial = autoconnect(
-    _go2_robot_body,
-    _go2_spatial_world_state,
-    _go2_spatial_skill_interface,
-).global_config(n_workers=8)
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 
-__all__ = ["unitree_go2_spatial"]
+
+def _go2_agent_brain_with_client(**mcp_client_kwargs: Any) -> Blueprint:
+    """Layer 3: MCP tool server plus the LLM/VLM agent client."""
+    return autoconnect(
+        McpServer.blueprint(),
+        McpClient.blueprint(**mcp_client_kwargs),
+    )
+
+
+_go2_agent_brain = _go2_agent_brain_with_client()
+
+__all__ = ["_go2_agent_brain", "_go2_agent_brain_with_client"]

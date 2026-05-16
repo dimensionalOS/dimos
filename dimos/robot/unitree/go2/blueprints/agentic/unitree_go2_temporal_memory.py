@@ -14,18 +14,16 @@
 # limitations under the License.
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
-from dimos.perception.experimental.temporal_memory.temporal_memory import (
-    TemporalMemory,
-    TemporalMemoryConfig,
-)
 from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitree_go2_agentic
+from dimos.robot.unitree.go2.blueprints.layers.layer_4_world_state import (
+    _go2_temporal_memory_world_state,
+)
 
 # This module is imported lazily by `get_by_name()` in the CLI run command,
 # AFTER global_config.update() has applied CLI flags like --new-memory.
 unitree_go2_temporal_memory = autoconnect(
     unitree_go2_agentic,
-    TemporalMemory.blueprint(config=TemporalMemoryConfig(new_memory=global_config.new_memory)),
+    _go2_temporal_memory_world_state(),
 )
 
 __all__ = ["unitree_go2_temporal_memory"]

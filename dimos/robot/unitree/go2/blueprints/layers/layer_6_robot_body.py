@@ -13,19 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.go2.blueprints.layers.layer_4_world_state import (
-    _go2_spatial_world_state,
-)
-from dimos.robot.unitree.go2.blueprints.layers.layer_5_skill_interface import (
-    _go2_spatial_skill_interface,
-)
-from dimos.robot.unitree.go2.blueprints.layers.layer_6_robot_body import _go2_robot_body
+from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
-unitree_go2_spatial = autoconnect(
-    _go2_robot_body,
-    _go2_spatial_world_state,
-    _go2_spatial_skill_interface,
-).global_config(n_workers=8)
+_go2_robot_body = unitree_go2
 
-__all__ = ["unitree_go2_spatial"]
+__all__ = ["_go2_robot_body"]

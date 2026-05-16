@@ -13,17 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.mcp.mcp_client import McpClient
-from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.go2.blueprints.agentic._common_agentic import _common_agentic
-from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree_go2_spatial
+from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain import _go2_agent_brain
+from dimos.robot.unitree.go2.blueprints.layers.layer_4_world_state import (
+    _go2_spatial_world_state,
+)
+from dimos.robot.unitree.go2.blueprints.layers.layer_5_skill_interface import (
+    _go2_skill_interface,
+)
+from dimos.robot.unitree.go2.blueprints.layers.layer_6_robot_body import _go2_robot_body
 
 unitree_go2_agentic = autoconnect(
-    unitree_go2_spatial,
-    McpServer.blueprint(),
-    McpClient.blueprint(),
-    _common_agentic,
-)
+    _go2_robot_body,
+    _go2_spatial_world_state,
+    _go2_skill_interface,
+    _go2_agent_brain,
+).global_config(n_workers=8)
 
 __all__ = ["unitree_go2_agentic"]
