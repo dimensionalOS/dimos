@@ -49,6 +49,7 @@ struct Config
     double sc_max_range_m = 80.0;
     int sc_top_k = 10;
     double sc_match_threshold = 0.4;
+    double sc_lidar_height_m = 2.0;
 };
 
 class SimplePGO

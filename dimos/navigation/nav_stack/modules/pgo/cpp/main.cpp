@@ -175,12 +175,13 @@ static nav_msgs::Path build_graph_nodes(const std::vector<KeyPoseWithCloud>& key
 
 static void append_segment(nav_msgs::Path& msg,
                             const std::string& frame_id,
-                            double ts,
+                            double start_ts,
                             const V3D& start,
                             const V3D& end,
-                            double traversability) {
+                            double traversability,
+                            double end_ts) {
     geometry_msgs::PoseStamped start_pose;
-    start_pose.header = dimos::make_header(frame_id, ts);
+    start_pose.header = dimos::make_header(frame_id, start_ts);
     start_pose.pose.position.x = start.x();
     start_pose.pose.position.y = start.y();
     start_pose.pose.position.z = start.z();
@@ -191,7 +192,7 @@ static void append_segment(nav_msgs::Path& msg,
     start_pose.pose.orientation.w = traversability;
 
     geometry_msgs::PoseStamped end_pose;
-    end_pose.header = dimos::make_header(frame_id, ts);
+    end_pose.header = dimos::make_header(frame_id, end_ts);
     end_pose.pose.position.x = end.x();
     end_pose.pose.position.y = end.y();
     end_pose.pose.position.z = end.z();
@@ -245,7 +246,10 @@ static nav_msgs::Path build_loop_closure_deltas(
 
 // Build a Path-encoded LineSegments3D message — pose pairs form segments.
 // Odometry edges get traversability=1.0 (green); loop closures get 0.4
-// (yellow) so they stand out in the rerun rendering.
+// (yellow) so they stand out in the rerun rendering. The header stamp
+// on each endpoint is the *creation* time of that keyframe (not the
+// message publish time), so downstream consumers can correlate edge
+// endpoints back to the input scan that produced each keyframe.
 static nav_msgs::Path build_graph_edges(const std::vector<KeyPoseWithCloud>& key_poses,
                                          const std::vector<std::pair<size_t, size_t>>& loop_pairs,
                                          double ts,
@@ -255,19 +259,21 @@ static nav_msgs::Path build_graph_edges(const std::vector<KeyPoseWithCloud>& key
 
     // Odometry edges between consecutive keyframes.
     for (size_t i = 1; i < key_poses.size(); i++) {
-        append_segment(msg, frame_id, ts,
+        append_segment(msg, frame_id, key_poses[i - 1].time,
                        key_poses[i - 1].t_global,
                        key_poses[i].t_global,
-                       1.0);
+                       1.0,
+                       key_poses[i].time);
     }
     // Loop closure edges.
     for (const auto& pair : loop_pairs) {
         if (pair.first >= key_poses.size() || pair.second >= key_poses.size())
             continue;
-        append_segment(msg, frame_id, ts,
+        append_segment(msg, frame_id, key_poses[pair.first].time,
                        key_poses[pair.first].t_global,
                        key_poses[pair.second].t_global,
-                       0.4);
+                       0.4,
+                       key_poses[pair.second].time);
     }
     msg.poses_length = static_cast<int32_t>(msg.poses.size());
     return msg;
@@ -306,6 +312,7 @@ int main(int argc, char** argv)
     config.sc_max_range_m = mod.arg_float("sc_max_range_m", 80.0f);
     config.sc_top_k = mod.arg_int("sc_top_k", 10);
     config.sc_match_threshold = mod.arg_float("sc_match_threshold", 0.4f);
+    config.sc_lidar_height_m = mod.arg_float("sc_lidar_height_m", 2.0f);
 
     // Node-level config
     std::string parent_frame = mod.arg("parent_frame", "world");

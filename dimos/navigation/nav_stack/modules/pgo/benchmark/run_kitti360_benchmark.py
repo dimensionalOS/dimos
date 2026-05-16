@@ -36,6 +36,7 @@ from dataclasses import asdict, dataclass
 import json
 import math
 from pathlib import Path
+import subprocess
 import threading
 import time
 
@@ -135,31 +136,45 @@ def _on_graph_edges(
     _channel: str,
     data: bytes,
 ) -> None:
-    """Extract loop-closure edges (traversability ~ 0.4) by matching
-    endpoint world-positions to known keyframe positions.
+    """Extract loop-closure edges (traversability ~ 0.4) and map each
+    endpoint back to the originating KITTI frame_id via its keyframe
+    creation timestamp.
 
-    Each loop edge in the Path is a pair of consecutive ``poses[i],
-    poses[i+1]`` with traversability=0.4. Odometry edges have 1.0.
+    Each loop edge is a pair of consecutive ``poses[i], poses[i+1]``
+    with traversability=0.4. PGO stamps each endpoint's header with the
+    keyframe's *creation* timestamp (not the message publish time), so
+    we can look up which input scan produced each endpoint regardless
+    of how much iSAM2 has since shifted the keyframe's world position.
     """
     msg = NavPath.lcm_decode(data)
-    # Build a kd-tree on the known lidar positions so we can map an
-    # endpoint world-position back to a frame_id.
-    positions = np.array([sequence.lidar_pose(fid)[:3, 3] for fid in frame_ids_in_order])
+    # ts_to_frame_id: built once on the first call so we don't pay for it on every edge update.
+    if not state.keyframe_index_to_frame_id:  # repurpose this dict as ts→frame_id cache
+        for fid in frame_ids_in_order:
+            ts = sequence.timestamps.get(fid)
+            if ts is not None:
+                state.keyframe_index_to_frame_id[round(ts * 1e3)] = fid
+
+    def _ts_to_frame(ts_sec: float) -> int | None:
+        ts_ms = round(ts_sec * 1e3)
+        # Allow ±1ms slop (PoseStamped ts rounds through int sec + uint nsec)
+        for delta in (0, -1, 1):
+            fid = state.keyframe_index_to_frame_id.get(ts_ms + delta)
+            if fid is not None:
+                return fid
+        return None
 
     i = 0
     while i + 1 < len(msg.poses):
         pose_a = msg.poses[i]
         pose_b = msg.poses[i + 1]
-        # Pair-encoded: both poses share the same traversability (~ 0.4 for loop).
         trav_a = float(pose_a.orientation.w)
         if abs(trav_a - 0.4) < 0.05:
-            pa = np.array([pose_a.position.x, pose_a.position.y, pose_a.position.z])
-            pb = np.array([pose_b.position.x, pose_b.position.y, pose_b.position.z])
-            idx_a = int(np.argmin(np.linalg.norm(positions - pa, axis=1)))
-            idx_b = int(np.argmin(np.linalg.norm(positions - pb, axis=1)))
-            pair = (frame_ids_in_order[idx_a], frame_ids_in_order[idx_b])
-            if pair not in state.detected_pairs:
-                state.detected_pairs.append(pair)
+            fa = _ts_to_frame(pose_a.ts)
+            fb = _ts_to_frame(pose_b.ts)
+            if fa is not None and fb is not None:
+                pair = (fa, fb)
+                if pair not in state.detected_pairs:
+                    state.detected_pairs.append(pair)
         i += 2
 
 
@@ -186,7 +201,7 @@ def _build_runner(config: BenchmarkConfig, topic_prefix: str) -> NativeProcessRu
             "--key_pose_delta_deg",
             "10.0",
             "--key_pose_delta_trans",
-            "1.0",
+            "0.5",
             "--loop_search_radius",
             str(config.loop_search_radius_m),
             "--loop_time_thresh",
@@ -198,7 +213,7 @@ def _build_runner(config: BenchmarkConfig, topic_prefix: str) -> NativeProcessRu
             "--submap_resolution",
             "0.5",
             "--min_loop_detect_duration",
-            "1.0",
+            "0.0",
             "--global_map_voxel_size",
             "0.5",
             "--global_map_publish_rate",
@@ -277,7 +292,14 @@ def run_benchmark(config: BenchmarkConfig) -> BenchmarkResult:
     runner = _build_runner(config, topic_prefix)
     wallclock_start = time.monotonic()
     try:
-        runner.start(capture_stderr=False)
+        # Capture PGO's stderr so its diagnostic prints (keyframes, sc-search, loop events)
+        # are available for debugging. We dump them to the runner's log at the end.
+        runner.process = subprocess.Popen(
+            [runner.binary_path, *runner.args],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
         time.sleep(2.0)
         if not runner.is_running:
             raise RuntimeError("PGO native process failed to start")
@@ -319,13 +341,66 @@ def run_benchmark(config: BenchmarkConfig) -> BenchmarkResult:
 
         time.sleep(config.drain_sec)
     finally:
-        runner.stop()
+        stderr_bytes = b""
+        if runner.process is not None:
+            runner.process.terminate()
+            try:
+                _, stderr_bytes = runner.process.communicate(timeout=3.0)
+            except Exception:
+                runner.process.kill()
+                try:
+                    _, stderr_bytes = runner.process.communicate()
+                except Exception:
+                    pass
+            runner.process = None
         stop_event.set()
         handle_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         lcm_instance.unsubscribe(loop_sub)
         lcm_instance.unsubscribe(edges_sub)
+        if getattr(config, "print_stderr", False) and stderr_bytes:
+            text = stderr_bytes.decode("utf-8", errors="replace")
+            logger.info(f"\n--- PGO stderr ({len(text.splitlines())} lines) ---")
+            for line in text.splitlines():
+                logger.info(f"  {line}")
 
     wallclock = time.monotonic() - wallclock_start
+
+    # Diagnostic: print every detected pair with positions + verdict, so we can
+    # see whether PGO is finding wrong places or whether the scorer is mis-snapping.
+    if getattr(config, "print_pairs", False):
+        positions_map = {fid: sequence.lidar_pose(fid)[:3, 3] for fid in frame_ids}
+        logger.info(f"\n--- {len(state.detected_pairs)} detected pairs ---")
+        for src, dst in state.detected_pairs:
+            pa = positions_map.get(src)
+            pb = positions_map.get(dst)
+            if pa is None or pb is None:
+                logger.info(f"  detected ({src}, {dst}): MISSING POSITION (off-window)")
+                continue
+            dist = float(np.linalg.norm(pa - pb))
+            gap = abs(src - dst)
+            src_valid = groundtruth.valid_loops_per_query.get(src, set())
+            dst_valid = groundtruth.valid_loops_per_query.get(dst, set())
+            is_tp = dst in src_valid or src in dst_valid
+            # Find the nearest GT pair for this query
+            nearest_gt = "none"
+            for query in (src, dst):
+                if groundtruth.valid_loops_per_query.get(query):
+                    cand_pos = np.array(
+                        [
+                            positions_map[c]
+                            for c in groundtruth.valid_loops_per_query[query]
+                            if c in positions_map
+                        ]
+                    )
+                    if len(cand_pos):
+                        qpos = positions_map[query]
+                        dists = np.linalg.norm(cand_pos - qpos, axis=1)
+                        nearest_gt = (
+                            f"q={query} has {len(cand_pos)} valid GT, nearest at {dists.min():.2f}m"
+                        )
+                        break
+            verdict = "✓TP" if is_tp else "✗FP"
+            logger.info(f"  {verdict} ({src}, {dst}) gap={gap} dist={dist:.2f}m | gt: {nearest_gt}")
 
     metrics = score_detected_loops(state.detected_pairs, groundtruth)
     result = BenchmarkResult(
@@ -393,6 +468,14 @@ def main() -> None:
     parser.add_argument("--loop-score-thresh", type=float, default=0.5)
     parser.add_argument("--publish-interval-sec", type=float, default=0.02)
     parser.add_argument("--output-json", type=Path, default=None)
+    parser.add_argument(
+        "--print-pairs",
+        action="store_true",
+        help="dump every detected pair + nearest GT (diagnostic)",
+    )
+    parser.add_argument(
+        "--print-stderr", action="store_true", help="dump PGO subprocess stderr (diagnostic)"
+    )
     args = parser.parse_args()
 
     config = BenchmarkConfig(
@@ -405,6 +488,8 @@ def main() -> None:
         publish_interval_sec=args.publish_interval_sec,
         output_json=args.output_json,
     )
+    config.print_pairs = args.print_pairs  # type: ignore[attr-defined]
+    config.print_stderr = args.print_stderr  # type: ignore[attr-defined]
 
     result = run_benchmark(config)
     print(_format_result(result))

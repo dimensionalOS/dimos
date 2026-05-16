@@ -195,7 +195,16 @@ def load_kitti360_sequence(root: Path, sequence_id: int) -> Kitti360Sequence:
 
     velo_to_cam = _parse_kitti_calib_matrix(calib_path)
     poses_world = _load_poses_file(poses_path)
-    timestamps = _load_timestamps_file(timestamps_path) if timestamps_path.exists() else {}
+    # timestamps.txt has one line per .bin file in this split's velodyne_points/data,
+    # in sorted-by-filename order. Rekey by the actual frame_id so callers can do
+    # ``timestamps[frame_id]`` instead of "line index" lookups (which silently miss
+    # in the Test SLAM split because frame_ids don't start at 0).
+    timestamps: dict[int, float] = {}
+    if timestamps_path.exists():
+        sorted_scan_ids = sorted(int(p.stem) for p in velodyne_dir.glob("*.bin"))
+        line_indexed = _load_timestamps_file(timestamps_path)
+        if len(sorted_scan_ids) == len(line_indexed):
+            timestamps = {fid: line_indexed[i] for i, fid in enumerate(sorted_scan_ids)}
 
     return Kitti360Sequence(
         sequence_id=sequence_id,

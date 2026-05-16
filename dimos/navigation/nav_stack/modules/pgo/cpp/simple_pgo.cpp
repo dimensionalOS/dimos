@@ -1,5 +1,8 @@
 #include "simple_pgo.h"
 
+#include <cstdio>
+#include <limits>
+
 SimplePGO::SimplePGO(const Config &config) : m_config(config)
 {
     gtsam::ISAM2Params isam2_params;
@@ -22,6 +25,7 @@ SimplePGO::SimplePGO(const Config &config) : m_config(config)
     m_sc_config.max_range_m = m_config.sc_max_range_m;
     m_sc_config.candidate_top_k = m_config.sc_top_k;
     m_sc_config.match_threshold = m_config.sc_match_threshold;
+    m_sc_config.lidar_height_m = m_config.sc_lidar_height_m;
 }
 
 bool SimplePGO::isKeyPose(const PoseWithTime &pose)
@@ -179,7 +183,9 @@ int SimplePGO::searchByScanContext(int& out_sector_shift) const
             return a.first < b.first;
         });
 
-    float best_dist = static_cast<float>(m_sc_config.match_threshold);
+    float best_dist = std::numeric_limits<float>::max();
+    int best_idx_unfiltered = -1;
+    float best_dist_filtered = static_cast<float>(m_sc_config.match_threshold);
     int best_idx = -1;
     int best_shift = 0;
     for (int rank = 0; rank < top_k_count; rank++) {
@@ -188,6 +194,10 @@ int SimplePGO::searchByScanContext(int& out_sector_shift) const
             query, m_sc_descriptors[idx]);
         if (distance < best_dist) {
             best_dist = distance;
+            best_idx_unfiltered = idx;
+        }
+        if (distance < best_dist_filtered) {
+            best_dist_filtered = distance;
             best_idx = idx;
             best_shift = shift;
         }
@@ -229,12 +239,21 @@ void SimplePGO::searchForLoopPairs()
 
     // Use Scan Context's column shift to seed ICP with a yaw-aligned initial
     // guess, which dramatically improves convergence on revisits at
-    // different headings.
+    // different headings. Both submaps are in *global* frame, so a naive
+    // rotation about the world origin would translate the source cloud
+    // kilometers off (e.g. at world position (3500, 350), rotating by 90°
+    // sends it to (-350, 3500)). Build a transform that rotates about the
+    // source keyframe's own global position instead:
+    //     init = T(src_pos) · Rz(θ) · T(-src_pos)
+    // → init · p = R · (p - src_pos) + src_pos
     Eigen::Matrix4f init_guess = Eigen::Matrix4f::Identity();
     if (m_config.use_scan_context && sector_shift != 0) {
         const double yaw = scan_context::yaw_from_shift(sector_shift, m_sc_config.n_sectors);
         Eigen::AngleAxisf rot(static_cast<float>(yaw), Eigen::Vector3f::UnitZ());
-        init_guess.block<3, 3>(0, 0) = rot.toRotationMatrix();
+        Eigen::Matrix3f R = rot.toRotationMatrix();
+        Eigen::Vector3f src_pos = m_key_poses[cur_idx].t_global.cast<float>();
+        init_guess.block<3, 3>(0, 0) = R;
+        init_guess.block<3, 1>(0, 3) = src_pos - R * src_pos;
     }
 
     CloudType::Ptr target_cloud = getSubMap(loop_idx, m_config.loop_submap_half_range, m_config.submap_resolution);

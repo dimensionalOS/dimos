@@ -6,6 +6,10 @@
 namespace scan_context {
 
 Descriptor make_descriptor(const CloudType& cloud, const Config& config) {
+    // Empty cells stay at 0; we shift z by lidar_height so real points
+    // are strictly positive and "no point here" is distinguishable from
+    // ground level. Matches irapkaist/scancontext's NO_POINT convention
+    // closely enough that the column-wise cosine distance behaves.
     Descriptor descriptor = Descriptor::Constant(config.n_rings, config.n_sectors, 0.0f);
     if (config.n_rings <= 0 || config.n_sectors <= 0 || config.max_range_m <= 0.0) {
         return descriptor;
@@ -13,6 +17,7 @@ Descriptor make_descriptor(const CloudType& cloud, const Config& config) {
 
     const double ring_step = config.max_range_m / static_cast<double>(config.n_rings);
     const double sector_step = 2.0 * M_PI / static_cast<double>(config.n_sectors);
+    const float height_offset = static_cast<float>(config.lidar_height_m);
 
     for (const auto& point : cloud.points) {
         const double x = point.x;
@@ -37,10 +42,13 @@ Descriptor make_descriptor(const CloudType& cloud, const Config& config) {
         if (sector < 0) sector = 0;
         if (sector >= config.n_sectors) sector = config.n_sectors - 1;
 
+        const float shifted_z = static_cast<float>(z) + height_offset;
+        // Clip to >= 0 — points slightly below the sensor frame (rare in
+        // properly-mounted lidars) shouldn't pull the cell negative.
+        const float cell_value = shifted_z > 0.0f ? shifted_z : 0.0f;
         float& cell = descriptor(ring, sector);
-        const float point_z = static_cast<float>(z);
-        if (point_z > cell) {
-            cell = point_z;
+        if (cell_value > cell) {
+            cell = cell_value;
         }
     }
     return descriptor;

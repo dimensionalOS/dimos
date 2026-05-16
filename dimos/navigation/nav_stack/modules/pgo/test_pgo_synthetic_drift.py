@@ -147,6 +147,45 @@ def _body_to_world(points_body: np.ndarray, position: np.ndarray, yaw: float) ->
     return points_body @ rot.T + position
 
 
+def _trajectory_reverse_loop(
+    n_outbound: int = 20, n_inbound: int = 20, leg_length: float = 8.0
+) -> list[tuple[float, np.ndarray, float, np.ndarray, float]]:
+    """Out-and-back trajectory where the robot turns 180° at the far
+    end, so the return leg is driven *facing west* while the outbound
+    leg was *facing east*.
+
+    No translation drift — the only thing distinguishing inbound from
+    outbound observations at the same position is the heading. This
+    forces Scan Context to find a column shift of ~n_sectors/2 to
+    match, and forces ICP to be seeded with a yaw init_guess rotated
+    about the source keyframe (not the world origin). Without the
+    init_guess fix in ``searchForLoopPairs``, a 180° rotation around
+    the world origin sends the source cloud kilometres away from the
+    target and ICP fails to converge.
+    """
+    samples: list[tuple[float, np.ndarray, float, np.ndarray, float]] = []
+    t = 1.0
+    dt = 0.5
+    # outbound: drive east, facing east (yaw=0)
+    for i in range(n_outbound + 1):
+        frac = i / max(n_outbound, 1)
+        x = frac * leg_length
+        pos = np.array([x, 0.0, 0.5])
+        yaw = 0.0
+        samples.append((t, pos, yaw, pos.copy(), yaw))
+        t += dt
+    # inbound: drive west, facing west (yaw=π) — body-frame scans see
+    # the room rotated 180° relative to the outbound leg.
+    for i in range(1, n_inbound + 1):
+        frac = i / max(n_inbound, 1)
+        x = leg_length * (1.0 - frac)
+        pos = np.array([x, 0.0, 0.5])
+        yaw = math.pi
+        samples.append((t, pos, yaw, pos.copy(), yaw))
+        t += dt
+    return samples
+
+
 def _trajectory_with_drift(
     n_outbound: int = 20, n_inbound: int = 20, leg_length: float = 8.0
 ) -> list[tuple[float, np.ndarray, float, np.ndarray, float]]:
@@ -213,14 +252,18 @@ def _publish_odom(
     lcm_instance.publish(ODOM_LCM, msg.lcm_encode())
 
 
-def _run_pgo(use_scan_context: bool) -> int:
+def _run_pgo(
+    use_scan_context: bool,
+    trajectory: list[tuple[float, np.ndarray, float, np.ndarray, float]] | None = None,
+) -> int:
     """Run a single PGO instance over the synthetic trajectory and
     return the number of pgo_loop_closure events received."""
     if not PGO_BIN.exists():
         pytest.skip(f"PGO binary not found: {PGO_BIN}")
 
     room_points = _make_room_points()
-    trajectory = _trajectory_with_drift()
+    if trajectory is None:
+        trajectory = _trajectory_with_drift()
 
     lcm_instance = lcmlib.LCM()
     received_events: list[NavPath] = []
@@ -352,4 +395,26 @@ class TestPGOSyntheticDrift:
             f"Position-based search shouldn't fire when drift "
             f"({DRIFT_AT_REVISIT_M}m) >> loop_search_radius "
             f"({LOOP_SEARCH_RADIUS_M}m). Got {pos_events} events."
+        )
+
+    def test_scan_context_catches_reverse_loop(self) -> None:
+        """Robot drives 8m east facing east, turns 180°, drives back to
+        the start facing west. Body-frame scans on the return leg are
+        rotated 180° relative to outbound, so Scan Context must use a
+        non-zero sector shift and ICP must be seeded with a yaw init
+        rotated about the *source keyframe* (not the world origin) for
+        the clouds to align. Without that fix in
+        ``simple_pgo.cpp::searchForLoopPairs``, the rotated source ends
+        up displaced from the target and ICP can't converge.
+        """
+        events = _run_pgo(
+            use_scan_context=True,
+            trajectory=_trajectory_reverse_loop(),
+        )
+        logger.info(f"[reverse_loop] → {events} loop events")
+        assert events >= 1, (
+            "Scan Context + iCP should catch the 180° reverse-heading loop. "
+            f"Got {events} events. This regresses the init_guess fix in "
+            "simple_pgo.cpp (rotation must be about the source keyframe, "
+            "not the world origin)."
         )
