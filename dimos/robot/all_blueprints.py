@@ -16,6 +16,7 @@
 # Run `pytest dimos/robot/test_all_blueprints_generation.py` to regenerate.
 
 all_blueprints = {
+    "agibot-x2-basic": "dimos.robot.agibot.x2_ultra.blueprints.basic.agibot_x2_basic:agibot_x2_basic",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_piper",
@@ -205,6 +206,7 @@ all_modules = {
     "unitree-skill-container": "dimos.robot.unitree.unitree_skill_container.UnitreeSkillContainer",
     "unity-bridge-module": "dimos.simulation.unity.module.UnityBridgeModule",
     "vlm-agent": "dimos.agents.vlm_agent.VLMAgent",
+    "x2-connection": "dimos.robot.agibot.x2_ultra.connection.X2Connection",
     "vlm-stream-tester": "dimos.agents.vlm_stream_tester.VlmStreamTester",
     "voxel-grid-mapper": "dimos.mapping.voxels.VoxelGridMapper",
     "wavefront-frontier-explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector.WavefrontFrontierExplorer",
