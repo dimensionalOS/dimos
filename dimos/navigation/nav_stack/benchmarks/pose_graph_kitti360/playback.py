@@ -67,10 +67,6 @@ class Kitti360PlaybackModule(Module):
         self._playback_error: str | None = None
 
     async def main(self) -> AsyncIterator[None]:
-        # Index-only loader work — no per-scan file IO yet. The scans get
-        # streamed off disk inside ``_run_playback`` so we don't stall
-        # ``self._loop`` (and the module's RPC dispatcher) for tens of
-        # seconds while we preload 100s of MB of point clouds.
         self._sequence = load_kitti360_sequence(
             Path(self.config.kitti360_root), self.config.sequence_id
         )
@@ -84,11 +80,6 @@ class Kitti360PlaybackModule(Module):
         self._playback_task.cancel()
 
     async def _run_playback(self) -> None:
-        # finally guarantees is_finished() flips to True even if a frame
-        # fails to load (e.g. partial KITTI-360 download missing a .bin).
-        # Without this, runner.py's `while not playback.is_finished()`
-        # poll loop would spin forever and the coordinator would never
-        # be torn down.
         try:
             for index, frame_id in enumerate(self._frame_ids):
                 scan_xyz = await asyncio.to_thread(self._sequence.scan_xyz, frame_id)
@@ -102,8 +93,7 @@ class Kitti360PlaybackModule(Module):
                 cloud_array = np.column_stack([world_xyz, scan_xyz[:, 3:4]]).astype(np.float32)
                 cloud_message = make_pointcloud_msg(cloud_array, ts=timestamp)
 
-                # Odometry first so the receiver can stash the latest pose
-                # before the matching scan arrives.
+                # Odometry first so the receiver can stash the latest pose before the matching scan arrives.
                 self.odometry.publish(odometry_message)
                 self.registered_scan.publish(cloud_message)
 
