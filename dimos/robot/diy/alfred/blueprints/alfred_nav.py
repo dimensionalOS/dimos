@@ -28,8 +28,7 @@ from dimos.visualization.vis_module import vis_module
 
 nav_config: dict[str, Any] = dict(
     planner="simple",
-    record=True,
-    vehicle_height=0.5,
+    vehicle_height=ALFRED.height_clearance,
     max_speed=0.8,
     terrain_analysis={
         "obstacle_height_threshold": 0.15,
