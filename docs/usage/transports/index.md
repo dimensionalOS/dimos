@@ -29,6 +29,73 @@ So: treat the API as uniform, but pick a backend whose semantics match the task.
 
 ---
 
+## Choosing a backend
+
+For most users, the important choice is between `lcm`, `zenoh`, and shared memory overrides:
+
+* `lcm`: current legacy default on most platforms. Fast and simple, but UDP multicast is best-effort.
+* `zenoh`: network transport with reliable delivery semantics and the same typed message model through `LCMEncoderMixin`.
+* shared memory (`pSHMTransport`, etc.): best for large local streams on a single machine.
+
+At the CLI level, you can select the stream transport globally with:
+
+```bash
+dimos --transport=lcm run unitree-go2
+dimos --transport=zenoh run unitree-go2
+```
+
+On macOS, large replay workloads can be unreliable over LCM UDP. If Zenoh is installed, DimOS defaults the global stream transport to `zenoh`; otherwise it falls back to `lcm`.
+
+---
+
+## Zenoh quickstart
+
+Zenoh comes from the **`zenoh`** optional extra (`eclipse-zenoh`).
+
+Repo devs who run `uv sync --all-extras --no-extra dds` (on macOS also `--no-extra cuda`; see [Developing on DimOS](/docs/installation/osx.md#developing-on-dimos) for optional `--frozen` with the checked-in lockfile) already pull in **`zenoh`** among the extras, so no extra step.
+
+Otherwise add only the Zenoh wheel (same constraint as the `zenoh` extra in `pyproject.toml`; does not edit `pyproject.toml`):
+
+```bash
+uv pip install 'eclipse-zenoh>=1.0.0,<2.0'
+```
+
+From a checkout, install the project editable with the optional group:
+
+```bash
+uv pip install -e ".[zenoh]"
+```
+
+Only use `` `uv sync --extra zenoh` `` when you intend to **sync the environment to default plus the `zenoh` extra only**; that can **uninstall** packages from other extras you used before. See the [macOS install page](/docs/installation/osx.md) if you rely on a wide optional set.
+
+**Default global stream transport** (only applies when you do not pass `--transport` or set `DIMOS_TRANSPORT`):
+
+| Situation | Default |
+|-----------|---------|
+| macOS and the `eclipse-zenoh` package is importable | `zenoh` |
+| Any other platform, or Zenoh not installed | `lcm` |
+
+**Two ways to override for one run or for your shell:**
+
+1. **CLI:** `dimos --transport=zenoh ...` or `dimos --transport=lcm ...` (see [CLI](/docs/usage/cli.md) for precedence with `.env` and blueprints).
+2. **Environment:** `DIMOS_TRANSPORT=zenoh` or `DIMOS_TRANSPORT=lcm`.
+
+Typical **replay on macOS** when Zenoh is installed (default is already Zenoh, so no transport flag is required):
+
+```bash
+dimos --dtop --replay --replay-db=go2_bigoffice run unitree-go2
+```
+
+The same workload on **Linux** (default remains `lcm` until you opt in):
+
+```bash
+dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go2
+```
+
+Architecture notes (Rerun bridge, TF still on LCM) live under [Zenoh](#zenoh) in PubSub transports below.
+
+---
+
 ## Benchmarks
 
 Quick view on performance of our pubsub backends:
@@ -302,6 +369,20 @@ lcm.stop()
 Received velocity: x=1.0, y=0.0, z=0.5
 ```
 
+### Zenoh
+
+Zenoh provides network pubsub without relying on UDP multicast for the user-facing stream transport. In DimOS it carries the same typed messages by encoding them with `LCMEncoderMixin`, so existing `dimos.msgs.*` types still work.
+
+Use Zenoh when:
+
+* you want a transport that behaves better than UDP multicast on macOS
+* you are replaying large or high-rate data and want a more reliable network path
+* you want to keep the DimOS typed stream model while changing the transport backend
+
+At the stream level, the transport wrappers are `ZenohTransport` and `pZenohTransport`. Install, defaults, and CLI versus environment overrides are in the [Zenoh quickstart](#zenoh-quickstart) above.
+
+The Rerun bridge also follows the global transport. When `transport=zenoh`, the bridge listens on Zenoh and on LCM for TF data.
+
 ### Shared memory (IPC)
 
 Shared memory is highest performance, but only works on the **same machine**.
@@ -475,6 +556,7 @@ python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_b
 | `Memory`       | Testing only, single process        | No            | No      | Minimal reference impl               |
 | `SharedMemory` | Multi-process on same machine       | Yes           | No      | Highest throughput (IPC)             |
 | `LCM`          | Robot LAN broadcast (UDP multicast) | Yes           | Yes     | Best-effort; can drop packets on LAN |
+| `Zenoh`        | Reliable network stream transport   | Yes           | Yes     | Recommended on macOS for heavy replay |
 | `Redis`        | Network pubsub via Redis server     | Yes           | Yes     | Central broker; adds hop             |
 | `ROS`          | ROS 2 topic communication           | Yes           | Yes     | Integrates with RViz/ROS tools       |
 | `DDS`          | Cyclone DDS without ROS (WIP)       | Yes           | Yes     | WIP                                  |

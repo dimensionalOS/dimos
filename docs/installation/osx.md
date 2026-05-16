@@ -41,3 +41,21 @@ uv run mypy dimos
 # tests (around a minute to run)
 uv run pytest --numprocesses=auto dimos
 ```
+
+## Transport note for macOS
+
+LCM over UDP can be unreliable on macOS for large or high-rate replay workloads. When the optional **Zenoh** bindings are installed, DimOS already defaults the global stream transport to **Zenoh** on macOS, so you usually do not need `--transport=zenoh`. Use `--transport=lcm` if you need to force the legacy multicast path.
+
+See the [Zenoh quickstart](/docs/usage/transports/index.md#zenoh-quickstart) for install, Linux versus macOS defaults, and `DIMOS_TRANSPORT`.
+
+```sh skip
+dimos --dtop --replay --replay-db=go2_bigoffice run unitree-go2
+```
+
+If you are developing on the repository, prefer syncing the full environment with the checked-in lockfile:
+
+```sh skip
+uv sync --all-extras --no-extra dds --no-extra cuda --frozen
+```
+
+Do not rely on `` `uv sync --extra zenoh` `` in an existing full development environment. That can re-resolve the environment in a way that removes unrelated packages you already had installed.

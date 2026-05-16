@@ -41,8 +41,11 @@ import rerun.blueprint as rrb
 from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
 
+from dimos.constants import ZENOH_DIMOS_KEY_PREFIX
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
@@ -163,7 +166,59 @@ def _default_blueprint() -> Blueprint:
     )
 
 
+def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
+    """Select the pubsub backend based on the active transport.
+
+    When transport is Zenoh, we listen on BOTH Zenoh and LCM because
+    TF (transform frames) is currently hardcoded to LCM in the Module
+    base class. Without LCM, the robot pose won't update in the viewer.
+
+    If transport is zenoh but eclipse-zenoh is not installed, raises
+    ``RuntimeError`` (same message as stream transport selection) instead of
+    falling back to LCM only.
+    """
+    transport = getattr(config, "transport", None) or global_config.transport
+    if transport == "zenoh":
+        from dimos.core.transport import ZENOH_AVAILABLE, ZENOH_INSTALL_HINT
+
+        if not ZENOH_AVAILABLE:
+            raise RuntimeError(
+                "transport='zenoh' but eclipse-zenoh is not installed. " + ZENOH_INSTALL_HINT
+            )
+        from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
+
+        return [Zenoh(), LCM()]
+    return [LCM()]
+
+
+def _resolve_pubsubs(config: Any) -> list[SubscribeAllCapable[Any, Any]]:
+    """Return explicit pubsubs when truly overridden, else transport defaults.
+
+    Older blueprints commonly passed ``pubsubs=[LCM()]`` as the effective
+    default. Preserve the newer transport-driven behavior for that legacy
+    value, but honor explicit non-default overrides such as custom backends.
+    """
+    fields_set: set[str] = cast("set[str]", getattr(config, "model_fields_set", set()))
+    pubsubs = cast(
+        "list[SubscribeAllCapable[Any, Any]] | None",
+        getattr(config, "pubsubs", None),
+    )
+    if "pubsubs" in fields_set and pubsubs is not None:
+        is_legacy_default = len(pubsubs) == 1 and isinstance(pubsubs[0], LCM)
+        if not is_legacy_default:
+            return pubsubs
+    return _default_pubsubs(getattr(config, "g", config))
+
+
 class Config(ModuleConfig):
+    """Configuration for RerunBridgeModule.
+
+    The pubsubs field is accepted for backwards compatibility. The legacy
+    ``[LCM()]`` value is treated as the old default and replaced by the
+    transport-driven runtime default. Explicit non-default overrides are still
+    honored.
+    """
+
     pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
     visual_override: dict[Glob | str, Callable[[Any], Archetype] | None] = field(
@@ -267,7 +322,16 @@ class RerunBridgeModule(Module):
             return self.config.topic_to_entity(topic)
 
         topic_str = getattr(topic, "name", None) or str(topic)
-        topic_str = topic_str.split("#")[0]  # strip LCM topic suffix
+        # Strip type suffix: LCM uses '#type', Zenoh embeds type as '/type' in key expr
+        # but _key_expr_to_topic already parsed it into topic.topic, so use that.
+        raw = getattr(topic, "topic", topic_str)
+        if isinstance(raw, str):
+            topic_str = raw
+        topic_str = topic_str.split("#")[0]
+        # Strip Zenoh key root to match LCM-style entity paths.
+        _prefix = f"{ZENOH_DIMOS_KEY_PREFIX}/"
+        if topic_str.startswith(_prefix):
+            topic_str = "/" + topic_str.removeprefix(_prefix)
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:
@@ -380,14 +444,24 @@ class RerunBridgeModule(Module):
         if self.config.blueprint:
             rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
 
-        for pubsub in self.config.pubsubs:
+        # Register colormap for viewer-side color resolution (PointCloud2 class_ids)
+        register_colormap_annotation("turbo")
+
+        # Resolve pubsubs lazily — the module-level global_config singleton in worker
+        # processes doesn't have CLI overrides. Use self.config.g which is the parent's
+        # updated config, passed via the worker kwargs.
+        pubsubs = _resolve_pubsubs(self.config)
+
+        # Start pubsubs and subscribe to all messages
+        for pubsub in pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
                 pubsub.start()
             unsub = pubsub.subscribe_all(self._on_message)
             self.register_disposable(Disposable(unsub))
 
-        for pubsub in self.config.pubsubs:
+        # Add pubsub stop as disposable
+        for pubsub in pubsubs:
             if hasattr(pubsub, "stop"):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 

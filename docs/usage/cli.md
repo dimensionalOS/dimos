@@ -25,6 +25,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--memory-limit` | TEXT | `auto` | Rerun viewer memory limit |
 | `--mcp-port` | INT | `9990` | MCP server port |
 | `--mcp-host` | TEXT | `127.0.0.1` | MCP server bind address |
+| `--transport` | `lcm\|zenoh` | platform-dependent | Stream transport backend. Defaults to `zenoh` on macOS when Zenoh is installed, otherwise `lcm`. |
 | `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
 | `--obstacle-avoidance` / `--no-obstacle-avoidance` | bool | `True` | Enable obstacle avoidance |
 | `--detection-model` | `qwen\|moondream` | `moondream` | Vision model for object detection |
@@ -83,6 +84,9 @@ dimos run unitree-go2-agentic --daemon
 # Replay with Rerun viewer
 dimos --replay --viewer rerun run unitree-go2
 
+# Replay Big Office (on Linux use --transport=zenoh; on macOS Zenoh is default when installed)
+dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go2
+
 # Real robot
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161
 
@@ -92,6 +96,8 @@ dimos run unitree-go2 keyboard-teleop
 # Disable specific modules
 dimos run unitree-go2-agentic --disable OsmSkill WebInput
 ```
+
+On macOS, heavy replay workloads can be unreliable over LCM UDP. If Zenoh is installed, the default transport resolves to `zenoh`; you can still force either path explicitly with `--transport=lcm` or `--transport=zenoh`.
 
 When `--daemon` is used, the process:
 1. Builds and starts all modules (foreground — you see errors)
@@ -192,6 +198,19 @@ Print resolved GlobalConfig values and their sources.
 ```bash
 dimos show-config
 ```
+
+### `dimos topic echo` and `dimos topic send`
+
+Subscribe to or publish on a channel by name, for quick debugging.
+
+```bash
+dimos topic echo /some_topic [MsgType]
+dimos topic send /some_topic '<python expression>'
+```
+
+**Zenoh and `--transport`:** These commands are **LCM-only**. They do not use the `dimos` global `--transport` flag and never open a Zenoh subscriber or publisher. Implementation uses `LCMTransport`, `pLCMTransport`, or raw LCM subscribe via `LCMPubSubBase` (see `dimos/robot/cli/topic.py`).
+
+If DimOS is running with `--transport=zenoh`, module streams use Zenoh (key expressions such as `dimos/...` on the Zenoh session), not the LCM UDP multicast bus. In that common case, `dimos topic echo` will **not** show the same traffic as the running stack. Use `--transport=lcm` when you need to snoop on the wire with these commands, use `lcmspy`, or use Zenoh-specific tooling against the stack's Zenoh keys.
 
 ---
 

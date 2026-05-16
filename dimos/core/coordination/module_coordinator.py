@@ -23,6 +23,7 @@ import sys
 import threading
 from typing import TYPE_CHECKING, Any, cast
 
+from dimos.constants import ZENOH_DIMOS_KEY_PREFIX
 from dimos.core.coordination.rpyc_server import RpycServer
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_docker import WorkerManagerDocker
@@ -30,7 +31,13 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
-from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
+from dimos.core.transport import (
+    ZENOH_AVAILABLE,
+    ZENOH_INSTALL_HINT,
+    LCMTransport,
+    PubSubTransport,
+    pLCMTransport,
+)
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -543,7 +550,22 @@ def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> Pu
 
     use_pickled = getattr(stream_type, "lcm_encode", None) is None
     topic = f"/{name}" if _is_name_unique(blueprint, name) else f"/{short_id()}"
-    transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
+
+    if global_config.transport == "zenoh":
+        if not ZENOH_AVAILABLE:
+            raise RuntimeError(
+                "transport='zenoh' but eclipse-zenoh is not installed. " + ZENOH_INSTALL_HINT
+            )
+        from dimos.core.transport import ZenohTransport, pZenohTransport
+
+        zenoh_topic = f"{ZENOH_DIMOS_KEY_PREFIX}{topic}"
+        transport = (
+            pZenohTransport(zenoh_topic)
+            if use_pickled
+            else ZenohTransport(zenoh_topic, stream_type)
+        )
+    else:
+        transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
 
     return transport
 
@@ -613,7 +635,10 @@ def _run_configurators(blueprint: Blueprint) -> None:
     from dimos.protocol.service.system_configurator.base import configure_system
     from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
 
-    configurators = [*lcm_configurators(), *blueprint.configurator_checks]
+    # LCM is still used outside merged module transports (CLI side channels, agents, tests).
+    # OS multicast/buffer tuning applies whenever those paths run, not only when transport=lcm.
+    lcm_checks = lcm_configurators()
+    configurators = [*lcm_checks, *blueprint.configurator_checks]
 
     try:
         configure_system(configurators)
