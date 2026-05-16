@@ -42,6 +42,7 @@
 #include <rtabmap/core/Signature.h>
 #include <rtabmap/core/Transform.h>
 #include <rtabmap/core/global_map/OctoMap.h>
+#include <rtabmap/utilite/ULogger.h>
 
 #include "dimos_native_module.hpp"
 #include "point_cloud_utils.hpp"
@@ -446,6 +447,15 @@ int main(int argc, char** argv) {
 
     dimos::NativeModule mod(argc, argv);
     const bool debug = mod.arg_bool("debug", false);
+    // Surface rtabmap-internal warnings/errors (and debug lines when the
+    // wrapper's --debug=true is set) so we can see what rtabmap thinks is
+    // happening — particularly useful for chasing silently-skipped loop
+    // closure / proximity detection paths.
+    ULogger::setType(ULogger::kTypeConsole);
+    // kDebug when --debug=true so we can see e.g. "nearestIds=X/Y" and
+    // "nearestPaths=N" UDEBUG lines that pinpoint why proximity-by-space
+    // candidate selection returns nothing.
+    ULogger::setLevel(debug ? ULogger::kDebug : ULogger::kWarning);
 
     // LCM port topics.
     const std::string scan_topic = mod.topic("registered_scan");
@@ -521,6 +531,16 @@ int main(int argc, char** argv) {
     params["RGBD/Enabled"] = "true";
     params["Reg/Strategy"] = "1";  // ICP
     params["Mem/IncrementalMemory"] = "true";
+    // Disable visual feature extraction entirely. rtabmap's default
+    // Kp/DetectorStrategy=8 (SURF) tries to pull visual descriptors out
+    // of every SensorData; with no RGB attached the Bayes filter never
+    // gets a likelihood vector, no hypothesis ever rises above zero,
+    // and (load-bearing observation as of 2026-05-16) proximity
+    // detection never even runs — we observed proximityDetectionId=0
+    // on every frame of a 500-scan KITTI-360 seq 2 run. Setting this
+    // to -1 takes the visual path completely out of the loop-closure
+    // pipeline so the spatial-proximity branch can fire.
+    params["Kp/DetectorStrategy"] = mod.arg("kp_detector_strategy", "-1");
     // Keep odometry covariance contributions modest so an externally-supplied
     // FastLIO2 odom dominates.
     params["Reg/Force3DoF"] = "false";

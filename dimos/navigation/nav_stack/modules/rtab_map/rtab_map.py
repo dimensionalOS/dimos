@@ -132,10 +132,18 @@ class RtabMapConfig(NativeModuleConfig):
     # rtabmap default 10m; KITTI-360-style outdoor scenes use ≥10, tight
     # indoor scenes use 2-3.
     rgbd_local_radius: float = 10.0
-    # Max pose-graph depth for the proximity candidate search. Default 50;
-    # raise to look further back in the graph (more loop closures, more
-    # cost per process call).
-    rgbd_proximity_max_graph_depth: int = 50
+    # Max pose-graph depth for proximity candidate selection. rtabmap's
+    # default is 50, which silently kills loop closure on long
+    # trajectories: any candidate that's >50 keyframes ago in the graph
+    # gets rejected even when it's spatially right next to the current
+    # pose. For a 500-scan KITTI-360 run we saw 16 candidates within 10m
+    # of the current pose, all but one with graph depth 200+ — that one
+    # qualifying because it happened to be the only loop candidate close
+    # enough. 0 disables the depth filter entirely (the "find loops
+    # anywhere in the graph" mode), at the cost of a per-process search
+    # that scales linearly with graph size. For benchmark / long-run
+    # contexts this is the right default.
+    rgbd_proximity_max_graph_depth: int = 0
     # ICP correspondence distance threshold (m). rtabmap default 0.05m is
     # very tight for outdoor LiDAR; 0.5m is forgiving and gives proximity
     # ICP a chance at slightly-misaligned candidates.

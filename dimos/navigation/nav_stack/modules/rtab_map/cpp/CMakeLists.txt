@@ -34,8 +34,13 @@ find_library(RTABMAP_CORE_LIBRARY
   NAMES rtabmap_core
   REQUIRED
 )
+find_library(RTABMAP_UTILITE_LIBRARY
+  NAMES rtabmap_utilite
+  REQUIRED
+)
 message(STATUS "Found rtabmap headers: ${RTABMAP_INCLUDE_DIR}")
 message(STATUS "Found rtabmap_core lib: ${RTABMAP_CORE_LIBRARY}")
+message(STATUS "Found rtabmap_utilite lib: ${RTABMAP_UTILITE_LIBRARY}")
 
 add_definitions(-DUSE_PCL)
 
@@ -56,6 +61,7 @@ target_link_libraries(rtab_map PRIVATE
   ${PCL_LIBRARIES}
   ${OpenCV_LIBRARIES}
   ${RTABMAP_CORE_LIBRARY}
+  ${RTABMAP_UTILITE_LIBRARY}
 )
 
 target_link_directories(rtab_map PRIVATE
