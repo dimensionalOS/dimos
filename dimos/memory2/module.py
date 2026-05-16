@@ -314,9 +314,8 @@ class Recorder(MemoryModule):
                     "[%s] No tf available for frame '%s' at time %s (msg ts: %s), storing without pose",
                     name,
                     frame_id,
-                    ts,
                     getattr(msg, "ts", None),
                 )
-            stream.append(msg, ts=ts, pose=pose)
+            stream.append(msg, ts=time.time(), pose=pose)
 
         self.register_disposable(Disposable(input_topic.subscribe(on_msg)))

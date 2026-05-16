@@ -162,12 +162,14 @@ def connect_wifi(
                 typer.echo("Found:")
                 for i, d in enumerate(devices, 1):
                     typer.echo(f"  {i}. {d.name} ({d.address})")
-                default = "1" if len(devices) == 1 else None
-                idx = typer.prompt("Select device", default=default, type=int)
-                if not 1 <= idx <= len(devices):
-                    typer.echo("Invalid selection.", err=True)
-                    raise typer.Exit(1)
-                target = devices[idx - 1].address
+                if len(devices) == 1:
+                    target = devices[0].address
+                else:
+                    idx = typer.prompt("Select device", type=int)
+                    if not 1 <= idx <= len(devices):
+                        typer.echo("Invalid selection.", err=True)
+                        raise typer.Exit(1)
+                    target = devices[idx - 1].address
 
         wifi_ssid = ssid if ssid is not None else typer.prompt("Wi-Fi SSID")
         wifi_password = (

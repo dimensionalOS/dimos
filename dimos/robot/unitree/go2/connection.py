@@ -64,6 +64,7 @@ class Go2Mode(str, Enum):
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
+    lidar_auto_off: bool = False
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -79,6 +80,7 @@ class Go2ConnectionProtocol(Protocol):
     def liedown(self) -> bool: ...
     def balance_stand(self) -> bool: ...
     def set_obstacle_avoidance(self, enabled: bool = True) -> None: ...
+    def set_lidar(self, enabled: bool) -> None: ...
     def enable_rage_mode(self) -> bool: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
@@ -164,6 +166,9 @@ class ReplayConnection(UnitreeWebRTCConnection):
         return True
 
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+        pass
+
+    def set_lidar(self, enabled: bool) -> None:
         pass
 
     def enable_rage_mode(self) -> bool:
@@ -268,10 +273,15 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
+        self.connection.set_lidar(True)
+
         # self.record("go2_bigoffice")
 
     @rpc
     def stop(self) -> None:
+        if self.config.lidar_auto_off:
+            self.connection.set_lidar(False)
+
         self.liedown()
 
         if self.connection:
@@ -336,6 +346,11 @@ class GO2Connection(Module, Camera, Pointcloud):
     def balance_stand(self) -> bool:
         """Enter BalanceStand: neutral state for switching locomotion modes"""
         return self.connection.balance_stand()
+
+    @rpc
+    def set_lidar(self, enabled: bool) -> None:
+        """Turn the L1 lidar on or off."""
+        self.connection.set_lidar(enabled)
 
     @rpc
     def enable_rage_mode(self) -> bool:

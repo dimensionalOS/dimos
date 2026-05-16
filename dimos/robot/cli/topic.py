@@ -37,11 +37,11 @@ _modules_to_try = [
 def _resolve_type(type_name: str) -> type:
     for module_name in _modules_to_try:
         try:
-            module = importlib.import_module(module_name)
-            if hasattr(module, type_name):
-                return getattr(module, type_name)  # type: ignore[no-any-return]
+            module = importlib.import_module(f"{module_name}.{type_name}")
         except ImportError:
             continue
+        if hasattr(module, type_name):
+            return getattr(module, type_name)  # type: ignore[no-any-return]
 
     raise ValueError(f"Could not find type '{type_name}' in any known message modules")
 
@@ -89,7 +89,11 @@ def topic_echo(topic: str, type_name: str | None) -> None:
     typed_pattern = rf"^{re.escape(topic)}#.*"
 
     def on_msg(channel: str, data: bytes) -> None:
-        print(_decode_typed_lcm_message(channel, data))
+        _, msg_name = channel.split("#", 1)  # e.g. "nav_msgs.Odometry"
+        pkg, cls_name = msg_name.split(".", 1)  # "nav_msgs", "Odometry"
+        module = importlib.import_module(f"dimos.msgs.{pkg}.{cls_name}")
+        cls = getattr(module, cls_name)
+        print(cls.lcm_decode(data))
 
     assert bus.l is not None
     bus.l.subscribe(typed_pattern, on_msg)

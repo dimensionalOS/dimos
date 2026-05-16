@@ -303,6 +303,19 @@ class UnitreeWebRTCConnection(Resource):
             {"api_id": 1001, "parameter": {"enable": int(enabled)}},
         )
 
+    def set_lidar(self, enabled: bool) -> None:
+        """Turn the L1 lidar on or off. The Go2 boots with lidar on; turning it
+        off saves power and stops the spinning sound."""
+
+        def publish() -> None:
+            # rt/utlidar/switch takes a std_msgs::String of "ON" / "OFF"
+            self.conn.datachannel.pub_sub.publish_without_callback(
+                RTC_TOPIC["ULIDAR_SWITCH"],
+                data="ON" if enabled else "OFF",
+            )
+
+        self.loop.call_soon_threadsafe(publish)
+
     def free_walk(self) -> bool:
         """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
