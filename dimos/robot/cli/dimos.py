@@ -54,6 +54,26 @@ main = typer.Typer(
 
 load_dotenv()
 
+SIMULATORS = ("mujoco", "dimsim")
+
+
+def _normalize_simulation_argv(argv: list[str]) -> list[str]:
+    """Keep `--simulation` backwards compatible.
+
+    Without an argument it should be `mujoco`, but can be overridden.
+    """
+    out: list[str] = []
+    for arg, nxt in zip(argv, [*argv[1:], None], strict=False):
+        out.append(arg)
+        if arg == "--simulation" and nxt not in SIMULATORS:
+            out.append(SIMULATORS[0])
+    return out
+
+
+def cli_main() -> None:
+    sys.argv = _normalize_simulation_argv(sys.argv)
+    main()
+
 
 def create_dynamic_callback():  # type: ignore[no-untyped-def]
     fields = GlobalConfig.model_fields
@@ -718,4 +738,4 @@ def rerun_bridge_cmd(
 
 
 if __name__ == "__main__":
-    main()
+    cli_main()
