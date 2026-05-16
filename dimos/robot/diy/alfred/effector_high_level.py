@@ -74,7 +74,7 @@ class AlfredHighLevel(Module):
             if self._stop_task is not None and not self._stop_task.done():
                 self._stop_task.cancel()
             try:
-                self._send_velocity(0.0, 0.0, 0.0)
+                await self._send_velocity(0.0, 0.0, 0.0)
             except Exception as e:
                 logger.error(f"Error stopping Alfred: {e}")
             if self._client is not None:
@@ -107,7 +107,7 @@ class AlfredHighLevel(Module):
 
         # Negate vy and wz for Alfred's inverted Y-axis frame.
         # Send before scheduling the watchdog — otherwise it could fire first.
-        if not self._send_velocity(vx, -vy, -wz):
+        if not await self._send_velocity(vx, -vy, -wz):
             return False
 
         self._last_velocities = [vx, vy, wz]
@@ -121,7 +121,7 @@ class AlfredHighLevel(Module):
         except asyncio.CancelledError:
             return
         try:
-            self._send_velocity(0.0, 0.0, 0.0)
+            await self._send_velocity(0.0, 0.0, 0.0)
             self._last_velocities = [0.0, 0.0, 0.0]
         except Exception as e:
             logger.error(f"Auto-stop failed: {e}")
@@ -142,7 +142,7 @@ class AlfredHighLevel(Module):
         await self.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 
-    def _send_velocity(self, vx: float, vy: float, wz: float) -> bool:
+    async def _send_velocity(self, vx: float, vy: float, wz: float) -> bool:
         """Send a raw velocity (already in Alfred frame) via Portal RPC."""
         if self._client is None:
             return False
@@ -151,7 +151,8 @@ class AlfredHighLevel(Module):
                 "target_velocity": np.array([vx, vy, wz]),
                 "frame": "local",
             }
-            self._client.set_target_velocity(command).result()
+            future = self._client.set_target_velocity(command)
+            await asyncio.to_thread(future.result)
             return True
         except Exception as e:
             logger.error(f"Error sending Alfred velocity: {e}")
