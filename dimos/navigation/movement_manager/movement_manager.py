@@ -26,6 +26,7 @@ import time
 from typing import Any
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -44,9 +45,10 @@ class MovementManagerConfig(ModuleConfig):
     tele_cmd_vel_scaling: Twist = Twist(Vector3(1, 1, 1), Vector3(1, 1, 1))
 
     # Clamp clicked goals so a stray click can't send the planner toward infinity in
-    # rerun. Configurable for people rendering very large maps.
-    max_click_horizontal_m: float = 500.0
-    max_click_vertical_m: float = 50.0
+    # rerun. Configurable for people rendering very large maps; must stay positive so a
+    # zero/negative override can't silently reject every click.
+    max_click_horizontal_m: float = Field(500.0, gt=0)
+    max_click_vertical_m: float = Field(50.0, gt=0)
 
 
 class MovementManager(Module):

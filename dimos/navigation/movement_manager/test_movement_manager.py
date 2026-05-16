@@ -143,6 +143,15 @@ def test_click_limit_accepts_when_raised(manager_and_captured):
     assert captured.way_point == [far_click]
 
 
+def test_vertical_click_limit_rejects_when_lowered(manager_and_captured):
+    """A click within the default vertical range is rejected once the limit is lowered below it."""
+    manager, captured = manager_and_captured
+    manager.config.max_click_vertical_m = 5.0
+    manager._on_click(_click(x=0.0, y=0.0, z=20.0))
+    assert captured.goal == []
+    assert captured.way_point == []
+
+
 def test_tele_cmd_vel_scaling(manager_and_captured):
     """tele_cmd_vel_scaling multiplies each teleop twist component independently."""
     manager, captured = manager_and_captured
