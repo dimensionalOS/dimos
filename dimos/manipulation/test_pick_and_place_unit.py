@@ -155,5 +155,6 @@ class TestPlaceBack:
         module._last_pick_pose = None
 
         result = module.place_back()
-        assert "Error" in result
-        assert "pick" in result.lower()
+        assert not result.is_success()
+        assert result.error_code == "NO_PRIOR_POSE"
+        assert "pick" in result.message.lower()

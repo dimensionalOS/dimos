@@ -99,7 +99,7 @@ lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
 foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 humancli = "dimos.utils.cli.human.humanclianim:main"
-dimos = "dimos.robot.cli.dimos:main"
+dimos = "dimos.robot.cli.dimos:cli_main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.utils.docs.doclinks:main"
 dtop = "dimos.utils.cli.dtop:main"
@@ -516,6 +516,7 @@ module = [
     "ultralytics.*",
     "unitree_sdk2py.*",
     "unitree_webrtc_connect.*",
+    "websocket",
     "xarm.*",
     "ament_index_python.*",
 ]
@@ -539,7 +540,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or self_hosted or mujoco)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or self_hosted or mujoco or dimsim)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

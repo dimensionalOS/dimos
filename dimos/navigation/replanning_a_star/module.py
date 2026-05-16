@@ -103,7 +103,6 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
     def _on_stop_movement(self, msg: Bool) -> None:
         if msg.data:
-            logger.info("ReplanningAStarPlanner: stop_movement received, cancelling goal")
             self.cancel_goal()
 
     @rpc
