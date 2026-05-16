@@ -571,7 +571,7 @@ int main(int argc, char** argv) {
     // "spatially nearby but not a real revisit" pairs that ICP can still
     // converge on, producing FPs against the benchmark.
     params["RGBD/LocalRadius"] =
-        mod.arg("rgbd_local_radius", "5");
+        mod.arg("rgbd_local_radius", "4");
     // Max pose-graph depth for proximity candidate search. Default 50;
     // raise this to find loop closures further back in the graph.
     params["RGBD/ProximityMaxGraphDepth"] =
