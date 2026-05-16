@@ -12,6 +12,7 @@
 
 #include <lcm/lcm-cpp.hpp>
 #include <Eigen/Geometry>
+#include <pcl/console/print.h>
 
 #include "commons.h"
 #include "simple_pgo.h"
@@ -146,6 +147,11 @@ int main(int argc, char** argv)
     // Unregister mode: transform world-frame scans to body-frame
     bool unregister_input = mod.arg_bool("unregister_input", true);
 
+    bool debug = mod.arg_bool("debug", false);
+
+    pcl::console::setVerbosityLevel(
+        debug ? pcl::console::L_INFO : pcl::console::L_ERROR);
+
     SimplePGO pgo(config);
 
     lcm::LCM lcm;
@@ -158,12 +164,14 @@ int main(int argc, char** argv)
     lcm.subscribe(odom_topic, &Handlers::on_odometry, &handlers);
     lcm.subscribe(scan_topic, &Handlers::on_registered_scan, &handlers);
 
-    fprintf(stderr, "PGO native module started\n");
-    fprintf(stderr, "  registered_scan: %s\n", scan_topic.c_str());
-    fprintf(stderr, "  odometry: %s\n", odom_topic.c_str());
-    fprintf(stderr, "  corrected_odometry: %s\n", corrected_odom_topic.c_str());
-    fprintf(stderr, "  global_map: %s\n", global_map_topic.c_str());
-    fprintf(stderr, "  pgo_tf: %s\n", tf_topic.c_str());
+    if (debug) {
+        fprintf(stderr, "PGO native module started\n");
+        fprintf(stderr, "  registered_scan: %s\n", scan_topic.c_str());
+        fprintf(stderr, "  odometry: %s\n", odom_topic.c_str());
+        fprintf(stderr, "  corrected_odometry: %s\n", corrected_odom_topic.c_str());
+        fprintf(stderr, "  global_map: %s\n", global_map_topic.c_str());
+        fprintf(stderr, "  pgo_tf: %s\n", tf_topic.c_str());
+    }
 
     double last_global_map_time = 0.0;
     int timer_period_ms = 50;  // 20 Hz, matching original
@@ -233,9 +241,11 @@ int main(int argc, char** argv)
         pgo.searchForLoopPairs();
         pgo.smoothAndUpdate();
 
-        fprintf(stderr, "PGO: keyframe %zu at (%.1f, %.1f, %.1f)\n",
-                pgo.keyPoses().size(),
-                cp.pose.t.x(), cp.pose.t.y(), cp.pose.t.z());
+        if (debug) {
+            fprintf(stderr, "PGO: keyframe %zu at (%.1f, %.1f, %.1f)\n",
+                    pgo.keyPoses().size(),
+                    cp.pose.t.x(), cp.pose.t.y(), cp.pose.t.z());
+        }
 
         // Publish corrected odometry
         M3D corr_r = pgo.offsetR() * cp.pose.r;
@@ -281,6 +291,6 @@ int main(int argc, char** argv)
         std::this_thread::sleep_for(std::chrono::milliseconds(timer_period_ms));
     }
 
-    fprintf(stderr, "PGO native module shutting down\n");
+    if (debug) fprintf(stderr, "PGO native module shutting down\n");
     return 0;
 }

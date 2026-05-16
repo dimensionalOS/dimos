@@ -121,8 +121,8 @@ class AlfredHighLevel(Module):
         except asyncio.CancelledError:
             return
         try:
-            await self._send_velocity(0.0, 0.0, 0.0)
-            self._last_velocities = [0.0, 0.0, 0.0]
+            if await self._send_velocity(0.0, 0.0, 0.0):
+                self._last_velocities = [0.0, 0.0, 0.0]
         except Exception as e:
             logger.error(f"Auto-stop failed: {e}")
 

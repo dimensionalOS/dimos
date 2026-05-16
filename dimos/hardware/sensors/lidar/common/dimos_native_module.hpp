@@ -67,6 +67,21 @@ public:
         return it != args_.end() ? std::stoi(it->second) : default_val;
     }
 
+    /// Get a bool arg value, or a default if not present.
+    /// Present-but-unparseable values throw, matching arg_int/arg_float's
+    /// std::stoi/std::stof behaviour — a typo'd value or empty string is a
+    /// misconfiguration we want to surface immediately, not silently coerce
+    /// to false.
+    bool arg_bool(const std::string& key, bool default_val = false) const {
+        auto it = args_.find(key);
+        if (it == args_.end()) return default_val;
+        if (it->second == "true" || it->second == "1") return true;
+        if (it->second == "false" || it->second == "0") return false;
+        throw std::runtime_error(
+            "NativeModule: arg '--" + key + "' has unparseable bool value '"
+            + it->second + "' (expected true/false or 1/0)");
+    }
+
     /// Check if a port/arg was provided.
     bool has(const std::string& key) const {
         return args_.count(key) > 0;
