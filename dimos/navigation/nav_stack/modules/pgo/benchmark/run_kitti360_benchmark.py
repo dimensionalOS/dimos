@@ -43,6 +43,7 @@ import time
 
 import lcm as lcmlib
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.nav_msgs.Path import Path as NavPath
@@ -100,11 +101,9 @@ class BenchmarkResult:
 
 
 def _matrix_to_quaternion(matrix: np.ndarray) -> np.ndarray:
-    """3x3 rotation matrix → (x, y, z, w) quaternion via scipy."""
-    from scipy.spatial.transform import Rotation
-
-    quat: np.ndarray = Rotation.from_matrix(matrix).as_quat()
-    return quat
+    """3x3 rotation matrix → (x, y, z, w) quaternion."""
+    quaternion: np.ndarray = Rotation.from_matrix(matrix).as_quat()
+    return quaternion
 
 
 @dataclass

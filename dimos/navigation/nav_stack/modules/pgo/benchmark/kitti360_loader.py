@@ -168,9 +168,7 @@ def load_kitti360_sequence(root: Path, sequence_id: int) -> Kitti360Sequence:
     poses_world = _load_poses_file(poses_path)
 
     # Rekey timestamps by actual frame_id (the on-disk file is line-indexed
-    # but the Test SLAM split's frame_ids don't start at 0). A length
-    # mismatch is fatal — a partial mapping caused silent benchmark recall
-    # collapse on PR #2099 (greptile c3).
+    # but the Test SLAM split's frame_ids don't start at 0)
     timestamps: dict[int, float] = {}
     if timestamps_path.exists():
         sorted_scan_ids = sorted(int(scan.stem) for scan in velodyne_dir.glob("*.bin"))
