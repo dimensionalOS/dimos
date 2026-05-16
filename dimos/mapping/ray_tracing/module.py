@@ -47,9 +47,10 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     voxel_size: float = 0.1
     # Skip rays longer than this (meters); 0 disables the limit.
     max_range: float = 30.0
-    # Raycast every N-th point. 1 = all points; higher values trade
-    # cleared-voxel coverage for CPU.
-    ray_subsample: int = 4
+    # Controls what portion of rays we perform ray tracing on.
+    # Honestly we probably should always have this at 1 unless you don't care about a clean map.
+    # Higher num means less ray tracing.
+    ray_subsample: int = 1
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):

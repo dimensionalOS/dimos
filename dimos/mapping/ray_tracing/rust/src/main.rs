@@ -208,7 +208,7 @@ fn walk_ray(
         voxel_size / dz.abs()
     };
 
-    // Hard cap on iteration count, in case of degenerate rays.
+    // FIXME: I don't know if we really need this
     let max_iter = 4096;
     for _ in 0..max_iter {
         if tx < ty {
