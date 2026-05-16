@@ -100,7 +100,8 @@ def _matrix_to_quaternion(matrix: np.ndarray) -> np.ndarray:
     """3x3 rotation matrix → (x, y, z, w) quaternion via scipy."""
     from scipy.spatial.transform import Rotation
 
-    return Rotation.from_matrix(matrix).as_quat()
+    quat: np.ndarray = Rotation.from_matrix(matrix).as_quat()
+    return quat
 
 
 @dataclass

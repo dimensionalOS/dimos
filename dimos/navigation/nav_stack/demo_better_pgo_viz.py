@@ -29,7 +29,7 @@ Run manually:
 
 from __future__ import annotations
 
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
@@ -41,7 +41,7 @@ from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.visualization.vis_module import vis_module
 
 
-def build_blueprint():
+def build_blueprint() -> Blueprint:
     return (
         autoconnect(
             UnityBridgeModule.blueprint(
