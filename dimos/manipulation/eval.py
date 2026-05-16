@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import pathlib
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -488,13 +489,13 @@ def _path_metrics(
 def scenarios_for(arm_name: str) -> list[Scenario]:
     """Tuned scenario set for the given arm.
 
-    Looks up ``SCENARIOS_BY_ARM`` in ``eval_cases.py`` — that's the file to edit
+    Looks up ``SCENARIOS_BY_ARM`` in ``eval_scenarios.py`` — that's the file to edit
     to tune existing arms or add new ones, not this one.
 
     Raises:
         ValueError: if no scenario set is registered for ``arm_name``.
     """
-    # Local import avoids an import cycle (eval_cases imports Scenario from here).
+    # Local import avoids an import cycle (eval_scenarios imports Scenario from here).
     from dimos.manipulation.eval_scenarios import SCENARIOS_BY_ARM
 
     factory = SCENARIOS_BY_ARM.get(arm_name)
@@ -502,7 +503,7 @@ def scenarios_for(arm_name: str) -> list[Scenario]:
         raise ValueError(
             f"no registered scenarios for arm: {arm_name!r}. "
             f"Registered: {sorted(SCENARIOS_BY_ARM)}. "
-            f"Add an entry to dimos/manipulation/eval_cases.py or pass a "
+            f"Add an entry to dimos/manipulation/eval_scenarios.py or pass a "
             f"custom list to evaluate()."
         )
     return factory()
@@ -550,6 +551,7 @@ def to_json(scores: list[Score], path: str) -> None:
         {"name": s.name, "passed": s.passed, "reason": s.reason, "metrics": s.metrics}
         for s in scores
     ]
+    pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(payload, f, indent=2)
 

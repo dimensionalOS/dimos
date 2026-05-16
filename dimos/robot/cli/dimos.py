@@ -77,7 +77,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
         else:
             actual_type = field_type
 
-        # Convert field name from snake_case to kebab-scenario for CLI
+        # Convert field name from snake_case to kebab-case for CLI
         cli_option_name = field_name.replace("_", "-")
 
         # Special handling for boolean fields
