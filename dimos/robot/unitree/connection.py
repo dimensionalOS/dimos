@@ -15,6 +15,7 @@
 import asyncio
 from dataclasses import dataclass
 import functools
+import os
 import threading
 import time
 from typing import Any, TypeAlias
@@ -85,12 +86,17 @@ class SerializableVideoFrame:
 class UnitreeWebRTCConnection(Resource):
     _SPORT_API_ID_RAGEMODE: int = 2059
 
-    def __init__(self, ip: str, mode: str = "ai") -> None:
+    def __init__(self, ip: str, mode: str = "ai", aes_128_key: str | None = None) -> None:
         self.ip = ip
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
-        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
+        # Per-device AES-128 key required by G1 firmware >= 1.5.1 (data2=3 WebRTC handshake).
+        # Fetch with: unitree-fetch-aes-key --email YOU --sn <serial>
+        if aes_128_key is None:
+            aes_128_key = os.environ.get("UNITREE_AES_128_KEY")
+        extra: dict[str, Any] = {"aes_128_key": aes_128_key} if aes_128_key else {}
+        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip, **extra)
         self.connect()
 
     def connect(self) -> None:
