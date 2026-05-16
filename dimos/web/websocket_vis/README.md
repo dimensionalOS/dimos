@@ -14,7 +14,7 @@ Control:
 
 - Set navigation goal
 - Set GPS location goal
-- Keyboard teleop (WASD)
+- Keyboard teleop (W/S and arrows move, A/D and ←/→ turn, Alt+A/D or Alt+←/→ strafe — see command-center UI when enabled)
 - Trigger exploration
 
 ## What it Provides
