@@ -38,14 +38,15 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# without this you can (basically) click into infinity in rerun (not good for the planner)
-MAX_CLICK_HORIZONTAL_M = 500.0
-MAX_CLICK_VERTICAL_M = 50.0
-
 
 class MovementManagerConfig(ModuleConfig):
     tele_cooldown_sec: float = 1.0
     tele_cmd_vel_scaling: Twist = Twist(Vector3(1, 1, 1), Vector3(1, 1, 1))
+
+    # Clamp clicked goals so a stray click can't send the planner toward infinity in
+    # rerun. Configurable for people rendering very large maps.
+    max_click_horizontal_m: float = 500.0
+    max_click_vertical_m: float = 50.0
 
 
 class MovementManager(Module):
@@ -86,9 +87,9 @@ class MovementManager(Module):
             logger.warning("Ignored invalid click", x=msg.x, y=msg.y, z=msg.z)
             return
         if (
-            abs(msg.x) > MAX_CLICK_HORIZONTAL_M
-            or abs(msg.y) > MAX_CLICK_HORIZONTAL_M
-            or abs(msg.z) > MAX_CLICK_VERTICAL_M
+            abs(msg.x) > self.config.max_click_horizontal_m
+            or abs(msg.y) > self.config.max_click_horizontal_m
+            or abs(msg.z) > self.config.max_click_vertical_m
         ):
             logger.warning("Ignored out-of-range click", x=msg.x, y=msg.y, z=msg.z)
             return
