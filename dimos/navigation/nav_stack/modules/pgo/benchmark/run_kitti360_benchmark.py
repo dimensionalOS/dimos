@@ -36,6 +36,7 @@ from dataclasses import asdict, dataclass
 import json
 import math
 from pathlib import Path
+import subprocess
 import threading
 import time
 
@@ -293,12 +294,10 @@ def run_benchmark(config: BenchmarkConfig) -> BenchmarkResult:
     try:
         # Capture PGO's stderr so its diagnostic prints (keyframes, sc-search, loop events)
         # are available for debugging. We dump them to the runner's log at the end.
-        import subprocess as _sp
-
-        runner.process = _sp.Popen(
+        runner.process = subprocess.Popen(
             [runner.binary_path, *runner.args],
-            stdout=_sp.DEVNULL,
-            stderr=_sp.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             start_new_session=True,
         )
         time.sleep(2.0)
