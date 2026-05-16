@@ -154,12 +154,21 @@ class MultiTBuffer:
 
         return None
 
-    def get(self, *args, **kwargs) -> Transform | None:  # type: ignore[no-untyped-def]
-        simple = self.get_transform(*args, **kwargs)
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> Transform | None:
+        if parent_frame == child_frame:
+            return Transform(frame_id=parent_frame, child_frame_id=child_frame)
+
+        simple = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
         if simple is not None:
             return simple
 
-        complex = self.get_transform_search(*args, **kwargs)
+        complex = self.get_transform_search(parent_frame, child_frame, time_point, time_tolerance)
 
         if complex is None:
             return None

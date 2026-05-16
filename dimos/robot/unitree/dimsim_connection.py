@@ -94,6 +94,9 @@ class DimSimConnection:
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
 
+    def set_lidar(self, enabled: bool) -> None:
+        pass
+
     def enable_rage_mode(self) -> bool:
         return True
 
