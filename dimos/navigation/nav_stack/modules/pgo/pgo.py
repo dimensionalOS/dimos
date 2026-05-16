@@ -66,6 +66,8 @@ class PGOConfig(NativeModuleConfig):
     global_map_voxel_size: float = 0.1
     global_map_publish_rate: float = 1.0
 
+    debug: bool = False
+
 
 class PGO(NativeModule):
     """Pose graph optimization with loop closure using GTSAM iSAM2 + PCL ICP."""
@@ -90,7 +92,8 @@ class PGO(NativeModule):
             rotation=(0.0, 0.0, 0.0, 1.0),
             ts=time.time(),
         )
-        logger.info("PGO native module started (C++ iSAM2 + PCL ICP)")
+        if self.config.debug:
+            logger.info("PGO native module started (C++ iSAM2 + PCL ICP)")
 
     @rpc
     def stop(self) -> None:
