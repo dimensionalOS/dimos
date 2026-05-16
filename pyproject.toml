@@ -410,6 +410,7 @@ tests-self-hosted = [
 ]
 
 [tool.uv]
+required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
 override-dependencies = [
