@@ -299,7 +299,7 @@ docker = [
 ]
 
 base = [
-    "dimos[agents,web,visualization]",
+    "dimos[agents,web,perception,visualization]",
 ]
 
 # All extras except dds and unitree-dds (which require special system setup).
