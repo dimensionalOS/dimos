@@ -74,9 +74,9 @@ class TestPGORosbag:
 
         lcm_instance = lcmlib.LCM()
 
-        corrected_odom_collector = LcmCollector(topic=CORRECTED_ODOM_LCM, msg_type=Odometry)
-        global_map_collector = LcmCollector(topic=GLOBAL_MAP_LCM, msg_type=PointCloud2)
-        tf_collector = LcmCollector(topic=TF_LCM, msg_type=Odometry)
+        corrected_odom_collector = LcmCollector(topic=CORRECTED_ODOM_LCM, message_type=Odometry)
+        global_map_collector = LcmCollector(topic=GLOBAL_MAP_LCM, message_type=PointCloud2)
+        tf_collector = LcmCollector(topic=TF_LCM, message_type=Odometry)
 
         corrected_odom_collector.start(lcm_instance)
         global_map_collector.start(lcm_instance)

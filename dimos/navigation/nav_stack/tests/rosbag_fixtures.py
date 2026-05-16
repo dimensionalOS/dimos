@@ -136,28 +136,28 @@ class LcmCollector:
     """Subscribes to an LCM topic and collects decoded messages with timestamps."""
 
     topic: str
-    msg_type: type
+    message_type: type
     messages: list[Any] = field(default_factory=list)
     timestamps: list[float] = field(default_factory=list)
-    _sub: Any = field(default=None, repr=False)
+    _subscription: Any = field(default=None, repr=False)
 
     def start(self, lcm: lcmlib.LCM) -> None:
-        msg_cls = self.msg_type
+        message_class = self.message_type
 
         def handler(_channel: str, data: bytes) -> None:
             try:
-                msg = msg_cls.lcm_decode(data)  # type: ignore[attr-defined]
-                self.messages.append(msg)
+                message = message_class.lcm_decode(data)  # type: ignore[attr-defined]
+                self.messages.append(message)
                 self.timestamps.append(time.monotonic())
             except Exception as exc:
                 logger.error(f"LcmCollector decode error on {self.topic}: {exc}")
 
-        self._sub = lcm.subscribe(self.topic, handler)
+        self._subscription = lcm.subscribe(self.topic, handler)
 
     def stop(self, lcm: lcmlib.LCM) -> None:
-        if self._sub is not None:
-            lcm.unsubscribe(self._sub)
-            self._sub = None
+        if self._subscription is not None:
+            lcm.unsubscribe(self._subscription)
+            self._subscription = None
 
 
 def lcm_handle_loop(lcm: lcmlib.LCM, stop_event: threading.Event, timeout_ms: int = 50) -> None:

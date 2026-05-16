@@ -217,7 +217,7 @@ class TestFarPlannerRosbag:
         assert len(ref_wp) > 0, "No reference waypoints in fixture"
 
         lcm = lcmlib.LCM()
-        wp_collector = LcmCollector(topic=WAYPOINT_OUT_LCM, msg_type=PointStamped)
+        wp_collector = LcmCollector(topic=WAYPOINT_OUT_LCM, message_type=PointStamped)
         wp_collector.start(lcm)
 
         stop_event = threading.Event()
