@@ -31,8 +31,8 @@ def _drake_available() -> bool:
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
 def test_xarm6_default_suite_passes():
-    """All default cases plan successfully on xArm6 with default tolerances."""
-    from dimos.manipulation.eval import evaluate, default_cases
+    """All default scenarios plan successfully on xArm6 with default tolerances."""
+    from dimos.manipulation.eval import evaluate, default_scenarios
     from dimos.robot.catalog.ufactory import xarm6
 
     try:
@@ -40,12 +40,12 @@ def test_xarm6_default_suite_passes():
     except Exception as exc:
         pytest.skip(f"xArm6 catalog not available: {exc}")
 
-    scores = evaluate(arm, default_cases())
+    scores = evaluate(arm, default_scenarios())
 
     failures = [(s.name, s.reason) for s in scores if not s.passed]
-    assert not failures, f"failed cases: {failures}"
+    assert not failures, f"failed scenarios: {failures}"
 
-    # Every passed case should have populated the standard metric keys.
+    # Every passed scenario should have populated the standard metric keys.
     for s in scores:
         if s.passed:
             assert "planning_time_s" in s.metrics

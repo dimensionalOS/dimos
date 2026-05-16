@@ -15,7 +15,7 @@
 """Unit tests for ``dimos.manipulation.eval`` — no Drake required.
 
 Covers the parts of the eval that can be exercised without spinning up a
-DrakeWorld: data types, the ``reach_case`` constructor, the per-arm case
+DrakeWorld: data types, the ``reach_scenario`` constructor, the per-arm scenario
 registry, and the pure reporting helpers (``print_scores``, ``to_json``).
 
 The integration test that actually runs IK + RRT against a Drake world
@@ -31,37 +31,37 @@ import sys
 import pytest
 
 from dimos.manipulation.eval import (
-    Case,
+    Scenario,
     Score,
-    cases_for,
-    default_cases,
+    scenarios_for,
+    default_scenarios,
     print_scores,
-    reach_case,
+    reach_scenario,
     to_json,
 )
 
 
-# ── Case + Score data types ───────────────────────────────────────────────────
+# ── Scenario + Score data types ───────────────────────────────────────────────────
 
 
 class TestCase:
-    """Construction and defaults for the Case dataclass."""
+    """Construction and defaults for the Scenario dataclass."""
 
     def test_required_only(self):
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
-        case = Case(name="probe", target=PoseStamped())
-        assert case.name == "probe"
-        assert case.obstacles == []
-        assert case.start_joints is None
-        assert case.position_tolerance_m == 0.01
-        assert case.orientation_tolerance_rad == 0.1
+        scenario = Scenario(name="probe", target=PoseStamped())
+        assert scenario.name == "probe"
+        assert scenario.obstacles == []
+        assert scenario.start_joints is None
+        assert scenario.position_tolerance_m == 0.01
+        assert scenario.orientation_tolerance_rad == 0.1
 
     def test_with_start_joints(self):
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
-        case = Case(name="x", target=PoseStamped(), start_joints=[0.1, 0.2, 0.3])
-        assert case.start_joints == [0.1, 0.2, 0.3]
+        scenario = Scenario(name="x", target=PoseStamped(), start_joints=[0.1, 0.2, 0.3])
+        assert scenario.start_joints == [0.1, 0.2, 0.3]
 
 
 class TestScore:
@@ -84,32 +84,32 @@ class TestScore:
         assert "NO_SOLUTION" in s.reason
 
 
-# ── reach_case helper ─────────────────────────────────────────────────────────
+# ── reach_scenario helper ─────────────────────────────────────────────────────────
 
 
 class TestReachCase:
-    """The convenience constructor for single-reach cases."""
+    """The convenience constructor for single-reach scenarios."""
 
     def test_position(self):
-        c = reach_case("p", 0.1, 0.2, 0.3)
+        c = reach_scenario("p", 0.1, 0.2, 0.3)
         assert c.target.position.x == pytest.approx(0.1)
         assert c.target.position.y == pytest.approx(0.2)
         assert c.target.position.z == pytest.approx(0.3)
 
     def test_default_orientation_is_xarm_gripper_down(self):
         # xArm gripper-down quaternion is (1, 0, 0, 0) in (x, y, z, w) order
-        c = reach_case("p", 0.0, 0.0, 0.0)
+        c = reach_scenario("p", 0.0, 0.0, 0.0)
         assert c.target.orientation.x == pytest.approx(1.0)
         assert c.target.orientation.y == pytest.approx(0.0)
         assert c.target.orientation.z == pytest.approx(0.0)
         assert c.target.orientation.w == pytest.approx(0.0)
 
     def test_custom_orientation(self):
-        c = reach_case("p", 0.0, 0.0, 0.0, orientation=(0.0, 0.0, 0.0, 1.0))
+        c = reach_scenario("p", 0.0, 0.0, 0.0, orientation=(0.0, 0.0, 0.0, 1.0))
         assert c.target.orientation.w == pytest.approx(1.0)
 
     def test_default_no_obstacles(self):
-        c = reach_case("p", 0.0, 0.0, 0.0)
+        c = reach_scenario("p", 0.0, 0.0, 0.0)
         assert c.obstacles == []
 
     def test_with_obstacles(self):
@@ -123,12 +123,12 @@ class TestReachCase:
             pose=PoseStamped(),
             dimensions=(0.1, 0.1, 0.1),
         )
-        c = reach_case("p", 0.0, 0.0, 0.0, obstacles=[obs])
+        c = reach_scenario("p", 0.0, 0.0, 0.0, obstacles=[obs])
         assert len(c.obstacles) == 1
         assert c.obstacles[0].name == "box1"
 
     def test_custom_tolerances(self):
-        c = reach_case(
+        c = reach_scenario(
             "p",
             0.0,
             0.0,
@@ -140,50 +140,199 @@ class TestReachCase:
         assert c.orientation_tolerance_rad == 0.05
 
     def test_frame_id_is_world(self):
-        c = reach_case("p", 0.0, 0.0, 0.0)
+        c = reach_scenario("p", 0.0, 0.0, 0.0)
         assert c.target.frame_id == "world"
 
 
-# ── case registry ─────────────────────────────────────────────────────────────
+# ── scenario registry ─────────────────────────────────────────────────────────────
 
 
 class TestCasesFor:
-    """The per-arm case dispatch and its built-in registrations."""
+    """The per-arm scenario dispatch and its built-in registrations."""
 
-    def test_xarm6_full_suite(self):
-        cases = cases_for("xarm6")
-        names = [c.name for c in cases]
+    def test_xarm6_includes_all_sections(self):
+        # xArm6 suite includes basic reaches, harder geometry, and a
+        # pick-and-place sequence.
+        names = [c.name for c in scenarios_for("xarm6")]
         assert "reach_center" in names
         assert "reach_obstacle_box" in names
-        assert len(cases) == 7
+        assert "reach_corner_far_right" in names
+        assert "tight_clearance_passage" in names
+        assert "pp_left_to_right_pick" in names
 
-    def test_xarm7_drops_obstacle_case(self):
-        # xArm7 is the xArm6 suite minus the obstacle case (extra DOF causes
-        # COLLISION_AT_GOAL).
-        names = {c.name for c in cases_for("xarm7")}
+    def test_xarm7_drops_known_failing_cases(self):
+        # xArm7 drops scenarios known to COLLISION_AT_GOAL with the 7-DOF arm.
+        # Free-space reaches, corners, and the pick-and-place sequence
+        # (which carries only a small work-surface obstacle) all still apply.
+        names = {c.name for c in scenarios_for("xarm7")}
         assert "reach_obstacle_box" not in names
+        assert "tight_clearance_passage" not in names
         assert "reach_center" in names
+        assert "reach_corner_far_right" in names
+        assert "pp_left_to_right_pick" in names
 
     def test_piper_uses_pitch90_orientation(self):
         # Piper's EE link points +X at zero config; pitch=90° quat puts the
         # gripper down. Quaternion (x, y, z, w) ≈ (0, 0.7071, 0, 0.7071).
-        cases = cases_for("piper")
-        assert len(cases) == 6
-        first = cases[0]
+        scenarios = scenarios_for("piper")
+        assert len(scenarios) == 6
+        first = scenarios[0]
         assert first.target.orientation.y == pytest.approx(0.7071, abs=1e-3)
         assert first.target.orientation.w == pytest.approx(0.7071, abs=1e-3)
 
     def test_unknown_arm_raises_value_error(self):
-        with pytest.raises(ValueError, match="no registered cases"):
-            cases_for("not_a_real_arm")
+        with pytest.raises(ValueError, match="no registered scenarios"):
+            scenarios_for("not_a_real_arm")
 
     def test_default_cases_is_xarm6(self):
-        assert [c.name for c in default_cases()] == [c.name for c in cases_for("xarm6")]
+        assert [c.name for c in default_scenarios()] == [c.name for c in scenarios_for("xarm6")]
 
     def test_obstacle_case_carries_one_obstacle(self):
-        obstacle_case = next(c for c in cases_for("xarm6") if c.name == "reach_obstacle_box")
+        obstacle_case = next(c for c in scenarios_for("xarm6") if c.name == "reach_obstacle_box")
         assert len(obstacle_case.obstacles) == 1
         assert obstacle_case.obstacles[0].name == "blocker"
+
+    def test_tight_clearance_carries_two_obstacles(self):
+        scenario = next(c for c in scenarios_for("xarm6") if c.name == "tight_clearance_passage")
+        assert len(scenario.obstacles) == 2
+        names = {o.name for o in scenario.obstacles}
+        assert names == {"corridor_left", "corridor_right"}
+
+
+class TestPickPlaceCases:
+    """The pick_place_scenarios() sequence builder."""
+
+    def test_returns_six_cases(self):
+        from dimos.manipulation.eval_scenarios import pick_place_scenarios
+
+        scenarios = pick_place_scenarios("test", pick=(0.3, 0.1, 0.1), place=(0.3, -0.1, 0.1))
+        assert len(scenarios) == 6
+
+    def test_names_follow_pre_target_post_pattern(self):
+        from dimos.manipulation.eval_scenarios import pick_place_scenarios
+
+        scenarios = pick_place_scenarios("foo", pick=(0.3, 0.1, 0.1), place=(0.3, -0.1, 0.1))
+        names = [c.name for c in scenarios]
+        assert names == [
+            "foo_pre_pick",
+            "foo_pick",
+            "foo_post_pick",
+            "foo_pre_place",
+            "foo_place",
+            "foo_post_place",
+        ]
+
+    def test_pre_post_have_approach_height_offset(self):
+        from dimos.manipulation.eval_scenarios import pick_place_scenarios
+
+        scenarios = pick_place_scenarios(
+            "x", pick=(0.3, 0.2, 0.10), place=(0.3, -0.2, 0.10), approach_height_m=0.07
+        )
+        # pre_pick / post_pick / pre_place / post_place are 7cm above their target
+        assert scenarios[0].target.position.z == pytest.approx(0.17)  # pre_pick
+        assert scenarios[1].target.position.z == pytest.approx(0.10)  # pick
+        assert scenarios[2].target.position.z == pytest.approx(0.17)  # post_pick
+        assert scenarios[3].target.position.z == pytest.approx(0.17)  # pre_place
+        assert scenarios[4].target.position.z == pytest.approx(0.10)  # place
+        assert scenarios[5].target.position.z == pytest.approx(0.17)  # post_place
+
+    def test_pick_and_place_x_y_independent(self):
+        from dimos.manipulation.eval_scenarios import pick_place_scenarios
+
+        scenarios = pick_place_scenarios("x", pick=(0.4, 0.2, 0.1), place=(0.2, -0.3, 0.1))
+        # First three scenarios use pick xy; last three use place xy
+        for c in scenarios[:3]:
+            assert c.target.position.x == pytest.approx(0.4)
+            assert c.target.position.y == pytest.approx(0.2)
+        for c in scenarios[3:]:
+            assert c.target.position.x == pytest.approx(0.2)
+            assert c.target.position.y == pytest.approx(-0.3)
+
+    def test_default_orientation_is_xarm_gripper_down(self):
+        from dimos.manipulation.eval_scenarios import pick_place_scenarios
+
+        scenarios = pick_place_scenarios("x", pick=(0.3, 0, 0.1), place=(0.3, 0, 0.1))
+        assert scenarios[0].target.orientation.x == pytest.approx(1.0)
+        assert scenarios[0].target.orientation.w == pytest.approx(0.0)
+
+    def test_custom_orientation_propagates(self):
+        from dimos.manipulation.eval_scenarios import pick_place_scenarios
+
+        q = (0.0, 0.7071, 0.0, 0.7071)
+        scenarios = pick_place_scenarios("x", pick=(0.3, 0, 0.1), place=(0.3, 0, 0.1), orientation=q)
+        for c in scenarios:
+            assert c.target.orientation.y == pytest.approx(0.7071, abs=1e-3)
+            assert c.target.orientation.w == pytest.approx(0.7071, abs=1e-3)
+
+    def test_no_obstacles_by_default(self):
+        from dimos.manipulation.eval_scenarios import pick_place_scenarios
+
+        scenarios = pick_place_scenarios("x", pick=(0.3, 0, 0.1), place=(0.3, 0, 0.1))
+        for c in scenarios:
+            assert c.obstacles == []
+
+
+class TestGraspHeuristicHelpers:
+    """Helpers that pull in PickAndPlaceModule's production grasp heuristics."""
+
+    def test_grasp_scenario_uses_object_top_for_z(self):
+        from dimos.manipulation.eval import grasp_scenario
+
+        s = grasp_scenario(
+            "x", object_at=(0.30, 0.10, 0.06), object_size=(0.04, 0.04, 0.10)
+        )
+        # grasp z is the top of the object — center.z + size.z / 2
+        assert s.target.position.z == pytest.approx(0.06 + 0.05)
+
+    def test_grasp_scenario_shifts_toward_robot(self):
+        from dimos.manipulation.eval import grasp_scenario
+
+        # PickAndPlaceModule._occlusion_offset shifts grasp xy toward the
+        # robot base. So for an object at +x, grasp x should be smaller.
+        s = grasp_scenario(
+            "x", object_at=(0.40, 0.0, 0.06), object_size=(0.05, 0.05, 0.10)
+        )
+        assert s.target.position.x < 0.40
+
+    def test_pick_place_for_object_returns_six_scenarios(self):
+        from dimos.manipulation.eval_scenarios import pick_place_for_object
+
+        scenarios = pick_place_for_object(
+            "x",
+            object_at=(0.30, 0.10, 0.06),
+            object_size=(0.04, 0.04, 0.10),
+            place_at=(0.30, -0.10, 0.08),
+        )
+        assert len(scenarios) == 6
+        assert scenarios[0].name == "x_pre_pick"
+        assert scenarios[-1].name == "x_post_place"
+
+    def test_pick_place_for_object_pick_uses_heuristic(self):
+        from dimos.manipulation.eval_scenarios import pick_place_for_object
+
+        scenarios = pick_place_for_object(
+            "x",
+            object_at=(0.40, 0.0, 0.06),
+            object_size=(0.05, 0.05, 0.10),
+            place_at=(0.30, -0.10, 0.08),
+        )
+        # Pick xy should be shifted from the object xy via _occlusion_offset
+        assert scenarios[1].target.position.x < 0.40
+
+    def test_pick_place_for_object_propagates_obstacles(self):
+        from dimos.manipulation.eval_scenarios import _box, pick_place_for_object
+
+        surface = _box("table", (0.35, 0.0, 0.02), (0.30, 0.40, 0.02))
+        scenarios = pick_place_for_object(
+            "x",
+            object_at=(0.30, 0.10, 0.06),
+            object_size=(0.04, 0.04, 0.10),
+            place_at=(0.30, -0.10, 0.08),
+            obstacles=[surface],
+        )
+        for s in scenarios:
+            assert len(s.obstacles) == 1
+            assert s.obstacles[0].name == "table"
 
 
 # ── reporting ─────────────────────────────────────────────────────────────────
@@ -205,7 +354,7 @@ class TestPrintScores:
 
     def test_empty_scores(self):
         out = _capture_stdout(print_scores, [])
-        assert "0 cases" in out
+        assert "0 scenarios" in out
         assert "0/0 passed" in out
 
     def test_passing_score(self):

@@ -12,26 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Planner evaluation — score motion-planning behaviour on a fixed list of cases.
+"""Planner evaluation — score motion-planning behaviour on a fixed list of scenarios.
 
 Runs the manipulation planning stack (IK + RRT) against a list of target
-poses for one arm and reports per-case results: did it plan, how long it
+poses for one arm and reports per-scenario results: did it plan, how long it
 took, how close the planner got, and several path-quality and feasibility
-metrics. Pure planner — no Module boot, no LCM, no hardware.
+metrics.
 
 The eval is built around three pieces:
 
-- ``Case``:    what the robot should do (pure data)
-- ``evaluate``:  how to run a Case against an arm (function)
-- ``Score``:   what came back, with a ``metrics: dict[str, float]`` for
+- ``Scenario``: what the robot should do (pure data)
+- ``evaluate``: how to run a Scenario against an arm (function)
+- ``Score``: what came back, with a ``metrics: dict[str, float]`` for
   named measurements. Adding a new metric is one dict-key change.
 
 Usage::
 
-    from dimos.manipulation.eval import evaluate, default_cases
+    from dimos.manipulation.eval import evaluate, default_scenarios
     from dimos.robot.catalog.ufactory import xarm6
 
-    scores = evaluate(xarm6(adapter_type="mock"), default_cases())
+    scores = evaluate(xarm6(adapter_type="mock"), default_scenarios())
     for s in scores:
         print(s.name, s.passed, s.metrics)
 
@@ -68,8 +68,8 @@ logger = setup_logger()
 
 
 @dataclass
-class Case:
-    """One planning case.
+class Scenario:
+    """One planning scenario.
 
     Attributes:
         name: Short identifier shown in reports.
@@ -90,7 +90,7 @@ class Case:
 
 @dataclass
 class Score:
-    """Result of running one Case.
+    """Result of running one Scenario.
 
     ``metrics`` is a free-form dict so new measurements can be added without
     changing the type. CI and dashboards read by key.
@@ -114,10 +114,10 @@ class Score:
     metrics: dict[str, float] = field(default_factory=dict)
 
 
-# ── case helpers ──────────────────────────────────────────────────────────────
+# ── scenario helpers ──────────────────────────────────────────────────────────────
 
 
-def reach_case(
+def reach_scenario(
     name: str,
     x: float,
     y: float,
@@ -126,8 +126,8 @@ def reach_case(
     obstacles: list[Obstacle] | None = None,
     position_tolerance_m: float = 0.01,
     orientation_tolerance_rad: float = 0.1,
-) -> Case:
-    """Convenience constructor for a single-reach Case.
+) -> Scenario:
+    """Convenience constructor for a single-reach Scenario.
 
     Saves the ``PoseStamped(Vector3(...), Quaternion(...))`` boilerplate.
 
@@ -142,7 +142,7 @@ def reach_case(
     - ``(0.0, 0.0, 0.0, 1.0)``         identity (no rotation from world)
     """
     qx, qy, qz, qw = orientation
-    return Case(
+    return Scenario(
         name=name,
         target=PoseStamped(
             frame_id="world",
@@ -155,30 +155,70 @@ def reach_case(
     )
 
 
+def grasp_scenario(
+    name: str,
+    object_at: tuple[float, float, float],
+    object_size: tuple[float, float, float],
+    obstacles: list[Obstacle] | None = None,
+) -> Scenario:
+    """Build a Scenario to grasp an object at the given position and size.
+
+    Uses ``PickAndPlaceModule``'s production grasp heuristics
+    (``_occlusion_offset`` and ``_grasp_orientation``) to derive the pick
+    pose — so when the heuristics change, the eval automatically reflects
+    the new behavior. Catches the failure mode "heuristic produces a pose
+    the planner can't reach."
+
+    The grasp z is the top of the object (``center.z + size.z / 2``).
+    """
+    # Lazy import: pulling in the full pick-and-place module is expensive,
+    # and most evals don't need it.
+    from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+
+    cx, cy, cz = object_at
+    sx, sy, sz = object_size
+    center = Vector3(x=cx, y=cy, z=cz)
+    size = Vector3(x=sx, y=sy, z=sz)
+
+    gx, gy = PickAndPlaceModule._occlusion_offset(center, size)
+    gz = cz + sz / 2
+    xy_dist = (gx * gx + gy * gy) ** 0.5
+    q = PickAndPlaceModule._grasp_orientation(gx, gy, xy_dist)
+
+    return reach_scenario(
+        name,
+        gx,
+        gy,
+        gz,
+        orientation=(q.x, q.y, q.z, q.w),
+        obstacles=obstacles,
+    )
+
+
 # ── runner ────────────────────────────────────────────────────────────────────
 
 
 def evaluate(
     arm: Any,
-    cases: list[Case],
+    scenarios: list[Scenario],
     planning_timeout_s: float = 10.0,
     kinematics_name: str = "jacobian",
     planner_name: str = "rrt_connect",
     viz: bool = False,
 ) -> list[Score]:
-    """Run a list of planning cases against an arm. One Score per Case.
+    """Run a list of planning scenarios against an arm. One Score per Scenario.
 
     Args:
         arm: A ``RobotConfig`` from the dimOS catalog (e.g. ``xarm6()``).
-        cases: Cases to run, in order.
-        planning_timeout_s: Per-case RRT timeout.
+        scenarios: Scenarios to run, in order.
+        planning_timeout_s: Per-scenario RRT timeout.
         kinematics_name: IK solver name (see ``create_kinematics``).
         planner_name: Motion planner name (see ``create_planner``).
         viz: When ``True``, opens a Meshcat viewer and animates each
             planned path. The Meshcat URL is printed at startup.
 
     Returns:
-        One Score per Case, in the same order. Failures are returned as
+        One Score per Scenario, in the same order. Failures are returned as
         Scores with ``passed=False`` and a human-readable ``reason``;
         exceptions never propagate out.
     """
@@ -199,17 +239,17 @@ def evaluate(
             print(f"\n  Meshcat: {url}\n", flush=True)
 
     scores: list[Score] = []
-    for case in cases:
+    for scenario in scenarios:
         scores.append(
             _run_one(
-                case, monitor, kinematics, planner, robot_id, config, dof, planning_timeout_s, viz
+                scenario, monitor, kinematics, planner, robot_id, config, dof, planning_timeout_s, viz
             )
         )
     return scores
 
 
 def _run_one(
-    case: Case,
+    scenario: Scenario,
     monitor: Any,
     kinematics: Any,
     planner: Any,
@@ -219,24 +259,24 @@ def _run_one(
     timeout_s: float,
     viz: bool = False,
 ) -> Score:
-    """Run a single case end-to-end. Catches exceptions to keep the suite running."""
-    start_joints = case.start_joints or [0.0] * dof
+    """Run a single scenario end-to-end. Catches exceptions to keep the suite running."""
+    start_joints = scenario.start_joints or [0.0] * dof
     initial_js = JointState(name=config.joint_names, position=start_joints)
     monitor.world.sync_from_joint_state(robot_id, initial_js)
 
     added_ids: list[str] = []
     try:
-        for obs in case.obstacles:
+        for obs in scenario.obstacles:
             added_ids.append(monitor.add_obstacle(obs))
         if viz:
-            print(f"  ▶ {case.name}", flush=True)
+            print(f"  ▶ {scenario.name}", flush=True)
             time.sleep(0.5)
         return _plan_and_score(
-            case, monitor, kinematics, planner, robot_id, initial_js, timeout_s, config, viz
+            scenario, monitor, kinematics, planner, robot_id, initial_js, timeout_s, config, viz
         )
     except Exception as exc:
-        logger.warning(f"{case.name}: eval raised exception: {exc}")
-        return Score(name=case.name, passed=False, reason=f"exception: {exc}")
+        logger.warning(f"{scenario.name}: eval raised exception: {exc}")
+        return Score(name=scenario.name, passed=False, reason=f"exception: {exc}")
     finally:
         if viz:
             time.sleep(0.5)
@@ -245,7 +285,7 @@ def _run_one(
 
 
 def _plan_and_score(
-    case: Case,
+    scenario: Scenario,
     monitor: Any,
     kinematics: Any,
     planner: Any,
@@ -258,19 +298,20 @@ def _plan_and_score(
     """Solve IK, plan, compute metrics, decide pass/fail."""
     t_start = time.perf_counter()
 
-    # check_collision=False: let IK find the best goal config; the planner is
-    # what's responsible for finding a collision-free path to it.
+    # check_collision=True: IK must return a goal joint config that is
+    # collision-free. Otherwise RRT can't plan a path TO it and we get
+    # spurious COLLISION_AT_GOAL failures whenever obstacles exist.
     ik = kinematics.solve(
         world=monitor.world,
         robot_id=robot_id,
-        target_pose=case.target,
+        target_pose=scenario.target,
         seed=initial_js,
-        check_collision=False,
+        check_collision=True,
     )
 
     if not ik.is_success() or ik.joint_state is None:
         return Score(
-            name=case.name,
+            name=scenario.name,
             passed=False,
             reason=f"ik failed: {ik.status.name}",
             metrics={"planning_time_s": time.perf_counter() - t_start},
@@ -293,7 +334,7 @@ def _plan_and_score(
 
     if not plan.is_success():
         return Score(
-            name=case.name,
+            name=scenario.name,
             passed=False,
             reason=f"plan failed: {plan.status.name}",
             metrics=metrics,
@@ -302,12 +343,12 @@ def _plan_and_score(
     metrics["path_length_rad"] = plan.path_length
     metrics["n_waypoints"] = float(len(plan.path))
 
-    # Path-quality + feasibility metrics. Non-fatal: case can still pass
+    # Path-quality + feasibility metrics. Non-fatal: scenario can still pass
     # on IK accuracy alone if these computations raise.
     try:
         metrics.update(_path_metrics(plan.path, monitor, robot_id, config))
     except Exception as exc:
-        logger.warning(f"{case.name}: extra metrics failed: {exc}")
+        logger.warning(f"{scenario.name}: extra metrics failed: {exc}")
 
     if viz:
         try:
@@ -315,28 +356,28 @@ def _plan_and_score(
         except Exception as exc:
             logger.warning(f"animate_path failed: {exc}")
 
-    if ik.position_error > case.position_tolerance_m:
+    if ik.position_error > scenario.position_tolerance_m:
         return Score(
-            name=case.name,
+            name=scenario.name,
             passed=False,
             reason=(
                 f"position error {ik.position_error * 1000:.1f}mm "
-                f"> {case.position_tolerance_m * 1000:.1f}mm tolerance"
+                f"> {scenario.position_tolerance_m * 1000:.1f}mm tolerance"
             ),
             metrics=metrics,
         )
-    if ik.orientation_error > case.orientation_tolerance_rad:
+    if ik.orientation_error > scenario.orientation_tolerance_rad:
         return Score(
-            name=case.name,
+            name=scenario.name,
             passed=False,
             reason=(
                 f"orientation error {ik.orientation_error:.3f}rad "
-                f"> {case.orientation_tolerance_rad:.3f}rad tolerance"
+                f"> {scenario.orientation_tolerance_rad:.3f}rad tolerance"
             ),
             metrics=metrics,
         )
 
-    return Score(name=case.name, passed=True, metrics=metrics)
+    return Score(name=scenario.name, passed=True, metrics=metrics)
 
 
 def _path_metrics(
@@ -441,35 +482,35 @@ def _path_metrics(
     return out
 
 
-# ── case registry ─────────────────────────────────────────────────────────────
+# ── scenario registry ─────────────────────────────────────────────────────────────
 
 
-def cases_for(arm_name: str) -> list[Case]:
-    """Tuned case set for the given arm.
+def scenarios_for(arm_name: str) -> list[Scenario]:
+    """Tuned scenario set for the given arm.
 
-    Looks up ``CASES_BY_ARM`` in ``eval_cases.py`` — that's the file to edit
+    Looks up ``SCENARIOS_BY_ARM`` in ``eval_cases.py`` — that's the file to edit
     to tune existing arms or add new ones, not this one.
 
     Raises:
-        ValueError: if no case set is registered for ``arm_name``.
+        ValueError: if no scenario set is registered for ``arm_name``.
     """
-    # Local import avoids an import cycle (eval_cases imports Case from here).
-    from dimos.manipulation.eval_cases import CASES_BY_ARM
+    # Local import avoids an import cycle (eval_cases imports Scenario from here).
+    from dimos.manipulation.eval_scenarios import SCENARIOS_BY_ARM
 
-    factory = CASES_BY_ARM.get(arm_name)
+    factory = SCENARIOS_BY_ARM.get(arm_name)
     if factory is None:
         raise ValueError(
-            f"no registered cases for arm: {arm_name!r}. "
-            f"Registered: {sorted(CASES_BY_ARM)}. "
+            f"no registered scenarios for arm: {arm_name!r}. "
+            f"Registered: {sorted(SCENARIOS_BY_ARM)}. "
             f"Add an entry to dimos/manipulation/eval_cases.py or pass a "
             f"custom list to evaluate()."
         )
     return factory()
 
 
-def default_cases() -> list[Case]:
-    """Canonical suite — xArm6, 7 cases. Used in docs and examples."""
-    return cases_for("xarm6")
+def default_scenarios() -> list[Scenario]:
+    """Canonical suite — xArm6, 7 scenarios. Used in docs and examples."""
+    return scenarios_for("xarm6")
 
 
 # ── reporting ─────────────────────────────────────────────────────────────────
@@ -479,7 +520,7 @@ def print_scores(scores: list[Score]) -> None:
     """Render scores as a terminal table."""
     line = "─" * 60
     print(line)
-    print(f"  Planner Eval · {len(scores)} cases")
+    print(f"  Planner Eval · {len(scores)} scenarios")
     print(line)
     n_passed = sum(1 for s in scores if s.passed)
     for s in scores:
@@ -553,7 +594,7 @@ def main() -> int:
     args = parser.parse_args()
 
     arm = _load_arm(args.arm)
-    scores = evaluate(arm, cases_for(args.arm), viz=args.viz)
+    scores = evaluate(arm, scenarios_for(args.arm), viz=args.viz)
     print_scores(scores)
     if args.json:
         to_json(scores, args.json)
