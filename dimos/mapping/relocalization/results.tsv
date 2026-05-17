@@ -65,3 +65,4 @@ e7cb4ca	0.8545	0.032	1.159	60.8	discard	FPFH max_nn 100->50; lost 8 frames - fea
 f5da9da	0.9818	0.029	0.194	54.7	discard	RANSAC confidence 0.999->0.99; lost frame 1292
 f94e8ce	0.9455	0.029	0.253	54.1	discard	per-scale iters 0.2m@300k; lost 3 frames
 ba73c3f	1.0000	0.028	0.087	55.8	keep	remove final tight ICP refine; median 0.029->0.028 (slight improvement)
+28b58f0	0.9273	0.028	0.719	56.7	discard	normal max_nn 30->20; lost 4 frames, no speedup
