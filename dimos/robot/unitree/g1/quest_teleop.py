@@ -243,7 +243,10 @@ class G1QuestTeleopConfig(QuestTeleopConfig):
     workspace_scale: float = 0.7
     waist_offset: tuple[float, float, float] = (0.15, 0.0, 0.45)
     shoulder_y_correction: float = 0.08
-    arm_engage_buttons: tuple[str, ...] = Field(default=("primary",))
+    # Engage = both index triggers pulled (>50%). Frees X/A so the operator
+    # can use their thumbs for the joysticks without releasing arm tracking.
+    # Override to ("primary",) for X/A or ("grip",) for the middle-finger grips.
+    arm_engage_buttons: tuple[str, ...] = Field(default=("trigger",))
 
 
 class G1QuestTeleopModule(QuestTeleopModule):
