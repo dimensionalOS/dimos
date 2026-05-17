@@ -61,3 +61,4 @@ c88923b	1.0000	0.029	0.079	56.2	keep	drop 0.5m voxel; 3-scale [0.2,0.3,0.8] same
 ed4419e	0.9091	0.033	0.781	42.8	discard	drop 0.3m voxel; lost 5 frames - too aggressive
 d5b36ba	0.9636	0.029	0.244	55.0	discard	top-K 10->5; lost frames 1292, 2153
 4fc7c26	0.9818	0.029	0.118	55.8	discard	polish iters 100->50; lost frame 1866 — polish wasn't the bottleneck anyway
+e7cb4ca	0.8545	0.032	1.159	60.8	discard	FPFH max_nn 100->50; lost 8 frames - features need full neighborhood
