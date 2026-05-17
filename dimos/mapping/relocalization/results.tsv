@@ -87,3 +87,4 @@ bd46ef5	0.9091	0.034	0.672	49.2	discard	0.3m -> 0.4m; lost 5 frames - 0.3m FPFH 
 7792600	1.0000	0.028	0.086	53.4	discard	ICP convergence 1e-5; median slightly worse
 475cde4	1.0000	0.037	0.091	53.7	discard	drop Tukey kernel from polish; median 0.028->0.037 (worse)
 ebc2ba0	1.0000	0.028	0.087	53.3	keep	polish max_iter 100->70; tied success+median, -0.4s
+b9bcb2f	0.9818	0.028	0.127	53.9	discard	polish max_iter 70->50; lost 1 frame
