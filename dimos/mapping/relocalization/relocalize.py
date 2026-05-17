@@ -209,14 +209,4 @@ def relocalize(
         )
         polished.append((float(r.fitness), np.asarray(r.transformation)))
     best_fit, best_T = max(polished, key=lambda fT: fT[0])
-
-    # Stage 3: one final tight ICP pass to tighten the answer.
-    refined = _reg.registration_icp(
-        src_fine,
-        tgt_fine,
-        FINE_VOXEL * 0.4,
-        best_T,
-        _reg.TransformationEstimationPointToPlane(),
-        _reg.ICPConvergenceCriteria(max_iteration=200),
-    )
-    return np.asarray(refined.transformation)
+    return best_T
