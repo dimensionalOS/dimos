@@ -45,7 +45,7 @@ _reg = o3d.pipelines.registration
 SCALE_PLAN: list[tuple[float, int]] = [
     (0.2, 8),
     (0.3, 8),
-    (0.8, 2),
+    (0.8, 1),
 ]
 RANSAC_ITERS = 500_000  # RANSAC iteration budget per scale
 FINE_VOXEL = 0.1  # voxel for the final ICP refinement
