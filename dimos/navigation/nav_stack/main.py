@@ -276,11 +276,11 @@ def nav_stack_rerun_config(
     static_entries = dict(resolved["static"])
     static_entries.setdefault("world/floor", _static_floor)
     resolved["static"] = static_entries
-    # scale/limit rendering (mostly preveting rerun from crashing)
+    # scale/limit rendering (mostly preventing rerun from crashing)
     resolved.setdefault("max_hz", {})
     resolved["max_hz"] = {
         each_entity: resolved["max_hz"].get(each_entity, default_max_hz) * vis_throttle
-        for each_entity in visual_override
+        for each_entity in set(visual_override) | set(resolved["max_hz"])
     }
 
     return resolved
