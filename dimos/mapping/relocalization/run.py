@@ -62,7 +62,7 @@ DATA_DIR = Path(__file__).parent / "data"
 TIME_BUDGET_SEC = 300.0  # 5 minutes wall-clock for the entire run
 SUCCESS_T_M = 1.0  # success threshold: translation error < 1m
 SUCCESS_R_DEG = 15.0  # success threshold: rotation error < 15°
-NUM_WORKERS = min(4, os.cpu_count() or 1)  # eval frames in parallel
+NUM_WORKERS = os.cpu_count() or 1  # eval frames in parallel — uses all cores
 
 RelocalizeFn = Callable[[o3d.geometry.PointCloud, o3d.geometry.PointCloud], np.ndarray]
 

@@ -8,7 +8,7 @@ Given a global indoor 3D map and a local body-frame submap (pose cleared),
 estimate the rigid transform that places the local submap into the global
 map's world frame. This is the kidnapped-robot global relocalization problem.
 
-The dataset is 20 pre-built test centers from a Unitree Go2 lidar log
+The dataset is 60 pre-built test centers from a Unitree Go2 lidar log
 (`go2_hongkong_office.db`) with PGO-corrected groundtruth poses.
 
 ## Setup
@@ -43,7 +43,7 @@ dimos/mapping/relocalization/
 ├── results.tsv                 your experiment log (gitignored)
 └── data/
     ├── global_map.npy          (N, 3) float32, PGO two-pass global map
-    └── test_frames.pkl         list[dict] — 20 test centers with body
+    └── test_frames.pkl         list[dict] — 60 test centers with body
                                 submap + SLERP-PGO groundtruth pose
 ```
 
@@ -80,7 +80,7 @@ script output flood your context.
 ### Goal
 
 Maximize **`success_rate`** (fraction of frames within 1m translation
-AND 15° rotation of groundtruth) across the 20 test frames, within the
+AND 15° rotation of groundtruth) across the 60 test frames, within the
 5-minute total budget. Higher is better.
 
 Metric hierarchy (apply in order — only consult the next when the
@@ -108,21 +108,20 @@ equal-or-better results is a win on its own.
 
 ### First run
 
-Always begin by running `run.py` against an unmodified `relocalize.py` to
-establish a baseline. The shipped baseline (multi-scale FPFH+RANSAC + ICP
-+ gravity prior) gets `success_rate ≈ 0.25` (5/20 frames),
-`median_distance ≈ 5.51m`, `average_distance ≈ 7.30m` in ~45s on this
-dataset. Eval is deterministic, so this exact baseline reproduces on
-every run.
+Always begin by running `run.py` against the current `relocalize.py` to
+establish a baseline. Eval is deterministic per `frame_idx`, so the
+same `relocalize.py` reproduces the same per-frame results on every
+run (wall-clock may vary).
 
 ### Parallelism
 
-`run.py` evaluates frames in parallel across 4 fork-child workers. Each
-worker is **pinned to single-threaded execution** (`OMP_NUM_THREADS=1`
-is set before Open3D import) so RANSAC sampling is reproducible. Do not
-spawn threads/processes inside `relocalize()`; you'll just contend for
-the same cores the harness already saturates. Your function should
-behave as if it owns one CPU.
+`run.py` evaluates frames in parallel across `os.cpu_count()` fork-child
+workers (uses every available core). Each worker is **pinned to
+single-threaded execution** (`OMP_NUM_THREADS=1` is set before Open3D
+import) so RANSAC sampling is reproducible. Do not spawn
+threads/processes inside `relocalize()`; you'll just contend for the
+same cores the harness already saturates. Your function should behave
+as if it owns one CPU.
 
 ## `relocalize()` signature contract
 
@@ -139,7 +138,7 @@ The returned 4x4 matrix `T` must transform body-frame points to world-frame:
 evaluator logs `crash` and skips that frame.
 
 The function may take seconds per call — that's expected. The 5-minute
-budget covers *all* 20 calls; if it expires mid-run, the evaluator stops
+budget covers *all* 60 calls; if it expires mid-run, the evaluator stops
 and reports metrics over whatever frames completed. So you can also
 spend more time per frame at the cost of fewer frames evaluated; the
 average is over those completed.

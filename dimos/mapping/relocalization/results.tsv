@@ -1,0 +1,34 @@
+commit	success_rate	median_distance	average_distance	total_seconds	status	description
+cdf199b	0.2500	5.514	7.305	42.7	keep	baseline multi-scale FPFH+RANSAC+ICP gravity prior
+9fa3e68	0.2500	5.514	7.305	41.0	discard	post-hoc xy-spread reject (0.6m) — filter never fired; dead code
+dc5789e	0.7500	0.097	2.193	89.3	keep	multi-restart RANSAC (3x/scale) + rerank by fine-scale fitness
+1457806	0.7500	0.164	2.200	150.5	discard	RANSAC_RESTARTS 3->7; same success, slightly worse median (failures not RNG-bound)
+38e8a76	0.7500	0.097	2.824	97.1	discard	yaw-flip variant per candidate; fine-scale scorer picked wrong on frame 6
+33e7e24	0.5000	0.714	4.457	128.7	discard	rank by per-candidate tight ICP polish; tight-dist ICP corrupted previously-good candidates
+ede41fc	0.7000	0.171	2.743	95.8	discard	add FGR candidate per scale; scorer picked FGR's bust on frame 16
+d098cff	0.8000	0.063	1.223	229.9	keep	add 0.2m FPFH voxel scale; new winning candidates on 3 frames net +1
+3f3e9a5	0.8000	0.063	1.223	239.2	discard	yaw-flip variants on broader pool; identical results (office is yaw-symmetric at 0.15m)
+6e7adcf	0.8000	0.063	1.434	233.2	discard	normal-aware rerank fitness; same success, slightly worse avg (failures not scoring-bound)
+d58d66e	0.7500	0.060	1.549	235.1	discard	edge-length checker 0.9->0.95; rejected good correspondences on frame 14
+e5982d5	0.8000	0.102	1.830	300.1	discard	RANSAC iters 500k->2M; budget timeout, only 15/20 frames completed
+40f900a	0.5500	0.223	4.303	262.9	discard	ransac_n 3->4; with same iter budget, 4-pt RANSAC under-converges
+eaa3275	0.8000	0.063	1.223	196.6	keep	cache global-map FPFH + fine cloud; -33s, identical accuracy
+9a21da6	0.6667	0.111	2.700	300.1	discard	add 0.15m voxel scale; budget timeout, 12/20 frames done
+0509869	0.8000	0.092	1.895	197.4	discard	rerank dist 0.15m->0.075m; tied success, worse median (frame 6 picked worse candidate)
+2f39411	0.8000	0.089	1.891	194.0	discard	rerank by fitness/rmse composite; same pattern as tighter rerank — different pick but no net win
+f5c3ef9	0.8000	0.063	1.163	195.1	keep	centroid-aware yaw flip variant; frame 7 trans improved 3.07->1.88m (still fail)
+f1d151c	0.8000	0.063	1.131	229.4	discard	6-yaw search around cloud centroid; tied success/median but +34s (strict tertiary loss)
+e4dd589	0.8000	0.022	1.071	212.8	keep	top-5 ICP at moderate dist + tight refine; median 0.063->0.022 (3x tighter)
+05ad586	0.8500	0.022	0.538	233.1	keep	top-K 5->10 for ICP rerank; frame 7 rescued (1.31m, 19° -> 0.36m, 6.8°)
+9c821df	0.8500	0.022	0.538	296.8	discard	top-K 10->15; identical picks, +64s (strict tertiary loss)
+93a14fc	0.7500	0.053	1.752	300.1	discard	RANSAC restarts 3->5; budget timeout 16/20 frames
+613fc6b	0.8000	0.025	0.704	300.2	discard	polish iters 100->50; budget timeout (timing variable); 15/20 frames
+b175a19	0.8333	0.022	0.605	300.1	discard	point-to-point polish; 15/18 done, timed out
+c930f33	0.8500	0.022	0.556	272.9	discard	polish iters 100->30; tied success/median but +40s (timing noise; strict tertiary loss)
+b32d563	0.8500	0.022	1.200	201.3	keep	wall-only scoring & polish; median 0.022355->0.022308, -32s; yaw flips still stuck
+0dde2fe	0.8500	0.022	1.298	199.2	discard	gravity tilt 10°->5°; median 0.022308->0.022313 (loses tiebreaker)
+45a1066	0.8000	0.022	1.727	219.2	discard	coarse-to-fine polish; wider basin pulled frame 7 to wrong room
+68b4fab	0.8500	0.038	1.197	205.5	discard	final ICP basin 0.04m->0.02m; fewer correspondences make ICP noisier
+d774ec6	0.8000	0.022	1.673	285.2	discard	restarts 3->5 retry; frame 7 lost (0.36m -> 11.9m)
+
+
