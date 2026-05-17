@@ -73,3 +73,4 @@ ba73c3f	1.0000	0.028	0.087	55.8	keep	remove final tight ICP refine; median 0.029
 f886031	0.9636	0.028	0.374	50.2	discard	0.2m@7; lost frames 1292 and 1579 - 0.2m needs all 8 restarts
 0799417	0.9636	0.028	0.267	50.2	discard	0.3/0.8@5; lost frames 1292 and 1579 - same failures, less diversity is bad
 3da23e9	1.0000	0.032	0.086	54.5	discard	looser ICP convergence 1e-4; median 0.028->0.032 (worse)
+83d399e	0.7818	0.034	1.888	60.5	discard	FPFH radius voxel*5 -> voxel*3; lost 12 frames - features too local
