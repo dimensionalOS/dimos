@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import functools
 import threading
 import time
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -54,7 +54,10 @@ from dimos.utils.reactive import backpressure, callback_to_observable
 VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 
 
-def time_is_now(x: Timestamped) -> Timestamped:
+_T = TypeVar("_T", bound=Timestamped)
+
+
+def time_is_now(x: _T) -> _T:
     x.ts = time.time()
     return x
 

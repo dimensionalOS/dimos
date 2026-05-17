@@ -352,7 +352,3 @@ class LCMTF(PubSubTF):
 
 
 TF = LCMTF
-TF = LCMTF
-TF = LCMTF
-TF = LCMTF
-TF = LCMTF

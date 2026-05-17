@@ -134,7 +134,7 @@ def estimate_marker_pose(
     pixels. Otherwise the radtan ``dist_coeffs`` are passed straight through.
     """
     obj = _aruco_marker_object_points(marker_length_m)
-    img = corners_px.reshape(4, 1, 2).astype(np.float32)
+    img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
     if _is_fisheye_model(distortion_model):
         d_fisheye = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)[:4].reshape(4, 1)
         img = cv2.fisheye.undistortPoints(img, camera_matrix, d_fisheye, P=camera_matrix)
