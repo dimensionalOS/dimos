@@ -69,3 +69,4 @@ ba73c3f	1.0000	0.028	0.087	55.8	keep	remove final tight ICP refine; median 0.029
 742a279	1.0000	0.028	0.087	55.5	keep	RANSAC confidence 0.999->0.995; minor early termination, -0.3s, same metrics
 7b4a493	0.9636	0.028	0.308	62.1	discard	drop wall-only; lost 2 frames AND +7s (full cloud scoring more expensive)
 25f01ea	0.9636	0.028	0.379	39.1	discard	per-scale (0.2m@4); -16s but lost 2 frames
+6d81ccc	0.9455	0.028	0.405	47.3	discard	0.2m@6; lost 3 frames
