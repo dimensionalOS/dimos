@@ -18,11 +18,15 @@ from typing import Any
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.robot.unitree.go2.blueprints.layers.context_provider import _Go2ContextProvider
+from dimos.robot.unitree.go2.blueprints.layers.expert_router import _Go2ExpertRouter
 
 
 def _go2_agent_brain_with_client(**mcp_client_kwargs: Any) -> Blueprint:
-    """Layer 3: MCP tool server plus the LLM/VLM agent client."""
+    """Layer 3: expert routing, context, MCP tools, and the LLM/VLM agent."""
     return autoconnect(
+        _Go2ExpertRouter.blueprint(),
+        _Go2ContextProvider.blueprint(),
         McpServer.blueprint(),
         McpClient.blueprint(**mcp_client_kwargs),
     )
