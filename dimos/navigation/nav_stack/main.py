@@ -21,7 +21,6 @@ from typing import Any
 import numpy as np
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.core.module import ModuleBase
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanner
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
@@ -32,7 +31,6 @@ from dimos.navigation.nav_stack.modules.tare_planner.tare_planner import TarePla
 from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
 from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import TerrainMapExt
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -88,16 +86,6 @@ def create_nav_stack(
         path_follower_config.setdefault("goal_tolerance", waypoint_threshold)
         simple_planner_config.setdefault("goal_reached_threshold", waypoint_threshold)
 
-    pgo_module: Blueprint = PGO.blueprint(
-        **{
-            "parent_frame": world_frame,
-            "frame_id": map_frame,
-            "child_frame_id": start_point_frame,
-            "body_frame": current_point_frame,
-            **(pgo or {}),
-        }
-    )
-
     modules: list[Blueprint] = [
         TerrainAnalysis.blueprint(
             **{
@@ -132,6 +120,10 @@ def create_nav_stack(
                 "vehicle_height": 1.5 if vehicle_height is None else vehicle_height,
                 **(terrain_analysis or {}),
             }
+        ).remappings(
+            [
+                (TerrainAnalysis, "odometry", "corrected_odometry"),
+            ]
         ),
         LocalPlanner.blueprint(
             **{
@@ -159,8 +151,20 @@ def create_nav_stack(
                 "max_acceleration": 2.0,  # important for smooth movement
                 **path_follower_config,
             }
+        ).remappings(
+            [
+                (PathFollower, "cmd_vel", "nav_cmd_vel"),
+            ]
         ),
-        pgo_module,
+        PGO.blueprint(
+            **{
+                "parent_frame": world_frame,
+                "frame_id": map_frame,
+                "child_frame_id": start_point_frame,
+                "body_frame": current_point_frame,
+                **(pgo or {}),
+            }
+        ).remappings([(PGO, "global_map", "_pgo_global_map")]),
     ]
     if planner == "simple":
         merged_simple_planner_config: dict[str, Any] = {
@@ -173,7 +177,13 @@ def create_nav_stack(
         merged_simple_planner_config.update(simple_planner_config)
         modules.append(SimplePlanner.blueprint(**merged_simple_planner_config))
     elif planner == "far":
-        modules.append(FarPlanner.blueprint(**far_planner_config))
+        modules.append(
+            FarPlanner.blueprint(**far_planner_config).remappings(
+                [
+                    (FarPlanner, "odometry", "corrected_odometry"),
+                ]
+            )
+        )
     else:
         raise Exception(f"invalid planner: {planner}")
 
@@ -190,6 +200,10 @@ def create_nav_stack(
                     "vehicle_height": 1.5 if vehicle_height is None else vehicle_height,
                     **(terrain_map_ext or {}),
                 }
+            ).remappings(
+                [
+                    (TerrainMapExt, "odometry", "corrected_odometry"),
+                ]
             )
         )
     if use_tare:
@@ -205,7 +219,6 @@ def create_nav_stack(
         )
 
         modules.append(ApplyClosure.blueprint(**(apply_closure or {})))
-    record_remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = []
     if record:
         # Lazy: breaks on G1 onboard (linux-aarch64 TLS allocation failure)
         from dimos.navigation.nav_stack.modules.nav_record.nav_record import NavRecord
@@ -216,21 +229,10 @@ def create_nav_stack(
                     "default_frame_id": current_point_frame,
                     **(nav_record or {}),
                 }
-            )
+            ).remappings([(NavRecord, "global_map", "_pgo_global_map")])
         )
-        record_remappings.append((NavRecord, "global_map", "global_map_pgo"))
 
-    remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
-        (PathFollower, "cmd_vel", "nav_cmd_vel"),
-        (TerrainAnalysis, "odometry", "corrected_odometry"),
-        (TerrainMapExt, "odometry", "corrected_odometry"),
-        (PGO, "global_map", "global_map_pgo"),
-        *record_remappings,
-    ]
-    if planner == "far":
-        remappings.append((FarPlanner, "odometry", "corrected_odometry"))
-
-    return autoconnect(*modules).remappings(remappings)
+    return autoconnect(*modules)
 
 
 def nav_stack_rerun_config(
