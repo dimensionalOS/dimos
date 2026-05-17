@@ -26,11 +26,10 @@ from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 def vis_module(
     viewer_backend: ViewerBackend,
     rerun_config: dict[str, Any] | None = None,
-    foxglove_config: dict[str, Any] | None = None,
 ) -> Blueprint:
     """Create a visualization blueprint based on the selected viewer backend.
 
-    Bundles the appropriate viewer module (Rerun or Foxglove) together with
+    Bundles the Rerun viewer module together with
     the ``WebsocketVisModule`` and ``RerunWebSocketServer`` so that the web
     dashboard and remote viewer connections work out of the box.
 
@@ -49,20 +48,10 @@ def vis_module(
             },
         )
     """
-    if foxglove_config is None:
-        foxglove_config = {}
     if rerun_config is None:
         rerun_config = {}
 
     match viewer_backend:
-        case "foxglove":
-            from dimos.robot.foxglove_bridge import FoxgloveBridge
-
-            return autoconnect(
-                FoxgloveBridge.blueprint(**foxglove_config),
-                RerunWebSocketServer.blueprint(),
-                WebsocketVisModule.blueprint(),
-            )
         case "rerun":
             from dimos.core.global_config import global_config
             from dimos.protocol.pubsub.impl.lcmpubsub import LCM

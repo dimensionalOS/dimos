@@ -138,7 +138,6 @@ all_modules = {
     "emitter-module": "dimos.utils.demo_image_encoding.EmitterModule",
     "far-planner": "dimos.navigation.nav_stack.modules.far_planner.far_planner.FarPlanner",
     "fast-lio2": "dimos.hardware.sensors.lidar.fastlio2.module.FastLio2",
-    "foxglove-bridge": "dimos.robot.foxglove_bridge.FoxgloveBridge",
     "g1-connection": "dimos.robot.unitree.g1.connection.G1Connection",
     "g1-connection-base": "dimos.robot.unitree.g1.connection.G1ConnectionBase",
     "g1-high-level-dds-sdk": "dimos.robot.unitree.g1.effectors.high_level.dds_sdk.G1HighLevelDdsSdk",

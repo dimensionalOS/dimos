@@ -13,14 +13,9 @@
 # limitations under the License.
 from collections.abc import Callable
 from copy import copy
-import threading
 import time
 from typing import Any
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-)
-from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 from reactivex.observable import Observable
 
 from dimos.core.core import rpc
@@ -152,8 +147,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
     pointcloud: In[PointCloud2]
 
     detections: Out[Detection2DArray]
-    annotations: Out[ImageAnnotations]
-
     detected_pointcloud_0: Out[PointCloud2]
     detected_pointcloud_1: Out[PointCloud2]
     detected_pointcloud_2: Out[PointCloud2]
@@ -161,8 +154,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
     detected_image_0: Out[Image]
     detected_image_1: Out[Image]
     detected_image_2: Out[Image]
-
-    scene_update: Out[SceneUpdate]
 
     target: Out[PoseStamped]
 
@@ -175,14 +166,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
         def update_objects(imageDetections: ImageDetections3DPC) -> None:
             for detection in imageDetections.detections:
                 self.add_detection(detection)
-
-        def scene_thread() -> None:
-            while True:
-                scene_update = self.to_foxglove_scene_update()
-                self.scene_update.publish(scene_update)
-                time.sleep(1.0)
-
-        threading.Thread(target=scene_thread, daemon=True).start()
 
         self.detection_stream_3d.subscribe(update_objects)
 
@@ -284,30 +267,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
     def goto_object(self, object_id: str) -> Object3D | None:
         """Go to object by id."""
         return self.objects.get(object_id, None)
-
-    def to_foxglove_scene_update(self) -> "SceneUpdate":
-        """Convert all detections to a Foxglove SceneUpdate message.
-
-        Returns:
-            SceneUpdate containing SceneEntity objects for all detections
-        """
-
-        # Create SceneUpdate message with all detections
-        scene_update = SceneUpdate()
-        scene_update.deletions_length = 0
-        scene_update.deletions = []
-        scene_update.entities = []
-
-        for obj in self.objects:
-            try:
-                scene_update.entities.append(
-                    obj.to_foxglove_scene_entity(entity_id=f"{obj.name}_{obj.track_id}")  # type: ignore[attr-defined]
-                )
-            except Exception:
-                pass
-
-        scene_update.entities_length = len(scene_update.entities)
-        return scene_update
 
     def __len__(self) -> int:
         return len(self.objects.values())
