@@ -20,10 +20,10 @@ The dataset is 20 pre-built test centers from a Unitree Go2 lidar log
 3. **Read the in-scope files** (full paths, repo-relative):
    - `dimos/mapping/relocalization/program.md` — this file.
    - `dimos/mapping/relocalization/relocalize.py` — **the only file you modify**. Defines
-     `relocalize(global_map, local_map) -> 4x4 numpy.ndarray`. Calls
-     `evaluate()` from run.py at the bottom.
-   - `dimos/mapping/relocalization/run.py` — **READ ONLY.** Fixed evaluation harness,
-     data loading, success thresholds, time budget enforcement.
+     `relocalize(global_map, local_map) -> 4x4 numpy.ndarray` and nothing else.
+   - `dimos/mapping/relocalization/run.py` — **READ ONLY** entry point. Imports your
+     `relocalize` and evaluates it. Owns data loading, success thresholds, and time
+     budget enforcement. You run this; you never invoke `relocalize.py` directly.
 4. **Verify data exists**: `dimos/mapping/relocalization/data/global_map.npy` and
    `dimos/mapping/relocalization/data/test_frames.pkl` must be present. If
    missing, ask the human — the data was generated from upstream PGO assets
@@ -53,7 +53,7 @@ Each run has a **fixed 5-minute wall-clock budget** (enforced inside
 `run.py`). Launch it as:
 
 ```
-uv run dimos/mapping/relocalization/relocalize.py > dimos/mapping/relocalization/run.log 2>&1
+uv run dimos/mapping/relocalization/run.py > dimos/mapping/relocalization/run.log 2>&1
 ```
 
 Do **not** use `tee`. Redirect stdout+stderr to `run.log`. Don't let the
@@ -79,10 +79,26 @@ script output flood your context.
 
 ### Goal
 
-Minimize **`average_distance`** (mean per-frame translation error in
-meters) across the 20 test frames, within the 5-minute total budget.
-Lower is better. Secondary signal: **`success_rate`** (fraction of frames
-within 1m translation AND 15° rotation of groundtruth).
+Maximize **`success_rate`** (fraction of frames within 1m translation
+AND 15° rotation of groundtruth) across the 20 test frames, within the
+5-minute total budget. Higher is better.
+
+Metric hierarchy (apply in order — only consult the next when the
+previous is tied):
+
+1. **`success_rate`** — higher is better. Primary.
+2. **`median_distance`** — lower is better. Translation tightness once
+   you're succeeding.
+3. **`total_seconds`** — lower is better. Speed only matters as a
+   tiebreaker; never sacrifice accuracy for it.
+
+`average_distance` is reported for debugging only — do **not** optimize
+for it directly. One catastrophic 50m outlier dominates the mean even
+when 19/20 frames are perfect, so it punishes the wrong things.
+
+Eval is fully deterministic: `run.py` seeds Open3D's RNG per-frame, so
+RANSAC variance is zero between runs of the same `relocalize.py`. Any
+metric change you see is a real algorithmic change.
 
 ### Simplicity criterion
 
@@ -92,9 +108,10 @@ equal-or-better results is a win on its own.
 
 ### First run
 
-Always begin by running `relocalize.py` unchanged to establish a baseline.
-The shipped baseline (multi-scale FPFH+RANSAC + ICP + gravity prior) gets
-roughly `average_distance ≈ 8m` / `success_rate ≈ 0.3` on this dataset.
+Always begin by running `run.py` against an unmodified `relocalize.py` to
+establish a baseline. The shipped baseline (multi-scale FPFH+RANSAC + ICP
++ gravity prior) gets roughly `success_rate ≈ 0.45` (9/20 frames),
+`median_distance ≈ 1.07m`, `average_distance ≈ 4.36m` on this dataset.
 
 ## `relocalize()` signature contract
 
@@ -147,24 +164,25 @@ After each run, append one TSV row to `dimos/mapping/relocalization/results.tsv`
 (tab-separated; commas occur inside descriptions and will break CSV):
 
 ```
-commit	average_distance	success_rate	total_seconds	status	description
+commit	success_rate	median_distance	average_distance	total_seconds	status	description
 ```
 
 1. git commit hash (7 chars)
-2. `average_distance` (e.g. `5.234`) — `0.000000` for crashes
-3. `success_rate` (e.g. `0.45`) — `0.0` for crashes
-4. `total_seconds` (e.g. `289.4`) — `0.0` for crashes
-5. status: `keep`, `discard`, or `crash`
-6. short text description of what was tried
+2. `success_rate` (e.g. `0.45`) — `0.0` for crashes — **primary metric**
+3. `median_distance` (e.g. `1.073`) — `0.0` for crashes — tiebreaker
+4. `average_distance` (e.g. `4.359`) — `0.0` for crashes — debug only
+5. `total_seconds` (e.g. `289.4`) — `0.0` for crashes
+6. status: `keep`, `discard`, or `crash`
+7. short text description of what was tried
 
 Example:
 
 ```
-commit	average_distance	success_rate	total_seconds	status	description
-a1b2c3d	8.142347	0.3000	20.0	keep	baseline multi-scale ransac
-b2c3d4e	6.523000	0.4500	240.3	keep	added FGR + filter ICP at 0.2
-c3d4e5f	7.891000	0.3500	298.0	discard	dropped FGR (made it worse)
-d4e5f6g	0.000000	0.0	0.0	crash	teaser++ import (not installed)
+commit	success_rate	median_distance	average_distance	total_seconds	status	description
+a1b2c3d	0.4500	1.073	4.359	64.4	keep	baseline multi-scale ransac
+b2c3d4e	0.6000	0.812	3.110	240.3	keep	added FGR + filter ICP at 0.2
+c3d4e5f	0.4000	1.450	5.220	298.0	discard	dropped FGR (made it worse)
+d4e5f6g	0.0	0.0	0.0	0.0	crash	teaser++ import (not installed)
 ```
 
 ## The experiment loop
@@ -174,13 +192,16 @@ LOOP FOREVER:
 1. Inspect git state — which branch + commit you're on.
 2. Edit `relocalize.py` with one experimental idea. Keep changes focused.
 3. `git add dimos/mapping/relocalization/relocalize.py && git commit -m "<idea>"`
-4. Run: `uv run dimos/mapping/relocalization/relocalize.py > dimos/mapping/relocalization/run.log 2>&1`
-5. Pull the metric: `grep "^average_distance:\|^success_rate:" dimos/mapping/relocalization/run.log`
+4. Run: `uv run dimos/mapping/relocalization/run.py > dimos/mapping/relocalization/run.log 2>&1`
+5. Pull metrics: `grep -E "^(success_rate|median_distance|average_distance|total_seconds):" dimos/mapping/relocalization/run.log`
 6. If the grep is empty, the run crashed. `tail -n 50 dimos/mapping/relocalization/run.log`
    to read the traceback and try to fix.
 7. Append a row to `results.tsv`.
-8. If `average_distance` improved, **advance** — keep the commit.
-9. If equal or worse, `git reset --hard HEAD~1` and try a different idea.
+8. Compare against the last `keep` row using the metric hierarchy:
+   `success_rate` (higher wins) → `median_distance` (lower wins) →
+   `total_seconds` (lower wins). If the new commit wins, **advance** —
+   keep it. If it loses or strictly ties on all three, `git reset --hard
+   HEAD~1` and try a different idea.
 
 **Timeout:** Each run should finish in ~5 minutes (enforced inside run.py).
 If a run exceeds 10 minutes wall-clock (e.g. you accidentally disabled the
@@ -215,6 +236,13 @@ Open3D point-cloud registration:
 
 Failure modes you'll likely see on this dataset:
 
+- **Z-only matches dominate** — the map is very flat (walls only ~1m
+  tall), so RANSAC will gleefully pick correspondences that agree only
+  on z (floor↔floor, ceiling↔ceiling). The resulting transform has
+  near-arbitrary (x, y, yaw) but reports high fitness. Mitigations:
+  reject candidates whose inlier set is z-degenerate (low spread in xy),
+  use `CorrespondenceCheckerBasedOnEdgeLength`, or remove floor/ceiling
+  points before feature extraction.
 - **180° yaw flips** — the office has corridor symmetry. RANSAC happily
   matches walls running in either direction.
 - **Wrong-room matches** — repetitive layout means FPFH descriptors

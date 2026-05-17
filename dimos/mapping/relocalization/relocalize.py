@@ -13,13 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Autoresearch entry point. THIS IS THE FILE YOU EDIT.
+"""THIS IS THE FILE YOU EDIT.
 
 Define ``relocalize(global_map, local_map) -> 4x4 numpy array`` that
 maps body-frame points in ``local_map`` to world-frame points in
-``global_map``. Then `uv run dimos/mapping/relocalize.py` runs the
-read-only evaluator in run.py against 20 cached test frames within a
-5-minute wall-clock budget.
+``global_map``. The read-only evaluator (`run.py`) imports this module
+and runs your function against 20 cached test frames within a 5-minute
+wall-clock budget. Invoke the experiment as:
+
+    uv run dimos/mapping/relocalization/run.py > .../run.log 2>&1
 
 Baseline: FPFH + multi-scale RANSAC + point-to-plane ICP refinement,
 with a gravity-prior filter (assumes both clouds are z-up, which they
@@ -34,9 +36,6 @@ from __future__ import annotations
 
 import numpy as np
 import open3d as o3d
-
-# Read-only evaluator (do not modify run.py).
-from run import evaluate
 
 _reg = o3d.pipelines.registration
 
@@ -130,7 +129,3 @@ def relocalize(
         _reg.ICPConvergenceCriteria(max_iteration=200),
     )
     return np.asarray(refined.transformation)
-
-
-if __name__ == "__main__":
-    evaluate(relocalize)

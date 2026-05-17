@@ -17,10 +17,13 @@
 DO NOT MODIFY THIS FILE. It contains the fixed evaluation, data loading,
 and time-budget enforcement. The agent edits `relocalize.py` only.
 
-Usage from relocalize.py:
+This is the **entry point** for the experiment. Run it as:
 
-    from run import evaluate
-    evaluate(relocalize)   # at the bottom of relocalize.py
+    uv run dimos/mapping/relocalization/run.py
+
+It imports `relocalize` from `relocalize.py` (sibling file), runs it
+against the 20 cached test frames under a 5-minute wall-clock budget,
+and prints a grep-friendly summary block.
 
 The agent's `relocalize` must have the signature:
 
@@ -31,19 +34,12 @@ The agent's `relocalize` must have the signature:
 
 The transform should map points in `local_map`'s (body) frame into
 `global_map`'s (world) frame, such that `T @ [body; 1] ≈ [world; 1]`.
-
-The evaluator:
-  1. Loads the cached global map + 20 pre-built test frames from data/.
-  2. Calls relocalize() on each frame until either all are done or the
-     5-minute wall-clock budget runs out.
-  3. Compares the returned transform against the SLERP-PGO groundtruth
-     pose for that frame.
-  4. Prints a summary line block (machine-parseable with grep).
 """
 
 from __future__ import annotations
 
 import pickle
+import random
 import time
 from pathlib import Path
 from typing import Callable
@@ -95,6 +91,9 @@ def evaluate(relocalize_fn: RelocalizeFn) -> dict:
         ``^all_distances:``  ``^all_rotations:``
     """
     global_map, test_frames = _load_data()
+    # Deterministic eval order: same prefix evaluated even when the time
+    # budget cuts a run short.
+    test_frames = sorted(test_frames, key=lambda f: f["frame_idx"])
     print(
         f"[run] global_map={len(global_map.points)} pts, "
         f"test_frames={len(test_frames)}, time_budget={TIME_BUDGET_SEC:.0f}s"
@@ -118,6 +117,15 @@ def evaluate(relocalize_fn: RelocalizeFn) -> dict:
         local_map = _to_o3d_pcd(frame["body_pts"])
         gt_R = np.asarray(frame["gt_R"], dtype=np.float64)
         gt_t = np.asarray(frame["gt_t"], dtype=np.float64)
+
+        # Reseed every stochastic source the agent could possibly touch,
+        # before every frame, so two runs of the same relocalize.py
+        # produce identical metrics. The agent's signal is then pure
+        # algorithm delta, not RNG luck.
+        seed = int(frame["frame_idx"])
+        o3d.utility.random.seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
 
         t_call = time.perf_counter()
         try:
@@ -186,3 +194,12 @@ def evaluate(relocalize_fn: RelocalizeFn) -> dict:
         "num_frames_total": len(test_frames),
         "num_crashed": len(crashed),
     }
+
+
+if __name__ == "__main__":
+    # Force line-buffered stdout so progress shows up live in redirected logs.
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)
+
+    from relocalize import relocalize
+    evaluate(relocalize)
