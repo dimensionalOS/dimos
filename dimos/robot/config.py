@@ -53,7 +53,7 @@ class RobotConfig(BaseModel):
 
     # Required fields
     name: str
-    model_path: Path
+    model_path: Path | None = None
     end_effector_link: str | None = None
 
     # Physical dimensions (meters)
@@ -115,6 +115,11 @@ class RobotConfig(BaseModel):
     def _ensure_parsed(self) -> ModelDescription:
         """Parse model lazily on first access."""
         if self._parsed is None:
+            if self.model_path is None:
+                raise ValueError(
+                    f"RobotConfig '{self.name}' has no model_path — "
+                    "joint/link info is unavailable. Set model_path to a URDF/MJCF."
+                )
             self._parsed = parse_model(self.model_path, self.package_paths, self.xacro_args)
             self._ensure_prefix()
             if self.joint_names is None:
@@ -191,6 +196,11 @@ class RobotConfig(BaseModel):
         if self.end_effector_link is None:
             raise ValueError(
                 f"RobotConfig '{self.name}' has no end_effector_link — "
+                "cannot generate RobotModelConfig for manipulation."
+            )
+        if self.model_path is None:
+            raise ValueError(
+                f"RobotConfig '{self.name}' has no model_path — "
                 "cannot generate RobotModelConfig for manipulation."
             )
         bp = self.base_pose
