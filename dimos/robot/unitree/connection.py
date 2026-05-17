@@ -93,7 +93,7 @@ class UnitreeWebRTCConnection(Resource):
         self.cmd_vel_timeout = 0.2
         # Per-device AES-128 key required by G1 firmware >= 1.5.1 (data2=3 WebRTC handshake).
         # Fetch with: unitree-fetch-aes-key --email YOU --sn <serial>
-        if aes_128_key is None:
+        if not aes_128_key:
             aes_128_key = os.environ.get("UNITREE_AES_128_KEY")
         extra: dict[str, Any] = {"aes_128_key": aes_128_key} if aes_128_key else {}
         self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip, **extra)
