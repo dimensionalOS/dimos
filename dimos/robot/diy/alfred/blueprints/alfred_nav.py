@@ -28,7 +28,7 @@ from dimos.visualization.vis_module import vis_module
 
 nav_config: dict[str, Any] = dict(
     planner="simple",
-    vehicle_height=ALFRED.height_clearance,
+    vehicle_height=0.5,
     max_speed=0.8,
     terrain_analysis={
         "obstacle_height_threshold": 0.15,
@@ -64,7 +64,7 @@ alfred_nav = (
         vis_module(
             global_config.viewer,
             rerun_config={
-                **nav_stack_rerun_config({"memory_limit": "1GB"}, vis_throttle=1.0),
+                **nav_stack_rerun_config({"memory_limit": "1GB"}, vis_throttle=0.5),
                 "rerun_open": "native",
             },
         ),

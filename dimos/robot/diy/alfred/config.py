@@ -30,8 +30,7 @@ ALFRED = RobotConfig(
     height_clearance=2.0,  # meters
     width_clearance=1.0,
     internal_odom_offsets={
-        # Mid-360 lidar: 0.20 m forward, 0.20 m right of base center, 0.10 m above ground.
-        # it is mounted at an angle but the livox driver will handle that automatically
+        # Mid-360 lidar: a bit forward, and a bit to the right of base center, above ground.
         "mid360_link": Pose(0.20, -0.20, 0.30, *Quaternion.from_euler(Vector3(0, 0, 0))),
     },
 )
