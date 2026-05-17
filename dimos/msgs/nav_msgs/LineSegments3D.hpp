@@ -35,10 +35,6 @@ public:
 
     void reserve(size_t capacity) { segments_.reserve(capacity); }
 
-    // traversability is in [0, 1]:
-    //   1.0 — fully traversable (green in rerun)
-    //   0.5 — partial (yellow)
-    //   0.0 — non-traversable (red)
     void add(float x1, float y1, float z1,
              float x2, float y2, float z2,
              float traversability = 1.0f) {

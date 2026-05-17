@@ -14,14 +14,9 @@
 
 """Graph3D: pose-graph / visibility-graph message with typed nodes and edges.
 
-Canonical wire format lives in ``Graph3D.ksy`` (Kaitai Struct). This
-module is hand-written to match — keep the two in sync. The C++
-counterpart is at ``Graph3D.hpp`` in the same directory.
-
 Edges reference nodes by ``id`` (not list index), so producers are free
 to reorder or re-emit nodes between snapshots. ``metadata_id`` is a
-caller-defined enum — e.g., for far_planner: 0=normal, 1=odom, 2=goal,
-3=frontier, 4=navpoint; for PGO edges: 0=odometry, 1=loop_closure.
+caller-defined enum — ex: for far_planner: 0=normal, 1=odom, 2=goal
 """
 
 from __future__ import annotations

@@ -12,13 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PGO liveness probe via the DimOS module framework.
-
+"""
 Spins up a blueprint with PGO, the KITTI-360 playback module, and a
 TopicCounter module that subscribes to every PGO output. Reports per-topic
-message counts and a one-line verdict so you can tell quickly whether PGO
-is alive at the graph, edges, and loop-closure layers — without any
-direct LCM calls in this file.
+message counts and a one-line verdict.
 """
 
 from __future__ import annotations

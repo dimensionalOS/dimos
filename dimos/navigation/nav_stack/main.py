@@ -563,9 +563,6 @@ def _graph_edges_colors_debug(graph_edges: Any) -> Any:
 
 
 def _pose_graph_colors_debug(pose_graph: Any) -> Any:
-    # PGO pose-graph: render nodes + edges under separate sub-paths so
-    # they can be toggled / styled independently in the rerun viewer.
-    # Lifted to the standard agentic-debug height to stand clear of terrain.
     return pose_graph.to_rerun_multi(
         base_path="world/pose_graph",
         z_offset=_AGENTIC_DEBUG_LIFT,

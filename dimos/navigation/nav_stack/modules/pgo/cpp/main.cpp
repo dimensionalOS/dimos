@@ -116,13 +116,7 @@ static nav_msgs::Odometry build_odometry(const M3D& r, const V3D& t, double ts,
 }
 
 // Pose-graph snapshot encoded as a Graph3D:
-//   - one node per keyframe (id = keyframe index, metadata_id = NODE_KEYFRAME),
-//     pose.ts = keyframe creation time so consumers can map nodes back to
-//     the input scan that produced them.
-//   - odometry edges between consecutive keyframes (metadata_id = EDGE_ODOMETRY,
-//     timestamp = the later keyframe's creation time).
-//   - loop-closure edges from `loop_pairs` (metadata_id = EDGE_LOOP_CLOSURE,
-//     timestamp = snapshot publish time since the loop fired this cycle).
+//   - one node per keyframe
 static constexpr uint64_t NODE_KEYFRAME = 0;
 static constexpr uint64_t EDGE_ODOMETRY = 0;
 static constexpr uint64_t EDGE_LOOP_CLOSURE = 1;

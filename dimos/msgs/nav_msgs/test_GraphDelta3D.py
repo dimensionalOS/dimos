@@ -112,12 +112,7 @@ def test_misaligned_lengths_rejected() -> None:
 
 
 def test_node_layout_matches_graph3d() -> None:
-    """A GraphDelta3D node's wire bytes should be identical to a Graph3D node.
-
-    The two messages share the Node3D wire format — important for any
-    consumer that wants to correlate a GraphDelta3D node id back to a
-    Graph3D node id from the same producer.
-    """
+    """A GraphDelta3D node's wire bytes should be identical to a Graph3D node."""
     node = Graph3D.Node3D(
         pose=PoseStamped(
             ts=42.0,

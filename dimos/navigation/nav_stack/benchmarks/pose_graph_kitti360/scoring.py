@@ -39,7 +39,7 @@ from dimos.core.stream import In
 from dimos.msgs.nav_msgs.Graph3D import Graph3D
 from dimos.msgs.nav_msgs.GraphDelta3D import GraphDelta3D
 
-# PGO edge-type enum (matches build_pose_graph in pgo/cpp/main.cpp).
+# edge-type enum (matches build_pose_graph in pgo/cpp/main.cpp).
 EDGE_LOOP_CLOSURE = 1
 
 
@@ -68,14 +68,8 @@ class LoopMetrics:
 
 
 class PoseGraphScoringConfig(ModuleConfig):
-    # ``ModuleConfig`` inherits from ``pydantic.BaseModel``, so default
-    # factories must come from ``pydantic.Field`` — ``dataclasses.field``
-    # would be stored as the literal default value and break validation
-    # (greptile c5 on PR #2099).
     frame_ids: list[int] = Field(default_factory=list)
     send_timestamps: list[float] = Field(default_factory=list)
-    # JSON-friendly form of LoopGroundtruth.valid_loops_per_query:
-    # frame_id → list of frame_ids that form valid loop pairs.
     valid_loops_per_query: dict[int, list[int]] = Field(default_factory=dict)
 
 
@@ -163,10 +157,7 @@ def _score_pairs(
     detected_pairs: list[tuple[int, int]],
     valid_loops_per_query: dict[int, set[int]],
 ) -> LoopMetrics:
-    # All three counts are query-level so precision/recall stay
-    # dimensionally consistent. The "query" of a detection pair is the
-    # later frame_id (matches the LCDNet convention). A query
-    # contributes 1 TP if any of its edges matched groundtruth,
+    # A query contributes 1 TP if any of its edges matched groundtruth,
     # otherwise 1 FP. Duplicate detections for the same query collapse.
     seen_queries_with_hit: set[int] = set()
     seen_queries_without_hit: set[int] = set()
@@ -182,7 +173,7 @@ def _score_pairs(
         else:
             seen_queries_without_hit.add(query_frame_id)
     # A query that fires both a TP and a FP edge is counted as TP only
-    # (one good detection is enough to say PGO recognised the place).
+    # (one good detection is enough to say LoopClosure recognised the place).
     seen_queries_without_hit -= seen_queries_with_hit
     return LoopMetrics(
         true_positive=len(seen_queries_with_hit),
