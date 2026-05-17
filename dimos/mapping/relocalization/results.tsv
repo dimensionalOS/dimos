@@ -75,3 +75,4 @@ f886031	0.9636	0.028	0.374	50.2	discard	0.2m@7; lost frames 1292 and 1579 - 0.2m
 3da23e9	1.0000	0.032	0.086	54.5	discard	looser ICP convergence 1e-4; median 0.028->0.032 (worse)
 83d399e	0.7818	0.034	1.888	60.5	discard	FPFH radius voxel*5 -> voxel*3; lost 12 frames - features too local
 d50b94f	0.9455	0.029	0.407	54.9	discard	FPFH radius voxel*5 -> voxel*4; lost 3 frames
+04c2612	0.9636	0.029	0.196	53.8	discard	polish max_iter 100->30; lost 2 frames
