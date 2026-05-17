@@ -11,7 +11,7 @@ runner provides two helper modules:
 | Module                       | Role                                                      |
 |------------------------------|-----------------------------------------------------------|
 | `Kitti360PlaybackModule`     | Publishes `registered_scan` + `odometry` from disk        |
-| Your pose-graph SLAM module  | Consumes those, publishes `pose_graph_edges` + `loop_correction_delta` |
+| Your pose-graph SLAM module  | Consumes those, publishes `pose_graph` + `loop_correction_delta` |
 | `PoseGraphScoringModule`     | Subscribes to the outputs, accumulates metrics            |
 
 `autoconnect` wires the three together by stream name.
@@ -23,16 +23,15 @@ class YourPoseGraphModule(Module):
     registered_scan: In[PointCloud2]
     odometry: In[Odometry]
 
-    pose_graph_edges: Out[NavPath]   # loop edges tagged orientation.w == 0.4
+    pose_graph: Out[Graph3D]             # nodes (keyframes) + edges (odom & loop-closure)
     loop_correction_delta: Out[NavPath]  # one message per loop-closure update
 ```
 
-Edge convention on `pose_graph_edges`: poses are paired
-`(start, end, start, end, …)`. Odometry edges use `orientation.w = 1.0`,
-loop-closure edges use `orientation.w = 0.4`. The timestamp on each
-endpoint's `PoseStamped` header is the keyframe's *creation* timestamp,
-which the scorer uses to map the endpoint back to its originating
-KITTI frame_id.
+Edge convention on `pose_graph`: loop-closure edges have
+``metadata_id == 1`` (odometry edges use ``0``). Each node carries the
+keyframe's *creation* timestamp in ``pose.ts``, and edges reference
+nodes by ``id``; the scorer looks up ``edge.start_id`` and
+``edge.end_id`` against the node table to recover endpoint frame_ids.
 
 ## Dataset
 

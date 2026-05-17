@@ -30,6 +30,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Graph3D import Graph3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -91,8 +92,7 @@ class PGO(NativeModule, LoopClosure):
     global_map: Out[PointCloud2]
     # NOTE: this corrected_tf gets refactored-out in the next PR
     corrected_tf: Out[Odometry]
-    pose_graph_nodes: Out[NavPath]
-    pose_graph_edges: Out[NavPath]
+    pose_graph: Out[Graph3D]
     loop_correction_delta: Out[NavPath]
 
     @rpc
