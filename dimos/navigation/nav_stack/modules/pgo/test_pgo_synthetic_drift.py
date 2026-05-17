@@ -27,8 +27,8 @@ scan rather than the pose, can.
 This test runs PGO twice with the same input via the DimOS Module +
 Blueprint pipeline (no direct LCM topic strings here):
 
-1. ``use_scan_context=true``  → expect ≥1 loop_correction_delta event.
-2. ``use_scan_context=false`` → expect 0 loop_correction_delta events.
+1. ``use_scan_context=true``  → expect ≥1 loop_closure_event message.
+2. ``use_scan_context=false`` → expect 0 loop_closure_event messages.
 """
 
 from __future__ import annotations
@@ -51,8 +51,8 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.GraphDelta3D import GraphDelta3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.modules.pgo.pgo import PGO
 from dimos.utils.logging_config import setup_logger
@@ -341,10 +341,10 @@ class SyntheticDriftPlaybackModule(Module):
         return self._frames_published
 
 
-class LoopCorrectionDeltaCounterModule(Module):
-    """Counts loop_correction_delta events from any pose-graph SLAM module."""
+class LoopClosureEventCounterModule(Module):
+    """Counts loop_closure_event messages from any pose-graph SLAM module."""
 
-    loop_correction_delta: In[NavPath]
+    loop_closure_event: In[GraphDelta3D]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -354,14 +354,14 @@ class LoopCorrectionDeltaCounterModule(Module):
     def start(self) -> None:
         super().start()
         self.register_disposable(
-            Disposable(self.loop_correction_delta.subscribe(self._on_loop_correction_delta))
+            Disposable(self.loop_closure_event.subscribe(self._on_loop_closure_event))
         )
 
-    def _on_loop_correction_delta(self, message: NavPath) -> None:
+    def _on_loop_closure_event(self, message: GraphDelta3D) -> None:
         self._count += 1
         logger.info(
-            f"[loop_correction_delta_counter] event #{self._count - 1}: "
-            f"keyframe_count={len(message.poses)}, ts={message.ts:.3f}"
+            f"[loop_closure_event_counter] event #{self._count - 1}: "
+            f"node_count={len(message.nodes)}, ts={message.ts:.3f}"
         )
 
     @rpc
@@ -396,13 +396,13 @@ def _run_pgo(
         scan_context_max_range_m=30.0,
         scan_context_match_threshold=0.6,
     )
-    counter_blueprint = LoopCorrectionDeltaCounterModule.blueprint()
+    counter_blueprint = LoopClosureEventCounterModule.blueprint()
 
     blueprint = autoconnect(playback_blueprint, pgo_blueprint, counter_blueprint)
     coordinator = ModuleCoordinator.build(blueprint)
     try:
         playback = coordinator.get_instance(SyntheticDriftPlaybackModule)
-        counter = coordinator.get_instance(LoopCorrectionDeltaCounterModule)
+        counter = coordinator.get_instance(LoopClosureEventCounterModule)
         while not playback.is_finished():
             time.sleep(POLL_INTERVAL_SEC)
         time.sleep(POST_FEED_DRAIN_SEC)

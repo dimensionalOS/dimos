@@ -18,6 +18,7 @@
 #include "simple_pgo.h"
 #include "dimos_native_module.hpp"
 #include "msgs/Graph3D.hpp"
+#include "msgs/GraphDelta3D.hpp"
 #include "point_cloud_utils.hpp"
 
 #include "nav_msgs/Odometry.hpp"
@@ -152,13 +153,7 @@ static nav_msgs::Odometry build_odometry(const M3D& r, const V3D& t, double ts,
 }
 
 // Pose-graph snapshot encoded as a Graph3D:
-//   - one node per keyframe (id = keyframe index, metadata_id = NODE_KEYFRAME),
-//     pose.ts = keyframe creation time so consumers can map nodes back to
-//     the input scan that produced them.
-//   - odometry edges between consecutive keyframes (metadata_id = EDGE_ODOMETRY,
-//     timestamp = the later keyframe's creation time).
-//   - loop-closure edges from `loop_pairs` (metadata_id = EDGE_LOOP_CLOSURE,
-//     timestamp = snapshot publish time since the loop fired this cycle).
+//   - one node per keyframe
 static constexpr uint64_t NODE_KEYFRAME = 0;
 static constexpr uint64_t EDGE_ODOMETRY = 0;
 static constexpr uint64_t EDGE_LOOP_CLOSURE = 1;
@@ -199,19 +194,22 @@ static dimos::Graph3D build_pose_graph(
     return msg;
 }
 
-// Build a Path-encoded loop-correction-delta message — one PoseStamped per
-// keyframe, where position = (post - delta @ pre) translation delta and
-// orientation = delta rotation quaternion. The Nth pose corresponds to
-// the Nth keyframe (m_key_poses[N]).
-static nav_msgs::Path build_loop_correction_delta(
+// Build a GraphDelta3D from paired pre/post keyframe lists. Each
+// (node, transform) pair has:
+//   - node    = the keyframe BEFORE iSAM2's smoothAndUpdate, with id =
+//               keyframe index and metadata_id = NODE_KEYFRAME.
+//   - transform = SE(3) delta such that post = transform * pre.
+// Convention matches Python's GraphDelta3D.lcm_decode.
+static constexpr uint64_t NODE_KEYFRAME_DELTA = 0;
+
+static dimos::GraphDelta3D build_loop_closure_event(
     const std::vector<std::pair<M3D, V3D>>& pre_poses,
     const std::vector<KeyPoseWithCloud>& post_poses,
     double ts,
     const std::string& frame_id) {
-    nav_msgs::Path msg;
-    msg.header = dimos::make_header(frame_id, ts);
+    dimos::GraphDelta3D msg(frame_id, ts);
     size_t count = std::min(pre_poses.size(), post_poses.size());
-    msg.poses.reserve(count);
+    msg.reserve(count);
     for (size_t i = 0; i < count; i++) {
         const M3D& pre_r = pre_poses[i].first;
         const V3D& pre_t = pre_poses[i].second;
@@ -221,20 +219,18 @@ static nav_msgs::Path build_loop_correction_delta(
         // SE(3) delta such that post = delta * pre.
         M3D r_delta = post_r * pre_r.transpose();
         V3D t_delta = post_t - r_delta * pre_t;
+        Eigen::Quaterniond q_pre(pre_r);
+        Eigen::Quaterniond q_delta(r_delta);
 
-        geometry_msgs::PoseStamped pose_stamped;
-        pose_stamped.header = dimos::make_header(frame_id, ts);
-        pose_stamped.pose.position.x = t_delta.x();
-        pose_stamped.pose.position.y = t_delta.y();
-        pose_stamped.pose.position.z = t_delta.z();
-        Eigen::Quaterniond q(r_delta);
-        pose_stamped.pose.orientation.x = q.x();
-        pose_stamped.pose.orientation.y = q.y();
-        pose_stamped.pose.orientation.z = q.z();
-        pose_stamped.pose.orientation.w = q.w();
-        msg.poses.push_back(pose_stamped);
+        msg.add(
+            /* id */ static_cast<uint64_t>(i),
+            /* metadata_id */ NODE_KEYFRAME_DELTA,
+            /* pose_ts */ post_poses[i].time,
+            /* pos_x,y,z */ pre_t.x(), pre_t.y(), pre_t.z(),
+            /* quat_x,y,z,w */ q_pre.x(), q_pre.y(), q_pre.z(), q_pre.w(),
+            /* translation_x,y,z */ t_delta.x(), t_delta.y(), t_delta.z(),
+            /* rotation_x,y,z,w */ q_delta.x(), q_delta.y(), q_delta.z(), q_delta.w());
     }
-    msg.poses_length = static_cast<int32_t>(msg.poses.size());
     return msg;
 }
 
@@ -252,7 +248,7 @@ int main(int argc, char** argv)
     std::string global_map_topic = native_module.topic("global_map");
     std::string tf_channel = native_module.arg("tf_channel", "/tf#tf2_msgs.TFMessage");
     std::string pose_graph_topic = native_module.topic("pose_graph");
-    std::string loop_correction_delta_topic = native_module.topic("loop_correction_delta");
+    std::string loop_closure_event_topic = native_module.topic("loop_closure_event");
 
     // Config parameters
     Config config;
@@ -315,8 +311,8 @@ int main(int argc, char** argv)
         fprintf(stderr, "  corrected_odometry: %s\n", corrected_odom_topic.c_str());
         fprintf(stderr, "  global_map: %s\n", global_map_topic.c_str());
         fprintf(stderr, "  tf_channel: %s\n", tf_channel.c_str());
-        fprintf(stderr, "  loop_correction_delta: %s\n", loop_correction_delta_topic.c_str());
         fprintf(stderr, "  pose_graph: %s\n", pose_graph_topic.c_str());
+        fprintf(stderr, "  loop_closure_event: %s\n", loop_closure_event_topic.c_str());
     }
     // Seed identity TF so consumers can query the chain before the first
     // odom message arrives.
@@ -411,12 +407,12 @@ int main(int argc, char** argv)
         pgo.smoothAndUpdate();
 
         if (had_loop) {
-            nav_msgs::Path loop_correction_delta_msg = build_loop_correction_delta(
+            dimos::GraphDelta3D loop_closure_event_msg = build_loop_closure_event(
                 pre_poses, pgo.keyPoses(), cur_time, world_frame);
-            lcm.publish(loop_correction_delta_topic, &loop_correction_delta_msg);
+            loop_closure_event_msg.publish(lcm, loop_closure_event_topic);
             if (debug) {
                 fprintf(stderr,
-                        "PGO: loop_correction_delta published — %zu keyframe deltas\n",
+                        "PGO: loop_closure_event published — %zu keyframe deltas\n",
                         pre_poses.size());
             }
         }

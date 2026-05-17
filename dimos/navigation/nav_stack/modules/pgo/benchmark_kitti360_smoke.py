@@ -12,13 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PGO liveness probe via the DimOS module framework.
-
+"""
 Spins up a blueprint with PGO, the KITTI-360 playback module, and a
 TopicCounter module that subscribes to every PGO output. Reports per-topic
-message counts and a one-line verdict so you can tell quickly whether PGO
-is alive at the graph, edges, and loop-closure layers — without any
-direct LCM calls in this file.
+message counts and a one-line verdict.
 """
 
 from __future__ import annotations
@@ -36,8 +33,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.msgs.nav_msgs.Graph3D import Graph3D
+from dimos.msgs.nav_msgs.GraphDelta3D import GraphDelta3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.benchmarks.pose_graph_kitti360.playback import (
     Kitti360PlaybackModule,
@@ -51,7 +48,7 @@ class TopicCounterModule(Module):
     corrected_odometry: In[Odometry]
     global_map: In[PointCloud2]
     pose_graph: In[Graph3D]
-    loop_correction_delta: In[NavPath]
+    loop_closure_event: In[GraphDelta3D]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -59,7 +56,7 @@ class TopicCounterModule(Module):
             "corrected_odometry": 0,
             "global_map": 0,
             "pose_graph": 0,
-            "loop_correction_delta": 0,
+            "loop_closure_event": 0,
         }
 
     @rpc
@@ -127,14 +124,14 @@ def main() -> None:
         "corrected_odometry",
         "global_map",
         "pose_graph",
-        "loop_correction_delta",
+        "loop_closure_event",
     ):
         print(f"  {name:<24} {counts.get(name, 0):>6}")
 
     print("\nverdict:")
     if counts.get("pose_graph", 0) == 0:
         print("  ⚠ no pose graph — PGO never promoted a keyframe. Check --key_pose_delta_*.")
-    elif counts.get("loop_correction_delta", 0) == 0:
+    elif counts.get("loop_closure_event", 0) == 0:
         print(
             "  ⚠ graph builds, no loop closure events — try wider --loop-search-radius "
             "or lower --scan-context-match-threshold."

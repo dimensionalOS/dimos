@@ -66,7 +66,7 @@ def run_benchmark(
 
     ``module_under_test`` is any Blueprint whose module exposes the
     pose-graph interface (in: ``registered_scan``, ``odometry``;
-    out: ``pose_graph``, ``loop_correction_delta``). The runner adds a
+    out: ``pose_graph``, ``loop_closure_event``). The runner adds a
     ``Kitti360PlaybackModule`` (publishes the inputs) and a
     ``PoseGraphScoringModule`` (subscribes to the outputs + scores),
     then auto-connects everything into one blueprint.

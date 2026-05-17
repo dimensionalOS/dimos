@@ -25,6 +25,7 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.ContourPolygons3D import ContourPolygons3D
 from dimos.msgs.nav_msgs.Graph3D import Graph3D
+from dimos.msgs.nav_msgs.GraphDelta3D import GraphDelta3D
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
@@ -86,7 +87,7 @@ class NavRecord(Recorder):
     corrected_odometry: In[Odometry]
     global_map: In[PointCloud2]
     pose_graph: In[Graph3D]
-    loop_correction_delta: In[NavPath]
+    loop_closure_event: In[GraphDelta3D]
 
     # FastLio2 outputs (SLAM source; blueprints typically remap FastLio2's
     # "lidar" -> "registered_scan" and "global_map" -> "global_map_fastlio")

@@ -20,8 +20,8 @@ Subscribes to two outputs that any pose-graph SLAM module exposes:
   edges are identified by ``metadata_id == EDGE_LOOP_CLOSURE``; each
   node carries the keyframe creation time in ``pose.ts``, which we map
   back to the input scan that produced it.
-* ``loop_correction_delta: In[NavPath]`` — one event per loop-closure
-  update with per-keyframe deltas.
+* ``loop_closure_event: In[GraphDelta3D]`` — one event per loop-closure
+  update, carrying per-keyframe (pre-pose, SE(3) delta) pairs.
 """
 
 from __future__ import annotations
@@ -37,9 +37,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.nav_msgs.Graph3D import Graph3D
-from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.msgs.nav_msgs.GraphDelta3D import GraphDelta3D
 
-# PGO edge-type enum (matches build_pose_graph in pgo/cpp/main.cpp).
+# edge-type enum (matches build_pose_graph in pgo/cpp/main.cpp).
 EDGE_LOOP_CLOSURE = 1
 
 
@@ -68,14 +68,8 @@ class LoopMetrics:
 
 
 class PoseGraphScoringConfig(ModuleConfig):
-    # ``ModuleConfig`` inherits from ``pydantic.BaseModel``, so default
-    # factories must come from ``pydantic.Field`` — ``dataclasses.field``
-    # would be stored as the literal default value and break validation
-    # (greptile c5 on PR #2099).
     frame_ids: list[int] = Field(default_factory=list)
     send_timestamps: list[float] = Field(default_factory=list)
-    # JSON-friendly form of LoopGroundtruth.valid_loops_per_query:
-    # frame_id → list of frame_ids that form valid loop pairs.
     valid_loops_per_query: dict[int, list[int]] = Field(default_factory=dict)
 
 
@@ -85,12 +79,12 @@ class PoseGraphScoringModule(Module):
     config: PoseGraphScoringConfig
 
     pose_graph: In[Graph3D]
-    loop_correction_delta: In[NavPath]
+    loop_closure_event: In[GraphDelta3D]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._detected_pairs: list[tuple[int, int]] = []
-        self._loop_correction_delta_events: int = 0
+        self._loop_closure_events: int = 0
         self._timestamp_ms_to_frame_id: dict[int, int] = {
             round(send_timestamp * 1e3): frame_id
             for frame_id, send_timestamp in zip(
@@ -102,13 +96,13 @@ class PoseGraphScoringModule(Module):
     def start(self) -> None:
         super().start()
         self.register_disposable(
-            Disposable(self.loop_correction_delta.subscribe(self._on_loop_correction_delta))
+            Disposable(self.loop_closure_event.subscribe(self._on_loop_closure_event))
         )
         self.register_disposable(Disposable(self.pose_graph.subscribe(self._on_pose_graph)))
 
-    def _on_loop_correction_delta(self, message: NavPath) -> None:
+    def _on_loop_closure_event(self, message: GraphDelta3D) -> None:
         del message
-        self._loop_correction_delta_events += 1
+        self._loop_closure_events += 1
 
     def _on_pose_graph(self, message: Graph3D) -> None:
         id_to_node_ts: dict[int, float] = {n.id: n.pose.ts for n in message.nodes}
@@ -149,7 +143,7 @@ class PoseGraphScoringModule(Module):
             "groundtruth_queries_with_loop": queries_with_loop,
             "groundtruth_total_loop_pairs": total_pairs,
             "detected_loop_edges": len(self._detected_pairs),
-            "loop_correction_delta_events": self._loop_correction_delta_events,
+            "loop_closure_events": self._loop_closure_events,
             "true_positive": metrics.true_positive,
             "false_positive": metrics.false_positive,
             "false_negative": metrics.false_negative,
@@ -163,10 +157,7 @@ def _score_pairs(
     detected_pairs: list[tuple[int, int]],
     valid_loops_per_query: dict[int, set[int]],
 ) -> LoopMetrics:
-    # All three counts are query-level so precision/recall stay
-    # dimensionally consistent. The "query" of a detection pair is the
-    # later frame_id (matches the LCDNet convention). A query
-    # contributes 1 TP if any of its edges matched groundtruth,
+    # A query contributes 1 TP if any of its edges matched groundtruth,
     # otherwise 1 FP. Duplicate detections for the same query collapse.
     seen_queries_with_hit: set[int] = set()
     seen_queries_without_hit: set[int] = set()
@@ -182,7 +173,7 @@ def _score_pairs(
         else:
             seen_queries_without_hit.add(query_frame_id)
     # A query that fires both a TP and a FP edge is counted as TP only
-    # (one good detection is enough to say PGO recognised the place).
+    # (one good detection is enough to say LoopClosure recognised the place).
     seen_queries_without_hit -= seen_queries_with_hit
     return LoopMetrics(
         true_positive=len(seen_queries_with_hit),

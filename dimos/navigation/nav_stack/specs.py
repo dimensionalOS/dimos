@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Graph3D import Graph3D
+from dimos.msgs.nav_msgs.GraphDelta3D import GraphDelta3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
@@ -29,12 +29,7 @@ if TYPE_CHECKING:
 class LoopClosure(Protocol):
     registered_scan: In[PointCloud2]
     odometry: In[Odometry]
-    # Per-keyframe SE(3) correction applied by the optimizer when a loop
-    # closure fires. Encoded as a NavPath where position = translation delta
-    # and orientation = rotation delta quaternion. The Nth pose corresponds
-    # to the Nth keyframe — same length and same node-index order as the
-    # nodes in `pose_graph` published in the same cycle.
-    loop_correction_delta: Out[NavPath]
+    loop_closure_event: Out[GraphDelta3D]
     pose_graph: Out[Graph3D]
 
     @classmethod
