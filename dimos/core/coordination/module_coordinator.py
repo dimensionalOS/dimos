@@ -201,11 +201,6 @@ class ModuleCoordinator(Resource):
 
         safe_thread_map(modules, lambda m: m.start())
 
-        # All starts done — fire the system-ready barrier so producers that
-        # were awaiting it can begin publishing. See ModuleBase.wait_for_system_ready.
-        for module in modules:
-            module.on_system_ready()
-
         self._send_on_system_modules()
 
     def _resolve_class(self, cls: type[ModuleBase]) -> type[ModuleBase]:

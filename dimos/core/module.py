@@ -166,23 +166,6 @@ class ModuleBase(Configurable, CompositeResource):
         Default is a no-op — override in subclasses that need a build step.
         """
 
-    async def wait_for_system_ready(self) -> None:
-        """Block until every module in the coordinator has finished start().
-
-        Producers (replay modules, sensor drivers, test playback) that emit
-        into shared streams should await this before their first publish, so
-        downstream subscribers (esp. native subprocesses) don't race-miss
-        early messages.
-        """
-        if self._system_ready.is_set():
-            return
-        await asyncio.to_thread(self._system_ready.wait)
-
-    @rpc
-    def on_system_ready(self) -> None:
-        """Coordinator hook: called once every module's start() has returned."""
-        self._system_ready.set()
-
     @rpc
     def start(self) -> None:
         self._start_main()
