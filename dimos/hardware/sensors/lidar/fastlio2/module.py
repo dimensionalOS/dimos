@@ -127,7 +127,7 @@ class FastLio2Config(NativeModuleConfig):
     host_imu_data_port: int = SDK_HOST_IMU_DATA_PORT
     host_log_data_port: int = SDK_HOST_LOG_DATA_PORT
 
-    # Resolved in __post_init__, passed as --config_path to the binary
+    # Resolved from `config` in model_post_init, passed as --config_path to the binary
     config_path: str | None = None
 
     # init_pose is computed from mount; config is resolved to config_path

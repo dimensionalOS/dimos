@@ -155,6 +155,14 @@ class MultiTBuffer:
         return None
 
     def get(self, *args, **kwargs) -> Transform | None:  # type: ignore[no-untyped-def]
+        parent_frame = args[0] if args else kwargs.get("parent_frame")
+        child_frame = args[1] if len(args) > 1 else kwargs.get("child_frame")
+        if parent_frame is not None and parent_frame == child_frame:
+            raise ValueError(
+                f"tf.get() called with same parent and child frame {parent_frame!r}; "
+                "this is almost always a caller bug — the data is already in that frame"
+            )
+
         simple = self.get_transform(*args, **kwargs)
         if simple is not None:
             return simple

@@ -305,7 +305,22 @@ class Recorder(MemoryModule):
 
         def on_msg(msg: Any) -> None:
             ts = getattr(msg, "ts", None) or time.time()
-            frame_id = getattr(msg, "frame_id", None) or default_frame_id
+            # For msgs that carry a parent→child transform (Odometry,
+            # TransformStamped), child_frame_id is the body whose pose we
+            # want to anchor; frame_id is just the parent (often world).
+            # Plain stamped msgs only have frame_id (the frame the data is in);
+            # if that's already 'world' the data carries no robot-pose info,
+            # so fall back to default_frame_id to still anchor it to the
+            # robot's world pose at this timestamp.
+            frame_id = (
+                getattr(msg, "child_frame_id", None)
+                or getattr(msg, "frame_id", None)
+                or default_frame_id
+            )
+
+            if frame_id == "world":
+                frame_id = default_frame_id
+
             transform = self.tf.get("world", frame_id, time_point=ts, time_tolerance=tf_tolerance)
             pose = transform.to_pose() if transform is not None else None
 
