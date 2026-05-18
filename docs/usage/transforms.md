@@ -377,7 +377,13 @@ Transform tree:
 ```
 
 
-You can also run `foxglove-studio-bridge` in the next terminal (binary provided by DimOS and should be in your Python env) and `foxglove-studio` to view these transforms in 3D. (TODO we need to update this for rerun)
+You can also visualize these transforms in 3D with Rerun. In a separate terminal, *before* running the example, start the standalone bridge:
+
+```bash
+dimos rerun-bridge
+```
+
+This opens the Rerun viewer and subscribes to the LCM bus, so every transform broadcast by `self.tf.publish()` is rendered under the `world/tf/<child_frame_id>` entity path in the 3D view. Start the bridge first — the example runs only briefly, and the TF buffer is short-lived, so a late-started viewer will miss the transforms.
 
 ![transforms](assets/transforms.png)
 
