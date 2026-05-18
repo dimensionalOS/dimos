@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections.abc import Callable
-import os
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
 import time
@@ -444,9 +443,7 @@ class McpClient(Module):
                 wipe_idx = i
 
         if wipe_idx is not None:
-            pre_wipe_msg_ids = {
-                h.id for h in self._history if getattr(h, "id", None) is not None
-            }
+            pre_wipe_msg_ids = {h.id for h in self._history if getattr(h, "id", None) is not None}
             self._history = []
             iter_msgs = node_messages[wipe_idx + 1 :]
             is_replay = True
