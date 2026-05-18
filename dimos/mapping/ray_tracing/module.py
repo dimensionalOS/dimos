@@ -45,17 +45,18 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     stdin_config: bool = True
 
     voxel_size: float = 0.1
-    # Skip rays longer than this (meters); 0 disables the limit.
+    # Maximum range for ray tracing
     max_range: float = 30.0
-    # Controls what portion of rays we perform ray tracing on.
-    # Honestly we probably should always have this at 1 unless you don't care about a clean map.
-    # Higher num means less ray tracing.
+    # Proportion of points that are ray traced
+    # Higher subsample means less tracing
     ray_subsample: int = 1
     # Extend rays past the end point to clear shadows
     shadow_depth: float = 0.2
+    # Ignore voxels within this range of points for ray tracing clearing
+    grace_depth: float = 0.2
     # Bounds for the health of voxels. Positive health means voxel is occupied.
     min_health: int = -2
-    max_health: int = 1
+    max_health: int = 3
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):

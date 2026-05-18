@@ -36,6 +36,7 @@ struct Config {
     max_range: f32,
     ray_subsample: u32,
     shadow_depth: f32,
+    grace_depth: f32,
     min_health: i32,
     max_health: i32,
 }
@@ -158,13 +159,13 @@ fn update_map(
             p,
             cfg.voxel_size,
             cfg.shadow_depth,
+            cfg.grace_depth,
             origin_voxel,
             endpoint,
         );
     }
 
-    // Apply hits first: a voxel that is both a hit and a miss this scan
-    // counts as a hit (the lidar return is the stronger signal).
+    // add new hits
     for v in &hits {
         let h = map.voxels.entry(*v).or_insert(cfg.min_health);
         *h = (*h + 1).min(cfg.max_health);
@@ -191,7 +192,7 @@ fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
 }
 
 /// Amanatides & Woo 3-D DDA. Records voxels on ray in between the end of the shadow region
-/// and origin if it is in the map.
+/// and origin if it is in the map. Voxels within grace region of the endpoint are spared from being marked as misses.
 #[allow(clippy::too_many_arguments)]
 fn find_misses_along_ray(
     misses: &mut AHashSet<VoxelKey>,
@@ -200,6 +201,7 @@ fn find_misses_along_ray(
     end: (f32, f32, f32),
     voxel_size: f32,
     shadow_depth: f32,
+    grace_depth: f32,
     origin_voxel: VoxelKey,
     endpoint: VoxelKey,
 ) {
@@ -257,6 +259,7 @@ fn find_misses_along_ray(
         endpoint.2 as f32 * voxel_size + half,
     );
     let shadow_sq = shadow_depth.max(0.0).powi(2);
+    let grace_sq = grace_depth.max(0.0).powi(2);
 
     let mut past_endpoint = false;
     loop {
@@ -281,20 +284,24 @@ fn find_misses_along_ray(
             continue;
         }
 
-        // continue past the endpoint and in to the shadow realm
+        let cx = x as f32 * voxel_size + half;
+        let cy = y as f32 * voxel_size + half;
+        let cz = z as f32 * voxel_size + half;
+        let ddx = cx - endpoint_center.0;
+        let ddy = cy - endpoint_center.1;
+        let ddz = cz - endpoint_center.2;
+        let dist_sq = ddx * ddx + ddy * ddy + ddz * ddz;
+
         if past_endpoint {
-            let cx = x as f32 * voxel_size + half;
-            let cy = y as f32 * voxel_size + half;
-            let cz = z as f32 * voxel_size + half;
-            let ddx = cx - endpoint_center.0;
-            let ddy = cy - endpoint_center.1;
-            let ddz = cz - endpoint_center.2;
-            if ddx * ddx + ddy * ddy + ddz * ddz > shadow_sq {
+            // continue past the endpoint and in to the shadow realm
+            if dist_sq > shadow_sq {
                 return;
             }
+        } else if dist_sq < grace_sq {
+            // too close to the endpoint to safely mark as miss because we might be clipping other voxel's rays
+            continue;
         }
 
-        // only add as a miss if there is a voxel in the map to decrement
         if map_voxels.contains_key(&(x, y, z)) {
             misses.insert((x, y, z));
         }
@@ -449,6 +456,7 @@ mod tests {
             max_range: 100.0,
             ray_subsample: 1,
             shadow_depth: 2.0,
+            grace_depth: 0.0,
             min_health: 0,
             max_health: 1,
         }
@@ -487,6 +495,7 @@ mod tests {
             end,
             voxel_size,
             shadow_depth,
+            0.0,
             origin_voxel,
             endpoint,
         );
@@ -529,6 +538,7 @@ mod tests {
             end,
             voxel_size,
             shadow_depth,
+            0.0,
             origin_voxel,
             endpoint,
         );
