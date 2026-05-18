@@ -16,12 +16,16 @@
 # Run `pytest dimos/robot/test_all_blueprints_generation.py` to regenerate.
 
 all_blueprints = {
+    "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_piper",
     "coordinator-combined-xarm6": "dimos.control.blueprints.teleop:coordinator_combined_xarm6",
     "coordinator-dual-mock": "dimos.control.blueprints.dual:coordinator_dual_mock",
     "coordinator-dual-xarm": "dimos.control.blueprints.dual:coordinator_dual_xarm",
+    "coordinator-flowbase": "dimos.control.blueprints.mobile:coordinator_flowbase",
+    "coordinator-flowbase-keyboard-teleop": "dimos.control.blueprints.mobile:coordinator_flowbase_keyboard_teleop",
+    "coordinator-flowbase-nav": "dimos.control.blueprints.mobile:coordinator_flowbase_nav",
     "coordinator-mobile-manip-mock": "dimos.control.blueprints.mobile:coordinator_mobile_manip_mock",
     "coordinator-mock": "dimos.control.blueprints.basic:coordinator_mock",
     "coordinator-mock-twist-base": "dimos.control.blueprints.mobile:coordinator_mock_twist_base",
@@ -50,6 +54,7 @@ all_blueprints = {
     "demo-object-scene-registration": "dimos.perception.demo_object_scene_registration:demo_object_scene_registration",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",
+    "desk-marker-tf": "dimos.perception.fiducial.blueprints.desk_marker_tf:desk_marker_tf",
     "drone-agentic": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic",
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
     "dual-xarm6-planner": "dimos.manipulation.blueprints:dual_xarm6_planner",
@@ -115,6 +120,7 @@ all_blueprints = {
 
 
 all_modules = {
+    "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "april-tag-detection-module": "dimos.perception.detection.apriltag_detector.AprilTagDetectionModule",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
@@ -125,6 +131,7 @@ all_modules = {
     "cost-mapper": "dimos.mapping.costmapper.CostMapper",
     "demo-calculator-skill": "dimos.agents.skills.demo_calculator_skill.DemoCalculatorSkill",
     "demo-robot": "dimos.agents.skills.demo_robot.DemoRobot",
+    "desk-static-tf-module": "dimos.perception.fiducial.blueprints.desk_marker_tf.DeskStaticTfModule",
     "detection2-d-module": "dimos.perception.detection.module2D.Detection2DModule",
     "detection3-d-module": "dimos.perception.detection.module3D.Detection3DModule",
     "drone-camera-module": "dimos.robot.drone.camera_module.DroneCameraModule",
@@ -156,6 +163,7 @@ all_modules = {
     "local-planner": "dimos.navigation.nav_stack.modules.local_planner.local_planner.LocalPlanner",
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
     "map": "dimos.robot.unitree.type.map.Map",
+    "marker-tf-module": "dimos.perception.fiducial.marker_tf_module.MarkerTfModule",
     "mcp-client": "dimos.agents.mcp.mcp_client.McpClient",
     "mcp-server": "dimos.agents.mcp.mcp_server.McpServer",
     "memory-module": "dimos.memory2.module.MemoryModule",
