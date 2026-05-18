@@ -27,14 +27,15 @@ from reactivex.disposable import Disposable
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
-from starlette.routing import Route, WebSocketRoute
+from starlette.routing import Mount, Route, WebSocketRoute
+from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 import uvicorn
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.experimental.pimsim.browser import HTML
+from dimos.experimental.pimsim.browser import STATIC_DIR, index_html
 from dimos.experimental.pimsim.config import (
     CoordinatorControlSpec,
     HumanoidControlSpec,
@@ -220,6 +221,7 @@ class BabylonSceneViewerModule(Module):
                 Route("/robot.json", self._robot_json),
                 Route("/arms.json", self._arms_json),
                 Route("/assets/{asset_name:path}", self._asset),
+                Mount("/static", app=StaticFiles(directory=STATIC_DIR), name="static"),
                 WebSocketRoute("/ws", self._websocket),
             ],
             lifespan=_lifespan,
@@ -238,7 +240,7 @@ class BabylonSceneViewerModule(Module):
         return JSONResponse({"joints": joints})
 
     async def _index(self, request: Request) -> HTMLResponse:
-        return HTMLResponse(HTML)
+        return HTMLResponse(index_html())
 
     async def _config(self, request: Request) -> JSONResponse:
         scene_file = None

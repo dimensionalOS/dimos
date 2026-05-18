@@ -1,0 +1,89 @@
+<!doctype html>
+<!--
+Copyright 2025-2026 Dimensional Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DimOS Scene Viewer</title>
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <canvas id="renderCanvas"></canvas>
+    <div id="cameraPanel" data-active="true" data-has-frame="false">
+      <div id="cameraHeader">
+        <span id="cameraLabel">camera</span>
+      </div>
+      <img id="cameraImg" alt="" />
+      <div id="cameraEmpty">waiting for frames…</div>
+    </div>
+    <div id="workspacePanel" data-active="true" data-has-frame="false">
+      <div id="workspaceHeader">
+        <span id="workspaceLabel">workspace</span>
+      </div>
+      <img id="workspaceImg" alt="" />
+    </div>
+    <div id="armsPanel" data-active="false">
+      <div id="armsHeader">Arm joints</div>
+      <div id="armsColumns">
+        <div class="arm-col">
+          <div class="arm-col-title">Left</div>
+          <div id="leftArmSliders" class="arm-sliders"></div>
+        </div>
+        <div class="arm-col">
+          <div class="arm-col-title">Right</div>
+          <div id="rightArmSliders" class="arm-sliders"></div>
+        </div>
+      </div>
+    </div>
+    <div id="hud">
+      <div class="hud-group">
+        <span class="hud-label">View</span>
+        <button id="toggleScene" data-active="true">Scene</button>
+        <button id="toggleRobot" data-active="true">Robot</button>
+        <button id="toggleCamera" data-active="true">Camera</button>
+        <button id="toggleLidar" data-active="true">Lidar</button>
+        <button id="toggleDepth" data-active="true">Depth</button>
+        <button id="toggleWire" data-active="false">Wire</button>
+        <button id="forceVisible" data-active="false">Force</button>
+      </div>
+      <div class="hud-group">
+        <span class="hud-label">Policy</span>
+        <button id="policyArm" data-active="false" title="Arm/disarm the coordinator's control tasks">Arm</button>
+        <button id="policyDryRun" data-active="true" title="Dry-run: task computes but coordinator does not write to hardware">Dry-run</button>
+      </div>
+      <div class="hud-group">
+        <span class="hud-label">Arms</span>
+        <button id="armsToggle" data-active="false">Sliders</button>
+        <button id="armsRelease">Release</button>
+      </div>
+      <div class="hud-group">
+        <span class="hud-label">Interact</span>
+        <button id="toggleDrive" data-active="false">Drive</button>
+        <button id="navClick" data-active="false">Nav</button>
+        <button id="pointClick" data-active="false">Point</button>
+        <button id="spawnClick" data-active="false">Spawn</button>
+        <button id="focusRobot">Focus</button>
+        <button id="loadScene">Load Scene</button>
+        <button id="respawnRobot">Respawn</button>
+      </div>
+      <span id="status">starting</span>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

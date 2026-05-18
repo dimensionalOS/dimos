@@ -602,5 +602,4 @@ ignore = [
     "dimos/manipulation/planning/world/drake_world.py",
     "dimos/navigation/nav_stack/modules/*/main.cpp",
     "dimos/navigation/nav_stack/common/*.hpp",
-    "dimos/experimental/pimsim/browser.py",
 ]

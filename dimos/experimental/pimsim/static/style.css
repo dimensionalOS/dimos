@@ -1,0 +1,358 @@
+/*
+ * Copyright 2025-2026 Dimensional Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+html,
+body,
+#renderCanvas {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #101216;
+  color: #e7ebf2;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+#hud {
+  position: fixed;
+  left: 16px;
+  top: 16px;
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 10px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 10px;
+  background: rgb(17 20 26 / 86%);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 32%);
+}
+
+.hud-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 12px;
+  border-right: 1px solid rgb(255 255 255 / 8%);
+}
+
+.hud-group:has(+ #status),
+.hud-group:last-of-type {
+  border-right: none;
+  padding-right: 0;
+}
+
+.hud-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgb(255 255 255 / 38%);
+  margin-right: 2px;
+  font-weight: 600;
+}
+
+button,
+#status {
+  height: 28px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 6%);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+button {
+  padding: 0 10px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+}
+
+button:hover {
+  background: rgb(255 255 255 / 12%);
+  border-color: rgb(255 255 255 / 22%);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+button[data-active="true"] {
+  background: rgb(96 165 250 / 18%);
+  border-color: rgb(96 165 250 / 42%);
+  color: rgb(180 210 255);
+}
+
+button[data-active="false"] {
+  opacity: 0.6;
+}
+
+.hud-segmented {
+  display: flex;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.hud-segmented button {
+  height: 28px;
+  border: none;
+  border-radius: 0;
+  border-right: 1px solid rgb(255 255 255 / 8%);
+  background: transparent;
+}
+
+.hud-segmented button:last-child {
+  border-right: none;
+}
+
+.hud-segmented button:hover {
+  background: rgb(255 255 255 / 8%);
+}
+
+.hud-segmented button[data-active="true"] {
+  background: rgb(96 165 250 / 22%);
+  color: rgb(200 220 255);
+}
+
+.hud-segmented button[data-active="false"] {
+  opacity: 1;       /* segmented controls show all 3, just highlight active */
+  color: rgb(255 255 255 / 72%);
+}
+
+.hud-hidden-by-default {
+  display: none;
+}
+
+#status {
+  display: flex;
+  align-items: center;
+  min-width: 140px;
+  padding: 0 12px;
+  margin-left: 4px;
+  color: rgb(255 255 255 / 75%);
+  background: rgb(255 255 255 / 3%);
+  border-color: rgb(255 255 255 / 8%);
+}
+
+#cameraPanel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 8px;
+  background: rgb(17 20 26 / 82%);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#cameraPanel[data-active="false"] {
+  display: none;
+}
+
+#cameraHeader {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: rgb(255 255 255 / 70%);
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+}
+
+#cameraImg {
+  width: 100%;
+  display: block;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: #000;
+}
+
+#cameraPanel[data-has-frame="false"] #cameraImg {
+  display: none;
+}
+
+#cameraEmpty {
+  padding: 30px;
+  text-align: center;
+  color: rgb(255 255 255 / 50%);
+  font-size: 12px;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#cameraPanel[data-has-frame="true"] #cameraEmpty {
+  display: none;
+}
+
+/* Workspace camera panel (optional second feed) — same look as the
+   primary panel, stacked to the left of it. Hidden until first frame. */
+#workspacePanel {
+  position: fixed;
+  right: 392px;     /* 360 + 16 + 16 */
+  bottom: 16px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 8px;
+  background: rgb(17 20 26 / 82%);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+#workspacePanel[data-has-frame="false"],
+#workspacePanel[data-active="false"] {
+  display: none;
+}
+#workspaceHeader {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: rgb(255 255 255 / 70%);
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+}
+#workspaceImg {
+  width: 100%;
+  display: block;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: #000;
+}
+
+#armsPanel {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 320px);
+  overflow-y: auto;
+  padding: 14px 16px 16px 16px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 10px;
+  background: rgb(17 20 26 / 90%);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 40%);
+  z-index: 5;
+}
+
+#armsPanel[data-active="false"] {
+  display: none;
+}
+
+#armsHeader {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgb(255 255 255 / 50%);
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+#armsColumns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.arm-col-title {
+  font-size: 12px;
+  color: rgb(255 255 255 / 80%);
+  margin-bottom: 6px;
+  font-weight: 600;
+  text-align: center;
+  padding: 4px 0;
+  background: rgb(255 255 255 / 4%);
+  border-radius: 4px;
+}
+
+.arm-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.arm-slider-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 6px;
+  align-items: center;
+}
+
+.arm-slider-row .joint-name {
+  font-size: 11px;
+  color: rgb(255 255 255 / 75%);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arm-slider-row .joint-val {
+  font-size: 10px;
+  color: rgb(96 165 250 / 90%);
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+  text-align: right;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.arm-slider-row input[type="range"] {
+  grid-column: 1 / span 2;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  background: rgb(255 255 255 / 8%);
+  border-radius: 2px;
+  outline: none;
+}
+
+.arm-slider-row input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  background: rgb(96 165 250);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+.arm-slider-row input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: rgb(96 165 250);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+.arm-slider-row .joint-range {
+  grid-column: 1 / span 2;
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: rgb(255 255 255 / 35%);
+  font-variant-numeric: tabular-nums;
+}
