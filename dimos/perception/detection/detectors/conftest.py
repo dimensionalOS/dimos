@@ -15,7 +15,6 @@
 import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.detection.detectors.apriltag import AprilTagDetector
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
@@ -44,9 +43,3 @@ def bbox_detector():
 def yoloe_detector():
     """Create a Yoloe2DDetector instance for general object detection."""
     return Yoloe2DDetector(prompt_mode=YoloePromptMode.LRPC)
-
-
-@pytest.fixture(scope="session")
-def apriltag_detector():
-    """Create an AprilTagDetector instance for fiducial pose estimation."""
-    return AprilTagDetector(family="tag36h11", tag_size_m=0.165)
