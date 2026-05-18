@@ -177,6 +177,7 @@ class DroneController:
         roll = float(command[1])
         yaw = float(command[2])
 
-        data.ctrl[0] = pitch * self._drone_input_scale
-        data.ctrl[1] = roll * self._drone_input_scale
-        data.ctrl[2] = yaw * self._drone_input_scale
+        data.ctrl[0] = self._drone_hover_thrust
+        data.ctrl[1] = pitch * self._drone_input_scale
+        data.ctrl[2] = roll * self._drone_input_scale
+        data.ctrl[3] = yaw * self._drone_input_scale
