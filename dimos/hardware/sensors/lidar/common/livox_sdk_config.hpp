@@ -135,7 +135,12 @@ inline std::pair<int, std::string> write_sdk_config(const std::string& host_ip,
 // Returns true on success. Handles fd lifecycle internally.
 inline bool init_livox_sdk(const std::string& host_ip,
                            const std::string& lidar_ip,
-                           const SdkPorts& ports) {
+                           const SdkPorts& ports,
+                           bool debug = false) {
+    if (!debug) {
+        DisableLivoxSdkConsoleLogger();
+    }
+
     auto [fd, path] = write_sdk_config(host_ip, lidar_ip, ports);
     if (fd < 0) {
         fprintf(stderr, "Error: failed to write SDK config\n");

@@ -1,0 +1,62 @@
+{
+  "theme": "mint",
+  "name": "Dimensional",
+  "description": "Official documentation for Dimensional (DimOS) \u2014 the modern operating system for generalist robotics: Python-first, agent-native, and hardware-agnostic.",
+  "colors": {
+    "primary": "#1682a3",
+    "light": "#1682a3",
+    "dark": "#1682a3"
+  },
+  "favicon": "assets/favicon.png",
+  "seo": {
+    "metatags": {
+      "og:site_name": "Dimensional",
+      "apple-mobile-web-app-title": "Dimensional"
+    }
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "introduction",
+          "quickstart"
+        ]
+      }
+    ]
+  },
+  "logo": {
+    "light": "/assets/dimensional-logo-master-transparent.png",
+    "dark": "/assets/dimensional-logo-master-transparent.png"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Dimensional",
+        "href": "/"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get started",
+      "href": "https://github.com/dimensionalOS/dimos"
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "mcp",
+      "cursor",
+      "vscode"
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/dimensionalOS/dimos"
+    }
+  }
+}

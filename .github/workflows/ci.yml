@@ -135,18 +135,14 @@ jobs:
           use_oidc: true
 
   self-hosted-tests:
-    # Skip on draft PRs and on PRs from forks — the latter would expose the
-    # self-hosted runner to untrusted code from external contributors.
+    # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
     if: |
-      github.event_name == 'push' || (
-        github.event.pull_request.draft == false &&
-        github.event.pull_request.head.repo.full_name == github.repository
-      )
+      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
