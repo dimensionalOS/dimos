@@ -50,19 +50,31 @@ logger = setup_logger()
 class MockController:
     """Controller that reads commands from shared memory."""
 
-    def __init__(self, shm_interface: ShmReader) -> None:
+    def __init__(self, shm_interface: ShmReader, robot_name: str = "unitree_go1") -> None:
         self.shm = shm_interface
+        self.robot_name = robot_name
         self._command = np.zeros(3, dtype=np.float32)
 
     def get_command(self) -> NDArray[Any]:
         """Get the current movement command."""
         cmd_data = self.shm.read_command()
-        if cmd_data is not None:
-            linear, angular = cmd_data
-            # MuJoCo expects [forward, lateral, rotational]
-            self._command[0] = linear[0]  # forward/backward
-            self._command[1] = linear[1]  # left/right
-            self._command[2] = angular[2]  # rotation
+
+        if self.robot_name == "cf2":
+            if cmd_data is not None:
+                linear, angular = cmd_data
+                self._command[0] = linear[0] 
+                self._command[1] = linear[1]
+                self._command[2] = angular[2]
+            else:
+                self._command = np.zeros(3, dtype=np.float32)
+        else:                   
+            if cmd_data is not None:
+                linear, angular = cmd_data
+                # MuJoCo expects [forward, lateral, rotational]
+                self._command[0] = linear[0]  # forward/backward
+                self._command[1] = linear[1]  # left/right
+                self._command[2] = angular[2]  # rotation
+        
         result: NDArray[Any] = self._command.copy()
         return result
 
@@ -78,7 +90,7 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     elif robot_name == "drone":
         robot_name = "cf2"
 
-    controller = MockController(shm)
+    controller = MockController(shm, robot_name)
     model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
 
     if model is None or data is None:
