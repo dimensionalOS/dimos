@@ -75,6 +75,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     robot_name = config.robot_model or "unitree_go1"
     if robot_name == "unitree_go2":
         robot_name = "unitree_go1"
+    elif robot_name == "drone":
+        robot_name = "cf2"
 
     controller = MockController(shm)
     model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
@@ -87,6 +89,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
             z = 0.3
         case "unitree_g1":
             z = 0.8
+        case "cf2":
+            z = 0.5
         case _:
             z = 0
 
