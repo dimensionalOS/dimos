@@ -259,10 +259,27 @@ class DimosCompactionMiddleware(AgentMiddleware):  # type: ignore[misc]
             return None
 
         if not compactable:
-            logger.warning(
-                "Compaction over threshold but everything is in the current turn; "
-                "passing through. Check compaction settings.",
+            # The current turn alone is over our soft threshold. We can't
+            # touch it without risking in-flight tool-call coherence, so we
+            # pass the prompt through unchanged. Threshold sits well below
+            # the model's hard context limit by default, so the LLM call
+            # often still completes — but it may fail with a provider-side
+            # context-overflow error if the turn is also above that limit.
+            # Log loudly so that, if it does fail, the cause is obvious
+            # (typically: a single turn spammed image-returning tools like
+            # `observe()`).
+            n_current_images = sum(1 for m in current_turn if _has_image(m.content))
+            logger.error(
+                "Compaction unable to reduce prompt: entire over-threshold "
+                "prompt is wedged in the current turn. The next model call "
+                "will run with this oversized prompt and may fail.",
                 total_tokens=total,
+                threshold=self._threshold,
+                target=self._target,
+                static_tokens=static,
+                current_turn_tokens=current_turn_tokens,
+                current_turn_messages=len(current_turn),
+                current_turn_images=n_current_images,
             )
             return None
 
@@ -285,16 +302,40 @@ class DimosCompactionMiddleware(AgentMiddleware):  # type: ignore[misc]
             }
 
         # Stage 2: split compactable into protected / to_summarize / keep_tail.
-        # Budget for the keep_tail accounts for the fixed cost of the current turn.
+        # Budget for the keep_tail subtracts every fixed cost the post-compaction
+        # prompt will still carry: the static overhead (system prompt + tool
+        # schemas), the summary we're about to produce, and the verbatim current
+        # turn. _split further deducts `protected` from this budget. Skipping
+        # `static` here would let keep_tail grow until total = target + static,
+        # which on tight target/threshold gaps with large tool schemas can put
+        # the next before_model call right back over threshold and loop.
         budget = max(
             0,
-            self._target - self._summary_size - current_turn_tokens,
+            self._target - static - self._summary_size - current_turn_tokens,
         )
         protected, to_summarize, keep = self._split(stripped, budget=budget)
         if not to_summarize:
-            logger.warning(
-                "Compaction over threshold but nothing eligible to summarize; passing through.",
+            # _split allocated every compactable message into either the
+            # protected prefix or the kept tail, leaving nothing summarizable.
+            # Same passthrough caveat as the `not compactable` branch above:
+            # the LLM call sees the over-soft-threshold prompt; it may still
+            # complete if it stays under the model's hard context limit.
+            logger.error(
+                "Compaction unable to reduce prompt: nothing eligible to "
+                "summarize after carving out the protected prefix and kept "
+                "tail. The next model call will run with this oversized "
+                "prompt and likely fail.",
                 total_tokens=total_after_strip,
+                threshold=self._threshold,
+                target=self._target,
+                static_tokens=static,
+                budget=budget,
+                protected_messages=len(protected),
+                protected_tokens=sum(count_message_tokens(m) for m in protected),
+                kept_messages=len(keep),
+                kept_tokens=sum(count_message_tokens(m) for m in keep),
+                current_turn_tokens=current_turn_tokens,
+                current_turn_messages=len(current_turn),
             )
             return None
 

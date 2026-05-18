@@ -224,6 +224,54 @@ def test_summarize_when_image_strip_insufficient() -> None:
     assert len(received) == 1
 
 
+def test_post_compaction_state_under_threshold_with_large_static() -> None:
+    """Stage-2 budget must subtract `static` (system prompt + tool schemas).
+
+    Regression: without that subtraction the kept tail fills to roughly
+    `target - summary_size - current_turn`, so the post-compaction total
+    lands at ~`static + target`. When `static > threshold - target` (large
+    tool schemas with a tight target/threshold gap), that total is still
+    above threshold — the next `before_model` re-fires compaction and the
+    loop never terminates.
+
+    Setup forces `static > threshold - target` to expose the bug, then
+    asserts the post-state is below threshold (i.e. compaction terminates).
+    """
+    history = build_text_history(n_turns=30, text_per_turn="y" * 200)
+    # Inflate the static overhead with a big system prompt + tool schemas.
+    big_system_prompt = "S" * 2_400
+    big_tool_schemas = [{"name": "tool", "schema": "T" * 1_500}]
+    fake, _received = make_counting_fake(["[summary]"])
+    mw = DimosCompactionMiddleware(
+        summarizer=fake,
+        threshold_tokens=5_000,
+        target_tokens=4_000,
+        summary_size_tokens=100,
+        system_prompt=big_system_prompt,
+        tool_schemas=big_tool_schemas,
+    )
+    static_tokens = mw._static_tokens()
+    # Bug condition: static larger than the threshold/target gap. Without it,
+    # `static + target ≤ threshold` and the loop wouldn't trigger even with
+    # the broken budget calc.
+    assert static_tokens > mw._threshold - mw._target
+
+    result = mw.before_model(state(history), runtime=None)
+    assert result is not None
+    new_msgs = result["messages"][1:]  # drop the REMOVE_ALL_MESSAGES sentinel
+    post_total = static_tokens + sum(count_message_tokens(m) for m in new_msgs)
+    # The compaction contract: the post-state must land below threshold,
+    # else the next before_model call sees over-threshold again. Asserting
+    # against `threshold` rather than the (no-op) re-trigger result — when
+    # the state lands above threshold but with everything wedged into the
+    # current turn or already-summarized prefix, before_model returns None
+    # (warns "nothing eligible to summarize") and the bug is silent.
+    assert post_total <= mw._threshold, (
+        f"post-compaction total {post_total} exceeds threshold {mw._threshold}; "
+        f"the next model call sees an over-budget prompt"
+    )
+
+
 def test_protected_prefix_preserved() -> None:
     history = build_text_history(n_turns=10, text_per_turn="z" * 200)
     sys_msg = history[0]
