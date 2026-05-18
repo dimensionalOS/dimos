@@ -236,7 +236,7 @@ class TestLocalPlannerRosbag:
         assert len(ref_paths) > 0, "No reference path data in fixture"
 
         lcm = lcmlib.LCM()
-        path_collector = LcmCollector(topic=PATH_LCM, msg_type=NavPath)
+        path_collector = LcmCollector(topic=PATH_LCM, message_type=NavPath)
         path_collector.start(lcm)
 
         stop_event = threading.Event()

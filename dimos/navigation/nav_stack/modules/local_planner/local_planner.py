@@ -19,7 +19,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos_lcm.geometry_msgs import PolygonStamped
-from dimos_lcm.std_msgs import Float32
+from dimos_lcm.std_msgs import (
+    Bool,  # type: ignore[import-untyped]
+    Float32,
+)
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -30,7 +33,6 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int8 import Int8
 
 
@@ -38,9 +40,9 @@ class LocalPlannerConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/local_planner"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-local-planner/v0.6.0 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-local-planner/feat/configurable-body-frame"
+        " --no-write-lock-file"
     )
-
     # C++ binary uses camelCase CLI args.
     cli_name_override: dict[str, str] = {
         "max_speed": "maxSpeed",
@@ -94,6 +96,8 @@ class LocalPlannerConfig(NativeModuleConfig):
     }
 
     paths_dir: str = ""
+
+    body_frame: str = "current_point"
 
     vehicle_length: float = 0.5  # m
     vehicle_width: float = 0.5  # m

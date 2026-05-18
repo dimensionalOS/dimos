@@ -116,7 +116,7 @@ class TestPathFollowerRosbag:
         assert len(ref_cmd) > 0, "No reference cmd_vel in fixture"
 
         lcm = lcmlib.LCM()
-        cmd_collector = LcmCollector(topic=CMD_VEL_LCM, msg_type=Twist)
+        cmd_collector = LcmCollector(topic=CMD_VEL_LCM, message_type=Twist)
         cmd_collector.start(lcm)
 
         stop_event = threading.Event()

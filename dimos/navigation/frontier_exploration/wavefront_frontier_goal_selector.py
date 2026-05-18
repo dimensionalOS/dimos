@@ -90,6 +90,7 @@ class WavefrontConfig(ModuleConfig):
     info_gain_threshold: float = 0.03
     num_no_gain_attempts: int = 2
     goal_timeout: float = 15.0
+    frame_id: str = "world"
 
 
 class WavefrontFrontierExplorer(Module):
@@ -751,7 +752,7 @@ class WavefrontFrontierExplorer(Module):
             goal = PoseStamped(
                 position=self.latest_odometry.position,
                 orientation=self.latest_odometry.orientation,
-                frame_id="world",
+                frame_id=self.config.frame_id,
                 ts=self.latest_odometry.ts,
             )
             self.goal_request.publish(goal)
@@ -792,7 +793,7 @@ class WavefrontFrontierExplorer(Module):
                 goal_msg.position.y = goal.y
                 goal_msg.position.z = 0.0
                 goal_msg.orientation.w = 1.0  # No rotation
-                goal_msg.frame_id = "world"
+                goal_msg.frame_id = self.config.frame_id
                 goal_msg.ts = self.latest_costmap.ts
 
                 self.goal_request.publish(goal_msg)

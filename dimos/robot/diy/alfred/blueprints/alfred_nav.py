@@ -71,9 +71,7 @@ alfred_nav = (
     )
     .remappings(
         [
-            # nav stack needs "registered_scan"
-            (FastLio2, "lidar", "registered_scan"),
-            (FastLio2, "global_map", "global_map_fastlio"),
+            (FastLio2, "global_map", "_fastlio_global_map"),
             # SimplePlanner / FarPlanner owns way_point — disconnect MovementManager's
             (MovementManager, "way_point", "_mgr_way_point_unused"),
         ]

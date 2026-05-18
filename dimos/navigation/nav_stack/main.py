@@ -21,7 +21,8 @@ from typing import Any
 import numpy as np
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.core.module import ModuleBase
+from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.navigation.nav_stack.modules.apply_closure.apply_closure import ApplyClosure
 from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanner
 from dimos.navigation.nav_stack.modules.local_planner.local_planner import LocalPlanner
 from dimos.navigation.nav_stack.modules.path_follower.path_follower import PathFollower
@@ -31,7 +32,6 @@ from dimos.navigation.nav_stack.modules.tare_planner.tare_planner import TarePla
 from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
 from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import TerrainMapExt
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -41,6 +41,8 @@ def create_nav_stack(
     *,
     use_tare: bool = False,
     use_terrain_map_ext: bool = True,
+    use_ray_tracing: bool = True,
+    use_apply_closure: bool = True,
     planner: str = "far",
     vehicle_height: float | None = None,
     max_speed: float | None = None,
@@ -48,6 +50,10 @@ def create_nav_stack(
     terrain_voxel_size: float = 0.2,
     replan_rate: float = 0.5,
     record: bool = False,
+    world_frame: str = "world",
+    map_frame: str = "map",
+    start_point_frame: str = "start_point",
+    current_point_frame: str = "current_point",
     terrain_analysis: dict[str, Any] | None = None,
     terrain_map_ext: dict[str, Any] | None = None,
     local_planner: dict[str, Any] | None = None,
@@ -57,27 +63,29 @@ def create_nav_stack(
     pgo: dict[str, Any] | None = None,
     tare_planner: dict[str, Any] | None = None,
     nav_record: dict[str, Any] | None = None,
+    ray_tracing: dict[str, Any] | None = None,
+    apply_closure: dict[str, Any] | None = None,
 ) -> Blueprint:
     """Compose a nav stack Blueprint.
 
     Per-module config dicts (``terrain_analysis``, ``local_planner``, etc.)
-    override defaults. ``vehicle_height`` and ``max_speed`` propagate to
-    the relevant modules automatically.
+    override defaults. ``vehicle_height``, ``max_speed`` and the ``*_frame``
+    parameters propagate to the relevant modules automatically.
     """
     far_planner_config = {**(far_planner or {})}
     far_planner_config.setdefault("is_static_env", False)
+    far_planner_config.setdefault("frame_id", map_frame)
     if vehicle_height is not None:
         far_planner_config.setdefault("vehicle_height", vehicle_height)
 
     local_planner_config = {**(local_planner or {})}
+    local_planner_config.setdefault("body_frame", current_point_frame)
     path_follower_config = {**(path_follower or {})}
     simple_planner_config = {**(simple_planner or {})}
     if waypoint_threshold is not None:
         local_planner_config.setdefault("goal_reached_threshold", waypoint_threshold)
         path_follower_config.setdefault("goal_tolerance", waypoint_threshold)
         simple_planner_config.setdefault("goal_reached_threshold", waypoint_threshold)
-
-    pgo_module: Blueprint = PGO.blueprint(**(pgo or {}))
 
     modules: list[Blueprint] = [
         TerrainAnalysis.blueprint(
@@ -113,6 +121,12 @@ def create_nav_stack(
                 "vehicle_height": 1.5 if vehicle_height is None else vehicle_height,
                 **(terrain_analysis or {}),
             }
+        ).remappings(
+            [
+                # Inputs
+                (TerrainAnalysis, "registered_scan", "lidar"),
+                (TerrainAnalysis, "odometry", "corrected_odometry"),
+            ]
         ),
         LocalPlanner.blueprint(
             **{
@@ -127,6 +141,11 @@ def create_nav_stack(
                 "publish_free_paths": False,
                 **local_planner_config,
             }
+        ).remappings(
+            [
+                (LocalPlanner, "registered_scan", "lidar"),
+                (LocalPlanner, "cancel_goal", "stop_movement"),
+            ]
         ),
         PathFollower.blueprint(
             **{
@@ -140,17 +159,39 @@ def create_nav_stack(
                 "max_acceleration": 2.0,  # important for smooth movement
                 **path_follower_config,
             }
+        ).remappings(
+            [
+                (PathFollower, "cmd_vel", "nav_cmd_vel"),
+            ]
         ),
-        pgo_module,
+        PGO.blueprint(
+            **{
+                "parent_frame": world_frame,
+                "frame_id": map_frame,
+                "child_frame_id": start_point_frame,
+                "body_frame": current_point_frame,
+                **(pgo or {}),
+            }
+        ).remappings([(PGO, "registered_scan", "lidar"), (PGO, "global_map", "_pgo_global_map")]),
     ]
     if planner == "simple":
-        merged_simple_planner_config: dict[str, Any] = {"replan_rate": replan_rate}
+        merged_simple_planner_config: dict[str, Any] = {
+            "replan_rate": replan_rate,
+            "frame_id": map_frame,
+            "body_frame": current_point_frame,
+        }
         if vehicle_height is not None:
             merged_simple_planner_config["ground_offset_below_robot"] = vehicle_height
         merged_simple_planner_config.update(simple_planner_config)
         modules.append(SimplePlanner.blueprint(**merged_simple_planner_config))
     elif planner == "far":
-        modules.append(FarPlanner.blueprint(**far_planner_config))
+        modules.append(
+            FarPlanner.blueprint(**far_planner_config).remappings(
+                [
+                    (FarPlanner, "odometry", "corrected_odometry"),
+                ]
+            )
+        )
     else:
         raise Exception(f"invalid planner: {planner}")
 
@@ -158,6 +199,7 @@ def create_nav_stack(
         modules.append(
             TerrainMapExt.blueprint(
                 **{
+                    "frame_id": map_frame,
                     "scan_voxel_size": 0.1,
                     "decay_time": 4.0,
                     "use_sorting": True,
@@ -166,29 +208,39 @@ def create_nav_stack(
                     "vehicle_height": 1.5 if vehicle_height is None else vehicle_height,
                     **(terrain_map_ext or {}),
                 }
+            ).remappings(
+                [
+                    (TerrainMapExt, "registered_scan", "lidar"),
+                    (TerrainMapExt, "odometry", "corrected_odometry"),
+                ]
             )
         )
     if use_tare:
         modules.append(TarePlanner.blueprint(**(tare_planner or {})))
-    record_remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = []
+    if use_ray_tracing:
+        modules.append(
+            RayTracingVoxelMap.blueprint(**(ray_tracing or {})).remappings(
+                [
+                    (RayTracingVoxelMap, "odometry", "corrected_odometry"),
+                ]
+            )
+        )
+    if use_apply_closure:
+        modules.append(ApplyClosure.blueprint(**(apply_closure or {})))
     if record:
         # Lazy: breaks on G1 onboard (linux-aarch64 TLS allocation failure)
         from dimos.navigation.nav_stack.modules.nav_record.nav_record import NavRecord
 
-        modules.append(NavRecord.blueprint(**(nav_record or {})))
-        record_remappings.append((NavRecord, "global_map", "global_map_pgo"))
+        modules.append(
+            NavRecord.blueprint(
+                **{
+                    "default_frame_id": current_point_frame,
+                    **(nav_record or {}),
+                }
+            ).remappings([(NavRecord, "global_map", "_pgo_global_map")])
+        )
 
-    remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
-        (PathFollower, "cmd_vel", "nav_cmd_vel"),
-        (TerrainAnalysis, "odometry", "corrected_odometry"),
-        (TerrainMapExt, "odometry", "corrected_odometry"),
-        (PGO, "global_map", "global_map_pgo"),
-        *record_remappings,
-    ]
-    if planner == "far":
-        remappings.append((FarPlanner, "odometry", "corrected_odometry"))
-
-    return autoconnect(*modules).remappings(remappings)
+    return autoconnect(*modules)
 
 
 def nav_stack_rerun_config(
@@ -218,6 +270,7 @@ def nav_stack_rerun_config(
     visual_override.setdefault("world/global_map", _global_map_colors)
     visual_override.setdefault("world/global_map_pgo", _global_map_colors)
     visual_override.setdefault("world/global_map_fastlio", _global_map_colors)
+    visual_override.setdefault("world/corrected_global_map", _global_map_colors)
     visual_override.setdefault(
         "world/registered_scan", _registered_scan_colors if show_registered_scan else _hide
     )
@@ -231,16 +284,15 @@ def nav_stack_rerun_config(
         visual_override.setdefault("world/goal_path", _goal_path_colors_debug)
         visual_override.setdefault("world/nav_boundary", _nav_boundary_colors_debug)
         visual_override.setdefault("world/contour_polygons", _contour_polygons_colors_debug)
-        visual_override.setdefault("world/graph_nodes", _graph_nodes_colors_debug)
-        visual_override.setdefault("world/graph_edges", _graph_edges_colors_debug)
+        visual_override.setdefault("world/graph", _graph_colors_debug)
+        visual_override.setdefault("world/pose_graph", _pose_graph_colors_debug)
     else:
         visual_override.setdefault("world/way_point", _waypoint_colors)
         visual_override.setdefault("world/goal", _goal_colors)
         visual_override.setdefault("world/goal_path", _goal_path_colors)
         visual_override.setdefault("world/nav_boundary", _nav_boundary_colors)
         visual_override.setdefault("world/contour_polygons", _contour_polygons_colors)
-        visual_override.setdefault("world/graph_nodes", _hide)
-        visual_override.setdefault("world/graph_edges", _hide)
+        visual_override.setdefault("world/graph", _hide)
     visual_override.setdefault("world/obstacle_cloud", _obstacle_cloud_colors)
     visual_override.setdefault("world/costmap_cloud", _costmap_cloud_colors)
     visual_override.setdefault("world/free_paths", _free_paths_colors)
@@ -285,7 +337,13 @@ def _sensor_scan_colors(cloud: Any) -> Any:
 def _global_map_colors(cloud: Any) -> Any:
     import rerun as rr
 
-    points, _ = cloud.as_numpy()
+    # Polymorphic over PointCloud2 (``as_numpy``) and DynamicCloud
+    # (``world_positions``) so the same coloring rule applies to whichever
+    # stream is feeding ``world/global_map``.
+    if hasattr(cloud, "as_numpy"):
+        points, _ = cloud.as_numpy()
+    else:
+        points = cloud.world_positions()
     if len(points) == 0:
         return None
 
@@ -553,9 +611,17 @@ def _contour_polygons_colors_debug(polygons: Any) -> Any:
     )
 
 
-def _graph_nodes_colors_debug(graph_nodes: Any) -> Any:
-    return graph_nodes.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT)
+def _graph_colors_debug(graph: Any) -> Any:
+    return graph.to_rerun_multi(
+        base_path="world/graph",
+        z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT,
+    )
 
 
-def _graph_edges_colors_debug(graph_edges: Any) -> Any:
-    return graph_edges.to_rerun(z_offset=_AGENTIC_DEBUG_BOUNDARY_LIFT)
+def _pose_graph_colors_debug(pose_graph: Any) -> Any:
+    return pose_graph.to_rerun_multi(
+        base_path="world/pose_graph",
+        z_offset=_AGENTIC_DEBUG_LIFT,
+        node_radius=0.15,
+        edge_radius=0.06,
+    )

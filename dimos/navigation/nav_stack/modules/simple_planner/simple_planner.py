@@ -34,9 +34,9 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.DynamicCloud import DynamicCloud
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_SENSOR
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -159,14 +159,6 @@ def progress_tick(
     return (state, False)
 
 
-def resolve_tf_chain(tf_buffer: Any, queries: list[tuple[str, str]]) -> Any:
-    for parent, child in queries:
-        tf = tf_buffer.get(parent, child)
-        if tf is not None:
-            return tf
-    return None
-
-
 def plan_on_costmap(
     costmap: Costmap,
     rx: float,
@@ -283,9 +275,8 @@ def astar(
 
 
 class SimplePlannerConfig(ModuleConfig):
-    world_frame: str = FRAME_MAP
-    body_frame: str = FRAME_BODY
-    sensor_frame: str = FRAME_SENSOR
+    frame_id: str = "map"
+    body_frame: str = "current_point"
 
     cell_size: float = 0.3  # m per cell
     obstacle_height_threshold: float = 0.15  # m above ground
@@ -322,7 +313,7 @@ class SimplePlanner(Module):
 
     config: SimplePlannerConfig
 
-    terrain_map_ext: In[PointCloud2]
+    global_map: In[DynamicCloud]
     terrain_map: In[PointCloud2]
     goal: In[PointStamped]
     stop_movement: In[Bool]
@@ -375,9 +366,7 @@ class SimplePlanner(Module):
         super().start()
         self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
         self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop_movement)))
-        self.register_disposable(
-            Disposable(self.terrain_map_ext.subscribe(self._on_terrain_map_ext))
-        )
+        self.register_disposable(Disposable(self.global_map.subscribe(self._on_global_map)))
         self.register_disposable(Disposable(self.terrain_map.subscribe(self._on_terrain_map)))
         self._running = True
         self._thread = threading.Thread(target=self._planning_loop, daemon=True)
@@ -397,26 +386,9 @@ class SimplePlanner(Module):
             self._thread = None
         super().stop()
 
-    @property
-    def _tf_pose_queries(self) -> list[tuple[str, str]]:
-        """Ordered (parent, child) TF lookups for the robot pose.
-        The first successful lookup wins. ``sensor`` is used by the Unity sim bridge."""
-        return [
-            (self.config.world_frame, self.config.body_frame),
-            (self.config.world_frame, self.config.sensor_frame),
-        ]
-
     def _query_pose(self) -> bool:
-        """Update cached robot position from the TF tree.
-
-        Tries several ``(parent, child)`` pairs in priority order so the
-        planner works both on real hardware (``map → body`` via PGO +
-        FastLio2) and in simulation (``map → sensor`` from the Unity
-        bridge).
-
-        Returns True if a pose was obtained from any chain.
-        """
-        tf = resolve_tf_chain(self.tf, list(self._tf_pose_queries))
+        """Update cached robot position from the TF tree."""
+        tf = self.tf.get(self.config.frame_id, self.config.body_frame)
         if tf is None:
             now = time.monotonic()
             if now - self._last_tf_warn > _TF_WARN_THROTTLE:
@@ -424,7 +396,7 @@ class SimplePlanner(Module):
                 buffers = list(self.tf.buffers.keys()) if hasattr(self.tf, "buffers") else []
                 logger.warning(
                     "TF lookup failed — no robot pose available",
-                    tried=[(p, c) for p, c in self._tf_pose_queries],
+                    tried=(self.config.frame_id, self.config.body_frame),
                     available_frames=buffers,
                 )
             return False
@@ -454,18 +426,18 @@ class SimplePlanner(Module):
             rx, ry, rz = self._robot_x, self._robot_y, self._robot_z
         now = time.time()
         self.way_point.publish(
-            PointStamped(ts=now, frame_id=self.config.world_frame, x=rx, y=ry, z=rz)
+            PointStamped(ts=now, frame_id=self.config.frame_id, x=rx, y=ry, z=rz)
         )
         # Single-pose path at the robot — explicitly distinguishes "cancelled,
         # holding position" from "no goal_path message yet" in the viewer.
         self.goal_path.publish(
             Path(
                 ts=now,
-                frame_id=self.config.world_frame,
+                frame_id=self.config.frame_id,
                 poses=[
                     PoseStamped(
                         ts=now,
-                        frame_id=self.config.world_frame,
+                        frame_id=self.config.frame_id,
                         position=[rx, ry, rz],
                         orientation=[0.0, 0.0, 0.0, 1.0],
                     )
@@ -547,16 +519,17 @@ class SimplePlanner(Module):
             inflation_radius=self.config.inflation_radius,
         )
 
-    def _on_terrain_map_ext(self, msg: PointCloud2) -> None:
-        """Rebuild the costmap from scratch using the persistent world view.
+    def _on_global_map(self, msg: DynamicCloud) -> None:
+        """Rebuild the costmap from scratch using the persistent voxel world.
 
-        ``terrain_map_ext`` applies a decay window (8 s by default) on
-        the producer side, so each message represents the current world
-        state. Resetting here prevents stale obstacles from piling up
-        forever.
+        ``global_map`` is the DynamicCloud produced by the ray-tracing voxel
+        map (post-closure-correction via ApplyClosure). Each message is
+        authoritative for the current world state, so the costmap is rebuilt
+        from scratch rather than accumulated — that way obstacles cleared by
+        raycasting on the producer side don't linger here.
         """
-        points, _ = msg.as_numpy()
-        if points is None or len(points) == 0:
+        points = msg.world_positions()
+        if len(points) == 0:
             return
         new_cm = self._fresh_costmap()
         self._classify_points(points, new_cm)
@@ -566,8 +539,8 @@ class SimplePlanner(Module):
     def _on_terrain_map(self, msg: PointCloud2) -> None:
         """Layer fresh local terrain on top of the current costmap.
 
-        ``terrain_map`` is faster than ``terrain_map_ext`` so dynamic obstacles
-        appear here first; additions are wiped on the next ``terrain_map_ext`` rebuild.
+        ``terrain_map`` is faster than ``global_map`` so dynamic obstacles
+        appear here first; additions are wiped on the next ``global_map`` rebuild.
         """
         points, _ = msg.as_numpy()
         if points is None or len(points) == 0:
@@ -623,7 +596,7 @@ class SimplePlanner(Module):
             self._current_wp_is_goal = is_goal
         now = time.time()
         self.way_point.publish(
-            PointStamped(ts=now, frame_id=self.config.world_frame, x=wx, y=wy, z=gz)
+            PointStamped(ts=now, frame_id=self.config.frame_id, x=wx, y=wy, z=gz)
         )
 
     def _publish_costmap_cloud(self, rz: float, now: float) -> None:
@@ -662,7 +635,7 @@ class SimplePlanner(Module):
         pcd_t.point["positions"] = o3c.Tensor(pts, dtype=o3c.float32)
         pcd_t.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
         self.costmap_cloud.publish(
-            PointCloud2(pointcloud=pcd_t, ts=now, frame_id=self.config.world_frame)
+            PointCloud2(pointcloud=pcd_t, ts=now, frame_id=self.config.frame_id)
         )
 
     def _replan_once(self) -> None:
@@ -744,22 +717,22 @@ class SimplePlanner(Module):
                 self._current_wp = None
                 self._current_wp_is_goal = False
             self.way_point.publish(
-                PointStamped(ts=now, frame_id=self.config.world_frame, x=rx, y=ry, z=rz)
+                PointStamped(ts=now, frame_id=self.config.frame_id, x=rx, y=ry, z=rz)
             )
             self.goal_path.publish(
                 Path(
                     ts=now,
-                    frame_id=self.config.world_frame,
+                    frame_id=self.config.frame_id,
                     poses=[
                         PoseStamped(
                             ts=now,
-                            frame_id=self.config.world_frame,
+                            frame_id=self.config.frame_id,
                             position=[rx, ry, rz],
                             orientation=[0.0, 0.0, 0.0, 1.0],
                         ),
                         PoseStamped(
                             ts=now,
-                            frame_id=self.config.world_frame,
+                            frame_id=self.config.frame_id,
                             position=[gx, gy, gz],
                             orientation=[0.0, 0.0, 0.0, 1.0],
                         ),
@@ -778,12 +751,12 @@ class SimplePlanner(Module):
             poses.append(
                 PoseStamped(
                     ts=now,
-                    frame_id=self.config.world_frame,
+                    frame_id=self.config.frame_id,
                     position=[wx, wy, rz],
                     orientation=[0.0, 0.0, 0.0, 1.0],
                 )
             )
-        self.goal_path.publish(Path(ts=now, frame_id=self.config.world_frame, poses=poses))
+        self.goal_path.publish(Path(ts=now, frame_id=self.config.frame_id, poses=poses))
 
         # 1 Hz diagnostic: cells in costmap, path length
         if now - self._last_diag_print >= 1.0:

@@ -80,9 +80,7 @@ unitree_g1_nav_onboard = (
     )
     .remappings(
         [
-            # FastLio2 outputs "lidar"; SmartNav modules expect "registered_scan"
-            (FastLio2, "lidar", "registered_scan"),
-            (FastLio2, "global_map", "global_map_fastlio"),
+            (FastLio2, "global_map", "_fastlio_global_map"),
             # Planner owns way_point — disconnect MovementManager's click relay
             (MovementManager, "way_point", "_mgr_way_point_unused"),
         ]

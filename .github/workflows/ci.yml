@@ -64,7 +64,7 @@ jobs:
         run: ./bin/run-doc-codeblocks --ci --no-cache
 
   tests:
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       matrix:
         pyver: ['3.10', '3.11', '3.12', '3.13', '3.14']

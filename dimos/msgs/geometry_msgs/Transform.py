@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     import rerun as rr
 
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.nav_msgs.Odometry import Odometry
 
 from dimos_lcm.geometry_msgs import (
     Transform as LCMTransform,
@@ -160,6 +161,17 @@ class Transform(Timestamped):
     def __neg__(self) -> Transform:
         """Unary minus operator returns the inverse transform."""
         return self.inverse()
+
+    @classmethod
+    def from_odometry(cls, odom: Odometry) -> Transform:  # type: ignore[name-defined]
+        """Create a Transform from an Odometry message using its own frame names."""
+        return cls(
+            translation=odom.pose.position,
+            rotation=odom.pose.orientation,
+            frame_id=odom.frame_id,
+            child_frame_id=odom.child_frame_id,
+            ts=odom.ts,
+        )
 
     @classmethod
     def from_pose(cls, frame_id: str, pose: Pose | PoseStamped) -> Transform:  # type: ignore[name-defined]

@@ -251,6 +251,13 @@ class RerunBridgeModule(Module):
                 return msg
             if is_rerun_multi(msg):
                 return msg
+            # Prefer to_rerun_multi when available — it lets the message
+            # render itself across nodes+edges sub-paths (or any other
+            # compound shape) without forcing every consumer to wire up
+            # an explicit visual_override.
+            to_rerun_multi = getattr(msg, "to_rerun_multi", None)
+            if callable(to_rerun_multi):
+                return cast("RerunData | None", to_rerun_multi(base_path=entity_path))
             if isinstance(msg, RerunConvertible):
                 return msg.to_rerun()
             return None

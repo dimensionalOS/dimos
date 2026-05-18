@@ -28,9 +28,9 @@ class TarePlannerConfig(NativeModuleConfig):
     cwd: str | None = "."
     executable: str = "result/bin/tare_planner"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-tare-planner/v0.1.0 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-tare-planner/feat/dimos-native-ready"
+        " --no-write-lock-file"
     )
-
     # Exploration parameters
     exploration_range: float = 20.0
     update_rate: float = 1.0

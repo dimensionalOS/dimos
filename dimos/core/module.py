@@ -247,11 +247,13 @@ class ModuleBase(Configurable, CompositeResource):
         self._tools = {}
         self._tools_lock = threading.Lock()
 
+    _tf_lock: threading.Lock = threading.Lock()
+
     @property
     def tf(self):  # type: ignore[no-untyped-def]
-        if self._tf is None:
-            # self._tf = self.config.tf_transport()
-            self._tf = LCMTF()
+        with self._tf_lock:
+            if self._tf is None:
+                self._tf = LCMTF()
         return self._tf
 
     @tf.setter

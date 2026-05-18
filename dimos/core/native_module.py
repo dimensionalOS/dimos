@@ -180,6 +180,15 @@ class NativeModule(Module):
             self.config.executable = str(Path(self.config.cwd) / self.config.executable)
 
     @rpc
+    def build(self) -> None:
+        # Heavy one-time work (cargo/cmake/nix builds, LFS) belongs in build(),
+        # not start(). Running it in start() blocks Popen and lets upstream
+        # publishers pump messages before the subprocess's LCM subscriptions
+        # are live, which causes flaky data loss in tests.
+        super().build()
+        self._maybe_build()
+
+    @rpc
     def start(self) -> None:
         super().start()
         if self._process is not None and self._process.poll() is None:
@@ -189,8 +198,6 @@ class NativeModule(Module):
                 pid=self._process.pid,
             )
             return
-
-        self._maybe_build()
 
         topics = self._collect_topics()
 
