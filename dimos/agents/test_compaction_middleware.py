@@ -412,14 +412,13 @@ def test_untagged_history_anchors_current_turn_on_latest_human() -> None:
     )
     # The trailing AIMessage(tool_call) is also preserved.
     assert any(
-        isinstance(m, AIMessage)
-        and (getattr(m, "tool_calls", None) or [{}])[0].get("id") == "c1"
+        isinstance(m, AIMessage) and (getattr(m, "tool_calls", None) or [{}])[0].get("id") == "c1"
         for m in new_history
     )
     # And the latest HumanMessage's content was NOT sent to the summarizer.
-    assert not any(
-        "LATEST_USER_INPUT_UNIQUE_MARKER" in p for p in received
-    ), "latest human input must not be summarized away"
+    assert not any("LATEST_USER_INPUT_UNIQUE_MARKER" in p for p in received), (
+        "latest human input must not be summarized away"
+    )
 
 
 def test_summarize_failure_propagates() -> None:
