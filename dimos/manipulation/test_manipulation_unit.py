@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dimos.agents.skill_result import SkillResult
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
@@ -260,11 +261,11 @@ class TestPickAndPlaceRetry:
             Pose(Vector3(0.25, 0.0, 0.2), Quaternion()),
         ]
         module._generate_grasps_for_pick = MagicMock(return_value=grasp_poses)
-        module._lift_if_low = MagicMock(return_value=None)
+        module._lift_if_low = MagicMock(return_value=SkillResult.ok())
         module._compute_pre_grasp_pose = MagicMock(side_effect=lambda pose, _offset: pose)
         module._wait_plan = MagicMock(side_effect=["Error: Planning failed: no IK", None])
         module._set_gripper_position = MagicMock()
-        module._preview_execute_wait = MagicMock(return_value=None)
+        module._preview_execute_wait = MagicMock(return_value=SkillResult.ok())
 
         events: list[str] = []
 
@@ -282,8 +283,9 @@ class TestPickAndPlaceRetry:
         with patch("dimos.manipulation.pick_and_place_module.time.sleep", return_value=None):
             result = module.pick("cup", robot_name="test_arm")
 
-        assert "Pick complete" in result
-        assert "'cup'" in result
+        assert result.is_success()
+        assert "Pick complete" in result.message
+        assert "'cup'" in result.message
         assert module._wait_plan.call_count == 2
         assert module._clear_failed_plan_for_retry.call_count == 1
         assert events[:3] == ["plan", "clear", "plan"]
