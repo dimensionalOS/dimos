@@ -179,14 +179,16 @@ def _run_baseline_sim(
     path: NavPath,
     speed: float,
     k_angular: float,
-    ff_config: FeedforwardGainConfig,
-    profile_config: VelocityProfileConfig,
+    ff_config: FeedforwardGainConfig | None,
+    profile_config: VelocityProfileConfig | None,
     timeout_s: float,
 ) -> tuple[ExecutedTrajectory, NavPath]:
-    """Production baseline P-controller in sim against the FOPDT
-    ``Go2SimTwistBaseAdapter``, with the derived FF + curvature profile.
-    Returns the trajectory and the reference path in the executed frame
-    (sim runs in the path's own frame, so it is ``path`` unchanged)."""
+    """Stock baseline P-controller in sim against the FOPDT
+    ``Go2SimTwistBaseAdapter``. ``ff_config``/``profile_config`` are
+    OPTIONAL comparison arms (``None`` = bare controller — the
+    physical-limit measurement). Returns the trajectory and the
+    reference path in the executed frame (sim runs in the path's own
+    frame, so it is ``path`` unchanged)."""
     coord = ControlCoordinator(
         tick_rate=GO2_TICK_RATE_HZ,
         hardware=[_go2_sim_base()],
@@ -203,6 +205,8 @@ def _run_baseline_sim(
             ),
             global_config=global_config,
         )
+        if profile_config is None:
+            return base
         return _VelocityProfileProxyTask(base, PathSpeedCap(profile_config))
 
     coord.start()
@@ -334,16 +338,18 @@ def _run_baseline_hw(
     path: NavPath,
     speed: float,
     k_angular: float,
-    ff_config: FeedforwardGainConfig,
-    profile_config: VelocityProfileConfig,
+    ff_config: FeedforwardGainConfig | None,
+    profile_config: VelocityProfileConfig | None,
     timeout_s: float,
     label: str,
 ) -> tuple[ExecutedTrajectory, NavPath]:
-    """Closed-loop baseline on the real Go2: anchor the path to the
-    robot's current pose, then track at 10 Hz off real odom. Safe:
-    velocity clamp, stale-odom abort, timeout, zero-Twist on exit.
-    Returns the trajectory and the anchored reference path (odom frame)
-    — score/plot must use this, not the robot-centric input path."""
+    """Closed-loop stock baseline on the real Go2: anchor the path to
+    the robot's current pose, then track at 10 Hz off real odom.
+    ``ff_config``/``profile_config`` are OPTIONAL arms (``None`` = bare
+    controller = the physical-limit measurement). Safe: velocity clamp,
+    stale-odom abort, timeout, zero-Twist on exit. Returns the trajectory
+    and the anchored reference path (odom frame) — score/plot must use
+    this, not the robot-centric input path."""
     cmd_pub, get_odom = link["pub"], link["get"]
 
     base = BaselinePathFollowerTask(
@@ -353,7 +359,11 @@ def _run_baseline_hw(
         ),
         global_config=global_config,
     )
-    task = _VelocityProfileProxyTask(base, PathSpeedCap(profile_config))
+    task = (
+        base
+        if profile_config is None
+        else _VelocityProfileProxyTask(base, PathSpeedCap(profile_config))
+    )
 
     pose0, _ = get_odom()
     path_w = _shift_path_to_start_at_pose(path, pose0)
@@ -466,9 +476,17 @@ def _open_hw_link(warmup_s: float) -> dict:
 
 
 def _run_ladder(
-    cfg: Go2TuningConfig, speeds: list[float], timeout_s: float, mode: str, warmup_s: float
+    cfg: Go2TuningConfig,
+    speeds: list[float],
+    timeout_s: float,
+    mode: str,
+    warmup_s: float,
+    use_ff: bool,
+    use_profile: bool,
 ) -> tuple[list[OperatingPoint], list[dict]]:
-    ff = cfg.feedforward.to_runtime()
+    # Bare stock baseline by default: this is the physical-limit
+    # measurement. FF / velocity profile are opt-in comparison arms.
+    ff = cfg.feedforward.to_runtime() if use_ff else None
     k_angular = float(cfg.recommended_controller.params.get("k_angular", 0.5))
     link = _open_hw_link(warmup_s) if mode == "hw" else None
     points: list[OperatingPoint] = []
@@ -476,7 +494,9 @@ def _run_ladder(
     try:
         for name, path in _path_set().items():
             for speed in speeds:
-                profile = cfg.velocity_profile.to_runtime(max_linear_speed=speed)
+                profile = (
+                    cfg.velocity_profile.to_runtime(max_linear_speed=speed) if use_profile else None
+                )
                 if mode == "hw":
                     for _ in range(3):
                         link["pub"].broadcast(None, _twist_clamped(0.0, 0.0))
@@ -540,7 +560,7 @@ def _run_ladder(
     return points, runs
 
 
-def _plot(points: list[OperatingPoint], out: Path) -> None:
+def _plot(points: list[OperatingPoint], out: Path, arm: str = "bare") -> None:
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for name in sorted({p.path for p in points}):
         xs = [p.speed for p in points if p.path == name]
@@ -548,7 +568,8 @@ def _plot(points: list[OperatingPoint], out: Path) -> None:
         ax.plot(xs, ys, marker="o", label=name)
     ax.set_xlabel("commanded speed (m/s)")
     ax.set_ylabel("cte_max (cm)")
-    ax.set_title("Go2 baseline tracking: cross-track error vs speed")
+    label = "BARE baseline (physical limit)" if arm == "bare" else f"baseline+{arm}"
+    ax.set_title(f"Go2 {label}: cross-track error vs speed")
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
@@ -584,7 +605,7 @@ def _canonicalize(ref: list, exec_: list) -> tuple[list, list]:
     return tf(ref), tf(exec_)
 
 
-def _plot_xy(runs: list[dict], out: Path) -> None:
+def _plot_xy(runs: list[dict], out: Path, arm: str = "bare") -> None:
     """One subplot per path: the reference path (black) overlaid with the
     executed trajectory at each speed, all normalized to the canonical
     path frame (common origin) so speeds are directly comparable. This is
@@ -630,7 +651,8 @@ def _plot_xy(runs: list[dict], out: Path) -> None:
         ax.legend(fontsize=7)
     for ax in flat[n:]:
         ax.set_visible(False)
-    fig.suptitle("Go2 baseline: executed trajectory vs reference path")
+    label = "BARE baseline (physical limit)" if arm == "bare" else f"baseline+{arm}"
+    fig.suptitle(f"Go2 {label}: executed trajectory vs reference path")
     fig.tight_layout()
     fig.savefig(out, dpi=120)
     plt.close(fig)
@@ -649,21 +671,35 @@ def main() -> None:
         default=_ODOM_WARMUP_S,
         help="how long to wait for first /go2/odom (s)",
     )
+    ap.add_argument(
+        "--ff",
+        action="store_true",
+        help="OPT-IN arm: apply the artifact's derived feedforward "
+        "(default OFF — bare stock baseline = the physical-limit measurement)",
+    )
+    ap.add_argument(
+        "--profile",
+        action="store_true",
+        help="OPT-IN arm: apply the artifact's derived curvature velocity "
+        "profile (default OFF — bare stock baseline)",
+    )
     args = ap.parse_args()
 
     config_path = Path(args.config).expanduser()
     cfg = Go2TuningConfig.from_json(config_path)  # asserts schema_version
     speeds = [float(s) for s in args.speeds.split(",")]
     tolerances = [float(t) for t in args.tolerances.split(",")]
+    arm = "+".join(x for x, on in (("ff", args.ff), ("profile", args.profile)) if on) or "bare"
 
-    if args.mode == "hw" and not cfg.valid_for_tuning:
+    # The sim-derived ff/profile are only meaningless on the real robot
+    # if you actually apply them; the bare baseline doesn't use them.
+    if args.mode == "hw" and (args.ff or args.profile) and not cfg.valid_for_tuning:
         sys.exit(
-            "Refusing --mode hw with a non-robot-valid config "
-            f"({config_path.name}, sim_or_hw={cfg.provenance.sim_or_hw!r}). Its "
-            "feedforward/profile were derived from the sim plant — running "
-            "them on the real robot is meaningless. Re-run "
-            "`go2_characterization --mode hw` first, or use --mode sim for a "
-            "pre-check."
+            f"Refusing --mode hw with --{arm} and a non-robot-valid config "
+            f"({config_path.name}, sim_or_hw={cfg.provenance.sim_or_hw!r}): its "
+            "feedforward/profile were derived from the sim plant. Re-run "
+            "`go2_characterization --mode hw` first, drop --ff/--profile for "
+            "the bare physical-limit run, or use --mode sim."
         )
     if args.mode == "sim":
         print(
@@ -671,32 +707,55 @@ def main() -> None:
             "plant only; the operating-point map is NOT a real-robot result."
         )
 
+    arm_desc = (
+        "BARE stock baseline (no FF, no profile) — the plant's physical tracking limit"
+        if arm == "bare"
+        else f"baseline + {arm} (comparison arm, vs the bare physical limit)"
+    )
     print(
-        f"{args.mode} speed ladder {speeds} over {len(_path_set())} paths "
-        f"(baseline k_angular={cfg.recommended_controller.params.get('k_angular')}):"
+        f"{args.mode} speed ladder {speeds} over {len(_path_set())} paths\n"
+        f"  controller: {arm_desc}\n"
+        f"  k_angular={cfg.recommended_controller.params.get('k_angular')}"
     )
     try:
-        points, runs = _run_ladder(cfg, speeds, args.timeout, args.mode, args.odom_warmup)
+        points, runs = _run_ladder(
+            cfg,
+            speeds,
+            args.timeout,
+            args.mode,
+            args.odom_warmup,
+            use_ff=args.ff,
+            use_profile=args.profile,
+        )
     except KeyboardInterrupt:
         raise SystemExit(
             "\n[hw] aborted by operator — robot stopped, artifact not modified."
         ) from None
     inversion = invert_tolerance(points, tolerances)
-    cfg.operating_point_map = OperatingPointMap(
-        speeds=speeds, points=points, tolerance_inversion=inversion
-    )
+    opm = OperatingPointMap(speeds=speeds, points=points, tolerance_inversion=inversion)
 
-    cfg.to_json(config_path)  # augment input artifact in place (section 5)
     sha = cfg.provenance.git_sha
-    bench_path = REPORTS_DIR / f"go2_benchmark_{sha}.json"
+    # Only the BARE run defines section 5 (the canonical physical-limit
+    # operating-point map). Comparison arms emit standalone artifacts so
+    # they never clobber the physical-limit map in the config.
+    if arm == "bare":
+        cfg.operating_point_map = opm
+        cfg.to_json(config_path)
+        artifact_msg = f"Augmented artifact (section 5 = physical limit): {config_path.resolve()}"
+    else:
+        artifact_msg = (
+            f"Config NOT modified (arm '{arm}' is a comparison, not the "
+            f"physical-limit map). See standalone outputs below."
+        )
+    bench_path = REPORTS_DIR / f"go2_benchmark_{arm}_{sha}.json"
     bench_path.parent.mkdir(parents=True, exist_ok=True)
-    bench_path.write_text(json.dumps(asdict(cfg.operating_point_map), indent=2))
-    plot_path = REPORTS_DIR / f"go2_benchmark_cte_vs_speed_{sha}.png"
-    _plot(points, plot_path)
-    xy_path = REPORTS_DIR / f"go2_benchmark_xy_{sha}.png"
-    _plot_xy(runs, xy_path)
+    bench_path.write_text(json.dumps(asdict(opm), indent=2))
+    plot_path = REPORTS_DIR / f"go2_benchmark_cte_vs_speed_{arm}_{sha}.png"
+    _plot(points, plot_path, arm)
+    xy_path = REPORTS_DIR / f"go2_benchmark_xy_{arm}_{sha}.png"
+    _plot_xy(runs, xy_path, arm)
 
-    print(f"\nAugmented artifact : {config_path.resolve()}")
+    print(f"\n{artifact_msg}")
     print(f"Benchmark json     : {bench_path.resolve()}")
     print(f"CTE-vs-speed plot  : {plot_path.resolve()}")
     print(f"XY trajectory plot : {xy_path.resolve()}  <-- the diagnostic view")

@@ -96,18 +96,31 @@ uv run python -m dimos.utils.benchmarking.go2_benchmark \
     --mode hw --speeds 0.3,0.5,0.7,0.9,1.0 --tolerances 5,10,15
 ```
 
-Loads the artifact, runs the hardcoded baseline + derived FF + velocity
-profile across the speed ladder on a fixed path set (`straight_line`,
-`single_corner` 2 m/90°, `square` 2 m, `circle` R1.0). For each
-(path, speed): operator gate (reposition+aim, ENTER), the path is
-**anchored to the robot's current pose** (so it need not be placed
+**By default it runs the BARE stock baseline P-controller — no
+feedforward, no velocity profile.** That is the point: this run measures
+the **plant's physical tracking limit** with the existing production
+controller, the number you compare everything against and check against
+the `(τ+L)·v` floor from characterization. Path set is fixed
+(`straight_line`, `single_corner` 2 m/90°, `square` 2 m, `circle` R1.0).
+For each (path, speed): operator gate (reposition+aim, ENTER), the path
+is **anchored to the robot's current pose** (so it need not be placed
 precisely), then tracked closed-loop at 10 Hz off real odom; CTE scored
-from the real trajectory. Writes section 5 (operating-point map +
-tolerance→max-safe-speed inversion) back into the artifact, plus a
-standalone json and one `cte_max`-vs-speed plot. Same safety as Tool 1.
+from the real trajectory. The **bare** run writes section 5
+(operating-point map + tolerance→max-safe-speed inversion) back into the
+artifact — that is the canonical physical-limit map. Same safety as Tool 1.
 
-`--mode hw` **refuses a non-robot-valid config** (a self-test artifact) —
-its gains are sim-derived and meaningless on the robot.
+Optional comparison arms (off by default), each measured *against* the
+bare physical limit, written to standalone `_<arm>_` files that never
+clobber section 5:
+
+- `--ff` — apply the artifact's derived feedforward.
+- `--profile` — apply the artifact's derived curvature velocity profile.
+- `--ff --profile` — both (the fully-derived config).
+
+`--mode hw` only **refuses a non-robot-valid config when `--ff`/`--profile`
+is set** (sim-derived gains are meaningless on the real robot). The bare
+physical-limit run accepts any config (it doesn't use the derived
+params).
 
 `--mode sim`: optional fast pre-check against the FOPDT sim plant. Loudly
 labelled a pre-check; the map is not a real-robot result. Useful to
