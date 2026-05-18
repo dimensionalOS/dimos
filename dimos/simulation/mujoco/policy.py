@@ -154,3 +154,29 @@ class G1OnnxController(OnnxController):
     def _post_control_update(self) -> None:
         phase_tp1 = self._phase + self._phase_dt
         self._phase = np.fmod(phase_tp1 + np.pi, 2 * np.pi) - np.pi
+
+class DroneController:
+    def __init__(
+            self,
+            input_controller: InputController,
+            drone_hover_thrust: float = 0.26487,
+            drone_input_scale: float = 0.2,
+            **kwargs: Any,
+    ) -> None:
+        self._input_controller = input_controller
+        self._drone_hover_thrust = drone_hover_thrust
+        self._drone_input_scale = drone_input_scale
+
+    def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+        return self._input_controller.get_command().astype(np.float32)
+    
+    def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+        command = self._input_controller.get_command()
+        
+        pitch = float(command[0])
+        roll = float(command[1])
+        yaw = float(command[2])
+
+        data.ctrl[0] = pitch * self._drone_input_scale
+        data.ctrl[1] = roll * self._drone_input_scale
+        data.ctrl[2] = yaw * self._drone_input_scale
