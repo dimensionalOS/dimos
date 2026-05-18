@@ -206,6 +206,9 @@ class Go2TuningConfig:
     recommended_controller: RecommendedControllerDC
     caveats: list[str] = field(default_factory=list)
     operating_point_map: OperatingPointMap | None = None
+    # False = a sim/self-test plumbing check, NOT measured on the robot.
+    # Operators must never tune from an artifact with this False.
+    valid_for_tuning: bool = True
     schema_version: int = SCHEMA_VERSION
 
     # --- serialization ---
@@ -253,6 +256,7 @@ class Go2TuningConfig:
             recommended_controller=RecommendedControllerDC(**data["recommended_controller"]),
             caveats=list(data.get("caveats", [])),
             operating_point_map=opm,
+            valid_for_tuning=bool(data.get("valid_for_tuning", True)),
             schema_version=sv,
         )
 
@@ -361,11 +365,16 @@ def derive_config(
         f"Plant fitted from {provenance.characterization_session_dir or 'n/a'} "
         f"on {provenance.date} (git {provenance.git_sha}).",
     ]
-    if provenance.sim_or_hw == "sim":
-        caveats.append(
-            "Derived from the FOPDT sim plant (self-test): validates the "
-            "pipeline, not absolute on-robot numbers — re-run --mode hw "
-            "for hardware-valid gains."
+    valid_for_tuning = provenance.sim_or_hw == "hw"
+    if not valid_for_tuning:
+        caveats.insert(
+            0,
+            "*** PIPELINE CHECK ONLY — NOT ROBOT-VALID — DO NOT TUNE FROM "
+            "THIS *** Derived from the in-process FOPDT sim plant "
+            "(self-test): it only proves the measure->fit->derive plumbing "
+            "runs and re-recovers its own injected model. Re-run "
+            "`go2_characterization --mode hw` on the real Go2 for a "
+            "tuning-valid artifact.",
         )
 
     return Go2TuningConfig(
@@ -380,6 +389,7 @@ def derive_config(
         recommended_controller=RecommendedControllerDC(),
         caveats=caveats,
         operating_point_map=None,
+        valid_for_tuning=valid_for_tuning,
     )
 
 

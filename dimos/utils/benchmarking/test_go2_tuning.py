@@ -113,6 +113,27 @@ def test_derive_leaves_operating_point_map_none():
     assert derive_config(_plant(), _prov()).operating_point_map is None
 
 
+def test_valid_for_tuning_only_when_hw():
+    hw = derive_config(_plant(), _prov(sim_or_hw="hw"))
+    assert hw.valid_for_tuning is True
+    assert not any("DO NOT TUNE" in c for c in hw.caveats)
+
+    st = derive_config(_plant(), _prov(sim_or_hw="self-test"))
+    assert st.valid_for_tuning is False
+    assert any("DO NOT TUNE FROM THIS" in c for c in st.caveats)
+    # the loud warning must be first so it can't be missed
+    assert "PIPELINE CHECK ONLY" in st.caveats[0]
+
+
+def test_valid_for_tuning_survives_round_trip(tmp_path):
+    st = derive_config(_plant(), _prov(sim_or_hw="self-test"))
+    back = Go2TuningConfig.from_json(st.to_json(tmp_path / "st.json"))
+    assert back.valid_for_tuning is False
+    hw = derive_config(_plant(), _prov(sim_or_hw="hw"))
+    back_hw = Go2TuningConfig.from_json(hw.to_json(tmp_path / "hw.json"))
+    assert back_hw.valid_for_tuning is True
+
+
 # --- artifact round-trip --------------------------------------------------
 
 
