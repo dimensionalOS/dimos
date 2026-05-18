@@ -140,7 +140,7 @@ def _execute_concurrently(client: RPCClient) -> float:
 
 
 @pytest.mark.skipif_in_ci
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_openarm_mock_bimanual_planning_overlap(lcm_spy, start_blueprint) -> None:
     """OpenArm mock should overlap bimanual plan, preview, and execute acceptance."""
     lcm_spy.save_topic(_JOINT_STATE_TOPIC)
