@@ -158,14 +158,14 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
             current_time = time.time()
 
             # Video rendering
-            if current_time - last_video_time >= video_interval:
+            if camera_id != -1 and current_time - last_video_time >= video_interval:
                 rgb_renderer.update_scene(data, camera=camera_id, scene_option=scene_option)
                 pixels = rgb_renderer.render()
                 shm.write_video(pixels)
                 last_video_time = current_time
 
             # Lidar/depth rendering
-            if current_time - last_lidar_time >= lidar_interval:
+            if lidar_camera_id != -1 and current_time - last_lidar_time >= lidar_interval:
                 # Render all depth cameras
                 depth_renderer.update_scene(data, camera=lidar_camera_id, scene_option=scene_option)
                 depth_front = depth_renderer.render()
