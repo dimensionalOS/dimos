@@ -77,12 +77,6 @@ _FAMILIES: dict[str, int] = {
     "aruco_7x7_1000": cv2.aruco.DICT_7X7_1000,
 }
 
-# Default detector parameters for ArUco detector.
-# Ref: https: // docs.opencv.org/4.x/d5/dae/tutorial_aruco_detection.html
-_DEFAULT_DETECTOR_PARAMS = cv2.aruco.DetectorParameters()
-_DEFAULT_REFINEMENT_PARAMS = cv2.aruco.RefineParameters()
-
-
 def _camera_info_to_cv_intrinsics(
     camera_info: CameraInfo,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
@@ -235,7 +229,7 @@ class AprilTagDetector:
             grey = cv_image
 
         # Detect markers.
-        corners, ids, rejected = self._detector.detectMarkers(grey)
+        corners, ids, _rejected = self._detector.detectMarkers(grey)
         if ids is None or len(ids) == 0:
             return []
 
