@@ -12,20 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native Rust voxel-map module with raycast clearing.
-
-Subscribes to a world-frame ``PointCloud2`` (e.g. from FastLio2's
-``lidar`` output) and matching ``Odometry``, maintains a global
-voxel hash set, and publishes the accumulated map on ``global_map``.
-
-Algorithm (v1):
-    * Insert the voxel of every point into the global hash set.
-    * For every point, walk the 3-D DDA ray from the latest
-      odometry position to the point and remove every intermediate
-      voxel from the map.  The endpoint voxel is preserved.
-
-The Rust binary at ``rust/`` does the heavy lifting.
-"""
 
 from __future__ import annotations
 

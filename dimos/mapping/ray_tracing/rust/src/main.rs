@@ -1,24 +1,5 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
-//
-// Native Rust voxel-map module with raycast clearing.
-//
-// Algorithm (v1):
-//   * Insert the voxel of every point into the global hash set.
-//   * For every point, walk the 3D-DDA ray from the sensor origin
-//     (latest odometry pose) toward the point, removing every
-//     intermediate voxel from the map.  The endpoint voxel itself
-//     is kept (it just got inserted as a hit).
-//
-// Inputs (LCM topics, set by the dimos NativeModule coordinator):
-//   * `lidar`    : sensor_msgs::PointCloud2  (world frame)
-//   * `odometry` : nav_msgs::Odometry        (world frame)
-//
-// Output:
-//   * `global_map` : sensor_msgs::PointCloud2  (world frame)
-//
-// PointCloud2 input is expected in the standard FastLio2 layout
-// (xyz at offsets 0/4/8 as little-endian f32, point_step >= 12).
 
 use ahash::{AHashMap, AHashSet};
 use dimos_module::{run, Input, LcmTransport, Module, Output};
