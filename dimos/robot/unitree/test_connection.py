@@ -82,10 +82,32 @@ def test_explicit_kwarg_beats_env(stub_legion: MagicMock, monkeypatch: pytest.Mo
     assert _aes_kwarg(stub_legion) == "from-kwarg"
 
 
-def test_empty_string_kwarg_skips_forwarding(
+def test_empty_string_kwarg_falls_back_to_env_when_unset(
     stub_legion: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An empty-string kwarg is treated as 'no key' (truthiness guard)."""
+    """Empty-string kwarg + unset env → final key is None, nothing forwarded.
+
+    Truthiness guard means `aes_128_key=""` falls through to the env-var
+    lookup just like `aes_128_key=None` would. With the env unset, the final
+    value is None and the kwarg is omitted from the LegionConnection call —
+    same byte-identical behaviour as the unset case.
+    """
     monkeypatch.delenv("UNITREE_AES_128_KEY", raising=False)
     UnitreeWebRTCConnection(ip="192.168.123.161", aes_128_key="")
     assert "aes_128_key" not in stub_legion.call_args.kwargs
+
+
+def test_empty_string_kwarg_uses_env_when_set(
+    stub_legion: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty-string kwarg + set env → env value wins.
+
+    Guards against the bug greptile flagged on PR #2117: a YAML/JSON config
+    serialising `aes_128_key: ""` instead of `null` MUST still allow the env
+    var to provide the real key. Otherwise the connection silently fails on
+    G1 firmware >=1.5.1 (and Go2 firmware >=1.1.15) with
+    'RSA key format is not supported'.
+    """
+    monkeypatch.setenv("UNITREE_AES_128_KEY", "cc" * 16)
+    UnitreeWebRTCConnection(ip="192.168.123.161", aes_128_key="")
+    assert _aes_kwarg(stub_legion) == "cc" * 16

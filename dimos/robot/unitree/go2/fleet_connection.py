@@ -71,7 +71,12 @@ class Go2FleetConnection(GO2Connection):
     def start(self) -> None:
         self._extra_connections.clear()
         for ip in self._extra_ips:
-            conn = make_connection(ip, self.config.g)
+            # Forward the configured key to every follower. The AES-128 key is
+            # technically per-device, so a heterogeneous fleet needs each robot's
+            # own key; that's a future per-IP mapping. For homogeneous-key or
+            # env-var-driven setups this matches the primary's behaviour and
+            # avoids leaving followers reliant on UNITREE_AES_128_KEY alone.
+            conn = make_connection(ip, self.config.g, aes_128_key=self.config.aes_128_key)
             conn.start()
             self._extra_connections.append(conn)
 
