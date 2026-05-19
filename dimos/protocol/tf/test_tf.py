@@ -60,7 +60,7 @@ def test_tf_ros_example() -> None:
 
 def test_tf_main() -> None:
     """Test TF broadcasting and querying between two TF instances.
-    If you run foxglove-bridge this will show up in the UI"""
+    If you run rerun-bridge this will show up in the UI"""
 
     # here we create broadcasting and receiving TF instance.
     # this is to verify that comms work multiprocess, normally

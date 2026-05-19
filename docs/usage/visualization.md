@@ -1,6 +1,6 @@
 # Viewer Backends
 
-Dimos supports three visualization backends: `rerun` (default), `foxglove`, and `none`.
+Dimos supports Rerun as its visualization backend (`rerun` default, or `none` to disable).
 
 ## Quick Start
 
@@ -12,7 +12,6 @@ dimos run unitree-go2
 
 # Explicitly select the viewer backend:
 dimos --viewer rerun run unitree-go2
-dimos --viewer foxglove run unitree-go2
 dimos --viewer none run unitree-go2
 ```
 
@@ -54,16 +53,6 @@ dimos --rerun-web --rerun-open native run unitree-go2
 - Rerun 3D viewer + command center sidebar in one page
 - Teleop controls and goal setting via the web UI
 - Works headless (no display required)
-
----
-
-### Foxglove (`foxglove`)
-
-**What you get:**
-- Foxglove bridge on ws://localhost:8765
-- No Rerun (saves resources)
-- Better performance with larger maps/higher resolution
-- Open layout: `assets/foxglove_dashboards/old/foxglove_unitree_lcm_dashboard.json`
 
 ---
 
