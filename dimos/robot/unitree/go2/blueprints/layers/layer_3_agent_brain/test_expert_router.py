@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.robot.unitree.go2.blueprints.layers.expert_router import _Go2ExpertRouter
+from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.expert_router import (
+    _Go2ExpertRouter,
+)
 
 
 def test_route_task_recommends_navigation_with_context() -> None:

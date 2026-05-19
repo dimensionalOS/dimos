@@ -30,6 +30,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
 from dimos.perception.spatial_memory_spec import SpatialMemorySpec
 from dimos.perception.temporal_memory_spec import TemporalMemorySpec
+from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.skill_outcome_store import (
+    SkillOutcomeStoreSpec,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -41,6 +44,7 @@ class _Go2ContextProvider(Module):
     _spatial_memory: SpatialMemorySpec | None = None
     _temporal_memory: TemporalMemorySpec | None = None
     _navigation: NavigationInterfaceSpec | None = None
+    _skill_outcomes: SkillOutcomeStoreSpec | None = None
     _latest_odom: PoseStamped | None = None
 
     odom: In[PoseStamped]
@@ -81,10 +85,7 @@ class _Go2ContextProvider(Module):
             "runtime": self._runtime_context(),
             "robot_state": self._robot_context(errors),
             "world_state": self._world_context(task, spatial_limit, errors),
-            "skill_state": {
-                "available": False,
-                "reason": "No shared skill-outcome store is wired into ContextProvider yet.",
-            },
+            "skill_state": self._skill_context(errors),
             "external_context": {
                 "available": False,
                 "reason": "External context sources are not wired into ContextProvider yet.",
@@ -103,6 +104,7 @@ class _Go2ContextProvider(Module):
             "temporal_memory": self._temporal_memory is not None,
             "odom": self._latest_odom is not None,
             "navigation": self._navigation is not None,
+            "skill_outcomes": self._skill_outcomes is not None,
             "runtime": True,
         }
 
@@ -146,6 +148,17 @@ class _Go2ContextProvider(Module):
             "spatial": self._spatial_context(task, spatial_limit, errors),
             "temporal": self._temporal_context(errors),
         }
+
+    def _skill_context(self, errors: list[str]) -> dict[str, Any]:
+        if self._skill_outcomes is None:
+            return {"available": False, "recent_outcomes": []}
+        try:
+            recent = self._skill_outcomes.get_recent_outcomes(limit=5)
+        except Exception as exc:
+            logger.warning("Failed to read skill-outcome context", exc_info=True)
+            errors.append(f"skill_outcomes: {exc}")
+            return {"available": True, "recent_outcomes": []}
+        return {"available": True, "recent_outcomes": recent}
 
     def _spatial_context(
         self, task: str, spatial_limit: int, errors: list[str]
@@ -251,6 +264,18 @@ class _Go2ContextProvider(Module):
 
         if metadata.get("errors"):
             lines.append(f"Context warnings: {metadata['errors']}")
+
+        skill_state = metadata.get("skill_state", {})
+        recent_outcomes = skill_state.get("recent_outcomes") or []
+        if recent_outcomes:
+            failures = [outcome for outcome in recent_outcomes if not outcome.get("success")]
+            lines.append(
+                f"Skill outcomes: {len(recent_outcomes)} recent, {len(failures)} failure(s)"
+            )
+        elif skill_state.get("available"):
+            lines.append("Skill outcomes: available, no recorded outcomes")
+        else:
+            lines.append("Skill outcomes: unavailable")
 
         return "\n".join(lines)
 

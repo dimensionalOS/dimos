@@ -360,10 +360,12 @@ Code style rules:
 
 ## Change Documentation
 
-Maintain `PROJECT_CHANGELOG.md` at the repository root for project-level work in
-this fork/branch. Add a reverse-chronological entry after substantive changes:
-architecture migrations, feature implementation, test fixes, blueprint rewiring,
-or upstream sync work.
+Maintain the nearest scoped `PROJECT_CHANGELOG.md` for project-level work in
+this fork/branch. Use the repository root changelog for repo-wide changes, or a
+subsystem changelog such as `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md` for
+focused subsystem architecture work. Add a reverse-chronological entry after
+substantive changes: architecture migrations, feature implementation, test
+fixes, blueprint rewiring, or upstream sync work.
 
 Each entry should include the date, branch, change summary, affected
 files/modules, validation performed, and open follow-up items. Small exploratory

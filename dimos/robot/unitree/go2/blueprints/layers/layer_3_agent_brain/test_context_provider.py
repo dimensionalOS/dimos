@@ -17,7 +17,9 @@ import json
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.navigation.base import NavigationState
-from dimos.robot.unitree.go2.blueprints.layers.context_provider import _Go2ContextProvider
+from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.context_provider import (
+    _Go2ContextProvider,
+)
 
 
 class StubSpatialMemory:
@@ -55,11 +57,26 @@ class StubNavigation:
         return False
 
 
+class StubSkillOutcomes:
+    def get_recent_outcomes(
+        self, limit: int = 5, skill_name: str = "", domain: str = ""
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "skill_name": "navigate_with_text",
+                "success": False,
+                "domain": "navigation",
+                "error_code": "EXECUTION_FAILED",
+            }
+        ][:limit]
+
+
 def test_get_context_aggregates_available_sources() -> None:
     provider = _Go2ContextProvider()
     provider._spatial_memory = StubSpatialMemory()  # type: ignore[assignment]
     provider._temporal_memory = StubTemporalMemory()  # type: ignore[assignment]
     provider._navigation = StubNavigation()  # type: ignore[assignment]
+    provider._skill_outcomes = StubSkillOutcomes()  # type: ignore[assignment]
     provider._latest_odom = PoseStamped(position=[1.0, 2.0, 0.0], frame_id="map")
 
     result = provider.get_context("find the person", focus="navigation")
@@ -71,6 +88,7 @@ def test_get_context_aggregates_available_sources() -> None:
     assert result.metadata["robot_state"]["navigation"]["state"] == "following_path"
     assert result.metadata["world_state"]["spatial"]["matches"][0]["distance"] == 0.12
     assert result.metadata["world_state"]["temporal"]["rolling_summary"]
+    assert result.metadata["skill_state"]["recent_outcomes"][0]["success"] is False
 
     encoded = json.loads(result.agent_encode()[0]["text"])
     assert encoded["success"] is True
