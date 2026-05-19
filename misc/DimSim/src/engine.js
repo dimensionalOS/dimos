@@ -2879,7 +2879,6 @@ async function startAgentTask(instruction, { autoPool = true, targetAgentId = nu
   for (const a of targets) {
     _setAgentTask(a.id, { ...taskState });
     a._taskStartedAt = now;
-    if (a?.vlm) a.vlm.enabled = true;
   }
 
   agentUiPush(`${new Date().toLocaleTimeString()}\nTASK START\n${text}${target ? ` [${target.id}]` : ` [${targets.length} agents]`}`);
@@ -5551,12 +5550,6 @@ function removeAiAgent(agent, reason = "manual") {
 
 function stopAiAgent(agent, reason = "manual-stop") {
   if (!agent) return;
-  try {
-    if (agent.vlm) agent.vlm.enabled = false;
-    agent._plan = null;
-    agent._pendingDecision = null;
-    agent._setThought?.("Stopped");
-  } catch {}
   agentUiPush(`${new Date().toLocaleTimeString()}\nAGENT STOP\n${agent.id} (${reason})`);
   renderAgentTaskUi();
 }
@@ -5576,12 +5569,7 @@ function createAiAgent({ ephemeral = false, avatarUrl } = {}) {
     scene,
     rapierWorld,
     RAPIER,
-    getWorldKey: () => worldKey,
-    getTags: () => tags,
-    getPlayerPosition: () => (Array.isArray(window.__playerPosition) ? window.__playerPosition : [0, 0, 0]),
     avatarUrl: _avatarUrl,
-    senseRadius: 3.0,
-    walkSpeed: 2.0,
     // Headless mode in dimos: skip visual rendering, keep colliders for physics
     headless: false,
   });
