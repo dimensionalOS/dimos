@@ -202,6 +202,7 @@ class RerunBridgeModule(Module):
     """
 
     config: Config
+    dedicated_worker = True
     _last_log: dict[str, float]
 
     # TODO this doesn't belong here, either hardcode it or put it to rerun bridge config
