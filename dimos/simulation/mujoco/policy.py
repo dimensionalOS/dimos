@@ -173,11 +173,19 @@ class DroneController:
     def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         command = self._input_controller.get_command()
         
+        if not np.any(command):
+            # Maintain hover if no command is given
+            data.ctrl[0] = self._drone_hover_thrust
+            data.ctrl[1] = 0.0
+            data.ctrl[2] = 0.0
+            data.ctrl[3] = 0.0
+            return
+
         pitch = float(command[0])
         roll = float(command[1])
         yaw = float(command[2])
 
         data.ctrl[0] = self._drone_hover_thrust
-        data.ctrl[1] = pitch * self._drone_input_scale
-        data.ctrl[2] = roll * self._drone_input_scale
-        data.ctrl[3] = yaw * self._drone_input_scale
+        data.ctrl[1] = -roll * self._drone_input_scale
+        data.ctrl[2] = pitch * self._drone_input_scale
+        data.ctrl[3] = -yaw * self._drone_input_scale

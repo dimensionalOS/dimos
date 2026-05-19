@@ -65,8 +65,8 @@ class MockController:
                 self._command[0] = linear[0] 
                 self._command[1] = linear[1]
                 self._command[2] = angular[2]
-            else:
-                self._command = np.zeros(3, dtype=np.float32)
+            # else:
+            #     self._command = np.zeros(3, dtype=np.float32)
         else:                   
             if cmd_data is not None:
                 linear, angular = cmd_data
