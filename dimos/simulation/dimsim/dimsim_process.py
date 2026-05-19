@@ -44,8 +44,10 @@ class DimSimProcess:
 
         scene = self.global_config.dimsim_scene
         port = self.global_config.dimsim_port
+        headless = self.global_config.dimsim_headless
 
-        ensure_playwright_chromium(deno_path)
+        if headless:
+            ensure_playwright_chromium(deno_path)
         _kill_port_holder(port)
 
         render = os.environ.get("DIMSIM_RENDER", "gpu").strip()
@@ -60,7 +62,7 @@ class DimSimProcess:
             "--port",
             str(port),
             "--no-depth",
-            "--headless",
+            *(("--headless",) if headless else ()),
             "--render",
             render,
             "--image-rate",
@@ -68,6 +70,11 @@ class DimSimProcess:
             "--lidar-rate",
             str(_LIDAR_RATE),
         ]
+
+        if not headless:
+            logger.info(
+                f"Open http://localhost:{port} in your browser; sensors won't publish until that tab is loaded."
+            )
 
         self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -127,6 +134,25 @@ def _kill_port_holder(port: int) -> None:
 
 
 def _ensure_repo() -> Path:
+    # DIMSIM_LOCAL — point at a local DimSim checkout instead of cloning.
+    #   DIMSIM_LOCAL=1            → ../DimSim sibling of the dimos repo
+    #   DIMSIM_LOCAL=/some/path   → that path
+    local = os.environ.get("DIMSIM_LOCAL", "").strip()
+    if local:
+        if local == "1":
+            # Walk up from this file to the dimos repo root, then to sibling DimSim
+            dimos_root = Path(__file__).resolve().parents[3]
+            path = dimos_root.parent / "DimSim"
+        else:
+            path = Path(local).expanduser().resolve()
+        if not (path / "dimos-cli" / "cli.ts").exists():
+            raise RuntimeError(
+                f"DIMSIM_LOCAL={local} resolved to {path}, but "
+                f"{path}/dimos-cli/cli.ts does not exist"
+            )
+        logger.info(f"Using local DimSim from {path}")
+        return path
+
     repo_dir = STATE_DIR / "dimsim_repo"
     if (repo_dir / ".git").exists():
         return repo_dir
