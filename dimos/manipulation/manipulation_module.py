@@ -24,6 +24,8 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor, wait as futures_wait
+from dataclasses import dataclass
 from enum import Enum
 import threading
 import time
@@ -71,6 +73,19 @@ PlannedPaths: TypeAlias = dict[RobotName, JointPath]
 
 PlannedTrajectories: TypeAlias = dict[RobotName, JointTrajectory]
 """Maps robot_name -> planned trajectory"""
+
+
+@dataclass
+class PlanningJob:
+    """In-flight or completed planning job for a single robot."""
+
+    request_id: int
+    accepted_at: float
+    future: Future[Any] | None = None
+    completed_at: float | None = None
+    success: bool | None = None
+    error: str | None = None
+    invalidated: bool = False
 
 
 class ManipulationState(Enum):
@@ -130,6 +145,13 @@ class ManipulationModule(Module):
         # Stored path for plan/preview/execute workflow (per robot)
         self._planned_paths: PlannedPaths = {}
         self._planned_trajectories: PlannedTrajectories = {}
+
+        # Per-robot async planning job tracking
+        self._planning_jobs: dict[RobotName, PlanningJob] = {}
+        self._executing: dict[RobotName, bool] = {}
+        self._last_op_success: dict[RobotName, bool] = {}
+        self._next_request_id: int = 0
+        self._planning_pool: ThreadPoolExecutor | None = None
 
         # Coordinator integration (lazy initialized)
         self._coordinator_client: RPCClient | None = None
@@ -204,6 +226,13 @@ class ManipulationModule(Module):
 
         self._planner = create_planner(name=self.config.planner_name)
         self._kinematics = create_kinematics(name=self.config.kinematics_name)
+
+        # One worker per robot lets bimanual plans run in parallel without
+        # queuing one arm's job behind the other.
+        self._planning_pool = ThreadPoolExecutor(
+            max_workers=max(1, len(self._robots)),
+            thread_name_prefix="manip-plan",
+        )
 
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):
@@ -333,8 +362,44 @@ class ManipulationModule(Module):
 
     @rpc
     def get_state(self) -> str:
-        """Get current manipulation state name."""
-        return self._state.name
+        """Get aggregate manipulation state derived from per-robot job records.
+
+        Priority: FAULT > PLANNING > EXECUTING > COMPLETED > IDLE.
+        FAULT is module-wide: any failed plan or coordinator rejection blocks
+        new plans/executions for every robot until reset() clears the fault.
+        """
+        with self._lock:
+            if self._has_fault_locked():
+                return ManipulationState.FAULT.name
+            if any(self._job_active_locked(j) for j in self._planning_jobs.values()):
+                return ManipulationState.PLANNING.name
+            if any(self._executing.values()):
+                return ManipulationState.EXECUTING.name
+            if any(self._last_op_success.values()):
+                return ManipulationState.COMPLETED.name
+            return ManipulationState.IDLE.name
+
+    def _has_fault_locked(self) -> bool:
+        """Return whether the module is faulted. Caller must hold self._lock."""
+        if self._state == ManipulationState.FAULT:
+            return True
+        # Failed jobs are kept as FAULT until reset() clears _last_op_success.
+        return any(s is False for s in self._last_op_success.values())
+
+    def _job_done_locked(self, job: PlanningJob) -> bool:
+        """Return whether a planning job has reached terminal state.
+
+        Caller must hold self._lock. completed_at is authoritative because a
+        very fast worker can complete before plan_to_* records job.future.
+        """
+        return job.completed_at is not None or (job.future is not None and job.future.done())
+
+    def _job_active_locked(self, job: PlanningJob | None) -> bool:
+        """Return whether a planning job should block plan/preview/execute.
+
+        Caller must hold self._lock.
+        """
+        return job is not None and not job.invalidated and not self._job_done_locked(job)
 
     @rpc
     def get_error(self) -> str:
@@ -346,29 +411,57 @@ class ManipulationModule(Module):
         return self._error_message
 
     @rpc
-    def cancel(self) -> bool:
-        """Cancel current motion."""
-        if self._state != ManipulationState.EXECUTING:
-            return False
-        self._state = ManipulationState.IDLE
-        logger.info("Motion cancelled")
-        return True
+    def cancel(self, robot_name: RobotName | None = None) -> bool:
+        """Clear the execute() accept window for one robot or all robots.
+
+        Best-effort signal — coordinator interaction is unchanged. Does not
+        cancel in-flight planning jobs (use reset() for that).
+
+        Args:
+            robot_name: Robot to cancel. None cancels every robot currently
+                in its execute() accept window.
+
+        Returns:
+            True if at least one robot was cancelled, else False.
+        """
+        with self._lock:
+            if robot_name is not None:
+                if not self._executing.get(robot_name, False):
+                    return False
+                self._executing[robot_name] = False
+                logger.info(f"Cancelled execute window for '{robot_name}'")
+                return True
+            if not any(self._executing.values()):
+                return False
+            self._executing = {k: False for k in self._executing}
+            logger.info("Cancelled execute window for all robots")
+            return True
 
     @rpc
     @skill
     def reset(self) -> SkillResult[ManipulationSkillError]:
-        """Reset the robot module to IDLE state, clearing any fault.
+        """Reset the module to IDLE: drop stored plans and invalidate active jobs.
 
-        Use this after an error or fault to allow new commands.
-        Cannot reset while a motion is executing — cancel first.
+        In-flight planner threads keep running (Drake's RRT is not preemptable),
+        but their late results are dropped at compare-and-store via the
+        invalidated flag. Use cancel() to abort an active coordinator execution.
+        Also clears the module-wide FAULT state raised by any robot's planning
+        or execution failure.
         """
-        if self._state == ManipulationState.EXECUTING:
-            return SkillResult.fail(
-                "INVALID_STATE",
-                "Cannot reset while executing — cancel the motion first",
-            )
-        self._state = ManipulationState.IDLE
-        self._error_message = ""
+        with self._lock:
+            if any(self._executing.values()):
+                return SkillResult.fail(
+                    "INVALID_STATE",
+                    "Cannot reset while executing — cancel the motion first",
+                )
+            for job in self._planning_jobs.values():
+                if not self._job_done_locked(job):
+                    job.invalidated = True
+            self._planned_paths.clear()
+            self._planned_trajectories.clear()
+            self._last_op_success.clear()
+            self._error_message = ""
+            self._state = ManipulationState.IDLE
         return SkillResult.ok("Reset to IDLE — ready for new commands")
 
     @rpc
@@ -411,23 +504,64 @@ class ManipulationModule(Module):
 
     def _begin_planning(
         self, robot_name: RobotName | None = None
-    ) -> tuple[RobotName, WorldRobotID] | None:
-        """Check state and begin planning. Returns (robot_name, robot_id) or None.
+    ) -> tuple[RobotName, WorldRobotID, int] | None:
+        """Per-robot gating + job registration. Returns (name, robot_id, request_id) or None.
+
+        On acceptance, clears the robot's stale plan and registers a new
+        PlanningJob (with future=None — caller submits the worker and assigns it).
 
         Args:
             robot_name: Robot to plan for (required if multiple robots configured)
         """
-        if self._world_monitor is None:
+        if self._world_monitor is None or self._planner is None or self._planning_pool is None:
             logger.error("Planning not initialized")
             return None
         if (robot := self._get_robot(robot_name)) is None:
             return None
+        name, robot_id, _, _ = robot
         with self._lock:
-            if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
-                logger.warning(f"Cannot plan: state is {self._state.name}")
+            if self._has_fault_locked():
+                logger.warning("Cannot plan: module is in FAULT, call reset() first")
                 return None
-            self._state = ManipulationState.PLANNING
-        return robot[0], robot[1]
+            existing = self._planning_jobs.get(name)
+            if self._job_active_locked(existing):
+                logger.warning(f"Cannot plan: '{name}' already has an active planning job")
+                return None
+            if self._executing.get(name, False):
+                logger.warning(f"Cannot plan: '{name}' is currently executing")
+                return None
+            self._planned_paths.pop(name, None)
+            self._planned_trajectories.pop(name, None)
+            request_id = self._next_request_id
+            self._next_request_id += 1
+            self._planning_jobs[name] = PlanningJob(request_id=request_id, accepted_at=time.time())
+        return name, robot_id, request_id
+
+    def _clear_failed_plan_for_retry(self, robot_name: RobotName) -> bool:
+        """Clear one completed failed plan so an internal retry loop can continue.
+
+        This is intentionally narrower than reset(): it only applies to a
+        terminal failed planning job for one robot, and it does not clear active
+        planning or execution. Use it for algorithms where a failed plan is an
+        expected candidate rejection, such as pick() trying the next grasp pose.
+        """
+        with self._lock:
+            if self._executing.get(robot_name, False):
+                return False
+            job = self._planning_jobs.get(robot_name)
+            if job is None or self._job_active_locked(job) or job.success is not False:
+                return False
+
+            self._planning_jobs.pop(robot_name, None)
+            self._planned_paths.pop(robot_name, None)
+            self._planned_trajectories.pop(robot_name, None)
+            self._last_op_success.pop(robot_name, None)
+
+            has_remaining_planning_fault = any(s is False for s in self._last_op_success.values())
+            if self._state != ManipulationState.FAULT and not has_remaining_planning_fault:
+                self._state = ManipulationState.IDLE
+                self._error_message = ""
+            return True
 
     def _fail(self, msg: str) -> bool:
         """Set FAULT state with error message."""
@@ -436,57 +570,40 @@ class ManipulationModule(Module):
         self._error_message = msg
         return False
 
-    def _dismiss_preview(self, robot_id: WorldRobotID) -> None:
-        """Hide the preview ghost if the world supports it."""
-        if self._world_monitor is None:
-            return
-        world = self._world_monitor.world
-        if hasattr(world, "hide_preview"):
-            world.hide_preview(robot_id)
-            world.publish_visualization()
-
     @rpc
     def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
-        """Plan motion to pose. Use preview_path() then execute().
+        """Submit an async motion plan to a target pose. Returns True on accept.
+
+        Planning runs in the background. Use wait_for_planning_completion()
+        before preview_path() / execute().
 
         Args:
             pose: Target end-effector pose
             robot_name: Robot to plan for (required if multiple robots configured)
         """
-        if self._kinematics is None or (r := self._begin_planning(robot_name)) is None:
+        if self._kinematics is None:
+            logger.error("Planning not initialized")
             return False
-        robot_name, robot_id = r
-        assert self._world_monitor  # guaranteed by _begin_planning
-
-        current = self._world_monitor.get_current_joint_state(robot_id)
-        if current is None:
-            return self._fail("No joint state")
-
-        # Convert Pose to PoseStamped for the IK solver
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-
-        target_pose = PoseStamped(
-            frame_id="world",
-            position=pose.position,
-            orientation=pose.orientation,
+        if (r := self._begin_planning(robot_name)) is None:
+            return False
+        name, robot_id, request_id = r
+        logger.info(f"Plan-to-pose accepted for '{name}' (request_id={request_id})")
+        assert self._planning_pool is not None  # guaranteed by _begin_planning
+        future = self._planning_pool.submit(
+            self._planning_worker, name, robot_id, request_id, pose, None
         )
-
-        ik = self._kinematics.solve(
-            world=self._world_monitor.world,
-            robot_id=robot_id,
-            target_pose=target_pose,
-            seed=current,
-            check_collision=True,
-        )
-        if not ik.is_success() or ik.joint_state is None:
-            return self._fail(f"IK failed: {ik.status.name}")
-
-        logger.info(f"IK solved, error: {ik.position_error:.4f}m")
-        return self._plan_path_only(robot_name, robot_id, ik.joint_state)
+        with self._lock:
+            job = self._planning_jobs.get(name)
+            if job is not None and job.request_id == request_id:
+                job.future = future
+        return True
 
     @rpc
     def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
-        """Plan motion to joint config. Use preview_path() then execute().
+        """Submit an async motion plan to a joint configuration. Returns True on accept.
+
+        Planning runs in the background. Use wait_for_planning_completion()
+        before preview_path() / execute().
 
         Args:
             joints: Target joint state (names + positions)
@@ -494,53 +611,222 @@ class ManipulationModule(Module):
         """
         if (r := self._begin_planning(robot_name)) is None:
             return False
-        robot_name, robot_id = r
-        logger.info(f"Planning to joints for {robot_name}: {[f'{j:.3f}' for j in joints.position]}")
-        return self._plan_path_only(robot_name, robot_id, joints)
-
-    def _plan_path_only(
-        self, robot_name: RobotName, robot_id: WorldRobotID, goal: JointState
-    ) -> bool:
-        """Plan path from current position to goal, store result."""
-        assert self._world_monitor and self._planner  # guaranteed by _begin_planning
-        self._dismiss_preview(robot_id)
-        start = self._world_monitor.get_current_joint_state(robot_id)
-        if start is None:
-            return self._fail("No joint state")
-
-        # Trim goal to planner DOF (e.g. strip gripper joint from coordinator state)
-        planner_dof = len(start.position)
-        if len(goal.position) > planner_dof:
-            goal = JointState(
-                name=list(goal.name[:planner_dof]) if goal.name else [],
-                position=list(goal.position[:planner_dof]),
-            )
-
-        result = self._planner.plan_joint_path(
-            world=self._world_monitor.world,
-            robot_id=robot_id,
-            start=start,
-            goal=goal,
-            timeout=self.config.planning_timeout,
+        name, robot_id, request_id = r
+        logger.info(
+            f"Plan-to-joints accepted for '{name}' (request_id={request_id}): "
+            f"[{', '.join(f'{j:.3f}' for j in joints.position)}]"
         )
-        if not result.is_success():
-            return self._fail(f"Planning failed: {result.status.name}")
-
-        logger.info(f"Path: {len(result.path)} waypoints")
-        self._planned_paths[robot_name] = result.path
-
-        _, _, traj_gen = self._robots[robot_name]
-        # Convert JointState path to list of position lists for trajectory generator
-        traj = traj_gen.generate([list(state.position) for state in result.path])
-        self._planned_trajectories[robot_name] = traj
-        logger.info(f"Trajectory: {traj.duration:.3f}s")
-
-        self._state = ManipulationState.COMPLETED
+        assert self._planning_pool is not None  # guaranteed by _begin_planning
+        future = self._planning_pool.submit(
+            self._planning_worker, name, robot_id, request_id, None, joints
+        )
+        with self._lock:
+            job = self._planning_jobs.get(name)
+            if job is not None and job.request_id == request_id:
+                job.future = future
         return True
+
+    def _build_status(self, robot_name: RobotName, job: PlanningJob | None) -> dict[str, Any]:
+        """Caller must hold self._lock."""
+        if job is None:
+            return {
+                "robot_name": robot_name,
+                "request_id": None,
+                "active": False,
+                "accepted": False,
+                "done": False,
+                "success": None,
+                "error": None,
+                "duration_s": None,
+                "invalidated": False,
+            }
+        done = self._job_done_locked(job)
+        end_time = job.completed_at if job.completed_at is not None else time.time()
+        return {
+            "robot_name": robot_name,
+            "request_id": job.request_id,
+            "active": not done,
+            "accepted": True,
+            "done": done,
+            "success": job.success,
+            "error": job.error,
+            "duration_s": end_time - job.accepted_at,
+            "invalidated": job.invalidated,
+        }
+
+    @rpc
+    def get_planning_status(self, robot_name: RobotName | None = None) -> dict[str, Any]:
+        """Return per-robot planning job status.
+
+        With a robot_name, returns a single status dict for that robot.
+        With robot_name=None, returns a {robot_name: status_dict} map covering
+        every robot that has ever had a planning job submitted.
+        """
+        with self._lock:
+            if robot_name is not None:
+                return self._build_status(robot_name, self._planning_jobs.get(robot_name))
+            return {
+                name: self._build_status(name, job) for name, job in self._planning_jobs.items()
+            }
+
+    @rpc
+    def wait_for_planning_completion(
+        self, robot_name: RobotName | None = None, timeout: float | None = None
+    ) -> bool:
+        """Block until planning job(s) reach a terminal state.
+
+        Returns True iff every waited-on job completed within the timeout
+        (regardless of success). Check get_planning_status() or has_planned_path()
+        to distinguish success from planning failure.
+
+        With robot_name=None, timeout is a total wall-clock budget across all
+        currently-active robots, not per-robot.
+
+        Args:
+            robot_name: robot name to wait for
+            timeout: Max time to wait in seconds
+        """
+        with self._lock:
+            if robot_name is not None:
+                job = self._planning_jobs.get(robot_name)
+                futures = [job.future] if job is not None and job.future is not None else []
+            else:
+                futures = [j.future for j in self._planning_jobs.values() if j.future is not None]
+
+        if not futures:
+            return True
+
+        _, not_done = futures_wait(futures, timeout=timeout)
+        return not not_done
+
+    def _planning_worker(
+        self,
+        robot_name: RobotName,
+        robot_id: WorldRobotID,
+        request_id: int,
+        target_pose: Pose | None,
+        target_joints: JointState | None,
+    ) -> None:
+        """Run a planning job on the pool. Result is recorded via compare-and-store.
+
+        Lock-free against WorldMonitor (Drake scratch contexts handle isolation).
+        Only reacquires self._lock at the very end to publish the result.
+        """
+        try:
+            assert self._world_monitor is not None and self._planner is not None
+
+            # Hide any active preview for this robot before planning kicks off.
+            # Serialized inside WorldMonitor — the live world is not thread-safe.
+            self._world_monitor.dismiss_preview(robot_id)
+
+            start = self._world_monitor.get_current_joint_state(robot_id)
+            if start is None:
+                self._complete_job(robot_name, request_id, False, "No joint state", None, None)
+                return
+
+            if target_pose is not None:
+                assert self._kinematics is not None
+                from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+                ps = PoseStamped(
+                    frame_id="world",
+                    position=target_pose.position,
+                    orientation=target_pose.orientation,
+                )
+                ik = self._kinematics.solve(
+                    world=self._world_monitor.world,
+                    robot_id=robot_id,
+                    target_pose=ps,
+                    seed=start,
+                    check_collision=True,
+                )
+                if not ik.is_success() or ik.joint_state is None:
+                    self._complete_job(
+                        robot_name,
+                        request_id,
+                        False,
+                        f"IK failed: {ik.status.name}",
+                        None,
+                        None,
+                    )
+                    return
+                logger.info(f"IK solved for '{robot_name}', error: {ik.position_error:.4f}m")
+                goal = ik.joint_state
+            else:
+                assert target_joints is not None
+                goal = target_joints
+
+            # Trim goal to planner DOF (e.g. strip gripper joint from coordinator state)
+            planner_dof = len(start.position)
+            if len(goal.position) > planner_dof:
+                goal = JointState(
+                    name=list(goal.name[:planner_dof]) if goal.name else [],
+                    position=list(goal.position[:planner_dof]),
+                )
+
+            result = self._planner.plan_joint_path(
+                world=self._world_monitor.world,
+                robot_id=robot_id,
+                start=start,
+                goal=goal,
+                timeout=self.config.planning_timeout,
+            )
+            if not result.is_success():
+                self._complete_job(
+                    robot_name,
+                    request_id,
+                    False,
+                    f"Planning failed: {result.status.name}",
+                    None,
+                    None,
+                )
+                return
+
+            logger.info(f"Path for '{robot_name}': {len(result.path)} waypoints")
+            _, _, traj_gen = self._robots[robot_name]
+            traj = traj_gen.generate([list(state.position) for state in result.path])
+            logger.info(f"Trajectory for '{robot_name}': {traj.duration:.3f}s")
+
+            self._complete_job(robot_name, request_id, True, None, result.path, traj)
+        except Exception as e:
+            logger.exception(f"Planning worker error for '{robot_name}'")
+            self._complete_job(robot_name, request_id, False, str(e), None, None)
+
+    def _complete_job(
+        self,
+        robot_name: RobotName,
+        request_id: int,
+        success: bool,
+        error: str | None,
+        path: JointPath | None,
+        traj: JointTrajectory | None,
+    ) -> None:
+        """Compare-and-store completion. Drops the result if the job was
+        superseded by a newer accept or invalidated by reset().
+        """
+        with self._lock:
+            job = self._planning_jobs.get(robot_name)
+            if job is None or job.request_id != request_id or job.invalidated:
+                logger.info(
+                    f"Dropping planning result for '{robot_name}' "
+                    f"req={request_id} (superseded or invalidated)"
+                )
+                return
+            job.completed_at = time.time()
+            job.success = success
+            job.error = error
+            self._last_op_success[robot_name] = success
+            if success and path is not None and traj is not None:
+                self._planned_paths[robot_name] = path
+                self._planned_trajectories[robot_name] = traj
+            elif not success and error:
+                self._error_message = error
 
     @rpc
     def preview_path(self, duration: float = 3.0, robot_name: RobotName | None = None) -> bool:
         """Preview the planned path in the visualizer.
+
+        Rejects if a planning job is still in flight for this robot.
 
         Args:
             duration: Total animation duration in seconds
@@ -556,30 +842,43 @@ class ManipulationModule(Module):
             return False
         robot_name, robot_id, _, _ = robot
 
-        planned_path = self._planned_paths.get(robot_name)
-        if planned_path is None or len(planned_path) == 0:
-            logger.warning(f"No planned path to preview for {robot_name}")
-            return False
+        with self._lock:
+            job = self._planning_jobs.get(robot_name)
+            if self._job_active_locked(job):
+                logger.warning(f"Cannot preview: planning still active for '{robot_name}'")
+                return False
+            planned_path = self._planned_paths.get(robot_name)
+            if planned_path is None or len(planned_path) == 0:
+                logger.warning(f"No planned path to preview for {robot_name}")
+                return False
 
-        # Interpolate and animate
+        # Animate outside the lock — the WorldMonitor handles its own
+        # synchronization for visualization writes.
         interpolated = interpolate_path(planned_path, resolution=0.1)
         self._world_monitor.world.animate_path(robot_id, interpolated, duration)
         return True
 
     @rpc
-    def has_planned_path(self) -> bool:
-        """Check if there's a planned path ready.
+    def has_planned_path(self, robot_name: RobotName | None = None) -> bool:
+        """Check if a usable planned path exists for the given robot.
 
-        Returns:
-            True if a path is planned and ready
+        Returns False if a planning job is still in flight, since the stored
+        path (if any) reflects a stale prior plan that was cleared on accept.
+
+        Args:
+            robot_name: Robot to query (required if multiple robots configured)
         """
-        robot = self._get_robot()
+        robot = self._get_robot(robot_name)
         if robot is None:
             return False
         robot_name, _, _, _ = robot
 
-        path = self._planned_paths.get(robot_name)
-        return path is not None and len(path) > 0
+        with self._lock:
+            job = self._planning_jobs.get(robot_name)
+            if self._job_active_locked(job):
+                return False
+            path = self._planned_paths.get(robot_name)
+            return path is not None and len(path) > 0
 
     @rpc
     def get_visualization_url(self) -> str | None:
@@ -593,19 +892,26 @@ class ManipulationModule(Module):
         return self._world_monitor.get_visualization_url()
 
     @rpc
-    def clear_planned_path(self) -> bool:
-        """Clear the stored planned path.
+    def clear_planned_path(self, robot_name: RobotName | None = None) -> bool:
+        """Clear the stored planned path and trajectory for the given robot.
 
-        Returns:
-            True if cleared
+        Args:
+            robot_name: Robot whose stored plan to drop (required if multiple
+                robots configured).
         """
-        robot = self._get_robot()
+        robot = self._get_robot(robot_name)
         if robot is None:
             return False
         robot_name, _, _, _ = robot
-
-        self._planned_paths.pop(robot_name, None)
-        self._planned_trajectories.pop(robot_name, None)
+        with self._lock:
+            job = self._planning_jobs.get(robot_name)
+            if self._job_active_locked(job):
+                logger.warning(
+                    f"Cannot clear planned path: planning still active for '{robot_name}'"
+                )
+                return False
+            self._planned_paths.pop(robot_name, None)
+            self._planned_trajectories.pop(robot_name, None)
         return True
 
     @rpc
@@ -749,14 +1055,16 @@ class ManipulationModule(Module):
 
     @rpc
     def execute(self, robot_name: RobotName | None = None) -> bool:
-        """Execute planned trajectory via ControlCoordinator."""
+        """Ship the stored trajectory to the coordinator for execution.
+
+        Rejects if a planning job is still in flight or no trajectory is stored
+        for this robot. Sets self._executing[robot_name] during the brief
+        task_invoke accept window so cancel(robot_name) and aggregate
+        get_state() can see the EXECUTING state.
+        """
         if (robot := self._get_robot(robot_name)) is None:
             return False
         robot_name, _, config, _ = robot
-
-        if (traj := self._planned_trajectories.get(robot_name)) is None:
-            logger.warning("No planned trajectory")
-            return False
         if not config.coordinator_task_name:
             logger.error(f"No coordinator_task_name for '{robot_name}'")
             return False
@@ -764,21 +1072,55 @@ class ManipulationModule(Module):
             logger.error("No coordinator client")
             return False
 
-        translated = self._translate_trajectory_to_coordinator(traj, config)
-        logger.info(
-            f"Executing: task='{config.coordinator_task_name}', {len(translated.points)} pts, {translated.duration:.2f}s"
-        )
+        with self._lock:
+            if self._has_fault_locked():
+                logger.warning("Cannot execute: module is in FAULT, call reset() first")
+                return False
+            job = self._planning_jobs.get(robot_name)
+            if self._job_active_locked(job):
+                logger.warning(f"Cannot execute: planning still active for '{robot_name}'")
+                return False
+            traj = self._planned_trajectories.get(robot_name)
+            if traj is None:
+                logger.warning(f"No planned trajectory for '{robot_name}'")
+                return False
+            self._executing[robot_name] = True
 
-        self._state = ManipulationState.EXECUTING
-        result = client.task_invoke(
-            config.coordinator_task_name, "execute", {"trajectory": translated}
-        )
+        execution_error: str | None = None
+        try:
+            translated = self._translate_trajectory_to_coordinator(traj, config)
+            logger.info(
+                f"Executing '{robot_name}': task='{config.coordinator_task_name}', "
+                f"{len(translated.points)} pts, {translated.duration:.2f}s"
+            )
+            result = bool(
+                client.task_invoke(
+                    config.coordinator_task_name, "execute", {"trajectory": translated}
+                )
+            )
+        except Exception as e:
+            logger.exception(f"Execution request failed for '{robot_name}'")
+            result = False
+            execution_error = f"Execution request failed for '{robot_name}': {e}"
+
+        # Update execution and fault state together so observers never see a
+        # completed state after the coordinator has rejected or crashed.
+        with self._lock:
+            self._executing[robot_name] = False
+            self._last_op_success[robot_name] = bool(result)
+            if not result:
+                self._state = ManipulationState.FAULT
+                self._error_message = (
+                    execution_error or f"Coordinator rejected trajectory for '{robot_name}'"
+                )
         if result:
-            logger.info("Trajectory accepted")
-            self._state = ManipulationState.COMPLETED
+            logger.info(f"Trajectory accepted for '{robot_name}'")
             return True
+        if execution_error:
+            logger.warning(execution_error)
         else:
-            return self._fail("Coordinator rejected trajectory")
+            logger.warning(f"Coordinator rejected trajectory for '{robot_name}'")
+        return False
 
     @rpc
     def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
@@ -1003,15 +1345,45 @@ class ManipulationModule(Module):
             )
         return self._preview_execute_wait(robot_name)
 
+    def _wait_plan(self, robot_name: RobotName | None = None) -> str | None:
+        """Block on the in-flight planning job and validate its result.
+
+        Returns None on success, or an error string. Callers that want to
+        retry on planning failure (e.g. pick() iterating grasp candidates)
+        should use this directly; sites that always bail on failure can use
+        the bundled _preview_execute_wait().
+        """
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return "Error: Robot not found"
+        rname, _, _, _ = robot
+
+        plan_timeout = self.config.planning_timeout + 5.0
+        if not self.wait_for_planning_completion(rname, plan_timeout):
+            return f"Error: Planning timed out after {plan_timeout:.1f}s"
+        status = self.get_planning_status(rname)
+        if status.get("success") is not True:
+            err = status.get("error") or "unknown reason"
+            return f"Error: Planning failed — {err}"
+        return None
+
     def _preview_execute_wait(
         self, robot_name: RobotName | None = None, preview_duration: float = 0.5
     ) -> SkillResult[ManipulationSkillError]:
-        """Preview planned path, execute, and wait for completion.
+        """Wait for in-flight planning, then preview, execute, and wait for the trajectory.
+
+        Run this after plan_to_*() returns True (accepted): the planning job is
+        in flight, and this helper blocks until it finishes, then runs the rest
+        of the motion sequence. Idempotent w.r.t. the wait — if planning is
+        already done, the wait is a no-op.
 
         Args:
-            robot_name: Robot to operate on
-            preview_duration: Duration to animate the preview in Meshcat (seconds)
+            robot_name: Robot to operate on.
+            preview_duration: Duration to animate the preview in Meshcat (seconds).
         """
+        if (err := self._wait_plan(robot_name)) is not None:
+            return SkillResult.fail("PLANNING_FAILED", err)
+
         logger.info("Previewing trajectory...")
         self.preview_path(preview_duration, robot_name)
 
@@ -1269,6 +1641,12 @@ class ManipulationModule(Module):
             self._tf_stop_event.set()
             self._tf_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._tf_thread = None
+
+        # Drain planning pool before the WorldMonitor goes away — in-flight RRT/IK
+        # calls hold Drake contexts derived from the world.
+        if self._planning_pool is not None:
+            self._planning_pool.shutdown(wait=True, cancel_futures=True)
+            self._planning_pool = None
 
         # Stop world monitor (includes visualization thread)
         if self._world_monitor is not None:

@@ -147,12 +147,16 @@ This gives you an interactive Python prompt with these functions:
 | `joints(robot_name)` | Read current joint positions (7 floats) |
 | `ee(robot_name)` | Read current end-effector pose |
 | `state()` | Module state: `IDLE`, `PLANNING`, `EXECUTING`, `FAULT`, etc. |
-| `plan([q1..q7], robot_name)` | Plan a collision-free trajectory to a joint configuration |
-| `plan_pose(x, y, z, robot_name=...)` | Plan to a Cartesian EE pose (preserves current orientation) |
+| `plan([q1..q7], robot_name)` | Submit a joint plan — returns `True` if accepted (planning is async) |
+| `plan_pose(x, y, z, robot_name=...)` | Submit a Cartesian EE plan (preserves current orientation if rpy not given) |
+| `wait_plan(timeout, robot_name)` | Block until planning finishes; returns `True` on success |
+| `plan_status(robot_name)` | Per-robot job status dict (`done`, `success`, `error`, `duration_s`, ...) |
 | `preview(robot_name)` | Animate the planned path in Meshcat without executing |
 | `execute(robot_name)` | Send the planned trajectory to the coordinator |
 | `home(robot_name)` | Plan + execute to home joints |
 | `commands()` | Print all available functions |
+
+Planning is **asynchronous**: `plan()` / `plan_pose()` return `True` as soon as the request is accepted, not when planning finishes. Each robot has its own planner thread, so two arms can plan in parallel. Call `wait_plan()` before `preview()` / `execute()` — they will reject while planning is still in flight.
 
 #### Example session — simple joint moves
 
@@ -163,17 +167,23 @@ This gives you an interactive Python prompt with these functions:
 >>> joints(robot_name="left_arm")
 [0.02, -0.01, -0.13, 0.15, 0.17, -0.07, 0.10]
 
->>> # One-liner: plan → preview in Meshcat → execute on hardware
->>> plan([0.3, 0, 0, 0, 0, 0, 0], robot_name="left_arm") and preview(robot_name="left_arm") and execute(robot_name="left_arm")
+>>> # plan → wait for the planner → preview in Meshcat → execute on hardware
+>>> plan([0.3, 0, 0, 0, 0, 0, 0], robot_name="left_arm")   # accepts the request (async)
+True
+>>> wait_plan(robot_name="left_arm")                       # blocks until planning finishes
+True
+>>> preview(robot_name="left_arm") and execute(robot_name="left_arm")
 True
 
 >>> joints(robot_name="left_arm")
 [0.30, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]   # arm is now at the commanded pose
 ```
 
-`plan()` returns `True` on success, `False` if planning failed (check the coordinator terminal for `COLLISION_AT_GOAL`, `INVALID_START`, `NO_SOLUTION`, etc). The `and` chaining is an idiom — if any step fails, the next one is short-circuited.
+`plan()` returns `True` once the request is **accepted**, not once planning finishes. `wait_plan()` returns `True` only if the plan succeeded — on failure, check `plan_status(robot_name)["error"]` or the coordinator terminal for `COLLISION_AT_GOAL`, `INVALID_START`, `NO_SOLUTION`, etc. `preview()` / `execute()` will reject while a plan is still in flight, so always `wait_plan()` first.
 
-If you ever get stuck in a `FAULT` state (e.g. an invalid plan was sent), reset the state machine:
+Planning and execution failures are treated as module-wide faults. In a bimanual sequence, if either arm fails to plan or the coordinator rejects a trajectory, `state()` reports `FAULT` and new plans for both arms are blocked until reset. This keeps the two-arm workflow from continuing from a partial plan.
+
+If you ever get stuck in a `FAULT` state, reset the state machine:
 
 ```python skip
 >>> _client.reset()
@@ -183,20 +193,28 @@ If you ever get stuck in a `FAULT` state (e.g. an invalid plan was sent), reset 
 #### Example session — bimanual
 
 ```python skip
->>> # Move both arms to mirrored poses
->>> plan([0.5, 0, 0, 0, 0, 0, 0], robot_name="left_arm") and execute(robot_name="left_arm")
+>>> # Plan both arms concurrently, then execute once both are ready
+>>> plan([0.5, 0, 0, 0, 0, 0, 0], robot_name="left_arm")   # accepted immediately
 True
->>> plan([-0.5, 0, 0, 0, 0, 0, 0], robot_name="right_arm") and execute(robot_name="right_arm")
+>>> plan([-0.5, 0, 0, 0, 0, 0, 0], robot_name="right_arm") # planned in parallel with left_arm
+True
+>>> wait_plan()                                            # waits on every active plan
+True
+>>> execute(robot_name="left_arm") and execute(robot_name="right_arm")
 True
 ```
 
-Each arm plans and executes independently — the coordinator runs both trajectories simultaneously on separate tick-loop tasks.
+Each arm has its own planner thread and its own coordinator task, so the two plans run in parallel and the two trajectories execute simultaneously.
+
+If `wait_plan()` returns `False` in a bimanual flow, inspect `plan_status()` before resetting; one arm may have succeeded while the other failed, but the module intentionally requires `reset()` before any further planning.
 
 #### Example session — Cartesian target
 
 ```python skip
 >>> ee(robot_name="left_arm")           # see where the EE currently is
->>> plan_pose(0.1, 0.3, 0.5, robot_name="left_arm") and preview(robot_name="left_arm")
+>>> plan_pose(0.1, 0.3, 0.5, robot_name="left_arm")
+True
+>>> wait_plan(robot_name="left_arm") and preview(robot_name="left_arm")
 True
 >>> execute(robot_name="left_arm")
 True
@@ -210,6 +228,9 @@ If you don't know which Cartesian targets are reachable, check first with the wo
 >>> add_box("table", 0.4, 0.0, 0.1, w=0.6, h=0.4, d=0.05)  # rectangular obstacle
 >>> add_sphere("ball", 0.3, 0.2, 0.4, radius=0.05)
 >>> plan_pose(0.4, 0.0, 0.3, robot_name="left_arm")         # now plans around it
+True
+>>> wait_plan(robot_name="left_arm")                        # check the plan succeeded
+True
 >>> remove("table")                                          # id returned by add_*
 ```
 

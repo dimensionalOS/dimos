@@ -587,15 +587,22 @@ then refreshes perception obstacles.
 
             logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
             if not self.plan_to_pose(pre_grasp_pose, rname):
-                logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
-                continue  # Try next candidate
+                logger.info(f"Grasp candidate {i + 1} approach rejected, trying next")
+                continue
+            # Wait for the async planner before committing to this candidate —
+            # planning may still fail after acceptance (collision, IK).
+            plan_err = self._wait_plan(rname)
+            if plan_err:
+                logger.info(f"Grasp candidate {i + 1} {plan_err}, trying next")
+                self._clear_failed_plan_for_retry(rname)
+                continue
 
             # 3. Open gripper before approach
             logger.info("Opening gripper...")
             self._set_gripper_position(0.85, rname)
             time.sleep(0.5)
 
-            # 4. Execute approach to pre-grasp
+            # 4. Execute approach to pre-grasp (planning already validated)
             exec_result = self._preview_execute_wait(rname)
             if not exec_result.is_success():
                 return exec_result

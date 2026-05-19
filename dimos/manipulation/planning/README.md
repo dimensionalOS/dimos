@@ -20,7 +20,8 @@ In the interactive client:
 ```python
 commands()              # List available commands
 joints()                # Get current joint positions
-plan([0.1] * 7)         # Plan to target
+plan([0.1] * 7)         # Submit a plan (returns True if accepted; planning is async)
+wait_plan()             # Block until planning finishes; True iff it succeeded
 preview()               # Preview in Meshcat (url() for link)
 execute()               # Execute via coordinator
 ```
@@ -82,7 +83,10 @@ module = ManipulationModule(
     kinematics_name="drake_optimization", # Or "jacobian"
 )
 module.start()
+# plan_to_joints / plan_to_pose return True on accept — planning runs on a
+# per-robot worker thread. Wait for completion before previewing/executing.
 module.plan_to_joints([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
+module.wait_for_planning_completion(timeout=30.0)
 module.execute()  # Sends to coordinator
 ```
 

@@ -428,6 +428,19 @@ class WorldMonitor:
         if hasattr(self._world, "publish_visualization"):
             self._world.publish_visualization()
 
+    def dismiss_preview(self, robot_id: WorldRobotID) -> None:
+        """Hide the preview ghost for a robot and publish viz update.
+
+        Serialized under the WorldMonitor lock — the live world mutates
+        non-scratch state, so concurrent planners must not call hide_preview
+        or publish_visualization unsynchronized.
+        """
+        with self._lock:
+            if hasattr(self._world, "hide_preview"):
+                self._world.hide_preview(robot_id)
+                if hasattr(self._world, "publish_visualization"):
+                    self._world.publish_visualization()
+
     def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
         """Start background thread for visualization updates at given rate."""
         if self._viz_thread is not None and self._viz_thread.is_alive():
