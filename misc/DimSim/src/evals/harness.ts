@@ -145,7 +145,7 @@ export class EvalHarness {
     if (this.channel && cmd.channel && cmd.channel !== this.channel) return;
     switch (cmd.type) {
       case "runEval":
-        await this.runEval(cmd.workflowUrl);
+        await this._loadAndRunWorkflowFile(cmd.workflowUrl);
         break;
       case "ping":
         this._send({ type: "pong", ts: Date.now() });
@@ -153,49 +153,68 @@ export class EvalHarness {
     }
   }
 
-  // ── Public entry point ─────────────────────────────────────────────────────
+  /**
+   * WS-driven entry: dynamic-import a workflow file.  The file's top-level
+   * `await runEval({...})` (via the `@dimsim/eval` import map) calls
+   * `this.runEval(workflow)` and sends the result WS message itself.  We
+   * just await the import — when it resolves the eval is done.
+   */
+  async _loadAndRunWorkflowFile(workflowUrl: string): Promise<void> {
+    try {
+      const cacheBust = `?t=${Date.now()}`;
+      await import(/* @vite-ignore */ workflowUrl + cacheBust);
+    } catch (e: any) {
+      console.error(`[eval] failed to import ${workflowUrl}:`, e);
+      this._send({
+        type: "evalResult", workflowUrl, scene: "", task: "",
+        passed: false, reason: `import failed: ${e?.message ?? e}`,
+        durationMs: 0,
+      });
+    }
+  }
+
+  // ── Public entry point (called by workflow files via @dimsim/eval) ─────────
 
   /**
-   * Load a workflow module and run it to completion.  Resolves with the
-   * result message (also sent over WS for the runner).
+   * Run a workflow object end-to-end.  Workflow files do:
+   *
+   *     import { runEval } from '@dimsim/eval';
+   *     await runEval({ scene, task, success, … });
+   *
+   * That import resolves to public/_dimsim/eval-api.js which delegates to
+   * this method via `window.__dimsim.eval.runEval`.  Result is both
+   * returned to the caller AND sent over WS as `{type:'evalResult'}` for
+   * the Deno runner.
    */
-  async runEval(workflowUrl: string): Promise<EvalResultMsg> {
+  async runEval(workflow: EvalWorkflow): Promise<EvalResultMsg> {
+    if (!workflow || typeof workflow.success !== "function") {
+      const msg = "runEval(workflow) requires { scene, task, success() }";
+      console.error(`[eval] ${msg}`);
+      return this._fail("", "", "", msg);
+    }
+    const tag = `${workflow.scene ?? "?"}/${workflow.task}`;
     if (this._activeUrl) {
       const err = `another eval is already running: ${this._activeUrl}`;
       console.warn(`[eval] ${err}`);
-      return this._fail(workflowUrl, "", "", err);
+      return this._fail("", workflow.scene, workflow.task, err);
     }
-    this._activeUrl = workflowUrl;
+    this._activeUrl = tag;
 
-    let wf: EvalWorkflow;
-    try {
-      const cacheBust = `?t=${Date.now()}`;
-      const mod = await import(/* @vite-ignore */ workflowUrl + cacheBust);
-      wf = mod.default;
-      if (!wf || typeof wf.success !== "function") {
-        throw new Error("workflow module must default-export { scene, task, success() }");
-      }
-    } catch (e: any) {
-      console.error(`[eval] failed to load ${workflowUrl}:`, e);
-      this._activeUrl = null;
-      return this._fail(workflowUrl, "", "", `load failed: ${e?.message ?? e}`);
-    }
-
-    console.log(`[eval] running: ${workflowUrl} — "${wf.task}"`);
-    this._showOverlay(wf.task, wf.timeoutSec ?? 120);
+    console.log(`[eval] running: ${tag}`);
+    this._showOverlay(workflow.task, workflow.timeoutSec ?? 120);
 
     const start = Date.now();
-    const timeoutMs = (wf.timeoutSec ?? 120) * 1000;
+    const timeoutMs = (workflow.timeoutSec ?? 120) * 1000;
     const ctx = this._makeContext();
 
-    if (wf.startPose) ctx.setAgentPose(wf.startPose);
-    if (wf.setup) {
-      try { await wf.setup(ctx); }
+    if (workflow.startPose) ctx.setAgentPose(workflow.startPose);
+    if (workflow.setup) {
+      try { await workflow.setup(ctx); }
       catch (e: any) {
         const reason = `setup() threw: ${e?.message ?? e}`;
         console.error(`[eval] ${reason}`);
         this._activeUrl = null;
-        return this._fail(workflowUrl, wf.scene, wf.task, reason, Date.now() - start);
+        return this._fail("", workflow.scene, workflow.task, reason, Date.now() - start);
       }
     }
 
@@ -204,17 +223,16 @@ export class EvalHarness {
         const elapsed = Date.now() - start;
         let result: EvalSuccess;
         try {
-          result = wf.success(this._makeContext());
+          result = workflow.success(this._makeContext());
         } catch (e: any) {
           result = { passed: false, reason: `success() threw: ${e?.message ?? e}` };
         }
-
         if (result.passed) {
-          this._finish(workflowUrl, wf, true, result, elapsed, resolve);
+          this._finish(workflow, true, result, elapsed, resolve);
           return;
         }
         if (elapsed >= timeoutMs) {
-          this._finish(workflowUrl, wf, false, { passed: false, ...result, reason: result.reason ?? "timeout" }, elapsed, resolve);
+          this._finish(workflow, false, { passed: false, ...result, reason: result.reason ?? "timeout" }, elapsed, resolve);
           return;
         }
         setTimeout(tick, 250);
@@ -253,13 +271,13 @@ export class EvalHarness {
   }
 
   _finish(
-    workflowUrl: string, wf: EvalWorkflow, passed: boolean,
+    wf: EvalWorkflow, passed: boolean,
     result: EvalSuccess, durationMs: number,
     resolve: (msg: EvalResultMsg) => void,
   ): void {
     const msg: EvalResultMsg = {
       type: "evalResult",
-      workflowUrl,
+      workflowUrl: "",
       scene: wf.scene,
       task: wf.task,
       passed,

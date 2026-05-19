@@ -8,6 +8,12 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- Import map so eval workflows can `import { runEval } from '@dimsim/eval'`.
+         The proxy module under public/_dimsim/ waits for the engine to expose
+         `window.__dimsim.eval.runEval` then delegates. -->
+    <script type="importmap">
+    { "imports": { "@dimsim/eval": "/_dimsim/eval-api.js" } }
+    </script>
   </head>
   <body>
     <!-- Force sim mode before main.js loads -->

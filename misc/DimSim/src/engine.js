@@ -7587,6 +7587,12 @@ if (dimosMode) {
         },
       });
       window.__evalHarness = evalHarness;
+      // Expose runEval(workflow) so workflow files imported from
+      // `@dimsim/eval` (via the import map → public/_dimsim/eval-api.js)
+      // can drive evaluations directly with top-level await.
+      window.__dimsim = window.__dimsim || {};
+      window.__dimsim.eval = { runEval: (wf) => evalHarness.runEval(wf) };
+      window.dispatchEvent(new Event('dimsim-eval-ready'));
 
       // Scene editor — script execution engine for sim editing (exec_js API)
       const { SceneEditor } = await import("./sceneEditor.ts");
