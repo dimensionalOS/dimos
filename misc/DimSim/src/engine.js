@@ -3,19 +3,9 @@ import "./style.css";
 import * as THREE from "three";
 import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
 import { AiAvatar } from "./AiAvatar.js";
-import { ACTIONS as SIM_VLM_ACTIONS, DEFAULTS as SIM_VLM_DEFAULTS } from "./ai/sim/vlmActions.js";
-import { buildPrompt as buildSimVlmPrompt } from "./ai/sim/vlmPrompt.js";
-import { MODEL_CONFIG } from "./ai/modelConfig.js";
-import { requestVlmDecision } from "./ai/vlmClient.js";
-import { captureAgentPovBase64, processPendingCaptures, hasPendingCapture } from "./ai/visionCapture.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-
-const ACTIVE_VLM_ACTIONS = SIM_VLM_ACTIONS;
-const ACTIVE_VLM_DEFAULTS = SIM_VLM_DEFAULTS;
-const buildActiveVlmPrompt = () => buildSimVlmPrompt({ actions: ACTIVE_VLM_ACTIONS });
-const resolveActiveVlmModel = () => MODEL_CONFIG.simMode;
 
 let threeRendererRef = null;
 let threeSceneRef = null;
@@ -5577,11 +5567,7 @@ function despawnEphemeralAgents(reason = "task-end") {
 }
 
 function createAiAgent({ ephemeral = false, avatarUrl } = {}) {
-  const endpoint = localStorage.getItem("sparkWorldVlmEndpoint") || "/vlm/decision";
-  const model = resolveActiveVlmModel();
-  const nearbyRange = 2.5;
   const id = `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  let agentRef = null;
   const _avatarUrl = avatarUrl !== undefined
     ? avatarUrl
     : ["/agent-model/unitree_go2.glb", "/agent-model/robot.glb"];
@@ -5598,155 +5584,7 @@ function createAiAgent({ ephemeral = false, avatarUrl } = {}) {
     walkSpeed: 2.0,
     // Headless mode in dimos: skip visual rendering, keep colliders for physics
     headless: false,
-    vlm: {
-      // In dimos mode, VLM is disabled — agent pose is driven externally via /odom.
-      // Ephemeral workers auto-enable; manually spawned agents start idle.
-      enabled: dimosMode ? false : true,
-      showSpeechBubbleInScene: false,
-      holdPositionWhenIdle: true,
-      endpoint,
-      model,
-      getModel: resolveActiveVlmModel,
-      actions: ACTIVE_VLM_ACTIONS,
-      buildPrompt: () => buildActiveVlmPrompt(),
-      request: requestVlmDecision,
-      captureBase64: async (a) => {
-        // If a sensor mode is active (RGB-D, LiDAR, Compare), capture the
-        // on-screen view which already renders in that mode via renderActiveView.
-        if (simSensorViewMode !== "rgb" || simCompareView) {
-          const [ax, ay, az] = a.getPosition?.() || [0, 0, 0];
-          const yaw = a.group?.rotation?.y ?? 0;
-          const pitch = typeof a.pitch === "number" ? a.pitch : 0;
-          const cp = Math.cos(pitch), sp = Math.sin(pitch);
-          const eyeY = ay + PLAYER_EYE_HEIGHT * 0.9;
-          const prevPos = camera.position.clone();
-          const prevQuat = camera.quaternion.clone();
-          camera.position.set(ax, eyeY, az);
-          camera.lookAt(ax + Math.sin(yaw) * cp, eyeY + sp, az + Math.cos(yaw) * cp);
-          camera.updateProjectionMatrix();
-          camera.updateMatrixWorld(true);
-          renderActiveView();
-          const dataUrl = renderer.domElement.toDataURL("image/jpeg", 0.8);
-          camera.position.copy(prevPos);
-          camera.quaternion.copy(prevQuat);
-          camera.updateProjectionMatrix();
-          camera.updateMatrixWorld(true);
-          const idx = dataUrl.indexOf("base64,");
-          return idx !== -1 ? dataUrl.slice(idx + 7) : null;
-        }
-        return captureAgentPovBase64({
-          agent: a,
-          renderer,
-          scene,
-          mainCamera: camera,
-          width: 960,
-          height: 432,
-          eyeHeight: PLAYER_EYE_HEIGHT * 0.9,
-          fov: camera.fov,
-          near: camera.near,
-          far: camera.far,
-          headLamp: null,
-          jpegQuality: 0.8,
-        });
-      },
-      decideEverySteps: ACTIVE_VLM_DEFAULTS.decideEverySteps,
-      stepMeters: ACTIVE_VLM_DEFAULTS.stepMeters,
-      getTask: () => ({ ..._getAgentTask(id) }),
-      getNearbyAssets: (a) => getNearbyAssetsForAgent(a, nearbyRange),
-      getNearbyPrimitives: (a) => getNearbyPrimitivesForAgent(a, nearbyRange),
-      isEditorMode: () => false,
-      interactAsset: ({ agent: a, assetId, actionId }) => agentInteractAsset({ agent: a, assetId, actionId }),
-      pickUpAsset: ({ agent: a, assetId }) => agentPickUpAsset(a, assetId),
-      dropAsset: ({ agent: a }) => agentDropAsset(a),
-      getHeldAsset: (a) => getAgentHeldAsset(a),
-      onCapture: (base64) => {
-        const id = agentRef?.id || "";
-        const s = getOrCreateAgentInspectorState(id);
-        s.shot = base64 || "";
-        if (!selectedAgentInspectorId) selectedAgentInspectorId = id;
-        if (selectedAgentInspectorId === id) agentUiSetShot(base64);
-      },
-      onRequest: ({ endpoint: ep, model: m, prompt, context, imageBase64, messages }) => {
-        const id = agentRef?.id || "";
-        const req = {
-          endpoint: ep,
-          model: m,
-          prompt,
-          context,
-          imageBytes: imageBase64 ? Math.floor((imageBase64.length * 3) / 4) : null,
-          messages,
-        };
-        const s = getOrCreateAgentInspectorState(id);
-        s.request = req;
-        if (!selectedAgentInspectorId) selectedAgentInspectorId = id;
-        if (selectedAgentInspectorId === id) renderAgentInspector(id);
-        agentUiPush(`${new Date().toLocaleTimeString()}\nREQUEST ${m}\n${ep}\nagent=${id}`);
-      },
-      onResponse: ({ raw, parsed }) => {
-        const id = agentRef?.id || "";
-        const resp = { raw, parsed };
-        const s = getOrCreateAgentInspectorState(id);
-        s.response = resp;
-        if (!selectedAgentInspectorId) selectedAgentInspectorId = id;
-        if (selectedAgentInspectorId === id) agentUiSetResponse(resp);
-        const action = typeof parsed?.action === "string" ? parsed.action : "";
-        agentUiPush(`${new Date().toLocaleTimeString()}\nRESPONSE\n${action}\nagent=${id}`);
-      },
-      onActionApplied: ({ action, params, plan }) => {
-        const id = agentRef?.id || "";
-        agentUiPush(
-          `${new Date().toLocaleTimeString()}\nAPPLY ${action}\nparams=${JSON.stringify(params || {})}\nplan=${JSON.stringify(plan || {})}\nagent=${id}`
-        );
-      },
-      onTaskFinished: ({ summary }) => {
-        const agent = agentRef;
-        const summaryText = String(summary || "").trim();
-        agentUiPush(`${new Date().toLocaleTimeString()}\nTASK FINISH${agent ? ` [${agent.id}]` : ""}\n${summaryText}`);
-
-        // End this specific agent's task
-        if (agent) {
-          const task = _agentTasks.get(agent.id);
-          if (task) {
-            task.active = false;
-            task.finishedAt = Date.now();
-            task.finishedReason = "model";
-            task.lastSummary = summaryText;
-          }
-        }
-
-        // Auto-despawn if ephemeral or configured to despawn after task
-        const shouldDespawn =
-          agent &&
-          (agent._ephemeral === true || agent._autoDespawnAfterTask === true);
-        if (shouldDespawn) {
-          _agentTasks.delete(agent.id);
-          removeAiAgent(agent, "task-complete");
-        }
-
-        // Check if any agents still have active tasks
-        const anyActive = [..._agentTasks.values()].some((t) => t.active);
-        if (!anyActive) {
-          agentTask.active = false;
-          agentTask.finishedAt = Date.now();
-          agentTask.finishedReason = "model";
-          agentTask.lastSummary = summaryText;
-          disableAgentCameraFollow();
-        }
-        renderAgentTaskUi();
-      },
-      onError: (err) => {
-        const id = agentRef?.id || "";
-        agentUiPush(`${new Date().toLocaleTimeString()}\nERROR\n${String(err?.message || err)}\nagent=${id}`);
-      },
-      onDecision: (d) => {
-        const thought = typeof d?.thought === "string" ? d.thought : "";
-        const action = typeof d?.action === "string" ? d.action : "";
-        const id = agentRef?.id || "";
-        agentUiPush(`${new Date().toLocaleTimeString()}\nDECISION\n${thought}\n${action}\nagent=${id}`);
-      },
-    },
   });
-  agentRef = agent;
   agent._ephemeral = !!ephemeral;
   // Manually spawned editor agents should clean themselves up after task completion.
   agent._autoDespawnAfterTask = true;
@@ -6966,15 +6804,6 @@ function tick() {
       //   bridge._publishImages();
       // }
     }
-  }
-
-  // Agent vision captures
-  if (hasPendingCapture()) {
-    processPendingCaptures().then(() => {
-      renderActiveView();
-      requestAnimationFrame(tick);
-    });
-    return;
   }
 
   renderActiveView();
