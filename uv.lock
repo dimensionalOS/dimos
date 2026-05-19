@@ -51,8 +51,11 @@ overrides = [
 
 [[package]]
 name = "a750-control"
-version = "0.0.0"
-source = { git = "https://github.com/adob/a750_control.git?rev=7153e271317e22b4aa55ac1186c0f0e4903e8f39#7153e271317e22b4aa55ac1186c0f0e4903e8f39" }
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/77/d46aa63e746dce7773b47c67533b4ef9c25aa8160d71d5e1a278a0ee8be6/a750_control-0.1.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1bba463c7258ab05cf652b26771f4f0715d795f6f67c9697448c0028301c0f4a", size = 22981212, upload-time = "2026-05-19T21:37:53.29Z" },
+]
 
 [[package]]
 name = "absl-py"
@@ -1896,6 +1899,7 @@ agents = [
     { name = "sounddevice" },
 ]
 all = [
+    { name = "a750-control" },
     { name = "anthropic" },
     { name = "catkin-pkg" },
     { name = "cerebras-cloud-sdk" },
@@ -2351,7 +2355,7 @@ tests-self-hosted = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a750-control", marker = "extra == 'manipulation'", git = "https://github.com/adob/a750_control.git?rev=7153e271317e22b4aa55ac1186c0f0e4903e8f39" },
+    { name = "a750-control", marker = "extra == 'manipulation'" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "anthropic", marker = "extra == 'agents'", specifier = ">=0.19.0" },
     { name = "bleak", specifier = ">=3.0.2" },
@@ -6272,6 +6276,7 @@ resolution-markers = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/82/6c/90d3f532f608a03a13c1d6c16c266ffa3828e8011b1549d3b61db2ad59f5/nvidia_cublas_cu12-12.9.1.4-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:7a950dae01add3b415a5a5cdc4ec818fb5858263e9cca59004bb99fdbbd3a5d6", size = 575006342, upload-time = "2025-06-05T20:04:16.902Z" },
+    { url = "https://files.pythonhosted.org/packages/77/3c/aa88abe01f3be3d1f8f787d1d33dc83e76fec05945f9a28fbb41cfb99cd5/nvidia_cublas_cu12-12.9.1.4-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:453611eb21a7c1f2c2156ed9f3a45b691deda0440ec550860290dc901af5b4c2", size = 581242350, upload-time = "2025-06-05T20:04:51.979Z" },
     { url = "https://files.pythonhosted.org/packages/45/a1/a17fade6567c57452cfc8f967a40d1035bb9301db52f27808167fbb2be2f/nvidia_cublas_cu12-12.9.1.4-py3-none-win_amd64.whl", hash = "sha256:1e5fee10662e6e52bd71dec533fbbd4971bb70a5f24f3bc3793e5c2e9dc640bf", size = 553153899, upload-time = "2025-06-05T20:13:35.556Z" },
 ]
 
@@ -6334,6 +6339,7 @@ resolution-markers = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/e0/0279bd94539fda525e0c8538db29b72a5a8495b0c12173113471d28bce78/nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:83469a846206f2a733db0c42e223589ab62fd2fabac4432d2f8802de4bded0a4", size = 3515012, upload-time = "2025-06-05T20:00:35.519Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/46/a92db19b8309581092a3add7e6fceb4c301a3fd233969856a8cbf042cd3c/nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:25bba2dfb01d48a9b59ca474a1ac43c6ebf7011f1b0b8cc44f54eb6ac48a96c3", size = 3493179, upload-time = "2025-06-05T20:00:53.735Z" },
     { url = "https://files.pythonhosted.org/packages/59/df/e7c3a360be4f7b93cee39271b792669baeb3846c58a4df6dfcf187a7ffab/nvidia_cuda_runtime_cu12-12.9.79-py3-none-win_amd64.whl", hash = "sha256:8e018af8fa02363876860388bd10ccb89eb9ab8fb0aa749aaf58430a9f7c4891", size = 3591604, upload-time = "2025-06-05T20:11:17.036Z" },
 ]
 
