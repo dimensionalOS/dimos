@@ -164,21 +164,23 @@ class MultiTBuffer:
 
         return None
 
-    def get(self, *args, **kwargs) -> Transform | None:  # type: ignore[no-untyped-def]
-        simple = self.get_transform(*args, **kwargs)
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> Transform | None:
+        simple = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
 
         if simple is not None:
             return simple
 
-        complex = self.get_transform_search(*args, **kwargs)
+        complex = self.get_transform_search(parent_frame, child_frame, time_point, time_tolerance)
 
         if complex is None:
-            parent_frame = args[0] if len(args) > 0 else kwargs.get("parent_frame", "?")
-            child_frame = args[1] if len(args) > 1 else kwargs.get("child_frame", "?")
-            time_point = args[2] if len(args) > 2 else kwargs.get("time_point") or time.time()
-
             logger.warning(
-                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point)}', {self}"
+                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}', {self}"
             )
             return None
 
