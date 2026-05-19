@@ -7127,12 +7127,13 @@ if (dimosMode) {
 
       // 4. Spawn player + agent based on scene config
       spawnPlayerInsideScene();
-      const _hasEmbodiment = sceneCfg.embodiment != null;
-      const agent = createAiAgent({
-        ephemeral: false,
-        avatarUrl: _hasEmbodiment ? undefined : [],
-      });
-      if (!_hasEmbodiment && agent.group) agent.group.visible = false;
+      // In dimos mode the agent is always driven by an external Python process,
+      // so an embodiment visual is always wanted.  Scenes return `embodiment:
+      // null` because they don't want to dictate the model — let createAiAgent's
+      // default avatarUrl (the dimsim_unitree_stub.glb) take over.  The legacy
+      // "hide the group when no embodiment" path predates dimos integration and
+      // is no longer reached here.
+      const agent = createAiAgent({ ephemeral: false });
       aiAgents.push(agent);
       sceneApi._setAgent(agent);
       const spawnPos = sceneCfg.spawnPoint || { x: 2, y: 0.5, z: 3 };
