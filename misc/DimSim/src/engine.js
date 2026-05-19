@@ -5563,7 +5563,7 @@ function createAiAgent({ ephemeral = false, avatarUrl } = {}) {
   const id = `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const _avatarUrl = avatarUrl !== undefined
     ? avatarUrl
-    : ["/agent-model/unitree_go2.glb", "/agent-model/robot.glb"];
+    : ["/agent-model/dimsim_unitree_stub.glb"];
   const agent = new AiAvatar({
     id,
     scene,
