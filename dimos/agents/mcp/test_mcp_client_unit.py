@@ -229,3 +229,69 @@ def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
     assert isinstance(meta, dict)
     token = meta["progressToken"]
     assert isinstance(token, str) and len(token) > 0
+
+
+def test_mcp_tool_call_records_structured_skill_outcome(mcp_client: McpClient) -> None:
+    """When the outcome store is available, agent tool calls are recorded."""
+    calls: list[dict[str, object]] = []
+
+    def fake_request(method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        assert params is not None
+        calls.append(params)
+        if params["name"] == "navigate_with_text":
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "success": False,
+                                "message": "No matching location found",
+                                "error_code": "EXECUTION_FAILED",
+                                "duration_ms": 12.0,
+                            }
+                        ),
+                    }
+                ]
+            }
+        if params["name"] == "record_skill_outcome":
+            return {"content": [{"type": "text", "text": "recorded"}]}
+        raise AssertionError(f"Unexpected tool call: {params['name']}")
+
+    mcp_client._mcp_request = fake_request
+    mcp_client._tool_registry = {
+        "navigate_with_text": {},
+        "record_skill_outcome": {},
+    }
+
+    result = mcp_client._mcp_tool_call("navigate_with_text", {"query": "kitchen"})
+
+    assert result["content"][0]["type"] == "text"
+    assert [call["name"] for call in calls] == ["navigate_with_text", "record_skill_outcome"]
+    record_args = calls[1]["arguments"]
+    assert isinstance(record_args, dict)
+    assert record_args["skill_name"] == "navigate_with_text"
+    assert record_args["success"] is False
+    assert record_args["domain"] == "navigation"
+    assert record_args["error_code"] == "EXECUTION_FAILED"
+    assert record_args["risk"] == "medium"
+
+
+def test_mcp_tool_call_skips_layer_3_internal_outcome_recording(mcp_client: McpClient) -> None:
+    """Layer 3 support tools should not pollute the skill-outcome store."""
+    calls: list[dict[str, object]] = []
+
+    def fake_request(method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        assert params is not None
+        calls.append(params)
+        return {"content": [{"type": "text", "text": "context"}]}
+
+    mcp_client._mcp_request = fake_request
+    mcp_client._tool_registry = {
+        "get_context": {},
+        "record_skill_outcome": {},
+    }
+
+    mcp_client._mcp_tool_call("get_context", {"task": "go to the kitchen"})
+
+    assert [call["name"] for call in calls] == ["get_context"]

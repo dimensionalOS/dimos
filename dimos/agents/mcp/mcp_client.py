@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from collections.abc import Callable
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
@@ -39,6 +40,36 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
+
+_RECORD_TOOL_NAME = "record_skill_outcome"
+_OUTCOME_SKIP_TOOLS = frozenset(
+    {
+        "get_context",
+        "route_task",
+        "predict_skill_outcome",
+        "record_skill_outcome",
+        "summarize_skill_outcomes",
+        "server_status",
+        "list_modules",
+        "agent_send",
+    }
+)
+_TOOL_DOMAINS = {
+    "navigate_with_text": "navigation",
+    "stop_navigation": "navigation",
+    "relative_move": "robot_motion",
+    "execute_sport_command": "robot_motion",
+    "follow_person": "person_follow",
+    "stop_following": "person_follow",
+    "look_out_for": "perception",
+    "stop_looking_out": "perception",
+    "tag_location": "memory",
+    "start_security_patrol": "security",
+    "stop_security_patrol": "security",
+    "speak": "speech",
+    "wait": "utility",
+    "current_time": "utility",
+}
 
 
 class McpClientConfig(ModuleConfig):
@@ -104,16 +135,56 @@ class McpClient(Module):
         result: dict[str, Any] = data.get("result")
         return result
 
-    def _mcp_tool_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _mcp_tool_call(
+        self, name: str, arguments: dict[str, Any], record_outcome: bool = True
+    ) -> dict[str, Any]:
         progress_token = str(uuid.uuid4())
-        return self._mcp_request(
-            "tools/call",
+        try:
+            result = self._mcp_request(
+                "tools/call",
+                {
+                    "name": name,
+                    "arguments": arguments,
+                    "_meta": {"progressToken": progress_token},
+                },
+            )
+        except Exception as exc:
+            if record_outcome:
+                self._record_tool_exception(name, exc)
+            raise
+
+        if record_outcome:
+            self._record_tool_outcome(name, result)
+        return result
+
+    def _should_record_tool_outcome(self, name: str) -> bool:
+        return name not in _OUTCOME_SKIP_TOOLS and _RECORD_TOOL_NAME in self._tool_registry
+
+    def _record_tool_exception(self, name: str, exc: Exception) -> None:
+        if not self._should_record_tool_outcome(name):
+            return
+        self._record_tool_payload(
             {
-                "name": name,
-                "arguments": arguments,
-                "_meta": {"progressToken": progress_token},
-            },
+                "skill_name": name,
+                "success": False,
+                "domain": _infer_tool_domain(name),
+                "error_code": "EXECUTION_FAILED",
+                "message": _truncate(f"MCP request failed: {exc}"),
+                "risk": "high",
+                "recovery": "Inspect the tool error before retrying.",
+            }
         )
+
+    def _record_tool_outcome(self, name: str, result: dict[str, Any]) -> None:
+        if not self._should_record_tool_outcome(name):
+            return
+        self._record_tool_payload(_outcome_payload_from_result(name, result))
+
+    def _record_tool_payload(self, payload: dict[str, Any]) -> None:
+        try:
+            self._mcp_tool_call(_RECORD_TOOL_NAME, payload, record_outcome=False)
+        except Exception:
+            logger.warning("Failed to record MCP tool outcome", tool=payload["skill_name"])
 
     def _on_tool_stream_message(self, msg: dict[str, Any]) -> None:
         method = msg.get("method")
@@ -348,3 +419,84 @@ def _append_image_to_history(
             ]
         )
     )
+
+
+def _outcome_payload_from_result(name: str, result: dict[str, Any]) -> dict[str, Any]:
+    text = _content_text(result)
+    structured = _parse_skill_result_text(text)
+    if structured is not None:
+        success = bool(structured.get("success", False))
+        message = str(structured.get("message") or "")
+        error_code = str(structured.get("error_code") or "")
+        raw_metadata = structured.get("metadata")
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        risk = str(metadata.get("risk") or ("unknown" if success else "medium"))
+        recovery = _recovery_text(metadata)
+    else:
+        message = text
+        failure = _looks_like_failure_text(text)
+        success = not failure
+        error_code = "EXECUTION_FAILED" if failure else ""
+        risk = "high" if failure else "unknown"
+        recovery = "Inspect the tool error before retrying." if failure else ""
+
+    return {
+        "skill_name": name,
+        "success": success,
+        "domain": _infer_tool_domain(name),
+        "error_code": error_code,
+        "message": _truncate(message),
+        "risk": _normalize_risk(risk),
+        "recovery": _truncate(recovery),
+    }
+
+
+def _content_text(result: dict[str, Any]) -> str:
+    content = result.get("content", [])
+    if not isinstance(content, list):
+        return ""
+    parts = [item.get("text", "") for item in content if isinstance(item, dict)]
+    return "\n".join(part for part in parts if part)
+
+
+def _parse_skill_result_text(text: str) -> dict[str, Any] | None:
+    text = text.strip()
+    if not text.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict) or "success" not in parsed:
+        return None
+    return parsed
+
+
+def _looks_like_failure_text(text: str) -> bool:
+    lowered = text.strip().casefold()
+    return lowered.startswith("error running tool") or lowered.startswith("tool not found")
+
+
+def _infer_tool_domain(name: str) -> str:
+    return _TOOL_DOMAINS.get(name, "")
+
+
+def _normalize_risk(risk: str) -> str:
+    risk = risk.strip().casefold()
+    if risk in {"low", "medium", "high", "unknown"}:
+        return risk
+    return "unknown"
+
+
+def _recovery_text(metadata: dict[str, Any]) -> str:
+    recovery = metadata.get("recovery")
+    if isinstance(recovery, str):
+        return recovery
+    suggestions = metadata.get("recovery_suggestions")
+    if isinstance(suggestions, list):
+        return "; ".join(str(item) for item in suggestions)
+    return ""
+
+
+def _truncate(text: str, limit: int = 500) -> str:
+    return text[:limit]

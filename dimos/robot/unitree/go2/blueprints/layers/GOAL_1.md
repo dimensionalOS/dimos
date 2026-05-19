@@ -8,7 +8,8 @@ breaking existing public blueprint names.
 ## Layer Mapping
 
 - Layer 3, Agent Brain: ExpertRouter, ContextProvider, SkillOutcomeStore,
-  SkillOutcomePredictor, MCP server/client, and the LLM agent loop.
+  SkillOutcomePredictor, CausalWorldModel, MCP server/client, and the LLM
+  agent loop.
 - Layer 4, World State: spatial memory today, with a lazy temporal-memory
   factory for the existing temporal-memory blueprint.
 - Layer 5, Skill Interface: MCP-callable skills and skill containers that
@@ -30,8 +31,10 @@ layers/
     __init__.py                  # internal Layer 3 blueprint composition
     context_provider.py          # context aggregation for the LLM agent
     expert_router.py             # deterministic expert-domain routing
+    prompt_policy.py             # Layer 3 tool-use policy for McpClient
     skill_outcome_store.py       # recent skill outcome memory
     skill_outcome_predictor.py   # rule-based preflight risk checks
+    causal_world_model.py        # before/action/result/after causal memory
     test_*.py                    # focused Layer 3 tests
   layer_4_world_state/
     __init__.py                  # spatial/temporal memory blueprint pieces
@@ -84,26 +87,47 @@ flag indicating whether the agent should call `get_context` first.
   external-context placeholders.
   `ExpertRouter` performs deterministic domain routing for Go2 skills. The
   existing `McpClient` remains the LLM/VLM agent loop.
-- V2 first pass implemented: Add a shared skill-outcome store and
+- V2 implemented: Add a shared skill-outcome store and
   `SkillOutcomePredictor` so Layer 3 can warn about likely failures before tool
-  execution. Later V2 work should make the agent record outcomes consistently
-  after important tool calls.
-- V3 planned: Add `CausalWorldModel` as an event/transition recorder that links
+  execution. The Go2 Layer 3 prompt now asks the agent to use
+  `route_task -> get_context -> predict_skill_outcome` for non-trivial tasks,
+  and `McpClient` automatically records non-internal MCP tool outcomes when
+  `record_skill_outcome` is available.
+- V3 implemented: Add `CausalWorldModel` as an event/transition recorder that links
   before-context, chosen tool, tool result, after-context, inferred cause, and
   recovery suggestion. Use it to summarize repeated failure patterns.
-- V4 planned: Promote stable Go2-specific Layer 3 pieces into robot-agnostic
-  modules under `dimos.agents`, while keeping robot-specific routing rules in
-  the robot blueprint layer.
+- Out of scope for this stage: promoting Layer 3 pieces into robot-agnostic
+  modules under `dimos.agents`. Do this only after Layers 4, 5, and 6 have
+  clearer Go2 boundaries and the V3 causal loop has been validated.
 
 ## Skill Outcome Direction
 
 `SkillOutcomeStore` is the Layer 3 memory for recent skill calls. The current
 implementation exposes `record_skill_outcome(...)` and
 `summarize_skill_outcomes(...)` as MCP skills, and exposes an internal
-`get_recent_outcomes(...)` RPC for other Layer 3 modules.
+`get_recent_outcomes(...)` RPC for other Layer 3 modules. Agent-driven tool
+calls are recorded automatically by `McpClient` when the outcome store is
+present; manual recording is still available for external events or outcomes
+outside the agent's MCP tool path.
 
 `SkillOutcomePredictor` performs conservative preflight checks with
 `predict_skill_outcome(skill_name: str, args_json: str = "", context: str = "")`.
 It uses deterministic rules plus recent outcomes from `SkillOutcomeStore`.
 This is not a trained model yet; it is a risk gate that helps the agent avoid
 obvious retries, missing arguments, or movement-sensitive calls without context.
+
+## Causal World Model Direction
+
+`CausalWorldModel` records compact Layer 3 transitions:
+
+```text
+task + before_context + chosen skill + args + prediction + outcome
+  -> after_context + inferred_cause + recovery suggestion
+```
+
+The current implementation exposes `record_causal_transition(...)` and
+`summarize_causal_patterns(...)` as MCP skills, and exposes
+`get_recent_transitions(...)` as an internal RPC for other Layer 3 modules.
+It stores recent transitions in memory only. `ContextProvider` includes recent
+causal transitions in its context payload, and `SkillOutcomePredictor` raises
+risk when the same skill repeatedly fails for the same inferred cause.

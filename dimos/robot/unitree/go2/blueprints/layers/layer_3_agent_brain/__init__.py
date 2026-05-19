@@ -18,11 +18,17 @@ from typing import Any
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.causal_world_model import (
+    _Go2CausalWorldModel,
+)
 from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.context_provider import (
     _Go2ContextProvider,
 )
 from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.expert_router import (
     _Go2ExpertRouter,
+)
+from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.prompt_policy import (
+    _go2_layer_3_system_prompt,
 )
 from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.skill_outcome_predictor import (
     _Go2SkillOutcomePredictor,
@@ -34,13 +40,18 @@ from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.skill_outcome
 
 def _go2_agent_brain_with_client(**mcp_client_kwargs: Any) -> Blueprint:
     """Layer 3: expert routing, context, MCP tools, and the LLM/VLM agent."""
+    client_kwargs = dict(mcp_client_kwargs)
+    client_kwargs["system_prompt"] = _go2_layer_3_system_prompt(
+        client_kwargs.get("system_prompt")
+    )
     return autoconnect(
         _Go2ExpertRouter.blueprint(),
         _Go2SkillOutcomeStore.blueprint(),
+        _Go2CausalWorldModel.blueprint(),
         _Go2SkillOutcomePredictor.blueprint(),
         _Go2ContextProvider.blueprint(),
         McpServer.blueprint(),
-        McpClient.blueprint(**mcp_client_kwargs),
+        McpClient.blueprint(**client_kwargs),
     )
 
 

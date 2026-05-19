@@ -16,8 +16,11 @@ Current Layer 3 modules:
 - `McpServer`: exposes `@skill` methods as MCP tools.
 - `ContextProvider`: gathers compact task/world/robot/runtime/skill context.
 - `ExpertRouter`: maps a task to an expert domain and recommended tools.
+- `PromptPolicy`: appends Layer 3 tool-use rules to the Go2 MCP client prompt.
 - `SkillOutcomeStore`: records recent skill outcomes in memory.
 - `SkillOutcomePredictor`: checks planned tool calls for obvious risk.
+- `CausalWorldModel`: records before/action/result/after transitions and
+  summarizes repeated failure causes.
 
 ## Runtime Flow
 
@@ -30,12 +33,16 @@ user task
   -> get_context(task, focus)
   -> predict_skill_outcome(skill_name, args_json, context)
   -> call a Layer 5 skill
-  -> record_skill_outcome(skill_name, success, ...)
+  -> McpClient auto-records the outcome through record_skill_outcome(...)
+  -> get_context(task, focus) for after-context
+  -> record_causal_transition(...)
+  -> summarize_causal_patterns(...) before risky retries
 ```
 
-The final `record_skill_outcome(...)` call is still manual in this version. The
-agent can call it after important skill calls. Automatic capture is deferred
-until the MCP/tool wrapper has a safe event sink.
+The final `record_skill_outcome(...)` call is automatic for agent-driven,
+non-internal MCP tool calls when the outcome store is present. Manual recording
+is still useful for external events or important outcomes that did not flow
+through `McpClient`.
 
 ## Module Responsibilities
 
@@ -61,6 +68,7 @@ until the MCP/tool wrapper has a safe event sink.
 - Keeps at most 100 records.
 - Clears when the blueprint/process restarts.
 - Is intentionally not backed by a database in this stage.
+- Receives automatic records from `McpClient` for non-internal MCP tool calls.
 
 `SkillOutcomePredictor`
 
@@ -69,6 +77,14 @@ until the MCP/tool wrapper has a safe event sink.
   same-skill outcomes.
 - Returns `low`, `medium`, or `high` risk, with reasons and recovery
   suggestions.
+
+`CausalWorldModel`
+
+- Stores recent causal transitions in a bounded in-memory `deque`.
+- Links task, before-context, chosen skill, args, prediction, outcome,
+  after-context, inferred cause, and recovery suggestion.
+- Uses deterministic cause rules, not a learned causal model.
+- Does not execute skills or own world state.
 
 ## Implementation Documentation Standard
 
@@ -185,6 +201,11 @@ Each implementation note should cover:
 - Inputs:
   - `skill_name`, `success`, `domain`, `error_code`, `message`, `risk`, and
     `recovery`.
+- Writers:
+  - `McpClient._mcp_tool_call(...)` writes automatically after non-internal MCP
+    tool calls when `record_skill_outcome` is available.
+  - LLM or human operators may still call this skill manually for external
+    events or non-MCP outcomes.
 - Storage:
   - Storage backend is an in-memory `collections.deque`.
   - The deque lives at `self._outcomes` inside `_Go2SkillOutcomeStore`.
@@ -213,8 +234,9 @@ Each implementation note should cover:
     total_outcomes=<int>)`.
   - Failure: `SkillResult.fail("INVALID_INPUT", ...)`.
 - Current limits:
-  - Recording is manual; the LLM or prompt policy must call it after important
-    tool calls.
+  - Automatic recording only covers the agent's `McpClient` tool path.
+    Direct external MCP clients can still call `record_skill_outcome(...)`
+    manually if they need history.
   - There is no durable audit log yet.
 
 ### `_Go2SkillOutcomePredictor.predict_skill_outcome(...)`
@@ -232,6 +254,7 @@ Each implementation note should cover:
   - No database.
   - No persistent state.
   - Reads recent outcomes if the store is wired, but does not write them.
+  - Reads recent causal transitions if `CausalWorldModel` is wired.
 - Data read:
   - `args_json` is parsed as a JSON object string because MCP tool schemas are
     simpler with primitive string arguments.
@@ -241,8 +264,8 @@ Each implementation note should cover:
   - Trim `skill_name` and `context`.
   - Reject empty `skill_name`.
   - Parse `args_json`; reject invalid JSON and non-object JSON.
-  - Build risk reasons from four signals: skill name, parsed args, context
-    text, and recent same-skill outcomes.
+  - Build risk reasons from five signals: skill name, parsed args, context
+    text, recent same-skill outcomes, and recent same-skill causal transitions.
   - Add history reasons for one recent failure or repeated recent failures.
   - Add movement-context reasons for `navigate_with_text`, `relative_move`, and
     `follow_person` when context or odom appears unavailable.
@@ -258,12 +281,148 @@ Each implementation note should cover:
 - Return shape:
   - `SkillResult(success=True, message=<risk summary>, metadata=<dict>)`.
   - Metadata keys: `skill_name`, `args`, `risk`, `predicted_success`,
-    `failure_reasons`, `recovery_suggestions`, `recent_outcomes`, and
-    `outcome_store_available`.
+    `failure_reasons`, `recovery_suggestions`, `recent_outcomes`,
+    `recent_causal_transitions`, `outcome_store_available`, and
+    `causal_world_model_available`.
 - Current limits:
   - `predicted_success` is `risk != "high"`, not a probability.
   - Risk rules are handcrafted and should be revised after real outcome data is
     available.
+
+### `_go2_layer_3_system_prompt(...)`
+
+- File: `layer_3_agent_brain/prompt_policy.py`
+- Entry point: private helper used by `_go2_agent_brain_with_client(...)`.
+- Purpose: append the Go2 Layer 3 decision policy to the MCP client's system
+  prompt without changing the public `McpClient` API.
+- Inputs:
+  - Optional `base_prompt`; defaults to `dimos.agents.system_prompt.SYSTEM_PROMPT`.
+- Storage:
+  - No database.
+  - No runtime state.
+  - Returns a composed prompt string.
+- Algorithm:
+  - Trim the base prompt.
+  - If the Layer 3 policy header is already present, return the prompt
+    unchanged.
+  - Otherwise append a policy block telling the agent to use
+    `route_task`, `get_context`, and `predict_skill_outcome` before risky
+    physical tools.
+  - Tell the agent that normal MCP tool outcomes are recorded automatically and
+    manual `record_skill_outcome(...)` is only for external/non-MCP events.
+- Return shape:
+  - `str`.
+- Current limits:
+  - This is prompt guidance, not a hard planner. It improves consistency but
+    cannot prove the LLM will always follow the intended flow.
+
+### `McpClient._mcp_tool_call(...)` Outcome Recording
+
+- File: `dimos/agents/mcp/mcp_client.py`
+- Entry point: internal MCP client helper used by LangChain tools and
+  continuation execution.
+- Purpose: automatically write recent outcomes into `SkillOutcomeStore` after
+  agent-driven MCP tool calls.
+- Inputs:
+  - Tool name and arguments.
+  - MCP tool response content.
+  - `_tool_registry`, used to detect whether `record_skill_outcome` is
+    available.
+- Storage:
+  - Does not store data locally.
+  - Calls the MCP `record_skill_outcome` tool with `record_outcome=False` to
+    avoid recursive self-recording.
+- Data shape written:
+  - `skill_name`, `success`, `domain`, `error_code`, `message`, `risk`, and
+    `recovery`.
+- Algorithm:
+  - Send the original `tools/call` request with a progress token.
+  - If the call raises, record a failed outcome with `risk="high"` when the
+    store is available, then re-raise.
+  - If the call succeeds, skip Layer 3/internal tools such as `get_context`,
+    `route_task`, `predict_skill_outcome`, `record_skill_outcome`, server
+    status, and utility agent-send tools.
+  - For `SkillResult` JSON responses, preserve `success`, `message`, and
+    `error_code`.
+  - For plain string responses, treat normal MCP responses as successful and
+    obvious server error text as failed.
+  - Infer a coarse domain from known Go2 tool names when possible.
+- Return shape:
+  - Returns the original MCP response unchanged.
+- Current limits:
+  - Plain string tools cannot provide precise success/failure semantics unless
+    they migrate to `SkillResult`.
+  - Direct external MCP calls that bypass `McpClient` are not auto-recorded.
+
+### `_Go2CausalWorldModel.record_causal_transition(...)`
+
+- File: `layer_3_agent_brain/causal_world_model.py`
+- Entry point: MCP skill exposed by `@skill`.
+- Purpose: record one compact causal transition after an important skill call.
+  It does not execute, retry, or repair the skill.
+- Inputs:
+  - Direct arguments: `task`, `skill_name`, `args_json`, `before_context`,
+    `after_context`, `prediction_json`, `outcome_json`, and `domain`.
+  - Optional injected Spec: `SkillOutcomeStoreSpec` for latest same-skill
+    outcome fallback when `outcome_json` is omitted.
+- Storage:
+  - Storage backend is an in-memory `collections.deque`.
+  - The deque lives at `self._transitions` inside `_Go2CausalWorldModel`.
+  - Maximum retained records: `_max_transitions = 200`.
+  - No SQL database, vector database, file, Redis, or external service is used.
+  - Restarting the blueprint or worker process clears the history.
+- Data written:
+  - Each record is a `_CausalTransition` dataclass with `timestamp`, `task`,
+    `domain`, `skill_name`, `args`, `before_context`, `prediction_risk`,
+    `prediction_reasons`, `outcome_success`, `outcome_error_code`,
+    `outcome_message`, `after_context`, `inferred_cause`, `recovery`, and
+    `confidence`.
+- Algorithm:
+  - Trim `task`, `skill_name`, context strings, and domain.
+  - Reject empty `task` or `skill_name`.
+  - Parse `args_json`, `prediction_json`, and `outcome_json` as JSON objects.
+  - If `outcome_json` is omitted, read the latest same-skill outcome from
+    `SkillOutcomeStore` when available.
+  - Flatten `metadata` from SkillResult-shaped JSON so prediction/outcome fields
+    are easy to read.
+  - Infer cause with deterministic rules:
+    missing args, repeated failures, unavailable odom, missing map target,
+    unavailable world state, unavailable visual target, explicit error code,
+    unknown failure, or success.
+  - Append the transition to the bounded deque.
+- Return shape:
+  - Success: `SkillResult.ok("Recorded causal transition ...",
+    transition=<dict>, total_transitions=<int>)`.
+  - Failure: `SkillResult.fail("INVALID_INPUT", ...)`.
+- Current limits:
+  - Cause inference is rule-based and coarse.
+  - The agent must explicitly call this after important physical/recovery tool
+    calls; `McpClient` only auto-records simple skill outcomes, not full causal
+    transitions.
+  - Context snapshots are compact strings, not full world-state copies.
+
+### `_Go2CausalWorldModel.summarize_causal_patterns(...)`
+
+- File: `layer_3_agent_brain/causal_world_model.py`
+- Entry point: MCP skill exposed by `@skill`.
+- Purpose: summarize repeated recent failure causes before the agent retries a
+  skill.
+- Inputs:
+  - Optional filters: `skill_name`, `domain`, and `limit`.
+- Storage:
+  - Reads the in-memory causal transition deque.
+  - Does not write new data.
+- Algorithm:
+  - Read newest transitions first through `get_recent_transitions(...)`.
+  - Keep failure transitions where `outcome_success is False`.
+  - Count transitions by `inferred_cause`.
+  - Return ordered patterns with cause, count, affected skill names, latest
+    message, and recovery suggestion.
+- Return shape:
+  - `SkillResult.ok(<summary>, patterns=<list>, transitions=<list>)`.
+- Current limits:
+  - Pattern summaries only cover recent in-memory transitions.
+  - It does not yet aggregate across process restarts.
 
 ## Version Boundaries
 
@@ -274,27 +433,30 @@ V1 implemented:
 - `ExpertRouter` gives deterministic task-domain routing.
 - Existing `McpClient` remains the LLM/VLM agent loop.
 
-V2 first pass implemented:
+V2 implemented:
 
 - `SkillOutcomeStore` records recent skill results.
 - `SkillOutcomePredictor` performs preflight risk checks.
 - `ContextProvider` includes recent skill outcomes when available.
+- Go2 Layer 3 prompt policy asks the LLM to route, gather context, and predict
+  risk before non-trivial or movement-sensitive tools.
+- `McpClient` automatically records non-internal MCP tool outcomes when
+  `record_skill_outcome` is available.
 
-V2 remaining:
+V3 implemented:
 
-- Update agent prompt/policy so important tool calls are followed by
-  `record_skill_outcome(...)`.
-- Decide whether some outcomes should be captured automatically by MCP.
-
-V3 planned:
-
-- Add `CausalWorldModel` as an event transition recorder:
+- Added `CausalWorldModel` as an event transition recorder:
   before-context, action, result, after-context, inferred cause, recovery.
+- `ContextProvider` includes recent causal transitions when available.
+- `SkillOutcomePredictor` raises risk when same-skill causal failures repeat.
+- `PromptPolicy` asks the agent to record causal transitions after important
+  physical or recovery-sensitive tool calls.
 
-V4 planned:
+Out of scope for this stage:
 
-- Promote stable Go2-specific Layer 3 pieces into robot-agnostic modules under
-  `dimos.agents`, while keeping robot-specific routing rules near Go2.
+- Do not promote Layer 3 pieces into robot-agnostic `dimos.agents` modules yet.
+  The current architecture work should stop at V3 until Layers 4, 5, and 6 have
+  clearer Go2 boundaries and the causal loop has been validated.
 
 ## Design Rules
 

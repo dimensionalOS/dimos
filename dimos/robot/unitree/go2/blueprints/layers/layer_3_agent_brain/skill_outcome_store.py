@@ -88,9 +88,10 @@ class _Go2SkillOutcomeStore(Module):
         before the outcome payload stabilizes.
 
     How data is written:
-        The agent can call the MCP skill ``record_skill_outcome(...)`` after an
-        important tool call. Later we can add automatic capture in the MCP/tool
-        wrapper, but manual recording is safer for the first version.
+        McpClient automatically calls ``record_skill_outcome(...)`` after
+        non-internal tool calls when this store is present in the MCP tool
+        registry. The skill remains available for manual recording of external
+        events or outcomes that did not flow through the agent's MCP tool path.
     """
 
     _max_outcomes = 100

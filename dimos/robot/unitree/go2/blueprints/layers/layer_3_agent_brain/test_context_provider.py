@@ -71,12 +71,31 @@ class StubSkillOutcomes:
         ][:limit]
 
 
+class StubCausalWorldModel:
+    def get_recent_transitions(
+        self,
+        limit: int = 5,
+        skill_name: str = "",
+        domain: str = "",
+        cause: str = "",
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "skill_name": "navigate_with_text",
+                "domain": "navigation",
+                "outcome_success": False,
+                "inferred_cause": "semantic_map_missing_target",
+            }
+        ][:limit]
+
+
 def test_get_context_aggregates_available_sources() -> None:
     provider = _Go2ContextProvider()
     provider._spatial_memory = StubSpatialMemory()  # type: ignore[assignment]
     provider._temporal_memory = StubTemporalMemory()  # type: ignore[assignment]
     provider._navigation = StubNavigation()  # type: ignore[assignment]
     provider._skill_outcomes = StubSkillOutcomes()  # type: ignore[assignment]
+    provider._causal_world_model = StubCausalWorldModel()  # type: ignore[assignment]
     provider._latest_odom = PoseStamped(position=[1.0, 2.0, 0.0], frame_id="map")
 
     result = provider.get_context("find the person", focus="navigation")
@@ -89,6 +108,7 @@ def test_get_context_aggregates_available_sources() -> None:
     assert result.metadata["world_state"]["spatial"]["matches"][0]["distance"] == 0.12
     assert result.metadata["world_state"]["temporal"]["rolling_summary"]
     assert result.metadata["skill_state"]["recent_outcomes"][0]["success"] is False
+    assert result.metadata["causal_state"]["recent_transitions"][0]["outcome_success"] is False
 
     encoded = json.loads(result.agent_encode()[0]["text"])
     assert encoded["success"] is True

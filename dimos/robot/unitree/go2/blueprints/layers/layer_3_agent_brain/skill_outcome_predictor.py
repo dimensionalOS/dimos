@@ -21,6 +21,9 @@ from typing import Any
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 from dimos.core.module import Module
+from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.causal_world_model import (
+    CausalWorldModelSpec,
+)
 from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.skill_outcome_store import (
     SkillOutcomeStoreSpec,
 )
@@ -44,6 +47,7 @@ class _Go2SkillOutcomePredictor(Module):
     # autoconnect wires this ref to _Go2SkillOutcomeStore. If not present, the
     # predictor still works using only args_json and context.
     _skill_outcomes: SkillOutcomeStoreSpec | None = None
+    _causal_world_model: CausalWorldModelSpec | None = None
 
     @skill
     def predict_skill_outcome(
@@ -77,8 +81,10 @@ class _Go2SkillOutcomePredictor(Module):
         # 2. parsed_args: planned tool arguments.
         # 3. context: text summary from get_context/route_task/dialogue.
         # 4. recent: same-skill outcomes from SkillOutcomeStore.
+        # 5. causal_recent: same-skill transitions from CausalWorldModel.
         recent = self._recent_outcomes(skill_name)
-        reasons = _risk_reasons(skill_name, parsed_args, context, recent)
+        causal_recent = self._recent_causal_transitions(skill_name)
+        reasons = _risk_reasons(skill_name, parsed_args, context, recent, causal_recent)
         risk = _risk_level(reasons)
         predicted_success = risk != "high"
         suggestions = _recovery_suggestions(skill_name, reasons)
@@ -91,7 +97,9 @@ class _Go2SkillOutcomePredictor(Module):
             "failure_reasons": reasons,
             "recovery_suggestions": suggestions,
             "recent_outcomes": recent,
+            "recent_causal_transitions": causal_recent,
             "outcome_store_available": self._skill_outcomes is not None,
+            "causal_world_model_available": self._causal_world_model is not None,
         }
         message = (
             f"Predicted risk={risk}, predicted_success={predicted_success}. "
@@ -104,6 +112,12 @@ class _Go2SkillOutcomePredictor(Module):
         if self._skill_outcomes is None:
             return []
         return self._skill_outcomes.get_recent_outcomes(limit=5, skill_name=skill_name)
+
+    def _recent_causal_transitions(self, skill_name: str) -> list[dict[str, Any]]:
+        """Fetch recent same-skill causal transitions if the model is wired."""
+        if self._causal_world_model is None:
+            return []
+        return self._causal_world_model.get_recent_transitions(limit=5, skill_name=skill_name)
 
 
 def _parse_args_json(args_json: str) -> dict[str, Any] | str:
@@ -129,6 +143,7 @@ def _risk_reasons(
     args: dict[str, Any],
     context: str,
     recent: list[dict[str, Any]],
+    causal_recent: list[dict[str, Any]],
 ) -> list[str]:
     """Collect human-readable risk reasons.
 
@@ -150,6 +165,19 @@ def _risk_reasons(
         reasons.append("same skill failed repeatedly in recent outcomes")
     elif len(failures) == 1:
         reasons.append("same skill has one recent failure")
+
+    causal_failures = [
+        transition
+        for transition in causal_recent
+        if transition.get("outcome_success") is False
+        and transition.get("inferred_cause") not in {"success_no_failure"}
+    ]
+    repeated_cause = _repeated_causal_cause(causal_failures)
+    if repeated_cause:
+        reasons.append(f"same skill repeatedly failed from causal cause: {repeated_cause}")
+    elif causal_failures:
+        cause = causal_failures[0].get("inferred_cause") or "unknown_failure"
+        reasons.append(f"same skill has a recent causal failure: {cause}")
 
     if name in {"navigate_with_text", "relative_move", "follow_person"}:
         # ContextProvider formats missing odom as "Robot pose: unavailable".
@@ -208,6 +236,7 @@ def _risk_level(reasons: list[str]) -> str:
     """
     high_markers = (
         "failed repeatedly",
+        "repeatedly failed from causal cause",
         "navigation query is missing",
         "person-follow query is missing",
         "descriptions are missing",
@@ -217,6 +246,18 @@ def _risk_level(reasons: list[str]) -> str:
     if reasons:
         return "medium"
     return "low"
+
+
+def _repeated_causal_cause(transitions: list[dict[str, Any]]) -> str:
+    counts: dict[str, int] = {}
+    for transition in transitions:
+        cause = str(transition.get("inferred_cause") or "")
+        if not cause:
+            continue
+        counts[cause] = counts.get(cause, 0) + 1
+        if counts[cause] >= 2:
+            return cause
+    return ""
 
 
 def _recovery_suggestions(skill_name: str, reasons: list[str]) -> list[str]:
@@ -234,6 +275,8 @@ def _recovery_suggestions(skill_name: str, reasons: list[str]) -> list[str]:
                 "call stop_navigation before retrying if navigation is already active",
             ]
         )
+    if any("causal" in reason for reason in reasons):
+        suggestions.append("call summarize_causal_patterns before retrying")
     if "follow" in name:
         suggestions.extend(
             [

@@ -30,6 +30,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
 from dimos.perception.spatial_memory_spec import SpatialMemorySpec
 from dimos.perception.temporal_memory_spec import TemporalMemorySpec
+from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.causal_world_model import (
+    CausalWorldModelSpec,
+)
 from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.skill_outcome_store import (
     SkillOutcomeStoreSpec,
 )
@@ -45,6 +48,7 @@ class _Go2ContextProvider(Module):
     _temporal_memory: TemporalMemorySpec | None = None
     _navigation: NavigationInterfaceSpec | None = None
     _skill_outcomes: SkillOutcomeStoreSpec | None = None
+    _causal_world_model: CausalWorldModelSpec | None = None
     _latest_odom: PoseStamped | None = None
 
     odom: In[PoseStamped]
@@ -86,6 +90,7 @@ class _Go2ContextProvider(Module):
             "robot_state": self._robot_context(errors),
             "world_state": self._world_context(task, spatial_limit, errors),
             "skill_state": self._skill_context(errors),
+            "causal_state": self._causal_context(errors),
             "external_context": {
                 "available": False,
                 "reason": "External context sources are not wired into ContextProvider yet.",
@@ -105,6 +110,7 @@ class _Go2ContextProvider(Module):
             "odom": self._latest_odom is not None,
             "navigation": self._navigation is not None,
             "skill_outcomes": self._skill_outcomes is not None,
+            "causal_world_model": self._causal_world_model is not None,
             "runtime": True,
         }
 
@@ -159,6 +165,17 @@ class _Go2ContextProvider(Module):
             errors.append(f"skill_outcomes: {exc}")
             return {"available": True, "recent_outcomes": []}
         return {"available": True, "recent_outcomes": recent}
+
+    def _causal_context(self, errors: list[str]) -> dict[str, Any]:
+        if self._causal_world_model is None:
+            return {"available": False, "recent_transitions": []}
+        try:
+            recent = self._causal_world_model.get_recent_transitions(limit=5)
+        except Exception as exc:
+            logger.warning("Failed to read causal-world context", exc_info=True)
+            errors.append(f"causal_world_model: {exc}")
+            return {"available": True, "recent_transitions": []}
+        return {"available": True, "recent_transitions": recent}
 
     def _spatial_context(
         self, task: str, spatial_limit: int, errors: list[str]
@@ -276,6 +293,23 @@ class _Go2ContextProvider(Module):
             lines.append("Skill outcomes: available, no recorded outcomes")
         else:
             lines.append("Skill outcomes: unavailable")
+
+        causal_state = metadata.get("causal_state", {})
+        recent_transitions = causal_state.get("recent_transitions") or []
+        if recent_transitions:
+            failures = [
+                transition
+                for transition in recent_transitions
+                if transition.get("outcome_success") is False
+            ]
+            lines.append(
+                f"Causal memory: {len(recent_transitions)} recent, "
+                f"{len(failures)} failure transition(s)"
+            )
+        elif causal_state.get("available"):
+            lines.append("Causal memory: available, no recorded transitions")
+        else:
+            lines.append("Causal memory: unavailable")
 
         return "\n".join(lines)
 

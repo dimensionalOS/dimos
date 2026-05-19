@@ -9,6 +9,81 @@ Entries are listed in reverse chronological order.
 ## 2026-05-19
 
 - Branch: `refactor/go2-architecture-layers`
+- Summary: Implemented the first Go2 Layer 3 `CausalWorldModel` for V3,
+  including in-memory causal transitions, repeated failure-pattern summaries,
+  ContextProvider integration, Predictor risk escalation, prompt policy updates,
+  and focused tests.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/causal_world_model.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_causal_world_model.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/skill_outcome_predictor.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/prompt_policy.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_prompt_policy.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/__init__.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/GOAL_1.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/DESIGN.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran `python -m py_compile` for the changed MCP client, Layer 3 modules,
+    prompt policy, and focused tests.
+  - Ran `git diff --check`.
+  - Attempted targeted pytest with `.venv\\Scripts\\python.exe -m pytest`;
+    local Windows environment still fails during repo `conftest.py` import
+    because the Unix-only `resource` module is unavailable.
+- Open items:
+  - Decide later whether causal transitions should be persisted to JSONL,
+    SQLite, TemporalMemory, or another durable event store.
+
+## 2026-05-19
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Completed the remaining Go2 Layer 3 V2 behavior by adding a default
+  Layer 3 decision prompt policy and automatic `McpClient` outcome recording
+  for non-internal MCP tool calls.
+- Files/modules:
+  - `dimos/agents/mcp/mcp_client.py`
+  - `dimos/agents/mcp/test_mcp_client_unit.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/__init__.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/prompt_policy.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_prompt_policy.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/skill_outcome_store.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/GOAL_1.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/DESIGN.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran `python -m py_compile` for the changed MCP client, tests, prompt
+    policy, Layer 3 blueprint entrypoint, and outcome store.
+  - Ran `git diff --check`.
+  - Attempted targeted pytest with `.venv\\Scripts\\python.exe -m pytest`;
+    local Windows environment still fails during repo `conftest.py` import
+    because the Unix-only `resource` module is unavailable.
+  - Attempted `uv run pytest`; local Windows dependency resolution is blocked
+    because `dimos-viewer==0.30.0a6.dev99` has no Windows wheel.
+- Open items:
+  - V3 should add `CausalWorldModel` for before/action/result/after causal
+    transition records.
+
+## 2026-05-19
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Narrowed the Go2 Layer 3 roadmap to stop at V3 for the current
+  architecture stage and deferred robot-agnostic Layer 3 extraction until
+  Layers 4, 5, and 6 are clearer.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/GOAL_1.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/DESIGN.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Documentation-only change; runtime tests were not required.
+- Open items:
+  - Finish V2 remaining prompt/outcome-recording behavior, then implement the
+    V3 `CausalWorldModel` before revisiting robot-agnostic extraction.
+
+## 2026-05-19
+
+- Branch: `refactor/go2-architecture-layers`
 - Summary: Expanded the Layer 3 design document with a required
   function-level implementation-note standard and detailed notes for the
   current ContextProvider, ExpertRouter, SkillOutcomeStore, and
