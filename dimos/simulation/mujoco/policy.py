@@ -161,31 +161,49 @@ class DroneController:
             input_controller: InputController,
             drone_hover_thrust: float = 0.26487,
             drone_input_scale: float = 0.02,
+            attitude_p: float = 1.0,
+            attitude_d: float = 0.1,
             **kwargs: Any,
     ) -> None:
         self._input_controller = input_controller
         self._drone_hover_thrust = drone_hover_thrust
         self._drone_input_scale = drone_input_scale
+        self._attitude_p = attitude_p
+        self._attitude_d = attitude_d
 
     def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         return self._input_controller.get_command().astype(np.float32)
     
     def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         command = self._input_controller.get_command()
-        
-        if not np.any(command):
-            # Maintain hover if no command is given
-            data.ctrl[0] = self._drone_hover_thrust
-            data.ctrl[1] = 0.0
-            data.ctrl[2] = 0.0
-            data.ctrl[3] = 0.0
-            return
 
         pitch = float(command[0])
         roll = float(command[1])
         yaw = float(command[2])
 
+        qw, qx, qy, qz = data.qpos[3:7]
+
+        # Quaternion to Euler 
+        sinr_cosp = 2 * (qw * qx + qy * qz)
+        cosr_cosp = 1 - 2 * (qx * qx + qy * qy)
+        current_roll = np.arctan2(sinr_cosp, cosr_cosp)
+
+        sinp = 2 * (qw * qy - qz * qx)
+        current_pitch = np.arcsin(np.clip(sinp, -1.0, 1.0))
+        
+        # siny_cosp = 2 * (qw * qz + qx * qy)
+        # cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
+        # current_yaw = np.arctan2(siny_cosp, cosy_cosp)
+
+        roll_rate = data.qvel[3]
+        pitch_rate = data.qvel[4]
+        # yaw_rate = data.qvel[5]
+
+        roll_correction = self._attitude_p * current_roll + self._attitude_d * roll_rate
+        pitch_correction = self._attitude_p * current_pitch + self._attitude_d * pitch_rate 
+        # yaw_correction = self._attitude_p * current_yaw + self._attitude_d * yaw_rate
+
         data.ctrl[0] = self._drone_hover_thrust
-        data.ctrl[1] = -roll * self._drone_input_scale
-        data.ctrl[2] = pitch * self._drone_input_scale
+        data.ctrl[1] = -roll * self._drone_input_scale + roll_correction
+        data.ctrl[2] = pitch * self._drone_input_scale + pitch_correction
         data.ctrl[3] = -yaw * self._drone_input_scale
