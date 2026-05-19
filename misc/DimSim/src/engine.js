@@ -7551,7 +7551,8 @@ if (dimosMode) {
       // Browser no longer needs to publish odom — server is authoritative.
 
       // Eval harness — scores objectDistance rubric when triggered by dimsim eval runner
-      const { EvalHarness } = await import("./evals/harness.ts");
+      const harnessMod = await import("./evals/harness.ts");
+      const { EvalHarness, setEvalHarness } = harnessMod;
       const channel = new URLSearchParams(location.search).get("channel") || undefined;
       const evalHarness = new EvalHarness({
         bridge,
@@ -7587,12 +7588,10 @@ if (dimosMode) {
         },
       });
       window.__evalHarness = evalHarness;
-      // Expose runEval(workflow) so workflow files imported from
-      // `@dimsim/eval` (via the import map → public/_dimsim/eval-api.js)
-      // can drive evaluations directly with top-level await.
-      window.__dimsim = window.__dimsim || {};
-      window.__dimsim.eval = { runEval: (wf) => evalHarness.runEval(wf) };
-      window.dispatchEvent(new Event('dimsim-eval-ready'));
+      // Register the singleton so workflow files importing `runEval` from
+      // `@dimsim/eval` (importmap → dist/assets/dimsim-eval.js → this same
+      // module) get a working runEval.
+      setEvalHarness(evalHarness);
 
       // Scene editor — script execution engine for sim editing (exec_js API)
       const { SceneEditor } = await import("./sceneEditor.ts");

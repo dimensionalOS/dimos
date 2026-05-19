@@ -85,6 +85,44 @@ declare global {
   interface Window { __dimosAgent?: any; }
 }
 
+// ── Singleton registration ──────────────────────────────────────────────────
+//
+// Workflow files import `runEval` from `@dimsim/eval`.  The importmap in
+// index.html points that bare specifier at this very chunk's bundled
+// filename (pinned by vite.config.js → `dist/assets/dimsim-eval.js`), so
+// the workflow ends up importing this same module — which means it sees
+// the `_instance` set below by engine.js after EvalHarness construction.
+
+let _instance: EvalHarness | null = null;
+let _readyResolvers: Array<() => void> = [];
+
+/** engine.js calls this once the harness is wired up. */
+export function setEvalHarness(h: EvalHarness): void {
+  _instance = h;
+  const r = _readyResolvers;
+  _readyResolvers = [];
+  for (const fn of r) fn();
+}
+
+async function _waitForInstance(): Promise<EvalHarness> {
+  if (_instance) return _instance;
+  await new Promise<void>((resolve) => _readyResolvers.push(resolve));
+  return _instance!;
+}
+
+/**
+ * Public entry — what workflow files call after importing from
+ * `@dimsim/eval`.  Resolves when the workflow finishes (passed, failed,
+ * or timed out); also sends a `{type:'evalResult'}` WS message for the
+ * Deno runner along the way.
+ */
+export async function runEval(workflow: EvalWorkflow): Promise<EvalResultMsg> {
+  const h = await _waitForInstance();
+  return h.runEval(workflow);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
 export class EvalHarness {
   bridge: DimosBridge;
   getSceneState: () => SceneState;

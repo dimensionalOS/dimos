@@ -9,10 +9,12 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Import map so eval workflows can `import { runEval } from '@dimsim/eval'`.
-         The proxy module under public/_dimsim/ waits for the engine to expose
-         `window.__dimsim.eval.runEval` then delegates. -->
+         Vite pins the harness chunk (src/evals/harness.ts) to a stable
+         filename (see vite.config.js → chunkFileNames), so workflow files
+         get the same module the engine loaded — sharing the singleton
+         state registered via setEvalHarness(). -->
     <script type="importmap">
-    { "imports": { "@dimsim/eval": "/_dimsim/eval-api.js" } }
+    { "imports": { "@dimsim/eval": "/assets/dimsim-eval.js" } }
     </script>
   </head>
   <body>
