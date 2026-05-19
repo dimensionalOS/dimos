@@ -294,6 +294,11 @@ export class DimosBridge {
         this.agent.model = null;
       }
       this.agent._loadGLB();
+      // Scenes that return `embodiment: null` ship with the agent's group
+      // hidden (engine.js sets `group.visible = false`).  Dimos sending an
+      // embodimentConfig is the signal that an external agent is now
+      // driving — re-enable visibility so the model actually renders.
+      if (this.agent.group) this.agent.group.visible = true;
     }
   }
 
