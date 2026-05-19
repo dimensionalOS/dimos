@@ -37,11 +37,11 @@ _modules_to_try = [
 def _resolve_type(type_name: str) -> type:
     for module_name in _modules_to_try:
         try:
-            module = importlib.import_module(module_name)
-            if hasattr(module, type_name):
-                return getattr(module, type_name)  # type: ignore[no-any-return]
+            module = importlib.import_module(f"{module_name}.{type_name}")
         except ImportError:
             continue
+        if hasattr(module, type_name):
+            return getattr(module, type_name)  # type: ignore[no-any-return]
 
     raise ValueError(f"Could not find type '{type_name}' in any known message modules")
 

@@ -23,7 +23,6 @@ Out: box "(image, pointcloud)" rad 5px fit wid 170% ht 170%
 
 </details>
 
-<!--Result:-->
 ![output](assets/alignment_overview.svg)
 
 
@@ -275,7 +274,6 @@ text "waiting..." at (Buffer.w.x - 0.4in, Buffer.w.y - 0.15in)
 
 </details>
 
-<!--Result:-->
 ![output](assets/alignment_flow.svg)
 
 ## Parameters

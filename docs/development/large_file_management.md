@@ -13,8 +13,7 @@ print(f"Path: {data_path}")
 print(f"Exists: {data_path.exists()}")
 ```
 
-<!--Result:-->
-```
+```results
 Path: /home/lesh/coding/dimos/data/cafe.jpg
 Exists: True
 ```
@@ -46,7 +45,6 @@ F: box "Return path" rad 5px fit wid 170% ht 170%
 
 </details>
 
-<!--Result:-->
 ![output](assets/get_data_flow.svg)
 
 1. Checks if `data/{name}` already exists locally
@@ -66,8 +64,7 @@ image = Image.from_file(get_data("cafe.jpg"))
 print(f"Image shape: {image.data.shape}")
 ```
 
-<!--Result:-->
-```
+```results
 Image shape: (771, 1024, 3)
 ```
 
@@ -143,8 +140,7 @@ data/
 
 </details>
 
-<!--Result:-->
-```
+```results
 data/
  ├──cafe.jpg
  ├──apartment/

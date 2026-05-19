@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from enum import Enum
+from importlib import resources
 import sys
 from threading import Thread
 import time
@@ -86,19 +87,14 @@ class Go2ConnectionProtocol(Protocol):
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
 
-def _camera_info_static() -> CameraInfo:
-    fx, fy, cx, cy = (819.553492, 820.646595, 625.284099, 336.808987)
-    width, height = (1280, 720)
+_FRONT_CAMERA_720_YAML = resources.files("dimos.robot.unitree.go2").joinpath(
+    "front_camera_720.yaml"
+)
 
-    return CameraInfo.from_intrinsics(
-        fx=fx,
-        fy=fy,
-        cx=cx,
-        cy=cy,
-        width=width,
-        height=height,
-        frame_id="camera_optical",
-    )
+
+def _camera_info_static() -> CameraInfo:
+    with resources.as_file(_FRONT_CAMERA_720_YAML) as yaml_path:
+        return CameraInfo.from_yaml(str(yaml_path))
 
 
 # Static camera mount chain: base_link -> camera_link -> camera_optical.

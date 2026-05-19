@@ -371,6 +371,32 @@ class TestMultiTBuffer:
         result = ttbuffer.get("world", "robot", time_point=base_time + 0.5, time_tolerance=0.1)
         assert result is None
 
+    def test_same_frame_returns_identity(self) -> None:
+        ttbuffer = MultiTBuffer()
+
+        # Empty buffer: same-frame lookup still returns identity
+        result = ttbuffer.get("base_link", "base_link")
+        assert result is not None
+        assert result.frame_id == "base_link"
+        assert result.child_frame_id == "base_link"
+        assert result.translation.x == 0.0
+        assert result.translation.y == 0.0
+        assert result.translation.z == 0.0
+        assert result.rotation.x == 0.0
+        assert result.rotation.y == 0.0
+        assert result.rotation.z == 0.0
+        assert result.rotation.w == 1.0
+
+        # Same behavior when the frame happens to exist in the buffer
+        ttbuffer.receive_transform(
+            Transform(frame_id="world", child_frame_id="base_link", ts=time.time())
+        )
+        result = ttbuffer.get("world", "world")
+        assert result is not None
+        assert result.frame_id == "world"
+        assert result.child_frame_id == "world"
+        assert result.rotation.w == 1.0
+
     def test_nonexistent_frame_pair(self) -> None:
         ttbuffer = MultiTBuffer()
 

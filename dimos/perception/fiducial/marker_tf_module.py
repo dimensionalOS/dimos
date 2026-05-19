@@ -21,10 +21,10 @@ lookups match marker poses in ``world``. Requires ``CameraInfo`` (``plumb_bob`` 
 empty distortion supported best; refine intrinsics on hardware when needed).
 Camera calibration runbook: ``docs/usage/camera_calibration.md``.
 
-The pose chain is ``base_link -> <optical> -> marker`` where ``<optical>`` is
+The pose chain is ``world -> <optical> -> marker`` where ``<optical>`` is
 ``Image.frame_id`` when set, else ``CameraInfo.frame_id``, else ``camera_optical``.
-That matches the frame the pixels live in. Then ``world -> base_link`` is applied
-before publishing the marker namespace.
+That matches the frame the pixels live in. The TF graph resolves ``world -> optical``
+in one lookup; the module no longer needs an intermediate ``base_link`` hop.
 
 OpenCV 4.7+ uses ``ArucoDetector``; pose uses ``solvePnP`` (``estimatePoseSingleMarkers``
 was removed in newer OpenCV builds).
@@ -79,6 +79,13 @@ if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
 
 
+_FISHEYE_MODELS = frozenset({"equidistant", "fisheye", "kannala_brandt"})
+
+
+def _is_fisheye_model(distortion_model: str | None) -> bool:
+    return (distortion_model or "").strip().lower() in _FISHEYE_MODELS
+
+
 def camera_info_to_cv_matrices(camera_info: CameraInfo) -> tuple[np.ndarray, np.ndarray]:
     """Build OpenCV ``cameraMatrix`` and ``distCoeffs`` from ``CameraInfo``."""
     k = np.array(camera_info.K, dtype=np.float64).reshape(3, 3)
@@ -117,15 +124,34 @@ def estimate_marker_pose(
     marker_length_m: float,
     camera_matrix: np.ndarray,
     dist_coeffs: np.ndarray,
+    *,
+    distortion_model: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """Return ``(rvec, tvec)`` for camera optical <- marker from undistorted solvePnP."""
+    """Return ``(rvec, tvec)`` for camera optical <- marker from undistorted solvePnP.
+
+    For fisheye/equidistant intrinsics, corners are first undistorted into the
+    same pinhole ``K`` so the radtan-only ``solvePnP`` sees pinhole-equivalent
+    pixels. Otherwise the radtan ``dist_coeffs`` are passed straight through.
+    """
     obj = _aruco_marker_object_points(marker_length_m)
-    img = corners_px.reshape(4, 1, 2).astype(np.float32)
+    img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
+    if _is_fisheye_model(distortion_model):
+        d_flat = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
+        if d_flat.size < 4:
+            raise ValueError(
+                f"Fisheye/equidistant distortion model requires at least 4 coefficients; "
+                f"got {d_flat.size}. Check CameraInfo.D."
+            )
+        d_fisheye = d_flat[:4].reshape(4, 1)
+        img = cv2.fisheye.undistortPoints(img, camera_matrix, d_fisheye, P=camera_matrix)
+        solve_dist: np.ndarray = np.zeros((0, 1), dtype=np.float64)
+    else:
+        solve_dist = dist_coeffs
     ok, rvec, tvec = cv2.solvePnP(
         obj,
         img,
         camera_matrix,
-        dist_coeffs,
+        solve_dist,
         flags=cv2.SOLVEPNP_IPPE_SQUARE,
     )
     if not ok:
@@ -170,14 +196,13 @@ class MarkerTfModuleConfig(ModuleConfig):
     """
 
     world_frame: str = "world"
-    base_frame: str = "base_link"
     markers_frame: str = "markers"
     marker_namespace_prefix: str | None = None
     aruco_dictionary: str = "DICT_APRILTAG_36h11"
     marker_length_m: float = Field(
         ..., gt=0.0, description="Physical square marker edge length in meters."
     )
-    max_freq: float = 15.0
+    max_freq: float = 5.0
     tf_lookup_tolerance: float = 0.5
 
 
@@ -207,7 +232,7 @@ class MarkerTfModule(Module):
 
     def _maybe_warn_distortion(self, camera_info: CameraInfo) -> None:
         model = (camera_info.distortion_model or "").strip().lower()
-        if model in ("", "plumb_bob"):
+        if model in ("", "plumb_bob") or _is_fisheye_model(model):
             return
         if not self._warned_distortion_model:
             logger.warning(
@@ -242,31 +267,16 @@ class MarkerTfModule(Module):
 
         cam_mtx, dist = camera_info_to_cv_matrices(info)
         optical = _camera_optical_frame_id(image, info)
-        t_world_base = self.tf.get(
+        t_world_optical = self.tf.get(
             self.config.world_frame,
-            self.config.base_frame,
-            image.ts,
-            self.config.tf_lookup_tolerance,
-        )
-        if t_world_base is None:
-            logger.debug(
-                "MarkerTfModule: no TF %s -> %s at ts=%s",
-                self.config.world_frame,
-                self.config.base_frame,
-                image.ts,
-            )
-            return
-
-        t_base_optical = self.tf.get(
-            self.config.base_frame,
             optical,
             image.ts,
             self.config.tf_lookup_tolerance,
         )
-        if t_base_optical is None:
+        if t_world_optical is None:
             logger.debug(
                 "MarkerTfModule: no TF %s -> %s at ts=%s",
-                self.config.base_frame,
+                self.config.world_frame,
                 optical,
                 image.ts,
             )
@@ -291,6 +301,7 @@ class MarkerTfModule(Module):
                 self.config.marker_length_m,
                 cam_mtx,
                 dist,
+                distortion_model=info.distortion_model,
             )
             if pose is None:
                 continue
@@ -302,8 +313,7 @@ class MarkerTfModule(Module):
                 child_frame_id="__marker_tmp",
                 ts=ts,
             )
-            t_base_marker = t_base_optical + t_optical_marker
-            t_world_marker = t_world_base + t_base_marker
+            t_world_marker = t_world_optical + t_optical_marker
             out.append(
                 Transform(
                     translation=t_world_marker.translation,

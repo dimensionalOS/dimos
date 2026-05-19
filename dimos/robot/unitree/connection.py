@@ -18,7 +18,7 @@ import functools
 import os
 import threading
 import time
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -45,14 +45,22 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,
     pointcloud2_from_webrtc_lidar,
-    repair_stale_ts,
 )
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.robot.unitree.type.odometry import Odometry
+from dimos.types.timestamped import Timestamped
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure, callback_to_observable
 
 VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
+
+
+_T = TypeVar("_T", bound=Timestamped)
+
+
+def time_is_now(x: _T) -> _T:
+    x.ts = time.time()
+    return x
 
 
 @dataclass
@@ -261,7 +269,8 @@ class UnitreeWebRTCConnection(Resource):
         return backpressure(
             self.raw_lidar_stream().pipe(
                 ops.map(pointcloud2_from_webrtc_lidar),
-                repair_stale_ts(),
+                ops.map(time_is_now),
+                # repair_stale_ts(),
             )
         )
 
@@ -272,7 +281,14 @@ class UnitreeWebRTCConnection(Resource):
 
     @simple_mcache
     def odom_stream(self) -> Observable[Pose]:
-        return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))
+        return backpressure(
+            self.raw_odom_stream().pipe(
+                ops.map(
+                    Odometry.from_msg,
+                ),
+                ops.map(time_is_now),
+            )
+        )
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:
@@ -285,8 +301,9 @@ class UnitreeWebRTCConnection(Resource):
                         frame.to_ndarray(format="rgb24"),  # type: ignore[attr-defined]
                         format=ImageFormat.RGB,  # Frame is RGB24, not BGR
                         frame_id="camera_optical",
-                    )
+                    ),
                 ),
+                ops.map(time_is_now),
             )
         )
 
