@@ -74,6 +74,15 @@ _TALL_OBJECT_MIN_HEIGHT = 0.06
 class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     """Configuration for PickAndPlaceModule (adds GraspGen settings)."""
 
+    # When True, each detection published on the `objects` port is promoted
+    # into the Drake planning world (visible in Meshcat, used by the planner)
+    # via refresh_obstacles() — the same call xArm7 makes through scan_objects,
+    # just driven by the publish instead of a scan cycle. Default False so
+    # xArm7/OSR (high-frequency publishes) keeps its explicit scan→refresh
+    # workflow and is unaffected. Enable only on the memory2-native xArm6 path
+    # where find_objects publishes at low (agent-call) frequency.
+    auto_refresh_obstacles: bool = False
+
     # GraspGen Docker settings
     graspgen_docker_image: str = "dimos-graspgen:latest"
     graspgen_gripper_type: str = "robotiq_2f_140"
@@ -132,10 +141,32 @@ class PickAndPlaceModule(ManipulationModule):
         logger.info("PickAndPlaceModule started")
 
     def _on_objects(self, objects: list[DetObject]) -> None:
-        """Callback when objects received from perception (runs on RxPY thread pool)."""
+        """Callback when objects received from perception (runs on RxPY thread pool).
+
+        Also writes ``_detection_snapshot`` so ``pick``/``place`` can act on
+        publish-driven detections (e.g., LazyPerceptionModule.find_objects)
+        without an explicit refresh_obstacles()/look() cycle.
+
+        Snapshot has TWO writers now:
+        - this callback (publish-driven, xArm6-style continuous flow)
+        - ``refresh_obstacles()`` (scan-driven, xArm7-style episodic flow)
+        For the xArm7 path with ObjectSceneRegistrationModule (publishes
+        only non-empty ``all_permanent``, monotonically), the callback
+        keeps the snapshot self-healed to the latest cached set — strictly
+        additive vs the previous scan→freeze semantics. The previous
+        "freeze at refresh time" was a workaround for cache volatility,
+        not a hard contract.
+        """
         try:
+            self._detection_snapshot = list(objects)
             if self._world_monitor is not None:
                 self._world_monitor.on_objects(objects)
+                # Promote into the Drake world so detections show in Meshcat and
+                # the planner treats them as collision geometry. refresh_obstacles
+                # is a full sync (remove-all-then-re-add-from-cache) — no
+                # accumulation. Opt-in: xArm6 (low agent-call publish rate) only.
+                if self.config.auto_refresh_obstacles:
+                    self._world_monitor.refresh_obstacles()
         except Exception as e:
             logger.error(f"Exception in _on_objects: {e}")
 
