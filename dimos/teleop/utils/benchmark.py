@@ -99,6 +99,8 @@ def _reorder_count(seqs: list[int]) -> int:
 
 def _classify_e2e(p50_ms: float) -> str:
     """Map an E2E p50 latency to an acceptance band label."""
+    if p50_ms < 0:
+        return "clock skew"
     for threshold, label in _E2E_BANDS:
         if p50_ms < threshold:
             return label
@@ -252,6 +254,9 @@ class TeleopBenchmarkModule(Module):
         self._stop_event = threading.Event()
         self._printer_thread: threading.Thread | None = None
         self._start_perf: float | None = None
+        self._start_timestamp: str | None = None
+        self._report_lock = threading.Lock()
+        self._report_written = False
 
     @rpc
     def start(self) -> None:
@@ -270,6 +275,8 @@ class TeleopBenchmarkModule(Module):
             logger.info("Benchmarking %s (%s)", name, port.type.__name__)
 
         self._start_perf = time.perf_counter()
+        self._start_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._report_written = False
         self._stop_event.clear()
         self._printer_thread = threading.Thread(
             target=self._printer_loop, daemon=True, name="TeleopBenchmarkPrinter"
@@ -278,11 +285,21 @@ class TeleopBenchmarkModule(Module):
 
     @rpc
     def stop(self) -> None:
-        """Stop the printer thread, compute final stats, write the report."""
+        """Stop the printer thread, compute final stats, write the report.
+
+        Guarded against double-invocation — teardown can fire ``stop()`` more
+        than once (e.g. Ctrl-C + module-coordinator shutdown), and we don't
+        want a second report folder one second after the first.
+        """
         self._stop_event.set()
         if self._printer_thread is not None:
             self._printer_thread.join(timeout=2.0)
             self._printer_thread = None
+        with self._report_lock:
+            if self._report_written:
+                super().stop()
+                return
+            self._report_written = True
         try:
             self._write_report()
         except Exception:
@@ -318,7 +335,9 @@ class TeleopBenchmarkModule(Module):
         per-stream final stats, the uncalibrated-E2E caveat, and a pass/fail
         check against the acceptance thresholds from the benchmarking plan.
         """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Use the start-of-run timestamp (captured in start()) so the folder
+        # name reflects when the run began, not when stop() fired.
+        timestamp = self._start_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
         out_root = Path(self.config.out_dir)
         if not out_root.is_absolute():
             out_root = DIMOS_PROJECT_ROOT / out_root

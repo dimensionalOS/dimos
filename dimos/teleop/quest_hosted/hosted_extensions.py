@@ -122,5 +122,7 @@ class HostedTwistTeleopModule(HostedTeleopModule):
         angular = Vector3(msg.angular.x * as_, msg.angular.y * as_, msg.angular.z * as_)
         self.cmd_vel.publish(Twist(linear=linear, angular=angular))
         self.cmd_vel_stamped.publish(
-            TwistStamped(ts=msg.ts, frame_id=msg.frame_id, linear=linear, angular=angular)
+            TwistStamped(
+                ts=msg.ts, frame_id=msg.frame_id, seq=msg.seq, linear=linear, angular=angular
+            )
         )

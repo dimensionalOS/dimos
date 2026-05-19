@@ -15,12 +15,14 @@
 
 """Hosted teleop blueprints (WebRTC transport)."""
 
+from datetime import datetime
 from pathlib import Path
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.control.blueprints.teleop import coordinator_teleop_xarm7
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.memory2.module import Recorder, RecorderConfig
@@ -32,6 +34,8 @@ from dimos.teleop.quest_hosted.hosted_extensions import (
     HostedArmTeleopModule,
     HostedTwistTeleopModule,
 )
+
+global_config.rerun_open = "none"
 
 # Single XArm7 teleop via the hosted (WebRTC) client. Pass `--simulation` to
 # run the coordinator inside MuJoCo, omit it for real hardware.
@@ -58,14 +62,23 @@ teleop_hosted_go2 = autoconnect(
 ).global_config(n_workers=8)
 
 
+HOSTED_RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "data/hosted_teleop/recordings"
+
+
 class HostedTeleopRecorderConfig(RecorderConfig):
-    db_path: str | Path = DIMOS_PROJECT_ROOT / "data/hosted_teleop/recordings/recording_hosted.db"
+    # Default path is a stem — HostedTeleopRecorder.start() appends a per-run
+    # timestamp so successive runs don't clobber each other. Pass an absolute
+    # path with `.db` to opt out of timestamping.
+    db_path: str | Path = HOSTED_RECORDINGS_DIR / "recording_hosted.db"
 
 
 class HostedTeleopRecorder(Recorder):
     """Records hosted teleop streams. Captures whatever the connected blueprint
     produces — VR controller poses + buttons (xarm7), or cmd_vel_stamped
     (go2). Unconnected ports stay empty in the DB.
+
+    Each run lands in its own ``recording_hosted_<YYYYmmdd_HHMMSS>.db`` so
+    successive runs don't clobber each other.
 
     Compose at the CLI::
 
@@ -81,8 +94,12 @@ class HostedTeleopRecorder(Recorder):
 
     @rpc
     def start(self) -> None:
+        # Append per-run timestamp to the stem so each run is its own file.
+        base = Path(self.config.db_path)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.config.db_path = base.with_name(f"{base.stem}_{timestamp}{base.suffix}")
         # SqliteStore (sqlite3.connect) won't create the parent dir — ensure it.
-        Path(self.config.db_path).parent.mkdir(parents=True, exist_ok=True)
+        self.config.db_path.parent.mkdir(parents=True, exist_ok=True)
         super().start()
 
 

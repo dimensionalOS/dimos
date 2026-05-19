@@ -307,21 +307,25 @@ class Recorder(MemoryModule):
 
         default_frame_id = self.config.default_frame_id
         tf_tolerance = self.config.tf_tolerance
+        # Frames already warned about — a stream with no tf (e.g. a cmd_vel
+        # tagged 'keyboard') would otherwise log on every message.
+        warned_frames: set[str] = set()
 
         def on_msg(msg: Any) -> None:
-            ts = getattr(msg, "ts", None) or time.time()
+            recv_ts = time.time()
+            ts = getattr(msg, "ts", None) or recv_ts
             frame_id = getattr(msg, "frame_id", None) or default_frame_id
             transform = self.tf.get("world", frame_id, time_point=ts, time_tolerance=tf_tolerance)
             pose = transform.to_pose() if transform is not None else None
 
-            if not pose:
+            if not pose and frame_id not in warned_frames:
+                warned_frames.add(frame_id)
                 logger.warning(
-                    "[%s] No tf available for frame '%s' at time %s (msg ts: %s), storing without pose",
+                    "[%s] No tf for frame '%s' — recording without pose "
+                    "(further such messages on this stream are not logged)",
                     name,
                     frame_id,
-                    ts,
-                    getattr(msg, "ts", None),
                 )
-            stream.append(msg, ts=ts, pose=pose)
+            stream.append(msg, ts=ts, pose=pose, tags={"recv_ts": recv_ts})
 
         self.register_disposable(Disposable(input_topic.subscribe(on_msg)))
