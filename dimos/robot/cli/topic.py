@@ -46,6 +46,16 @@ def _resolve_type(type_name: str) -> type:
     raise ValueError(f"Could not find type '{type_name}' in any known message modules")
 
 
+def _decode_typed_lcm_message(channel: str, data: bytes) -> object:
+    from dimos.msgs.helpers import resolve_msg_type
+
+    _, msg_name = channel.split("#", 1)  # e.g. "nav_msgs.Odometry"
+    cls = resolve_msg_type(msg_name)
+    if cls is None:
+        raise ValueError(f"Could not resolve message type from channel: {channel}")
+    return cls.lcm_decode(data)
+
+
 def topic_echo(topic: str, type_name: str | None) -> None:
     # Explicit mode (legacy): unchanged.
     if type_name is not None:
@@ -79,11 +89,7 @@ def topic_echo(topic: str, type_name: str | None) -> None:
     typed_pattern = rf"^{re.escape(topic)}#.*"
 
     def on_msg(channel: str, data: bytes) -> None:
-        _, msg_name = channel.split("#", 1)  # e.g. "nav_msgs.Odometry"
-        pkg, cls_name = msg_name.split(".", 1)  # "nav_msgs", "Odometry"
-        module = importlib.import_module(f"dimos.msgs.{pkg}")
-        cls = getattr(module, cls_name)
-        print(cls.lcm_decode(data))
+        print(_decode_typed_lcm_message(channel, data))
 
     assert bus.l is not None
     bus.l.subscribe(typed_pattern, on_msg)

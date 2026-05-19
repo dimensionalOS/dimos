@@ -99,6 +99,7 @@ _xarm7_cfg = _catalog_xarm7(
     name="arm",
     adapter_type="xarm" if global_config.xarm7_ip else "mock",
     address=global_config.xarm7_ip,
+    add_gripper=True,
 )
 
 xarm7_planner_coordinator = autoconnect(
