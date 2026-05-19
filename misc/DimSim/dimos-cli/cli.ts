@@ -1,16 +1,12 @@
 #!/usr/bin/env -S deno run --allow-all --unstable-net
 
 /**
- * DimSim CLI — 3D simulation, eval runner, dev server, and scene manager.
+ * DimSim CLI — 3D simulation + eval runner + dev server.
  *
  * Usage:
- *   dimsim setup                                            Download core assets
- *   dimsim scene install <name>                             Download a scene
- *   dimsim scene list                                       List scenes
- *   dimsim scene remove <name>                              Remove a scene
  *   dimsim dev   [--scene <name>] [--port <n>]              Dev server + browser
- *   dimsim eval create                                      Interactive eval wizard
  *   dimsim eval  [--headless] [--parallel N] [--render gpu] Headless CI evals
+ *   dimsim eval list                                        List eval workflows
  *   dimsim agent [--nav-only]                               dimos Python agent
  */
 
@@ -18,21 +14,13 @@ import { resolve, dirname, fromFileUrl } from "@std/path";
 import { startBridgeServer } from "./bridge/server.ts";
 import { launchHeadless, launchMultiPage, type RenderMode } from "./headless/launcher.ts";
 import { runEvals, runEvalsMultiPage, collectWorkflows, toJunitXml, type EvalResult } from "./eval/runner.ts";
-import { getDimsimHome, getDistDir, setup, sceneInstall, sceneList, sceneRemove } from "./setup.ts";
-import { loadSceneIndex, findObject, suggestObjects } from "./eval/scene-index.ts";
-import { buildEval } from "./eval/builder.ts";
 
-// Detect compiled binary: Deno.execPath() won't contain "deno" when compiled.
-// When compiled or installed from JSR, local source paths don't exist.
-const IS_COMPILED = !Deno.execPath().toLowerCase().includes("deno");
-const IS_REMOTE = IS_COMPILED || !import.meta.url.startsWith("file:");
-
-const CLI_DIR = IS_REMOTE ? null : dirname(fromFileUrl(import.meta.url));
-const PROJECT_DIR = CLI_DIR ? resolve(CLI_DIR, "..") : null;
-const LOCAL_DIST_DIR = PROJECT_DIR ? resolve(PROJECT_DIR, "dist") : null;
-const EVALS_DIR = PROJECT_DIR ? resolve(PROJECT_DIR, "evals") : `${getDimsimHome()}/evals`;
-const DIMOS_VENV = PROJECT_DIR ? resolve(PROJECT_DIR, "../dimos/.venv/bin/python") : null;
-const AGENT_PY = CLI_DIR ? resolve(CLI_DIR, "agent.py") : null;
+const CLI_DIR = dirname(fromFileUrl(import.meta.url));
+const PROJECT_DIR = resolve(CLI_DIR, "..");
+const LOCAL_DIST_DIR = resolve(PROJECT_DIR, "dist");
+const EVALS_DIR = resolve(PROJECT_DIR, "evals");
+const DIMOS_VENV = resolve(PROJECT_DIR, "../../.venv/bin/python");
+const AGENT_PY = resolve(CLI_DIR, "agent.py");
 
 /**
  * Build dist/ from the repo's own sources using Deno's npm compat.
@@ -100,30 +88,19 @@ async function tryBuildFromSource(
   }
 }
 
-/** Resolve distDir: use local dist/ if it exists (dev / vendored), build it from sources if not, else fall back to ~/.dimsim/dist/. */
+/** Resolve distDir: use local dist/ if present, otherwise build it from source. */
 async function resolveDistDir(): Promise<string> {
-  if (LOCAL_DIST_DIR && PROJECT_DIR) {
-    try {
-      await Deno.stat(`${LOCAL_DIST_DIR}/index.html`);
-      return LOCAL_DIST_DIR;
-    } catch { /* not found — try to build from repo sources */ }
-
-    if (await tryBuildFromSource(PROJECT_DIR, LOCAL_DIST_DIR)) {
-      return LOCAL_DIST_DIR;
-    }
-  }
-
-  const installed = getDistDir();
   try {
-    await Deno.stat(`${installed}/index.html`);
-    return installed;
-  } catch { /* not found */ }
+    await Deno.stat(`${LOCAL_DIST_DIR}/index.html`);
+    return LOCAL_DIST_DIR;
+  } catch { /* not found — fall through to build */ }
 
-  console.error(`[dimsim] No dist/ found.`);
-  console.error(`[dimsim] Run 'dimsim setup' to download core assets.`);
-  if (!IS_REMOTE) {
-    console.error(`[dimsim] Or build locally with 'npm run build'.`);
+  if (await tryBuildFromSource(PROJECT_DIR, LOCAL_DIST_DIR)) {
+    return LOCAL_DIST_DIR;
   }
+
+  console.error(`[dimsim] No dist/ found and tryBuildFromSource() failed.`);
+  console.error(`[dimsim] Build manually:  cd ${PROJECT_DIR} && npm run build`);
   Deno.exit(1);
 }
 
@@ -132,23 +109,13 @@ function printUsage() {
 DimSim CLI — 3D simulation + eval harness for dimos
 
 Commands:
-  dimsim setup                   Download core assets (~40MB)
-  dimsim scene install <name>    Download a scene
-  dimsim scene list              List available + installed scenes
-  dimsim scene remove <name>     Remove a local scene
   dimsim dev   [options]         Dev server (open browser, optional eval)
   dimsim eval list               List installed eval workflows
-  dimsim eval create             Interactive eval builder wizard
   dimsim eval  [options]         Run eval workflows (headless CI)
-  dimsim list objects [options]   List scene objects (eval targets)
-  dimsim build eval [options]    Generate eval from validated target
   dimsim agent [options]         Launch dimos Python agent
 
-Setup:
-  --local <path>                 Use local archive instead of downloading
-
 Dev:
-  --scene <name>                 Scene to load (default: apt)
+  --scene <name>                 Scene to load (default: apartment)
   --port <n>                     Server port (default: 8090)
   --headless                     Launch headless browser (no GUI)
   --render gpu|cpu               Render mode for headless (default: gpu)
@@ -172,25 +139,9 @@ Eval:
   --port <n>                     Bridge port (default: 8090)
   --timeout <ms>                 Engine init timeout (default: auto)
 
-List Objects:
-  --scene <name>                   Scene to inspect (required)
-  --search <term>                  Filter objects by name
-
-Build Eval:
-  --scene <name>                   Scene name (required)
-  --target <object>                Target object name (required, validated)
-  --threshold <m>                  Distance threshold (default: 2.0)
-  --timeout <s>                    Timeout in seconds (default: 60)
-  --task <prompt>                  Agent prompt (default: auto from target)
-  --name <id>                      Eval name (default: slugified target)
-  --env <name>                     Manifest environment (default: scene name)
-
 Agent:
   --nav-only                     Nav stack only (no LLM agent)
-  --venv <path>                  Python venv path (default: ../dimos/.venv/bin/python)
-
-Environment:
-  DIMSIM_HOME                    Override data dir (default: ~/.dimsim)
+  --venv <path>                  Python venv path (default: ../../.venv/bin/python relative to misc/DimSim/)
 `);
 }
 
@@ -222,169 +173,16 @@ async function main() {
   }
 
   if (subcommand === "--version" || subcommand === "version") {
-    if (IS_COMPILED) {
-      // Version is read from the embedded deno.json at compile time
-      try {
-        const text = await Deno.readTextFile(new URL("./deno.json", import.meta.url));
-        console.log(JSON.parse(text).version);
-      } catch {
-        console.log("0.1.31");  // fallback — updated at release time
-      }
-    } else {
-      const metaUrl = new URL("./deno.json", import.meta.url);
-      try {
-        const resp = await fetch(metaUrl);
-        const meta = await resp.json();
-        console.log(meta.version);
-      } catch {
-        console.log("unknown");
-      }
+    try {
+      const text = await Deno.readTextFile(new URL("./deno.json", import.meta.url));
+      console.log(JSON.parse(text).version);
+    } catch {
+      console.log("unknown");
     }
     Deno.exit(0);
   }
 
   const port = parseInt(opts.port as string) || 8090;
-
-  // ── Setup ───────────────────────────────────────────────────────────
-  if (subcommand === "setup") {
-    const local = opts.local;
-    if (local === true) {
-      console.error("[dimsim] --local requires a path: dimsim setup --local ./dimsim-core-v0.1.0.tar.gz");
-      Deno.exit(1);
-    }
-    await setup(local as string | undefined);
-    Deno.exit(0);
-  }
-
-  // ── Scene management ────────────────────────────────────────────────
-  if (subcommand === "scene") {
-    const action = Deno.args[1];
-    const name = Deno.args[2];
-    const sceneOpts = parseArgs(Deno.args.slice(2));
-
-    if (action === "install" && name) {
-      const local = sceneOpts.local;
-      if (local === true) {
-        console.error("[dimsim] --local requires a path: dimsim scene install apt --local ./scene-apt-v0.1.0.tar.gz");
-        Deno.exit(1);
-      }
-      await sceneInstall(name, local as string | undefined);
-    } else if (action === "list") {
-      await sceneList();
-    } else if (action === "remove" && name) {
-      await sceneRemove(name);
-    } else {
-      console.log("Usage:");
-      console.log("  dimsim scene install <name> [--local <path>]");
-      console.log("  dimsim scene list");
-      console.log("  dimsim scene remove <name>");
-    }
-    Deno.exit(0);
-  }
-
-  // ── List objects ────────────────────────────────────────────────────
-  if (subcommand === "list") {
-    const what = Deno.args[1];
-    if (what === "objects") {
-      const listOpts = parseArgs(Deno.args.slice(2));
-      const sceneName = listOpts.scene as string;
-      if (!sceneName) {
-        console.error("[dimsim] --scene is required. Example: dimsim list objects --scene apt");
-        Deno.exit(1);
-      }
-
-      const distDir = await resolveDistDir();
-      const scenePath = `${distDir}/sims/${sceneName}.json`;
-      try {
-        await Deno.stat(scenePath);
-      } catch {
-        console.error(`[dimsim] Scene "${sceneName}" not found at ${scenePath}`);
-        console.error(`[dimsim] Run 'dimsim scene install ${sceneName}' first.`);
-        Deno.exit(1);
-      }
-
-      const index = loadSceneIndex(scenePath, sceneName);
-      const search = listOpts.search as string | undefined;
-
-      let filtered = index.objects;
-      if (search) {
-        const lower = search.toLowerCase();
-        filtered = index.objects.filter(
-          (o) => o.title.toLowerCase().includes(lower) || o.id.toLowerCase().includes(lower),
-        );
-        console.log(`\nObjects matching "${search}" in scene "${sceneName}" (${filtered.length}):\n`);
-      } else {
-        console.log(`\nObjects in scene "${sceneName}" (${filtered.length} titled assets):\n`);
-      }
-
-      if (filtered.length === 0) {
-        console.log("  (none)");
-      } else {
-        const maxTitle = Math.min(45, Math.max(...filtered.map((o) => o.title.length)));
-        for (const obj of filtered) {
-          const t = obj.title.padEnd(maxTitle);
-          console.log(`  ${t}  (${obj.position.x}, ${obj.position.y}, ${obj.position.z})`);
-        }
-      }
-      console.log();
-      Deno.exit(0);
-    }
-    console.log("Usage: dimsim list objects --scene <name> [--search <term>]");
-    Deno.exit(1);
-  }
-
-  // ── Build eval ─────────────────────────────────────────────────────
-  if (subcommand === "build") {
-    const what = Deno.args[1];
-    if (what === "eval") {
-      const buildOpts = parseArgs(Deno.args.slice(2));
-      const sceneName = buildOpts.scene as string;
-      const target = buildOpts.target as string;
-
-      if (!sceneName || !target) {
-        console.error("[dimsim] --scene and --target are required.");
-        console.error("Example: dimsim build eval --scene apt --target television");
-        Deno.exit(1);
-      }
-
-      const distDir = await resolveDistDir();
-      const scenePath = `${distDir}/sims/${sceneName}.json`;
-      try {
-        await Deno.stat(scenePath);
-      } catch {
-        console.error(`[dimsim] Scene "${sceneName}" not found at ${scenePath}`);
-        console.error(`[dimsim] Run 'dimsim scene install ${sceneName}' first.`);
-        Deno.exit(1);
-      }
-
-      try {
-        const result = buildEval({
-          scenePath,
-          sceneName,
-          target,
-          threshold: buildOpts.threshold ? parseFloat(buildOpts.threshold as string) : undefined,
-          timeout: buildOpts.timeout ? parseInt(buildOpts.timeout as string) : undefined,
-          task: buildOpts.task as string | undefined,
-          name: buildOpts.name as string | undefined,
-          env: buildOpts.env as string | undefined,
-          evalsDir: EVALS_DIR,
-        });
-
-        console.log(`\nCreated eval: ${result.filePath}`);
-        console.log(`  Task:      "${result.task}"`);
-        console.log(`  Target:    ${result.targetTitle} (${result.targetPosition.x}, ${result.targetPosition.y}, ${result.targetPosition.z})`);
-        console.log(`  Threshold: ${result.threshold}m`);
-        console.log(`  Timeout:   ${result.timeout}s`);
-        console.log(`\nRun: dimsim eval --connect --env ${result.env} --workflow ${result.workflowName}\n`);
-      } catch (err: any) {
-        console.error(`[dimsim] ${err.message}`);
-        Deno.exit(1);
-      }
-      Deno.exit(0);
-    }
-    console.log("Usage: dimsim build eval --scene <name> --target <object> [options]");
-    Deno.exit(1);
-  }
 
   // ── Dev ─────────────────────────────────────────────────────────────
   if (subcommand === "dev") {
@@ -539,7 +337,7 @@ async function main() {
         }
       }
     } catch {
-      console.log("\nNo evals installed. Run 'dimsim setup' or 'dimsim eval create' first.\n");
+      console.log("\nNo evals installed under ${EVALS_DIR}.\n");
       Deno.exit(0);
     }
 
@@ -562,205 +360,6 @@ async function main() {
     Deno.exit(0);
   }
 
-  // ── Eval create (interactive wizard) ─────────────────────────────────
-  if (subcommand === "eval" && Deno.args[1] === "create") {
-    // ANSI helpers
-    const c = {
-      bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
-      cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
-      green: (s: string) => `\x1b[32m${s}\x1b[0m`,
-      yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
-      red: (s: string) => `\x1b[31m${s}\x1b[0m`,
-      dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
-    };
-
-    const distDir = await resolveDistDir();
-    const simsDir = `${distDir}/sims`;
-
-    // ── 1. Pick scene ──────────────────────────────────────────────────
-    const installed: string[] = [];
-    try {
-      for await (const entry of Deno.readDir(simsDir)) {
-        if (entry.name.endsWith(".json") && entry.name !== "manifest.json") {
-          installed.push(entry.name.replace(".json", ""));
-        }
-      }
-    } catch { /* no sims */ }
-    installed.sort();
-
-    if (installed.length === 0) {
-      console.error(c.red("No scenes installed. Run 'dimsim scene install <name>' first."));
-      Deno.exit(1);
-    }
-
-    console.log(`\n${c.bold("  Create Eval Workflow")}\n`);
-    console.log(c.cyan("  Installed scenes:"));
-    installed.forEach((s, i) => console.log(`    ${c.dim(`${i + 1}.`)} ${s}`));
-
-    let sceneName = "";
-    let scenePath = "";
-    while (true) {
-      const input = prompt(`\n  ${c.cyan("Scene")} ${c.dim(`[${installed[0]}]`)}:`) || installed[0];
-      const resolved = installed.includes(input)
-        ? input
-        : installed[parseInt(input) - 1];
-      if (resolved) {
-        sceneName = resolved;
-        scenePath = `${simsDir}/${sceneName}.json`;
-        try {
-          await Deno.stat(scenePath);
-          console.log(`  ${c.green("→")} ${sceneName}`);
-          break;
-        } catch { /* fall through */ }
-      }
-      console.log(c.yellow(`  "${input}" not found. Pick a number or name from the list above.`));
-    }
-
-    // ── 2. Pick rubric ─────────────────────────────────────────────────
-    const rubricChoices = [
-      { key: "objectDistance", label: "objectDistance", desc: "agent must reach a target object" },
-      { key: "llmJudge", label: "llmJudge", desc: "VLM judges success from screenshots" },
-      { key: "groundTruth", label: "groundTruth", desc: "check spatial ground truth conditions" },
-    ];
-
-    console.log(`\n${c.cyan("  Rubric types:")}`);
-    rubricChoices.forEach((r, i) =>
-      console.log(`    ${c.dim(`${i + 1}.`)} ${c.bold(r.label)} ${c.dim(`— ${r.desc}`)}`)
-    );
-
-    let rubric = "";
-    while (true) {
-      const input = prompt(`\n  ${c.cyan("Rubric")} ${c.dim("[1]")}:`) || "1";
-      const byNum = rubricChoices[parseInt(input) - 1];
-      const byName = rubricChoices.find((r) => r.key === input);
-      const match = byNum || byName;
-      if (match) {
-        rubric = match.key;
-        console.log(`  ${c.green("→")} ${match.label}`);
-        break;
-      }
-      console.log(c.yellow(`  Invalid choice. Enter 1-3 or a rubric name.`));
-    }
-
-    // ── 3. Pick target object (objectDistance needs it) ─────────────────
-    const needsTarget = rubric === "objectDistance";
-    const index = loadSceneIndex(scenePath, sceneName);
-    let target = "";
-    let matchedObj: ReturnType<typeof findObject> = null;
-
-    if (needsTarget) {
-      console.log(`\n${c.cyan(`  Objects in "${sceneName}"`)} ${c.dim(`(${index.objects.length})`)}:`);
-      const sample = index.objects.slice(0, 20);
-      for (const obj of sample) {
-        console.log(`    ${obj.title}`);
-      }
-      if (index.objects.length > 20) {
-        console.log(c.dim(`    ... and ${index.objects.length - 20} more (dimsim list objects --scene ${sceneName})`));
-      }
-
-      while (true) {
-        const input = prompt(`\n  ${c.cyan("Target object")}:`);
-        if (!input) {
-          console.log(c.yellow("  Target is required for objectDistance rubric."));
-          continue;
-        }
-        matchedObj = findObject(input, index);
-        if (matchedObj) {
-          target = input;
-          console.log(`  ${c.green("→")} "${matchedObj.title}" at (${matchedObj.position.x}, ${matchedObj.position.y}, ${matchedObj.position.z})`);
-          break;
-        }
-        const suggestions = suggestObjects(input, index);
-        if (suggestions.length > 0) {
-          console.log(c.yellow(`  No match for "${input}". Similar: ${suggestions.join(", ")}`));
-        } else {
-          console.log(c.yellow(`  No match for "${input}". Try 'dimsim list objects --scene ${sceneName}'.`));
-        }
-      }
-    }
-
-    // ── 4. Task prompt ─────────────────────────────────────────────────
-    const defaultTask = needsTarget && matchedObj
-      ? `Go to the ${matchedObj.title}`
-      : "";
-    let task = "";
-    while (true) {
-      const suffix = defaultTask ? ` ${c.dim(`[${defaultTask}]`)}` : "";
-      const input = prompt(`\n  ${c.cyan("Task prompt")}${suffix}:`) || defaultTask;
-      if (input) {
-        task = input;
-        break;
-      }
-      console.log(c.yellow("  Task prompt is required."));
-    }
-
-    // ── 5. Rubric-specific config ──────────────────────────────────────
-    let threshold = 2.0;
-    let llmPrompt = "";
-
-    if (rubric === "objectDistance") {
-      while (true) {
-        const input = prompt(`  ${c.cyan("Distance threshold")} ${c.dim("[2.0m]")}:`) || "2.0";
-        const val = parseFloat(input);
-        if (!isNaN(val) && val > 0) {
-          threshold = val;
-          break;
-        }
-        console.log(c.yellow("  Enter a positive number (meters)."));
-      }
-    } else if (rubric === "llmJudge") {
-      const defaultJudge = `Did the agent successfully complete: ${task}?`;
-      llmPrompt = prompt(`  ${c.cyan("LLM judge prompt")} ${c.dim(`[${defaultJudge}]`)}:`) || defaultJudge;
-    }
-
-    // ── 6. Eval name ───────────────────────────────────────────────────
-    const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    const defaultName = target ? slug(target) : slug(task.slice(0, 40));
-    const name = prompt(`  ${c.cyan("Eval name")} ${c.dim(`[${defaultName}]`)}:`) || defaultName;
-
-    // ── 7. Timeout ─────────────────────────────────────────────────────
-    let timeout = 60;
-    while (true) {
-      const input = prompt(`  ${c.cyan("Timeout")} ${c.dim("[60s]")}:`) || "60";
-      const val = parseInt(input);
-      if (!isNaN(val) && val > 0) {
-        timeout = val;
-        break;
-      }
-      console.log(c.yellow("  Enter a positive number (seconds)."));
-    }
-
-    // ── Build & write ──────────────────────────────────────────────────
-    const successCriteria: Record<string, unknown> = {};
-    if (rubric === "objectDistance") {
-      successCriteria.objectDistance = { object: "agent", target, thresholdM: threshold };
-    } else if (rubric === "llmJudge") {
-      successCriteria.llmJudge = { prompt: llmPrompt };
-    } else if (rubric === "groundTruth") {
-      successCriteria.groundTruth = {};
-    }
-
-    const env = sceneName;
-    const workflow = {
-      name,
-      environment: env,
-      task,
-      startPose: { x: 0, y: 0.5, z: 3, yaw: 0 },
-      timeoutSec: timeout,
-      successCriteria,
-    };
-
-    const envDir = `${EVALS_DIR}/${env}`;
-    try { Deno.mkdirSync(envDir, { recursive: true }); } catch { /* exists */ }
-    const filePath = `${envDir}/${name}.json`;
-    Deno.writeTextFileSync(filePath, JSON.stringify(workflow, null, 2) + "\n");
-
-    console.log(`\n  ${c.green("Created:")} ${filePath}`);
-    console.log(`\n  ${c.cyan("Run it:")}`);
-    console.log(`    dimsim eval --connect --env ${env} --workflow ${name}`);
-    console.log(`    dimsim eval --headless --env ${env} --workflow ${name}\n`);
-    Deno.exit(0);
-  }
 
   // ── Eval ────────────────────────────────────────────────────────────
   if (subcommand === "eval") {
