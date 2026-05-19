@@ -80,6 +80,18 @@ export class ServerPhysics {
   private yaw = 0;
   private seq = 0;
 
+  // Profiling (DIMSIM_PROFILE_PHYSICS=1) — rolling timing per phase.
+  private profile = false;
+  private lastStepStart = 0;
+  private prof = {
+    n: 0,
+    sumCompute: 0, maxCompute: 0,
+    sumStep: 0, maxStep: 0,
+    sumPublish: 0, maxPublish: 0,
+    sumTotal: 0, maxTotal: 0,
+    sumInterval: 0, maxInterval: 0,
+  };
+
   // cmd_vel (ROS frame: x=fwd, z=yaw)
   private linX = 0; // forward
   private linY = 0; // lateral
@@ -89,6 +101,8 @@ export class ServerPhysics {
 
   // Callback to send position to browser
   private onPoseUpdate: ((x: number, y: number, z: number, yaw: number) => void) | null = null;
+
+  private userColliders = new Map<string, { collider: any; body: any | null }>();
 
   constructor(
     lcm: LCM,
@@ -121,6 +135,11 @@ export class ServerPhysics {
     let colliderCount = 0;
     this.world.colliders.forEach(() => { colliderCount++; });
     // Quiet init — only log on error or reconfigure
+
+    this.profile = Deno.env.get("DIMSIM_PROFILE_PHYSICS") === "1";
+    if (this.profile) {
+      console.log(`[physics-prof] enabled — colliderCount=${colliderCount} target=${PHYSICS_HZ}Hz (${(1000 / PHYSICS_HZ).toFixed(1)}ms interval)`);
+    }
   }
 
   private _createBodyAndColliders(): void {
@@ -210,6 +229,63 @@ export class ServerPhysics {
     // quiet
   }
 
+  /** Add a user-authored collider to the world. The browser sends these via
+   * `physicsColliderAdd` when scenes are edited live (SceneClient.add_object,
+   * load_map, etc.). Without this the agent has no floor to stand on. */
+  addCollider(uuid: string, desc: any): void {
+    if (!desc || this.userColliders.has(uuid)) return;
+    const RAPIER = this.RAPIER;
+    const clamp = (v: number) => Math.max(0.001, v);
+    let cd: any;
+    if (desc.shape === "sphere" && desc.radius != null) {
+      cd = RAPIER.ColliderDesc.ball(clamp(desc.radius));
+    } else if (desc.shape === "trimesh" && desc.vertices && desc.indices) {
+      cd = RAPIER.ColliderDesc.trimesh(
+        new Float32Array(desc.vertices),
+        new Uint32Array(desc.indices),
+      );
+    } else if (desc.halfExtents) {
+      const h = desc.halfExtents;
+      cd = RAPIER.ColliderDesc.cuboid(clamp(h.x), clamp(h.y), clamp(h.z));
+    } else {
+      return;
+    }
+    cd.setFriction(0.9);
+    if (desc.restitution != null) cd.setRestitution(desc.restitution);
+    const pos = desc.position ?? { x: 0, y: 0, z: 0 };
+    if (desc.dynamic) {
+      const body = this.world.createRigidBody(
+        RAPIER.RigidBodyDesc.dynamic().setTranslation(pos.x, pos.y, pos.z),
+      );
+      if (desc.mass != null) body.setAdditionalMass(desc.mass);
+      const collider = this.world.createCollider(cd, body);
+      this.userColliders.set(uuid, { collider, body });
+    } else {
+      cd.setTranslation(pos.x, pos.y, pos.z);
+      const collider = this.world.createCollider(cd);
+      this.userColliders.set(uuid, { collider, body: null });
+    }
+  }
+
+  removeCollider(uuid: string): void {
+    const entry = this.userColliders.get(uuid);
+    if (!entry) return;
+    if (entry.body) {
+      this.world.removeRigidBody(entry.body);
+    } else if (entry.collider) {
+      this.world.removeCollider(entry.collider, false);
+    }
+    this.userColliders.delete(uuid);
+  }
+
+  /** Drop every user-authored collider. Used when hot-reloading a scene
+   * from JSON — the new content's colliders get re-added afterwards. */
+  clearUserColliders(): void {
+    for (const uuid of [...this.userColliders.keys()]) {
+      this.removeCollider(uuid);
+    }
+  }
+
   /** Set callback for browser position sync. */
   setOnPoseUpdate(
     cb: (x: number, y: number, z: number, yaw: number) => void,
@@ -264,6 +340,14 @@ export class ServerPhysics {
   }
 
   private _step(): void {
+    const stepStart = this.profile ? performance.now() : 0;
+    if (this.profile && this.lastStepStart) {
+      const interval = stepStart - this.lastStepStart;
+      this.prof.sumInterval += interval;
+      if (interval > this.prof.maxInterval) this.prof.maxInterval = interval;
+    }
+    this.lastStepStart = stepStart;
+
     // Safety timeout — zero velocity if no cmd_vel received recently
     const hasVel = Date.now() - this.cmdVelStamp < CMD_VEL_TIMEOUT_MS;
     const linX = hasVel ? this.linX * this.speedScale : 0;
@@ -327,18 +411,51 @@ export class ServerPhysics {
 
     this.body.setNextKinematicTranslation(newPos);
 
+    const computeEnd = this.profile ? performance.now() : 0;
+
     // Step world to apply kinematic translation (needed for next computeColliderMovement)
     this.world.step();
+
+    const stepEnd = this.profile ? performance.now() : 0;
 
     // Publish odom to LCM (Three.js Y-up → ROS Z-up)
     this._publishOdom(newPos);
 
-    // Debug: log first few steps
-    // step logging removed — too noisy for dimos subprocess output
-
     // Notify browser for visual sync
     if (this.onPoseUpdate) {
       this.onPoseUpdate(newPos.x, newPos.y, newPos.z, this.yaw);
+    }
+
+    if (this.profile) {
+      const publishEnd = performance.now();
+      const compute = computeEnd - stepStart;
+      const step = stepEnd - computeEnd;
+      const publish = publishEnd - stepEnd;
+      const total = publishEnd - stepStart;
+      const p = this.prof;
+      p.n++;
+      p.sumCompute += compute; if (compute > p.maxCompute) p.maxCompute = compute;
+      p.sumStep += step;       if (step > p.maxStep) p.maxStep = step;
+      p.sumPublish += publish; if (publish > p.maxPublish) p.maxPublish = publish;
+      p.sumTotal += total;     if (total > p.maxTotal) p.maxTotal = total;
+
+      // Log rolling averages every 20 steps (~0.4s at 50Hz target, ~4s at 5Hz actual).
+      if (p.n >= 20) {
+        const intervalAvg = p.sumInterval / Math.max(p.n - 1, 1);
+        const effHz = intervalAvg > 0 ? 1000 / intervalAvg : 0;
+        console.log(
+          `[physics-prof] n=${p.n} ` +
+          `compute=${(p.sumCompute / p.n).toFixed(2)}/${p.maxCompute.toFixed(1)}ms ` +
+          `step=${(p.sumStep / p.n).toFixed(2)}/${p.maxStep.toFixed(1)}ms ` +
+          `pub=${(p.sumPublish / p.n).toFixed(2)}/${p.maxPublish.toFixed(1)}ms ` +
+          `total=${(p.sumTotal / p.n).toFixed(2)}/${p.maxTotal.toFixed(1)}ms ` +
+          `interval=${intervalAvg.toFixed(1)}/${p.maxInterval.toFixed(1)}ms ` +
+          `effHz=${effHz.toFixed(1)}`
+        );
+        // reset rolling counters but keep maxima — useful to spot worst-case drift
+        p.n = 0;
+        p.sumCompute = p.sumStep = p.sumPublish = p.sumTotal = p.sumInterval = 0;
+      }
     }
   }
 

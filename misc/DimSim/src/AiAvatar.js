@@ -117,7 +117,7 @@ export class AiAvatar {
     this._vlmAssistantHistoryLimit = 15;
     this._moveStepAcc = 0;
     this._turnAcc = 0;
-
+    
     // Task state tracking
     this._startPosition = null; // {x,y,z} - where agent was when task started
     this._currentSubgoal = ""; // Current sub-goal from VLM reasoning
@@ -415,7 +415,7 @@ export class AiAvatar {
   async _requestVlmDecision(now, nearby) {
     // Increment step counter once per VLM decision
     this._stepCounter++;
-
+    
     const capture = this.vlm.captureBase64;
     const prompt = this.vlm.buildPrompt?.({ actions: this.vlm.actions }) ?? "";
     const model = this.vlm.getModel?.() || this.vlm.model;
@@ -455,7 +455,7 @@ export class AiAvatar {
     }));
     const assetLibraryNames = (this.vlm?.getAssetLibraryNames?.() || []).slice(0, 12);
     const isEditorMode = !!this.vlm?.isEditorMode?.();
-
+    
     // Get what the agent is currently holding
     const heldAsset = this.vlm?.getHeldAsset?.(this);
     const recentGeneratedAssets = (this.vlm?.getRecentGeneratedAssets?.(this) || []).slice(0, 8);
@@ -470,7 +470,7 @@ export class AiAvatar {
     // Build condensed context for user message
     const task = this.vlm?.getTask?.();
     const taskInstruction = String(task?.instruction || "No active task");
-
+    
     // Chat-style message history: system prompt + prior assistant outputs + current user (context + image).
     const assistantMsgs = (this._vlmAssistantHistory || [])
       .slice(-this._vlmAssistantHistoryLimit)
@@ -483,17 +483,17 @@ export class AiAvatar {
       // `${this._stepCounter}${this._stepCounter === 1 ? 'st' : this._stepCounter === 2 ? 'nd' : this._stepCounter === 3 ? 'rd' : 'th'} ACTION`,
       `POSITION: ${pose.x}, ${pose.y}, ${pose.z} | facing ${pose.yaw} yaw, ${pose.pitch} pitch`,
     ];
-
+    
     if (this._startPosition) {
       lines.push(`START POSITION: ${this._startPosition.x.toFixed(1)}, ${this._startPosition.y.toFixed(1)}, ${this._startPosition.z.toFixed(1)}`);
     }
-
+    
     // Show what the agent is currently holding
     if (heldAsset) {
       lines.push(`\nHOLDING: ${heldAsset.title || heldAsset.id} [id: ${heldAsset.id}]`);
       lines.push(`  → Use DROP to place it in front of you`);
     }
-
+    
     if (nearbyAssets.length > 0) {
       lines.push(`\nNEARBY OBJECTS:`);
       for (const a of nearbyAssets) {
@@ -521,7 +521,7 @@ export class AiAvatar {
         lines.push(`  • ${name} [id: ${id}]`);
       }
     }
-
+    
     if (nearbyLocations.length > 0) {
       lines.push(`\nNEARBY LOCATIONS:`);
       for (const loc of nearbyLocations) {
@@ -613,10 +613,10 @@ export class AiAvatar {
       paramsForBubble.observation ||
       "";
     const subgoal = decision.currentSubgoal || "";
-
+    
     // Update current sub-goal tracking
     if (subgoal) this._currentSubgoal = subgoal;
-
+    
     // Display observation bubble (prioritize what the agent sees, not chain-of-thought).
     // If observation is absent, show a concise action status so the bubble still updates each turn.
     const actionPreview = String(decision?.action || "").trim();
@@ -630,19 +630,19 @@ export class AiAvatar {
     const displayText = String(observation || fallbackStatus || "").trim();
     this._setThought(displayText);
     this._lastDecisionBubbleAt = Date.now();
-
+    
     try {
       this.vlm?.onDecision?.(decision);
     } catch {}
-
+    
     const action = String(decision.action || "").trim().toUpperCase();
     const params = decision.params && typeof decision.params === "object" ? decision.params : {};
 
     const [x, y, z] = this.getPosition?.() || [0, 0, 0];
     const yaw = this.group?.rotation?.y ?? 0;
-    this._tracePush(Date.now(), "ACTION", {
-      action,
-      params,
+    this._tracePush(Date.now(), "ACTION", { 
+      action, 
+      params, 
       thinking: thinking.slice(0, 100),
       subgoal,
       pose: { x: x.toFixed(2), y: y.toFixed(2), z: z.toFixed(2), yaw: (yaw * 180 / Math.PI).toFixed(0) }
@@ -687,9 +687,9 @@ export class AiAvatar {
       const assetId = String(params.assetId || "");
       // Support both actionLabel (new) and actionId (old)
       const actionLabel = String(params.actionLabel || params.actionId || "");
-
+      
       console.log(`[AI INTERACT] Raw params: assetId="${assetId}", actionLabel="${actionLabel}"`);
-
+      
       // Find matching action by label
       const nearbyAssets = this.vlm?.getNearbyAssets?.(this) || [];
       console.log(`[AI INTERACT] Nearby assets:`, nearbyAssets.map(a => ({
@@ -700,14 +700,14 @@ export class AiAvatar {
         currentState: a.currentState,
         actions: a.actions?.map(act => `${act.id}:${act.label}(${act.from}->${act.to})`)
       })));
-
+      
       const targetAsset = nearbyAssets.find((a) => a.id === assetId);
       let actionId = actionLabel;
-
+      
       if (targetAsset && targetAsset.actions) {
         console.log(`[AI INTERACT] Target asset found: "${targetAsset.title}", looking for action: "${actionLabel}"`);
         console.log(`[AI INTERACT] Available actions:`, targetAsset.actions);
-
+        
         const matchingAction = targetAsset.actions.find(
           (a) => a.label?.toLowerCase() === actionLabel.toLowerCase() || a.id === actionLabel
         );
@@ -720,10 +720,10 @@ export class AiAvatar {
       } else {
         console.warn(`[AI INTERACT] Target asset "${assetId}" not found in nearby assets`);
       }
-
+      
       console.log(`[AI INTERACT] Final actionId to use: "${actionId}"`);
       this._tracePush(Date.now(), "INTERACT", { assetId, actionLabel, actionId });
-
+      
       Promise.resolve()
         .then(() => this.vlm?.interactAsset?.({ agent: this, assetId, actionId }))
         .then((res) => {
@@ -747,9 +747,9 @@ export class AiAvatar {
     if (action === "PICK_UP") {
       const assetId = String(params.assetId || "");
       console.log(`[AI PICK_UP] Attempting to pick up: assetId="${assetId}"`);
-
+      
       this._tracePush(Date.now(), "PICK_UP", { assetId });
-
+      
       Promise.resolve()
         .then(() => this.vlm?.pickUpAsset?.({ agent: this, assetId }))
         .then((res) => {
@@ -773,9 +773,9 @@ export class AiAvatar {
     // === DROP ===
     if (action === "DROP") {
       console.log(`[AI DROP] Attempting to drop held item`);
-
+      
       this._tracePush(Date.now(), "DROP", {});
-
+      
       Promise.resolve()
         .then(() => this.vlm?.dropAsset?.({ agent: this }))
         .then((res) => {
@@ -952,7 +952,7 @@ export class AiAvatar {
     // === GOTO_LOCATION / GOTO_TAG ===
     if (action === "GOTO_LOCATION" || action === "GOTO_TAG") {
       const locId = String(params.locationId || params.tagId || "");
-
+      
       // Special case: "start" returns to start position
       if (locId === "start" && this._startPosition) {
         this._plan = { type: "GOTO", x: this._startPosition.x, z: this._startPosition.z };
@@ -960,7 +960,7 @@ export class AiAvatar {
         this._tracePush(Date.now(), "GOTO_START", {});
         return;
       }
-
+      
       // Find tag by ID
       const tags = this.getTags?.() || [];
       const t = tags.find((x) => x?.id === locId);
@@ -969,7 +969,7 @@ export class AiAvatar {
         this._planRemaining = 999;
         return;
       }
-
+      
       // Tag not found - wait briefly
       this._tracePush(Date.now(), "GOTO_FAIL", { locId, reason: "not found" });
       this._plan = { type: "WAIT" };
@@ -1211,7 +1211,7 @@ export class AiAvatar {
         try {
           this._facing.visible = false;
         } catch {}
-
+        
         this.model = gltf.scene;
 
         // Auto-fit the model to our agent dimensions
@@ -1505,3 +1505,5 @@ function wrapTextLines(ctx, text, maxWidth) {
   if (line) lines.push(line);
   return lines.length ? lines : [""];
 }
+
+

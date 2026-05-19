@@ -1,6 +1,6 @@
 {
   "name": "@antim/dimsim",
-  "version": "0.2.2",
+  "version": "0.3.2",
   "description": "3D simulation environment for the dimos robotics stack. Browser-based Three.js + Rapier sim with LCM transport, sensor publishing, and eval harness.",
   "license": "MIT",
   "exports": {
@@ -18,9 +18,7 @@
       "vendor/",
       "setup.ts"
     ],
-    "exclude": [
-      "test/"
-    ]
+    "exclude": ["test/"]
   },
   "tasks": {
     "start": "deno run --allow-net --allow-read --unstable-net bridge/server.ts",

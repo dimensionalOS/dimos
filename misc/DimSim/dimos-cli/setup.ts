@@ -156,33 +156,33 @@ export async function setup(localArchive?: string): Promise<void> {
   const home = getDimsimHome();
   const distDir = getDistDir();
 
-  console.log(`[dimsim] Setting up in ${home}`);
   await Deno.mkdir(home, { recursive: true });
 
   let registry: Registry | null = null;
+  let didWork = false;
 
   if (localArchive) {
     console.log(`[dimsim] Extracting core from local archive: ${localArchive}`);
     await extractTarGz(localArchive, distDir);
+    didWork = true;
   } else {
     registry = await fetchRegistry();
     const local = await readVersionInfo();
 
-    if (local.core === registry.version) {
-      console.log(`[dimsim] Core already up-to-date (v${registry.version})`);
-    } else {
+    if (local.core !== registry.version) {
       if (local.core) {
         console.log(`[dimsim] Updating core: v${local.core} → v${registry.version}`);
+      } else {
+        console.log(`[dimsim] Installing core v${registry.version}`);
       }
       const tmpFile = `${home}/core-download.tar.gz`;
       await download(registry.coreUrl, tmpFile);
       console.log(`[dimsim] Extracting core assets...`);
       await extractTarGz(tmpFile, distDir);
       await Deno.remove(tmpFile);
-
-      // Write updated version
       local.core = registry.version;
       await writeVersionInfo(local);
+      didWork = true;
     }
   }
 
@@ -206,21 +206,23 @@ export async function setup(localArchive?: string): Promise<void> {
       installedEvalsVer = (await Deno.readTextFile(evalsVerFile)).trim();
     } catch { /* not installed */ }
 
-    if (installedEvalsVer === registry.version) {
-      console.log(`[dimsim] Evals already up-to-date (v${registry.version})`);
-    } else {
+    if (installedEvalsVer !== registry.version) {
       const tmpFile = `${home}/evals-download.tar.gz`;
-      console.log(`[dimsim] Downloading evals...`);
+      console.log(`[dimsim] Updating evals → v${registry.version}`);
       await download(registry.evalsUrl, tmpFile);
-      console.log(`[dimsim] Extracting evals...`);
       await extractTarGz(tmpFile, evalsDir);
       await Deno.remove(tmpFile);
       await Deno.writeTextFile(evalsVerFile, registry.version);
+      didWork = true;
     }
   }
 
-  console.log(`[dimsim] Core setup complete.`);
-  console.log(`[dimsim] Install a scene: dimsim scene install apt`);
+  const verLabel = registry?.version ? `v${registry.version}` : "local";
+  if (didWork) {
+    console.log(`[dimsim] core + evals ready (${verLabel})`);
+  } else {
+    console.log(`[dimsim] core + evals up-to-date (${verLabel})`);
+  }
 }
 
 export async function sceneInstall(

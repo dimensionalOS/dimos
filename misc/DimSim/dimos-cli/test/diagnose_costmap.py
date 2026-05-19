@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-# Copyright 2026 Dimensional Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Diagnostic: subscribe to /global_costmap and /odom via LCM, print costmap stats.
 
 Run with the dimos venv while the agent + bridge are running:
@@ -25,7 +11,6 @@ and whether frontier-eligible cells exist.
 
 import sys
 import time
-
 import numpy as np
 
 try:
@@ -34,8 +19,8 @@ except ImportError:
     print("ERROR: 'lcm' Python package not found. Run with dimos venv.")
     sys.exit(1)
 
-from dimos_lcm.geometry_msgs.PoseStamped import PoseStamped as LCMPoseStamped
 from dimos_lcm.nav_msgs.OccupancyGrid import OccupancyGrid as LCMOccupancyGrid
+from dimos_lcm.geometry_msgs.PoseStamped import PoseStamped as LCMPoseStamped
 
 
 class CostmapDiagnostic:
@@ -82,21 +67,21 @@ class CostmapDiagnostic:
         other_count = int(np.sum((grid != 0) & (grid != 100) & (grid != -1)))
         total = w * h
 
-        print(f"\n{'=' * 60}")
+        print(f"\n{'='*60}")
         print(f"COSTMAP #{self.costmap_count}  ({w}x{h} cells, {res:.3f} m/cell)")
         print(f"Origin: ({ox:.2f}, {oy:.2f})")
-        print(f"World extent: X=[{ox:.2f}, {ox + w * res:.2f}]  Y=[{oy:.2f}, {oy + h * res:.2f}]")
-        print(f"  FREE (0):        {free_count:>8} ({100 * free_count / total:.1f}%)")
-        print(f"  OCCUPIED (100):  {occupied_count:>8} ({100 * occupied_count / total:.1f}%)")
-        print(f"  UNKNOWN (-1):    {unknown_count:>8} ({100 * unknown_count / total:.1f}%)")
-        print(f"  OTHER (1-99):    {other_count:>8} ({100 * other_count / total:.1f}%)")
+        print(f"World extent: X=[{ox:.2f}, {ox + w*res:.2f}]  Y=[{oy:.2f}, {oy + h*res:.2f}]")
+        print(f"  FREE (0):        {free_count:>8} ({100*free_count/total:.1f}%)")
+        print(f"  OCCUPIED (100):  {occupied_count:>8} ({100*occupied_count/total:.1f}%)")
+        print(f"  UNKNOWN (-1):    {unknown_count:>8} ({100*unknown_count/total:.1f}%)")
+        print(f"  OTHER (1-99):    {other_count:>8} ({100*other_count/total:.1f}%)")
 
         if other_count > 0:
             mask = (grid != 0) & (grid != 100) & (grid != -1)
             other_vals = grid[mask]
             unique, counts = np.unique(other_vals, return_counts=True)
-            print("  Other cost distribution (top 10):")
-            for v, c in sorted(zip(unique, counts, strict=False), key=lambda x: -x[1])[:10]:
+            print(f"  Other cost distribution (top 10):")
+            for v, c in sorted(zip(unique, counts), key=lambda x: -x[1])[:10]:
                 print(f"    cost={v:>4}: {c} cells")
 
         # Check robot position
@@ -111,24 +96,23 @@ class CostmapDiagnostic:
             if 0 <= gx < w and 0 <= gy < h:
                 print(f"Robot cell cost: {grid[gy, gx]}")
                 r = 5
-                region = grid[max(0, gy - r) : gy + r + 1, max(0, gx - r) : gx + r + 1]
+                region = grid[max(0,gy-r):gy+r+1, max(0,gx-r):gx+r+1]
                 rfree = int(np.sum(region == 0))
                 rocc = int(np.sum(region == 100))
                 runk = int(np.sum(region == -1))
                 roth = int(np.sum((region != 0) & (region != 100) & (region != -1)))
                 print(f"11x11 neighborhood: FREE={rfree} OCC={rocc} UNK={runk} OTHER={roth}")
             else:
-                print("WARNING: Robot is OUTSIDE costmap bounds!")
+                print(f"WARNING: Robot is OUTSIDE costmap bounds!")
         else:
             print(f"\nNo odom received (count={self.odom_count})")
 
         # Frontier analysis
-        unk_mask = grid == -1
-        free_mask = grid == 0
-        occ_mask = grid >= 100
+        unk_mask = (grid == -1)
+        free_mask = (grid == 0)
+        occ_mask = (grid >= 100)
 
         from scipy import ndimage
-
         kernel = np.ones((3, 3))
         free_dilated = ndimage.binary_dilation(free_mask, structure=kernel)
         occ_dilated = ndimage.binary_dilation(occ_mask, structure=kernel)
@@ -139,7 +123,7 @@ class CostmapDiagnostic:
         frontier_count = int(np.sum(frontier_eligible))
         frontier_blocked = unknown_near_free - frontier_count
 
-        print("\nFRONTIER ANALYSIS (pre-inflation):")
+        print(f"\nFRONTIER ANALYSIS (pre-inflation):")
         print(f"  Unknown cells adjacent to free:         {unknown_near_free}")
         print(f"  ...blocked by adjacent occupied:        {frontier_blocked}")
         print(f"  VALID FRONTIER CELLS:                   {frontier_count}")
@@ -148,29 +132,27 @@ class CostmapDiagnostic:
         if frontier_count > 0:
             inflate_radius = 0.25  # meters, default in frontier explorer
             cell_radius = int(np.ceil(inflate_radius / res))
-            y, x = np.ogrid[-cell_radius : cell_radius + 1, -cell_radius : cell_radius + 1]
+            y, x = np.ogrid[-cell_radius:cell_radius+1, -cell_radius:cell_radius+1]
             inflate_kernel = (x**2 + y**2 <= cell_radius**2).astype(np.uint8)
             inflated_occ = ndimage.binary_dilation(occ_mask, structure=inflate_kernel)
             inflated_occ_dilated = ndimage.binary_dilation(inflated_occ, structure=kernel)
             frontier_after_inflate = candidates & ~inflated_occ_dilated
-            print("\n  After 0.25m inflation:")
-            print(
-                f"  VALID FRONTIER CELLS:                   {int(np.sum(frontier_after_inflate))}"
-            )
+            print(f"\n  After 0.25m inflation:")
+            print(f"  VALID FRONTIER CELLS:                   {int(np.sum(frontier_after_inflate))}")
 
         if frontier_count == 0 and unknown_near_free > 0:
             print(f"\n  *** DIAGNOSIS: ALL {unknown_near_free} unknown-near-free cells")
-            print("      are also adjacent to occupied cells. Obstacles border every")
-            print("      free/unknown boundary. The height_cost algorithm may produce")
-            print("      high-gradient costs at edges, or the LiDAR sees obstacles")
-            print("      exactly at the boundary of observed space.")
+            print(f"      are also adjacent to occupied cells. Obstacles border every")
+            print(f"      free/unknown boundary. The height_cost algorithm may produce")
+            print(f"      high-gradient costs at edges, or the LiDAR sees obstacles")
+            print(f"      exactly at the boundary of observed space.")
         elif frontier_count == 0 and free_count == 0:
-            print("\n  *** DIAGNOSIS: No FREE (cost=0) cells at all!")
-            print("      The height_cost algorithm is not seeing flat ground.")
-            print("      Check if LiDAR produces ground-hitting points (Z<0.1 in robotics frame).")
+            print(f"\n  *** DIAGNOSIS: No FREE (cost=0) cells at all!")
+            print(f"      The height_cost algorithm is not seeing flat ground.")
+            print(f"      Check if LiDAR produces ground-hitting points (Z<0.1 in robotics frame).")
         elif frontier_count == 0 and unknown_near_free == 0 and free_count > 0:
-            print("\n  *** DIAGNOSIS: FREE cells exist but no UNKNOWN cells border them.")
-            print("      The free space is fully enclosed by occupied/other-cost cells.")
+            print(f"\n  *** DIAGNOSIS: FREE cells exist but no UNKNOWN cells border them.")
+            print(f"      The free space is fully enclosed by occupied/other-cost cells.")
 
     def run(self):
         self.lc.subscribe("/global_costmap#nav_msgs.OccupancyGrid", self._on_costmap)

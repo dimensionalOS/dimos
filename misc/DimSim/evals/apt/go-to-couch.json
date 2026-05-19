@@ -2,12 +2,7 @@
   "name": "go-to-couch",
   "environment": "apt",
   "task": "Go to the couch",
-  "startPose": {
-    "x": 0,
-    "y": 0.5,
-    "z": 3,
-    "yaw": 0
-  },
+  "startPose": { "x": 0, "y": 0.5, "z": 3, "yaw": 0 },
   "timeoutSec": 30,
   "successCriteria": {
     "objectDistance": {

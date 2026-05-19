@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-# Copyright 2026 Dimensional Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Integration test for SceneEditor — script execution engine.
 
 Requires dimsim running headless on port 8090:
@@ -28,6 +14,7 @@ import time
 import uuid
 
 import websocket
+
 
 PORT = 8090
 WS_URL = f"ws://localhost:{PORT}?ch=control"
@@ -162,9 +149,7 @@ def test_agent_access(ws):
     r = send_exec(ws, "const p = agent.getPosition(); return {x: p[0], y: p[1], z: p[2]}")
     assert r["success"], f"exec failed: {r.get('error')}"
     assert "x" in r["result"], f"unexpected: {r['result']}"
-    print(
-        f"      PASS — agent at ({r['result']['x']:.2f}, {r['result']['y']:.2f}, {r['result']['z']:.2f})"
-    )
+    print(f"      PASS — agent at ({r['result']['x']:.2f}, {r['result']['y']:.2f}, {r['result']['z']:.2f})")
 
 
 def test_add_light(ws):
@@ -209,7 +194,7 @@ return {
     assert r["success"], f"exec failed: {r.get('error')}"
     assert r["result"]["pos"] == {"x": 7, "y": 2, "z": 7}, f"position wrong: {r['result']}"
     assert r["result"]["scale"] == {"x": 2, "y": 2, "z": 2}, f"scale wrong: {r['result']}"
-    assert r["result"]["color"] == 0x00FF00, f"color wrong: {r['result']}"
+    assert r["result"]["color"] == 0x00ff00, f"color wrong: {r['result']}"
     print(f"      PASS — modified: {r['result']}")
 
 
@@ -338,13 +323,10 @@ return {removed}
     print(f"      PASS — removed: {r['result']}")
 
     # Verify double-remove returns false
-    r2 = send_exec(
-        ws,
-        """
+    r2 = send_exec(ws, """
 const mesh = scene.getObjectByName("test-physics-box");
 return {removed: removeCollider(mesh)}
-""",
-    )
+""")
     assert r2["success"] and r2["result"]["removed"] is False, "Double remove should return false"
     print("      PASS — double remove returns false")
 
@@ -410,16 +392,13 @@ return npc
 def test_remove_npc(ws):
     """Test: removeNPC removes NPC and cleans up."""
     print("  [21] NPC: removeNPC")
-    r = send_exec(
-        ws,
-        """
+    r = send_exec(ws, """
 removeNPC('test-npc-idle');
 // Check immediately in same exec — name was cleared by removeNPC
 const npcs = [];
 scene.traverse(obj => { if (obj.name === 'test-npc-idle') npcs.push(obj.name); });
 return { removed: true, remaining: npcs.length }
-""",
-    )
+""")
     assert r["success"], f"exec failed: {r.get('error')}"
     assert r["result"]["remaining"] == 0, f"NPC still found: {r['result']}"
     print(f"      PASS — removed and verified: {r['result']}")
@@ -437,9 +416,7 @@ def test_embodiment_config(ws):
     assert "radius" in cfg, f"no radius: {cfg}"
     assert "halfHeight" in cfg, f"no halfHeight: {cfg}"
     assert "type" in cfg, f"no type: {cfg}"
-    print(
-        f"      PASS — embodiment: type={cfg['type']} radius={cfg['radius']} halfHeight={cfg['halfHeight']}"
-    )
+    print(f"      PASS — embodiment: type={cfg['type']} radius={cfg['radius']} halfHeight={cfg['halfHeight']}")
 
 
 def main():
@@ -489,7 +466,7 @@ def main():
             failed += 1
 
     ws.close()
-    print(f"\n{'=' * 50}")
+    print(f"\n{'='*50}")
     print(f"Results: {passed} passed, {failed} failed out of {len(tests)}")
     sys.exit(1 if failed else 0)
 

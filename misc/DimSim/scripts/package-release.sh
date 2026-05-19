@@ -17,11 +17,15 @@ if [ ! -f "dist/index.html" ]; then
   exit 1
 fi
 
-# Core: everything in dist/ except sims/
+# Core: everything in dist/ except the huge apt scene jsons (those ship as
+# scene-apt-v{VERSION}.tar.gz). empty.json + manifest.json are tiny and
+# travel in core so authoring workflows (DIMSIM_SCENE=empty) work out of
+# the box.
 echo "Packaging core assets..."
 tar -czf "dimsim-core-v${VERSION}.tar.gz" \
   -C dist \
-  --exclude='sims' \
+  --exclude='sims/apt.json' \
+  --exclude='sims/apt_.json' \
   .
 
 echo "Packaging apt scene..."

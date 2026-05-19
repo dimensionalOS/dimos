@@ -25,6 +25,23 @@ const SNAPSHOT_MAGIC = 0x4453534E;
 const DEFAULT_LCM_PORT = 7667;
 const DEFAULT_LCM_HOST = "239.255.76.67";
 
+const SCENE_MIME: Record<string, string> = {
+  js: "application/javascript; charset=utf-8",
+  mjs: "application/javascript; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  glb: "model/gltf-binary",
+  gltf: "model/gltf+json",
+  bin: "application/octet-stream",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  avif: "image/avif",
+  ktx2: "image/ktx2",
+  hdr: "image/vnd.radiance",
+  exr: "image/x-exr",
+};
+
 export interface BridgeServerOptions {
   port: number;
   distDir: string;
@@ -58,6 +75,58 @@ export async function startBridgeServer(options: BridgeServerOptions) {
     channels, lcmBasePort = DEFAULT_LCM_PORT,
     sensorRates, sensorEnable, cameraFov,
   } = options;
+
+  // Scene the engine boots into.  Injected as window.__dimosScene below so
+  // engine.js dynamically imports /scenes/<name>/index.js.
+  const activeSceneName: string = scene || "empty";
+
+  // Event-loop lag probe — fire setTimeout(0) every 50ms; difference between
+  // expected and actual fire time is contention-induced lag. If physics misses
+  // ticks, this will show why.
+  if (Deno.env.get("DIMSIM_PROFILE_PHYSICS") === "1") {
+    let lagSum = 0, lagMax = 0, lagCount = 0;
+    const tick = () => {
+      const expected = performance.now() + 50;
+      setTimeout(() => {
+        const lag = performance.now() - expected;
+        lagSum += Math.max(lag, 0);
+        if (lag > lagMax) lagMax = lag;
+        lagCount++;
+        if (lagCount >= 20) { // ~1s
+          console.log(`[loop-prof] lag avg=${(lagSum / lagCount).toFixed(1)}ms max=${lagMax.toFixed(1)}ms (over ${lagCount} probes)`);
+          lagSum = 0; lagMax = 0; lagCount = 0;
+        }
+        tick();
+      }, 50);
+    };
+    tick();
+  }
+
+  // ── Per-handler profiling --------------------------------------------------
+  // Records sum/max/count for two hot callbacks so we can see whether they
+  // dominate the bridge thread alongside lidar.
+  const PROFILE = Deno.env.get("DIMSIM_PROFILE_PHYSICS") === "1";
+  const profPose = { n: 0, sum: 0, max: 0 };
+  const profRelay = { n: 0, sum: 0, max: 0, bytes: 0 };
+  if (PROFILE) {
+    setInterval(() => {
+      if (profPose.n > 0) {
+        console.log(
+          `[pose-cb-prof] n=${profPose.n} avg=${(profPose.sum / profPose.n).toFixed(2)}ms ` +
+          `max=${profPose.max.toFixed(2)}ms total=${profPose.sum.toFixed(0)}ms/sec`,
+        );
+        profPose.n = 0; profPose.sum = 0; profPose.max = 0;
+      }
+      if (profRelay.n > 0) {
+        console.log(
+          `[relay-prof] n=${profRelay.n} avg=${(profRelay.sum / profRelay.n).toFixed(2)}ms ` +
+          `max=${profRelay.max.toFixed(2)}ms total=${profRelay.sum.toFixed(0)}ms/sec ` +
+          `bytes=${profRelay.bytes}`,
+        );
+        profRelay.n = 0; profRelay.sum = 0; profRelay.max = 0; profRelay.bytes = 0;
+      }
+    }, 1000);
+  }
 
   // Build channel list: if channels provided, use them; otherwise single default
   const channelNames = channels && channels.length > 0
@@ -110,6 +179,44 @@ export async function startBridgeServer(options: BridgeServerOptions) {
     channelMap.set(name, state);
   }
 
+  (async () => {
+    const candidates = [
+      Deno.env.get("DIMSIM_SCENES_DIR"),
+      `${distDir}/scenes`,
+      `${distDir}/../scenes`,
+    ].filter((d): d is string => !!d && d.length > 0);
+    let watchDir: string | null = null;
+    for (const d of candidates) {
+      try {
+        await Deno.stat(`${d}/${activeSceneName}`);
+        watchDir = `${d}/${activeSceneName}`;
+        break;
+      } catch { /* try next */ }
+    }
+    if (!watchDir) return;
+    console.log(`[bridge] hot-reload watching ${watchDir}`);
+    let last = 0;
+    try {
+      for await (const event of Deno.watchFs(watchDir)) {
+        if (event.kind !== "modify" && event.kind !== "create") continue;
+        const now = performance.now();
+        if (now - last < 250) continue;
+        last = now;
+        const msg = JSON.stringify({ type: "reload" });
+        for (const ch of channelMap.values()) {
+          for (const client of ch.controlClients) {
+            if (client.readyState === WebSocket.OPEN) {
+              try { client.send(msg); } catch { /* ignore */ }
+            }
+          }
+        }
+        console.log(`[bridge] hot-reload`);
+      }
+    } catch (e) {
+      console.warn(`[bridge] watcher failed: ${e}`);
+    }
+  })();
+
   /** Resolve channel from WS query param. Falls back to default ("") if not found. */
   function resolveChannel(channelParam: string | null): ChannelState {
     if (channelParam && channelMap.has(channelParam)) {
@@ -142,7 +249,8 @@ export async function startBridgeServer(options: BridgeServerOptions) {
       for (const handle of bodiesToRemove) {
         world.removeRigidBody(world.getRigidBody(handle));
       }
-      console.log(`[bridge:${chState.name || "default"}] Rapier snapshot restored (removed ${bodiesToRemove.length} non-fixed bodies)`);
+      // Single canonical "physics live" marker — test fixtures grep for this.
+      console.log(`[bridge:${chState.name || "default"}] ready`);
 
       chState.serverPhysics = new ServerPhysics(chState.lcm, world, RAPIER, chState.sentSeqs, chState.embodiment ?? undefined);
       if (spawnPos) {
@@ -153,6 +261,7 @@ export async function startBridgeServer(options: BridgeServerOptions) {
       chState.serverLidar.setExcludeBody(chState.serverPhysics.getBody());
 
       chState.serverPhysics.setOnPoseUpdate((x, y, z, yaw) => {
+        const t0 = PROFILE ? performance.now() : 0;
         const qw = Math.cos(yaw / 2);
         const qy = Math.sin(yaw / 2);
         chState.serverLidar!.updatePose(x, y, z, 0, qy, 0, qw);
@@ -161,6 +270,12 @@ export async function startBridgeServer(options: BridgeServerOptions) {
         const client = chState.activeControlClient;
         if (client && client.readyState === WebSocket.OPEN) {
           try { client.send(msg); } catch { /* ignore */ }
+        }
+        if (PROFILE) {
+          const dt = performance.now() - t0;
+          profPose.n++;
+          profPose.sum += dt;
+          if (dt > profPose.max) profPose.max = dt;
         }
       });
 
@@ -190,35 +305,74 @@ export async function startBridgeServer(options: BridgeServerOptions) {
         socket.onclose = () => { chState.sensorClients.delete(socket); };
         socket.onerror = () => chState.sensorClients.delete(socket);
 
+        // Chunked snapshot reassembly state (DSC1 protocol).
+        // Browser ships the Rapier snapshot in many small frames so a
+        // CPU-starved main thread can drain the WebSocket pump.
+        let chunkedSnapshot: {
+          total: number;
+          spawn: { x: number; y: number; z: number };
+          received: number;
+          parts: Uint8Array[];
+        } | null = null;
+
         let _sensorLogN = 0;
         socket.onmessage = (event: MessageEvent) => {
           if (!(event.data instanceof ArrayBuffer) || !chState.lcm) return;
           const packet = new Uint8Array(event.data);
+
+          // While reassembling a chunked snapshot, treat every binary frame
+          // on this socket as the next chunk in order.
+          if (chunkedSnapshot) {
+            chunkedSnapshot.parts.push(packet);
+            chunkedSnapshot.received += packet.byteLength;
+            if (chunkedSnapshot.received >= chunkedSnapshot.total) {
+              const combined = new Uint8Array(chunkedSnapshot.received);
+              let off = 0;
+              for (const p of chunkedSnapshot.parts) { combined.set(p, off); off += p.byteLength; }
+              const snapshot = combined.subarray(0, chunkedSnapshot.total);
+              const spawn = chunkedSnapshot.spawn;
+              chunkedSnapshot = null;
+              initServerSystems(chState, snapshot, spawn);
+            }
+            return;
+          }
 
           // Check for Rapier snapshot
           if (packet.length > 4) {
             const dv = new DataView(packet.buffer, packet.byteOffset);
             const magic = dv.getUint32(0, false);
 
+            if (magic === 0x44534331) { // "DSC1" — chunked prelude
+              const total = dv.getUint32(4, true);
+              const sx = dv.getFloat32(8, true);
+              const sy = dv.getFloat32(12, true);
+              const sz = dv.getFloat32(16, true);
+              chunkedSnapshot = {
+                total,
+                spawn: { x: sx, y: sy, z: sz },
+                received: 0,
+                parts: [],
+              };
+              return;
+            }
+
             if (magic === 0x44535332) { // "DSS2"
               const sx = dv.getFloat32(4, true);
               const sy = dv.getFloat32(8, true);
               const sz = dv.getFloat32(12, true);
               const snapshot = packet.slice(16);
-              const spawnPos = { x: sx, y: sy, z: sz };
-              console.log(`${logPrefix} Rapier snapshot received (${(snapshot.byteLength / 1024).toFixed(0)}KB) spawn=(${sx.toFixed(1)},${sy.toFixed(1)},${sz.toFixed(1)})`);
-              initServerSystems(chState, snapshot, spawnPos);
+              initServerSystems(chState, snapshot, { x: sx, y: sy, z: sz });
               return;
             }
 
             if (magic === SNAPSHOT_MAGIC) { // "DSSN"
               const snapshot = packet.slice(4);
-              console.log(`${logPrefix} Rapier snapshot received (${(snapshot.byteLength / 1024).toFixed(0)}KB) [legacy, no spawn]`);
               initServerSystems(chState, snapshot);
               return;
             }
           }
 
+          const t0 = PROFILE ? performance.now() : 0;
           try {
             const decoded = decodePacket(packet);
             if (decoded && decoded.type === "small") {
@@ -231,6 +385,13 @@ export async function startBridgeServer(options: BridgeServerOptions) {
               chState.lcm.publishRaw(decoded.channel, decoded.data).catch(() => {});
             }
           } catch { /* ignore */ }
+          if (PROFILE) {
+            const dt = performance.now() - t0;
+            profRelay.n++;
+            profRelay.sum += dt;
+            profRelay.bytes += packet.byteLength;
+            if (dt > profRelay.max) profRelay.max = dt;
+          }
         };
       } else {
         // ── CONTROL WebSocket ─────────────────────────────────────────
@@ -275,9 +436,15 @@ export async function startBridgeServer(options: BridgeServerOptions) {
                 return; // don't relay teleport commands
               }
 
-              // -- Physics collider add/remove: forward to Rapier world --
-              if (msg.type === "physicsColliderAdd" || msg.type === "physicsColliderRemove") {
-                // These are handled by the browser's physics; just relay
+              // -- Physics collider add/remove: also apply to ServerPhysics
+              // world so live-authored colliders (floor, walls, dynamic balls)
+              // become real obstacles for the server-side agent. Without this,
+              // the dog falls through anything added after the boot snapshot.
+              if (msg.type === "physicsColliderAdd" && msg.uuid && msg.desc) {
+                chState.serverPhysics?.addCollider(msg.uuid, msg.desc);
+              }
+              if (msg.type === "physicsColliderRemove" && msg.uuid) {
+                chState.serverPhysics?.removeCollider(msg.uuid);
               }
             } catch { /* not JSON, relay as-is */ }
 
@@ -316,12 +483,35 @@ export async function startBridgeServer(options: BridgeServerOptions) {
         const ratesJs = sensorRates ? `window.__dimosSensorRates=${JSON.stringify(sensorRates)};` : "";
         const enableJs = sensorEnable ? `window.__dimosSensorEnable=${JSON.stringify(sensorEnable)};` : "";
         const fovJs = cameraFov ? `window.__dimosCameraFov=${cameraFov};` : "";
-        const inject = `<script>window.__dimosMode=true;window.__dimosScene="${scene || "apt"}";${headless ? "window.__dimosHeadless=true;" : ""}${ratesJs}${enableJs}${fovJs}</script>`;
+        const inject = `<script>window.__dimosMode=true;window.__dimosScene="${activeSceneName}";${headless ? "window.__dimosHeadless=true;" : ""}${ratesJs}${enableJs}${fovJs}</script>`;
         html = html.replace("</head>", `${inject}\n</head>`);
         return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
       } catch {
         return new Response("index.html not found", { status: 404 });
       }
+    }
+
+    // JS scene project folders. Resolution order:
+    //   1. DIMSIM_SCENES_DIR env (dimos points this at user-authored scenes)
+    //   2. dist/scenes/         (shipped built-ins, when running from a built binary)
+    //   3. ../scenes/           (dev built-ins, when running directly from source)
+    if (url.pathname.startsWith("/scenes/")) {
+      const rel = url.pathname.slice("/scenes/".length);
+      const candidates = [
+        Deno.env.get("DIMSIM_SCENES_DIR"),
+        `${distDir}/scenes`,
+        `${distDir}/../scenes`,
+      ].filter((d): d is string => !!d && d.length > 0);
+      for (const dir of candidates) {
+        try {
+          const filePath = `${dir}/${rel}`;
+          const data = await Deno.readFile(filePath);
+          const ext = rel.split(".").pop()?.toLowerCase() ?? "";
+          const contentType = SCENE_MIME[ext] ?? "application/octet-stream";
+          return new Response(data, { headers: { "content-type": contentType } });
+        } catch { /* try next */ }
+      }
+      return new Response(`Scene file not found: ${rel}`, { status: 404 });
     }
 
     return serveDir(req, { fsRoot: distDir, quiet: true });

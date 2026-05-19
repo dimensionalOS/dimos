@@ -3,10 +3,10 @@ import * as THREE from "three";
 // =============================================================================
 // AGENT POV CAPTURE SYSTEM
 // =============================================================================
-//
+// 
 // For Gaussian splats to render correctly, the SparkRenderer needs to sort splats
 // based on the camera position. This sorting happens during the render call.
-//
+// 
 // ARCHITECTURE:
 // Instead of capturing mid-frame, we use a request/callback system:
 // 1. Agent requests a capture -> we queue the request
@@ -62,9 +62,9 @@ export function requestAgentCapture({
       reject(new Error("No agent provided"));
       return;
     }
-
+    
     const agentId = agent.id || "default";
-
+    
     // Store the capture request
     _pendingCaptures.set(agentId, {
       agent,
@@ -90,14 +90,14 @@ export function requestAgentCapture({
 /**
  * Process all pending captures - called from the main render loop.
  * This renders from each agent's POV and captures the result.
- *
+ * 
  * We do a "warm-up" render first to trigger splat sorting, wait for the
  * renderer to complete, then do the actual capture render.
  */
 export async function processPendingCaptures() {
   const captures = getPendingCaptures();
   if (captures.length === 0) return;
-
+  
   for (const capture of captures) {
     try {
       const base64 = await performCaptureWithDelay(capture);

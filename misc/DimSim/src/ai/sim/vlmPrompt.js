@@ -55,7 +55,7 @@ Some objects are marked [pickable] - you can carry them:
 Example pickup: {"action": "PICK_UP", "params": {"assetId": "73799fa3d397c-19b5c3d31fb"}}
 Example drop: {"action": "DROP", "params": {}}
 
-**CRITICAL**:
+**CRITICAL**: 
 - The assetId must be EXACTLY as shown in [id: ...] - don't make up IDs!
 - If no objects appear in NEARBY OBJECTS, move around to find them
 - If distance > 1.5m, move closer first

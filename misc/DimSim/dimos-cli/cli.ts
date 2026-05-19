@@ -41,6 +41,10 @@ const AGENT_PY = CLI_DIR ? resolve(CLI_DIR, "agent.py") : null;
  * no assets need to be downloaded from GitHub releases, and npm/Node are
  * not required — Deno runs Vite directly.
  *
+ * Important for the vendored layout (misc/DimSim/ inside dimos): dist/ is
+ * gitignored and never committed, so on first run we have to materialize
+ * it ourselves rather than asking the user to `npm run build`.
+ *
  * --no-lock keeps the repo's deno.lock (which tracks only JSR deps for
  * the CLI) from being polluted with the frontend's npm dep graph.
  */
@@ -96,9 +100,8 @@ async function tryBuildFromSource(
   }
 }
 
-/** Resolve distDir: use local dist/ if it exists (dev), else ~/.dimsim/dist/ (installed). */
+/** Resolve distDir: use local dist/ if it exists (dev / vendored), build it from sources if not, else fall back to ~/.dimsim/dist/. */
 async function resolveDistDir(): Promise<string> {
-  // Check local dist/ (only in dev mode, running from source)
   if (LOCAL_DIST_DIR && PROJECT_DIR) {
     try {
       await Deno.stat(`${LOCAL_DIST_DIR}/index.html`);
@@ -118,8 +121,10 @@ async function resolveDistDir(): Promise<string> {
 
   console.error(`[dimsim] No dist/ found.`);
   console.error(`[dimsim] Run 'dimsim setup' to download core assets.`);
+  if (!IS_REMOTE) {
+    console.error(`[dimsim] Or build locally with 'npm run build'.`);
+  }
   Deno.exit(1);
-  throw new Error("unreachable"); // for TS flow analysis — Deno.exit is never
 }
 
 function printUsage() {

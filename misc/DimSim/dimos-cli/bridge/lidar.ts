@@ -18,7 +18,11 @@ const MIN_RANGE = 0.1;
 const MAX_RANGE = 4;
 const V_MIN_RAD = (-30 * Math.PI) / 180;
 const V_MAX_RAD = (15 * Math.PI) / 180;
-const RATE_MS = 100; // 10 Hz
+// 5 Hz — at 15k raycasts per scan, 10 Hz starves the physics setInterval
+// (each scan takes 25-30ms on M4, ~60-80ms on weaker runners). 5 Hz halves
+// the per-second blocking budget and matches typical low-end LiDAR rates
+// (RPLIDAR, low-Velodyne). Module docstring already advertised 5 Hz.
+const RATE_MS = 200; // 5 Hz
 
 const CH_LIDAR = "/lidar#sensor_msgs.PointCloud2";
 
@@ -87,6 +91,9 @@ function rotateByQuat(
 // -- ServerLidar --------------------------------------------------------------
 
 export class ServerLidar {
+  // Resolved once at module load; hot-path callers should not Deno.env.get every scan.
+  static readonly PROFILE = Deno.env.get("DIMSIM_PROFILE_PHYSICS") === "1";
+
   private lcm: LCM;
   private world: any; // RAPIER.World
   private RAPIER: any;
@@ -176,6 +183,8 @@ export class ServerLidar {
   }
 
   private async _doScan(): Promise<void> {
+      const profile = ServerLidar.PROFILE;
+      const scanStart = profile ? performance.now() : 0;
       this.scanCount++;
       const jitterAngle = this.scanCount * 2.399963; // golden angle per scan
       const cosJ = Math.cos(jitterAngle);
@@ -191,6 +200,8 @@ export class ServerLidar {
 
       const ox = this.px, oy = this.py, oz = this.pz;
       const rqx = this.qx, rqy = this.qy, rqz = this.qz, rqw = this.qw;
+
+      const raycastStart = profile ? performance.now() : 0;
 
       for (let i = 0; i < NUM_POINTS; i++) {
         // Fibonacci direction (pre-rotated to camera-local) with per-scan golden angle jitter.
@@ -229,6 +240,8 @@ export class ServerLidar {
         intensity[n] = 1.0 / (1.0 + 0.02 * toi * toi);
         n++;
       }
+
+      const raycastEnd = profile ? performance.now() : 0;
 
       if (n === 0) return;
 
@@ -280,5 +293,17 @@ export class ServerLidar {
       this.sentSeqs.add(this.lcm.getNextSeq());
       // Publish directly to LCM — no WS hop (await so buffer pressure is felt)
       await this.lcm.publish(CH_LIDAR, msg);
+
+      if (profile) {
+        const total = performance.now() - scanStart;
+        const raycast = raycastEnd - raycastStart;
+        // Log every scan — there are only 10 per second.
+        if (this.scanCount % 5 === 0) {
+          console.log(
+            `[lidar-prof] scan=${this.scanCount} raycast=${raycast.toFixed(1)}ms ` +
+            `total=${total.toFixed(1)}ms hits=${n}/${NUM_POINTS}`
+          );
+        }
+      }
   }
 }

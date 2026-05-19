@@ -34,3 +34,5 @@ export async function requestVlmDecision({ endpoint, model, prompt, imageBase64,
 
   throw lastError || new Error("VLM request failed");
 }
+
+

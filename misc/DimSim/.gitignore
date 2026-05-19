@@ -5,3 +5,4 @@ dist/
 **/.DS_Store
 .deno/
 scenes.json
+scenes/**/apt.json

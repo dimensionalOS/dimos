@@ -434,14 +434,14 @@ function normalizeAssetSchema(raw) {
     }];
     raw.currentStateId = raw.states[0].id;
   }
-
+  
   // Ensure each state has interactions array
   for (const state of raw.states) {
     if (!Array.isArray(state.interactions)) {
       state.interactions = [];
     }
   }
-
+  
   // Build the normalized asset object
   const normalized = {
     id: raw.id ?? crypto.randomUUID(),
@@ -456,7 +456,7 @@ function normalizeAssetSchema(raw) {
     receiveShadow: raw.receiveShadow ?? false,
     blobShadow: raw.blobShadow ?? null, // { opacity, scale, stretch, rotationDeg, offsetX, offsetY, offsetZ }
   };
-
+  
   // Copy actions if they exist in raw data
   if (Array.isArray(raw.actions) && raw.actions.length > 0) {
     normalized.actions = raw.actions.map(act => ({
@@ -480,7 +480,7 @@ function normalizeAssetSchema(raw) {
       }
     }
   }
-
+  
   // Also backfill interactions from actions if any state is missing them
   if (normalized.actions.length > 0) {
     const actionsByFrom = new Map();
@@ -494,7 +494,7 @@ function normalizeAssetSchema(raw) {
       }
     }
   }
-
+  
   return normalized;
 }
 
@@ -620,6 +620,7 @@ const skyDome = new THREE.Mesh(
 skyDome.frustumCulled = false;
 skyDome.renderOrder = -1000;
 skyDome.visible = false;
+skyDome.userData.engineInternal = true;
 scene.add(skyDome);
 
 
@@ -641,6 +642,11 @@ const avatar = new THREE.Mesh(
 avatar.castShadow = false;
 avatar.receiveShadow = false;
 avatar.visible = false; // always hidden; physics capsule handles collision
+avatar.userData.engineInternal = true;
+tagsGroup.userData.engineInternal = true;
+assetsGroup.userData.engineInternal = true;
+primitivesGroup.userData.engineInternal = true;
+lightsGroup.userData.engineInternal = true;
 scene.add(avatar);
 scene.add(tagsGroup);
 scene.add(assetsGroup);
@@ -2329,7 +2335,7 @@ function saveTagsForWorld() {
   try {
     let rawState = localStorage.getItem("sparkWorldStateByWorld");
     let byWorld = {};
-
+    
     try {
       byWorld = rawState ? JSON.parse(rawState) : {};
     } catch {
@@ -2355,7 +2361,7 @@ function saveTagsForWorld() {
         _deltaOnly: true,
       };
     });
-
+    
     // Save primitives — strip collider handles and large texture data URLs
     // (textures are preserved in Export but too big for localStorage)
     const savePrimitives = primitives.map((p) => {
@@ -2381,16 +2387,16 @@ function saveTagsForWorld() {
       sceneSettings: serializeSceneSettings(),
     };
     const dataStr = JSON.stringify(byWorld);
-
+    
     // Check size before saving (localStorage limit is typically 5MB)
     const sizeKB = (dataStr.length * 2) / 1024; // Rough estimate (UTF-16)
     console.log(`[SAVE] Data size: ${sizeKB.toFixed(1)}KB`);
-
+    
     localStorage.setItem("sparkWorldStateByWorld", dataStr);
     localStorage.setItem("sparkWorldLastWorldKey", worldKey);
   } catch (e) {
     console.error("[SAVE] Failed to save world state:", e);
-
+    
     // If quota exceeded, try clearing old data and retry
     if (e.name === "QuotaExceededError") {
       console.warn("[SAVE] Quota exceeded, clearing old world data...");
@@ -2513,7 +2519,7 @@ function agentUiSetRequest({ endpoint, model, prompt, context, imageBytes, messa
   if (agentReqPromptEl) agentReqPromptEl.textContent = prompt || "";
   const editPrompt = document.getElementById("edit-agent-req-prompt");
   if (editPrompt) editPrompt.textContent = prompt || "";
-
+  
   // Format messages for display (only assistant and user messages, not system)
   let contextText = "";
   if (messages && messages.length > 0) {
@@ -2791,19 +2797,19 @@ function enableAgentCameraFollow(agentId = selectedAgentInspectorId) {
   agentCameraFollow = true;
   agentCameraFollowId = target.id;
   _agentFollowInitialized = false;
-
+  
   // Unlock player controls so camera isn't fighting with pointer lock
   controls?.unlock?.();
-
+  
   // Hide the player avatar
   avatar.visible = false;
-
+  
   // Hide crosshair and interaction hints during follow mode
   const crosshair = document.getElementById("crosshair");
   if (crosshair) crosshair.style.display = "none";
   const hint = document.getElementById("interaction-hint");
   if (hint) hint.style.display = "none";
-
+  
   console.log("[AGENT CAM] Following agent");
   renderSelectedAgentControls();
 }
@@ -2811,33 +2817,33 @@ function enableAgentCameraFollow(agentId = selectedAgentInspectorId) {
 function disableAgentCameraFollow() {
   agentCameraFollow = false;
   agentCameraFollowId = null;
-
+  
   // Show all agent meshes again
   for (const a of aiAgents) {
     if (a?.group) a.group.visible = true;
   }
-
+  
   // Avatar mesh stays hidden (physics capsule still active)
-
+  
   // Restore crosshair and interaction hints
   const crosshair = document.getElementById("crosshair");
   if (crosshair) crosshair.style.display = "";
   const hint = document.getElementById("interaction-hint");
   if (hint) hint.style.display = "";
-
+  
   console.log("[AGENT CAM] Returning to player");
   renderSelectedAgentControls();
 }
 
 function updateAgentCameraFollow(dt) {
   if (!agentCameraFollow || aiAgents.length === 0) return;
-
+  
   const agent = getAgentById(agentCameraFollowId) || aiAgents[0];
   if (!agent) return;
   const [ax, ay, az] = agent.getPosition?.() || [0, 0, 0];
   const yaw = agent.group?.rotation?.y ?? 0;
   const pitch = typeof agent.pitch === "number" ? agent.pitch : 0;
-
+  
   // Place camera at the real Go2 front-camera mount: GO2_CAMERA_HEIGHT above
   // the ground and GO2_CAMERA_FORWARD along the agent's heading so the origin
   // sits outside the body mesh (Go2's head-mounted RGB-D, not body-center).
@@ -2846,17 +2852,17 @@ function updateAgentCameraFollow(dt) {
   const eyeX = ax + Math.sin(yaw) * GO2_CAMERA_FORWARD;
   const eyeZ = az + Math.cos(yaw) * GO2_CAMERA_FORWARD;
   camera.position.set(eyeX, eyeY, eyeZ);
-
+  
   // Compute forward direction exactly like visionCapture.js does
   const cp = Math.cos(pitch);
   const sp = Math.sin(pitch);
   const fx = Math.sin(yaw) * cp;
   const fy = sp;
   const fz = Math.cos(yaw) * cp;
-
+  
   // Use lookAt to match the VLM capture camera
   camera.lookAt(eyeX + fx, eyeY + fy, eyeZ + fz);
-
+  
   // Hide the agent's own mesh so it doesn't block the view
   if (agent.group) agent.group.visible = false;
 }
@@ -2888,7 +2894,7 @@ async function startAgentTask(instruction, { autoPool = true, targetAgentId = nu
 
   agentUiPush(`${new Date().toLocaleTimeString()}\nTASK START\n${text}${target ? ` [${target.id}]` : ` [${targets.length} agents]`}`);
   renderAgentTaskUi();
-
+  
   if (simUserCameraMode === "agent") enableAgentCameraFollow();
 }
 
@@ -3280,27 +3286,27 @@ function getNearbyAssetsForAgent(agent, maxDist = 1.0) {
   const pitch = typeof agent.pitch === "number" ? agent.pitch : 0;
   const cp = Math.cos(pitch);
   const sp = Math.sin(pitch);
-
+  
   // Full 3D forward direction (with pitch) - used for raycasting
   const forward3D = _tmpV1.set(Math.sin(yaw) * cp, sp, Math.cos(yaw) * cp).normalize();
-
+  
   // Horizontal-only forward direction (yaw only, no pitch) - used for "in front" check
   // BUG FIX: Previously used forward3D which includes pitch, causing dot product to be
   // artificially reduced when looking up/down (cos(pitch) scaling factor)
   const forwardHoriz = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).normalize();
-
+  
   const eye = _tmpV2.set(ax, ay + PLAYER_EYE_HEIGHT * 0.9, az);
 
   const results = [];
   for (const a of assets) {
     const obj = assetsGroup.getObjectByName(`asset:${a.id}`);
     if (!obj) continue;
-
+    
     // Use cached sphere center (O(1) — no vertex traversal)
     const _agentSphere = new THREE.Sphere();
     if (!getAssetWorldSphere(obj, _agentSphere)) continue;
     const center = _agentSphere.center;
-
+    
     const dx = center.x - ax;
     const dy = center.y - ay;
     const dz = center.z - az;
@@ -3311,16 +3317,16 @@ function getNearbyAssetsForAgent(agent, maxDist = 1.0) {
     const toHoriz = _tmpV3.set(dx, 0, dz);
     const horizLen = toHoriz.length() || 1;
     toHoriz.multiplyScalar(1 / horizLen);
-
+    
     // BUG FIX: Use horizontal forward for horizontal "in front" check
     // Threshold relaxed from 0.92 (~23°) to 0.7 (~45°) for better usability
     const inFrontHoriz = forwardHoriz.dot(toHoriz) > 0.7;
 
     let isLookedAt = false;
-
+    
     // Debug: log for specific asset checks
     const debugThis = a.title?.toLowerCase().includes('bathtub') || a.title?.toLowerCase().includes('tub');
-
+    
     if (debugThis) {
       console.log(`[RAYCAST DEBUG] Checking "${a.title}" (${a.id})`);
       console.log(`  Eye position:`, eye.toArray().map(v => v.toFixed(2)));
@@ -3333,11 +3339,11 @@ function getNearbyAssetsForAgent(agent, maxDist = 1.0) {
       console.log(`  inFrontHoriz (>0.7):`, inFrontHoriz);
       console.log(`  roughlyInFront (>0.3):`, dotVal > 0.3);
     }
-
+    
     // For interaction purposes, we use a very lenient "roughly in front" check
     // The bounding box center can be off to the side for wide objects
     const roughlyInFront = forwardHoriz.dot(toHoriz) > 0.3; // ~72° cone
-
+    
     if (inFrontHoriz || roughlyInFront) {
       // Cheap bounding-sphere ray test instead of expensive recursive mesh raycast
       const objNode = assetsGroup.getObjectByName(`asset:${a.id}`);
@@ -3345,13 +3351,13 @@ function getNearbyAssetsForAgent(agent, maxDist = 1.0) {
         const _tmpSphere = new THREE.Sphere();
         if (!getAssetWorldSphere(objNode, _tmpSphere)) { /* skip */ }
         _tmpSphere.radius = Math.max(_tmpSphere.radius, 0.3);
-
+        
         // Test look direction against bounding sphere
         const lookRay = new THREE.Ray(eye, forward3D);
         if (lookRay.intersectsSphere(_tmpSphere)) {
           isLookedAt = true;
         }
-
+        
         // Also test toward center direction (catches pitch misalignment)
         if (!isLookedAt) {
           const toCenter = new THREE.Vector3(
@@ -3367,7 +3373,7 @@ function getNearbyAssetsForAgent(agent, maxDist = 1.0) {
         }
       }
     }
-
+    
     // Method 3: If close enough and roughly in front, allow interaction even if raycast fails
     // This handles cases where:
     // - Mesh geometry doesn't raycast well
@@ -3378,7 +3384,7 @@ function getNearbyAssetsForAgent(agent, maxDist = 1.0) {
       }
       isLookedAt = true;
     }
-
+    
     if (debugThis) {
       console.log(`  Final isLookedAt:`, isLookedAt);
     }
@@ -3452,9 +3458,9 @@ function getNearbyPrimitivesForAgent(agent, maxDist = 2.5) {
 
 async function agentInteractAsset({ agent, assetId, actionId }) {
   console.log(`[INTERACT] Attempting interaction: assetId="${assetId}", actionId="${actionId}"`);
-
+  
   const candidates = getNearbyAssetsForAgent(agent, 1.5); // Interaction distance
-
+  
   // Debug: if no candidates, show what assets exist
   if (candidates.length === 0) {
     const [ax, ay, az] = agent.getPosition?.() || [0, 0, 0];
@@ -3472,7 +3478,7 @@ async function agentInteractAsset({ agent, assetId, actionId }) {
       return { id: a.id, title: a.title, dist: dist.toFixed(2), center: [center.x.toFixed(2), center.y.toFixed(2), center.z.toFixed(2)] };
     }));
   }
-
+  
   console.log(`[INTERACT] Nearby candidates:`, candidates.map(c => ({
     id: c.id,
     title: c.title,
@@ -3481,15 +3487,15 @@ async function agentInteractAsset({ agent, assetId, actionId }) {
     currentState: c.currentState,
     actions: c.actions.map(a => `${a.id}:${a.label}`)
   })));
-
+  
   const target = candidates.find((x) => x.id === assetId);
   if (!target) {
     console.warn(`[INTERACT] FAIL: Asset "${assetId}" not in nearby candidates`);
     return { ok: false, reason: "not-nearby" };
   }
-
+  
   console.log(`[INTERACT] Found target: dist=${target.dist.toFixed(2)}m, isLookedAt=${target.isLookedAt}, currentState=${target.currentState}`);
-
+  
   if (!target.isLookedAt && target.dist > 1.2) {
     console.warn(`[INTERACT] FAIL: Asset "${assetId}" not looked at (isLookedAt=false)`);
     return { ok: false, reason: "not-looking" };
@@ -3497,7 +3503,7 @@ async function agentInteractAsset({ agent, assetId, actionId }) {
   if (!target.isLookedAt && target.dist <= 1.2) {
     console.log(`[INTERACT] Allowing close-range interaction despite look mismatch (dist=${target.dist.toFixed(2)}m).`);
   }
-
+  
   // Check if the actionId exists in the target's available actions
   const availableAction = target.actions.find(a => a.id === actionId);
   if (!availableAction) {
@@ -3509,10 +3515,10 @@ async function agentInteractAsset({ agent, assetId, actionId }) {
       actionId = byLabel.id;
     }
   }
-
+  
   const ok = await applyAssetAction(assetId, actionId);
   console.log(`[INTERACT] applyAssetAction result: ${ok}`);
-
+  
   if (!ok) {
     // Diagnose why it failed
     const asset = assets.find(a => a.id === assetId);
@@ -3531,7 +3537,7 @@ async function agentInteractAsset({ agent, assetId, actionId }) {
       });
     }
   }
-
+  
   return { ok, reason: ok ? "ok" : "invalid-action" };
 }
 
@@ -3678,21 +3684,21 @@ function playerPickUpAsset(assetId) {
   const asset = assets.find(a => a.id === assetId);
   if (!asset) return { ok: false, reason: "not-found" };
   if (!asset.pickable) return { ok: false, reason: "not-pickable" };
-
+  
   const holdStatus = isAssetHeld(assetId);
   if (holdStatus.held) return { ok: false, reason: "already-held", by: holdStatus.by };
-
+  
   if (playerHeldAsset) return { ok: false, reason: "hands-full" };
-
+  
   playerHeldAsset = assetId;
-
+  
   // Hide the asset from the scene (it's now "in hand")
   const obj = assetsGroup.getObjectByName(`asset:${assetId}`);
   if (obj) obj.visible = false;
-
+  
   // Remove collider while held
   removeAssetCollider(assetId);
-
+  
   console.log(`[PICKUP] Player picked up: ${asset.title || assetId}`);
   setStatus(`Picked up: ${asset.title || "item"}`);
   return { ok: true };
@@ -3703,13 +3709,13 @@ function playerPickUpAsset(assetId) {
  */
 function playerDropAsset() {
   if (!playerHeldAsset) return { ok: false, reason: "not-holding" };
-
+  
   const asset = assets.find(a => a.id === playerHeldAsset);
   if (!asset) {
     playerHeldAsset = null;
     return { ok: false, reason: "not-found" };
   }
-
+  
   // Raycast from crosshair to find where the player is looking
   const dropRay = new THREE.Raycaster();
   dropRay.setFromCamera({ x: 0, y: 0 }, camera);
@@ -3740,10 +3746,10 @@ function playerDropAsset() {
       camera.position.z + forward.z * fallbackDist
     );
   }
-
+  
   // Update asset transform
   asset.transform.position = { x: dropPos.x, y: dropPos.y, z: dropPos.z };
-
+  
   // Show and reposition the asset — traverse to ensure all children are visible
   const obj = assetsGroup.getObjectByName(`asset:${playerHeldAsset}`);
   if (obj) {
@@ -3755,17 +3761,17 @@ function playerDropAsset() {
     console.warn(`[DROP] 3D object missing for ${playerHeldAsset}, re-instantiating...`);
     instantiateAsset(asset);
   }
-
+  
   // Rebuild collider
   rebuildAssetCollider(playerHeldAsset);
-
+  
   console.log(`[DROP] Player dropped: ${asset.title || playerHeldAsset}`);
   setStatus(`Dropped: ${asset.title || "item"}`);
-
+  
   const droppedId = playerHeldAsset;
   playerHeldAsset = null;
   saveTagsForWorld();
-
+  
   return { ok: true, assetId: droppedId };
 }
 
@@ -3775,15 +3781,15 @@ function playerDropAsset() {
 function agentPickUpAsset(agent, assetId) {
   const agentId = agent.id || "default";
   const asset = assets.find(a => a.id === assetId);
-
+  
   if (!asset) return { ok: false, reason: "not-found" };
   if (!asset.pickable) return { ok: false, reason: "not-pickable" };
-
+  
   const holdStatus = isAssetHeld(assetId);
   if (holdStatus.held) return { ok: false, reason: "already-held", by: holdStatus.by };
-
+  
   if (agentHeldAssets.has(agentId)) return { ok: false, reason: "hands-full" };
-
+  
   // Check distance
   const [ax, ay, az] = agent.getPosition?.() || [0, 0, 0];
   const obj = assetsGroup.getObjectByName(`asset:${assetId}`);
@@ -3792,21 +3798,21 @@ function agentPickUpAsset(agent, assetId) {
     getAssetWorldSphere(obj, _pickSphere);
     const center = _pickSphere.center;
     const dist = Math.sqrt(
-      Math.pow(center.x - ax, 2) +
-      Math.pow(center.y - ay, 2) +
+      Math.pow(center.x - ax, 2) + 
+      Math.pow(center.y - ay, 2) + 
       Math.pow(center.z - az, 2)
     );
     if (dist > 1.5) return { ok: false, reason: "too-far", dist };
   }
-
+  
   agentHeldAssets.set(agentId, assetId);
-
+  
   // Hide the asset from the scene
   if (obj) obj.visible = false;
-
+  
   // Remove collider while held
   removeAssetCollider(assetId);
-
+  
   console.log(`[PICKUP] Agent ${agentId} picked up: ${asset.title || assetId}`);
   return { ok: true };
 }
@@ -3817,44 +3823,44 @@ function agentPickUpAsset(agent, assetId) {
 function agentDropAsset(agent) {
   const agentId = agent.id || "default";
   const assetId = agentHeldAssets.get(agentId);
-
+  
   if (!assetId) return { ok: false, reason: "not-holding" };
-
+  
   const asset = assets.find(a => a.id === assetId);
   if (!asset) {
     agentHeldAssets.delete(agentId);
     return { ok: false, reason: "not-found" };
   }
-
+  
   // Calculate drop position (in front of agent)
   const [ax, ay, az] = agent.getPosition?.() || [0, 0, 0];
   const yaw = agent.group?.rotation?.y ?? 0;
   const dropDist = 0.6;
-
+  
   const dropPos = new THREE.Vector3(
     ax + Math.sin(yaw) * dropDist,
     ay + 0.1, // Slightly above ground
     az + Math.cos(yaw) * dropDist
   );
-
+  
   // Update asset transform
   asset.transform.position = { x: dropPos.x, y: dropPos.y, z: dropPos.z };
-
+  
   // Show and reposition the asset
   const obj = assetsGroup.getObjectByName(`asset:${assetId}`);
   if (obj) {
     obj.position.copy(dropPos);
     obj.visible = true;
   }
-
+  
   // Rebuild collider
   rebuildAssetCollider(assetId);
-
+  
   console.log(`[DROP] Agent ${agentId} dropped: ${asset.title || assetId}`);
-
+  
   agentHeldAssets.delete(agentId);
   saveTagsForWorld();
-
+  
   return { ok: true, assetId };
 }
 
@@ -4009,7 +4015,7 @@ function getInteractableAssetAtCrosshair() {
  */
 function getInteractionPopup() {
   if (_interactionPopup) return _interactionPopup;
-
+  
   _interactionPopup = document.createElement("div");
   _interactionPopup.id = "interaction-popup";
   // Styles are now in CSS, just set display none initially
@@ -4023,45 +4029,45 @@ function getInteractionPopup() {
  */
 function showInteractionPopup(asset, actions) {
   const popup = getInteractionPopup();
-
+  
   // Build popup content
   const title = asset.title || "(asset)";
   const stateObj = Array.isArray(asset.states)
     ? asset.states.find((s) => s.id === (asset.currentStateId || asset.currentState))
     : null;
   const stateName = stateObj?.name || "";
-
+  
   let html = `<div style="font-size: 11px; color: rgba(255,255,255,0.5); padding: 6px 10px 4px; font-weight: 600; letter-spacing: 0.02em;">${escapeHtml(title)}${stateName ? ` · ${escapeHtml(stateName)}` : ""}</div>`;
-
+  
   actions.forEach((act, idx) => {
     html += `<button class="interact-action-btn" data-action-id="${escapeHtml(act.id)}" data-idx="${idx}">
       <span style="color: #6366f1; font-size: 11px; font-weight: 700; min-width: 24px;">[${idx + 1}]</span>
       ${escapeHtml(act.label || "interact")}
     </button>`;
   });
-
+  
   html += `<div style="font-size: 10px; color: rgba(255,255,255,0.35); padding: 8px 10px 4px; text-align: center; border-top: 1px solid rgba(255,255,255,0.06); margin-top: 4px;">Press <b style="color: rgba(255,255,255,0.6);">1-${actions.length}</b> or click · <b style="color: rgba(255,255,255,0.6);">Esc</b> to cancel</div>`;
-
+  
   popup.innerHTML = html;
   popup.style.display = "flex";
   _currentInteractableAsset = { asset, actions };
-
+  
   // Add click handlers to buttons
   popup.querySelectorAll(".interact-action-btn").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const actionId = btn.getAttribute("data-action-id");
-
+      
       // Hide popup first
       hideInteractionPopup();
-
+      
       // Execute the action
       if (actionId === "__PICK_UP__") {
         playerPickUpAsset(asset.id);
       } else {
         await executePlayerInteraction(asset.id, actionId);
       }
-
+      
       // Re-lock pointer after a short delay (click events can re-lock)
       setTimeout(() => {
         try {
@@ -4101,19 +4107,19 @@ async function executePlayerInteraction(assetId, actionId) {
     const result = playerPickUpAsset(assetId);
     return result.ok;
   }
-
+  
   const asset = assets.find((a) => a.id === assetId);
   if (!asset) {
     setStatus("Asset not found.");
     return false;
   }
-
+  
   const action = (asset.actions || []).find((a) => a.id === actionId);
   if (!action) {
     setStatus("Action not available.");
     return false;
   }
-
+  
   const ok = await applyAssetAction(assetId, actionId);
   if (ok) {
     setStatus(`${action.label || "Interacted"}: ${asset.title || "asset"}`);
@@ -4131,7 +4137,7 @@ async function handlePlayerInteraction() {
   if (isInteractionPopupVisible()) {
     return;
   }
-
+  
   // First, check if player is holding something - pressing E drops it
   if (playerHeldAsset) {
     playerDropAsset();
@@ -4141,7 +4147,7 @@ async function handlePlayerInteraction() {
     playerDropGroup();
     return;
   }
-
+  
   const target = getInteractableAssetAtCrosshair();
   if (!target) {
     // No interactable asset at crosshair
@@ -4159,7 +4165,7 @@ async function handlePlayerInteraction() {
   if (canPickUp) {
     combinedActions.push({ id: "__PICK_UP__", label: "Pick up", special: true });
   }
-
+  
   if (combinedActions.length === 1) {
     // Single action - execute immediately
     if (combinedActions[0].id === "__PICK_UP__") {
@@ -4350,7 +4356,7 @@ async function rebuildAssetCollider(assetId) {
   if (!a) return;
   await ensureRapierLoaded();
   if (!rapierWorld || !RAPIER) return;
-
+  
   // Remove existing collider
   if (a._colliderHandle != null) {
     try {
@@ -4362,7 +4368,7 @@ async function rebuildAssetCollider(assetId) {
     }
     a._colliderHandle = null;
   }
-
+  
   const obj = assetsGroup.getObjectByName(`asset:${assetId}`);
   if (!obj) return;
   const collider = await buildRapierTriMeshColliderFromObject(obj);
@@ -5570,12 +5576,15 @@ function despawnEphemeralAgents(reason = "task-end") {
   for (const a of doomed) removeAiAgent(a, reason);
 }
 
-function createAiAgent({ ephemeral = false } = {}) {
+function createAiAgent({ ephemeral = false, avatarUrl } = {}) {
   const endpoint = localStorage.getItem("sparkWorldVlmEndpoint") || "/vlm/decision";
   const model = resolveActiveVlmModel();
   const nearbyRange = 2.5;
   const id = `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   let agentRef = null;
+  const _avatarUrl = avatarUrl !== undefined
+    ? avatarUrl
+    : ["/agent-model/unitree_go2.glb", "/agent-model/robot.glb"];
   const agent = new AiAvatar({
     id,
     scene,
@@ -5584,7 +5593,7 @@ function createAiAgent({ ephemeral = false } = {}) {
     getWorldKey: () => worldKey,
     getTags: () => tags,
     getPlayerPosition: () => (Array.isArray(window.__playerPosition) ? window.__playerPosition : [0, 0, 0]),
-    avatarUrl: ["/agent-model/unitree_go2.glb", "/agent-model/robot.glb"],
+    avatarUrl: _avatarUrl,
     senseRadius: 3.0,
     walkSpeed: 2.0,
     // Headless mode in dimos: skip visual rendering, keep colliders for physics
@@ -6012,7 +6021,7 @@ function setGhostMode(enabled) {
   ghostMode = !!enabled;
   // Ghost mode indicator shown in status
   if (enabled) setStatus("Ghost mode ON");
-
+  
   // Disable collisions by turning the player collider into a sensor.
   // (Sensors don't generate contact forces, so you can pass through walls.)
   try {
@@ -6262,6 +6271,9 @@ async function importLevelFromJSON(json, options = {}) {
   syncShadowMapEnabled();
 }
 
+// Exposed for the sim-authoring UI dropdown and sceneApi.loadJson.
+window.importLevelFromJSON = importLevelFromJSON;
+
 
 // Sim-mode "Load Level JSON" input (only exists in sim.html)
 const simLevelImportEl = document.getElementById("sim-level-import");
@@ -6455,7 +6467,7 @@ window.addEventListener("keydown", (e) => {
     if (ghostMode) safeDisableGhost();
     else setGhostMode(true);
   }
-
+  
   // === PLAYER INTERACTION KEYS ===
   // E key to interact with asset at crosshair
   if (e.code === "KeyE" && controls?.isLocked && !isTyping) {
@@ -6468,7 +6480,7 @@ window.addEventListener("keydown", (e) => {
       e.preventDefault();
     }
   }
-
+  
   // Escape to close interaction popup
   if (e.code === "Escape" && isInteractionPopupVisible()) {
     hideInteractionPopup();
@@ -6476,7 +6488,7 @@ window.addEventListener("keydown", (e) => {
     controls?.lock?.();
     e.preventDefault();
   }
-
+  
   // Number keys 1-9 to select action when popup is visible
   if (isInteractionPopupVisible() && _currentInteractableAsset) {
     const numMatch = e.code.match(/^(?:Digit|Numpad)([1-9])$/);
@@ -6485,17 +6497,17 @@ window.addEventListener("keydown", (e) => {
       const { asset, actions } = _currentInteractableAsset;
       if (idx >= 0 && idx < actions.length) {
         const actionId = actions[idx].id;
-
+        
         // Hide popup and re-lock pointer FIRST (before async operations)
         hideInteractionPopup();
-
+        
         // Execute the action
         if (actionId === "__PICK_UP__") {
           playerPickUpAsset(asset.id);
         } else {
           executePlayerInteraction(asset.id, actionId);
         }
-
+        
         // Re-lock pointer (use setTimeout since pointer lock may need a moment)
         setTimeout(() => {
           try {
@@ -6504,7 +6516,7 @@ window.addEventListener("keydown", (e) => {
             // Pointer lock requires user gesture, may fail silently
           }
         }, 10);
-
+        
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -6859,7 +6871,7 @@ function updateRapier(dt) {
     }
   } catch {}
   avatar.position.set(p.x, p.y, p.z);
-
+  
   // If agent camera follow is active, DON'T sync player camera to player body
   // The tick() function will handle camera positioning via updateAgentCameraFollow
   if (!agentCameraFollow) {
@@ -6905,7 +6917,7 @@ function tick() {
       }
     }
   }
-
+  
   // Update agent camera follow (after agent update, before render)
   if (agentCameraFollow) {
     updateAgentCameraFollow(physicsDt);
@@ -6978,7 +6990,7 @@ function updateInteractionHint() {
   // Cache DOM elements
   if (!_crosshairEl) _crosshairEl = document.getElementById("crosshair");
   if (!_interactionHintEl) _interactionHintEl = document.getElementById("interaction-hint");
-
+  
   // Only show when pointer is locked and no popup is visible
   if (!controls?.isLocked || isInteractionPopupVisible()) {
     _crosshairEl?.classList.remove("interactable");
@@ -6987,7 +6999,7 @@ function updateInteractionHint() {
     }
     return;
   }
-
+  
   // If holding something, show drop hint
   if (playerHeldAsset) {
     const heldAsset = getPlayerHeldAsset();
@@ -7011,10 +7023,10 @@ function updateInteractionHint() {
     }
     return;
   }
-
+  
   // Not holding anything - remove holding class
   _crosshairEl?.classList.remove("holding");
-
+  
   const target = getInteractableAssetAtCrosshair();
 
   if (target) {
@@ -7033,7 +7045,7 @@ function updateInteractionHint() {
       const count = actions.length + (canPickUp ? 1 : 0);
       actionText = `${count} actions`;
     }
-
+    
     _crosshairEl?.classList.add("interactable");
     if (_interactionHintEl) {
       const cycleHint = kind === "asset" && target.candidateCount > 1
@@ -7170,7 +7182,7 @@ window.debugColliders = function() {
     console.log("[DEBUG] No physics world loaded");
     return;
   }
-
+  
   console.log("[DEBUG] === ALL COLLIDERS IN PHYSICS WORLD ===");
   let count = 0;
   rapierWorld.colliders.forEach((collider) => {
@@ -7182,7 +7194,7 @@ window.debugColliders = function() {
     count++;
   });
   console.log(`[DEBUG] Total colliders: ${count}`);
-
+  
   // Also show asset collider handles
   console.log("[DEBUG] === ASSET COLLIDERS (on asset objects) ===");
   let assetColCount = 0;
@@ -7194,7 +7206,7 @@ window.debugColliders = function() {
     }
   }
   console.log(`[DEBUG] Assets with colliders: ${assetColCount}`);
-
+  
   // Show tracked map
   console.log("[DEBUG] === _assetColliderHandles Map ===");
   console.log(`Map size: ${_assetColliderHandles.size}`);
@@ -7203,7 +7215,7 @@ window.debugColliders = function() {
 // Debug: Remove all colliders except world/player
 window.debugClearAssetColliders = function() {
   if (!rapierWorld) return;
-
+  
   // Helper to remove a collider (handles both object and number)
   const removeCol = (handle) => {
     try {
@@ -7220,15 +7232,15 @@ window.debugClearAssetColliders = function() {
     } catch (e) {}
     return false;
   };
-
+  
   let removed = 0;
-
+  
   // Remove all tracked asset colliders
   _assetColliderHandles.forEach((handle, assetId) => {
     if (removeCol(handle)) removed++;
   });
   _assetColliderHandles.clear();
-
+  
   // Also clear colliders stored on asset objects
   for (const asset of assets) {
     if (asset._colliderHandle != null) {
@@ -7236,7 +7248,7 @@ window.debugClearAssetColliders = function() {
       asset._colliderHandle = null;
     }
   }
-
+  
   console.log(`[DEBUG] Cleared ${removed} asset colliders`);
 };
 
@@ -7246,24 +7258,67 @@ window.debugClearAssetColliders = function() {
 if (dimosMode) {
   (async () => {
     try {
-      // 1. Auto-load scene
-      const sceneName = dimosScene || "apt";
+      // 1. Load Rapier first — scene module's build() may create colliders
+      const sceneName = dimosScene || "empty";
       console.log(`[dimos] Loading scene: ${sceneName}`);
-      const resp = await fetch(`/sims/${sceneName}.json`);
-      if (!resp.ok) throw new Error(`Scene fetch failed: HTTP ${resp.status}`);
-      const sceneJson = await resp.json();
-      await importLevelFromJSON(sceneJson);
+      await ensureRapierLoaded();
+
+      // 2. Initialize the scene-api module shared with the runtime exec sandbox.
+      //    Scenes can either receive the api as a build() arg or — for runtime
+      //    exec via SceneEditor — pick it up off `window.__dimsim`.
+      const sceneApi = await import("./dimos/sceneApi.ts");
+      sceneApi._init({
+        scene, THREE, RAPIER, rapierWorld,
+        renderer, camera, agent: null,
+        assets, assetsGroup, gltfLoader,
+        // Bridge isn't connected yet; pre-bridge collider sends are dropped
+        // and the initial-state Rapier snapshot (shipped later) covers them.
+        sendPhysics: (msg) => window.__dimosBridge?.sendCommand?.(msg),
+        sceneBaseUrl: new URL(`/scenes/${sceneName}/`, window.location.href).toString(),
+        importLevelFromJSON,
+        setSky: (opts) => {
+          sceneSettings.sky = { ...sceneSettings.sky, enabled: opts.enabled !== false, ...opts };
+          applySceneSkySettings();
+          applySceneRgbBackground();
+        },
+      });
+      window.__dimsim = sceneApi;
+
+      // 3. Dynamic-import the scene module + run its build()
+      sceneApi._captureBaseline();
+      const sceneMod = await import(/* @vite-ignore */ `/scenes/${sceneName}/index.js`);
+      if (typeof sceneMod.default !== "function") {
+        throw new Error(`Scene "${sceneName}" must export a default build function`);
+      }
+      const sceneCfg = (await sceneMod.default(sceneApi)) || {};
       console.log(`[dimos] Scene loaded: ${sceneName}`);
 
-      // 2. Auto-spawn agent (wait for physics to settle)
-      await new Promise((r) => setTimeout(r, 1500));
-      await ensureRapierLoaded();
-      // Re-apply grid floor now that rapier is loaded (creates collider)
+      // HMR: bridge broadcasts {type:"reload"} on scene-file edits.
+      // sceneEditor.ts dispatches to this handler, which re-runs build()
+      // without losing the engine/agent/bridge state.
+      window.__dimsimHmr = async () => {
+        console.log(`[dimos] HMR start for ${sceneName}`);
+        sceneApi._revertToBaseline();
+        console.log(`[dimos] HMR reverted baseline, re-importing`);
+        const mod = await import(/* @vite-ignore */
+          `/scenes/${sceneName}/index.js?t=${Date.now()}`);
+        console.log(`[dimos] HMR re-imported, calling build()`);
+        await mod.default(sceneApi);
+        console.log(`[dimos] hot-reloaded ${sceneName}`);
+      };
+      console.log(`[dimos] __dimsimHmr installed`);
+
+      // 4. Spawn player + agent based on scene config
       spawnPlayerInsideScene();
-      const agent = createAiAgent({ ephemeral: false });
+      const _hasEmbodiment = sceneCfg.embodiment != null;
+      const agent = createAiAgent({
+        ephemeral: false,
+        avatarUrl: _hasEmbodiment ? undefined : [],
+      });
+      if (!_hasEmbodiment && agent.group) agent.group.visible = false;
       aiAgents.push(agent);
-      // Place agent at a default spawn point
-      const spawnPos = sceneJson.dimosSpawnPoint || { x: 2, y: 0.5, z: 3 };
+      sceneApi._setAgent(agent);
+      const spawnPos = sceneCfg.spawnPoint || { x: 2, y: 0.5, z: 3 };
       agent.setPosition(spawnPos.x, spawnPos.y, spawnPos.z);
       renderAgentTaskUi(); // update UI: hide spawn button, enable task controls
       // Server-side physics: agent pose is driven by ServerPhysics (Deno).
@@ -7616,26 +7671,53 @@ if (dimosMode) {
       // Flush any deferred collider builds first — primitives (floor, walls) may be
       // queued in _pendingColliderBuilds if they were created before the render loop ran.
       flushPendingColliderBuilds();
-      let _snapshotColliders = 0;
-      rapierWorld.colliders.forEach(() => { _snapshotColliders++; });
-      console.log(`[dimos] Flushed collider queue — ${_snapshotColliders} colliders in world before snapshot`);
 
-      // Format: [DSSN 4B][spawnX f32][spawnY f32][spawnZ f32][snapshot...]
+      // Chunked snapshot protocol (DSC1) — single-frame send stalls when the
+      // browser main thread is CPU-saturated (e.g. headless SwiftShader on a
+      // weak runner): WebSocket.bufferedAmount climbs and never drains.
+      // Splitting into ~256KB chunks with a setTimeout(0) yield between each
+      // lets the WS pump run, and bridge reassembles in receive order.
+      // Wire format:
+      //   prelude:  [DSC1 4B BE][total u32 LE][sx f32 LE][sy f32 LE][sz f32 LE]   (20B)
+      //   chunks:   raw bytes, in order, until `total` accumulated bridge-side.
+      const SNAPSHOT_CHUNK_SIZE = 256 * 1024;
       const _waitSensorWs = () => {
         if (bridge.wsSensors && bridge.wsSensors.readyState === WebSocket.OPEN) {
           try {
             const snapshot = rapierWorld.takeSnapshot();
             const [sx, sy, sz] = agent.getPosition?.() || [2, 0.5, 3];
-            const prefixed = new Uint8Array(16 + snapshot.byteLength);
-            const dv = new DataView(prefixed.buffer);
-            dv.setUint32(0, 0x44535332, false); // "DSS2" — includes spawn position
-            dv.setFloat32(4, sx, true);
-            dv.setFloat32(8, sy, true);
-            dv.setFloat32(12, sz, true);
-            prefixed.set(snapshot, 16);
-            bridge.wsSensors.send(prefixed.buffer);
+            const total = snapshot.byteLength;
+
+            const prelude = new Uint8Array(20);
+            const pdv = new DataView(prelude.buffer);
+            pdv.setUint32(0, 0x44534331, false); // "DSC1"
+            pdv.setUint32(4, total, true);
+            pdv.setFloat32(8, sx, true);
+            pdv.setFloat32(12, sy, true);
+            pdv.setFloat32(16, sz, true);
+            bridge.wsSensors.send(prelude.buffer);
             bridge._serverLidar = true;
-            console.log(`[DimosBridge] sent Rapier snapshot (${(snapshot.byteLength / 1024).toFixed(0)}KB) spawn=(${sx.toFixed(1)},${sy.toFixed(1)},${sz.toFixed(1)}) — server physics + lidar active`);
+
+            let sent = 0;
+            let chunkN = 0;
+            const sendNextChunk = () => {
+              if (bridge.wsSensors.readyState !== WebSocket.OPEN) {
+                console.warn("[DimosBridge] sensor WS closed mid-snapshot");
+                return;
+              }
+              // Backpressure: don't outpace the WS pump.
+              if (bridge.wsSensors.bufferedAmount > 4 * SNAPSHOT_CHUNK_SIZE) {
+                setTimeout(sendNextChunk, 50);
+                return;
+              }
+              const end = Math.min(sent + SNAPSHOT_CHUNK_SIZE, total);
+              bridge.wsSensors.send(snapshot.subarray(sent, end));
+              sent = end;
+              chunkN++;
+              if (sent >= total) return;
+              setTimeout(sendNextChunk, 0); // yield to event loop
+            };
+            sendNextChunk();
           } catch (e) {
             console.warn("[DimosBridge] snapshot send failed:", e);
           }
