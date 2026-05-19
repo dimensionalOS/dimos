@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from typing import TYPE_CHECKING, Any, BinaryIO, TypeAlias
@@ -82,17 +83,17 @@ class PoseStamped(Pose, Timestamped):
             f"euler=[{math.degrees(self.roll):.1f}, {math.degrees(self.pitch):.1f}, {math.degrees(self.yaw):.1f}])"
         )
 
-    def agent_encode(self) -> dict[str, Any]:
+    def agent_encode(self) -> list[dict[str, Any]]:
         """Render the pose for an LLM agent.
 
-        Returns a flat dict with ``frame_id``, ``x``, ``y``, ``z``,
-        ``roll_deg``, ``pitch_deg``, ``yaw_deg``. Pass these straight
-        into navigation skills (e.g. ``navigate_to_position``) to act
-        on the pose. To reason about the pose relative to the robot,
-        the agent should fetch its own pose (e.g. via ``current_pose``)
-        and combine the two.
+        Returns an MCP text content block whose text is a JSON object with
+        ``frame_id``, ``x``, ``y``, ``z``, ``roll_deg``, ``pitch_deg``,
+        ``yaw_deg``. Pass these straight into navigation skills (e.g.
+        ``navigate_to_position``) to act on the pose. To reason about the
+        pose relative to the robot, the agent should fetch its own pose
+        (e.g. via ``current_pose``) and combine the two.
         """
-        return {
+        payload = {
             "frame_id": self.frame_id,
             "x": round(self.x, 3),
             "y": round(self.y, 3),
@@ -101,6 +102,7 @@ class PoseStamped(Pose, Timestamped):
             "pitch_deg": round(math.degrees(self.pitch), 1),
             "yaw_deg": round(math.degrees(self.yaw), 1),
         }
+        return [{"type": "text", "text": json.dumps(payload)}]
 
     def to_rerun(self) -> Archetype:
         """Convert to rerun Transform3D format.

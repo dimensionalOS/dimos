@@ -302,7 +302,7 @@ class NavigationSkillContainer(Module):
         return self._navigate_to(goal, f"Rotating to face ({x:.2f}, {y:.2f})")
 
     @skill
-    def current_pose(self) -> str:
+    def current_pose(self) -> PoseStamped:
         """Return the robot's current pose.
 
         Use this to reason about a target pose relative to the robot (e.g. distance or bearing). Compare only against poses with the same frame_id.
@@ -311,14 +311,9 @@ class NavigationSkillContainer(Module):
             raise ValueError(f"{self} has not been started.")
 
         if self._latest_odom is None:
-            return "No odometry data received yet."
+            raise RuntimeError("No odometry data received yet.")
 
-        data = self._latest_odom.agent_encode()
-        return (
-            f"Pose: ({data['x']}, {data['y']}, {data['z']})\n"
-            f"Yaw: {data['yaw_deg']}°\n"
-            f"Frame: {data['frame_id']}"
-        )
+        return self._latest_odom
 
     @skill
     def stop_navigation(self) -> str:

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import math
 import pickle
 import time
@@ -72,7 +73,11 @@ def test_agent_encode_returns_absolute_fields() -> None:
     )
     encoded = pose.agent_encode()
 
-    assert set(encoded.keys()) == {
+    assert len(encoded) == 1
+    assert encoded[0]["type"] == "text"
+    data = json.loads(encoded[0]["text"])
+
+    assert set(data.keys()) == {
         "frame_id",
         "x",
         "y",
@@ -81,13 +86,13 @@ def test_agent_encode_returns_absolute_fields() -> None:
         "pitch_deg",
         "yaw_deg",
     }
-    assert encoded["frame_id"] == "map"
-    assert encoded["x"] == pytest.approx(1.0)
-    assert encoded["y"] == pytest.approx(2.0)
-    assert encoded["z"] == pytest.approx(3.0)
-    assert encoded["roll_deg"] == pytest.approx(10.0, abs=0.1)
-    assert encoded["pitch_deg"] == pytest.approx(20.0, abs=0.1)
-    assert encoded["yaw_deg"] == pytest.approx(45.0, abs=0.1)
+    assert data["frame_id"] == "map"
+    assert data["x"] == pytest.approx(1.0)
+    assert data["y"] == pytest.approx(2.0)
+    assert data["z"] == pytest.approx(3.0)
+    assert data["roll_deg"] == pytest.approx(10.0, abs=0.1)
+    assert data["pitch_deg"] == pytest.approx(20.0, abs=0.1)
+    assert data["yaw_deg"] == pytest.approx(45.0, abs=0.1)
 
 
 def test_agent_encode_rounds_values() -> None:
@@ -101,10 +106,11 @@ def test_agent_encode_rounds_values() -> None:
         frame_id="map",
     )
     encoded = pose.agent_encode()
+    data = json.loads(encoded[0]["text"])
 
-    assert encoded["x"] == pytest.approx(1.235)
-    assert encoded["y"] == pytest.approx(2.346)
-    assert encoded["z"] == pytest.approx(3.457)
-    assert encoded["roll_deg"] == pytest.approx(10.1, abs=0.05)
-    assert encoded["pitch_deg"] == pytest.approx(20.5, abs=0.05)
-    assert encoded["yaw_deg"] == pytest.approx(45.8, abs=0.05)
+    assert data["x"] == pytest.approx(1.235)
+    assert data["y"] == pytest.approx(2.346)
+    assert data["z"] == pytest.approx(3.457)
+    assert data["roll_deg"] == pytest.approx(10.1, abs=0.05)
+    assert data["pitch_deg"] == pytest.approx(20.5, abs=0.05)
+    assert data["yaw_deg"] == pytest.approx(45.8, abs=0.05)

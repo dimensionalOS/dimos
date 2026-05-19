@@ -216,25 +216,25 @@ def test_rotate_toward_position_without_odom_returns_message() -> None:
     assert skill.recorded_goals == []
 
 
-def test_current_pose_returns_formatted_pose() -> None:
-    skill = MockedPositionNavSkill(
-        latest_odom=PoseStamped(
-            position=(1.0, 2.0, 0.0),
-            orientation=(0.0, 0.0, 0.0, 1.0),
-            frame_id="map",
-        )
+def test_current_pose_returns_pose_stamped() -> None:
+    odom = PoseStamped(
+        position=(1.0, 2.0, 0.0),
+        orientation=(0.0, 0.0, 0.0, 1.0),
+        frame_id="map",
     )
+    skill = MockedPositionNavSkill(latest_odom=odom)
 
     result = skill.current_pose()
 
-    assert "Pose: (1.0, 2.0, 0.0)" in result
-    assert "Yaw: 0.0" in result
-    assert "Frame: map" in result
+    assert isinstance(result, PoseStamped)
+    assert result is odom
+    assert result.position.x == pytest.approx(1.0)
+    assert result.position.y == pytest.approx(2.0)
+    assert result.frame_id == "map"
 
 
-def test_current_pose_without_odom_returns_message() -> None:
+def test_current_pose_without_odom_raises() -> None:
     skill = MockedPositionNavSkill()
 
-    result = skill.current_pose()
-
-    assert "no odometry" in result.lower()
+    with pytest.raises(RuntimeError, match="No odometry"):
+        skill.current_pose()
