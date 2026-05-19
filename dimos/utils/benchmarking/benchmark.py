@@ -12,20 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tool 2 of the Go2 tuning deliverable: the operating-point benchmark.
+"""Tool 2 of the twist-base tuning deliverable: operating-point benchmark.
 
-Consumes the config artifact from ``go2_characterization``, runs the
-HARDCODED baseline P-controller with the derived feedforward + velocity
-profile across a speed ladder on a fixed real-space-constrained path set,
-scores each (path, speed), and writes back the operating-point map +
-tolerance->max-safe-speed inversion (artifact section 5).
+Consumes the config artifact from ``characterization``, runs the stock
+baseline P-controller (bare by default = the plant's physical tracking
+limit; ``--ff`` / ``--profile`` are opt-in comparison arms) across a
+speed ladder on a fixed real-space-constrained path set, scores each
+(path, speed), and writes back the operating-point map +
+tolerance->max-safe-speed inversion (artifact section 5). Robot-agnostic:
+everything robot-specific comes from the ``RobotProfile`` (``--robot``).
 
-    uv run python -m dimos.utils.benchmarking.go2_benchmark \\
-        --config reports/go2_config_sim_mujoco_<date>_<sha>.json
+    uv run python -m dimos.utils.benchmarking.benchmark \\
+        --robot go2 --config reports/go2_config_hw_<...>.json --mode hw
 
-The sim harness (the baseline controller driven through a real
-``ControlCoordinator`` + the FOPDT ``Go2SimTwistBaseAdapter``) is inlined
-below — it is small, baseline-only, and used by nothing else.
+The sim harness (the baseline driven through a real ``ControlCoordinator``
++ the FOPDT sim adapter) is inlined below — small, baseline-only.
 """
 
 from __future__ import annotations
@@ -64,24 +65,43 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.utils.benchmarking.go2_tuning import (
-    Go2TuningConfig,
+from dimos.utils.benchmarking.paths import circle, single_corner, square, straight_line
+from dimos.utils.benchmarking.plant import ROBOT_PROFILES, RobotProfile
+from dimos.utils.benchmarking.scoring import ExecutedTrajectory, TrajectoryTick, score_run
+from dimos.utils.benchmarking.tuning import (
     OperatingPoint,
     OperatingPointMap,
+    TuningConfig,
     invert_tolerance,
 )
-from dimos.utils.benchmarking.paths import circle, single_corner, square, straight_line
-from dimos.utils.benchmarking.scoring import ExecutedTrajectory, TrajectoryTick, score_run
 from dimos.utils.benchmarking.velocity_profile import PathSpeedCap, VelocityProfileConfig
 
 if TYPE_CHECKING:
-    from dimos.hardware.drive_trains.go2_sim.adapter import Go2SimTwistBaseAdapter
+    from dimos.hardware.drive_trains.fopdt_sim_base.adapter import FopdtTwistBaseAdapter
 
-# Go2 hardware control rate.
-GO2_TICK_RATE_HZ = 10.0
 _base_joints = make_twist_base_joints("base")
 _ARRIVED_STATES = frozenset({"arrived", "completed"})
 _FAILED_STATES = frozenset({"aborted"})
+
+REPORTS_DIR = Path(__file__).parent / "reports"
+
+
+def _resolve_profile(name: str) -> RobotProfile:
+    try:
+        return ROBOT_PROFILES[name]
+    except KeyError:
+        raise SystemExit(f"unknown --robot {name!r}; known: {sorted(ROBOT_PROFILES)}") from None
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+
+def _twist_clamped(vx: float, wz: float, vx_max: float, wz_max: float) -> Twist:
+    return Twist(
+        linear=Vector3(_clamp(vx, -vx_max, vx_max), 0.0, 0.0),
+        angular=Vector3(0.0, 0.0, _clamp(wz, -wz_max, wz_max)),
+    )
 
 
 # --- inlined baseline sim harness (was runner.py + sim_blueprint.py) -----
@@ -155,12 +175,13 @@ class _VelocityProfileProxyTask:
         )
 
 
-def _go2_sim_base() -> HardwareComponent:
+def _sim_base(profile: RobotProfile) -> HardwareComponent:
     return HardwareComponent(
         hardware_id="base",
         hardware_type=HardwareType.BASE,
         joints=make_twist_base_joints("base"),
-        adapter_type="go2_sim_twist_base",
+        adapter_type=profile.sim_adapter_key,
+        adapter_kwargs={"params": profile.sim_plant},
     )
 
 
@@ -176,6 +197,7 @@ def _vels_to_twist(v: list[float]) -> Twist:
 
 
 def _run_baseline_sim(
+    profile: RobotProfile,
     path: NavPath,
     speed: float,
     k_angular: float,
@@ -183,15 +205,14 @@ def _run_baseline_sim(
     profile_config: VelocityProfileConfig | None,
     timeout_s: float,
 ) -> tuple[ExecutedTrajectory, NavPath]:
-    """Stock baseline P-controller in sim against the FOPDT
-    ``Go2SimTwistBaseAdapter``. ``ff_config``/``profile_config`` are
-    OPTIONAL comparison arms (``None`` = bare controller — the
-    physical-limit measurement). Returns the trajectory and the
-    reference path in the executed frame (sim runs in the path's own
-    frame, so it is ``path`` unchanged)."""
+    """Stock baseline P-controller in sim against the profile's FOPDT
+    sim adapter. ``ff_config``/``profile_config`` are OPTIONAL comparison
+    arms (``None`` = bare controller — the physical-limit measurement).
+    Returns the trajectory and the reference path in the executed frame
+    (sim runs in the path's own frame, so it is ``path`` unchanged)."""
     coord = ControlCoordinator(
-        tick_rate=GO2_TICK_RATE_HZ,
-        hardware=[_go2_sim_base()],
+        tick_rate=profile.tick_rate_hz,
+        hardware=[_sim_base(profile)],
         tasks=[
             TaskConfig(name="vel_base", type="velocity", joint_names=_base_joints, priority=10),
         ],
@@ -211,7 +232,7 @@ def _run_baseline_sim(
 
     coord.start()
     try:
-        adapter: Go2SimTwistBaseAdapter = coord._hardware["base"].adapter
+        adapter: FopdtTwistBaseAdapter = coord._hardware["base"].adapter
         start = path.poses[0]
         adapter.set_initial_pose(start.position.x, start.position.y, start.orientation.euler[2])
         adapter.connect()
@@ -221,7 +242,7 @@ def _run_baseline_sim(
         task.start_path(path, _odom_to_pose(adapter.read_odometry()))
 
         ticks: list[TrajectoryTick] = []
-        period = 1.0 / GO2_TICK_RATE_HZ
+        period = 1.0 / profile.tick_rate_hz
         t0 = time.perf_counter()
         next_sample = t0
         arrived = False
@@ -255,31 +276,14 @@ def _run_baseline_sim(
         coord.stop()
 
 
-# --- hw harness (real Go2 over LCM; closed-loop baseline) ---------------
+# --- hw harness (real robot over LCM; closed-loop baseline) -------------
 #
 # Ported from the R&D `_run_path_follower_hw`. Talks LCM to a separately
-# running `dimos run unitree-go2-webrtc-keyboard-teleop` (publishes
-# /go2/odom, consumes /cmd_vel; its teleop is publish-only-when-active,
-# so between gated paths you reposition with the keyboard, release keys
-# — teleop goes silent — then the tool owns /cmd_vel for the run). No
-# new module — inlined here, the small estimator/anchor duplicated with
-# go2_characterization by choice (no shared-module addition).
-
-VX_MAX = 1.0
-WZ_MAX = 1.5
-_ODOM_WARMUP_S = 10.0  # WebRTC connect + first odom (override: --odom-warmup)
-_ODOM_STALE_S = 1.0
-
-
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
-
-
-def _twist_clamped(vx: float, wz: float) -> Twist:
-    return Twist(
-        linear=Vector3(_clamp(vx, -VX_MAX, VX_MAX), 0.0, 0.0),
-        angular=Vector3(0.0, 0.0, _clamp(wz, -WZ_MAX, WZ_MAX)),
-    )
+# running `dimos run <profile.blueprint>` (publishes the odom topic,
+# consumes the cmd topic; if that blueprint includes a keyboard teleop it
+# must be publish-only-when-active so it does not fight the run). No new
+# module — the small estimator/anchor are duplicated with
+# characterization by choice (no shared-module addition).
 
 
 class _PoseVelocityEstimator:
@@ -334,6 +338,7 @@ def _shift_path_to_start_at_pose(path: NavPath, start_pose: PoseStamped) -> NavP
 
 
 def _run_baseline_hw(
+    profile: RobotProfile,
     link: dict,
     path: NavPath,
     speed: float,
@@ -343,14 +348,17 @@ def _run_baseline_hw(
     timeout_s: float,
     label: str,
 ) -> tuple[ExecutedTrajectory, NavPath]:
-    """Closed-loop stock baseline on the real Go2: anchor the path to
-    the robot's current pose, then track at 10 Hz off real odom.
-    ``ff_config``/``profile_config`` are OPTIONAL arms (``None`` = bare
-    controller = the physical-limit measurement). Safe: velocity clamp,
-    stale-odom abort, timeout, zero-Twist on exit. Returns the trajectory
-    and the anchored reference path (odom frame) — score/plot must use
-    this, not the robot-centric input path."""
+    """Closed-loop stock baseline on the real robot: anchor the path to
+    the robot's current pose, then track at the profile tick rate off
+    real odom. ``ff_config``/``profile_config`` are OPTIONAL arms
+    (``None`` = bare = the physical-limit measurement). Safe: velocity
+    clamp, stale-odom abort, timeout, zero-Twist on exit. Returns the
+    trajectory and the anchored reference path (odom frame) — score/plot
+    must use this, not the robot-centric input path."""
     cmd_pub, get_odom = link["pub"], link["get"]
+
+    def stop_twist() -> Twist:
+        return _twist_clamped(0.0, 0.0, profile.vx_max, profile.wz_max)
 
     base = BaselinePathFollowerTask(
         name=f"baseline_{label}",
@@ -371,7 +379,7 @@ def _run_baseline_hw(
 
     ticks: list[TrajectoryTick] = []
     est = _PoseVelocityEstimator()
-    period = 1.0 / GO2_TICK_RATE_HZ
+    period = 1.0 / profile.tick_rate_hz
     t0 = time.perf_counter()
     arrived = False
     try:
@@ -382,7 +390,7 @@ def _run_baseline_hw(
                 print(f"  [{label}] timeout {timeout_s:.0f}s")
                 break
             pose, age = get_odom()
-            if pose is None or age > _ODOM_STALE_S:
+            if pose is None or age > profile.odom_stale_s:
                 print(f"  [{label}] ABORT stale odom ({age:.2f}s)")
                 break
             task.update_odom(pose)
@@ -401,7 +409,7 @@ def _run_baseline_hw(
                 if (out is not None and out.velocities is not None)
                 else (0.0, 0.0)
             )
-            tw = _twist_clamped(vx, wz)
+            tw = _twist_clamped(vx, wz, profile.vx_max, profile.wz_max)
             cmd_pub.broadcast(None, tw)
             ticks.append(
                 TrajectoryTick(
@@ -425,7 +433,7 @@ def _run_baseline_hw(
             time.sleep(max(0.0, t0 + len(ticks) * period - time.perf_counter()))
     finally:
         for _ in range(3):
-            cmd_pub.broadcast(None, _twist_clamped(0.0, 0.0))
+            cmd_pub.broadcast(None, stop_twist())
             time.sleep(0.05)
     return ExecutedTrajectory(ticks=ticks, arrived=arrived), path_w
 
@@ -443,15 +451,12 @@ def _path_set() -> dict:
     }
 
 
-REPORTS_DIR = Path(__file__).parent / "reports"
-
-
-def _open_hw_link(warmup_s: float) -> dict:
-    """LCM to a running `dimos run unitree-go2-webrtc-keyboard-teleop`."""
+def _open_hw_link(profile: RobotProfile, warmup_s: float) -> dict:
+    """LCM to a running `dimos run <profile.blueprint>`."""
     from dimos.core.transport import LCMTransport
 
-    cmd_pub = LCMTransport("/cmd_vel", Twist)
-    odom_sub = LCMTransport("/go2/odom", PoseStamped)
+    cmd_pub = LCMTransport(profile.cmd_topic, Twist)
+    odom_sub = LCMTransport(profile.odom_topic, PoseStamped)
     lock = threading.Lock()
     box: dict = {"pose": None, "t": 0.0}
 
@@ -466,17 +471,18 @@ def _open_hw_link(warmup_s: float) -> dict:
         with lock:
             return box["pose"], time.perf_counter() - box["t"]
 
-    print(f"[hw] waiting up to {warmup_s:.0f}s for /go2/odom ...")
+    print(f"[hw] waiting up to {warmup_s:.0f}s for {profile.odom_topic} ...")
     deadline = time.perf_counter() + warmup_s
     while time.perf_counter() < deadline and get_odom()[0] is None:
         time.sleep(0.05)
     if get_odom()[0] is None:
-        raise RuntimeError("No /go2/odom — is `dimos run unitree-go2-webrtc-keyboard-teleop` up?")
+        raise RuntimeError(f"No {profile.odom_topic} — is `dimos run {profile.blueprint}` up?")
     return {"pub": cmd_pub, "get": get_odom}
 
 
 def _run_ladder(
-    cfg: Go2TuningConfig,
+    cfg: TuningConfig,
+    profile: RobotProfile,
     speeds: list[float],
     timeout_s: float,
     mode: str,
@@ -488,18 +494,20 @@ def _run_ladder(
     # measurement. FF / velocity profile are opt-in comparison arms.
     ff = cfg.feedforward.to_runtime() if use_ff else None
     k_angular = float(cfg.recommended_controller.params.get("k_angular", 0.5))
-    link = _open_hw_link(warmup_s) if mode == "hw" else None
+    link = _open_hw_link(profile, warmup_s) if mode == "hw" else None
     points: list[OperatingPoint] = []
     runs: list[dict] = []  # for the XY trajectory overlay
     try:
         for name, path in _path_set().items():
             for speed in speeds:
-                profile = (
+                prof_cfg = (
                     cfg.velocity_profile.to_runtime(max_linear_speed=speed) if use_profile else None
                 )
                 if mode == "hw":
                     for _ in range(3):
-                        link["pub"].broadcast(None, _twist_clamped(0.0, 0.0))
+                        link["pub"].broadcast(
+                            None, _twist_clamped(0.0, 0.0, profile.vx_max, profile.wz_max)
+                        )
                         time.sleep(0.05)
                     resp = (
                         input(
@@ -515,17 +523,20 @@ def _run_ladder(
                         print("  skipped")
                         continue
                     traj, ref = _run_baseline_hw(
+                        profile,
                         link,
                         path,
                         speed,
                         k_angular,
                         ff,
-                        profile,
+                        prof_cfg,
                         timeout_s,
                         f"{name}@{speed:.2f}",
                     )
                 else:
-                    traj, ref = _run_baseline_sim(path, speed, k_angular, ff, profile, timeout_s)
+                    traj, ref = _run_baseline_sim(
+                        profile, path, speed, k_angular, ff, prof_cfg, timeout_s
+                    )
                 # Score/plot against the executed-frame reference: in hw
                 # that's the pose-anchored path, not the robot-centric input.
                 s = score_run(ref, traj)
@@ -555,12 +566,14 @@ def _run_ladder(
     finally:
         if link is not None:
             for _ in range(3):
-                link["pub"].broadcast(None, _twist_clamped(0.0, 0.0))
+                link["pub"].broadcast(
+                    None, _twist_clamped(0.0, 0.0, profile.vx_max, profile.wz_max)
+                )
                 time.sleep(0.05)
     return points, runs
 
 
-def _plot(points: list[OperatingPoint], out: Path, arm: str = "bare") -> None:
+def _plot(points: list[OperatingPoint], out: Path, robot_name: str, arm: str) -> None:
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for name in sorted({p.path for p in points}):
         xs = [p.speed for p in points if p.path == name]
@@ -569,7 +582,7 @@ def _plot(points: list[OperatingPoint], out: Path, arm: str = "bare") -> None:
     ax.set_xlabel("commanded speed (m/s)")
     ax.set_ylabel("cte_max (cm)")
     label = "BARE baseline (physical limit)" if arm == "bare" else f"baseline+{arm}"
-    ax.set_title(f"Go2 {label}: cross-track error vs speed")
+    ax.set_title(f"{robot_name} {label}: cross-track error vs speed")
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
@@ -605,7 +618,7 @@ def _canonicalize(ref: list, exec_: list) -> tuple[list, list]:
     return tf(ref), tf(exec_)
 
 
-def _plot_xy(runs: list[dict], out: Path, arm: str = "bare") -> None:
+def _plot_xy(runs: list[dict], out: Path, robot_name: str, arm: str) -> None:
     """One subplot per path: the reference path (black) overlaid with the
     executed trajectory at each speed, all normalized to the canonical
     path frame (common origin) so speeds are directly comparable. This is
@@ -652,15 +665,16 @@ def _plot_xy(runs: list[dict], out: Path, arm: str = "bare") -> None:
     for ax in flat[n:]:
         ax.set_visible(False)
     label = "BARE baseline (physical limit)" if arm == "bare" else f"baseline+{arm}"
-    fig.suptitle(f"Go2 {label}: executed trajectory vs reference path")
+    fig.suptitle(f"{robot_name} {label}: executed trajectory vs reference path")
     fig.tight_layout()
     fig.savefig(out, dpi=120)
     plt.close(fig)
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Go2 operating-point benchmark")
-    ap.add_argument("--config", required=True, help="config artifact from go2_characterization")
+    ap = argparse.ArgumentParser(description="Twist-base operating-point benchmark")
+    ap.add_argument("--robot", default="go2", help=f"one of {sorted(ROBOT_PROFILES)}")
+    ap.add_argument("--config", required=True, help="config artifact from characterization")
     ap.add_argument("--mode", choices=["hw", "sim"], default="hw")
     ap.add_argument("--speeds", default="0.3,0.5,0.7,0.9,1.0")
     ap.add_argument("--tolerances", default="5,10,15", help="cm")
@@ -668,8 +682,8 @@ def main() -> None:
     ap.add_argument(
         "--odom-warmup",
         type=float,
-        default=_ODOM_WARMUP_S,
-        help="how long to wait for first /go2/odom (s)",
+        default=None,
+        help="how long to wait for first odom (s); default from profile",
     )
     ap.add_argument(
         "--ff",
@@ -685,8 +699,10 @@ def main() -> None:
     )
     args = ap.parse_args()
 
+    profile = _resolve_profile(args.robot)
+    warmup_s = args.odom_warmup if args.odom_warmup is not None else profile.odom_warmup_s
     config_path = Path(args.config).expanduser()
-    cfg = Go2TuningConfig.from_json(config_path)  # asserts schema_version
+    cfg = TuningConfig.from_json(config_path)  # asserts schema_version
     speeds = [float(s) for s in args.speeds.split(",")]
     tolerances = [float(t) for t in args.tolerances.split(",")]
     arm = "+".join(x for x, on in (("ff", args.ff), ("profile", args.profile)) if on) or "bare"
@@ -698,7 +714,7 @@ def main() -> None:
             f"Refusing --mode hw with --{arm} and a non-robot-valid config "
             f"({config_path.name}, sim_or_hw={cfg.provenance.sim_or_hw!r}): its "
             "feedforward/profile were derived from the sim plant. Re-run "
-            "`go2_characterization --mode hw` first, drop --ff/--profile for "
+            "`characterization --mode hw` first, drop --ff/--profile for "
             "the bare physical-limit run, or use --mode sim."
         )
     if args.mode == "sim":
@@ -713,17 +729,18 @@ def main() -> None:
         else f"baseline + {arm} (comparison arm, vs the bare physical limit)"
     )
     print(
-        f"{args.mode} speed ladder {speeds} over {len(_path_set())} paths\n"
+        f"{profile.name} {args.mode} speed ladder {speeds} over {len(_path_set())} paths\n"
         f"  controller: {arm_desc}\n"
         f"  k_angular={cfg.recommended_controller.params.get('k_angular')}"
     )
     try:
         points, runs = _run_ladder(
             cfg,
+            profile,
             speeds,
             args.timeout,
             args.mode,
-            args.odom_warmup,
+            warmup_s,
             use_ff=args.ff,
             use_profile=args.profile,
         )
@@ -735,6 +752,7 @@ def main() -> None:
     opm = OperatingPointMap(speeds=speeds, points=points, tolerance_inversion=inversion)
 
     sha = cfg.provenance.git_sha
+    rid = cfg.provenance.robot_id
     # Only the BARE run defines section 5 (the canonical physical-limit
     # operating-point map). Comparison arms emit standalone artifacts so
     # they never clobber the physical-limit map in the config.
@@ -747,13 +765,13 @@ def main() -> None:
             f"Config NOT modified (arm '{arm}' is a comparison, not the "
             f"physical-limit map). See standalone outputs below."
         )
-    bench_path = REPORTS_DIR / f"go2_benchmark_{arm}_{sha}.json"
+    bench_path = REPORTS_DIR / f"{rid}_benchmark_{arm}_{sha}.json"
     bench_path.parent.mkdir(parents=True, exist_ok=True)
     bench_path.write_text(json.dumps(asdict(opm), indent=2))
-    plot_path = REPORTS_DIR / f"go2_benchmark_cte_vs_speed_{arm}_{sha}.png"
-    _plot(points, plot_path, arm)
-    xy_path = REPORTS_DIR / f"go2_benchmark_xy_{arm}_{sha}.png"
-    _plot_xy(runs, xy_path, arm)
+    plot_path = REPORTS_DIR / f"{rid}_benchmark_cte_vs_speed_{arm}_{sha}.png"
+    _plot(points, plot_path, profile.name, arm)
+    xy_path = REPORTS_DIR / f"{rid}_benchmark_xy_{arm}_{sha}.png"
+    _plot_xy(runs, xy_path, profile.name, arm)
 
     print(f"\n{artifact_msg}")
     print(f"Benchmark json     : {bench_path.resolve()}")

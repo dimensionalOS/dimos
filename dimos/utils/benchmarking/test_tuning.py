@@ -21,20 +21,20 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.utils.benchmarking.go2_tuning import (
+from dimos.utils.benchmarking.plant import FopdtChannelParams, TwistBasePlantParams
+from dimos.utils.benchmarking.tuning import (
     SCHEMA_VERSION,
-    Go2TuningConfig,
     OperatingPoint,
     Provenance,
+    TuningConfig,
     derive_config,
     invert_tolerance,
 )
-from dimos.utils.benchmarking.plant import FopdtChannelParams, Go2PlantParams
 from dimos.utils.benchmarking.velocity_profile import GO2_VX_MAX, GO2_WZ_MAX
 
 
-def _plant(kvx=0.9, kvy=0.5, kwz=2.4) -> Go2PlantParams:
-    return Go2PlantParams(
+def _plant(kvx=0.9, kvy=0.5, kwz=2.4) -> TwistBasePlantParams:
+    return TwistBasePlantParams(
         vx=FopdtChannelParams(K=kvx, tau=0.40, L=0.06),
         vy=FopdtChannelParams(K=kvy, tau=0.30, L=0.05),
         wz=FopdtChannelParams(K=kwz, tau=0.60, L=0.05),
@@ -127,10 +127,10 @@ def test_valid_for_tuning_only_when_hw():
 
 def test_valid_for_tuning_survives_round_trip(tmp_path):
     st = derive_config(_plant(), _prov(sim_or_hw="self-test"))
-    back = Go2TuningConfig.from_json(st.to_json(tmp_path / "st.json"))
+    back = TuningConfig.from_json(st.to_json(tmp_path / "st.json"))
     assert back.valid_for_tuning is False
     hw = derive_config(_plant(), _prov(sim_or_hw="hw"))
-    back_hw = Go2TuningConfig.from_json(hw.to_json(tmp_path / "hw.json"))
+    back_hw = TuningConfig.from_json(hw.to_json(tmp_path / "hw.json"))
     assert back_hw.valid_for_tuning is True
 
 
@@ -140,7 +140,7 @@ def test_valid_for_tuning_survives_round_trip(tmp_path):
 def test_json_round_trip_identity(tmp_path):
     cfg = derive_config(_plant(), _prov())
     p = cfg.to_json(tmp_path / "c.json")
-    back = Go2TuningConfig.from_json(p)
+    back = TuningConfig.from_json(p)
     assert back.feedforward == cfg.feedforward
     assert back.velocity_profile == cfg.velocity_profile
     assert back.plant == cfg.plant
@@ -154,7 +154,7 @@ def test_loader_rejects_wrong_schema_version(tmp_path):
     bad = p.read_text().replace(f'"schema_version": {SCHEMA_VERSION}', '"schema_version": 999')
     (tmp_path / "bad.json").write_text(bad)
     with pytest.raises(ValueError, match="schema_version"):
-        Go2TuningConfig.from_json(tmp_path / "bad.json")
+        TuningConfig.from_json(tmp_path / "bad.json")
 
 
 # --- tolerance -> max-safe-speed inversion --------------------------------

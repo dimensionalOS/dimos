@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Layer 1 sim plant for the Go2 base.
+"""Sim plant + per-robot profile for the twist-base tuning tools.
 
-Per-channel FOPDT velocity tracking + unicycle kinematics. Tick-based:
-each call to :meth:`Go2PlantSim.step` advances one control period.
+Per-channel FOPDT velocity tracking + unicycle kinematics (robot-agnostic;
+the ``(vx, vy, wz)`` twist-base contract). Tick-based: each call to
+:meth:`TwistBasePlantSim.step` advances one control period.
 
-The vendored fitted parameters (``GO2_PLANT_FITTED``) live at the bottom
-of this module — types, simulator, and the measured values in one place.
+The bottom of this module holds the per-robot config (``RobotProfile`` +
+``ROBOT_PROFILES``). The vendored Go2 fit (``GO2_PLANT_FITTED``) is the
+Go2 profile's ground truth — it keeps its ``GO2_`` name because it is
+genuinely Go2-measured data, not generic.
 """
 
 from __future__ import annotations
@@ -70,15 +73,15 @@ class FOPDTChannel:
 
 
 @dataclass
-class Go2PlantParams:
-    """FOPDT params for all three velocity channels."""
+class TwistBasePlantParams:
+    """FOPDT params for the three twist-base velocity channels."""
 
     vx: FopdtChannelParams
     vy: FopdtChannelParams
     wz: FopdtChannelParams
 
 
-class Go2PlantSim:
+class TwistBasePlantSim:
     """Unicycle kinematic sim with FOPDT velocity response per channel.
 
     Body-frame velocities `(vx, vy, wz)` are commanded; the plant produces
@@ -86,7 +89,7 @@ class Go2PlantSim:
     in the world frame.
     """
 
-    def __init__(self, params: Go2PlantParams) -> None:
+    def __init__(self, params: TwistBasePlantParams) -> None:
         self.params = params
         self.ch_vx = FOPDTChannel(params.vx)
         self.ch_vy = FOPDTChannel(params.vy)
@@ -125,17 +128,87 @@ class Go2PlantSim:
 # small dead-time (L ~ 0.05-0.07 s), larger tau (vx ~ 0.40,
 # wz ~ 0.55-0.60 s). K is unchanged (independently validated).
 #
-# This is the ground truth the sim self-test injects and recovers, and
-# the documented rationale for the derived feedforward gains. vy on the
-# real robot strafes and should be characterized for real (--mode hw);
-# the sim ground truth copies vx into vy only because the sim FOPDT has
-# no independent lateral model.
+# This is the Go2 profile's sim ground truth (self-test recovers it; the
+# sim adapter / DERIVE fallback use it). It keeps its GO2_ name because
+# it is genuinely Go2-measured data. vy is a placeholder copy of vx —
+# the Go2 does not strafe in the default gait (so vy is not excited on
+# hardware) and the sim FOPDT has no independent lateral model.
 
 GO2_VX_RISE = FopdtChannelParams(K=0.922, tau=0.395, L=0.065)
 GO2_WZ_RISE = FopdtChannelParams(K=2.453, tau=0.596, L=0.052)
 
-GO2_PLANT_FITTED = Go2PlantParams(
+GO2_PLANT_FITTED = TwistBasePlantParams(
     vx=GO2_VX_RISE,
-    vy=GO2_VX_RISE,  # sim ground-truth placeholder; real vy via --mode hw
+    vy=GO2_VX_RISE,  # placeholder; Go2 doesn't strafe in default gait
     wz=GO2_WZ_RISE,
 )
+
+
+# --- Per-robot profile (single source of truth for robot specifics) -----
+
+
+@dataclass(frozen=True)
+class RobotProfile:
+    """Everything the characterization + benchmark tools need to know
+    about a specific velocity-commanded twist base. Add a robot by
+    appending one instance to ``ROBOT_PROFILES``."""
+
+    # identity / cosmetic
+    name: str
+    robot_id: str
+    # transport / bring-up
+    cmd_topic: str
+    odom_topic: str
+    blueprint: str  # the `dimos run <blueprint>` the operator starts
+    sim_adapter_key: str
+    # physical envelope
+    vx_max: float
+    wz_max: float
+    tick_rate_hz: float
+    odom_warmup_s: float
+    odom_stale_s: float
+    # SI plan / kinematics
+    excited_channels: tuple[str, ...]  # subset of (vx,vy,wz); omit vy => non-strafing
+    si_amplitudes: dict[str, list[float]]
+    step_s: float
+    pre_roll_s: float
+    max_dist_m: float
+    # sim ground truth: self-test + sim adapter + DERIVE ceiling fallback
+    sim_plant: TwistBasePlantParams
+
+
+GO2_PROFILE = RobotProfile(
+    name="Go2",
+    robot_id="go2",
+    cmd_topic="/cmd_vel",
+    odom_topic="/go2/odom",
+    blueprint="unitree-go2-webrtc-keyboard-teleop",
+    sim_adapter_key="fopdt_sim_twist_base",
+    vx_max=1.0,
+    wz_max=1.5,
+    tick_rate_hz=10.0,
+    odom_warmup_s=10.0,
+    odom_stale_s=1.0,
+    excited_channels=("vx", "wz"),  # Go2 does not strafe in default gait
+    si_amplitudes={"vx": [0.3, 0.6, 0.9], "vy": [0.2, 0.4], "wz": [0.4, 0.8, 1.2]},
+    step_s=8.0,
+    pre_roll_s=1.0,
+    max_dist_m=6.0,
+    sim_plant=GO2_PLANT_FITTED,
+)
+
+ROBOT_PROFILES: dict[str, RobotProfile] = {"go2": GO2_PROFILE}
+
+
+__all__ = [
+    "GO2_PLANT_FITTED",
+    "GO2_PROFILE",
+    "GO2_VX_RISE",
+    "GO2_WZ_RISE",
+    "ROBOT_PROFILES",
+    "FOPDTChannel",
+    "FopdtChannelParams",
+    "RobotProfile",
+    "TwistBasePlantParams",
+    "TwistBasePlantSim",
+]

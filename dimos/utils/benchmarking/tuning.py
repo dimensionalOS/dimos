@@ -12,23 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Go2 tuning config artifact + the DERIVE step (model -> config).
+"""Twist-base tuning config artifact + the DERIVE step (model -> config).
 
-This is the contract the two tuning tools share:
+Robot-agnostic. This is the contract the two tuning tools share:
 
 * :func:`derive_config` is the **pure** DERIVE step — a fitted FOPDT
   plant model in, a fully-populated controller config out. No file or
-  robot I/O, so it is unit-tested in isolation
-  (``test_go2_tuning.py``).
-* :class:`Go2TuningConfig` is the versioned artifact. It owns the JSON
+  robot I/O, so it is unit-tested in isolation (``test_tuning.py``).
+* :class:`TuningConfig` is the versioned artifact. It owns the JSON
   (de)serialization (``to_json`` / ``from_json``) and the
   runtime-config converters the benchmark tool consumes.
 * :func:`invert_tolerance` is the pure tolerance -> max-safe-speed
   inversion the benchmark tool fills section 5 with (also unit-tested).
 
 Why these numbers (the settled characterization findings, not re-derived
-here — see ``reports/go2_tuning_README.md``): the Go2 base is FOPDT per
-axis; at a given speed the tracking error is the plant floor
+here — see ``reports/tuning_README.md``): a velocity-commanded base is
+FOPDT per axis; at a given speed the tracking error is the plant floor
 ``(tau + L) * v``; reactive controllers have ~zero headroom over that
 floor; the dominant lever is speed vs path curvature; the simple
 production baseline P-controller is the recommended controller.
@@ -42,7 +41,7 @@ from pathlib import Path
 import subprocess
 
 from dimos.control.tasks.feedforward_gain_compensator import FeedforwardGainConfig
-from dimos.utils.benchmarking.plant import Go2PlantParams
+from dimos.utils.benchmarking.plant import TwistBasePlantParams
 from dimos.utils.benchmarking.velocity_profile import (
     GO2_VX_MAX,
     GO2_WZ_MAX,
@@ -78,8 +77,9 @@ RECOMMENDED_CONTROLLER_EVIDENCE = (
     "v, which no reactive control law can beat (~zero headroom over the "
     "floor — validated controller bake-off). The only effective lever is "
     "speed vs path curvature, which the derived velocity profile + "
-    "feedforward already apply. See reports/go2_tuning_README.md and the "
-    "characterization findings."
+    "feedforward already apply. See reports/tuning_README.md and the "
+    "characterization findings (this evidence string cites the Go2 "
+    "result; a different robot's headroom is TBD until characterized)."
 )
 
 
@@ -198,7 +198,7 @@ class OperatingPointMap:
 
 
 @dataclass
-class Go2TuningConfig:
+class TuningConfig:
     provenance: Provenance
     plant: PlantModelDC
     feedforward: FeedforwardDC
@@ -220,12 +220,12 @@ class Go2TuningConfig:
         return path
 
     @classmethod
-    def from_json(cls, path: str | Path) -> Go2TuningConfig:
+    def from_json(cls, path: str | Path) -> TuningConfig:
         data = json.loads(Path(path).read_text())
         return cls.from_dict(data)
 
     @classmethod
-    def from_dict(cls, data: dict) -> Go2TuningConfig:
+    def from_dict(cls, data: dict) -> TuningConfig:
         sv = data.get("schema_version")
         if sv != SCHEMA_VERSION:
             raise ValueError(
@@ -290,8 +290,8 @@ def _safe_inv_gain(K: float) -> float:
 def _channel_ceiling(per_amplitude: dict | None, channel: str, fallback: float) -> float:
     """Measured steady-state magnitude ceiling for a channel:
     ``max(K_at_amp * |amplitude|)`` over the swept amplitudes. Falls back
-    to the Go2 saturation envelope when per-amplitude data is missing or
-    too sparse to be trustworthy."""
+    to the robot's saturation envelope when per-amplitude data is missing
+    or too sparse to be trustworthy."""
     if not per_amplitude:
         return fallback
     entries = per_amplitude.get(channel) or []
@@ -314,14 +314,16 @@ def _channel_ceiling(per_amplitude: dict | None, channel: str, fallback: float) 
 
 
 def derive_config(
-    plant: Go2PlantParams,
+    plant: TwistBasePlantParams,
     provenance: Provenance,
     *,
     per_amplitude: dict | None = None,
-) -> Go2TuningConfig:
+    vx_max: float = GO2_VX_MAX,
+    wz_max: float = GO2_WZ_MAX,
+) -> TuningConfig:
     """Derive the full controller config from a fitted FOPDT plant model.
 
-    Pure: model + provenance in, :class:`Go2TuningConfig` out. No I/O.
+    Pure: model + provenance in, :class:`TuningConfig` out. No I/O.
 
     - Feedforward gain per axis = ``1 / K`` (the compensator divides the
       controller command by the plant gain so commanded == achieved).
@@ -334,14 +336,14 @@ def derive_config(
     - recommended controller = baseline, hardcoded, with cited evidence.
 
     ``per_amplitude`` (optional) is the fitter's per-amplitude table
-    ``{channel: [{amplitude, K, ...}, ...]}``; when absent the Go2
-    saturation envelope is used for the ceilings.
+    ``{channel: [{amplitude, K, ...}, ...]}``; when absent the robot's
+    saturation envelope (``vx_max``/``wz_max``) is used for the ceilings.
     """
-    # Clamp the measured ceiling to the Go2 saturation envelope: an
+    # Clamp the measured ceiling to the robot's saturation envelope: an
     # un-saturated FOPDT fit extrapolates linearly past what the platform
     # can physically deliver, so the envelope is a hard upper bound.
-    vx_ceiling = min(_channel_ceiling(per_amplitude, "vx", GO2_VX_MAX), GO2_VX_MAX)
-    wz_ceiling = min(_channel_ceiling(per_amplitude, "wz", GO2_WZ_MAX), GO2_WZ_MAX)
+    vx_ceiling = min(_channel_ceiling(per_amplitude, "vx", vx_max), vx_max)
+    wz_ceiling = min(_channel_ceiling(per_amplitude, "wz", wz_max), wz_max)
 
     feedforward = FeedforwardDC(
         K_vx=_safe_inv_gain(plant.vx.K),
@@ -349,7 +351,7 @@ def derive_config(
         K_wz=_safe_inv_gain(plant.wz.K),
     )
 
-    max_linear_accel = vx_ceiling / plant.vx.tau if plant.vx.tau > 1e-6 else GO2_VX_MAX
+    max_linear_accel = vx_ceiling / plant.vx.tau if plant.vx.tau > 1e-6 else vx_max
     velocity_profile = VelocityProfileDC(
         max_linear_speed=vx_ceiling,
         max_angular_speed=wz_ceiling * (1.0 - WZ_HEADROOM_MARGIN),
@@ -361,7 +363,7 @@ def derive_config(
     caveats = [
         f"Valid only for surface={provenance.surface!r}, "
         f"mode={provenance.mode!r}, {provenance.sim_or_hw}. Re-run "
-        f"go2-characterization on any surface or gait-mode change.",
+        f"characterization on any surface or gait-mode change.",
         f"Plant fitted from {provenance.characterization_session_dir or 'n/a'} "
         f"on {provenance.date} (git {provenance.git_sha}).",
     ]
@@ -373,11 +375,11 @@ def derive_config(
             "THIS *** Derived from the in-process FOPDT sim plant "
             "(self-test): it only proves the measure->fit->derive plumbing "
             "runs and re-recovers its own injected model. Re-run "
-            "`go2_characterization --mode hw` on the real Go2 for a "
+            "`characterization --mode hw` on the real robot for a "
             "tuning-valid artifact.",
         )
 
-    return Go2TuningConfig(
+    return TuningConfig(
         provenance=provenance,
         plant=PlantModelDC(
             vx=FopdtChannelDC(plant.vx.K, plant.vx.tau, plant.vx.L),
@@ -441,13 +443,13 @@ __all__ = [
     "SCHEMA_VERSION",
     "FeedforwardDC",
     "FopdtChannelDC",
-    "Go2TuningConfig",
     "OperatingPoint",
     "OperatingPointMap",
     "PlantModelDC",
     "Provenance",
     "RecommendedControllerDC",
     "ToleranceRow",
+    "TuningConfig",
     "VelocityProfileDC",
     "derive_config",
     "git_sha",

@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Layer 1 sim TwistBase adapter for the Unitree Go2.
+"""Layer 1 FOPDT sim TwistBase adapter (robot-agnostic).
 
-Wraps :class:`~dimos.utils.benchmarking.plant.Go2PlantSim` and presents
-the standard :class:`TwistBaseAdapter` protocol so any controller / task /
-coordinator that talks to a real Go2 base can be exercised in pure-Python
-sim with no hardware.
+Wraps :class:`~dimos.utils.benchmarking.plant.TwistBasePlantSim` and
+presents the standard :class:`TwistBaseAdapter` protocol so any
+controller / task / coordinator that talks to a real velocity-commanded
+base can be exercised in pure-Python sim with no hardware. The plant
+params are supplied per robot (``params=`` kwarg, via the robot
+profile's ``sim_plant``); the Go2 fit is only the default fallback.
 
 Plant integration is wall-clock driven: each :meth:`write_velocities`
 call advances the plant by ``time.perf_counter()`` delta since the last
@@ -30,34 +32,38 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from dimos.utils.benchmarking.plant import GO2_PLANT_FITTED, Go2PlantParams, Go2PlantSim
+from dimos.utils.benchmarking.plant import (
+    GO2_PLANT_FITTED,
+    TwistBasePlantParams,
+    TwistBasePlantSim,
+)
 
 if TYPE_CHECKING:
     from dimos.hardware.drive_trains.registry import TwistBaseAdapterRegistry
 
 
-class Go2SimTwistBaseAdapter:
-    """FOPDT + unicycle sim posing as a real Go2 twist base.
+class FopdtTwistBaseAdapter:
+    """FOPDT + unicycle sim posing as a real twist base.
 
     Implements :class:`TwistBaseAdapter`. ``dof`` is fixed at 3 for the
-    holonomic Go2 model (vx, vy, wz); commanding non-zero vy is a sim
-    artifact in the sim ground truth (the real Go2 strafes — characterize
-    real vy via ``go2_characterization --mode hw``).
+    twist-base model (vx, vy, wz). For a non-strafing robot, vy is simply
+    never commanded (the characterization tool excludes it); the model
+    itself is robot-agnostic — pass the robot's fitted ``params``.
     """
 
     def __init__(
         self,
         dof: int = 3,
-        params: Go2PlantParams | None = None,
+        params: TwistBasePlantParams | None = None,
         initial_pose: tuple[float, float, float] = (0.0, 0.0, 0.0),
         nominal_dt: float = 0.1,
         **_: object,
     ) -> None:
         if dof != 3:
-            raise ValueError(f"Go2SimTwistBaseAdapter requires dof=3, got {dof}")
+            raise ValueError(f"FopdtTwistBaseAdapter requires dof=3, got {dof}")
         self._dof = dof
         self._params = params if params is not None else GO2_PLANT_FITTED
-        self._plant = Go2PlantSim(self._params)
+        self._plant = TwistBasePlantSim(self._params)
         self._initial_pose = initial_pose
         self._nominal_dt = nominal_dt
 
@@ -137,7 +143,7 @@ class Go2SimTwistBaseAdapter:
     # =========================================================================
 
     @property
-    def plant(self) -> Go2PlantSim:
+    def plant(self) -> TwistBasePlantSim:
         """Direct access to the underlying plant (for inspection / tests)."""
         return self._plant
 
@@ -147,8 +153,8 @@ class Go2SimTwistBaseAdapter:
 
 
 def register(registry: TwistBaseAdapterRegistry) -> None:
-    """Register this adapter with the registry under ``go2_sim_twist_base``."""
-    registry.register("go2_sim_twist_base", Go2SimTwistBaseAdapter)
+    """Register this adapter under ``fopdt_sim_twist_base``."""
+    registry.register("fopdt_sim_twist_base", FopdtTwistBaseAdapter)
 
 
-__all__ = ["Go2SimTwistBaseAdapter"]
+__all__ = ["FopdtTwistBaseAdapter"]
