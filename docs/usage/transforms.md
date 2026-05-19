@@ -42,7 +42,6 @@ text "target here" small italic at (GR.s.x, GR.s.y - 0.25in)
 
 </details>
 
-<!--Result:-->
 ![output](assets/transforms_tree.svg)
 
 
@@ -92,8 +91,7 @@ camera_transform = Transform(
 print(camera_transform)
 ```
 
-<!--Result:-->
-```
+```results
 base_link -> camera_link
   Translation: → Vector Vector([0.5 0.  0.3])
   Rotation: Quaternion(0.000000, 0.000000, 0.000000, 1.000000)
@@ -133,8 +131,7 @@ t_inverse = -t1
 print(f"Inverse: {t_inverse.frame_id} -> {t_inverse.child_frame_id}")
 ```
 
-<!--Result:-->
-```
+```results
 Composed: base_link -> end_effector
 Translation: (1.0, 0.5, 0.0)
 Inverse: camera_link -> base_link
@@ -159,8 +156,7 @@ print("4x4 transformation matrix:")
 print(matrix)
 ```
 
-<!--Result:-->
-```
+```results
 4x4 transformation matrix:
 [[1. 0. 0. 1.]
  [0. 1. 0. 2.]
@@ -196,8 +192,7 @@ sensor2 = MySensorModule(frame_id_prefix="robot1")
 print(f"With prefix: {sensor2.frame_id}")
 ```
 
-<!--Result:-->
-```
+```results
 Default frame_id: sensor_link
 With prefix: robot1/sensor_link
 ```
@@ -422,7 +417,6 @@ text "CameraModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
 
 </details>
 
-<!--Result:-->
 ![output](assets/transforms_modules.svg)
 
 
@@ -460,12 +454,11 @@ print(f"Buffer has {len(tf.buffers)} transform pair(s)")
 print(tf)
 ```
 
-<!--Result:-->
-```
+```results
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
-LCMTF(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2025-12-29 18:19:18 - 2025-12-29 18:19:18])
+MultiTBuffer(1 buffers):
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-05-15 21:11:37 - 2026-05-15 21:11:37])
 ```
 
 
