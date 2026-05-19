@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+
+"""Minimal Drone Stack without navigation. An attempt to create a minimal stack"""
+
+from typing import Any
+
+from dimos_lcm.sensor_msgs import CameraInfo
+
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
+from dimos.core.transport import LCMTransport
+
+# from dimos.hardware.sensors.camera.module import CameraModule
+# from dimos.hardware.sensors.camera.webcam import Webcam
+# from dimos.hardware.sensors.camera.zed import compat as zed
+from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.voxels import VoxelGridMapper
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+# from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+# from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+
+# from dimos.msgs.geometry_msgs.Vector3 import Vector3
+# from dimos.msgs.nav_msgs.Odometry import Odometry
+# from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+# from dimos.msgs.std_msgs.Bool import Bool
+# from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+#     WavefrontFrontierExplorer,
+# )
+from dimos.visualization.vis_module import vis_module
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+
+
+def _convert_camera_info(camera_info: Any) -> Any:
+    return camera_info.to_rerun(
+        image_topic="/world/color_image",
+        optical_frame="camera_optical",
+    )
+
+
+def _convert_navigation_costmap(grid: Any) -> Any:
+    return grid.to_rerun(
+        colormap="Accent",
+        z_offset=0.015,
+        opacity=0.2,
+        background="#484981",
+    )
+
+
+def _static_base_link(rr: Any) -> list[Any]:
+    return [
+        rr.Boxes3D(
+            half_sizes=[0.05, 0.05, 0.02],
+            colors=[(0, 255, 127)],
+            fill_mode="MajorWireframe",
+        ),
+        rr.Transform3D(parent_frame="tf#/base_link"),
+    ]
+
+
+def _drone_rerun_blueprint() -> Any:
+    """Same as the G1 rerun blueprint but with a different base link visualization."""
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+            rrb.Spatial3DView(
+                origin="world",
+                name="3D",
+                background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+                line_grid=rrb.LineGrid3D(
+                    plane=rr.components.Plane3D.XY.with_distance(0.5),
+                ),
+            ),
+            column_shares=[1, 2],
+        ),
+    )
+
+
+rerun_config = {
+    "blueprint": _drone_rerun_blueprint,
+    "visual_override": {
+        "world/camera_info": _convert_camera_info,
+        "world/navigation_costmap": _convert_navigation_costmap,
+    },
+    "static": {
+        "world/tf/base_link": _static_base_link,
+    },
+}
+
+_with_vis = vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config)
+
+drone_primitive_no_nav = (
+    autoconnect(
+        _with_vis,
+        VoxelGridMapper.blueprint(),
+        CostMapper.blueprint(),
+        # Visualization
+        WebsocketVisModule.blueprint(),
+    )
+    .global_config(n_workers=4, robot_model="drone", mujoco_room="empty")
+    .transports(
+        {
+            # Movement command
+            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+            # Odometry output from ROSNavigationModule
+            ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
+            ("pointcloud", PointCloud2): LCMTransport("/lidar", PointCloud2),
+            ("goal_pose", PoseStamped): LCMTransport("/goal_pose", PoseStamped),
+            # Camera topics
+            ("color_image", Image): LCMTransport("/color_image", Image),
+            ("camera_info", CameraInfo): LCMTransport("/camera_info", CameraInfo),
+        }
+    )
+)
+
+__all__ = ["drone_primitive_no_nav"]

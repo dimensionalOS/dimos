@@ -154,3 +154,30 @@ class G1OnnxController(OnnxController):
     def _post_control_update(self) -> None:
         phase_tp1 = self._phase + self._phase_dt
         self._phase = np.fmod(phase_tp1 + np.pi, 2 * np.pi) - np.pi
+
+
+_DRONE_HOVER_THRUST = 0.26487  # From cf2.xml file
+_DRONE_MOMENT_SCALE = 0.005
+
+
+class DroneController:
+    def __init__(
+        self,
+        input_controller: InputController,
+        **kwargs: Any,
+    ) -> None:
+        self._input_controller = input_controller
+
+    def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray[Any, Any]:
+        command = self._input_controller.get_command()
+        return command.astype(np.float32)
+
+    def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+        command = self._input_controller.get_command()
+        forward = float(command[0])
+        lateral = float(command[1])
+        yaw = float(command[2])
+        data.ctrl[0] = _DRONE_HOVER_THRUST
+        data.ctrl[1] = lateral * _DRONE_MOMENT_SCALE  # x_moment (roll)
+        data.ctrl[2] = -forward * _DRONE_MOMENT_SCALE  # y_moment (pitch)
+        data.ctrl[3] = -yaw * _DRONE_MOMENT_SCALE  # z_moment (yaw)
