@@ -141,6 +141,33 @@ class CollisionSpec:
     #: ``USD-path-glob -> override-dict``.  See class docstring.
     prim_overrides: dict[str, OverrideConfig] = field(default_factory=dict)
 
+    #: Split suspicious scene-graph nodes that are really many disconnected
+    #: tiny meshes spread over a large area before running primitive fitting.
+    split_disconnected_components: bool = True
+
+    #: Minimum component count before a prim is considered grouped clutter.
+    split_min_components: int = 8
+
+    #: Combined prim extent must be this much larger than the median component
+    #: extent before splitting.  This avoids splitting normal multi-part props.
+    split_extent_ratio: float = 4.0
+
+    #: A prim must span at least this far before the cooker spends time
+    #: checking disconnected components.  This keeps normal props cheap.
+    split_prim_min_extent_m: float = 5.0
+
+    #: The prim must also be slab-like by axis ratio before splitting.
+    #: This targets the path that can otherwise emit one giant box.
+    split_axis_ratio: float = 20.0
+
+    #: Components smaller than this largest extent are dropped after splitting.
+    #: This catches leaves, cups, bottles, and other decorative clutter that can
+    #: destabilize navigation collision while being too small to matter.
+    split_component_min_extent_m: float = 0.15
+
+    #: Very small triangle islands are dropped after splitting.
+    split_component_min_faces: int = 16
+
     @classmethod
     def from_json(cls, path: Path | str) -> CollisionSpec:
         """Load a sidecar.  Unknown keys are ignored to keep the format forwards-compatible."""
@@ -158,6 +185,13 @@ class CollisionSpec:
             "enable_sheet_prisms",
             "sheet_prism_max_scene_prims",
             "prim_overrides",
+            "split_disconnected_components",
+            "split_min_components",
+            "split_extent_ratio",
+            "split_prim_min_extent_m",
+            "split_axis_ratio",
+            "split_component_min_extent_m",
+            "split_component_min_faces",
         }
         kwargs = {k: v for k, v in raw.items() if k in known}
         # Ignore "$schema" and any future top-level keys silently.
@@ -179,8 +213,11 @@ class CollisionSpec:
         Returns a dict with at least ``"type"``.  Falls back to
         ``{"type": self.default}`` when no pattern matches.
         """
+        stripped = prim_path.lstrip("/")
+        sanitized = "".join(c if c.isalnum() else "_" for c in stripped)
+        candidates = (prim_path, stripped, sanitized)
         for pattern, override in self.prim_overrides.items():
-            if fnmatch.fnmatchcase(prim_path, pattern):
+            if any(fnmatch.fnmatchcase(candidate, pattern) for candidate in candidates):
                 # Pattern's "auto" defers to global default.
                 if override.get("type") == "auto":
                     return {**override, "type": self.default}

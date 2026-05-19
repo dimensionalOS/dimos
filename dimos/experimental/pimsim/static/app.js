@@ -76,6 +76,8 @@ let spawnMarker = null;
 let latestRootPosition = null;
 let sceneDepthEnabled = true;
 let sceneWireEnabled = false;
+let collisionVisible = false;
+let collisionMaterial = null;
 let forceVisibleEnabled = false;
 let driveEnabled = false;
 let lastDriveSendTime = 0;
@@ -113,6 +115,27 @@ function setLidarVisibility(visible) {
   lidarVisible = visible;
   if (lidarMesh) lidarMesh.setEnabled(visible);
   setButtonActive("toggleLidar", visible);
+}
+
+function createCollisionMaterial() {
+  if (collisionMaterial) return collisionMaterial;
+  collisionMaterial = new BABYLON.StandardMaterial("collisionDebugMaterial", scene);
+  collisionMaterial.diffuseColor = new BABYLON.Color3(0.0, 0.95, 1.0);
+  collisionMaterial.emissiveColor = new BABYLON.Color3(0.0, 0.45, 0.55);
+  collisionMaterial.alpha = 0.45;
+  collisionMaterial.wireframe = true;
+  collisionMaterial.backFaceCulling = false;
+  collisionMaterial.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
+  return collisionMaterial;
+}
+
+function setCollisionVisibility(visible) {
+  collisionVisible = visible;
+  for (const mesh of collisionMeshes) {
+    mesh.visibility = visible ? 1 : 0;
+    mesh.setEnabled(visible);
+  }
+  setButtonActive("toggleCollision", visible);
 }
 
 function sceneMaterials() {
@@ -443,8 +466,9 @@ async function loadCollisionAsset(config) {
     if (mesh.parent === null) mesh.parent = root;
     if (!mesh.getTotalVertices || mesh.getTotalVertices() === 0) continue;
     mesh.isPickable = true;
-    mesh.visibility = 0;
-    mesh.setEnabled(false);
+    mesh.material = createCollisionMaterial();
+    mesh.visibility = collisionVisible ? 1 : 0;
+    mesh.setEnabled(collisionVisible);
     mesh.metadata = { dimosCollisionMesh: true };
     collisionMeshes.push(mesh);
   }
@@ -460,11 +484,11 @@ function pickScenePoint() {
     camera,
   );
   const meshes = collisionMeshes.length > 0 ? collisionMeshes : sceneMeshes;
-  if (collisionMeshes.length > 0) {
+  if (collisionMeshes.length > 0 && !collisionVisible) {
     for (const mesh of collisionMeshes) mesh.setEnabled(true);
   }
   const pick = scene.pickWithRay(ray, (mesh) => meshes.includes(mesh));
-  if (collisionMeshes.length > 0) {
+  if (collisionMeshes.length > 0 && !collisionVisible) {
     for (const mesh of collisionMeshes) mesh.setEnabled(false);
   }
   if (pick && pick.hit && pick.pickedPoint) return pick.pickedPoint;
@@ -838,6 +862,9 @@ function installClickPublisher(socketRef) {
 document.getElementById("toggleScene").onclick = () => {
   const visible = document.getElementById("toggleScene").dataset.active !== "true";
   setSceneVisibility(visible);
+};
+document.getElementById("toggleCollision").onclick = () => {
+  setCollisionVisibility(!collisionVisible);
 };
 document.getElementById("toggleRobot").onclick = () => {
   const visible = document.getElementById("toggleRobot").dataset.active !== "true";

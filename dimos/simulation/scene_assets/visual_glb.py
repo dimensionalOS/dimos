@@ -50,8 +50,10 @@ import sys
 
 import bpy
 
-source = pathlib.Path(sys.argv[-2])
-target = pathlib.Path(sys.argv[-1])
+source = pathlib.Path(sys.argv[-4])
+target = pathlib.Path(sys.argv[-3])
+simplify_ratio = float(sys.argv[-2])
+max_texture_size = int(sys.argv[-1])
 suffix = source.suffix.lower()
 
 bpy.ops.object.select_all(action="SELECT")
@@ -73,6 +75,42 @@ else:
 for obj in list(bpy.context.scene.objects):
     if obj.type != "MESH":
         bpy.data.objects.remove(obj, do_unlink=True)
+
+if max_texture_size > 0:
+    for image in bpy.data.images:
+        width, height = image.size
+        largest = max(width, height)
+        if largest <= max_texture_size:
+            continue
+        scale = max_texture_size / largest
+        try:
+            image.scale(max(1, int(width * scale)), max(1, int(height * scale)))
+        except RuntimeError:
+            # Blender cannot scale some generated or missing images; keep those
+            # untouched instead of aborting the entire scene cook.
+            pass
+
+if 0.0 < simplify_ratio < 0.999:
+    for obj in list(bpy.context.scene.objects):
+        if obj.type != "MESH":
+            continue
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        modifier = obj.modifiers.new("dimos_decimate", "DECIMATE")
+        modifier.ratio = simplify_ratio
+        try:
+            bpy.ops.object.modifier_apply(modifier=modifier.name)
+        except RuntimeError:
+            obj.modifiers.remove(modifier)
+
+mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+if len(mesh_objects) > 1:
+    bpy.ops.object.select_all(action="DESELECT")
+    for obj in mesh_objects:
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = mesh_objects[0]
+    bpy.ops.object.join()
 
 bpy.ops.export_scene.gltf(
     filepath=str(target),
@@ -149,14 +187,25 @@ def _cook_visual(
         shutil.copy2(source, target)
         return ("copy", None)
     if optimizer == "blender":
-        _export_with_blender(source, target)
+        _export_with_blender(
+            source,
+            target,
+            simplify_ratio=spec.simplify_ratio,
+            max_texture_size=spec.max_texture_size,
+        )
         return ("blender", None)
     if optimizer == "gltfpack":
         return _export_with_gltfpack(source, target, spec)
     raise ValueError(f"unknown browser visual optimizer: {spec.optimizer}")
 
 
-def _export_with_blender(source: Path, target: Path) -> None:
+def _export_with_blender(
+    source: Path,
+    target: Path,
+    *,
+    simplify_ratio: float = 1.0,
+    max_texture_size: int | None = None,
+) -> None:
     blender = shutil.which("blender")
     if blender is None:
         raise RuntimeError(
@@ -177,6 +226,8 @@ def _export_with_blender(source: Path, target: Path) -> None:
                 "--",
                 str(source),
                 str(target),
+                str(simplify_ratio),
+                str(max_texture_size or 0),
             ],
             "blender",
         )

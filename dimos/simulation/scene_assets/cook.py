@@ -106,7 +106,7 @@ def cook_scene_package(
     browser_collision_result = cook_browser_collision(
         source,
         browser_dir,
-        alignment=SceneMeshAlignment(),
+        alignment=SceneMeshAlignment(y_up=False),
         spec=browser_collision,
         collision_spec=collision_spec,
         rebake=rebake,

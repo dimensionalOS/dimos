@@ -30,6 +30,7 @@ coordinate convention.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -415,6 +416,105 @@ class ScenePrimMesh:
     """Original scene-graph path when the source format provides one."""
 
 
+def split_disconnected_scene_prims(
+    prims: list[ScenePrimMesh],
+    *,
+    min_components: int,
+    extent_ratio: float,
+    prim_min_extent: float,
+    axis_ratio: float,
+    min_component_extent: float,
+    min_component_faces: int,
+    can_split: Callable[[ScenePrimMesh], bool] | None = None,
+) -> tuple[list[ScenePrimMesh], dict[str, int]]:
+    """Split scene-graph nodes that are disconnected prop clusters.
+
+    Some game exports group many small disconnected objects under one node
+    (for example leaves, cups, bottles).  Primitive fitting sees only the
+    combined bounds and can turn the group into one scene-scale slab.  This
+    helper keeps normal connected props intact, but splits suspicious wide
+    clusters so tiny decorative islands can be dropped and larger islands can
+    be fitted independently.
+    """
+    import trimesh
+
+    result: list[ScenePrimMesh] = []
+    stats = {
+        "source_prims": len(prims),
+        "split_prims": 0,
+        "emitted_components": 0,
+        "dropped_components": 0,
+    }
+
+    for prim in prims:
+        if can_split is not None and not can_split(prim):
+            result.append(prim)
+            continue
+        if len(prim.triangles) < max(min_component_faces * 2, 1):
+            result.append(prim)
+            continue
+        prim_extent = np.ptp(prim.vertices, axis=0)
+        if float(prim_extent.max()) < prim_min_extent:
+            result.append(prim)
+            continue
+        positive_extent = prim_extent[prim_extent > 1e-6]
+        if (
+            len(positive_extent) < 3
+            or float(positive_extent.max() / positive_extent.min()) < axis_ratio
+        ):
+            result.append(prim)
+            continue
+
+        mesh = trimesh.Trimesh(vertices=prim.vertices, faces=prim.triangles, process=False)
+        parts = mesh.split(only_watertight=False)
+        if len(parts) < min_components:
+            result.append(prim)
+            continue
+
+        component_extents = np.array(
+            [np.ptp(np.asarray(part.vertices), axis=0).max() for part in parts],
+            dtype=np.float64,
+        )
+        median_component_extent = float(np.median(component_extents))
+        if median_component_extent <= 0.0:
+            result.append(prim)
+            continue
+        if float(prim_extent.max()) / median_component_extent < extent_ratio:
+            result.append(prim)
+            continue
+
+        emitted = 0
+        dropped = 0
+        for index, part in enumerate(parts):
+            vertices = np.asarray(part.vertices, dtype=np.float32)
+            triangles = np.asarray(part.faces, dtype=np.int32)
+            component_extent = float(np.ptp(vertices, axis=0).max()) if len(vertices) else 0.0
+            if len(triangles) < min_component_faces or component_extent < min_component_extent:
+                dropped += 1
+                continue
+            result.append(
+                ScenePrimMesh(
+                    name=f"{prim.name}_part{index:04d}",
+                    vertices=vertices,
+                    triangles=triangles,
+                    prim_path=(
+                        f"{prim.prim_path}/component_{index:04d}"
+                        if prim.prim_path is not None
+                        else f"{prim.name}/component_{index:04d}"
+                    ),
+                )
+            )
+            emitted += 1
+
+        stats["split_prims"] += 1
+        stats["emitted_components"] += emitted
+        stats["dropped_components"] += dropped
+        if emitted == 0:
+            continue
+
+    return result, stats
+
+
 def _load_glb_prims(path: Path, alignment: SceneMeshAlignment) -> list[ScenePrimMesh]:
     """Enumerate per-instance prims from a glTF/GLB.
 
@@ -594,4 +694,5 @@ __all__ = [
     "load_scene_mesh",
     "load_scene_prims",
     "make_raycasting_scene",
+    "split_disconnected_scene_prims",
 ]

@@ -15,14 +15,17 @@
 """G1 GR00T whole-body-control blueprint.
 
 ``dimos --simulation mujoco run g1-groot-wbc`` uses MuJoCo as the whole-body
-backend. ``dimos run g1-groot-wbc`` uses the real G1 DDS connection.
-The coordinator/task stack is shared; only the hardware adapter and the
-sim-only navigation/visualization modules are gated by configuration.
+backend and opens the Babylon viewer with the default ``dimos-office`` scene.
+Pass ``--scene <name-or-scene.meta.json>`` to select a cooked scene package;
+``--scene none`` starts the bare robot. ``dimos run g1-groot-wbc`` uses the
+real G1 DDS connection. The coordinator/task stack is shared; only the
+hardware adapter and sim-only modules are gated by configuration.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import logging
 import os
 from pathlib import Path
@@ -81,10 +84,7 @@ _DEFAULT_LIDAR_VOXEL_SIZE_M = 0.05
 _DEFAULT_LIDAR_CAMERA_WIDTH = 640
 _DEFAULT_LIDAR_CAMERA_HEIGHT = 360
 _DEFAULT_GLOBAL_MAP_VOXEL_SIZE_M = 0.05
-_DEFAULT_CUSTOM_SCENE_SCALE = 0.05
-_DEFAULT_OFFICE_MESH_SCALE = 2.0
 _DEFAULT_G1_SPAWN_Z_M = 0.793
-_USD_SCENE_SUFFIXES = {".usd", ".usda", ".usdc", ".usdz"}
 
 
 @dataclass(frozen=True)
@@ -129,100 +129,21 @@ def _env_int(name: str, default: int) -> int:
     return default if raw is None or raw == "" else int(raw)
 
 
-def _env_xyz(name: str, default: tuple[float, float, float]) -> tuple[float, float, float]:
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return default
-    values = tuple(float(part.strip()) for part in raw.split(","))
-    if len(values) != 3:
-        raise ValueError(f"{name} must be formatted as 'x,y,z'")
-    return values
+def _babylon_enabled() -> bool:
+    return _env_bool("DIMOS_ENABLE_BABYLON", bool(global_config.simulation))
 
 
-def _default_scene_y_up(scene_path: str | None, *, custom_scene: bool) -> bool:
-    if not scene_path or not custom_scene:
-        return False
-
-    path = Path(scene_path)
-    if path.suffix.lower() in _USD_SCENE_SUFFIXES:
-        try:
-            from pxr import Usd, UsdGeom  # type: ignore[import-not-found, import-untyped]
-
-            stage = Usd.Stage.Open(str(path))
-            if stage is not None:
-                return str(UsdGeom.GetStageUpAxis(stage)).upper() != "Z"
-        except Exception as exc:
-            logger.debug("Could not read USD upAxis for %s: %s", path, exc)
-
-    return True
-
-
-def _scene_mesh_config() -> tuple[
-    str | None, float, tuple[float, float, float], tuple[float, float, float], bool
-]:
-    scene_mesh_override = os.environ.get("DIMOS_SCENE_MESH_PATH") or None
-    default_scene_mesh = _REPO_ROOT / "data/dimos_office_mesh/dimos_office_mesh.glb"
-    scene_mesh_path = scene_mesh_override or (
-        str(default_scene_mesh) if default_scene_mesh.exists() else None
-    )
-
-    default_scale = (
-        _DEFAULT_CUSTOM_SCENE_SCALE if scene_mesh_override else _DEFAULT_OFFICE_MESH_SCALE
-    )
-    scene_mesh_scale = _env_float("DIMOS_SCENE_MESH_SCALE", default_scale)
-    scene_mesh_translation = _env_xyz("DIMOS_SCENE_MESH_TRANSLATION", (0.0, 0.0, 0.0))
-    scene_mesh_rotation = _env_xyz("DIMOS_SCENE_MESH_ROTATION_ZYX_DEG", (0.0, 0.0, 0.0))
-    scene_mesh_y_up = _env_bool(
-        "DIMOS_SCENE_MESH_Y_UP",
-        _default_scene_y_up(scene_mesh_path, custom_scene=scene_mesh_override is not None),
-    )
-    return (
-        scene_mesh_path,
-        scene_mesh_scale,
-        scene_mesh_translation,
-        scene_mesh_rotation,
-        scene_mesh_y_up,
-    )
-
-
+@lru_cache(maxsize=1)
 def _scene_package_config() -> Any | None:
-    package_path = os.environ.get("DIMOS_SCENE_PACKAGE_PATH") or None
-    if not package_path:
-        return None
+    scene = os.environ.get("DIMOS_SCENE_PACKAGE_PATH") or global_config.scene
 
-    from dimos.simulation.scene_assets.spec import load_scene_package
+    from dimos.simulation.scenes.catalog import resolve_scene_package
 
-    return load_scene_package(package_path)
-
-
-def _scene_backed_mjcf(
-    scene_mesh_path: str | None,
-    scene_mesh_scale: float,
-    scene_mesh_translation: tuple[float, float, float],
-    scene_mesh_rotation: tuple[float, float, float],
-    scene_mesh_y_up: bool,
-) -> tuple[str | Path, str | Path]:
-    if not scene_mesh_path or not _env_bool("DIMOS_SCENE_MESH_COLLISION", True):
-        return _MJCF_PATH, _MJCF_PATH
-
-    from dimos.simulation.mujoco.scene_mesh_to_mjcf import load_or_bake
-    from dimos.simulation.scene_assets.mesh_scene import SceneMeshAlignment
-
-    _, wrapper = load_or_bake(
-        scene_mesh_path=scene_mesh_path,
+    return resolve_scene_package(
+        scene,
         robot_mjcf_path=_MJCF_PATH,
-        alignment=SceneMeshAlignment(
-            scale=scene_mesh_scale,
-            translation=scene_mesh_translation,
-            rotation_zyx_deg=scene_mesh_rotation,
-            y_up=scene_mesh_y_up,
-        ),
         meshdir=_G1_MESH_DIR,
-        include_visual_mesh=_env_bool("DIMOS_SCENE_MESH_VISUAL", False),
-        rebake=_env_bool("DIMOS_SCENE_MESH_BAKE", False),
     )
-    compiled = wrapper.with_name("compiled.mjb")
-    return (compiled if compiled.exists() else wrapper), wrapper
 
 
 def _select_backend() -> _BackendSelection:
@@ -240,31 +161,12 @@ def _select_backend() -> _BackendSelection:
             arm_holder=_arm_holder_config(),
         )
 
-    (
-        scene_mesh_path,
-        scene_mesh_scale,
-        scene_mesh_translation,
-        scene_mesh_rotation,
-        scene_mesh_y_up,
-    ) = _scene_mesh_config()
     scene_package = _scene_package_config()
-    if scene_package is not None:
-        scene_mesh_path = str(scene_package.source_path)
-        scene_mesh_scale = scene_package.alignment.scale
-        scene_mesh_translation = scene_package.alignment.translation
-        scene_mesh_rotation = scene_package.alignment.rotation_zyx_deg
-        scene_mesh_y_up = scene_package.alignment.y_up
     if scene_package is not None and scene_package.mujoco_model_path is not None:
         sim_mjcf_path = scene_package.mujoco_model_path
         viewer_mjcf_path = scene_package.mujoco_wrapper_path or _MJCF_PATH
     else:
-        sim_mjcf_path, viewer_mjcf_path = _scene_backed_mjcf(
-            scene_mesh_path,
-            scene_mesh_scale,
-            scene_mesh_translation,
-            scene_mesh_rotation,
-            scene_mesh_y_up,
-        )
+        sim_mjcf_path, viewer_mjcf_path = _MJCF_PATH, _MJCF_PATH
     lidar_disabled = _env_bool("DIMOS_DISABLE_LIDAR", False)
     depth_cloud_enabled = _env_bool("DIMOS_ENABLE_DEPTH_CLOUD", False)
 
@@ -380,17 +282,11 @@ def _sim_support_blueprints(mujoco_mjcf_path: str | Path) -> tuple[Blueprint, ..
     from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 
     lidar_disabled = _env_bool("DIMOS_DISABLE_LIDAR", False)
-    (
-        scene_mesh_path,
-        scene_mesh_scale,
-        scene_mesh_translation,
-        scene_mesh_rotation,
-        scene_mesh_y_up,
-    ) = _scene_mesh_config()
+    scene_package = _scene_package_config()
 
     mapping_stack: tuple[Blueprint, ...] = (
         (StaticCostmapModule.blueprint(),)
-        if lidar_disabled or not scene_mesh_path or sys.platform == "darwin"
+        if lidar_disabled or scene_package is None or sys.platform == "darwin"
         else (
             VoxelGridMapper.blueprint(
                 voxel_size=_env_float(
@@ -402,10 +298,11 @@ def _sim_support_blueprints(mujoco_mjcf_path: str | Path) -> tuple[Blueprint, ..
     )
 
     viser_stack: tuple[Blueprint, ...] = ()
-    if _env_bool("DIMOS_ENABLE_VISER", True):
+    if _env_bool("DIMOS_ENABLE_VISER", False):
         try:
             from dimos.visualization.viser import ViserRenderModule
 
+            scene_mesh_path = str(scene_package.source_path) if scene_package is not None else None
             viser_stack = (
                 ViserRenderModule.blueprint(
                     splat_path=None,
@@ -414,10 +311,22 @@ def _sim_support_blueprints(mujoco_mjcf_path: str | Path) -> tuple[Blueprint, ..
                         "DIMOS_VISER_PORT", global_config.viser_port or _DEFAULT_VISER_PORT
                     ),
                     scene_mesh_path=scene_mesh_path,
-                    scene_mesh_scale=scene_mesh_scale,
-                    scene_mesh_translation=scene_mesh_translation,
-                    scene_mesh_rotation_zyx_deg=scene_mesh_rotation,
-                    scene_mesh_y_up=scene_mesh_y_up,
+                    scene_mesh_scale=(
+                        scene_package.alignment.scale if scene_package is not None else 1.0
+                    ),
+                    scene_mesh_translation=(
+                        scene_package.alignment.translation
+                        if scene_package is not None
+                        else (0.0, 0.0, 0.0)
+                    ),
+                    scene_mesh_rotation_zyx_deg=(
+                        scene_package.alignment.rotation_zyx_deg
+                        if scene_package is not None
+                        else (0.0, 0.0, 0.0)
+                    ),
+                    scene_mesh_y_up=(
+                        scene_package.alignment.y_up if scene_package is not None else False
+                    ),
                 ).transports(
                     {
                         ("joint_state", JointState): LCMTransport(
@@ -448,9 +357,10 @@ def _babylon_blueprint(viewer_mjcf_path: str | Path, cmd_vel_topic: str) -> Blue
     """Build the BabylonSceneViewerModule blueprint for either backend.
 
     Sim mode optionally overlays a scene-mesh visual; real mode uses the bare
-    G1 MJCF. Returns ``None`` if ``DIMOS_ENABLE_BABYLON`` is unset.
+    G1 MJCF. Simulation starts Babylon by default; set
+    ``DIMOS_ENABLE_BABYLON=0`` to suppress it.
     """
-    if not _env_bool("DIMOS_ENABLE_BABYLON", False):
+    if not _babylon_enabled():
         return None
 
     from dimos.experimental.pimsim.module import BabylonSceneViewerModule
@@ -463,48 +373,22 @@ def _babylon_blueprint(viewer_mjcf_path: str | Path, cmd_vel_topic: str) -> Blue
     )
     if global_config.simulation:
         scene_package = _scene_package_config()
-        (
-            scene_mesh_path,
-            scene_mesh_scale,
-            scene_mesh_translation,
-            scene_mesh_rotation,
-            scene_mesh_y_up,
-        ) = _scene_mesh_config()
-        if scene_package is not None:
-            scene_mesh_path = str(scene_package.source_path)
-            scene_mesh_scale = scene_package.alignment.scale
-            scene_mesh_translation = scene_package.alignment.translation
-            scene_mesh_rotation = scene_package.alignment.rotation_zyx_deg
-            scene_mesh_y_up = scene_package.alignment.y_up
         if scene_package is not None and scene_package.visual_path is not None:
             scene_visual_path = str(scene_package.visual_path)
-            scene_visual_y_up = scene_package.alignment.y_up
-            scene_mesh_scale = scene_package.alignment.scale
-            scene_mesh_translation = scene_package.alignment.translation
-            scene_mesh_rotation = scene_package.alignment.rotation_zyx_deg
             browser_collision_path = (
                 str(scene_package.browser_collision_path)
                 if scene_package.browser_collision_path is not None
                 else None
             )
-        else:
-            scene_visual_override = os.environ.get("DIMOS_SCENE_VISUAL_PATH") or None
-            browser_collision_path = os.environ.get("DIMOS_SCENE_BROWSER_COLLISION_PATH") or None
-            scene_visual_path = scene_visual_override or scene_mesh_path
-            scene_visual_y_up = (
-                _default_scene_y_up(scene_visual_path, custom_scene=True)
-                if scene_visual_override
-                else scene_mesh_y_up
+            kwargs.update(
+                scene_path=scene_visual_path,
+                scene_scale=scene_package.alignment.scale,
+                scene_translation=scene_package.alignment.translation,
+                scene_rotation_zyx_deg=scene_package.alignment.rotation_zyx_deg,
+                scene_y_up=scene_package.alignment.y_up,
+                browser_collision_path=browser_collision_path,
             )
         kwargs.update(
-            scene_path=scene_visual_path,
-            scene_scale=_env_float("DIMOS_SCENE_VISUAL_SCALE", scene_mesh_scale),
-            scene_translation=_env_xyz("DIMOS_SCENE_VISUAL_TRANSLATION", scene_mesh_translation),
-            scene_rotation_zyx_deg=_env_xyz(
-                "DIMOS_SCENE_VISUAL_ROTATION_ZYX_DEG", scene_mesh_rotation
-            ),
-            scene_y_up=_env_bool("DIMOS_SCENE_VISUAL_Y_UP", scene_visual_y_up),
-            browser_collision_path=browser_collision_path,
             pointcloud_hz=_env_float("DIMOS_BABYLON_POINTCLOUD_HZ", 2.0),
             pointcloud_max_points=_env_int("DIMOS_BABYLON_POINTCLOUD_MAX_POINTS", 70000),
         )
@@ -529,7 +413,7 @@ def _arm_teleop_blueprint() -> Blueprint | None:
     Implements ``HumanoidControlSpec``; the viewer auto-wires it. Only worth
     starting when Babylon is enabled (nothing else consumes the spec).
     """
-    if not _env_bool("DIMOS_ENABLE_BABYLON", False):
+    if not _babylon_enabled():
         return None
     from dimos.robot.unitree.g1.arm_teleop import G1ArmTeleop
 

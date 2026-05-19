@@ -29,8 +29,8 @@ from dimos.simulation.scene_assets.inspect import inspect_scene_asset
 from dimos.simulation.scene_assets.mesh_scene import (
     SceneMeshAlignment,
     ScenePrimMesh,
-    load_scene_mesh,
     load_scene_prims,
+    split_disconnected_scene_prims,
 )
 from dimos.simulation.scene_assets.spec import BrowserCollisionSpec
 from dimos.utils.logging_config import setup_logger
@@ -109,13 +109,31 @@ def _load_collision_mesh(
     alignment: SceneMeshAlignment | None,
     collision_spec: CollisionSpec | None,
 ) -> o3d.geometry.TriangleMesh:
-    spec = collision_spec
-    if spec is None and source.with_suffix(".collision.json").exists():
-        spec = CollisionSpec.from_json(source.with_suffix(".collision.json"))
-    if spec is None:
-        return load_scene_mesh(source, alignment=alignment)
+    spec = collision_spec or CollisionSpec.auto_discover(source)
+    source_alignment = alignment or SceneMeshAlignment(y_up=False)
 
-    prims = load_scene_prims(source, alignment=alignment)
+    prims = load_scene_prims(source, alignment=source_alignment)
+    if spec.split_disconnected_components:
+        prims, split_stats = split_disconnected_scene_prims(
+            prims,
+            min_components=spec.split_min_components,
+            extent_ratio=spec.split_extent_ratio,
+            prim_min_extent=spec.split_prim_min_extent_m,
+            axis_ratio=spec.split_axis_ratio,
+            min_component_extent=spec.split_component_min_extent_m,
+            min_component_faces=spec.split_component_min_faces,
+            can_split=lambda prim: (
+                spec.resolve(prim.prim_path or prim.name).get("type", spec.default) == "auto"
+            ),
+        )
+        if split_stats["split_prims"]:
+            logger.info(
+                "browser collision: split %s disconnected prims into %s kept "
+                "components; dropped %s tiny components",
+                split_stats["split_prims"],
+                split_stats["emitted_components"],
+                split_stats["dropped_components"],
+            )
     vertices: list[np.ndarray] = []
     faces: list[np.ndarray] = []
     vertex_offset = 0

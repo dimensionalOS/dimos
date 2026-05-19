@@ -81,6 +81,7 @@ from dimos.simulation.scene_assets.mesh_scene import (
     SceneMeshAlignment,
     ScenePrimMesh,
     load_scene_prims,
+    split_disconnected_scene_prims,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -179,7 +180,7 @@ _CACHE_KEY_LEN = 12
 # affect MJCF emission (new geom kinds, rewritten visual policy, etc.).
 # This is only a local cache salt; it is not a persisted file format
 # contract and old cache directories can safely stay on disk.
-_CACHE_SCHEMA_VERSION = "dispatcher-v8"
+_CACHE_SCHEMA_VERSION = "dispatcher-v9"
 
 
 @dataclass
@@ -276,6 +277,27 @@ def bake_scene_mjcf(
 
     logger.info(f"bake_scene_mjcf: loading + aligning {scene_mesh_path}")
     prims = load_scene_prims(scene_mesh_path, alignment=align)
+    if spec.split_disconnected_components:
+        prims, split_stats = split_disconnected_scene_prims(
+            prims,
+            min_components=spec.split_min_components,
+            extent_ratio=spec.split_extent_ratio,
+            prim_min_extent=spec.split_prim_min_extent_m,
+            axis_ratio=spec.split_axis_ratio,
+            min_component_extent=spec.split_component_min_extent_m,
+            min_component_faces=spec.split_component_min_faces,
+            can_split=lambda prim: (
+                spec.resolve(prim.prim_path or prim.name).get("type", spec.default) == "auto"
+            ),
+        )
+        if split_stats["split_prims"]:
+            logger.info(
+                "bake_scene_mjcf: split %s disconnected prims into %s kept "
+                "components; dropped %s tiny components",
+                split_stats["split_prims"],
+                split_stats["emitted_components"],
+                split_stats["dropped_components"],
+            )
     logger.info(f"bake_scene_mjcf: {len(prims)} prims to process")
     if spec.enable_sheet_prisms and len(prims) > spec.sheet_prism_max_scene_prims:
         logger.info(

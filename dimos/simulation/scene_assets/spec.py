@@ -27,6 +27,12 @@ from typing import Any
 
 from dimos.simulation.scene_assets.mesh_scene import SceneMeshAlignment
 
+ARTIFACT_FRAMES = {
+    "browser_visual": "source",
+    "browser_collision": "source",
+    "mujoco": "dimos_world",
+}
+
 
 @dataclass(frozen=True)
 class BrowserVisualSpec:
@@ -93,6 +99,7 @@ class ScenePackage:
             "source_path": str(self.source_path),
             "package_dir": str(self.package_dir),
             "alignment": asdict(self.alignment),
+            "artifact_frames": ARTIFACT_FRAMES,
             "artifacts": {
                 "browser_visual": str(self.visual_path) if self.visual_path else None,
                 "browser_collision": (
@@ -117,6 +124,7 @@ def load_scene_package(path: str | Path) -> ScenePackage:
     """Load a previously written ``scene.meta.json``."""
     metadata_path = Path(path).expanduser().resolve()
     raw = json.loads(metadata_path.read_text())
+    _validate_artifact_frames(raw, metadata_path)
     artifacts = raw.get("artifacts", {})
     align = SceneMeshAlignment(**raw["alignment"])
     return ScenePackage(
@@ -138,7 +146,31 @@ def load_scene_package(path: str | Path) -> ScenePackage:
     )
 
 
+def _validate_artifact_frames(raw: dict[str, Any], metadata_path: Path) -> None:
+    frames = raw.get("artifact_frames")
+    if frames is None:
+        raise ValueError(
+            f"scene package is missing artifact frame metadata: {metadata_path}. "
+            "Recook it with dimos.simulation.scene_assets.cook."
+        )
+
+    artifacts = raw.get("artifacts", {})
+    required = {
+        "browser_visual": "browser_visual",
+        "browser_collision": "browser_collision",
+        "mujoco_model": "mujoco",
+    }
+    for artifact_name, frame_name in required.items():
+        if artifacts.get(artifact_name) and frames.get(frame_name) != ARTIFACT_FRAMES[frame_name]:
+            raise ValueError(
+                f"scene package artifact frame mismatch in {metadata_path}: "
+                f"{frame_name}={frames.get(frame_name)!r}, "
+                f"expected {ARTIFACT_FRAMES[frame_name]!r}. Recook the scene package."
+            )
+
+
 __all__ = [
+    "ARTIFACT_FRAMES",
     "BrowserCollisionSpec",
     "BrowserVisualSpec",
     "MujocoSceneSpec",
