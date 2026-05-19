@@ -57,6 +57,14 @@ class EdgeTAMProcessor(Detector):
     def __init__(
         self,
     ) -> None:
+        try:
+            import sam2  # noqa: F401
+        except ImportError:
+            raise ImportError(
+                "EdgeTAM requires the 'edgetam-dimos' package (provides sam2). "
+                "Install with: uv sync --extra misc"
+            ) from None
+
         local_config_path = Path(__file__).parent / "configs" / "edgetam.yaml"
 
         if not local_config_path.exists():
