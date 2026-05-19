@@ -1,0 +1,26 @@
+substitutions:
+  _IMAGE: dimos-g1-sim
+  _TAG: smoke
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.g1-sim
+      - -t
+      - ${_IMAGE}:${_TAG}
+      - .
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - run
+      - --rm
+      - -e
+      - RUN_SECONDS=10
+      - -e
+      - BLUEPRINT=unitree-g1-sim
+      - ${_IMAGE}:${_TAG}
+
+timeout: 1800s
+options:
+  logging: CLOUD_LOGGING_ONLY
