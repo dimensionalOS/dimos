@@ -160,7 +160,7 @@ class DroneController:
             self,
             input_controller: InputController,
             drone_hover_thrust: float = 0.26487,
-            drone_input_scale: float = 0.2,
+            drone_input_scale: float = 0.02,
             **kwargs: Any,
     ) -> None:
         self._input_controller = input_controller
