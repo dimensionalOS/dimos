@@ -17,8 +17,9 @@ import json
 from queue import Empty, Queue
 from unittest.mock import MagicMock, patch
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
+from langgraph.types import Command
 import pytest
 
 from dimos.agents.mcp.mcp_client import McpClient
@@ -64,18 +65,36 @@ def _mock_post(url: str, **kwargs: object) -> MagicMock:
                         },
                     },
                 },
+                {
+                    "name": "take_picture",
+                    "description": "Take a picture",
+                    "inputSchema": {"type": "object", "properties": {}},
+                },
             ]
         }
     elif method == "tools/call":
         name = body["params"]["name"]
         args = body["params"].get("arguments", {})
         if name == "add":
-            text = str(args.get("x", 0) + args.get("y", 0))
+            result = {"content": [{"type": "text", "text": str(args.get("x", 0) + args.get("y", 0))}]}
         elif name == "greet":
-            text = f"Hello, {args.get('name', 'world')}!"
+            result = {
+                "content": [
+                    {"type": "text", "text": f"Hello, {args.get('name', 'world')}!"}
+                ]
+            }
+        elif name == "take_picture":
+            # Simulates `dimos.msgs.sensor_msgs.Image.agent_encode()` output.
+            result = {
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/jpeg;base64,FAKEPAYLOAD"},
+                    }
+                ]
+            }
         else:
-            text = "Skill not found"
-        result = {"content": [{"type": "text", "text": text}]}
+            result = {"content": [{"type": "text", "text": "Skill not found"}]}
     else:
         resp = MagicMock()
         resp.status_code = 200
@@ -113,9 +132,7 @@ def mcp_client() -> McpClient:
 def test_fetch_tools_from_mcp_server(mcp_client: McpClient) -> None:
     tools = mcp_client._fetch_tools()
 
-    assert len(tools) == 2
-    assert tools[0].name == "add"
-    assert tools[1].name == "greet"
+    assert [t.name for t in tools] == ["add", "greet", "take_picture"]
 
 
 def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:
@@ -123,8 +140,67 @@ def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:
     add_tool = next(t for t in tools if t.name == "add")
     greet_tool = next(t for t in tools if t.name == "greet")
 
-    assert add_tool.func(x=2, y=3) == "5"
-    assert greet_tool.func(name="Alice") == "Hello, Alice!"
+    # tool_call_id is an InjectedToolCallId argument; the LangGraph tool node
+    # supplies it at runtime, but here we call .func directly so we pass it
+    # explicitly.
+    assert add_tool.func(tool_call_id="tc-1", x=2, y=3) == "5"
+    assert greet_tool.func(tool_call_id="tc-2", name="Alice") == "Hello, Alice!"
+
+
+def test_image_tool_returns_langgraph_command(mcp_client: McpClient) -> None:
+    """Non-text MCP content rides back as a `Command` that appends a
+    ``ToolMessage`` + image-bearing ``HumanMessage`` to the agent state.
+
+    Replaces the previous side-channel (`add_message` after a UUID
+    placeholder), which forced an extra agent turn to deliver the image.
+    """
+    tools = mcp_client._fetch_tools()
+    picture_tool = next(t for t in tools if t.name == "take_picture")
+
+    out = picture_tool.func(tool_call_id="tc-image")
+
+    assert isinstance(out, Command)
+    messages = out.update["messages"]
+    assert len(messages) == 2
+
+    tool_msg, human_msg = messages
+    assert isinstance(tool_msg, ToolMessage)
+    assert tool_msg.tool_call_id == "tc-image"
+
+    assert isinstance(human_msg, HumanMessage)
+    # Tagged so the state reducer can pair this HumanMessage with the
+    # corresponding ToolMessage when several tool calls run in parallel.
+    assert human_msg.additional_kwargs.get("tool_call_id") == "tc-image"
+    blocks = human_msg.content
+    assert isinstance(blocks, list)
+    # First block is the intro text; the rest carry the image_url payload.
+    assert blocks[0]["type"] == "text"
+    assert any(
+        b.get("type") == "image_url" and "FAKEPAYLOAD" in b["image_url"]["url"]
+        for b in blocks[1:]
+    )
+
+
+def test_structured_tool_invocation_injects_tool_call_id(mcp_client: McpClient) -> None:
+    """End-to-end: invoking via the ToolCall path lets the wrapper grab
+    `tool_call_id` even though `args_schema` is a JSON-Schema dict — the
+    behaviour Langchain only ships for Pydantic schemas out of the box.
+    """
+    tools = mcp_client._fetch_tools()
+    picture_tool = next(t for t in tools if t.name == "take_picture")
+
+    result = picture_tool.invoke(
+        {
+            "name": "take_picture",
+            "args": {},
+            "id": "tc-via-invoke",
+            "type": "tool_call",
+        }
+    )
+
+    assert isinstance(result, Command)
+    messages = result.update["messages"]
+    assert messages[0].tool_call_id == "tc-via-invoke"
 
 
 def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:

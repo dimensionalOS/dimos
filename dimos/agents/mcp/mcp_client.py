@@ -16,15 +16,16 @@ from collections.abc import Callable
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
 import time
-from typing import Any
+from typing import Annotated, Any
 import uuid
 
 import httpx
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import InjectedToolCallId, StructuredTool
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
 from reactivex.disposable import Disposable
 
 from dimos.agents.mcp import tool_stream
@@ -168,24 +169,41 @@ class McpClient(Module):
         description = mcp_tool.get("description", "")
         input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
 
-        def call_tool(**kwargs: Any) -> str:
+        def call_tool(
+            tool_call_id: Annotated[str, InjectedToolCallId],
+            **kwargs: Any,
+        ) -> str | Command[Any]:
             result = self._mcp_tool_call(name, kwargs)
             content = result.get("content", [])
-            parts = [c.get("text", "") for c in content if c.get("type") == "text"]
-            text = "\n".join(parts)
+            text = "\n".join(c.get("text", "") for c in content if c.get("type") == "text")
+            image_blocks = [c for c in content if c.get("type") != "text"]
 
-            # Images need to be added to the history separately because they
-            # cannot be included in the tool response for OpenAI models and
-            # probably others.
-            for item in content:
-                if item.get("type") != "text":
-                    uuid_ = str(uuid.uuid4())
-                    text += f"Tool call started with UUID: {uuid_}. You will be updated with the result soon."
-                    _append_image_to_history(self, name, uuid_, item)
+            if not image_blocks:
+                return text
 
-            return text
+            # Vision content can't be embedded inside a ToolMessage for OpenAI
+            # (and others), so we use Command to append a follow-up HumanMessage
+            # carrying the image blocks within the same agent turn. Mirrors the
+            # pattern used by examples/memory2_agent/tools.py.
+            #
+            # The HumanMessage is tagged with `additional_kwargs["tool_call_id"]`
+            # so the state reducer can pair it with the right ToolMessage when
+            # multiple parallel tool calls return images in one batch.
+            summary = text or f"{name} returned {len(image_blocks)} non-text artefact(s)."
+            intro = f"Artefacts returned by '{name}' (image follows):"
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(content=summary, tool_call_id=tool_call_id),
+                        HumanMessage(
+                            content=[{"type": "text", "text": intro}, *image_blocks],
+                            additional_kwargs={"tool_call_id": tool_call_id},
+                        ),
+                    ]
+                }
+            )
 
-        return StructuredTool(
+        return _McpStructuredTool(
             name=name,
             description=description,
             func=call_tool,
@@ -334,17 +352,26 @@ class McpClient(Module):
             self.agent_idle.publish(True)
 
 
-def _append_image_to_history(
-    mcp_client: McpClient, func_name: str, uuid_: str, result: Any
-) -> None:
-    mcp_client.add_message(
-        HumanMessage(
-            content=[
-                {
-                    "type": "text",
-                    "text": f"This is the artefact for the '{func_name}' tool with UUID:={uuid_}.",
-                },
-                result,
-            ]
-        )
-    )
+class _McpStructuredTool(StructuredTool):
+    """StructuredTool that honours `InjectedToolCallId` with a JSON-Schema dict.
+
+    Langchain's `StructuredTool` only auto-injects `tool_call_id` when
+    `args_schema` is a Pydantic model. MCP gives us JSON-Schema dicts (the
+    server's authoritative contract for the LLM), so we extend the dict path
+    to apply the same injection from the function signature — letting tools
+    return a `langgraph` `Command` that references their own `tool_call_id`
+    without having to invent a side-channel for it.
+    """
+
+    def _to_args_and_kwargs(
+        self, tool_input: str | dict[str, Any], tool_call_id: str | None
+    ) -> tuple[tuple[Any, ...], dict[str, Any]]:
+        args, kwargs = super()._to_args_and_kwargs(tool_input, tool_call_id)
+        if "tool_call_id" in self._injected_args_keys:
+            if tool_call_id is None:
+                raise ValueError(
+                    "Tool requires an InjectedToolCallId but no tool_call_id was "
+                    "provided; invoke via a ToolCall, not a bare dict."
+                )
+            kwargs["tool_call_id"] = tool_call_id
+        return args, kwargs
