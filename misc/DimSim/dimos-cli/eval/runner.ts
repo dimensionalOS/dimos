@@ -1,389 +1,220 @@
 /**
- * Eval Runner — Deno-side orchestrator that drives eval workflows.
+ * Eval Runner — Deno-side orchestrator.
  *
- * Connects to the bridge server via WebSocket and sends commands to the
- * browser's EvalHarness: load environment, start workflow, collect results.
+ * Walks `scenes/<env>/evals/*.js` to discover workflows, then for each one
+ * opens a control WebSocket to the bridge, sends `{type:'runEval',
+ * workflowUrl}`, and awaits the `{type:'evalResult', ...}` reply from the
+ * browser-side harness.
  *
- * Two modes:
- *   runEvals()          — Sequential: one page, one workflow at a time
- *   runEvalsMultiPage() — Parallel: N pages in one browser, channel-routed
+ * No JSON parsing.  No manifest.json.  The workflow file is the source of
+ * truth — its `setup(ctx)` runs in the browser, its `success(ctx)` is
+ * polled until passed or timeout, and the runner just collects results.
  */
 
-export interface EvalResult {
-  name: string;
-  environment: string;
-  reason: string;
-  durationMs: number;
-  rubricScores: Record<string, unknown>;
-  pass: boolean;
-}
+import { resolve } from "@std/path";
 
-export interface RunEvalOptions {
-  wsUrl: string;
-  manifestPath: string;
-  filterEnv?: string;
-  filterWorkflow?: string;
-  /** Run only these specific workflow names (overrides filterWorkflow). */
-  filterWorkflows?: string[];
-  outputFormat?: "json" | "junit";
+export interface EvalResult {
+  scene: string;
+  workflow: string;
+  workflowUrl: string;
+  task: string;
+  passed: boolean;
+  reason: string;
+  score: number | null;
+  durationMs: number;
 }
 
 export interface WorkflowEntry {
-  env: string;
   scene: string;
-  workflowPath: string;
-  workflowName: string;
+  workflow: string;
+  filePath: string;
+  /** URL the browser uses to dynamic-import the workflow module. */
+  url: string;
 }
 
-/** Collect workflows from manifest, applying filters. */
-export function collectWorkflows(manifestPath: string, filterEnv?: string, filterWorkflow?: string, filterWorkflows?: string[]): WorkflowEntry[] {
-  const manifestText = Deno.readTextFileSync(manifestPath);
-  const manifest = JSON.parse(manifestText);
-  const result: WorkflowEntry[] = [];
+export interface RunEvalOptions {
+  /** Control WebSocket URL (no `?ch=...`). */
+  wsUrl: string;
+  /** Absolute path to the scenes/ root. */
+  scenesRoot: string;
+  filterScene?: string;
+  filterWorkflow?: string;
+  /** Filter to specific workflow names ("scene/workflow" or just "workflow"). */
+  filterWorkflows?: string[];
+}
 
-  for (const env of manifest.environments) {
-    if (filterEnv && env.name !== filterEnv) continue;
-    for (const wfName of env.workflows) {
-      if (filterWorkflows) {
-        if (!filterWorkflows.includes(wfName)) continue;
-      } else if (filterWorkflow && wfName !== filterWorkflow) {
-        continue;
-      }
-      const dir = new URL(`../../evals/${env.name}/`, import.meta.url).pathname;
-      result.push({
-        env: env.name,
-        scene: env.scene,
-        workflowPath: `${dir}${wfName}.json`,
-        workflowName: wfName,
+/** Walk `scenes/<env>/evals/*.js` and return one entry per workflow file. */
+export function collectWorkflows(opts: {
+  scenesRoot: string;
+  filterScene?: string;
+  filterWorkflow?: string;
+  filterWorkflows?: string[];
+}): WorkflowEntry[] {
+  const { scenesRoot, filterScene, filterWorkflow, filterWorkflows } = opts;
+  const matchSet = filterWorkflows && filterWorkflows.length
+    ? new Set(filterWorkflows)
+    : null;
+
+  const out: WorkflowEntry[] = [];
+  let sceneDirs: Deno.DirEntry[];
+  try {
+    sceneDirs = [...Deno.readDirSync(scenesRoot)];
+  } catch {
+    return out;
+  }
+
+  for (const sceneEnt of sceneDirs) {
+    if (!sceneEnt.isDirectory) continue;
+    const scene = sceneEnt.name;
+    if (filterScene && filterScene !== scene) continue;
+
+    const evalsDir = resolve(scenesRoot, scene, "evals");
+    let workflowEnts: Deno.DirEntry[];
+    try {
+      workflowEnts = [...Deno.readDirSync(evalsDir)];
+    } catch {
+      continue; // no evals dir → no workflows for this scene
+    }
+
+    for (const ent of workflowEnts) {
+      if (!ent.isFile || !ent.name.endsWith(".js")) continue;
+      const workflow = ent.name.slice(0, -3);
+      if (filterWorkflow && filterWorkflow !== workflow) continue;
+      if (matchSet && !matchSet.has(workflow) && !matchSet.has(`${scene}/${workflow}`)) continue;
+
+      out.push({
+        scene,
+        workflow,
+        filePath: resolve(evalsDir, ent.name),
+        url: `/scenes/${scene}/evals/${ent.name}`,
       });
     }
   }
-  return result;
+  return out;
 }
 
+/** Run each workflow sequentially over one control WebSocket. */
 export async function runEvals(options: RunEvalOptions): Promise<EvalResult[]> {
-  const { wsUrl, manifestPath, filterEnv, filterWorkflow, filterWorkflows, outputFormat } = options;
-
-  const workflowsToRun = collectWorkflows(manifestPath, filterEnv, filterWorkflow, filterWorkflows);
-
-  if (workflowsToRun.length === 0) {
-    console.log("[runner] No workflows match filter criteria.");
+  const workflows = collectWorkflows(options);
+  if (workflows.length === 0) {
+    console.log("[runner] no workflows match filter — nothing to do.");
     return [];
   }
+  console.log(`[runner] running ${workflows.length} workflow(s)…`);
 
-  console.log(`[runner] Running ${workflowsToRun.length} workflow(s)...`);
-
-  // Connect to bridge WebSocket
-  const ws = new WebSocket(wsUrl);
-  ws.binaryType = "arraybuffer";
-
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("WebSocket connect timeout")), 30000);
-    ws.onopen = () => { clearTimeout(timeout); resolve(); };
-    ws.onerror = (e) => { clearTimeout(timeout); reject(new Error(`WebSocket connection failed: ${e}`)); };
-  });
-
-  console.log("[runner] Connected to bridge");
-
-  // Helper: send command and wait for response
-  function sendAndWait(cmd: Record<string, unknown>, responseType: string, timeoutMs = 60000): Promise<Record<string, unknown>> {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error(`Timeout waiting for ${responseType}`)), timeoutMs);
-
-      const handler = (event: MessageEvent) => {
-        if (typeof event.data !== "string") return;
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === responseType) {
-            clearTimeout(timeout);
-            ws.removeEventListener("message", handler);
-            resolve(msg);
-          }
-        } catch { /* not JSON */ }
-      };
-
-      ws.addEventListener("message", handler);
-      ws.send(JSON.stringify(cmd));
-    });
-  }
-
-  // Wait for the browser eval harness to be alive (ping/pong handshake)
-  console.log("[runner] Waiting for browser eval harness...");
-  const harnessTimeout = 60000;
-  const harnessStart = Date.now();
-  let harnessReady = false;
-  while (Date.now() - harnessStart < harnessTimeout) {
-    try {
-      await sendAndWait({ type: "ping" }, "pong", 3000);
-      harnessReady = true;
-      break;
-    } catch {
-      // No response yet — browser not connected or harness not initialized
-      await new Promise((r) => setTimeout(r, 1000));
+  const ws = await _connect(options.wsUrl);
+  try {
+    const results: EvalResult[] = [];
+    for (const wf of workflows) {
+      console.log(`[runner] → ${wf.scene}/${wf.workflow}`);
+      const result = await _runOne(ws, wf);
+      results.push(result);
+      const tag = result.passed ? "PASS" : "FAIL";
+      console.log(`[runner]   ${tag} (${result.durationMs}ms): ${result.reason}`);
     }
+    return results;
+  } finally {
+    try { ws.close(); } catch { /* ignore */ }
   }
-  if (!harnessReady) {
-    console.error("[runner] Timeout waiting for browser eval harness. Is the browser open?");
-    ws.close();
-    return [];
-  }
-  console.log("[runner] Browser eval harness connected!");
-
-  const results: EvalResult[] = [];
-  let currentScene = "";
-
-  for (const wf of workflowsToRun) {
-    // Load environment if different from current
-    if (wf.scene !== currentScene) {
-      console.log(`[runner] Loading environment: ${wf.env} (scene: ${wf.scene})`);
-      await sendAndWait({ type: "loadEnv", scene: wf.scene }, "envReady", 120000);
-      currentScene = wf.scene;
-      // Wait for physics to settle
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-
-    // Load workflow definition
-    const wfText = await Deno.readTextFile(wf.workflowPath);
-    const workflow = JSON.parse(wfText);
-
-    console.log(`[runner] Starting workflow: ${wf.workflowName} — "${workflow.task}"`);
-
-    // Start workflow and wait for completion
-    const timeoutMs = (workflow.timeoutSec || 120) * 1000 + 30000; // +30s buffer for slow renderers
-    const result = await sendAndWait(
-      { type: "startWorkflow", workflow },
-      "workflowComplete",
-      timeoutMs,
-    ) as Record<string, unknown>;
-
-    const scores = result.rubricScores as Record<string, { pass?: boolean }> || {};
-    const allPass = Object.values(scores).every((s) => s.pass !== false);
-
-    const evalResult: EvalResult = {
-      name: wf.workflowName,
-      environment: wf.env,
-      reason: result.reason as string,
-      durationMs: result.durationMs as number,
-      rubricScores: scores,
-      pass: allPass,
-    };
-
-    results.push(evalResult);
-
-    const status = allPass ? "PASS" : "FAIL";
-    console.log(`[runner] ${status}: ${wf.workflowName} (${evalResult.durationMs}ms)`);
-  }
-
-  ws.close();
-
-  // Output results
-  if (outputFormat === "junit") {
-    const xml = toJunitXml(results);
-    console.log(xml);
-  } else {
-    console.log(JSON.stringify(results, null, 2));
-  }
-
-  // Summary
-  const passed = results.filter((r) => r.pass).length;
-  const failed = results.length - passed;
-  console.log(`\n[runner] Done: ${passed} passed, ${failed} failed, ${results.length} total`);
-
-  return results;
 }
 
-// ── Multi-page parallel runner ────────────────────────────────────────────
-
-export interface RunEvalsMultiPageOptions {
-  wsUrl: string;
-  manifestPath: string;
-  /** Channel IDs matching the browser pages (e.g. ["page-0", "page-1"]) */
+/** Parallel variant — one control WS per channel, workflows round-robin'd across them. */
+export interface RunEvalsMultiPageOptions extends RunEvalOptions {
+  /** Channel names from launchMultiPage (one per browser page). */
   channels: string[];
-  filterEnv?: string;
-  filterWorkflow?: string;
 }
 
-/**
- * Run eval workflows in parallel across multiple browser pages within a
- * single browser instance.  One WebSocket connection to the bridge; commands
- * are routed to pages via a `channel` field that each page's EvalHarness
- * filters on.
- */
 export async function runEvalsMultiPage(options: RunEvalsMultiPageOptions): Promise<EvalResult[]> {
-  const { wsUrl, manifestPath, channels, filterEnv, filterWorkflow } = options;
-  const numPages = channels.length;
+  const workflows = collectWorkflows(options);
+  if (workflows.length === 0 || options.channels.length === 0) return [];
 
-  const allWorkflows = collectWorkflows(manifestPath, filterEnv, filterWorkflow);
-  if (allWorkflows.length === 0) {
-    console.log("[runner] No workflows match filter criteria.");
-    return [];
-  }
+  // Open one socket per channel.
+  const sockets = await Promise.all(
+    options.channels.map((ch) => _connect(`${options.wsUrl}/?ch=${encodeURIComponent(ch)}`)),
+  );
 
-  console.log(`[runner] Multi-page: ${allWorkflows.length} workflow(s) across ${numPages} page(s)`);
+  // Round-robin workflows across sockets.
+  const queues: WorkflowEntry[][] = sockets.map(() => []);
+  workflows.forEach((wf, i) => queues[i % queues.length].push(wf));
 
-  // Connect to bridge
-  const ws = new WebSocket(wsUrl);
-  ws.binaryType = "arraybuffer";
-
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("WebSocket connect timeout")), 30000);
-    ws.onopen = () => { clearTimeout(timeout); resolve(); };
-    ws.onerror = (e) => { clearTimeout(timeout); reject(new Error(`WebSocket connection failed: ${e}`)); };
-  });
-
-  console.log("[runner] Connected to bridge");
-
-  // Channel-aware sendAndWait: matches on BOTH message type AND channel
-  function sendAndWait(
-    cmd: Record<string, unknown>,
-    responseType: string,
-    channel: string,
-    timeoutMs = 60000,
-  ): Promise<Record<string, unknown>> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`Timeout waiting for ${responseType} on ${channel}`)),
-        timeoutMs,
-      );
-
-      const handler = (event: MessageEvent) => {
-        if (typeof event.data !== "string") return;
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === responseType && msg.channel === channel) {
-            clearTimeout(timer);
-            ws.removeEventListener("message", handler);
-            resolve(msg);
-          }
-        } catch { /* not JSON */ }
-      };
-
-      ws.addEventListener("message", handler);
-      ws.send(JSON.stringify({ ...cmd, channel }));
-    });
-  }
-
-  // Wait for all pages to be ready (ping/pong per channel)
-  console.log("[runner] Waiting for all pages to be ready...");
-  for (const ch of channels) {
-    const start = Date.now();
-    let ready = false;
-    while (Date.now() - start < 60000) {
-      try {
-        await sendAndWait({ type: "ping" }, "pong", ch, 3000);
-        ready = true;
-        break;
-      } catch {
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-    }
-    if (!ready) {
-      console.error(`[runner] Timeout waiting for page ${ch}`);
-      ws.close();
-      return [];
-    }
-    console.log(`[runner] Page ${ch} ready`);
-  }
-
-  // Distribute workflows round-robin across pages
-  const batches: WorkflowEntry[][] = Array.from({ length: numPages }, () => []);
-  allWorkflows.forEach((wf, i) => batches[i % numPages].push(wf));
-
-  // Run each page's batch concurrently
-  const pagePromises = batches.map(async (batch, i) => {
-    const ch = channels[i];
-    const tag = `[${ch}]`;
-    const pageResults: EvalResult[] = [];
-    let currentScene = "";
-
-    for (const wf of batch) {
-      try {
-        // Load scene if needed
-        if (wf.scene !== currentScene) {
-          console.log(`${tag} Loading environment: ${wf.env} (scene: ${wf.scene})`);
-          await sendAndWait({ type: "loadEnv", scene: wf.scene }, "envReady", ch, 120000);
-          currentScene = wf.scene;
-          await new Promise((r) => setTimeout(r, 2000));
+  try {
+    const all = await Promise.all(
+      sockets.map(async (ws, i) => {
+        const out: EvalResult[] = [];
+        for (const wf of queues[i]) {
+          console.log(`[runner:${options.channels[i]}] → ${wf.scene}/${wf.workflow}`);
+          out.push(await _runOne(ws, wf));
         }
-
-        const wfText = await Deno.readTextFile(wf.workflowPath);
-        const workflow = JSON.parse(wfText);
-
-        console.log(`${tag} Starting: ${wf.workflowName} — "${workflow.task}"`);
-
-        const timeoutMs = (workflow.timeoutSec || 120) * 1000 + 30000;
-        const result = await sendAndWait(
-          { type: "startWorkflow", workflow },
-          "workflowComplete",
-          ch,
-          timeoutMs,
-        ) as Record<string, unknown>;
-
-        const scores = result.rubricScores as Record<string, { pass?: boolean }> || {};
-        const allPass = Object.values(scores).every((s) => s.pass !== false);
-
-        const evalResult: EvalResult = {
-          name: wf.workflowName,
-          environment: wf.env,
-          reason: result.reason as string,
-          durationMs: result.durationMs as number,
-          rubricScores: scores,
-          pass: allPass,
-        };
-        pageResults.push(evalResult);
-
-        const status = allPass ? "PASS" : "FAIL";
-        console.log(`${tag} ${status}: ${wf.workflowName} (${evalResult.durationMs}ms)`);
-      } catch (err) {
-        console.error(`${tag} Error on ${wf.workflowName}: ${err}`);
-        pageResults.push({
-          name: wf.workflowName,
-          environment: wf.env,
-          reason: `page error: ${err}`,
-          durationMs: 0,
-          rubricScores: {},
-          pass: false,
-        });
-      }
+        return out;
+      }),
+    );
+    return all.flat();
+  } finally {
+    for (const ws of sockets) {
+      try { ws.close(); } catch { /* ignore */ }
     }
-
-    return pageResults;
-  });
-
-  const allResults = (await Promise.all(pagePromises)).flat();
-  ws.close();
-
-  // Summary
-  const passed = allResults.filter((r) => r.pass).length;
-  const failed = allResults.length - passed;
-  console.log(`\n[runner] Done: ${passed} passed, ${failed} failed, ${allResults.length} total`);
-
-  return allResults;
+  }
 }
 
-// ── JUnit XML output ──────────────────────────────────────────────────────
-
+/** JUnit-style XML emitter for CI consumption. */
 export function toJunitXml(results: EvalResult[]): string {
-  const totalTime = results.reduce((s, r) => s + r.durationMs, 0) / 1000;
-  const failures = results.filter((r) => !r.pass).length;
-
-  let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-  xml += `<testsuites tests="${results.length}" failures="${failures}" time="${totalTime.toFixed(1)}">\n`;
-  xml += `  <testsuite name="dimsim-evals" tests="${results.length}" failures="${failures}">\n`;
-
+  const lines: string[] = [];
+  lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+  const failures = results.filter((r) => !r.passed).length;
+  lines.push(`<testsuite name="dimsim-evals" tests="${results.length}" failures="${failures}">`);
   for (const r of results) {
-    const time = (r.durationMs / 1000).toFixed(1);
-    xml += `    <testcase name="${r.name}" classname="${r.environment}" time="${time}"`;
-    if (r.pass) {
-      xml += ` />\n`;
+    const name = `${r.scene}/${r.workflow}`;
+    const time = (r.durationMs / 1000).toFixed(3);
+    if (r.passed) {
+      lines.push(`  <testcase name="${name}" time="${time}"/>`);
     } else {
-      xml += `>\n`;
-      xml += `      <failure message="${r.reason}">${JSON.stringify(r.rubricScores)}</failure>\n`;
-      xml += `    </testcase>\n`;
+      lines.push(`  <testcase name="${name}" time="${time}">`);
+      lines.push(`    <failure message="${_escape(r.reason)}"/>`);
+      lines.push(`  </testcase>`);
     }
   }
+  lines.push("</testsuite>");
+  return lines.join("\n");
+}
 
-  xml += `  </testsuite>\n`;
-  xml += `</testsuites>\n`;
-  return xml;
+// ── Internals ────────────────────────────────────────────────────────────────
+
+function _connect(wsUrl: string): Promise<WebSocket> {
+  // Force the control channel so eval text messages route correctly.
+  const url = wsUrl.includes("?") ? wsUrl : `${wsUrl}/?ch=control`;
+  const ws = new WebSocket(url);
+  return new Promise((resolve, reject) => {
+    ws.addEventListener("open", () => resolve(ws), { once: true });
+    ws.addEventListener("error", (e) => reject(e), { once: true });
+  });
+}
+
+function _runOne(ws: WebSocket, wf: WorkflowEntry): Promise<EvalResult> {
+  return new Promise((resolve) => {
+    const onMessage = (event: MessageEvent) => {
+      if (typeof event.data !== "string") return;
+      let msg: any;
+      try { msg = JSON.parse(event.data); } catch { return; }
+      if (msg.type !== "evalResult") return;
+      if (msg.workflowUrl && msg.workflowUrl !== wf.url) return;
+      ws.removeEventListener("message", onMessage);
+      resolve({
+        scene: wf.scene,
+        workflow: wf.workflow,
+        workflowUrl: wf.url,
+        task: msg.task ?? "",
+        passed: !!msg.passed,
+        reason: msg.reason ?? (msg.passed ? "ok" : "fail"),
+        score: typeof msg.score === "number" ? msg.score : null,
+        durationMs: msg.durationMs ?? 0,
+      });
+    };
+    ws.addEventListener("message", onMessage);
+    ws.send(JSON.stringify({ type: "runEval", workflowUrl: wf.url }));
+  });
+}
+
+function _escape(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }

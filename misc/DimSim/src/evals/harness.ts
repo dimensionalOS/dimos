@@ -1,0 +1,324 @@
+/**
+ * EvalHarness — browser-side runner for JS-native eval workflows.
+ *
+ * A workflow is a JS module under `scenes/<env>/evals/<name>.js` whose
+ * default export shapes like:
+ *
+ *     export default {
+ *       scene: 'apartment',
+ *       task:  'Go to the couch',
+ *       timeoutSec: 30,
+ *       startPose: { x: 0, y: 0.5, z: 3, yaw: 0 },   // optional sugar
+ *       setup:   async (ctx) => { … },               // optional
+ *       success: (ctx) => ({ passed, reason?, score? }),
+ *     };
+ *
+ * The Deno runner sends one `{type:'runEval', workflowUrl, channel?}` WS
+ * message; this class dynamic-imports the module, runs `setup(ctx)` once,
+ * then polls `success(ctx)` every 250 ms until passed or timeout, and
+ * replies with `{type:'evalResult', …}`.  No JSON criteria, no runner-side
+ * orchestration — the workflow file is the source of truth.
+ */
+
+import {
+  type SceneState, type AssetEntry, type EvalSuccess as _EvalSuccess,
+  type ObjectDistanceOpts, type RadiusContainsOpts,
+  findAsset, dist, objectDistance, radiusContains,
+} from "./rubrics.ts";
+import type { DimosBridge } from "../bridge.ts";
+
+export interface AgentPose { x: number; y: number; z: number; yaw: number; pitch: number; }
+export interface StartPose { x?: number; y?: number; z?: number; yaw?: number; }
+
+/** Shape returned by `workflow.success(ctx)`. */
+export interface EvalSuccess {
+  passed: boolean;
+  reason?: string;
+  score?: number;
+}
+
+/** Context passed to `workflow.setup(ctx)` and `workflow.success(ctx)`. */
+export interface EvalContext {
+  agent: any;
+  agentPos: { x: number; y: number; z: number };
+  sceneState: SceneState;
+  setAgentPose: (p: StartPose) => void;
+  findAsset: (q: string) => AssetEntry | null;
+  dist: (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) => number;
+  /** Pre-bound high-level rubric helpers — `ctx.rubrics.objectDistance({...})` etc. */
+  rubrics: {
+    objectDistance: (opts: ObjectDistanceOpts) => EvalSuccess;
+    radiusContains: (opts: RadiusContainsOpts) => EvalSuccess;
+  };
+}
+
+/** Default-export shape of a workflow file. */
+export interface EvalWorkflow {
+  scene: string;
+  task: string;
+  timeoutSec?: number;
+  startPose?: StartPose;
+  setup?: (ctx: EvalContext) => void | Promise<void>;
+  success: (ctx: EvalContext) => EvalSuccess;
+}
+
+export interface EvalResultMsg {
+  type: "evalResult";
+  workflowUrl: string;
+  scene: string;
+  task: string;
+  passed: boolean;
+  reason?: string;
+  score?: number;
+  durationMs: number;
+  channel?: string;
+}
+
+export interface EvalHarnessOptions {
+  bridge: DimosBridge;
+  getSceneState: () => SceneState;
+  getAgentPose: () => AgentPose | null;
+  channel?: string;
+}
+
+declare global {
+  interface Window { __dimosAgent?: any; }
+}
+
+export class EvalHarness {
+  bridge: DimosBridge;
+  getSceneState: () => SceneState;
+  getAgentPose: () => AgentPose | null;
+  channel: string;
+
+  _activeUrl: string | null = null;
+  _overlay: HTMLDivElement | null = null;
+
+  constructor({ bridge, getSceneState, getAgentPose, channel }: EvalHarnessOptions) {
+    this.bridge = bridge;
+    this.getSceneState = getSceneState;
+    this.getAgentPose = getAgentPose;
+    this.channel = channel || "";
+    this._hookBridgeMessages();
+  }
+
+  // ── WS plumbing ────────────────────────────────────────────────────────────
+
+  _hookBridgeMessages(): void {
+    const origConnect = this.bridge.connect.bind(this.bridge);
+    this.bridge.connect = () => {
+      origConnect();
+      setTimeout(() => {
+        const ws = this.bridge.ws;
+        if (ws) this._patchWsOnMessage(ws);
+      }, 100);
+    };
+    const ws = this.bridge.ws;
+    if (ws) this._patchWsOnMessage(ws);
+  }
+
+  _patchWsOnMessage(ws: WebSocket): void {
+    const origOnMessage = ws.onmessage;
+    const evalTypes = new Set(["runEval", "ping"]);
+    ws.onmessage = (event: MessageEvent) => {
+      if (typeof event.data === "string") {
+        try {
+          const cmd = JSON.parse(event.data);
+          if (cmd.type && evalTypes.has(cmd.type)) {
+            this._handleCommand(cmd);
+            return;
+          }
+        } catch { /* not JSON */ }
+        if (origOnMessage) (origOnMessage as (e: MessageEvent) => void).call(ws, event);
+        return;
+      }
+      if (origOnMessage) (origOnMessage as (e: MessageEvent) => void).call(ws, event);
+    };
+  }
+
+  _send(msg: Record<string, any>): void {
+    if (this.channel) msg.channel = this.channel;
+    this.bridge.sendCommand(msg);
+  }
+
+  async _handleCommand(cmd: { type: string; channel?: string; [k: string]: any }): Promise<void> {
+    if (this.channel && cmd.channel && cmd.channel !== this.channel) return;
+    switch (cmd.type) {
+      case "runEval":
+        await this.runEval(cmd.workflowUrl);
+        break;
+      case "ping":
+        this._send({ type: "pong", ts: Date.now() });
+        break;
+    }
+  }
+
+  // ── Public entry point ─────────────────────────────────────────────────────
+
+  /**
+   * Load a workflow module and run it to completion.  Resolves with the
+   * result message (also sent over WS for the runner).
+   */
+  async runEval(workflowUrl: string): Promise<EvalResultMsg> {
+    if (this._activeUrl) {
+      const err = `another eval is already running: ${this._activeUrl}`;
+      console.warn(`[eval] ${err}`);
+      return this._fail(workflowUrl, "", "", err);
+    }
+    this._activeUrl = workflowUrl;
+
+    let wf: EvalWorkflow;
+    try {
+      const cacheBust = `?t=${Date.now()}`;
+      const mod = await import(/* @vite-ignore */ workflowUrl + cacheBust);
+      wf = mod.default;
+      if (!wf || typeof wf.success !== "function") {
+        throw new Error("workflow module must default-export { scene, task, success() }");
+      }
+    } catch (e: any) {
+      console.error(`[eval] failed to load ${workflowUrl}:`, e);
+      this._activeUrl = null;
+      return this._fail(workflowUrl, "", "", `load failed: ${e?.message ?? e}`);
+    }
+
+    console.log(`[eval] running: ${workflowUrl} — "${wf.task}"`);
+    this._showOverlay(wf.task, wf.timeoutSec ?? 120);
+
+    const start = Date.now();
+    const timeoutMs = (wf.timeoutSec ?? 120) * 1000;
+    const ctx = this._makeContext();
+
+    if (wf.startPose) ctx.setAgentPose(wf.startPose);
+    if (wf.setup) {
+      try { await wf.setup(ctx); }
+      catch (e: any) {
+        const reason = `setup() threw: ${e?.message ?? e}`;
+        console.error(`[eval] ${reason}`);
+        this._activeUrl = null;
+        return this._fail(workflowUrl, wf.scene, wf.task, reason, Date.now() - start);
+      }
+    }
+
+    return new Promise<EvalResultMsg>((resolve) => {
+      const tick = () => {
+        const elapsed = Date.now() - start;
+        let result: EvalSuccess;
+        try {
+          result = wf.success(this._makeContext());
+        } catch (e: any) {
+          result = { passed: false, reason: `success() threw: ${e?.message ?? e}` };
+        }
+
+        if (result.passed) {
+          this._finish(workflowUrl, wf, true, result, elapsed, resolve);
+          return;
+        }
+        if (elapsed >= timeoutMs) {
+          this._finish(workflowUrl, wf, false, { passed: false, ...result, reason: result.reason ?? "timeout" }, elapsed, resolve);
+          return;
+        }
+        setTimeout(tick, 250);
+      };
+      tick();
+    });
+  }
+
+  // ── Internals ──────────────────────────────────────────────────────────────
+
+  _makeContext(): EvalContext {
+    const sceneState = this.getSceneState();
+    const pose = this.getAgentPose();
+    const agentPos = pose
+      ? { x: pose.x, y: pose.y, z: pose.z }
+      : { x: 0, y: 0, z: 0 };
+    sceneState.agentPos = agentPos;
+    const ctxLite = { agentPos, sceneState };
+    return {
+      agent: window.__dimosAgent,
+      agentPos,
+      sceneState,
+      setAgentPose: (p) => {
+        const a = window.__dimosAgent;
+        if (!a) return;
+        a.setPosition(p.x ?? 0, p.y ?? 0.5, p.z ?? 0);
+        if (p.yaw !== undefined && a.group) a.group.rotation.y = (p.yaw * Math.PI) / 180;
+      },
+      findAsset: (q) => findAsset(q, sceneState),
+      dist,
+      rubrics: {
+        objectDistance: (opts) => objectDistance(ctxLite, opts),
+        radiusContains: (opts) => radiusContains(ctxLite, opts),
+      },
+    };
+  }
+
+  _finish(
+    workflowUrl: string, wf: EvalWorkflow, passed: boolean,
+    result: EvalSuccess, durationMs: number,
+    resolve: (msg: EvalResultMsg) => void,
+  ): void {
+    const msg: EvalResultMsg = {
+      type: "evalResult",
+      workflowUrl,
+      scene: wf.scene,
+      task: wf.task,
+      passed,
+      reason: result.reason,
+      score: result.score,
+      durationMs,
+    };
+    console.log(`[eval] ${passed ? "PASS" : "FAIL"} (${durationMs}ms): ${result.reason ?? ""}`);
+    this._showResult(passed, result.reason ?? (passed ? "ok" : "fail"));
+    this._send(msg);
+    this._activeUrl = null;
+    resolve(msg);
+  }
+
+  _fail(workflowUrl: string, scene: string, task: string, reason: string, durationMs = 0): EvalResultMsg {
+    const msg: EvalResultMsg = {
+      type: "evalResult", workflowUrl, scene, task,
+      passed: false, reason, durationMs,
+    };
+    this._send(msg);
+    return msg;
+  }
+
+  // ── UI overlay ─────────────────────────────────────────────────────────────
+
+  _showOverlay(task: string, timeoutSec: number): void {
+    if (this._overlay) this._overlay.remove();
+    const el = document.createElement("div");
+    el.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:99999;background:rgba(0,0,0,0.85);color:#fff;font:14px/1.5 monospace;padding:12px 24px;border-radius:10px;text-align:center;pointer-events:none;";
+    const taskEl = document.createElement("div");
+    taskEl.style.cssText = "color:#4fc3f7;font-size:16px;font-weight:bold;margin-bottom:4px;";
+    taskEl.textContent = `EVAL: ${task}`;
+    const timerEl = document.createElement("div");
+    timerEl.style.cssText = "color:#aaa;font-size:13px;";
+    el.appendChild(taskEl); el.appendChild(timerEl);
+    document.body.appendChild(el);
+    this._overlay = el;
+
+    let remaining = timeoutSec;
+    timerEl.textContent = `${remaining}s remaining`;
+    const interval = setInterval(() => {
+      remaining--;
+      if (remaining <= 0 || !this._activeUrl) { clearInterval(interval); return; }
+      timerEl.textContent = `${remaining}s remaining`;
+    }, 1000);
+  }
+
+  _showResult(pass: boolean, details: string): void {
+    if (this._overlay) this._overlay.remove();
+    const el = document.createElement("div");
+    const bg = pass ? "rgba(46,125,50,0.9)" : "rgba(198,40,40,0.9)";
+    el.style.cssText = `position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:99999;background:${bg};color:#fff;font:14px/1.5 monospace;padding:12px 24px;border-radius:10px;text-align:center;pointer-events:none;`;
+    el.textContent = `${pass ? "PASS" : "FAIL"}: ${details}`;
+    document.body.appendChild(el);
+    this._overlay = el;
+    setTimeout(() => { if (this._overlay === el) { el.remove(); this._overlay = null; } }, 5000);
+  }
+
+  dispose(): void {
+    if (this._overlay) { this._overlay.remove(); this._overlay = null; }
+  }
+}

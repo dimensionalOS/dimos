@@ -8,7 +8,7 @@
  * Must NOT modify engine.js — hooks into DimosBridge WS the same way EvalHarness does.
  */
 
-import type { DimosBridge } from "./dimosBridge.ts";
+import type { DimosBridge } from "./bridge.ts";
 
 export interface SceneEditorGlobals {
   scene: any;         // THREE.Scene

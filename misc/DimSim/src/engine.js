@@ -7083,7 +7083,7 @@ if (dimosMode) {
       // 2. Initialize the scene-api module shared with the runtime exec sandbox.
       //    Scenes can either receive the api as a build() arg or — for runtime
       //    exec via SceneEditor — pick it up off `window.__dimsim`.
-      const sceneApi = await import("./dimos/sceneApi.ts");
+      const sceneApi = await import("./sceneApi.ts");
       sceneApi._init({
         scene, THREE, RAPIER, rapierWorld,
         renderer, camera, agent: null,
@@ -7421,7 +7421,7 @@ if (dimosMode) {
 
       // 5. Connect dimos bridge
       let _lastRgbBase64 = null;
-      const { DimosBridge } = await import("./dimos/dimosBridge.ts");
+      const { DimosBridge } = await import("./bridge.ts");
       const bridge = new DimosBridge({
         agent,
         rates: window.__dimosSensorRates || undefined,
@@ -7551,7 +7551,7 @@ if (dimosMode) {
       // Browser no longer needs to publish odom — server is authoritative.
 
       // Eval harness — scores objectDistance rubric when triggered by dimsim eval runner
-      const { EvalHarness } = await import("./dimos/evalHarness.ts");
+      const { EvalHarness } = await import("./evals/harness.ts");
       const channel = new URLSearchParams(location.search).get("channel") || undefined;
       const evalHarness = new EvalHarness({
         bridge,
@@ -7589,7 +7589,7 @@ if (dimosMode) {
       window.__evalHarness = evalHarness;
 
       // Scene editor — script execution engine for sim editing (exec_js API)
-      const { SceneEditor } = await import("./dimos/sceneEditor.ts");
+      const { SceneEditor } = await import("./sceneEditor.ts");
       const sceneEditor = new SceneEditor({
         bridge,
         channel,

@@ -18,7 +18,7 @@ import { runEvals, runEvalsMultiPage, collectWorkflows, toJunitXml, type EvalRes
 const CLI_DIR = dirname(fromFileUrl(import.meta.url));
 const PROJECT_DIR = resolve(CLI_DIR, "..");
 const LOCAL_DIST_DIR = resolve(PROJECT_DIR, "dist");
-const EVALS_DIR = resolve(PROJECT_DIR, "evals");
+const SCENES_DIR = resolve(PROJECT_DIR, "scenes");
 const DIMOS_VENV = resolve(PROJECT_DIR, "../../.venv/bin/python");
 const AGENT_PY = resolve(CLI_DIR, "agent.py");
 
@@ -250,23 +250,17 @@ async function main() {
       console.log(`[dimsim] Eval workflow: ${evalWorkflow}`);
       console.log("[dimsim] Waiting for browser to connect and load scene...\n");
 
-      const wsUrl = `ws://localhost:${port}`;
-      const manifestPath = resolve(EVALS_DIR, "manifest.json");
-
       const results = await runEvals({
-        wsUrl,
-        manifestPath,
-        filterEnv: opts.env as string,
+        wsUrl: `ws://localhost:${port}`,
+        scenesRoot: SCENES_DIR,
+        filterScene: opts.env as string,
         filterWorkflow: evalWorkflow,
-        outputFormat: "json",
       });
 
-      const passed = results.filter((r) => r.pass).length;
+      const passed = results.filter((r) => r.passed).length;
       const failed = results.length - passed;
       console.log(`\n[dimsim] Eval done: ${passed} passed, ${failed} failed`);
-
-      // Stay alive in dev mode (don't exit like headless eval does)
-      console.log("[dimsim] Eval complete. Server still running. Press Ctrl+C to stop.");
+      console.log("[dimsim] Server still running. Press Ctrl+C to stop.");
     } else {
       console.log("[dimsim] Press Ctrl+C to stop.");
     }
@@ -277,18 +271,8 @@ async function main() {
 
   // ── Agent ───────────────────────────────────────────────────────────
   if (subcommand === "agent") {
-    if (IS_REMOTE && !opts.venv) {
-      console.error(`[dimsim] Agent mode requires a local dimos install.`);
-      console.error(`[dimsim] Pass --venv /path/to/python`);
-      Deno.exit(1);
-    }
-    const pythonBin = (opts.venv as string) || DIMOS_VENV!;
+    const pythonBin = (opts.venv as string) || DIMOS_VENV;
     const navOnly = opts["nav-only"] === true;
-
-    if (IS_REMOTE && !AGENT_PY) {
-      console.error(`[dimsim] Agent mode is only available when running from source.`);
-      Deno.exit(1);
-    }
 
     // Verify python exists
     try {
@@ -299,7 +283,7 @@ async function main() {
       Deno.exit(1);
     }
 
-    const cmd = [pythonBin, AGENT_PY!];
+    const cmd = [pythonBin, AGENT_PY];
     if (navOnly) cmd.push("--nav-only");
 
     console.log(`[dimsim] Starting dimos agent${navOnly ? " (nav-only)" : ""}...`);
@@ -319,68 +303,44 @@ async function main() {
 
   // ── Eval list ───────────────────────────────────────────────────────
   if (subcommand === "eval" && Deno.args[1] === "list") {
-    const evalsDir = EVALS_DIR;
-    const envs: Map<string, string[]> = new Map();
-
-    try {
-      for await (const entry of Deno.readDir(evalsDir)) {
-        if (!entry.isDirectory) continue;
-        const workflows: string[] = [];
-        for await (const file of Deno.readDir(`${evalsDir}/${entry.name}`)) {
-          if (file.name.endsWith(".json") && file.name !== "manifest.json") {
-            workflows.push(file.name.replace(".json", ""));
-          }
-        }
-        if (workflows.length > 0) {
-          workflows.sort();
-          envs.set(entry.name, workflows);
-        }
-      }
-    } catch {
-      console.log("\nNo evals installed under ${EVALS_DIR}.\n");
+    const found = collectWorkflows({ scenesRoot: SCENES_DIR });
+    if (found.length === 0) {
+      console.log(`\nNo eval workflows under ${SCENES_DIR}/*/evals/\n`);
       Deno.exit(0);
     }
-
-    if (envs.size === 0) {
-      console.log("\nNo eval workflows found.\n");
-      Deno.exit(0);
+    const byScene = new Map<string, string[]>();
+    for (const wf of found) {
+      if (!byScene.has(wf.scene)) byScene.set(wf.scene, []);
+      byScene.get(wf.scene)!.push(wf.workflow);
     }
-
-    const sorted = [...envs.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    let total = 0;
+    const sorted = [...byScene.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     console.log("");
-    for (const [env, workflows] of sorted) {
-      console.log(`  \x1b[1m${env}\x1b[0m \x1b[2m(${workflows.length})\x1b[0m`);
-      for (const w of workflows) {
-        console.log(`    ${w}`);
-        total++;
-      }
+    for (const [scene, workflows] of sorted) {
+      console.log(`  \x1b[1m${scene}\x1b[0m \x1b[2m(${workflows.length})\x1b[0m`);
+      workflows.sort();
+      for (const w of workflows) console.log(`    ${w}`);
     }
-    console.log(`\n  \x1b[2m${total} workflow(s) across ${envs.size} environment(s)\x1b[0m\n`);
+    console.log(`\n  \x1b[2m${found.length} workflow(s) across ${sorted.length} scene(s)\x1b[0m\n`);
     Deno.exit(0);
   }
-
 
   // ── Eval ────────────────────────────────────────────────────────────
   if (subcommand === "eval") {
     const connectMode = opts.connect === true;
     const outputFormat = (opts.output as string) === "junit" ? "junit" : "json";
-    const manifestPath = resolve(EVALS_DIR, "manifest.json");
+    const wsUrl = `ws://localhost:${port}`;
 
-    // --connect mode: just run the eval runner against an existing bridge
+    // --connect mode: just run the runner against an existing bridge
     if (connectMode) {
-      const wsUrl = `ws://localhost:${port}`;
-      console.log(`[dimsim] Connecting to existing bridge at ${wsUrl}...`);
-
+      console.log(`[dimsim] Connecting to existing bridge at ${wsUrl}…`);
       const results = await runEvals({
         wsUrl,
-        manifestPath,
-        filterEnv: opts.env as string,
+        scenesRoot: SCENES_DIR,
+        filterScene: (opts.scene as string) || (opts.env as string),
         filterWorkflow: opts.workflow as string,
-        outputFormat: outputFormat as "json" | "junit",
       });
-
-      const passed = results.filter((r) => r.pass).length;
+      if (outputFormat === "junit") console.log(toJunitXml(results));
+      const passed = results.filter((r) => r.passed).length;
       const failed = results.length - passed;
       console.log(`\n[dimsim] Done: ${passed} passed, ${failed} failed, ${results.length} total`);
       Deno.exit(failed > 0 ? 1 : 0);
@@ -388,24 +348,22 @@ async function main() {
 
     const distDir = await resolveDistDir();
     const headless = opts.headless === true;
-    const scene = (opts.scene as string) || (opts.env as string) || "apt";
+    const scene = (opts.scene as string) || (opts.env as string) || "apartment";
     const parallel = Math.max(1, parseInt(opts.parallel as string) || 1);
     const render = ((opts.render as string) === "gpu" ? "gpu" : "cpu") as RenderMode;
     const defaultTimeout = render === "cpu" ? 120000 : 30000;
     const timeout = parseInt(opts.timeout as string) || defaultTimeout;
 
     if (headless && parallel > 1) {
-      const allWorkflows = collectWorkflows(
-        manifestPath,
-        opts.env as string,
-        opts.workflow as string,
-      );
-
+      const allWorkflows = collectWorkflows({
+        scenesRoot: SCENES_DIR,
+        filterScene: (opts.scene as string) || (opts.env as string),
+        filterWorkflow: opts.workflow as string,
+      });
       if (allWorkflows.length === 0) {
         console.log("[dimsim] No workflows match filter criteria.");
         Deno.exit(0);
       }
-
       const numPages = Math.min(parallel, allWorkflows.length);
       console.log(`[dimsim] Multi-page eval — ${allWorkflows.length} workflows across ${numPages} page(s)`);
 
@@ -417,22 +375,19 @@ async function main() {
       await new Promise((r) => setTimeout(r, 2000));
 
       const allResults = await runEvalsMultiPage({
-        wsUrl: `ws://localhost:${port}`,
-        manifestPath,
+        wsUrl,
+        scenesRoot: SCENES_DIR,
         channels: instance.channels,
-        filterEnv: opts.env as string,
+        filterScene: (opts.scene as string) || (opts.env as string),
         filterWorkflow: opts.workflow as string,
       });
 
       await instance.close();
 
-      if (outputFormat === "junit") {
-        console.log(toJunitXml(allResults));
-      } else {
-        console.log(JSON.stringify(allResults, null, 2));
-      }
+      if (outputFormat === "junit") console.log(toJunitXml(allResults));
+      else console.log(JSON.stringify(allResults, null, 2));
 
-      const passed = allResults.filter((r) => r.pass).length;
+      const passed = allResults.filter((r) => r.passed).length;
       const failed = allResults.length - passed;
       console.log(`\n[dimsim] Done: ${passed} passed, ${failed} failed, ${allResults.length} total`);
       Deno.exit(failed > 0 ? 1 : 0);
@@ -440,28 +395,25 @@ async function main() {
 
     // -- Single worker eval (sequential) -----------------------------------
     console.log(`[dimsim] Eval mode — headless: ${headless}, port: ${port}`);
-
     startBridgeServer({ port, distDir, scene, evalOnly: headless });
     await new Promise((r) => setTimeout(r, 500));
 
     const url = `http://localhost:${port}`;
-
     if (headless) {
-      console.log("[dimsim] Launching headless browser...");
+      console.log("[dimsim] Launching headless browser…");
       const instance = await launchHeadless({ url, timeout, render });
       await new Promise((r) => setTimeout(r, 3000));
 
       const results = await runEvals({
-        wsUrl: `ws://localhost:${port}`,
-        manifestPath,
-        filterEnv: opts.env as string,
+        wsUrl,
+        scenesRoot: SCENES_DIR,
+        filterScene: (opts.scene as string) || (opts.env as string),
         filterWorkflow: opts.workflow as string,
-        outputFormat: outputFormat as "json" | "junit",
       });
+      if (outputFormat === "junit") console.log(toJunitXml(results));
 
       await instance.close();
-
-      const failed = results.filter((r) => !r.pass).length;
+      const failed = results.filter((r) => !r.passed).length;
       Deno.exit(failed > 0 ? 1 : 0);
     } else {
       console.log(`[dimsim] Open ${url} in your browser to start evals`);
