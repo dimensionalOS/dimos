@@ -4,21 +4,7 @@
   "description": "3D simulation environment for the dimos robotics stack. Browser-based Three.js + Rapier sim with LCM transport, sensor publishing, and eval harness.",
   "license": "MIT",
   "exports": {
-    ".": "./cli.ts",
-    "./mod": "./mod.ts"
-  },
-  "publish": {
-    "include": [
-      "README.md",
-      "cli.ts",
-      "mod.ts",
-      "bridge/",
-      "eval/",
-      "headless/",
-      "vendor/",
-      "setup.ts"
-    ],
-    "exclude": ["test/"]
+    ".": "./cli.ts"
   },
   "tasks": {
     "start": "deno run --allow-net --allow-read --unstable-net bridge/server.ts",
