@@ -139,6 +139,17 @@ rerun_init(
 
 When a `RerunBridgeModule` is already part of your blueprint, you typically don't need `start_grpc` — just call `rerun_init()` and log directly with `rr.log()`. The data will appear in the existing viewer.
 
-## How to use Rerun on `dev` (and the TF/entity nuances)
+## TF Frames in Rerun
 
-Rerun on `dev` is **module-driven**: modules decide what to log, and `Blueprint.build()` sets up the shared viewer + default layout.
+When a module calls `self.tf.publish(...)`, the resulting `TFMessage` is converted to a Rerun `Transform3D` and logged at the entity path `world/tf/<child_frame_id>`. The default `Spatial3DView` is rooted at `world`, so frames appear in the 3D scene with no extra logging code. The conversion lives in `TFMessage.to_rerun()` ([`dimos/msgs/tf2_msgs/TFMessage.py`](/dimos/msgs/tf2_msgs/TFMessage.py#L126)) and runs inside whichever Rerun bridge is active.
+
+> Note: every transform is flattened under `world/tf/` regardless of TF tree depth. Rerun's native convention is hierarchical (each path segment is a frame), but the dimos bridge does not yet reconstruct full ancestry — see the `TODO` in [`dimos/visualization/rerun/bridge.py`](/dimos/visualization/rerun/bridge.py#L79).
+
+### Two ways to run the bridge
+
+| Path | Use |
+|------|-----|
+| **In-blueprint** | Include `RerunBridgeModule` in your composition. All shipped agentic blueprints do this. |
+| **Standalone** | Run `dimos rerun-bridge` in a separate terminal — it subscribes to LCM and picks up any blueprint already running on the host. Useful as a sidecar viewer for debugging. |
+
+The standalone bridge subscribes to LCM at startup, so transforms published before it comes up are missed (the TF buffer is short and Rerun does not backfill). Start `dimos rerun-bridge` first when using it as a sidecar.
