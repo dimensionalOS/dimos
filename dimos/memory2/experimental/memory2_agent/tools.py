@@ -39,6 +39,7 @@ from dimos.memory2.type.observation import Observation
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.sensor_msgs.Image import Image as DimosImage
 
+
 def _fmt_pose(pose: Any) -> str:
     if pose is None:
         return "—"
@@ -307,15 +308,9 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
             # stream just to pick one — image streams join blobs eagerly.
             candidates: list[Observation[Any]] = []
             candidates.extend(
-                store.stream(stream)
-                .before(target_ts)
-                .order_by("ts", desc=True)
-                .limit(1)
-                .to_list()
+                store.stream(stream).before(target_ts).order_by("ts", desc=True).limit(1).to_list()
             )
-            candidates.extend(
-                store.stream(stream).at(target_ts, tolerance=0.0).limit(1).to_list()
-            )
+            candidates.extend(store.stream(stream).at(target_ts, tolerance=0.0).limit(1).to_list())
             candidates.extend(
                 store.stream(stream).after(target_ts).order_by("ts").limit(1).to_list()
             )
