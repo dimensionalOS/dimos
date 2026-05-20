@@ -177,14 +177,10 @@ def recording_db_hongkong() -> Path:
     (elevator room, white robots seen, total floor area)."""
     raw = os.environ.get("MEMORY2_AGENT_DB_HONGKONG")
     if not raw:
-        pytest.skip(
-            "MEMORY2_AGENT_DB_HONGKONG not set; point it at the Hong Kong .db"
-        )
+        pytest.skip("MEMORY2_AGENT_DB_HONGKONG not set; point it at the Hong Kong .db")
     db = Path(raw)
     if not db.exists():
-        pytest.skip(
-            f"recording not at {db}; set MEMORY2_AGENT_DB_HONGKONG to an existing .db"
-        )
+        pytest.skip(f"recording not at {db}; set MEMORY2_AGENT_DB_HONGKONG to an existing .db")
     return db
 
 
@@ -374,8 +370,7 @@ def test_short_recording_qa(
 _QA_CASES_HONGKONG: list[tuple[str, str, Callable[[str], bool]]] = [
     (
         "white_robots_count_2_hk",
-        "How many white robots did you pass by? Reply with only the "
-        "number, nothing else.",
+        "How many white robots did you pass by? Reply with only the number, nothing else.",
         lambda ans: "2" in ans.split(),
     ),
     (
