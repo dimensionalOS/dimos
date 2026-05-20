@@ -220,8 +220,7 @@ def test_image_tool_with_text_uses_real_text_as_tool_message(mcp_client: McpClie
     blocks = human_msg.content
     assert isinstance(blocks, list)
     assert any(
-        b.get("type") == "image_url" and "FAKEPAYLOAD" in b["image_url"]["url"]
-        for b in blocks[1:]
+        b.get("type") == "image_url" and "FAKEPAYLOAD" in b["image_url"]["url"] for b in blocks[1:]
     )
 
 
