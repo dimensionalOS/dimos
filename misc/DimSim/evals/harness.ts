@@ -202,7 +202,7 @@ export class EvalHarness {
       const cacheBust = `?t=${Date.now()}`;
       await import(/* @vite-ignore */ workflowUrl + cacheBust);
     } catch (e: any) {
-      console.error(`[eval] failed to import ${workflowUrl}:`, e);
+      console.error("[eval] failed to import %s:", workflowUrl, e);
       this._send({
         type: "evalResult", workflowUrl, scene: "", task: "",
         passed: false, reason: `import failed: ${e?.message ?? e}`,
