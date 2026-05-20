@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
@@ -9,8 +10,14 @@ use serde::de::DeserializeOwned;
 
 use crate::transport::Transport;
 
-const INPUT_CHANNEL_CAPACITY: usize = 16;
-const PUBLISH_CHANNEL_CAPACITY: usize = 64;
+// Per-input handler mpsc-queue capacity. When full, new messages are
+// dropped via `try_send` in `TypedRoute::try_dispatch`. 1024 was chosen
+// to give ~100 s of headroom at 10 Hz publish — enough that a handler
+// briefly stalling (GC pause, file I/O, etc.) doesn't cascade into
+// silent drops. Drops past the cap are counted and logged with
+// rate-limited eprintlns; see `TypedRoute::try_dispatch`.
+const INPUT_CHANNEL_CAPACITY: usize = 1024;
+const PUBLISH_CHANNEL_CAPACITY: usize = 1024;
 
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's mpsc channel.
@@ -22,15 +29,36 @@ struct TypedRoute<T: Send + 'static> {
     topic: String,
     decode: fn(&[u8]) -> io::Result<T>,
     sender: mpsc::Sender<T>,
+    /// Count of `try_send` Full errors on this route — the number of
+    /// messages silently dropped because the user's handler couldn't
+    /// keep up with publish rate. Logged in `try_dispatch` at
+    /// power-of-2 milestones so operators see "1 drop", "2 drops",
+    /// "4 drops"... without spamming once a stream goes badly wrong.
+    drops: AtomicU64,
 }
 
 impl<T: Send + 'static> Route for TypedRoute<T> {
     fn try_dispatch(&self, data: &[u8]) {
         match (self.decode)(data) {
-            // If the input channel is full, the newest message is dropped.
-            Ok(msg) => {
-                let _ = self.sender.try_send(msg);
-            }
+            Ok(msg) => match self.sender.try_send(msg) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    let n = self.drops.fetch_add(1, Ordering::Relaxed) + 1;
+                    // Power-of-2 rate limit: log at 1, 2, 4, 8, 16, ...
+                    // First drop fires immediately so operators see the
+                    // first warning, then frequency decays exponentially.
+                    if n.is_power_of_two() {
+                        eprintln!(
+                            "dimos_module: input '{}' dropped {} message(s) — handler can't keep up with publish rate (queue cap = {})",
+                            self.topic, n, INPUT_CHANNEL_CAPACITY,
+                        );
+                    }
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    // Receiver dropped — user-side handler ended. Not
+                    // a back-pressure issue; not logged at every call.
+                }
+            },
             Err(e) => eprintln!("dimos_module: decode error on {}: {e}", self.topic),
         }
     }
@@ -149,6 +177,7 @@ impl Builder {
                 topic: topic.clone(),
                 decode,
                 sender: tx,
+                drops: AtomicU64::new(0),
             }));
         Input {
             topic,
@@ -563,5 +592,80 @@ mod tests {
     #[test]
     fn ok_does_not_panic() {
         propagate_task_failure("recv", Ok(()));
+    }
+
+    // Back-pressure detection — when the per-input mpsc queue fills,
+    // try_dispatch must (a) drop the message and (b) increment the
+    // per-route `drops` counter so operators see "this handler can't
+    // keep up". Logging is rate-limited to power-of-2 milestones to
+    // avoid flooding stderr.
+
+    fn make_route<T: Send + 'static + Clone>(
+        capacity: usize,
+        decode: fn(&[u8]) -> io::Result<T>,
+    ) -> (TypedRoute<T>, mpsc::Receiver<T>) {
+        let (tx, rx) = mpsc::channel(capacity);
+        let route = TypedRoute {
+            topic: "/test".to_string(),
+            decode,
+            sender: tx,
+            drops: AtomicU64::new(0),
+        };
+        (route, rx)
+    }
+
+    #[test]
+    fn typed_route_drops_count_when_queue_full() {
+        // Capacity 4. Send 100 messages without reading any. The first 4
+        // sit in the queue; the remaining 96 must be dropped, and the
+        // drops counter must reflect that exactly.
+        let (route, _rx) = make_route::<Vec<u8>>(4, |b| Ok(b.to_vec()));
+        for _ in 0..100 {
+            route.try_dispatch(&[1u8, 2, 3]);
+        }
+        let drops = route.drops.load(Ordering::Relaxed);
+        assert_eq!(
+            drops, 96,
+            "expected exactly 96 drops (100 sent, 4 queue capacity); got {drops}",
+        );
+    }
+
+    #[test]
+    fn typed_route_drops_counter_starts_at_zero() {
+        let (route, _rx) = make_route::<Vec<u8>>(8, |b| Ok(b.to_vec()));
+        assert_eq!(route.drops.load(Ordering::Relaxed), 0);
+        // First few sends fit in the queue and shouldn't increment drops.
+        for _ in 0..4 {
+            route.try_dispatch(&[1u8]);
+        }
+        assert_eq!(route.drops.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn typed_route_does_not_drop_when_queue_has_headroom() {
+        // Sanity: if the queue capacity exceeds the number of messages
+        // dispatched, the drops counter must stay at zero. This guards
+        // against the rate-limited drop log firing on the happy path.
+        let (route, _rx) = make_route::<Vec<u8>>(2048, |b| Ok(b.to_vec()));
+        for _ in 0..1000 {
+            route.try_dispatch(&[7u8, 7, 7]);
+        }
+        assert_eq!(route.drops.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn typed_route_rate_limited_log_fires_on_power_of_two() {
+        // The log spam threshold is `n.is_power_of_two()`. We can't easily
+        // capture stderr from the unit test, but we can verify the
+        // *count* of dropped messages traverses each power of 2, which is
+        // the trigger condition for the log. Capacity 1, dispatch 130.
+        let (route, _rx) = make_route::<Vec<u8>>(1, |b| Ok(b.to_vec()));
+        for _ in 0..130 {
+            route.try_dispatch(&[1u8]);
+        }
+        let drops = route.drops.load(Ordering::Relaxed);
+        // 130 sent, 1 queued, 129 dropped. 129 covers the milestones
+        // 1, 2, 4, 8, 16, 32, 64, 128 — operator would see 8 log lines.
+        assert_eq!(drops, 129);
     }
 }
