@@ -39,14 +39,6 @@ from dimos.memory2.type.observation import Observation
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.sensor_msgs.Image import Image as DimosImage
 
-_KNOWN_STREAMS = {
-    "color_image",
-    "color_image_embedded",
-    "lidar",
-    "odom",
-}
-
-
 def _fmt_pose(pose: Any) -> str:
     if pose is None:
         return "—"
@@ -83,13 +75,6 @@ def _fmt_obs_list(obs_list: list[Observation], header: str = "", *, with_sim: bo
         return f"{header}(no matches)" if header else "(no matches)"
     body = "\n".join(_fmt_obs(o, with_sim=with_sim) for o in obs_list)
     return f"{header}\n{body}" if header else body
-
-
-def _validate_stream(name: str) -> str | None:
-    """Return an error string if the stream name is invalid, else None."""
-    if name not in _KNOWN_STREAMS:
-        return f"unknown stream {name!r}; available: {sorted(_KNOWN_STREAMS)}"
-    return None
 
 
 def _multimodal_command(
@@ -131,6 +116,16 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
     """
     map_renderer = MapRenderer(store)
     state: dict[str, Any] = {}
+
+    # Snapshot streams that actually exist in this store. Tools below
+    # validate against this set so the agent sees consistent answers
+    # between list_streams() and any stream-named call.
+    known_streams: frozenset[str] = frozenset(store.list_streams())
+
+    def _validate_stream(name: str) -> str | None:
+        if name not in known_streams:
+            return f"unknown stream {name!r}; available: {sorted(known_streams)}"
+        return None
 
     # Per-question Monty REPL — state (variables, function defs) persists
     # across `calc` calls within one question.
@@ -306,10 +301,27 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         if stream not in ("color_image", "color_image_embedded"):
             return f"show_image only supports color_image / color_image_embedded, got {stream!r}"
         try:
-            all_obs = store.stream(stream).to_list()
-            if not all_obs:
+            target_ts = float(ts)
+            # Nearest frame on each side of target_ts via indexed pushdown,
+            # plus an exact-ts match. Avoids decoding every blob in the
+            # stream just to pick one — image streams join blobs eagerly.
+            candidates: list[Observation[Any]] = []
+            candidates.extend(
+                store.stream(stream)
+                .before(target_ts)
+                .order_by("ts", desc=True)
+                .limit(1)
+                .to_list()
+            )
+            candidates.extend(
+                store.stream(stream).at(target_ts, tolerance=0.0).limit(1).to_list()
+            )
+            candidates.extend(
+                store.stream(stream).after(target_ts).order_by("ts").limit(1).to_list()
+            )
+            if not candidates:
                 return f"stream {stream!r} is empty"
-            obs = min(all_obs, key=lambda o: abs(o.ts - float(ts)))
+            obs = min(candidates, key=lambda o: abs(o.ts - target_ts))
         except Exception as e:
             return f"show_image failed: {e}"
         summary = (

@@ -730,11 +730,11 @@ def _annotate_query_in_frame(
 
     proj = _project_world_xy_to_pixel(cam_pose=cam_pose, query_x=query_x, query_y=query_y)
     if proj is None:
-        return bgr  # query behind camera; return unaltered
+        return None  # query behind camera; caller falls back to unannotated frame
     px, py_floor, z_cam = proj
     H, W = bgr.shape[:2]
     if px < -W // 2 or px > W + W // 2:
-        return bgr  # very far off image; not informative
+        return None  # very far off image; not informative
 
     # Clip drawing position to image bounds; mark sideways arrow if off-screen
     draw_x = max(0, min(W - 1, px))
@@ -1041,10 +1041,6 @@ def walkthrough_frames(
 
     import cv2 as _cv2  # local alias to avoid shadowing in tests
 
-    img_obs = store.stream(stream).to_list()
-    if not img_obs:
-        return f"walkthrough: stream {stream!r} is empty"
-
     resolved = _resolve_walkthrough_range(
         "walkthrough",
         store,
@@ -1057,6 +1053,10 @@ def walkthrough_frames(
         return resolved
     ts0, ts1, _step, n, odom_obs = resolved
     sample_ts = [ts0 + (ts1 - ts0) * i / (n - 1) for i in range(n)]
+
+    img_obs = store.stream(stream).to_list()
+    if not img_obs:
+        return f"walkthrough: stream {stream!r} is empty"
 
     t_zero = odom_obs[0].ts
     out: list[tuple[np.ndarray, float, tuple[float, ...]]] = []
