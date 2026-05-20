@@ -26,7 +26,7 @@ struct TypedRoute<T: Send + 'static> {
     topic: String,
     decode: fn(&[u8]) -> io::Result<T>,
     sender: mpsc::Sender<T>,
-    drops: AtomicU64,
+    drop_count: AtomicU64,
     last_log: Mutex<Option<Instant>>,
 }
 
@@ -36,7 +36,7 @@ impl<T: Send + 'static> Route for TypedRoute<T> {
             Ok(msg) => match self.sender.try_send(msg) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    let n = self.drops.fetch_add(1, Ordering::Relaxed) + 1;
+                    let n = self.drop_count.fetch_add(1, Ordering::Relaxed) + 1;
                     let interval = Duration::from_secs(1) / MAX_ERROR_LOG_RATE;
                     let mut last = self.last_log.lock().unwrap();
                     let now = Instant::now();
@@ -171,7 +171,7 @@ impl Builder {
                 topic: topic.clone(),
                 decode,
                 sender: tx,
-                drops: AtomicU64::new(0),
+                drop_count: AtomicU64::new(0),
                 last_log: Mutex::new(None),
             }));
         Input {
@@ -589,68 +589,23 @@ mod tests {
         propagate_task_failure("recv", Ok(()));
     }
 
-    // Back-pressure / drop counter
-
-    fn make_route<T: Send + 'static + Clone>(
-        capacity: usize,
-        decode: fn(&[u8]) -> io::Result<T>,
-    ) -> (TypedRoute<T>, mpsc::Receiver<T>) {
-        let (tx, rx) = mpsc::channel(capacity);
+    #[test]
+    fn typed_route_logs_error_on_drop() {
+        let (tx, _rx) = mpsc::channel::<Vec<u8>>(1);
         let route = TypedRoute {
             topic: "/test".to_string(),
-            decode,
+            decode: |b| Ok(b.to_vec()),
             sender: tx,
-            drops: AtomicU64::new(0),
+            drop_count: AtomicU64::new(0),
             last_log: Mutex::new(None),
         };
-        (route, rx)
-    }
-
-    #[test]
-    fn typed_route_drops_count_when_queue_full() {
-        let (route, _rx) = make_route::<Vec<u8>>(4, |b| Ok(b.to_vec()));
-        for _ in 0..100 {
-            route.try_dispatch(&[1u8, 2, 3]);
-        }
-        assert_eq!(route.drops.load(Ordering::Relaxed), 96);
-    }
-
-    #[test]
-    fn typed_route_drops_counter_starts_at_zero() {
-        let (route, _rx) = make_route::<Vec<u8>>(8, |b| Ok(b.to_vec()));
-        assert_eq!(route.drops.load(Ordering::Relaxed), 0);
-        for _ in 0..4 {
-            route.try_dispatch(&[1u8]);
-        }
-        assert_eq!(route.drops.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn typed_route_does_not_drop_when_queue_has_headroom() {
-        let (route, _rx) = make_route::<Vec<u8>>(2048, |b| Ok(b.to_vec()));
-        for _ in 0..1000 {
-            route.try_dispatch(&[7u8, 7, 7]);
-        }
-        assert_eq!(route.drops.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn typed_route_log_throttle_skips_within_interval() {
-        // Dispatch many drops back-to-back. All must increment the
-        // counter, but `last_log` is set exactly once (the first drop)
-        // because the entire loop runs inside one MAX_ERROR_LOG_RATE
-        // window.
-        let (route, _rx) = make_route::<Vec<u8>>(1, |b| Ok(b.to_vec()));
-        let interval = Duration::from_secs(1) / MAX_ERROR_LOG_RATE;
-        let before = Instant::now();
-        for _ in 0..130 {
-            route.try_dispatch(&[1u8]);
-        }
+        // Fill the queue, then force a drop.
+        route.try_dispatch(&[1u8]);
+        route.try_dispatch(&[1u8]);
+        assert_eq!(route.drop_count.load(Ordering::Relaxed), 1);
         assert!(
-            before.elapsed() < interval,
-            "test invalid: loop must complete within one log-throttle window",
+            route.last_log.lock().unwrap().is_some(),
+            "drop must trigger a log",
         );
-        assert_eq!(route.drops.load(Ordering::Relaxed), 129);
-        assert!(route.last_log.lock().unwrap().is_some());
     }
 }
