@@ -278,8 +278,8 @@ export class ServerPhysics {
     this.userColliders.delete(uuid);
   }
 
-  /** Drop every user-authored collider. Used when hot-reloading a scene
-   * from JSON — the new content's colliders get re-added afterwards. */
+  /** Drop every user-authored collider — used when an explicit re-load
+   * of a level clears the existing scene content. */
   clearUserColliders(): void {
     for (const uuid of [...this.userColliders.keys()]) {
       this.removeCollider(uuid);

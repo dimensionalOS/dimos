@@ -7102,28 +7102,15 @@ if (dimosMode) {
       window.__dimsim = sceneApi;
 
       // 3. Dynamic-import the scene module + run its build()
-      sceneApi._captureBaseline();
       const sceneMod = await import(/* @vite-ignore */ `/scenes/${sceneName}/index.js`);
       if (typeof sceneMod.default !== "function") {
         throw new Error(`Scene "${sceneName}" must export a default build function`);
       }
       const sceneCfg = (await sceneMod.default(sceneApi)) || {};
+      if (typeof sceneMod.afterBuild === "function") {
+        await sceneMod.afterBuild(sceneApi);
+      }
       console.log(`[dimos] Scene loaded: ${sceneName}`);
-
-      // HMR: bridge broadcasts {type:"reload"} on scene-file edits.
-      // sceneEditor.ts dispatches to this handler, which re-runs build()
-      // without losing the engine/agent/bridge state.
-      window.__dimsimHmr = async () => {
-        console.log(`[dimos] HMR start for ${sceneName}`);
-        sceneApi._revertToBaseline();
-        console.log(`[dimos] HMR reverted baseline, re-importing`);
-        const mod = await import(/* @vite-ignore */
-          `/scenes/${sceneName}/index.js?t=${Date.now()}`);
-        console.log(`[dimos] HMR re-imported, calling build()`);
-        await mod.default(sceneApi);
-        console.log(`[dimos] hot-reloaded ${sceneName}`);
-      };
-      console.log(`[dimos] __dimsimHmr installed`);
 
       // 4. Spawn player + agent based on scene config
       spawnPlayerInsideScene();

@@ -68,19 +68,6 @@ export class SceneEditor {
             this._handleCommand(cmd);
             return;
           }
-          if (cmd.type === "reload") {
-            const hmr = (globalThis as any).__dimsimHmr;
-            console.log(`[dimos] reload msg received, __dimsimHmr=${typeof hmr}`);
-            if (typeof hmr === "function") {
-              hmr().catch((e: any) =>
-                console.error("[dimos] hot-reload failed:", e),
-              );
-            } else {
-              console.log("[dimos] __dimsimHmr not set, falling back to location.reload");
-              location.reload();
-            }
-            return;
-          }
         } catch { /* not JSON or not for us */ }
       }
       // Pass through to existing handlers (EvalHarness, DimosBridge)
