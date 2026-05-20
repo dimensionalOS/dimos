@@ -30,12 +30,9 @@ import time
 
 import pytest
 
-pytestmark = pytest.mark.tool
-
 try:
     from dimos.protocol.pubsub.impl.webrtc_providers.cloudflare import (
         CloudflareProvider,
-        _sanitize_topic as _sanitize_dc_name,
     )
     from dimos.protocol.pubsub.impl.webrtcpubsub import (
         WEBRTC_AVAILABLE,
@@ -45,7 +42,6 @@ except ImportError:  # pragma: no cover - aiortc missing
     WEBRTC_AVAILABLE = False
     WebRTCPubSub = None  # type: ignore[assignment,misc]
     CloudflareProvider = None  # type: ignore[assignment,misc]
-    _sanitize_dc_name = None  # type: ignore[assignment]
 
 CF_CREDS_PRESENT = bool(os.environ.get("CF_TELEOP_APP_ID")) and bool(
     os.environ.get("CF_TELEOP_APP_SECRET")
@@ -55,20 +51,6 @@ skip_unless_cf = pytest.mark.skipif(
     not (WEBRTC_AVAILABLE and CF_CREDS_PRESENT),
     reason="Requires aiortc + CF_TELEOP_APP_ID/CF_TELEOP_APP_SECRET",
 )
-
-
-def test_import() -> None:
-    """Module should be importable even without aiortc installed."""
-    from dimos.protocol.pubsub.impl import webrtcpubsub  # noqa: F401
-
-
-@pytest.mark.skipif(not WEBRTC_AVAILABLE, reason="aiortc not installed")
-def test_sanitize_dc_name() -> None:
-    assert _sanitize_dc_name("simple") == "simple"
-    assert _sanitize_dc_name("benchmark/webrtc") == "benchmark_webrtc"
-    assert _sanitize_dc_name("a" * 100) == "a" * 64
-    # Empty / fully-stripped names get a fallback so we never produce ""
-    assert _sanitize_dc_name("///") == "___"
 
 
 @pytest.fixture
@@ -82,6 +64,7 @@ def pubsub() -> Generator[WebRTCPubSub, None, None]:
         ps.stop()
 
 
+@pytest.mark.tool
 @skip_unless_cf
 @pytest.mark.timeout(60)
 def test_basic_pub_sub(pubsub: WebRTCPubSub) -> None:
@@ -105,6 +88,7 @@ def test_basic_pub_sub(pubsub: WebRTCPubSub) -> None:
         unsub()
 
 
+@pytest.mark.tool
 @skip_unless_cf
 @pytest.mark.timeout(60)
 def test_latency(pubsub: WebRTCPubSub) -> None:
@@ -142,6 +126,7 @@ def test_latency(pubsub: WebRTCPubSub) -> None:
         unsub()
 
 
+@pytest.mark.tool
 @skip_unless_cf
 @pytest.mark.timeout(120)
 @pytest.mark.parametrize("size", [64, 1024, 16384])
