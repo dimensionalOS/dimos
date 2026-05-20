@@ -1,86 +1,147 @@
-# Authoring scenes
+# Scenes
 
-A scene is a JS module at `scenes/<name>/index.js` that default-exports an async `build(api)` function. dimsim dynamically imports it at boot, hands you the scene API, and lets you do whatever you'd do in a normal Three.js script — `scene.add(mesh)`, attach lights, register physics colliders.
+A scene is one JS file: `scenes/<name>/index.js`. It default-exports an async `build(api)` function. DimSim hot-reloads it on save.
 
-## Minimal scene
+## Create a new scene
+
+```bash
+mkdir -p misc/DimSim/scenes/my-room
+```
+
+`misc/DimSim/scenes/my-room/index.js`:
 
 ```js
-// scenes/warehouse/index.js
 export default async function build({ scene, THREE, physics, setSky }) {
-  setSky({ topColor: '#3a4654', horizonColor: '#cfd6df', brightness: 0.7 });
+  setSky({ topColor: '#3a4654', horizonColor: '#cfd6df', brightness: 0.8 });
 
   // floor
   const floor = new THREE.Mesh(
-    new THREE.BoxGeometry(30, 0.2, 40),
-    new THREE.MeshPhysicalMaterial({ color: 0x6b6f74, roughness: 0.95 }),
+    new THREE.BoxGeometry(20, 0.2, 20),
+    new THREE.MeshPhysicalMaterial({ color: 0x808080, roughness: 0.9 }),
   );
   floor.position.y = -0.1;
   scene.add(floor);
-  physics.staticCollider(floor, 'box');     // make it solid for the agent + lidar
+  physics.staticCollider(floor, 'box');
 
-  // sun + ambient
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x404040, 0.8));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+  // a wall
+  const wall = new THREE.Mesh(
+    new THREE.BoxGeometry(20, 3, 0.2),
+    new THREE.MeshPhysicalMaterial({ color: 0xc4c1b8, roughness: 0.8 }),
+  );
+  wall.position.set(0, 1.5, -10);
+  scene.add(wall);
+  physics.staticCollider(wall, 'box');
+
+  // lighting
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x404040, 0.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.0);
   sun.position.set(10, 20, 10);
   sun.castShadow = true;
   scene.add(sun);
 
-  return {
-    embodiment: null,                       // dimos sends the embodiment over WS
-    spawnPoint: { x: 0, y: 0.5, z: 0 },
-  };
+  return { spawnPoint: { x: 0, y: 0.5, z: 0 } };
 }
 ```
 
 Run it:
 
 ```bash
-dimsim dev --scene warehouse
+dimsim dev --scene my-room
 # or via dimos:
-dimos --simulation dimsim --dimsim-scene=warehouse run unitree-go2-basic
+dimos --simulation dimsim --dimsim-scene=my-room run unitree-go2-basic
 ```
 
-A live example with stacked crates, pallet racks, and pendant lights is at `scenes/warehouse/index.js`.
+## Edit a scene
+
+Open the file, edit, save. The browser HMR-reloads — no full refresh.
+
+The whole `build()` re-runs on every save, so iteration is cheap. Try changing `setSky({ brightness: 0.8 })` to `1.5` — the sky brightens within a second.
 
 ## The `api` argument
 
-`build(api)` receives an object — destructure what you need:
+`build(api)` gets one argument — destructure what you need:
 
-| Field | Description |
+| Field | What |
 |---|---|
-| `scene` | `THREE.Scene` — add meshes, lights, groups here |
-| `THREE` | The engine's THREE module; use this rather than re-importing |
-| `physics.staticCollider(mesh, shape)` | Attach a static collider. `shape`: `"box"` / `"trimesh"` / `"sphere"` |
-| `physics.dynamicCollider(mesh, {mass, shape})` | Rigid body — falls, bounces. Engine syncs its position into `mesh` each frame |
-| `setSky(opts)` | `{topColor, horizonColor, bottomColor, brightness, softness, sunStrength, sunHeight}` |
-| `loadGLTF(url)` | Async GLB loader. Returns `{ scene, animations, ... }` |
-| `loadLevel(data)` | Feed an apt-shape blob through the engine's importLevelFromJSON — populates the assets registry so E-key pickup / multi-state objects work |
-| `loadJson(url)` | Like loadLevel, but fetches a JSON file first |
-| `agent`, `camera`, `renderer`, `RAPIER`, `rapierWorld` | Live references — same instances the engine uses |
+| `scene` | The `THREE.Scene`. `scene.add(mesh)` anything you want rendered. |
+| `THREE` | The engine's THREE module. Use this rather than re-importing. |
+| `physics.staticCollider(mesh, shape)` | Make a mesh solid (agent can't walk through, lidar hits it). `shape`: `'box'` \| `'trimesh'` \| `'sphere'`. |
+| `physics.dynamicCollider(mesh, {mass, shape})` | Mesh becomes a rigid body — falls, can be pushed. Engine syncs `mesh.position` each frame. |
+| `setSky({...})` | Atmosphere. Keys: `topColor`, `horizonColor`, `bottomColor`, `brightness`, `softness`, `sunStrength`, `sunHeight`. |
+| `loadGLTF(url)` | Async GLB load — `await loadGLTF('./forklift.glb')` returns `{scene, animations, …}`. |
+| `agent`, `camera`, `renderer`, `RAPIER`, `rapierWorld` | Live engine refs if you need them. |
 
-You can also `import * as THREE from 'three'` if you prefer the explicit form, but the `api.THREE` is guaranteed to be the same instance the engine uses (avoiding "two THREEs" bugs).
+## Return value
 
-## Adding interactive objects (limitation)
+`build()` can return `{ spawnPoint?, embodiment? }`:
 
-Right now, anything you add with `scene.add(mesh)` is **invisible to the E-key interaction system**. Pickable items, multi-state cabinets, openable doors, the TV-toggle pattern — all of these live in the engine's `assets[]` registry, which is only populated by `loadLevel(data)` / `loadJson(url)` with apt-shape data.
+```js
+return { spawnPoint: { x: 2, y: 0.5, z: -5 } };
+```
 
-Two options today:
+If omitted, the agent spawns at `(2, 0.5, 3)`.
 
-1. **Decompose your scene's interactive objects into apt-shape data** (see `scenes/apartment/data/objects.js` for the format) and feed them through `loadLevel`. Tedious but works.
-2. **Hold for the `registerAsset(group, {pickable, states, actions})` API** — planned but not yet built. Will let `new THREE.Group(...)` participate in interactions without the apt-shape detour.
+## Common patterns
 
-The apartment scene (`scenes/apartment/index.js`) uses option 1 — its `data/` folder has 123 assets including 28 interactive ones.
+**Loops for repeated geometry.** The whole module re-runs on HMR, so spawning 50 crates via a loop is fine — no `_disposed` bookkeeping needed.
 
-## Hot reload
+```js
+const crateGeo = new THREE.BoxGeometry(1, 1, 1);
+const crateMat = new THREE.MeshPhysicalMaterial({ color: 0x8b5a2b, roughness: 0.75 });
+for (let i = 0; i < 8; i++) {
+  const c = new THREE.Mesh(crateGeo, crateMat);
+  c.position.set((i % 4) - 1.5, 0.5 + Math.floor(i / 4), 3);
+  scene.add(c);
+  physics.staticCollider(c, 'box');
+}
+```
 
-dimsim's bridge watches `scenes/<active-scene>/` and re-fires the engine's HMR handler on any file save. You'll see a `[bridge] hot-reload …` line in the bridge logs, then the engine logs `[dimos] hot-reloaded <scene>`. No browser refresh needed.
+**GLB props.** Drop a GLB next to `index.js`, then:
 
-Limitation: HMR re-runs `build(api)` which re-adds everything — but the engine doesn't currently scrub interactive state from `loadLevel`. If your scene uses `loadLevel`, expect duplicate assets after HMR; refresh the browser instead.
+```js
+const gltf = await loadGLTF('./forklift.glb');
+const forklift = gltf.scene;
+forklift.position.set(5, 0, 0);
+scene.add(forklift);
+physics.staticCollider(forklift, 'trimesh');
+```
 
-## Tips
+**Lighting** — `HemisphereLight` for ambient fill + one `DirectionalLight` with `castShadow = true` is enough for most interiors. `PointLight`s give nice volumetric pendant effects but turn off `castShadow` to keep frame rate sane.
 
-- **Always pair `scene.add(mesh)` with `physics.staticCollider(mesh, ...)` if the agent / lidar should see it.** Visual-only meshes are fine — lidar won't hit them.
-- **Use `MeshPhysicalMaterial`** for anything you care about visually — supports clearcoat, sheen, transmission, iridescence.
-- **For repeating elements** (racks, pillars, crates) use loops in `build`. The whole module re-runs on HMR, so iteration is cheap.
-- **Spawn point**: `spawnPoint` from `build`'s return value is where the agent gets placed at scene-load time. dimos may override it later.
-- **`scenes/empty/index.js`** is the bare-minimum scene — a floor and a sky. Useful as a starting template.
+**Tune the shadow camera** if shadows pop:
+
+```js
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -20;
+sun.shadow.camera.right = 20;
+sun.shadow.camera.top = 25;
+sun.shadow.camera.bottom = -25;
+scene.add(sun);
+```
+
+**Materials** — `MeshPhysicalMaterial` supports clearcoat, sheen, transmission, iridescence — use it for anything you care about visually. The engine sets the renderer up for HDR/PBR.
+
+## Always pair `scene.add(mesh)` with a collider
+
+Otherwise the agent walks through it and lidar passes straight through:
+
+```js
+scene.add(mesh);
+physics.staticCollider(mesh, 'box');     // ← don't skip this
+```
+
+Pure-visual meshes (decoration the agent can't bump into) — skip the collider on purpose. Just be aware.
+
+## Tip: start from `scenes/empty/`
+
+It's a one-file scene with a floor and a sky. Copy it as a template:
+
+```bash
+cp -r misc/DimSim/scenes/empty misc/DimSim/scenes/my-room
+```
+
+## What about interactive objects?
+
+Pickable items, openable doors, multi-state cabinets — these need a `registerAsset(group, {pickable, states, actions})` API that doesn't exist yet. Until then, anything you add with `scene.add` is visible/collidable but the **E-key interaction system won't see it**. The apartment scene is the only one with full E-key interactivity today.

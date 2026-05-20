@@ -22,12 +22,11 @@ cd <dimos-repo>
 
 On first run, `cli/cli.ts` will build `dist/` via Vite (dimsim ships its frontend as source — Deno+Vite materializes it in ~20s).
 
-## Authoring
+## Docs
 
-- New scenes:  see [docs/scenes.md](docs/scenes.md)
-- New evals:   see [docs/evals.md](docs/evals.md)
-- Architecture overview: see [docs/architecture.md](docs/architecture.md)
-- Tour:        see [docs/getting-started.md](docs/getting-started.md)
+- [docs/getting-started.md](docs/getting-started.md) — 5-minute tour
+- [docs/scenes.md](docs/scenes.md) — create + edit scenes
+- [docs/evals.md](docs/evals.md) — write eval workflows
 
 ## Install the CLI (optional)
 
