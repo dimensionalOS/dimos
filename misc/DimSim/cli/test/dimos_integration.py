@@ -27,12 +27,12 @@ Options:
   --rate N       cmd_vel publish rate in Hz (default: 10)
 """
 
-import sys
-import time
-import struct
-import socket
-import threading
 import argparse
+import socket
+import struct
+import sys
+import threading
+import time
 
 # dimos message types for encoding cmd_vel
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -45,6 +45,7 @@ MCAST_PORT = 7667
 _seq = 0
 
 # -- LCM packet codec (matches @dimos/msgs encodePacket / decodePacket) --------
+
 
 def encode_lcm_packet(channel: str, payload: bytes) -> bytes:
     """Encode an LCM binary packet (same format as @dimos/msgs encodePacket)."""
@@ -64,16 +65,16 @@ def decode_lcm_packet(data: bytes) -> tuple[str, bytes]:
         raise ValueError(f"Bad magic: 0x{magic:08x}")
     null_pos = data.index(0, 8)
     channel = data[8:null_pos].decode("utf-8")
-    payload = data[null_pos + 1:]
+    payload = data[null_pos + 1 :]
     return channel, payload
 
 
 # -- Channel names (must match DimSim's dimosBridge.ts) ------------------------
 CH_CMD_VEL = "/cmd_vel#geometry_msgs.Twist"
-CH_ODOM    = "/odom#geometry_msgs.PoseStamped"
-CH_IMAGE   = "/camera/image#sensor_msgs.Image"
-CH_DEPTH   = "/camera/depth#sensor_msgs.Image"
-CH_LIDAR   = "/lidar/points#sensor_msgs.PointCloud2"
+CH_ODOM = "/odom#geometry_msgs.PoseStamped"
+CH_IMAGE = "/camera/image#sensor_msgs.Image"
+CH_DEPTH = "/camera/depth#sensor_msgs.Image"
+CH_LIDAR = "/lidar/points#sensor_msgs.PointCloud2"
 
 
 def create_mcast_recv_socket() -> socket.socket:
@@ -116,7 +117,7 @@ def main():
 
     print(f"[integration] LCM multicast {MCAST_GRP}:{MCAST_PORT}")
     print(f"[integration] Publishing /cmd_vel at {args.rate} Hz")
-    print(f"[integration] Listening for sensor data on multicast")
+    print("[integration] Listening for sensor data on multicast")
     print(f"[integration] Timeout: {args.timeout}s\n")
 
     # -- Receive thread --------------------------------------------------------
@@ -124,7 +125,7 @@ def main():
         while running:
             try:
                 data, addr = recv_sock.recvfrom(65536)
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break
@@ -176,10 +177,12 @@ def main():
             # Status check every 5s
             elapsed = time.time() - start_time
             if tick > 1 and (tick % (args.rate * 5) == 0):
-                print(f"\n[integration] STATUS ({elapsed:.0f}s): "
-                      f"cmd_sent={tick} odom={received['odom']} "
-                      f"rgb={received['image']} depth={received['depth']} "
-                      f"lidar={received['lidar']}")
+                print(
+                    f"\n[integration] STATUS ({elapsed:.0f}s): "
+                    f"cmd_sent={tick} odom={received['odom']} "
+                    f"rgb={received['image']} depth={received['depth']} "
+                    f"lidar={received['lidar']}"
+                )
 
                 if all(v > 0 for v in received.values()):
                     success = True
@@ -199,9 +202,11 @@ def main():
 
         if not success:
             print(f"\n[integration] TIMEOUT after {args.timeout}s")
-            print(f"[integration] Final: cmd_sent={tick} odom={received['odom']} "
-                  f"rgb={received['image']} depth={received['depth']} "
-                  f"lidar={received['lidar']}")
+            print(
+                f"[integration] Final: cmd_sent={tick} odom={received['odom']} "
+                f"rgb={received['image']} depth={received['depth']} "
+                f"lidar={received['lidar']}"
+            )
 
     except KeyboardInterrupt:
         print("\n[integration] Interrupted by user")

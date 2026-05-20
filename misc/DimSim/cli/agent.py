@@ -14,7 +14,6 @@ Usage (run with dimos venv):
 """
 
 import argparse
-import sys
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import JpegLcmTransport, LCMTransport
@@ -35,13 +34,15 @@ _transports = {
 }
 
 # Navigation stack: LiDAR → voxels → costmap → frontier explorer → path planner
-nav = autoconnect(
-    voxel_mapper(voxel_size=0.1),
-    cost_mapper(algo="simple"),
-    replanning_a_star_planner(),
-    wavefront_frontier_explorer(),
-).transports(_transports).global_config(
-    n_dask_workers=6, robot_model="dimsim"
+nav = (
+    autoconnect(
+        voxel_mapper(voxel_size=0.1),
+        cost_mapper(algo="simple"),
+        replanning_a_star_planner(),
+        wavefront_frontier_explorer(),
+    )
+    .transports(_transports)
+    .global_config(n_dask_workers=6, robot_model="dimsim")
 )
 
 

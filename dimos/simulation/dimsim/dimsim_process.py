@@ -148,8 +148,7 @@ def _resolve_dimsim_dir() -> Path:
         path = Path(local).expanduser().resolve()
     if not (path / "cli" / "cli.ts").exists():
         raise RuntimeError(
-            f"DIMSIM_LOCAL={local} resolved to {path}, but "
-            f"{path}/cli/cli.ts does not exist"
+            f"DIMSIM_LOCAL={local} resolved to {path}, but {path}/cli/cli.ts does not exist"
         )
     logger.info(f"Using local DimSim from {path}")
     return path

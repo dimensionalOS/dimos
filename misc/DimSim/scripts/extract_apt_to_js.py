@@ -25,9 +25,9 @@ against the scene base before import.
 import base64
 import hashlib
 import json
+from pathlib import Path
 import re
 import sys
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENE_DIR = ROOT / "scenes" / "apartment"
@@ -36,12 +36,18 @@ DATA_DIR = SCENE_DIR / "data"
 
 
 def sniff_format(raw: bytes) -> str:
-    if raw[:4] == b"\x89PNG": return "png"
-    if raw[:2] == b"\xff\xd8": return "jpg"
-    if b"ftypavif" in raw[:32] or b"ftypmif1" in raw[:32]: return "avif"
-    if b"ftypheic" in raw[:32] or b"ftypheix" in raw[:32]: return "heic"
-    if raw[:6] in (b"GIF87a", b"GIF89a"): return "gif"
-    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP": return "webp"
+    if raw[:4] == b"\x89PNG":
+        return "png"
+    if raw[:2] == b"\xff\xd8":
+        return "jpg"
+    if b"ftypavif" in raw[:32] or b"ftypmif1" in raw[:32]:
+        return "avif"
+    if b"ftypheic" in raw[:32] or b"ftypheix" in raw[:32]:
+        return "heic"
+    if raw[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "webp"
     return "bin"
 
 
@@ -151,18 +157,26 @@ def main(apt_path: str | None = None) -> None:
     prims = doc.get("primitives", [])
     assets = doc.get("assets", [])
 
-    print(f"Emitting data/sky.js, data/tags.js, data/groups.js...")
+    print("Emitting data/sky.js, data/tags.js, data/groups.js...")
     emit_module("SKY", sky, DATA_DIR / "sky.js", note="Sky / atmosphere settings.")
     emit_module("TAGS", tags, DATA_DIR / "tags.js", note="World tag list (string filter tags).")
     emit_module("GROUPS", groups, DATA_DIR / "groups.js", note="Editor groupings.")
     print(f"Emitting data/lights.js ({len(lights)} lights)...")
     emit_module("LIGHTS", lights, DATA_DIR / "lights.js", note="Scene lights.")
     print(f"Emitting data/structure.js ({len(prims)} top-level primitives)...")
-    emit_module("PRIMITIVES", prims, DATA_DIR / "structure.js",
-                note="Static geometry (walls, floor, ceiling, fixtures).")
+    emit_module(
+        "PRIMITIVES",
+        prims,
+        DATA_DIR / "structure.js",
+        note="Static geometry (walls, floor, ceiling, fixtures).",
+    )
     print(f"Emitting data/objects.js ({len(assets)} assets, incl. _deltaOnly)...")
-    emit_module("ASSETS", assets, DATA_DIR / "objects.js",
-                note="Placed assets with full state lists (interactive parity with apt.json).")
+    emit_module(
+        "ASSETS",
+        assets,
+        DATA_DIR / "objects.js",
+        note="Placed assets with full state lists (interactive parity with apt.json).",
+    )
 
     print("Emitting index.js...")
     emit_index()

@@ -45,9 +45,11 @@ def _decode_lcm_packet(data: bytes):
 # Layout: hash(8) + 6 x float64 (linear.x,y,z, angular.x,y,z)
 
 
-def encode_twist(linear_x=0.0, linear_y=0.0, linear_z=0.0,
-                 angular_x=0.0, angular_y=0.0, angular_z=0.0) -> bytes:
+def encode_twist(
+    linear_x=0.0, linear_y=0.0, linear_z=0.0, angular_x=0.0, angular_y=0.0, angular_z=0.0
+) -> bytes:
     from dimos.msgs.geometry_msgs import Twist, Vector3
+
     t = Twist(
         linear=Vector3(x=linear_x, y=linear_y, z=linear_z),
         angular=Vector3(x=angular_x, y=angular_y, z=angular_z),
@@ -61,6 +63,7 @@ def encode_twist(linear_x=0.0, linear_y=0.0, linear_z=0.0,
 def decode_pose_stamped(data: bytes):
     """Decode geometry_msgs.PoseStamped using dimos LCM decoder."""
     from dimos.msgs.geometry_msgs import PoseStamped
+
     msg = PoseStamped.lcm_decode(data)
     p = msg.position
     q = msg.orientation
@@ -96,14 +99,14 @@ def main():
     send_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
 
     # ── Collect initial odom ──
-    print(f"Waiting for odom...")
+    print("Waiting for odom...")
     odom_channel = "/odom#geometry_msgs.PoseStamped"
     start_pose = None
 
     for _ in range(200):  # up to 20s
         try:
             data, _ = sock.recvfrom(65535)
-        except socket.timeout:
+        except TimeoutError:
             continue
         ch, payload = _decode_lcm_packet(data)
         if ch == odom_channel:
@@ -141,7 +144,7 @@ def main():
     while time.time() - t0 < duration:
         try:
             data, _ = sock.recvfrom(65535)
-        except socket.timeout:
+        except TimeoutError:
             continue
         ch, payload = _decode_lcm_packet(data)
         if ch == odom_channel:
@@ -175,19 +178,23 @@ def main():
     print(f"End pose:    ({ex:.3f}, {ey:.3f}, {ez:.3f})")
     print(f"Displacement: {dist:.3f}m")
     print(f"Expected:     {expected:.3f}m")
-    print(f"Ratio:        {ratio:.2f}x  {'(OK)' if 0.85 < ratio < 1.15 else '(SLOW!)' if ratio < 0.85 else '(FAST!)'}")
-    print(f"Odom samples: {len(poses)} ({len(poses)/duration:.0f} Hz)")
+    print(
+        f"Ratio:        {ratio:.2f}x  {'(OK)' if 0.85 < ratio < 1.15 else '(SLOW!)' if ratio < 0.85 else '(FAST!)'}"
+    )
+    print(f"Odom samples: {len(poses)} ({len(poses) / duration:.0f} Hz)")
     print(f"{'─' * 50}")
 
     # Show velocity over time
-    print(f"\nVelocity trace (sampled):")
+    print("\nVelocity trace (sampled):")
     prev_t, prev_p = 0, start_pose
     for i, (t, p) in enumerate(poses):
         if i % max(1, len(poses) // 10) != 0:
             continue
         dt = t - prev_t
         if dt > 0:
-            d = math.sqrt((p[0]-prev_p[0])**2 + (p[1]-prev_p[1])**2 + (p[2]-prev_p[2])**2)
+            d = math.sqrt(
+                (p[0] - prev_p[0]) ** 2 + (p[1] - prev_p[1]) ** 2 + (p[2] - prev_p[2]) ** 2
+            )
             v = d / dt
             print(f"  t={t:5.2f}s  v={v:.3f} m/s  pos=({p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f})")
         prev_t, prev_p = t, p
