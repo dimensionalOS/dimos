@@ -29,11 +29,12 @@ from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector impo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
 unitree_go2 = autoconnect(
     unitree_go2_basic,
-    VoxelGridMapper.blueprint(),
+    VoxelGridMapper.blueprint(emit_every=5),
     CostMapper.blueprint(),
     ReplanningAStarPlanner.blueprint(),
     WavefrontFrontierExplorer.blueprint(),
@@ -53,9 +54,14 @@ class Go2Memory(Recorder):
     config: Go2MemoryConfig
 
 
-unitree_go2_memory = autoconnect(
+unitree_go2_markers = autoconnect(
     unitree_go2,
-    Go2Memory.blueprint(),
-).global_config(n_workers=11)
+    MarkerTfModule.blueprint(marker_length_m=0.1),
+).global_config(n_workers=11, robot_model="unitree_go2")
 
-__all__ = ["unitree_go2", "unitree_go2_memory"]
+unitree_go2_memory = autoconnect(
+    unitree_go2_markers,
+    Go2Memory.blueprint(),
+).global_config(n_workers=12)
+
+__all__ = ["unitree_go2", "unitree_go2_markers", "unitree_go2_memory"]

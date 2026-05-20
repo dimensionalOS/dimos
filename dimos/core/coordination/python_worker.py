@@ -168,6 +168,7 @@ class PythonWorker:
         self._process: Any = None
         self._conn: Connection | None = None
         self._worker_id: int = _worker_ids.next()
+        self.dedicated: bool = False
 
     @property
     def module_count(self) -> int:
