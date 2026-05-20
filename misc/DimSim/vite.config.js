@@ -16,7 +16,7 @@ export default defineConfig({
         // (it's the public ESM surface for evals).  Everything else keeps
         // its content-hashed name.
         chunkFileNames(chunk) {
-          if (chunk.facadeModuleId?.endsWith("/src/evals/harness.ts")) {
+          if (chunk.facadeModuleId?.endsWith("/evals/harness.ts")) {
             return "assets/dimsim-eval.js";
           }
           return "assets/[name]-[hash].js";

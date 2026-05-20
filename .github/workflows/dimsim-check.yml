@@ -42,4 +42,4 @@ jobs:
         run: npm run build
 
       - name: Type-check CLI
-        run: cd dimos-cli && deno check cli.ts
+        run: cd cli && deno check cli.ts

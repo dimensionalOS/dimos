@@ -17,10 +17,10 @@ This script:
 
 Prerequisites:
   1. Start DimSim bridge:
-       ~/.deno/bin/deno run --allow-all --unstable-net dimos-cli/cli.ts dev
+       ~/.deno/bin/deno run --allow-all --unstable-net cli/cli.ts dev
   2. Open http://localhost:8090 in Chrome (scene must load)
   3. Run this script from the dimos venv:
-       /path/to/dimos/.venv/bin/python dimos-cli/test/dimos_integration.py
+       /path/to/dimos/.venv/bin/python cli/test/dimos_integration.py
 
 Options:
   --timeout N    Timeout in seconds (default: 30)
