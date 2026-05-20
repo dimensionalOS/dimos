@@ -541,6 +541,8 @@ module = [
     "pyzed",
     "pyzed.*",
     "rclpy.*",
+    "reportlab",
+    "reportlab.*",
     "sam2.*",
     "scipy",
     "scipy.*",

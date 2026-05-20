@@ -175,6 +175,7 @@ class TestWorkerManagerPartialFailure:
         mock_workers = [MagicMock(name=f"Worker{i}") for i in range(2)]
         for w in mock_workers:
             w.module_count = 0
+            w.dedicated = False
             w.reserve_slot = MagicMock(
                 side_effect=lambda w=w: setattr(w, "module_count", w.module_count + 1)
             )
@@ -190,9 +191,9 @@ class TestWorkerManagerPartialFailure:
         for w in mock_workers:
             w.deploy_module = fake_deploy_module
 
-        FakeA = type("A", (), {"name": "A"})
-        FakeB = type("B", (), {"name": "B"})
-        FakeC = type("C", (), {"name": "C"})
+        FakeA = type("A", (), {"name": "A", "dedicated_worker": False})
+        FakeB = type("B", (), {"name": "B", "dedicated_worker": False})
+        FakeC = type("C", (), {"name": "C", "dedicated_worker": False})
 
         with patch("dimos.core.coordination.worker_manager_python.RPCClient"):
             with pytest.raises(ExceptionGroup, match="safe_thread_map failed"):
