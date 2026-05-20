@@ -42,7 +42,7 @@ them automatically), or `direnv` with `.envrc.nix`. See
 Set the robot IP and launch a blueprint:
 
 ```bash
-export ROBOT_IP=192.168.123.161
+export ROBOT_PORT=192.168.123.161
 dimos run unitree-go2-keyboard-teleop         # direct DDS, FreeWalk default
 ```
 
@@ -64,6 +64,6 @@ Troubleshooting:
 |---------------------------------------|-------------------------------------------------------------|
 | `ModuleNotFoundError: unitree_sdk2py` | `uv pip install -e ".[unitree-dds]"`                        |
 | `Could not locate cyclonedds`         | See [`docs/usage/transports/dds.md`](../../../../docs/usage/transports/dds.md) |
-| DDS discovery failures                | Verify `ping $ROBOT_IP` succeeds; only one DDS domain active |
+| DDS discovery failures                | Verify `ping $ROBOT_PORT` succeeds; only one DDS domain active |
 | `StandUp()` / `FreeWalk()` fails      | Power-cycle the Go2 on flat ground and retry                |
 | Robot ignores velocity commands       | Wait ~5s for `[Go2] Locomotion ready` after startup       |

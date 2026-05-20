@@ -31,12 +31,7 @@ def _get_all_numbers(s: str) -> list[float]:
 
 
 class GlobalConfig(BaseSettings):
-    robot_ip: str | None = None
-    robot_ips: str | None = None
-    xarm7_ip: str | None = None
-    xarm6_ip: str | None = None
-    can_port: str | None = None
-    device_path: str | None = None  # device path for real robot (e.g. /dev/ttyUSB0)
+    robot_port: str | None = None  # IP address or device path for real robot (e.g. /dev/ttyUSB0)
     simulation: str = ""
     replay: bool = False
     replay_db: str = "go2_short"

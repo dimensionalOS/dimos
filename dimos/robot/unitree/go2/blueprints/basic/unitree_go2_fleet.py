@@ -17,7 +17,7 @@
 """Blueprint for Go2 fleet — multiple Go2 robots controlled together.
 
 Usage:
-    ROBOT_IPS=10.0.0.102,10.0.0.209 dimos run unitree-go2-fleet
+    ROBOT_PORT=10.0.0.102,10.0.0.209 dimos run unitree-go2-fleet
 """
 
 from dimos.core.coordination.blueprints import autoconnect

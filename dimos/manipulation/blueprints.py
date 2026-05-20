@@ -48,8 +48,8 @@ from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _cata
 # Single XArm6 planner (standalone, no coordinator)
 _xarm6_planner_cfg = _catalog_xarm6(
     name="arm",
-    adapter_type="xarm" if global_config.xarm6_ip else "mock",
-    address=global_config.xarm6_ip,
+    adapter_type="xarm" if global_config.robot_port else "mock",
+    address=global_config.robot_port,
 )
 
 xarm6_planner_only = ManipulationModule.blueprint(
@@ -67,14 +67,14 @@ xarm6_planner_only = ManipulationModule.blueprint(
 # Usage: Start with coordinator_dual_mock, then plan/execute via RPC
 _left_arm_cfg = _catalog_xarm6(
     name="left_arm",
-    adapter_type="xarm" if global_config.xarm6_ip else "mock",
-    address=global_config.xarm6_ip,
+    adapter_type="xarm" if global_config.robot_port else "mock",
+    address=global_config.robot_port,
     y_offset=0.5,
 )
 _right_arm_cfg = _catalog_xarm6(
     name="right_arm",
-    adapter_type="xarm" if global_config.xarm6_ip else "mock",
-    address=global_config.xarm6_ip,
+    adapter_type="xarm" if global_config.robot_port else "mock",
+    address=global_config.robot_port,
     y_offset=-0.5,
 )
 
@@ -92,12 +92,12 @@ dual_xarm6_planner = ManipulationModule.blueprint(
 )
 
 
-# Single XArm7 planner + coordinator (uses real hardware when XARM7_IP is set)
-# Usage: XARM7_IP=<ip> dimos run xarm7-planner-coordinator
+# Single XArm7 planner + coordinator (uses real hardware when ROBOT_PORT is set)
+# Usage: ROBOT_PORT=<ip> dimos run xarm7-planner-coordinator
 _xarm7_cfg = _catalog_xarm7(
     name="arm",
-    adapter_type="xarm" if global_config.xarm7_ip else "mock",
-    address=global_config.xarm7_ip,
+    adapter_type="xarm" if global_config.robot_port else "mock",
+    address=global_config.robot_port,
     add_gripper=True,
 )
 
@@ -169,8 +169,8 @@ _XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
 
 _xarm7_perception_cfg = _catalog_xarm7(
     name="arm",
-    adapter_type="xarm" if global_config.xarm7_ip else "mock",
-    address=global_config.xarm7_ip,
+    adapter_type="xarm" if global_config.robot_port else "mock",
+    address=global_config.robot_port,
     pitch=math.radians(45),
     add_gripper=True,
     tf_extra_links=["link7"],
@@ -208,7 +208,7 @@ xarm_perception = (
 
 # XArm7 perception + LLM agent for agentic manipulation.
 # Skills (pick, place, move_to_pose, etc.) auto-register with the agent's SkillCoordinator.
-# Usage: XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
+# Usage: ROBOT_PORT=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 _MANIPULATION_AGENT_SYSTEM_PROMPT = """\
 You are a robotic manipulation assistant controlling an xArm7 robot arm with an \
 eye-in-hand RealSense camera and a gripper.
