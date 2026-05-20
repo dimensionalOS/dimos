@@ -26,7 +26,6 @@ from dimos.mapping.pointclouds.occupancy import (
     HeightCostConfig,
     OccupancyConfig,
 )
-from dimos.mapping.utils.merge import merge_pc
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -54,7 +53,7 @@ class CostMapper(Module):
         def _maybe_merge(triple: tuple[PointCloud2, PointCloud2 | None, Transform | None]) -> PointCloud2:
             gmap, lmap, tf = triple
             if lmap is not None and tf is not None:
-                return merge_pc(gmap, lmap, tf)
+                return gmap + lmap.transform(tf)
             return gmap
 
         def _publish_costmap(grid: OccupancyGrid, calc_time_ms: float, rx_monotonic: float) -> None:

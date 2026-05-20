@@ -675,7 +675,7 @@ def export_premap_cmd(
     ),
 ) -> None:
     """Export a twopass relocalization premap (.pc2.lcm) from a recorded SQLite dataset."""
-    from dimos.mapping.pgo import pgo_then_voxels
+    from dimos.mapping.relocalization.pgo import pgo_then_voxels
     from dimos.memory2.store.sqlite import SqliteStore
     from dimos.utils.data import get_data, get_data_dir
 

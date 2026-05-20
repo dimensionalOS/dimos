@@ -30,8 +30,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.data import get_data
 
-from dimos.mapping.relocalize import relocalize as _relocalize
-from dimos.mapping.utils.merge import merge_pc
+from dimos.mapping.relocalization.relocalize import relocalize as _relocalize
 
 logger = setup_logger()
 
@@ -198,7 +197,7 @@ class RelocalizationModule(Module):
                 with self._local_lock:
                     local = self._local_map
                 if local is not None:
-                    self.merged_map_viz.publish(merge_pc(local, self._premap, tf))
+                    self.merged_map_viz.publish(local + self._premap.transform(tf))
 
             self.tf.publish(tf)
             self.world_to_map.publish(tf)

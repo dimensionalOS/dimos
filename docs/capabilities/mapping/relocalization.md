@@ -9,25 +9,7 @@ this run, as long as it's part of the global map.
 ![relocalize on the live go2 and nav_to a point in the premap](assets/reloc_and_nav_to.webp)
 
 
-## 1. Install
-
-Follow the platform guide for your machine:
-
-- [docs/installation/ubuntu.md](../../installation/ubuntu.md)
-- [docs/installation/nix.md](../../installation/nix.md)
-- [docs/installation/osx.md](../../installation/osx.md)
-
-If you cloned this branch directly (rather than installing a release), use
-these commands (refer to Developing on DimOS section in install docs):
-
-```bash
-# Ubuntu, macOS
-uv sync --all-groups
-# or Nix
-pip install -e ".[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu]"
-```
-
-## 2. Record a run
+## 1. Record a run
 
 ```bash
 dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-memory
@@ -52,7 +34,7 @@ mv recording_go2.db data/{DB_NAME}.db
 
 `{DB_NAME}` is the stem (no `.db`); the next steps refer to it.
 
-## 3. Export the premap
+## 2. Export the premap
 
 Convert the recording to a relocalization premap (`.pc2.lcm`). If you
 kept the default recording filename:
@@ -78,13 +60,15 @@ wrote /Users/dimos/Desktop/dimos-reloc/data/go2_hongkong_office_2_twopass_map.pc
 
 The output filename is `{DB_NAME}_twopass_map.pc2.lcm`, stored in `data/`.
 
-## 4. Relocalize against the premap (replay smoke test)
+## 3. Relocalize against the premap (replay smoke test)
 
 Replay the same recording and have the relocalization module localize
-against the premap you just exported:
+against the premap you just exported. Use the `unitree-go2-relocalization`
+blueprint — it's the standard `unitree-go2` stack plus
+`RelocalizationModule`:
 
 ```bash
-dimos --replay --replay-db {DB_NAME} run unitree-go2 \
+dimos --replay --replay-db {DB_NAME} run unitree-go2-relocalization \
   -o relocalizationmodule.map_file={DB_NAME}_twopass_map
 ```
 
@@ -115,7 +99,7 @@ its own entity — to compare the merged costmap (live scan + premap)
 against the live scan alone, click the eye icon next to the loaded-map
 entity to toggle it off.
 
-![toggle loaded map](assets/reloc_hide_loaded_map.png)
+![toggle loaded map](assets/reloc_hide_loaded_map.webp)
 
 With the loaded map hidden you see the partial pointcloud from the
 scanning replay plus the full costmap from the merged current scan +
@@ -125,13 +109,13 @@ Also, you can also replay a different recording taken in the same physical
 space against the same premap.
 
 
-## 5. Relocalize on a live robot
+## 4. Relocalize on a live robot
 
 Same flags as the replay test, but point at the live robot instead of a
 recorded `.db`:
 
 ```bash
-dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2 \
+dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-relocalization \
   -o relocalizationmodule.map_file={DB_NAME}_twopass_map
 ```
 

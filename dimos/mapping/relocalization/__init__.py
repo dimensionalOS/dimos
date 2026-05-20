@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos.mapping.relocalization.module import RelocalizationModule
 
-def test_relocalization():
-    ...
-    # loads loop closed global map, loads a bunch of snippets of local maps (maybe just lidar frames)
-    # tests if it relocalizes correctly
-    # tests if it relocalizes correctly
+__all__ = ["RelocalizationModule"]
