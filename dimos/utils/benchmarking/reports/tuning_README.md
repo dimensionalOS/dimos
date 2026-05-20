@@ -3,15 +3,26 @@
 Two CLI tools that turn one real measurement of a velocity-commanded
 mobile base into a single versioned config artifact with every parameter
 needed to tune its path controller, then validate it on the real robot.
-**Robot-agnostic**: everything robot-specific lives in a `RobotProfile`
-(`--robot`, default `go2`). Adding a robot = one profile entry (see
-*Adding a robot* below); the two commands are otherwise identical.
+**Robot-agnostic**: everything robot-specific lives in a
+`RobotPlantProfile` (`--robot`, default `go2`). Adding a robot = one
+profile entry (see *Adding a robot* below); the two commands are
+otherwise identical.
 
 ```
 characterization --robot R --mode hw  ──▶  R_config_hw_*.json (robot-valid)
 benchmark --robot R --mode hw --config …  ──▶  same file + section 5
                                           "for tolerance X cm, run Y m/s"
 ```
+
+Both tools run the baseline path follower **inside a real
+`ControlCoordinator`** in this process, driving the existing
+`transport_lcm` twist-base adapter. The operator brings up whichever
+connection module owns the robot side of the LCM topics in another
+terminal — `unitree-go2-webrtc-keyboard-teleop` for hw, the new
+`coordinator-sim-fopdt` (an in-process FOPDT plant exposed on the same
+`/{robot_id}/cmd_vel|odom`) for sim. **The two modes are architecturally
+identical**: same coordinator, same adapter, same task; only the robot
+on the other side differs.
 
 **This is a hardware deliverable.** Sim exists only as a plumbing
 self-test / pre-check and is explicitly stamped not-robot-valid — never
@@ -82,10 +93,16 @@ consumes (sections 1–4 + 6; section 5 pending; `valid_for_tuning=true`).
 Channels not excited (e.g. vy on a non-strafing robot) are placeholdered
 = vx and flagged in the caveats.
 
-`--mode self-test` (no robot): steps the profile's in-process FOPDT sim
-plant and recovers it. Proves the measure→fit→derive code runs; artifact
-stamped `valid_for_tuning=false`. The pytest/CI path — **not a tuning
-artifact**.
+`--mode self-test` (no robot, no blueprint, no coord): steps the
+profile's in-process FOPDT sim plant and recovers it. Proves the
+measure→fit→derive code runs; artifact stamped `valid_for_tuning=false`.
+The pytest/CI path — **not a tuning artifact**.
+
+For a `--mode hw` *style* run against the sim plant (full coordinator +
+transport_lcm path, no robot): bring up `coordinator-sim-fopdt` in
+terminal 1, then run the benchmark/characterization with `--mode sim`
+in terminal 2. Same architectural shape as hw — only the LCM peer
+differs.
 
 ## Tool 2 — `benchmark`
 
@@ -119,8 +136,11 @@ clobber section 5:
 is set** (sim-derived gains are meaningless on the real robot). The bare
 physical-limit run accepts any config.
 
-`--mode sim`: optional fast pre-check against the profile's FOPDT sim
-plant. Loudly labelled a pre-check; the map is not a real-robot result.
+`--mode sim`: optional fast pre-check. Same baseline + coordinator +
+`transport_lcm` path as hw, but the LCM peer is the
+`coordinator-sim-fopdt` blueprint (FOPDT plant + odom integrator)
+instead of the real Go2 bring-up. Loudly labelled a pre-check; the map
+is not a real-robot result.
 
 ## Reading the artifact
 
@@ -137,13 +157,17 @@ plant. Loudly labelled a pre-check; the map is not a real-robot result.
 
 ## Adding a robot
 
-Append one `RobotProfile` to `ROBOT_PROFILES` in
-`dimos/utils/benchmarking/plant.py`: its `cmd_topic` / `odom_topic` /
-`blueprint`, `sim_adapter_key` (`fopdt_sim_twist_base`), saturation
+Append one `RobotPlantProfile` to `ROBOT_PLANT_PROFILES` in
+`dimos/utils/benchmarking/plant.py`: its `robot_id` (= LCM topic prefix
+= `transport_lcm` adapter `hardware_id`), the hw `blueprint` and the
+sim `sim_blueprint` the operator runs in the other terminal, saturation
 envelope (`vx_max`, `wz_max`), `tick_rate_hz`, `excited_channels`
 (omit `vy` if it doesn't strafe), `si_amplitudes`, and a `sim_plant`
-(`TwistBasePlantParams`) used as the self-test ground truth. Then the
-identical two commands with `--robot <id>`. No other code changes.
+(`TwistBasePlantParams`) used as the self-test ground truth and by
+`FopdtPlantConnection` when the sim blueprint is composed. Then the
+identical two commands with `--robot <id>`. For a brand-new sim plant
+shape (different topic prefix), add a tiny blueprint mirroring
+`coordinator_sim_fopdt` in `dimos/control/blueprints/mobile.py`.
 
 ## When to re-run
 
