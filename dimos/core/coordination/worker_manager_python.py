@@ -70,9 +70,6 @@ class WorkerManagerPython:
         self._n_workers += n
         logger.info("Added workers to pool.", added=n, total=self._n_workers)
 
-    def _select_worker(self) -> PythonWorker:
-        return min(self._workers, key=lambda w: w.module_count)
-
     def deploy(
         self,
         module_class: type[ModuleBase],
@@ -85,7 +82,8 @@ class WorkerManagerPython:
         if not self._started:
             self.start()
 
-        worker = self._select_worker()
+        self._ensure_capacity_for_dedicated([(module_class, global_config, kwargs)])
+        worker = self._select_worker(dedicated=module_class.dedicated_worker)
         actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
         return RPCClient(actor, module_class)
 
@@ -110,6 +108,8 @@ class WorkerManagerPython:
         worker.start_process()
         self._workers.append(worker)
         self._n_workers += 1
+        if module_class.dedicated_worker:
+            worker.dedicated = True
         actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
         return RPCClient(actor, module_class)
 
@@ -148,22 +148,32 @@ class WorkerManagerPython:
         if not self._started:
             self.start()
 
+        self._ensure_capacity_for_dedicated(specs)
+
         # Pre-assign workers sequentially (so least-loaded accounting is
         # correct), then deploy concurrently via threads. The per-worker lock
         # serializes deploys that land on the same worker process.
-        assignments: list[tuple[PythonWorker, type[ModuleBase], GlobalConfig, dict[str, Any]]] = []
-        for module_class, global_config, kwargs in specs:
-            worker = self._select_worker()
+        # Process dedicated specs first so they claim empty workers before
+        # non-dedicated specs land on them; preserve input order in output.
+        workers_by_index: dict[int, PythonWorker] = {}
+        order = sorted(range(len(specs)), key=lambda i: not specs[i][0].dedicated_worker)
+        for i in order:
+            module_class, _, kwargs = specs[i]
+            worker = self._select_worker(dedicated=module_class.dedicated_worker)
             worker.reserve_slot()
             kwargs.update(blueprint_args.get(module_class.name, {}))
-            assignments.append((worker, module_class, global_config, kwargs))
+            workers_by_index[i] = worker
+
+        assignments = [(workers_by_index[i], specs[i]) for i in range(len(specs))]
+
+        def _deploy(item: tuple[PythonWorker, ModuleSpec]) -> ModuleProxyProtocol:
+            worker, (module_class, global_config, kwargs) = item
+            return RPCClient(
+                worker.deploy_module(module_class, global_config, kwargs), module_class
+            )
 
         try:
-            # item: (worker, module_class, global_config, kwargs)
-            return safe_thread_map(
-                assignments,
-                lambda item: RPCClient(item[0].deploy_module(item[1], item[2], item[3]), item[1]),
-            )
+            return safe_thread_map(assignments, _deploy)
         except:
             self.stop()
             raise
@@ -206,3 +216,43 @@ class WorkerManagerPython:
         self._workers.clear()
 
         logger.info("All workers shut down")
+
+    def _select_worker(self, dedicated: bool = False) -> PythonWorker:
+        """Pick a worker for a new module and mark it dedicated if needed."""
+        if dedicated:
+            for w in self._workers:
+                if not w.dedicated and w.module_count == 0:
+                    w.dedicated = True
+                    return w
+            self.add_workers(1)
+            w = self._workers[-1]
+            w.dedicated = True
+            return w
+
+        candidates = [w for w in self._workers if not w.dedicated]
+        if not candidates:
+            self.add_workers(1)
+            return self._workers[-1]
+        return min(candidates, key=lambda w: w.module_count)
+
+    def _ensure_capacity_for_dedicated(self, specs: Iterable[ModuleSpec]) -> None:
+        """Grow the pool so non-dedicated workers >= dedicated workers.
+
+        If the total number of dedicated modules (already deployed + about to be)
+        exceeds half the worker pool, scale up to `2 * total_dedicated` workers.
+        """
+        new_dedicated = sum(1 for spec in specs if spec[0].dedicated_worker)
+        already_dedicated = sum(1 for w in self._workers if w.dedicated)
+        total_dedicated = already_dedicated + new_dedicated
+        if total_dedicated == 0:
+            return
+        total_workers = len(self._workers)
+        if total_dedicated * 2 > total_workers:
+            n_to_add = total_dedicated * 2 - total_workers
+            logger.warning(
+                "Auto-scaling worker pool for dedicated modules.",
+                dedicated=total_dedicated,
+                before=total_workers,
+                added=n_to_add,
+            )
+            self.add_workers(n_to_add)

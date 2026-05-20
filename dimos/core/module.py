@@ -118,6 +118,11 @@ class ModuleBase(Configurable, CompositeResource):
     # handle; the coordinator routes modules accordingly.
     deployment: ClassVar[Deployment] = "python"
 
+    # When True, this module must be the only one running on its worker
+    # process. Used for heavy modules that would otherwise contend with
+    # each other for CPU and the GIL.
+    dedicated_worker: ClassVar[bool] = False
+
     _rpc: RPCSpec | None = None
     _tf: TFSpec | None = None
     _loop: asyncio.AbstractEventLoop | None = None

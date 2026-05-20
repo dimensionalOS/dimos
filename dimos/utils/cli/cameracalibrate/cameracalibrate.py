@@ -21,7 +21,10 @@ from dataclasses import dataclass
 from enum import Enum
 import os
 from pathlib import Path
+import threading
+import time
 from typing import Any, TypedDict, cast
+import warnings
 
 # Default OpenCL off: on Apple Silicon, CPU chessboard detection is often faster and more stable here.
 # Use setdefault so an explicit OPENCV_OPENCL_RUNTIME from the environment still wins.
@@ -59,6 +62,25 @@ class Source(str, Enum):
 
     webcam = "webcam"
     folder = "folder"
+    topic = "topic"
+
+
+class DistortionModel(str, Enum):
+    """Distortion model selected for ``calibrate_from_frames``.
+
+    - ``plumb_bob``: ``cv2.calibrateCamera`` with 5-coefficient radial-tangential
+      model. Good for near-pinhole lenses (narrow webcams, etc).
+    - ``fisheye``: ``cv2.fisheye.calibrate`` with the 4-coefficient
+      Kannala-Brandt model. Required for genuine fisheye / very wide-angle lenses
+      (e.g. the Go2 front camera). The YAML written for this model uses the
+      ROS-canonical name ``equidistant``.
+    """
+
+    plumb_bob = "plumb_bob"
+    fisheye = "fisheye"
+
+    def to_ros_name(self) -> str:
+        return "equidistant" if self is DistortionModel.fisheye else self.value
 
 
 app = typer.Typer(
@@ -312,53 +334,37 @@ def _draw_capture_status(
     cv2.putText(preview, detail, (12, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
 
-def _capture_frames_from_webcam(
-    device_index: int,
+def _interactive_capture(
+    next_frame: Callable[[], np.ndarray | None],
     target_count: int,
     cols: int,
     rows: int,
     *,
-    no_display: bool = False,
+    no_display: bool,
 ) -> _WebcamCapture:
-    """Capture ``target_count`` BGR frames from a webcam when the board is visible.
+    """Interactive chessboard preview + SPACE-accept / q-quit loop.
 
-    Shows a live preview (unless ``no_display`` is True, for headless runs and CI).
-    When a chessboard is detected, press SPACE to accept the current frame. Press
-    ``q`` to quit early (raises if fewer than ``target_count`` frames were accepted).
-
-    ``no_display`` mirrors the CLI ``--no-display`` flag: no ``cv2.imshow`` or window
-    teardown; ``cv2.waitKey`` is still used so automated tests can inject key codes.
+    ``next_frame()`` returns the latest BGR (or grayscale) frame, or ``None`` to
+    skip the iteration without calling ``imshow``/``waitKey``. The caller owns
+    any wait-on-no-frame or fail-fast policy. ``no_display`` skips ``imshow``
+    and window teardown; ``cv2.waitKey`` is still called so tests can inject keys.
     """
     if target_count < 1:
         raise ValueError("target_count must be >= 1")
 
     accepted: list[np.ndarray] = []
     accepted_corners: list[np.ndarray] = []
-    cap: cv2.VideoCapture | None = None
     last_detected: tuple[int, int, str] | None = None
     locked_pattern: tuple[int, int, str] | None = None
     locked_exact_probe = False
     pattern_candidates = _pattern_candidates(cols, rows)
     pattern_candidate_index = 0
-    consecutive_read_failures = 0
 
     try:
-        cap = cv2.VideoCapture(device_index)
-        if not cap.isOpened():
-            raise RuntimeError(f"Failed to open camera device_index={device_index!r}")
-
         while len(accepted) < target_count:
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                consecutive_read_failures += 1
-                if consecutive_read_failures >= _MAX_CONSECUTIVE_WEBCAM_READ_FAILURES:
-                    raise RuntimeError(
-                        "Failed to read from camera "
-                        f"device_index={device_index!r} for "
-                        f"{_MAX_CONSECUTIVE_WEBCAM_READ_FAILURES} consecutive attempts."
-                    )
+            frame = next_frame()
+            if frame is None:
                 continue
-            consecutive_read_failures = 0
 
             if frame.ndim == 3:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -432,14 +438,63 @@ def _capture_frames_from_webcam(
         return _WebcamCapture(accepted, accepted_corners, locked_pattern)
 
     finally:
-        if cap is not None:
-            cap.release()
         if not no_display:
             try:
                 cv2.destroyWindow(_CAMERACALIBRATE_WINDOW)
             except cv2.error:
                 pass
             cv2.waitKey(1)
+
+
+def _capture_frames_from_webcam(
+    device_index: int,
+    target_count: int,
+    cols: int,
+    rows: int,
+    *,
+    no_display: bool = False,
+) -> _WebcamCapture:
+    """Capture ``target_count`` BGR frames from a webcam when the board is visible.
+
+    Shows a live preview (unless ``no_display`` is True, for headless runs and CI).
+    When a chessboard is detected, press SPACE to accept the current frame. Press
+    ``q`` to quit early (raises if fewer than ``target_count`` frames were accepted).
+
+    ``no_display`` mirrors the CLI ``--no-display`` flag: no ``cv2.imshow`` or window
+    teardown; ``cv2.waitKey`` is still used so automated tests can inject key codes.
+    """
+    if target_count < 1:
+        raise ValueError("target_count must be >= 1")
+
+    cap: cv2.VideoCapture | None = None
+    consecutive_read_failures = 0
+
+    try:
+        cap = cv2.VideoCapture(device_index)
+        if not cap.isOpened():
+            raise RuntimeError(f"Failed to open camera device_index={device_index!r}")
+
+        def _next() -> np.ndarray | None:
+            nonlocal consecutive_read_failures
+            assert cap is not None  # narrow for type-checker
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                consecutive_read_failures += 1
+                if consecutive_read_failures >= _MAX_CONSECUTIVE_WEBCAM_READ_FAILURES:
+                    raise RuntimeError(
+                        "Failed to read from camera "
+                        f"device_index={device_index!r} for "
+                        f"{_MAX_CONSECUTIVE_WEBCAM_READ_FAILURES} consecutive attempts."
+                    )
+                return None
+            consecutive_read_failures = 0
+            return frame  # type: ignore[no-any-return]
+
+        return _interactive_capture(_next, target_count, cols, rows, no_display=no_display)
+
+    finally:
+        if cap is not None:
+            cap.release()
 
 
 def capture_frames_from_webcam(
@@ -457,6 +512,93 @@ def capture_frames_from_webcam(
         cols,
         rows,
         no_display=no_display,
+    ).frames
+
+
+def _capture_frames_from_topic(
+    topic_uri: str,
+    target_count: int,
+    cols: int,
+    rows: int,
+    *,
+    no_display: bool = False,
+    timeout_sec: float = 60.0,
+) -> _WebcamCapture:
+    """Capture frames from an LCM/SHM image topic with the same interactive UX.
+
+    ``topic_uri`` follows the pubsub registry format ``"<proto>:<topic>"``, e.g.
+    ``"jpeg_lcm:/color_image"`` or ``"pshm:color_image"``. The publisher must
+    emit ``sensor_msgs.Image`` messages; ``Image.to_opencv()`` normalizes the
+    payload to BGR before detection. Raises ``RuntimeError`` if no frames arrive
+    within ``timeout_sec``.
+    """
+    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.protocol.pubsub.registry import subscribe_pubsub_uri
+
+    if target_count < 1:
+        raise ValueError("target_count must be >= 1")
+
+    latest_frame: list[np.ndarray | None] = [None]
+    last_received_ts: list[float] = [time.time()]
+    lock = threading.Lock()
+
+    def _on_image(msg: Any) -> None:
+        try:
+            arr = msg.to_opencv()
+        except (AttributeError, ValueError):
+            return
+        with lock:
+            latest_frame[0] = np.asarray(arr)
+            last_received_ts[0] = time.time()
+
+    transport, unsub = subscribe_pubsub_uri(topic_uri, _on_image, msg_type=Image)
+
+    def _next() -> np.ndarray | None:
+        with lock:
+            frame = latest_frame[0]
+            ts = last_received_ts[0]
+        if frame is None:
+            if time.time() - ts > timeout_sec:
+                raise RuntimeError(
+                    f"No frames received on topic {topic_uri!r} within {timeout_sec:.1f}s."
+                )
+            # Yield so the LCM/SHM callback thread can run; avoid busy spin.
+            time.sleep(0.01)
+            return None
+        return frame
+
+    try:
+        return _interactive_capture(_next, target_count, cols, rows, no_display=no_display)
+    finally:
+        # Best-effort teardown: swallow per-transport quirks so cleanup
+        # never masks the original error from _interactive_capture.
+        try:
+            unsub()
+        except Exception:
+            pass
+        try:
+            transport.stop()
+        except Exception:
+            pass
+
+
+def capture_frames_from_topic(
+    topic_uri: str,
+    target_count: int,
+    cols: int,
+    rows: int,
+    *,
+    no_display: bool = False,
+    timeout_sec: float = 60.0,
+) -> list[np.ndarray]:
+    """Capture ``target_count`` frames from an LCM/SHM image topic."""
+    return _capture_frames_from_topic(
+        topic_uri,
+        target_count,
+        cols,
+        rows,
+        no_display=no_display,
+        timeout_sec=timeout_sec,
     ).frames
 
 
@@ -507,6 +649,59 @@ def _select_calibration_pattern(
     return best_cols, best_rows, best_label
 
 
+def _calibrate_pinhole(
+    objpoints: list[np.ndarray],
+    imgpoints: list[np.ndarray],
+    image_size: tuple[int, int],
+) -> tuple[float, np.ndarray, np.ndarray]:
+    """Run ``cv2.calibrateCamera`` (plumb-bob)."""
+    _calibrate = cast("Callable[..., Any]", cv2.calibrateCamera)
+    rms, camera_matrix, dist_coeffs, _rvecs, _tvecs = _calibrate(
+        objpoints,
+        imgpoints,
+        image_size,
+        None,
+        None,
+    )
+    K = np.asarray(camera_matrix, dtype=np.float64)
+    D = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
+    return float(rms), K, D
+
+
+def _calibrate_fisheye(
+    objpoints: list[np.ndarray],
+    imgpoints: list[np.ndarray],
+    image_size: tuple[int, int],
+) -> tuple[float, np.ndarray, np.ndarray]:
+    """Run ``cv2.fisheye.calibrate`` (4-coeff Kannala-Brandt).
+
+    ``objpoints`` must be a list of ``(N, 1, 3)`` arrays and ``imgpoints`` a list of
+    ``(N, 1, 2)`` arrays (the fisheye solver is strict about the extra middle axis).
+    """
+    K = np.zeros((3, 3), dtype=np.float64)
+    D = np.zeros((4, 1), dtype=np.float64)
+    n_views = len(objpoints)
+    rvecs = [np.zeros((1, 1, 3), dtype=np.float64) for _ in range(n_views)]
+    tvecs = [np.zeros((1, 1, 3), dtype=np.float64) for _ in range(n_views)]
+    flags = cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC | cv2.fisheye.CALIB_FIX_SKEW
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1e-6)
+    _calibrate = cast("Callable[..., Any]", cv2.fisheye.calibrate)
+    rms, camera_matrix, dist_coeffs, _rvecs, _tvecs = _calibrate(
+        objpoints,
+        imgpoints,
+        image_size,
+        K,
+        D,
+        rvecs,
+        tvecs,
+        flags,
+        criteria,
+    )
+    K_out = np.asarray(camera_matrix, dtype=np.float64)
+    D_out = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
+    return float(rms), K_out, D_out
+
+
 def calibrate_from_frames(
     frames: list[np.ndarray],
     cols: int,
@@ -515,11 +710,15 @@ def calibrate_from_frames(
     *,
     pattern_hint: tuple[int, int, str] | None = None,
     image_points_hint: list[np.ndarray] | None = None,
+    distortion_model: DistortionModel | str = DistortionModel.plumb_bob,
 ) -> CalibrationResultDict:
     """Calibrate intrinsics from grayscale or BGR frames containing a chessboard.
 
     Each frame where ``find_chessboard_corners`` succeeds contributes one view.
     All frames must share the same resolution.
+
+    ``distortion_model`` picks the solver: ``plumb_bob`` (``cv2.calibrateCamera``,
+    5 coeffs) or ``fisheye`` (``cv2.fisheye.calibrate``, 4 coeffs).
 
     Returns:
         ``{"K", "D", "rms", "image_size", "n_used"}`` with ``K`` (3x3) and ``D`` (1-d),
@@ -529,15 +728,20 @@ def calibrate_from_frames(
     if not frames:
         raise ValueError("frames must be non-empty")
 
+    model = DistortionModel(distortion_model)
+
     if pattern_hint is None:
         actual_cols, actual_rows, pattern_label = _select_calibration_pattern(frames, cols, rows)
     else:
         actual_cols, actual_rows, pattern_label = pattern_hint
 
-    # Object points on Z=0 with XY spacing square_size_m; pairs with image_points from the detector.
-    objp = np.zeros((actual_rows * actual_cols, 3), dtype=np.float32)
-    objp[:, :2] = np.mgrid[0:actual_cols, 0:actual_rows].T.reshape(-1, 2).astype(np.float32)
-    objp *= float(square_size_m)
+    # Object points on Z=0 with XY spacing square_size_m. cv2.fisheye.calibrate
+    # demands an explicit middle axis on each view; cv2.calibrateCamera is fine
+    # with the flat (N, 3) shape.
+    objp_flat = np.zeros((actual_rows * actual_cols, 3), dtype=np.float32)
+    objp_flat[:, :2] = np.mgrid[0:actual_cols, 0:actual_rows].T.reshape(-1, 2).astype(np.float32)
+    objp_flat *= float(square_size_m)
+    objp_view = objp_flat.reshape(-1, 1, 3) if model is DistortionModel.fisheye else objp_flat
 
     objpoints: list[np.ndarray] = []
     imgpoints: list[np.ndarray] = []
@@ -571,22 +775,16 @@ def calibrate_from_frames(
             if corners_opt is None:
                 continue
             corners_found = corners_opt
-        objpoints.append(objp)
+        objpoints.append(objp_view)
         imgpoints.append(corners_found.astype(np.float32))
 
     if not objpoints:
         raise ValueError("Chessboard not found in any frame.")
 
-    _calibrate = cast("Callable[..., Any]", cv2.calibrateCamera)
-    rms, camera_matrix, dist_coeffs, _rvecs, _tvecs = _calibrate(
-        objpoints,
-        imgpoints,
-        (w0, h0),
-        None,
-        None,
-    )
-    K = np.asarray(camera_matrix, dtype=np.float64)
-    D = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
+    if model is DistortionModel.fisheye:
+        rms, K, D = _calibrate_fisheye(objpoints, imgpoints, (w0, h0))
+    else:
+        rms, K, D = _calibrate_pinhole(objpoints, imgpoints, (w0, h0))
 
     return {
         "K": K,
@@ -628,6 +826,8 @@ def run_calibration(
     source: Source | str,
     device_index: int,
     images: Path | None,
+    topic: str | None,
+    topic_timeout_sec: float,
     cols: int,
     rows: int,
     square_size_m: float,
@@ -636,9 +836,11 @@ def run_calibration(
     camera_name: str,
     target_count: int,
     no_display: bool,
+    distortion_model: DistortionModel | str = DistortionModel.plumb_bob,
 ) -> CalibrationRunResultDict:
     """Run calibration from the requested frame source and write CameraInfo YAML."""
     source_value = Source(source)
+    model = DistortionModel(distortion_model)
     if cols < 1:
         raise ValueError("cols must be >= 1")
     if rows < 1:
@@ -652,6 +854,22 @@ def run_calibration(
         frames = load_frames_from_folder(str(images))
         pattern_hint = None
         image_points_hint = None
+    elif source_value is Source.topic:
+        if topic is None:
+            raise ValueError(
+                "--topic is required when --source topic (e.g. --topic jpeg_lcm:/color_image)"
+            )
+        capture = _capture_frames_from_topic(
+            topic,
+            target_count,
+            cols,
+            rows,
+            no_display=no_display,
+            timeout_sec=topic_timeout_sec,
+        )
+        frames = capture.frames
+        pattern_hint = capture.pattern
+        image_points_hint = capture.image_points
     else:
         capture = _capture_frames_from_webcam(
             device_index,
@@ -671,6 +889,7 @@ def run_calibration(
         square_size_m,
         pattern_hint=pattern_hint,
         image_points_hint=image_points_hint,
+        distortion_model=model,
     )
     result: CalibrationRunResultDict = {
         "K": cal["K"],
@@ -692,24 +911,46 @@ def run_calibration(
             camera_name=camera_name,
             K=np.asarray(result["K"], dtype=np.float64),
             D=np.asarray(result["D"], dtype=np.float64),
+            distortion_model=model.to_ros_name(),
         )
         result["out_path"] = out
 
     if preview_out is not None:
         preview_out.parent.mkdir(parents=True, exist_ok=True)
         pattern_cols, pattern_rows = result["pattern_size"]
-        write_preview_overlay_png(frames, int(pattern_cols), int(pattern_rows), preview_out)
-        result["preview_path"] = preview_out
+        # Preview is best-effort: a chessboard-detection failure here must not mask
+        # the fact that the YAML was already written above.
+        try:
+            write_preview_overlay_png(frames, int(pattern_cols), int(pattern_rows), preview_out)
+            result["preview_path"] = preview_out
+        except ValueError as exc:
+            warnings.warn(
+                f"Preview PNG skipped ({exc}). Camera info YAML was still written to {out}.",
+                stacklevel=2,
+            )
 
     return result
 
 
 @app.command()
 def calibrate(
-    source: Source = typer.Option(..., "--source", help="Frame source: webcam or folder"),
+    source: Source = typer.Option(..., "--source", help="Frame source: webcam, folder, or topic"),
     device_index: int = typer.Option(0, "--device-index", help="Webcam device index"),
     images: Path | None = typer.Option(
         None, "--images", help="Directory of calibration images for --source folder"
+    ),
+    topic: str | None = typer.Option(
+        None,
+        "--topic",
+        help=(
+            "Pubsub URI for --source topic (proto:channel), "
+            "e.g. 'jpeg_lcm:/color_image' or 'pshm:color_image'."
+        ),
+    ),
+    topic_timeout_sec: float = typer.Option(
+        60.0,
+        "--topic-timeout-sec",
+        help="Abort --source topic if no frames arrive within this many seconds.",
     ),
     cols: int = typer.Option(..., "--cols", help="Inner chessboard corner columns"),
     rows: int = typer.Option(..., "--rows", help="Inner chessboard corner rows"),
@@ -723,6 +964,15 @@ def calibrate(
     camera_name: str = typer.Option("webcam", "--camera-name", help="Camera name in YAML"),
     target_count: int = typer.Option(20, "--target-count", help="Accepted webcam frame count"),
     no_display: bool = typer.Option(False, "--no-display", help="Disable OpenCV preview windows"),
+    distortion_model: DistortionModel = typer.Option(
+        DistortionModel.plumb_bob,
+        "--distortion-model",
+        help=(
+            "Lens model: 'plumb_bob' (cv2.calibrateCamera, 5 coeffs) for near-pinhole "
+            "lenses, or 'fisheye' (cv2.fisheye.calibrate, 4 coeffs) for wide-angle / "
+            "fisheye lenses. Fisheye writes ROS 'equidistant' to the YAML."
+        ),
+    ),
 ) -> None:
     """Calibrate camera intrinsics and write ROS CameraInfo YAML."""
     if preview_out is not None and out is None:
@@ -733,6 +983,8 @@ def calibrate(
             source=source,
             device_index=device_index,
             images=images,
+            topic=topic,
+            topic_timeout_sec=topic_timeout_sec,
             cols=cols,
             rows=rows,
             square_size_m=square_size_m,
@@ -741,6 +993,7 @@ def calibrate(
             camera_name=camera_name,
             target_count=target_count,
             no_display=no_display,
+            distortion_model=distortion_model,
         )
     except (ValueError, RuntimeError) as exc:
         raise typer.BadParameter(str(exc)) from exc

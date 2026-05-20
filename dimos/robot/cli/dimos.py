@@ -696,10 +696,23 @@ def send(
 
 @main.command()
 def cameracalibrate(
-    source: str = typer.Option(..., "--source", help="Frame source: webcam or folder"),
+    source: str = typer.Option(..., "--source", help="Frame source: webcam, folder, or topic"),
     device_index: int = typer.Option(0, "--device-index", help="Webcam device index"),
     images: Path | None = typer.Option(
         None, "--images", help="Directory of calibration images for --source folder"
+    ),
+    topic: str | None = typer.Option(
+        None,
+        "--topic",
+        help=(
+            "Pubsub URI for --source topic (proto:channel), "
+            "e.g. 'jpeg_lcm:/color_image' or 'pshm:color_image'."
+        ),
+    ),
+    topic_timeout_sec: float = typer.Option(
+        60.0,
+        "--topic-timeout-sec",
+        help="Abort --source topic if no frames arrive within this many seconds.",
     ),
     cols: int = typer.Option(..., "--cols", help="Inner chessboard corner columns"),
     rows: int = typer.Option(..., "--rows", help="Inner chessboard corner rows"),
@@ -713,6 +726,14 @@ def cameracalibrate(
     camera_name: str = typer.Option("webcam", "--camera-name", help="Camera name in YAML"),
     target_count: int = typer.Option(20, "--target-count", help="Accepted webcam frame count"),
     no_display: bool = typer.Option(False, "--no-display", help="Disable OpenCV preview windows"),
+    distortion_model: str = typer.Option(
+        "plumb_bob",
+        "--distortion-model",
+        help=(
+            "Lens model: 'plumb_bob' (5 coeffs, near-pinhole) or 'fisheye' "
+            "(4 coeffs, wide-angle / fisheye; written as ROS 'equidistant')."
+        ),
+    ),
 ) -> None:
     """Calibrate camera intrinsics and write ROS CameraInfo YAML."""
     from dimos.utils.cli.cameracalibrate.cameracalibrate import run_calibration
@@ -725,6 +746,8 @@ def cameracalibrate(
             source=source,
             device_index=device_index,
             images=images,
+            topic=topic,
+            topic_timeout_sec=topic_timeout_sec,
             cols=cols,
             rows=rows,
             square_size_m=square_size_m,
@@ -733,6 +756,7 @@ def cameracalibrate(
             camera_name=camera_name,
             target_count=target_count,
             no_display=no_display,
+            distortion_model=distortion_model,
         )
     except (ValueError, RuntimeError) as exc:
         raise typer.BadParameter(str(exc)) from exc

@@ -18,7 +18,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
 | `--replay-db` | TEXT | `go2_bigoffice` | Replay memory2 SQLite database name |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
-| `--viewer` | `rerun\|foxglove\|none` | `rerun` | Visualization backend |
+| `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
 | `--rerun-open` | `native\|web\|both\|none` | `native` | How to open the Rerun viewer |
 | `--rerun-web` / `--no-rerun-web` | bool | `False` | Serve the Rerun web viewer |
 | `--n-workers` | INT | `2` | Number of forkserver workers |

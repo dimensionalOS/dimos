@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import Event, Thread
 import time
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -48,13 +48,11 @@ from dimos.robot.connection_registry import connection
 from dimos.robot.tf_utils import odom_to_tf
 from dimos.robot.unitree.go2.camera import _camera_info_static
 from dimos.robot.unitree.go2.config import ConnectionConfig, Go2Mode
-from dimos.robot.unitree.type.lidar import (
-    pointcloud2_from_webrtc_lidar,
-    repair_stale_ts,
-)
+from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.odometry import Odometry as OdometryConverter
 from dimos.robot.unitree.webrtc_session import UnitreeWebRtcSession
 from dimos.spec.perception import Camera, Pointcloud
+from dimos.types.timestamped import Timestamped
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -62,6 +60,13 @@ from dimos.utils.reactive import backpressure
 VideoMessage: TypeAlias = NDArray[np.uint8]
 
 logger = setup_logger()
+
+_T = TypeVar("_T", bound=Timestamped)
+
+
+def time_is_now(x: _T) -> _T:
+    x.ts = time.time()
+    return x
 
 
 @dataclass
@@ -98,6 +103,8 @@ _SPORT_API_ID_RAGEMODE: int = 2059
 @connection(robot="go2", backend="webrtc")
 class Go2WebRtcConnection(Module, Camera, Pointcloud):
     """Real-hardware Go2 connection over Unitree's WebRTC stack."""
+
+    dedicated_worker = True
 
     config: ConnectionConfig
     cmd_vel: In[Twist]
@@ -178,13 +185,18 @@ class Go2WebRtcConnection(Module, Camera, Pointcloud):
         return backpressure(
             self._raw_lidar_stream().pipe(
                 ops.map(pointcloud2_from_webrtc_lidar),
-                repair_stale_ts(),
+                ops.map(time_is_now),
             )
         )
 
     @simple_mcache
     def _odom_stream(self) -> Observable[PoseStamped]:
-        return backpressure(self._raw_odom_stream().pipe(ops.map(OdometryConverter.from_msg)))
+        return backpressure(
+            self._raw_odom_stream().pipe(
+                ops.map(OdometryConverter.from_msg),
+                ops.map(time_is_now),
+            )
+        )
 
     @simple_mcache
     def _video_stream(self) -> Observable[Image]:
@@ -196,8 +208,9 @@ class Go2WebRtcConnection(Module, Camera, Pointcloud):
                         frame.to_ndarray(format="rgb24"),  # type: ignore[attr-defined]
                         format=ImageFormat.RGB,
                         frame_id="camera_optical",
-                    )
+                    ),
                 ),
+                ops.map(time_is_now),
             )
         )
 

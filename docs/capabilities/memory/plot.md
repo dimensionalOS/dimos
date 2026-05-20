@@ -135,8 +135,7 @@ plot.add(plantness_similarity,
 plot.to_svg("assets/plot_plantness.svg")
 ```
 
-<!--Result:-->
-```
+```results
 Stream("color_image_embedded") | vector_search() | order_by(ts)
 Stream("materialize")
 Stream("materialize"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
