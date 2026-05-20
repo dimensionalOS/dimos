@@ -21,19 +21,8 @@ const SKY    = {
   sunHeight:   0.6,
 };
 
-export default async function build({ scene, THREE, physics, setSky, setEmbodiment }) {
+export default async function build({ scene, THREE, physics, setSky }) {
   setSky(SKY);
-
-  setEmbodiment({
-    embodimentType: 'drone',
-    avatarUrl: '/agent-model/dimsim_unitree_stub.glb',
-    radius: 0.3,
-    halfHeight: 0.1,
-    gravity: 0,
-    maxSpeed: 3.0,
-    turnRate: 2.0,
-    maxAltitude: 8,
-  });
 
   // ── Floor ────────────────────────────────────────────────────────────────
   const floor = new THREE.Mesh(
