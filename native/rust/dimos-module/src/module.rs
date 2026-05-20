@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
@@ -12,6 +13,8 @@ use crate::transport::Transport;
 
 const INPUT_CHANNEL_CAPACITY: usize = 1024;
 const PUBLISH_CHANNEL_CAPACITY: usize = 1024;
+/// Maximum drop-warning log lines per second per route.
+const MAX_ERROR_LOG_RATE: u32 = 1;
 
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's mpsc channel.
@@ -24,6 +27,7 @@ struct TypedRoute<T: Send + 'static> {
     decode: fn(&[u8]) -> io::Result<T>,
     sender: mpsc::Sender<T>,
     drops: AtomicU64,
+    last_log: Mutex<Option<Instant>>,
 }
 
 impl<T: Send + 'static> Route for TypedRoute<T> {
@@ -33,8 +37,14 @@ impl<T: Send + 'static> Route for TypedRoute<T> {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     let n = self.drops.fetch_add(1, Ordering::Relaxed) + 1;
-                    // Rate-limited: log at drop counts 1, 2, 4, 8, ...
-                    if n.is_power_of_two() {
+                    let interval = Duration::from_secs(1) / MAX_ERROR_LOG_RATE;
+                    let mut last = self.last_log.lock().unwrap();
+                    let now = Instant::now();
+                    if last
+                        .map(|t| now.duration_since(t) >= interval)
+                        .unwrap_or(true)
+                    {
+                        *last = Some(now);
                         eprintln!(
                             "dimos_module: input '{}' dropped {} message(s) — handler can't keep up (queue cap = {})",
                             self.topic, n, INPUT_CHANNEL_CAPACITY,
@@ -162,6 +172,7 @@ impl Builder {
                 decode,
                 sender: tx,
                 drops: AtomicU64::new(0),
+                last_log: Mutex::new(None),
             }));
         Input {
             topic,
@@ -590,6 +601,7 @@ mod tests {
             decode,
             sender: tx,
             drops: AtomicU64::new(0),
+            last_log: Mutex::new(None),
         };
         (route, rx)
     }
@@ -623,13 +635,22 @@ mod tests {
     }
 
     #[test]
-    fn typed_route_rate_limited_log_fires_on_power_of_two() {
-        // 130 sent, 1 queued, 129 dropped — crosses milestones at
-        // 1, 2, 4, 8, 16, 32, 64, 128 (8 log lines).
+    fn typed_route_log_throttle_skips_within_interval() {
+        // Dispatch many drops back-to-back. All must increment the
+        // counter, but `last_log` is set exactly once (the first drop)
+        // because the entire loop runs inside one MAX_ERROR_LOG_RATE
+        // window.
         let (route, _rx) = make_route::<Vec<u8>>(1, |b| Ok(b.to_vec()));
+        let interval = Duration::from_secs(1) / MAX_ERROR_LOG_RATE;
+        let before = Instant::now();
         for _ in 0..130 {
             route.try_dispatch(&[1u8]);
         }
+        assert!(
+            before.elapsed() < interval,
+            "test invalid: loop must complete within one log-throttle window",
+        );
         assert_eq!(route.drops.load(Ordering::Relaxed), 129);
+        assert!(route.last_log.lock().unwrap().is_some());
     }
 }
