@@ -85,7 +85,7 @@ def create_mcast_recv_socket() -> socket.socket:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
     except AttributeError:
         pass
-    sock.bind(("", MCAST_PORT))
+    sock.bind(("127.0.0.1", MCAST_PORT))
     mreq = struct.pack("4s4s", socket.inet_aton(MCAST_GRP), socket.inet_aton("0.0.0.0"))
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
