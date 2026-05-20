@@ -92,7 +92,7 @@ const dimosScene = _dimosParams.get("scene") || window.__dimosScene || null;
 let simSensorViewMode = "rgb"; // "rgb" | "rgbd" | "lidar"
 let simCompareView = false; // show RGB + RGB-D + LiDAR side-by-side
 let simPanelCollapsed = false;
-let simUserCameraMode = localStorage.getItem("sparkWorldSimCameraMode") === "user" ? "user" : "agent";
+let simUserCameraMode = localStorage.getItem("sparkWorldSimCameraMode") === "agent" ? "agent" : "user";
 let rgbdVizMode = "colormap"; // "colormap" | "gray"
 let rgbdAutoRange = true;
 let rgbdRangeMinM = 0.2;

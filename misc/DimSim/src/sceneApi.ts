@@ -371,10 +371,54 @@ export function removeCollider(obj: any): boolean {
   return !!existing;
 }
 
+/**
+ * Kinematic-position-based body for script-driven actors (NPCs, doors).
+ * Caller updates the world position each frame via
+ *   body.setNextKinematicTranslation({ x, y, z })
+ * The body collides with the static world (walls, floor) and pushes dynamic
+ * bodies, but is not itself pushed.
+ *
+ * Returns the Rapier RigidBody handle (so the caller can drive it).  The body
+ * is also registered for cleanup via removeCollider(mesh).
+ */
+export function kinematicCollider(
+  mesh: any,
+  opts: { shape?: "box" | "sphere"; radius?: number } = {},
+): any {
+  if (!RAPIER || !rapierWorld) throw new Error("rapier not loaded");
+  removeCollider(mesh);
+  mesh.updateMatrixWorld(true);
+  const bbox = new THREE.Box3().setFromObject(mesh);
+  const size = new THREE.Vector3(); bbox.getSize(size);
+  const center = new THREE.Vector3(); bbox.getCenter(center);
+  const offset = center.clone().sub(mesh.position);
+
+  const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
+    mesh.position.x, mesh.position.y, mesh.position.z,
+  );
+  const body = rapierWorld.createRigidBody(bodyDesc);
+
+  let desc: any;
+  if (opts.shape === "sphere") {
+    const r = opts.radius ?? Math.max(size.x, size.z) / 2;
+    desc = RAPIER.ColliderDesc.ball(Math.max(r, 0.01));
+  } else {
+    desc = RAPIER.ColliderDesc.cuboid(
+      Math.max(size.x / 2, 0.01), Math.max(size.y / 2, 0.01), Math.max(size.z / 2, 0.01),
+    );
+  }
+  desc.setTranslation(offset.x, offset.y, offset.z);
+  desc.setFriction(0.9);
+  const collider = rapierWorld.createCollider(desc, body);
+  _colliderMap.set(mesh.uuid, collider);
+  return body;
+}
+
 /** Bundled namespace so scene modules can `import { physics } from '@dimsim/scene-api'`. */
 export const physics = {
   staticCollider,
   dynamicCollider,
+  kinematicCollider,
   addCollider,
   removeCollider,
 };
