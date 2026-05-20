@@ -15,9 +15,17 @@
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.perception.spatial_perception import SpatialMemory
+from dimos.robot.unitree.go2.blueprints.layers.layer_4_world_state.semantic_temporal_map import (
+    _Go2SemanticTemporalMap,
+)
+from dimos.robot.unitree.go2.blueprints.layers.layer_4_world_state.structured_world_state import (
+    _Go2StructuredWorldState,
+)
 
 _go2_spatial_world_state = autoconnect(
     SpatialMemory.blueprint(),
+    _Go2SemanticTemporalMap.blueprint(),
+    _Go2StructuredWorldState.blueprint(),
 )
 
 

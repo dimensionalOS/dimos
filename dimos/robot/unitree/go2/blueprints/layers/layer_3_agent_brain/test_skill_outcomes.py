@@ -20,63 +20,79 @@ from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.skill_outcome
 )
 
 
+def _stop_modules(*modules: object) -> None:
+    for module in modules:
+        stop = getattr(module, "stop", None)
+        if stop is not None:
+            stop()
+
+
 def test_record_and_summarize_skill_outcomes() -> None:
     store = _Go2SkillOutcomeStore()
+    try:
+        result = store.record_skill_outcome(
+            skill_name="navigate_with_text",
+            success=False,
+            domain="navigation",
+            error_code="EXECUTION_FAILED",
+            message="No matching location",
+            risk="high",
+            recovery="call get_context",
+        )
 
-    result = store.record_skill_outcome(
-        skill_name="navigate_with_text",
-        success=False,
-        domain="navigation",
-        error_code="EXECUTION_FAILED",
-        message="No matching location",
-        risk="high",
-        recovery="call get_context",
-    )
+        assert result.success is True
+        outcomes = store.get_recent_outcomes(limit=5)
+        assert len(outcomes) == 1
+        assert outcomes[0]["skill_name"] == "navigate_with_text"
+        assert outcomes[0]["success"] is False
 
-    assert result.success is True
-    outcomes = store.get_recent_outcomes(limit=5)
-    assert len(outcomes) == 1
-    assert outcomes[0]["skill_name"] == "navigate_with_text"
-    assert outcomes[0]["success"] is False
-
-    summary = store.summarize_skill_outcomes(domain="navigation")
-    assert summary.success is True
-    assert summary.metadata["outcomes"][0]["error_code"] == "EXECUTION_FAILED"
+        summary = store.summarize_skill_outcomes(domain="navigation")
+        assert summary.success is True
+        assert summary.metadata["outcomes"][0]["error_code"] == "EXECUTION_FAILED"
+    finally:
+        _stop_modules(store)
 
 
 def test_predictor_uses_recent_failures() -> None:
     store = _Go2SkillOutcomeStore()
-    store.record_skill_outcome("navigate_with_text", False)
-    store.record_skill_outcome("navigate_with_text", False)
-
     predictor = _Go2SkillOutcomePredictor()
-    predictor._skill_outcomes = store
+    try:
+        store.record_skill_outcome("navigate_with_text", False)
+        store.record_skill_outcome("navigate_with_text", False)
 
-    result = predictor.predict_skill_outcome(
-        "navigate_with_text",
-        args_json='{"query": "kitchen"}',
-        context="Robot pose: x=1.0, y=2.0",
-    )
+        predictor._skill_outcomes = store
 
-    assert result.success is True
-    assert result.metadata["risk"] == "high"
-    assert result.metadata["predicted_success"] is False
-    assert "same skill failed repeatedly in recent outcomes" in result.metadata["failure_reasons"]
+        result = predictor.predict_skill_outcome(
+            "navigate_with_text",
+            args_json='{"query": "kitchen"}',
+            context="Robot pose: x=1.0, y=2.0",
+        )
+
+        assert result.success is True
+        assert result.metadata["risk"] == "high"
+        assert result.metadata["predicted_success"] is False
+        assert "same skill failed repeatedly in recent outcomes" in result.metadata["failure_reasons"]
+    finally:
+        _stop_modules(predictor, store)
 
 
 def test_predictor_rejects_invalid_args_json() -> None:
     predictor = _Go2SkillOutcomePredictor()
+    try:
+        result = predictor.predict_skill_outcome("navigate_with_text", args_json="[1, 2]")
 
-    result = predictor.predict_skill_outcome("navigate_with_text", args_json="[1, 2]")
-
-    assert result.success is False
-    assert result.error_code == "INVALID_INPUT"
+        assert result.success is False
+        assert result.error_code == "INVALID_INPUT"
+    finally:
+        _stop_modules(predictor)
 
 
 def test_predictor_requires_skill_name() -> None:
     predictor = _Go2SkillOutcomePredictor()
+    try:
+        result = predictor.predict_skill_outcome(" ")
 
-    result = predictor.predict_skill_outcome(" ")
-
-    assert result.success is False
-    assert result.error_code == "INVALID_INPUT"
+        assert result.success is False
+        assert result.error_code == "INVALID_INPUT"
+    finally:
+        _stop_modules(predictor)

@@ -38,6 +38,11 @@ layers/
     test_*.py                    # focused Layer 3 tests
   layer_4_world_state/
     __init__.py                  # spatial/temporal memory blueprint pieces
+    structured_world_state.py    # normalized Layer 4 world snapshot
+    semantic_temporal_map.py     # spatial/temporal memory evidence view
+    world_state_spec.py          # Layer 4 RPC specs
+    DESIGN.md                    # Layer 4 implementation logic
+    test_*.py                    # focused Layer 4 tests
   layer_5_skill_interface/
     __init__.py                  # Go2 skill-interface blueprint pieces
   layer_6_robot_body/
@@ -68,8 +73,27 @@ aggregate and compress context from these sources:
 
 The current implementation exposes a compact MCP skill,
 `get_context(task: str, focus: str = "", spatial_limit: int = 3)`, returning
-the minimum context needed for the agent's next decision. Planning and tool
+the minimum context needed for the agent's next decision. It now prefers the
+Layer 4 `WorldStateSpec.get_world_snapshot(...)` RPC when available, and keeps
+direct spatial/temporal/odom reads as fallback behavior. Planning and tool
 execution remain with the agent and Layer 5 skills.
+
+## Layer 4 Direction
+
+Layer 4 owns the structured robot/world-state view. It should normalize state
+from memory, odom, navigation, runtime config, and later safety/connection
+sources, then expose RPC methods that upper layers can read.
+
+Current Layer 4 modules:
+
+- `_Go2SemanticTemporalMap`: combines spatial-memory matches and temporal-memory
+  summaries/answers for one query. It does not create a new database.
+- `_Go2StructuredWorldState`: returns one `get_world_snapshot(...)` payload with
+  `runtime`, `robot_state`, `memory_state`, and `semantic_temporal_map` fields.
+
+Layer 4 V1 is intentionally a facade over existing modules. The existing
+`SpatialMemory` and lazy `TemporalMemory` implementations stay in their current
+packages.
 
 ## ExpertRouter Direction
 

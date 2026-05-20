@@ -23,102 +23,121 @@ from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.skill_outcome
 )
 
 
+def _stop_modules(*modules: object) -> None:
+    for module in modules:
+        stop = getattr(module, "stop", None)
+        if stop is not None:
+            stop()
+
+
 def test_record_causal_transition_infers_semantic_map_failure() -> None:
     model = _Go2CausalWorldModel()
+    try:
+        result = model.record_causal_transition(
+            task="go to the kitchen",
+            skill_name="navigate_with_text",
+            args_json='{"query": "kitchen"}',
+            before_context="Spatial memory: available, no relevant matches",
+            prediction_json='{"risk": "medium", "failure_reasons": []}',
+            outcome_json='{"success": false, "message": "No matching location found"}',
+        )
 
-    result = model.record_causal_transition(
-        task="go to the kitchen",
-        skill_name="navigate_with_text",
-        args_json='{"query": "kitchen"}',
-        before_context="Spatial memory: available, no relevant matches",
-        prediction_json='{"risk": "medium", "failure_reasons": []}',
-        outcome_json='{"success": false, "message": "No matching location found"}',
-    )
-
-    assert result.success is True
-    transition = model.get_recent_transitions(limit=1)[0]
-    assert transition["skill_name"] == "navigate_with_text"
-    assert transition["outcome_success"] is False
-    assert transition["inferred_cause"] == "semantic_map_missing_target"
-    assert transition["domain"] == "navigation"
+        assert result.success is True
+        transition = model.get_recent_transitions(limit=1)[0]
+        assert transition["skill_name"] == "navigate_with_text"
+        assert transition["outcome_success"] is False
+        assert transition["inferred_cause"] == "semantic_map_missing_target"
+        assert transition["domain"] == "navigation"
+    finally:
+        _stop_modules(model)
 
 
 def test_summarize_causal_patterns_counts_repeated_failures() -> None:
     model = _Go2CausalWorldModel()
+    try:
+        for target in ("kitchen", "office"):
+            model.record_causal_transition(
+                task=f"go to the {target}",
+                skill_name="navigate_with_text",
+                args_json=f'{{"query": "{target}"}}',
+                before_context="Spatial memory: available, no relevant matches",
+                outcome_json='{"success": false, "message": "No matching location found"}',
+            )
 
-    for target in ("kitchen", "office"):
-        model.record_causal_transition(
-            task=f"go to the {target}",
-            skill_name="navigate_with_text",
-            args_json=f'{{"query": "{target}"}}',
-            before_context="Spatial memory: available, no relevant matches",
-            outcome_json='{"success": false, "message": "No matching location found"}',
-        )
+        summary = model.summarize_causal_patterns(skill_name="navigate_with_text")
 
-    summary = model.summarize_causal_patterns(skill_name="navigate_with_text")
-
-    assert summary.success is True
-    assert summary.metadata["patterns"][0]["cause"] == "semantic_map_missing_target"
-    assert summary.metadata["patterns"][0]["count"] == 2
+        assert summary.success is True
+        assert summary.metadata["patterns"][0]["cause"] == "semantic_map_missing_target"
+        assert summary.metadata["patterns"][0]["count"] == 2
+    finally:
+        _stop_modules(model)
 
 
 def test_record_causal_transition_can_use_latest_skill_outcome() -> None:
     store = _Go2SkillOutcomeStore()
-    store.record_skill_outcome(
-        skill_name="navigate_with_text",
-        success=False,
-        domain="navigation",
-        message="No matching location found",
-    )
-
     model = _Go2CausalWorldModel()
-    model._skill_outcomes = store
+    try:
+        store.record_skill_outcome(
+            skill_name="navigate_with_text",
+            success=False,
+            domain="navigation",
+            message="No matching location found",
+        )
 
-    result = model.record_causal_transition(
-        task="go to the kitchen",
-        skill_name="navigate_with_text",
-        args_json='{"query": "kitchen"}',
-    )
+        model._skill_outcomes = store
 
-    assert result.success is True
-    transition = model.get_recent_transitions(limit=1)[0]
-    assert transition["outcome_message"] == "No matching location found"
-    assert transition["inferred_cause"] == "semantic_map_missing_target"
+        result = model.record_causal_transition(
+            task="go to the kitchen",
+            skill_name="navigate_with_text",
+            args_json='{"query": "kitchen"}',
+        )
+
+        assert result.success is True
+        transition = model.get_recent_transitions(limit=1)[0]
+        assert transition["outcome_message"] == "No matching location found"
+        assert transition["inferred_cause"] == "semantic_map_missing_target"
+    finally:
+        _stop_modules(model, store)
 
 
 def test_record_causal_transition_rejects_invalid_json() -> None:
     model = _Go2CausalWorldModel()
+    try:
+        result = model.record_causal_transition(
+            task="go to the kitchen",
+            skill_name="navigate_with_text",
+            args_json="[1, 2]",
+        )
 
-    result = model.record_causal_transition(
-        task="go to the kitchen",
-        skill_name="navigate_with_text",
-        args_json="[1, 2]",
-    )
-
-    assert result.success is False
-    assert result.error_code == "INVALID_INPUT"
+        assert result.success is False
+        assert result.error_code == "INVALID_INPUT"
+    finally:
+        _stop_modules(model)
 
 
 def test_predictor_uses_repeated_causal_failures() -> None:
     model = _Go2CausalWorldModel()
-    for target in ("kitchen", "office"):
-        model.record_causal_transition(
-            task=f"go to the {target}",
-            skill_name="navigate_with_text",
-            args_json=f'{{"query": "{target}"}}',
-            outcome_json='{"success": false, "message": "No matching location found"}',
+    predictor = _Go2SkillOutcomePredictor()
+    try:
+        for target in ("kitchen", "office"):
+            model.record_causal_transition(
+                task=f"go to the {target}",
+                skill_name="navigate_with_text",
+                args_json=f'{{"query": "{target}"}}',
+                outcome_json='{"success": false, "message": "No matching location found"}',
+            )
+
+        predictor._causal_world_model = model
+
+        result = predictor.predict_skill_outcome(
+            "navigate_with_text",
+            args_json='{"query": "kitchen"}',
+            context="Robot pose: x=1.0, y=2.0",
         )
 
-    predictor = _Go2SkillOutcomePredictor()
-    predictor._causal_world_model = model
-
-    result = predictor.predict_skill_outcome(
-        "navigate_with_text",
-        args_json='{"query": "kitchen"}',
-        context="Robot pose: x=1.0, y=2.0",
-    )
-
-    assert result.success is True
-    assert result.metadata["risk"] == "high"
-    assert result.metadata["predicted_success"] is False
-    assert any("causal cause" in reason for reason in result.metadata["failure_reasons"])
+        assert result.success is True
+        assert result.metadata["risk"] == "high"
+        assert result.metadata["predicted_success"] is False
+        assert any("causal cause" in reason for reason in result.metadata["failure_reasons"])
+    finally:
+        _stop_modules(predictor, model)

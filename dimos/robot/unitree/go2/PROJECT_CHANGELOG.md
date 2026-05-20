@@ -6,6 +6,44 @@ work so future contributors can understand why the fork differs from upstream.
 
 Entries are listed in reverse chronological order.
 
+## 2026-05-20
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Started Go2 Layer 4 construction by adding RPC-only
+  semantic-temporal memory and structured world-state facades, then connected
+  Layer 3 `ContextProvider` to prefer the Layer 4 world snapshot when present.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/semantic_temporal_map.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/structured_world_state.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/world_state_spec.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/test_world_state.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/DESIGN.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/__init__.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_causal_world_model.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_expert_router.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_skill_outcomes.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/GOAL_1.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran `python -m py_compile` for the new Layer 4 modules, focused tests, and
+    changed Layer 3 ContextProvider files.
+  - Ran `git diff --check`.
+  - Ran static Layer 4 connectivity assertions confirming the path:
+    Go2 blueprint -> `_go2_spatial_world_state` -> `_Go2StructuredWorldState`
+    -> `_Go2SemanticTemporalMap` -> existing spatial/temporal memory, and
+    Layer 3 `ContextProvider` -> `WorldStateSpec.get_world_snapshot(...)`.
+  - Installed WSL user-level `uv` and WSL system build dependencies needed for
+    Python packages that compile extensions.
+  - Copied the working tree to `~/dimos-layer-test` in WSL and ran the focused
+    Layer 3 + Layer 4 test suite with a minimal pytest dependency set:
+    `21 passed, 1 warning`.
+- Open items:
+  - Add safety and connection status to `robot_state`.
+  - Decide whether stable world snapshots should be persisted in a later Layer
+    4 version.
+
 ## 2026-05-19
 
 - Branch: `refactor/go2-architecture-layers`

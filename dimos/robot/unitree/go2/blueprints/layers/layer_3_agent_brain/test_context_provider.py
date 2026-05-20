@@ -22,6 +22,13 @@ from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.context_provi
 )
 
 
+def _stop_modules(*modules: object) -> None:
+    for module in modules:
+        stop = getattr(module, "stop", None)
+        if stop is not None:
+            stop()
+
+
 class StubSpatialMemory:
     def query_by_text(self, text: str, limit: int = 5) -> list[dict[str, Any]]:
         return [
@@ -89,48 +96,117 @@ class StubCausalWorldModel:
         ][:limit]
 
 
+class StubWorldState:
+    def get_world_snapshot(self, task: str = "", spatial_limit: int = 3) -> dict[str, Any]:
+        return {
+            "task": task,
+            "sources": {
+                "odom": True,
+                "navigation": True,
+                "spatial_memory": True,
+                "temporal_memory": True,
+                "semantic_temporal_map": True,
+                "runtime": True,
+            },
+            "runtime": {"mode": "replay", "simulation": False, "replay": True},
+            "robot_state": {
+                "odom": {
+                    "frame_id": "map",
+                    "timestamp": 1.0,
+                    "position": {"x": 3.0, "y": 4.0, "z": 0.0},
+                    "yaw_degrees": 0.0,
+                },
+                "navigation": {"state": "following_path", "goal_reached": False},
+            },
+            "memory_state": {
+                "spatial": {"available": True, "matches": [{"distance": 0.3}]},
+                "temporal": {
+                    "available": True,
+                    "rolling_summary": "The hallway was recently observed.",
+                },
+            },
+            "semantic_temporal_map": {
+                "fused": {"available": True, "spatial_match_count": 1}
+            },
+        }
+
+    def get_robot_state(self) -> dict[str, Any]:
+        return {}
+
+    def get_runtime_state(self) -> dict[str, Any]:
+        return {}
+
+    def get_memory_state(self, task: str = "", spatial_limit: int = 3) -> dict[str, Any]:
+        return {}
+
+
 def test_get_context_aggregates_available_sources() -> None:
     provider = _Go2ContextProvider()
-    provider._spatial_memory = StubSpatialMemory()  # type: ignore[assignment]
-    provider._temporal_memory = StubTemporalMemory()  # type: ignore[assignment]
-    provider._navigation = StubNavigation()  # type: ignore[assignment]
-    provider._skill_outcomes = StubSkillOutcomes()  # type: ignore[assignment]
-    provider._causal_world_model = StubCausalWorldModel()  # type: ignore[assignment]
-    provider._latest_odom = PoseStamped(position=[1.0, 2.0, 0.0], frame_id="map")
+    try:
+        provider._spatial_memory = StubSpatialMemory()  # type: ignore[assignment]
+        provider._temporal_memory = StubTemporalMemory()  # type: ignore[assignment]
+        provider._navigation = StubNavigation()  # type: ignore[assignment]
+        provider._skill_outcomes = StubSkillOutcomes()  # type: ignore[assignment]
+        provider._causal_world_model = StubCausalWorldModel()  # type: ignore[assignment]
+        provider._latest_odom = PoseStamped(position=[1.0, 2.0, 0.0], frame_id="map")
 
-    result = provider.get_context("find the person", focus="navigation")
+        result = provider.get_context("find the person", focus="navigation")
 
-    assert result.success is True
-    assert "Task: find the person" in result.message
-    assert result.metadata["sources"]["spatial_memory"] is True
-    assert result.metadata["sources"]["temporal_memory"] is True
-    assert result.metadata["robot_state"]["navigation"]["state"] == "following_path"
-    assert result.metadata["world_state"]["spatial"]["matches"][0]["distance"] == 0.12
-    assert result.metadata["world_state"]["temporal"]["rolling_summary"]
-    assert result.metadata["skill_state"]["recent_outcomes"][0]["success"] is False
-    assert result.metadata["causal_state"]["recent_transitions"][0]["outcome_success"] is False
+        assert result.success is True
+        assert "Task: find the person" in result.message
+        assert result.metadata["sources"]["spatial_memory"] is True
+        assert result.metadata["sources"]["temporal_memory"] is True
+        assert result.metadata["robot_state"]["navigation"]["state"] == "following_path"
+        assert result.metadata["world_state"]["spatial"]["matches"][0]["distance"] == 0.12
+        assert result.metadata["world_state"]["temporal"]["rolling_summary"]
+        assert result.metadata["skill_state"]["recent_outcomes"][0]["success"] is False
+        assert result.metadata["causal_state"]["recent_transitions"][0]["outcome_success"] is False
 
-    encoded = json.loads(result.agent_encode()[0]["text"])
-    assert encoded["success"] is True
-    assert encoded["metadata"]["task"] == "find the person"
+        encoded = json.loads(result.agent_encode()[0]["text"])
+        assert encoded["success"] is True
+        assert encoded["metadata"]["task"] == "find the person"
+    finally:
+        _stop_modules(provider)
 
 
 def test_get_context_handles_missing_optional_sources() -> None:
     provider = _Go2ContextProvider()
+    try:
+        result = provider.get_context("walk forward")
 
-    result = provider.get_context("walk forward")
-
-    assert result.success is True
-    assert result.metadata["sources"]["spatial_memory"] is False
-    assert result.metadata["sources"]["temporal_memory"] is False
-    assert result.metadata["robot_state"]["odom"] is None
-    assert "Spatial memory: unavailable" in result.message
+        assert result.success is True
+        assert result.metadata["sources"]["spatial_memory"] is False
+        assert result.metadata["sources"]["temporal_memory"] is False
+        assert result.metadata["robot_state"]["odom"] is None
+        assert "Spatial memory: unavailable" in result.message
+    finally:
+        _stop_modules(provider)
 
 
 def test_get_context_requires_task() -> None:
     provider = _Go2ContextProvider()
+    try:
+        result = provider.get_context("   ")
 
-    result = provider.get_context("   ")
+        assert result.success is False
+        assert result.error_code == "INVALID_INPUT"
+    finally:
+        _stop_modules(provider)
 
-    assert result.success is False
-    assert result.error_code == "INVALID_INPUT"
+
+def test_get_context_prefers_layer4_structured_world_state() -> None:
+    provider = _Go2ContextProvider()
+    try:
+        provider._world_state = StubWorldState()  # type: ignore[assignment]
+
+        result = provider.get_context("find the hallway")
+
+        assert result.success is True
+        assert result.metadata["sources"]["structured_world_state"] is True
+        assert result.metadata["sources"]["spatial_memory"] is True
+        assert result.metadata["runtime"]["mode"] == "replay"
+        assert result.metadata["robot_state"]["odom"]["position"]["x"] == 3.0
+        assert result.metadata["world_state"]["source"] == "structured_world_state"
+        assert result.metadata["world_state"]["spatial"]["matches"][0]["distance"] == 0.3
+    finally:
+        _stop_modules(provider)

@@ -36,6 +36,9 @@ from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.causal_world_
 from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.skill_outcome_store import (
     SkillOutcomeStoreSpec,
 )
+from dimos.robot.unitree.go2.blueprints.layers.layer_4_world_state.world_state_spec import (
+    WorldStateSpec,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -44,6 +47,7 @@ logger = setup_logger()
 class _Go2ContextProvider(Module):
     """Layer 3 context aggregator for the Go2 agent brain."""
 
+    _world_state: WorldStateSpec | None = None
     _spatial_memory: SpatialMemorySpec | None = None
     _temporal_memory: TemporalMemorySpec | None = None
     _navigation: NavigationInterfaceSpec | None = None
@@ -82,13 +86,14 @@ class _Go2ContextProvider(Module):
 
         spatial_limit = max(0, min(spatial_limit, 10))
         errors: list[str] = []
+        world_snapshot = self._layer4_snapshot(task, spatial_limit, errors)
         metadata: dict[str, Any] = {
             "task": task,
             "focus": focus,
-            "sources": self._source_status(),
-            "runtime": self._runtime_context(),
-            "robot_state": self._robot_context(errors),
-            "world_state": self._world_context(task, spatial_limit, errors),
+            "sources": self._source_status(world_snapshot),
+            "runtime": self._runtime_context(world_snapshot),
+            "robot_state": self._robot_context(errors, world_snapshot),
+            "world_state": self._world_context(task, spatial_limit, errors, world_snapshot),
             "skill_state": self._skill_context(errors),
             "causal_state": self._causal_context(errors),
             "external_context": {
@@ -102,19 +107,38 @@ class _Go2ContextProvider(Module):
         message = self._format_message(metadata)
         return SkillResult(success=True, message=message, metadata=_to_jsonable(metadata))
 
-    def _source_status(self) -> dict[str, bool]:
+    def _source_status(self, world_snapshot: dict[str, Any] | None) -> dict[str, bool]:
+        layer4_sources = (world_snapshot or {}).get("sources", {})
         return {
             "task": True,
-            "spatial_memory": self._spatial_memory is not None,
-            "temporal_memory": self._temporal_memory is not None,
-            "odom": self._latest_odom is not None,
-            "navigation": self._navigation is not None,
+            "structured_world_state": self._world_state is not None,
+            "spatial_memory": self._spatial_memory is not None
+            or bool(layer4_sources.get("spatial_memory")),
+            "temporal_memory": self._temporal_memory is not None
+            or bool(layer4_sources.get("temporal_memory")),
+            "odom": self._latest_odom is not None or bool(layer4_sources.get("odom")),
+            "navigation": self._navigation is not None or bool(layer4_sources.get("navigation")),
             "skill_outcomes": self._skill_outcomes is not None,
             "causal_world_model": self._causal_world_model is not None,
             "runtime": True,
         }
 
-    def _runtime_context(self) -> dict[str, Any]:
+    def _layer4_snapshot(
+        self, task: str, spatial_limit: int, errors: list[str]
+    ) -> dict[str, Any] | None:
+        if self._world_state is None:
+            return None
+        try:
+            return self._world_state.get_world_snapshot(task=task, spatial_limit=spatial_limit)
+        except Exception as exc:
+            logger.warning("Failed to read Layer 4 world state", exc_info=True)
+            errors.append(f"world_state: {exc}")
+            return None
+
+    def _runtime_context(self, world_snapshot: dict[str, Any] | None) -> dict[str, Any]:
+        if world_snapshot is not None and isinstance(world_snapshot.get("runtime"), dict):
+            return world_snapshot["runtime"]
+
         simulation = bool(getattr(global_config, "simulation", False))
         replay = bool(getattr(global_config, "replay", False))
         mode = "simulation" if simulation else "replay" if replay else "hardware"
@@ -128,7 +152,12 @@ class _Go2ContextProvider(Module):
             "n_workers": getattr(global_config, "n_workers", None),
         }
 
-    def _robot_context(self, errors: list[str]) -> dict[str, Any]:
+    def _robot_context(
+        self, errors: list[str], world_snapshot: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        if world_snapshot is not None and isinstance(world_snapshot.get("robot_state"), dict):
+            return world_snapshot["robot_state"]
+
         context: dict[str, Any] = {
             "odom": self._pose_to_dict(self._latest_odom),
             "navigation": None,
@@ -149,7 +178,23 @@ class _Go2ContextProvider(Module):
 
         return context
 
-    def _world_context(self, task: str, spatial_limit: int, errors: list[str]) -> dict[str, Any]:
+    def _world_context(
+        self,
+        task: str,
+        spatial_limit: int,
+        errors: list[str],
+        world_snapshot: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if world_snapshot is not None:
+            memory_state = world_snapshot.get("memory_state") or {}
+            return {
+                "source": "structured_world_state",
+                "spatial": memory_state.get("spatial", {"available": False, "matches": []}),
+                "temporal": memory_state.get("temporal", {"available": False}),
+                "semantic_temporal": world_snapshot.get("semantic_temporal_map", {}),
+                "snapshot": world_snapshot,
+            }
+
         return {
             "spatial": self._spatial_context(task, spatial_limit, errors),
             "temporal": self._temporal_context(errors),
