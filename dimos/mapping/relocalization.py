@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import threading, time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -41,9 +42,11 @@ DEFAULT_Z_OFFSET = 20.0     # before the first relocalize() converges, offset ma
 PUBLISH_INTERVAL = 2.0      # for loaded_map + TF
 RELOC_INTERVAL = 2.0
 MIN_LOCAL_POINTS = 20000
+MAP_SUFFIX = ".pc2.lcm"
 
 
 class Config(ModuleConfig):
+    map_file: str | None = None         # e.g. `-o relocalizationmodule.map_file=go2_hongkong_office_twopass_map`
     publish_loaded_map: bool = True
     publish_merged: bool = False        # turn on by `-o relocalizationmodule.publish_merged=true`
 
@@ -81,9 +84,17 @@ class RelocalizationModule(Module):
     def start(self):
         super().start()
 
-        self._premap = PointCloud2.lcm_decode(
-            get_data("go2_hongkong_office_twopass_map.pc2.lcm").read_bytes()
-        )
+        if not self.config.map_file:
+            logger.info("Relocalization module disabled (no map_file configured)")
+            return
+
+        name = self.config.map_file
+        if not name.endswith(MAP_SUFFIX):
+            name = name + MAP_SUFFIX
+        path = Path(name)
+        data = path.read_bytes() if path.is_absolute() or path.exists() else get_data(name).read_bytes()
+
+        self._premap = PointCloud2.lcm_decode(data)
         self._premap.frame_id = FRAME_MAP
         self._running = True
         self.register_disposable(Disposable(self.global_map.subscribe(self._on_global_map)))
@@ -94,7 +105,7 @@ class RelocalizationModule(Module):
         self._reloc_thread.start()
 
         logger.info(
-            f"Relocalization module started: "
+            f"Relocalization module started: map_file={self.config.map_file!r}  "
             f"loaded_map.frame_id={self._premap.frame_id!r}  "
             f"placeholder TF {FRAME_WORLD!r} -> {FRAME_MAP!r}  "
             f"z_offset={DEFAULT_Z_OFFSET}"
