@@ -141,7 +141,3 @@ It's a one-file scene with a floor and a sky. Copy it as a template:
 ```bash
 cp -r misc/DimSim/scenes/empty misc/DimSim/scenes/my-room
 ```
-
-## What about interactive objects?
-
-Pickable items, openable doors, multi-state cabinets — these need a `registerAsset(group, {pickable, states, actions})` API that doesn't exist yet. Until then, anything you add with `scene.add` is visible/collidable but the **E-key interaction system won't see it**. The apartment scene is the only one with full E-key interactivity today.
