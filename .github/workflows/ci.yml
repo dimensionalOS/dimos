@@ -37,15 +37,15 @@ jobs:
         uses: pre-commit/action@v3.0.1
 
   md-babel:
-    timeout-minutes: 10
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
 
     steps:
       - uses: actions/checkout@v6
-        with:
-          lfs: true
+      - name: Fetch LFS data needed by doc code blocks
+        run: git lfs pull --include="data/.lfs/go2_bigoffice.db.tar.gz,data/.lfs/unitree_go2_bigoffice_map.pickle.tar.gz"
       # Docs decode JPEG from SQLite via PyTurboJPEG; pyaudio needs portaudio.
       - name: Install system dependencies
         run: |
