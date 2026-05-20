@@ -1,55 +1,55 @@
 # DimSim
 
-Standalone 3D simulation runner for SimStudio scenes. Load a scene, spawn AI agents, run tasks — with full sensor support (RGB-D, LiDAR).
+Browser-based 3D simulator (Three.js + Rapier) plus a Deno bridge that talks LCM/WS to [dimos](https://github.com/dimensionalOS/dimos). Lives inside dimos as `misc/DimSim/`.
 
-## Setup
-
-```bash
-npm install    # installs everything (frontend + backend)
+```
+src/        — browser engine (vite-bundled)
+cli/        — Deno CLI + bridge server + headless launcher + LCM vendor
+evals/      — eval harness (browser) + runner (Deno) + rubrics
+scenes/     — user-authored scenes (JS) + per-scene eval workflows
+public/     — static assets (agent GLB, logo)
+docs/       — guides
 ```
 
 ## Run
 
-Terminal 1:
-```bash
-npm run server         # Node.js VLM backend on :8000
-```
-
-Terminal 2:
-```bash
-npm run dev            # Frontend on :5173
-```
-
-## Architecture
-
-```
-DimSim/
-├── index.html              ← Sim-mode UI (scene dropdown + full sensor controls)
-├── server.js               ← VLM backend (Express + OpenAI SDK)
-├── src/
-│   ├── main.js             ← Entry point (imports engine.js)
-│   ├── engine.js           ← Full SimStudio engine (synced via copy-sources.sh)
-│   ├── style.css           ← Synced from SimStudio
-│   ├── AiAvatar.js         ← Agent class (synced)
-│   └── ai/                 ← VLM modules (synced)
-├── public/
-│   ├── sims/               ← Scene JSON files + manifest.json
-│   └── agent-model/        ← Robot GLB models
-├── vlm-server/
-│   └── asset-library.json  ← Persisted asset library data
-├── copy-sources.sh         ← Sync engine from SimStudio
-└── update-sims.sh          ← Rebuild scene manifest
-```
-
-## Sync from SimStudio
+dimsim is launched by dimos directly when you pick `--simulation dimsim`:
 
 ```bash
-npm run sync
+cd <dimos-repo>
+.venv/bin/dimos --simulation dimsim --dimsim-scene=apartment run unitree-go2-agentic
 ```
 
-## Add/remove scenes
+On first run, `cli/cli.ts` will build `dist/` via Vite (dimsim ships its frontend as source — Deno+Vite materializes it in ~20s).
 
-Drop `.json` files in `public/sims/`, then:
+## Authoring
+
+- New scenes:  see [docs/scenes.md](docs/scenes.md)
+- New evals:   see [docs/evals.md](docs/evals.md)
+- Architecture overview: see [docs/architecture.md](docs/architecture.md)
+- Tour:        see [docs/getting-started.md](docs/getting-started.md)
+
+## Install the CLI (optional)
+
+If you want `dimsim` as a global command:
+
 ```bash
-npm run update-sims
+cd misc/DimSim/cli
+deno install -gAf --unstable-net --name=dimsim --config=./deno.json ./cli.ts
+```
+
+After install:
+
+```bash
+dimsim dev --scene apartment              # standalone dev server + browser
+dimsim eval list                          # list workflows under scenes/*/evals/
+dimsim eval go-to-couch                   # run one workflow against an open sim
+dimsim eval --headless --scene apartment  # full headless run (CI)
+```
+
+## Build manually
+
+```bash
+npm install      # browser deps (three, rapier, spark, vite)
+npm run build    # → dist/
 ```
