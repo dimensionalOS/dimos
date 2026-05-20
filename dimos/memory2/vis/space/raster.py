@@ -57,9 +57,7 @@ if TYPE_CHECKING:
     from dimos.memory2.vis.space.space import Space
 
 
-# ---------------------------------------------------------------------------
 # Color helpers
-# ---------------------------------------------------------------------------
 
 
 def _bgr_u8(c: ColorLike) -> tuple[int, int, int]:
@@ -79,9 +77,7 @@ def _thick(value_world: float, res_px: float, minimum: int = 1) -> int:
     return max(minimum, int(round(value_world * res_px)))
 
 
-# ---------------------------------------------------------------------------
 # Bounds pass — compute world-frame extent from elements
-# ---------------------------------------------------------------------------
 
 
 def _grow_bounds(el: Any, b: Bounds, pc_cache: dict[int, OccupancyGrid]) -> None:
@@ -159,9 +155,7 @@ def _grow_bounds(el: Any, b: Bounds, pc_cache: dict[int, OccupancyGrid]) -> None
             b.include(el.pose[0], el.pose[1])
 
 
-# ---------------------------------------------------------------------------
 # Draw pass — paint each element onto BGR ndarray
-# ---------------------------------------------------------------------------
 
 
 class _Canvas:
@@ -355,7 +349,7 @@ def _draw_polygon(el: Polygon, c: _Canvas) -> None:
         # Anchor at the top-most pixel (smallest py).
         anchor_idx = int(np.argmin(pts[:, 1]))
         ax, ay = int(pts[anchor_idx, 0]), int(pts[anchor_idx, 1])
-        label_col = _bgr_u8(el.stroke) if el.stroke is not None else _bgr_u8(el.fill)
+        label_col = _bgr_u8(el.stroke if el.stroke is not None else (el.fill or "#000000"))
         _draw_text_halo(c.bgr, el.label, (ax + 6, ay + 18), label_col, scale=0.5)
 
 
@@ -506,7 +500,7 @@ def _draw_pointcloud(el: PointCloud2, c: _Canvas) -> None:
     _draw_occupancy_grid(grid, c)
 
 
-def _draw_observation(el: Observation, c: _Canvas) -> None:
+def _draw_observation(el: Observation[Any], c: _Canvas) -> None:
     if el.pose is None:
         return
     color: ColorLike = "#ff0000" if el.data_type == float else "#e67e22"
@@ -551,9 +545,7 @@ def _draw_element(el: Any, c: _Canvas) -> None:
     # Unsupported types are silently skipped (mirrors svg.py's fallback).
 
 
-# ---------------------------------------------------------------------------
 # Top-level render
-# ---------------------------------------------------------------------------
 
 
 _DEFAULT_BACKGROUND_BGR: tuple[int, int, int] = (248, 248, 248)  # matches SVG #f8f8f8

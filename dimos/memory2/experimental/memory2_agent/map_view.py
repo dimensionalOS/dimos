@@ -181,9 +181,7 @@ class MapRenderer:
         return int(self._grid.width * SCALE)
 
 
-# ----------------------------------------------------------------------------
 # Shared points overlay for top-down map renders
-# ----------------------------------------------------------------------------
 
 POINT_COLORS_BGR: dict[str, tuple[int, int, int]] = {
     "red":     (0, 0, 255),
@@ -324,9 +322,7 @@ def encode_bgr_as_multimodal(bgr: np.ndarray, caption: str) -> list[dict[str, An
     ]
 
 
-# ----------------------------------------------------------------------------
 # walkthrough — annotated low-res frame sequence between two moments
-# ----------------------------------------------------------------------------
 
 
 def _resolve_ts(when: str, odom_observations: list) -> float | None:
@@ -344,9 +340,7 @@ def _resolve_ts(when: str, odom_observations: list) -> float | None:
     return v
 
 
-# ----------------------------------------------------------------------------
 # verify_room_partition — render agent-described room rectangles over the map
-# ----------------------------------------------------------------------------
 
 
 @dataclass
@@ -666,9 +660,7 @@ def verify_room_partition(
     return space, stats, n_outside, n_total, n_visible_outside
 
 
-# ----------------------------------------------------------------------------
 # frames_facing — recorded frames whose viewing cone could contain a point
-# ----------------------------------------------------------------------------
 
 
 # Go2 head camera intrinsics (from dimos/robot/unitree/go2/connection.py)
@@ -1080,9 +1072,7 @@ def encode_walkthrough_blocks(
     return blocks
 
 
-# ----------------------------------------------------------------------------
 # recall_view — find recorded camera frames matching a (position, direction)
-# ----------------------------------------------------------------------------
 
 
 def _yaw_from_quat(qx: float, qy: float, qz: float, qw: float) -> float:

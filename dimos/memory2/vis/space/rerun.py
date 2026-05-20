@@ -254,11 +254,14 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
         ox, oy = el.origin
         col = _rgba(el)
         radius = max(el.stroke_width / 2, 0.005)
+        # Capture `el.length` locally so the `_edge` closure doesn't pick up
+        # the widened `el` type from the outer `for el in space.elements` loop.
+        length = el.length
 
         def _edge(ang: float) -> list[list[float]]:
             return [
                 [ox, oy, 0.0],
-                [ox + math.cos(ang) * el.length, oy + math.sin(ang) * el.length, 0.0],
+                [ox + math.cos(ang) * length, oy + math.sin(ang) * length, 0.0],
             ]
 
         # Label the centerline strip only; wings get their own unlabelled log.

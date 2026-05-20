@@ -510,7 +510,7 @@ incremental = true
 strict = true
 warn_unused_ignores = false
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|^dimos/memory2/experimental/memory2_agent(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
