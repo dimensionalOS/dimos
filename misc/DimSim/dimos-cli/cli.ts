@@ -5,6 +5,7 @@
  *
  * Usage:
  *   dimsim dev   [--scene <name>] [--port <n>]              Dev server + browser
+ *   dimsim eval <workflow>                                  Run one workflow (auto --connect)
  *   dimsim eval  [--headless] [--parallel N] [--render gpu] Headless CI evals
  *   dimsim eval list                                        List eval workflows
  *   dimsim agent [--nav-only]                               dimos Python agent
@@ -111,6 +112,7 @@ DimSim CLI — 3D simulation + eval harness for dimos
 Commands:
   dimsim dev   [options]         Dev server (open browser, optional eval)
   dimsim eval list               List installed eval workflows
+  dimsim eval <workflow>         Run one workflow against an already-running bridge
   dimsim eval  [options]         Run eval workflows (headless CI)
   dimsim agent [options]         Launch dimos Python agent
 
@@ -326,19 +328,34 @@ async function main() {
 
   // ── Eval ────────────────────────────────────────────────────────────
   if (subcommand === "eval") {
-    const connectMode = opts.connect === true;
+    // Positional workflow: `dimsim eval go-to-tv` is shorthand for
+    // `dimsim eval --workflow go-to-tv --connect`.  Accepts either bare
+    // workflow name ("go-to-tv") or scene-qualified ("apartment/go-to-tv").
+    const positional = Deno.args[1] && !Deno.args[1].startsWith("--") ? Deno.args[1] : null;
+    let posScene: string | undefined;
+    let posWorkflow: string | undefined;
+    if (positional) {
+      const slash = positional.indexOf("/");
+      if (slash !== -1) {
+        posScene = positional.slice(0, slash);
+        posWorkflow = positional.slice(slash + 1);
+      } else {
+        posWorkflow = positional;
+      }
+    }
+    // If a workflow was given positionally, default to --connect.  Spinning up
+    // a fresh headless bridge for a one-off run during dev is rarely what you
+    // want; the common case is "the sim is already open, run this eval in it".
+    const connectMode = opts.connect === true || positional !== null;
     const outputFormat = (opts.output as string) === "junit" ? "junit" : "json";
     const wsUrl = `ws://localhost:${port}`;
+    const filterScene = posScene ?? (opts.scene as string) ?? (opts.env as string);
+    const filterWorkflow = posWorkflow ?? (opts.workflow as string);
 
     // --connect mode: just run the runner against an existing bridge
     if (connectMode) {
       console.log(`[dimsim] Connecting to existing bridge at ${wsUrl}…`);
-      const results = await runEvals({
-        wsUrl,
-        scenesRoot: SCENES_DIR,
-        filterScene: (opts.scene as string) || (opts.env as string),
-        filterWorkflow: opts.workflow as string,
-      });
+      const results = await runEvals({ wsUrl, scenesRoot: SCENES_DIR, filterScene, filterWorkflow });
       if (outputFormat === "junit") console.log(toJunitXml(results));
       const passed = results.filter((r) => r.passed).length;
       const failed = results.length - passed;
@@ -356,9 +373,7 @@ async function main() {
 
     if (headless && parallel > 1) {
       const allWorkflows = collectWorkflows({
-        scenesRoot: SCENES_DIR,
-        filterScene: (opts.scene as string) || (opts.env as string),
-        filterWorkflow: opts.workflow as string,
+        scenesRoot: SCENES_DIR, filterScene, filterWorkflow,
       });
       if (allWorkflows.length === 0) {
         console.log("[dimsim] No workflows match filter criteria.");
@@ -375,11 +390,9 @@ async function main() {
       await new Promise((r) => setTimeout(r, 2000));
 
       const allResults = await runEvalsMultiPage({
-        wsUrl,
-        scenesRoot: SCENES_DIR,
+        wsUrl, scenesRoot: SCENES_DIR,
         channels: instance.channels,
-        filterScene: (opts.scene as string) || (opts.env as string),
-        filterWorkflow: opts.workflow as string,
+        filterScene, filterWorkflow,
       });
 
       await instance.close();
@@ -404,12 +417,7 @@ async function main() {
       const instance = await launchHeadless({ url, timeout, render });
       await new Promise((r) => setTimeout(r, 3000));
 
-      const results = await runEvals({
-        wsUrl,
-        scenesRoot: SCENES_DIR,
-        filterScene: (opts.scene as string) || (opts.env as string),
-        filterWorkflow: opts.workflow as string,
-      });
+      const results = await runEvals({ wsUrl, scenesRoot: SCENES_DIR, filterScene, filterWorkflow });
       if (outputFormat === "junit") console.log(toJunitXml(results));
 
       await instance.close();
