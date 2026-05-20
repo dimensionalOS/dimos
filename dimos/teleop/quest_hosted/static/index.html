@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DimOS Teleop</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: {
+                dim: { 50:'#f0f9ff',100:'#e0f2fe',500:'#0ea5e9',600:'#0284c7',700:'#0369a1',900:'#0c4a6e' }
+            }}}
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .key-reveal { font-family: 'JetBrains Mono', monospace; word-break: break-all; }
+        #canvas { display: none; position: absolute; inset: 0; width: 100%; height: 100%; }
+        .kb-key {
+            width: 56px; height: 56px;
+            display: flex; align-items: center; justify-content: center;
+            background: #1f2937; border: 1px solid #374151;
+            border-radius: 8px; font-family: monospace; font-weight: 600;
+            color: #d1d5db;
+            user-select: none;
+        }
+        .kb-key.wide { width: 96px; font-size: 0.85rem; }
+        .kb-key.pressed {
+            background: #0284c7; border-color: #38bdf8;
+            color: white;
+        }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+    <div id="app"></div>
+    <canvas id="canvas"></canvas>
+
+    <script type="module">
+        import { geometry_msgs, std_msgs, sensor_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+
+        // ─── State ──────────────────────────────────────────────────────────
+        let token = localStorage.getItem('teleop_token') || '';
+        let userEmail = localStorage.getItem('teleop_email') || '';
+        let brokerOverride = new URLSearchParams(window.location.search).get('broker') || '';
+
+        // WebRTC + WebXR state
+        let pc = null;
+        let cmdChannel = null;
+        let xrSession = null;
+        let xrRefSpace = null;
+        let gl = null;
+        let lastSendTime = 0;
+        let activeRobot = null;
+        const sendInterval = 1000 / 80;
+
+        // Probed once at boot. Quest browser → true; desktop/mobile → false.
+        let xrSupported = false;
+        const xrDetection = (async () => {
+            if (!navigator.xr) return false;
+            const ar = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+            if (ar) return true;
+            return await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
+        })().then(v => { xrSupported = v; return v; });
+
+        // ─── API helpers ────────────────────────────────────────────────────
+        function brokerOrigin() {
+            return brokerOverride || window.location.origin;
+        }
+
+        async function api(method, path, body = null) {
+            const opts = { method, headers: { 'Content-Type': 'application/json' } };
+            if (token) opts.headers['Authorization'] = `Bearer ${token}`;
+            if (body) opts.body = JSON.stringify(body);
+            const res = await fetch(`${brokerOrigin()}/api/v1${path}`, opts);
+            if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+            return data;
+        }
+
+        function logout() {
+            localStorage.removeItem('teleop_token');
+            localStorage.removeItem('teleop_email');
+            token = '';
+            userEmail = '';
+            navigate('auth');
+        }
+
+        function escHtml(s) {
+            return s ? String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) : '';
+        }
+
+        function timeAgo(iso) {
+            const diff = Date.now() - new Date(iso).getTime();
+            const mins = Math.floor(diff / 60000);
+            if (mins < 1) return 'just now';
+            if (mins < 60) return `${mins}m ago`;
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24) return `${hrs}h ago`;
+            return `${Math.floor(hrs/24)}d ago`;
+        }
+
+        // ─── Router ─────────────────────────────────────────────────────────
+        function navigate(view) {
+            const app = document.getElementById('app');
+            if (view === 'auth') renderAuth(app);
+            else if (view === 'dashboard') renderDashboard(app);
+            else if (view === 'teleop') renderTeleop(app);
+            else if (view === 'keyboard') renderKeyboard(app);
+        }
+
+        // ─── Auth view ──────────────────────────────────────────────────────
+        let authMode = 'login';
+
+        function renderAuth(c) {
+            c.innerHTML = `
+            <div class="min-h-screen flex items-center justify-center p-4">
+                <div class="w-full max-w-md">
+                    <div class="text-center mb-8">
+                        <h1 class="text-3xl font-bold text-white mb-2">DimOS Teleop</h1>
+                        <p class="text-gray-400">Remote robot teleoperation platform</p>
+                    </div>
+                    <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-xl">
+                        <div class="flex mb-6 bg-gray-800 rounded-lg p-1">
+                            <button id="tab-login" class="flex-1 py-2 px-4 rounded-md text-sm font-medium bg-dim-600 text-white">Log In</button>
+                            <button id="tab-register" class="flex-1 py-2 px-4 rounded-md text-sm font-medium text-gray-400 hover:text-white">Sign Up</button>
+                        </div>
+                        <form id="auth-form">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-1">Email</label>
+                                    <input id="email" type="email" required value="${escHtml(userEmail)}"
+                                        class="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-dim-500"
+                                        placeholder="you@company.com">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-1">Password</label>
+                                    <input id="password" type="password" required
+                                        class="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-dim-500"
+                                        placeholder="••••••••">
+                                </div>
+                                <div id="auth-error" class="text-red-400 text-sm hidden"></div>
+                                <button type="submit" class="w-full py-2.5 bg-dim-600 hover:bg-dim-700 text-white font-medium rounded-lg transition-colors">
+                                    <span id="auth-btn-text">Log In</span>
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                    <p class="text-center text-gray-500 text-sm mt-6">
+                        Powered by <a href="https://dimensionalos.com" class="text-dim-500 hover:text-dim-400">DimensionalOS</a>
+                    </p>
+                </div>
+            </div>`;
+
+            document.getElementById('tab-login').onclick = () => showAuthTab('login');
+            document.getElementById('tab-register').onclick = () => showAuthTab('register');
+            document.getElementById('auth-form').onsubmit = handleAuth;
+        }
+
+        function showAuthTab(mode) {
+            authMode = mode;
+            const active = 'flex-1 py-2 px-4 rounded-md text-sm font-medium bg-dim-600 text-white';
+            const inactive = 'flex-1 py-2 px-4 rounded-md text-sm font-medium text-gray-400 hover:text-white';
+            document.getElementById('tab-login').className = mode === 'login' ? active : inactive;
+            document.getElementById('tab-register').className = mode === 'register' ? active : inactive;
+            document.getElementById('auth-btn-text').textContent = mode === 'login' ? 'Log In' : 'Create Account';
+        }
+
+        async function handleAuth(e) {
+            e.preventDefault();
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            const errEl = document.getElementById('auth-error');
+            errEl.classList.add('hidden');
+            try {
+                const endpoint = authMode === 'login' ? '/auth/login' : '/auth/register';
+                const data = await api('POST', endpoint, { email, password });
+                token = data.token;
+                userEmail = data.user_id;
+                localStorage.setItem('teleop_token', token);
+                localStorage.setItem('teleop_email', userEmail);
+                navigate('dashboard');
+            } catch (err) {
+                errEl.textContent = err.message;
+                errEl.classList.remove('hidden');
+            }
+        }
+
+        // ─── Dashboard view (API keys + robot list) ─────────────────────────
+        async function renderDashboard(c) {
+            c.innerHTML = `
+            <div class="max-w-4xl mx-auto p-6 fade-in">
+                <header class="flex items-center justify-between mb-8">
+                    <div>
+                        <h1 class="text-2xl font-bold text-white">Dashboard</h1>
+                        <p class="text-gray-400 text-sm">${escHtml(userEmail)}</p>
+                    </div>
+                    <button id="logoutBtn" class="px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-lg hover:border-gray-600 transition-colors">
+                        Log Out
+                    </button>
+                </header>
+
+                <!-- API Keys -->
+                <section class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 class="text-lg font-semibold text-white">API Keys</h2>
+                            <p class="text-gray-400 text-sm">Authenticate your robots with the teleop service</p>
+                        </div>
+                        <button id="newKeyBtn" class="px-4 py-2 bg-dim-600 hover:bg-dim-700 text-white text-sm font-medium rounded-lg transition-colors">
+                            + New Key
+                        </button>
+                    </div>
+
+                    <div id="create-key-form" class="hidden mb-4 p-4 bg-gray-800 rounded-lg border border-gray-700">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                            <input id="key-name" type="text" placeholder="Key name (e.g. Lab Robot 01)"
+                                class="px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-dim-500">
+                            <input id="key-robot-id" type="text" placeholder="Robot ID (optional)"
+                                class="px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-dim-500">
+                        </div>
+                        <div class="flex gap-2">
+                            <button id="generateKeyBtn" class="px-4 py-2 bg-dim-600 hover:bg-dim-700 text-white text-sm rounded-lg transition-colors">Generate Key</button>
+                            <button id="cancelKeyBtn" class="px-4 py-2 text-gray-400 hover:text-white text-sm rounded-lg transition-colors">Cancel</button>
+                        </div>
+                    </div>
+
+                    <div id="new-key-reveal" class="hidden mb-4 p-4 bg-green-900/20 border border-green-800 rounded-lg">
+                        <p class="text-green-400 text-sm font-medium mb-2">🔑 Key created! Copy it now — it won't be shown again.</p>
+                        <div class="flex items-center gap-2">
+                            <code id="new-key-value" class="key-reveal flex-1 px-3 py-2 bg-gray-900 rounded text-green-300 text-sm"></code>
+                            <button id="copyKeyBtn" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white transition-colors">Copy</button>
+                        </div>
+                        <p class="text-gray-500 text-xs mt-2">Use it as <code>broker_api_key</code> when starting <code>HostedTeleopModule</code>.</p>
+                    </div>
+
+                    <div id="keys-list" class="space-y-2">
+                        <div class="text-gray-500 text-sm py-4 text-center">Loading...</div>
+                    </div>
+                </section>
+
+                <!-- Connected robots -->
+                <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 class="text-lg font-semibold text-white">Available Robots</h2>
+                            <p class="text-gray-400 text-sm">Robots online — click Connect to teleoperate</p>
+                        </div>
+                        <button id="refreshRobotsBtn" class="px-4 py-2 text-sm text-gray-300 border border-gray-700 rounded-lg hover:bg-gray-800 transition-colors">
+                            Refresh
+                        </button>
+                    </div>
+                    <div id="robots-list" class="space-y-2">
+                        <div class="text-gray-500 text-sm py-4 text-center">Loading...</div>
+                    </div>
+                </section>
+
+                <p class="text-center text-xs text-gray-600 mt-6">
+                    Broker: <code>${escHtml(brokerOrigin())}</code>
+                </p>
+            </div>`;
+
+            document.getElementById('logoutBtn').onclick = logout;
+            document.getElementById('newKeyBtn').onclick = () => document.getElementById('create-key-form').classList.remove('hidden');
+            document.getElementById('cancelKeyBtn').onclick = () => document.getElementById('create-key-form').classList.add('hidden');
+            document.getElementById('generateKeyBtn').onclick = createKey;
+            document.getElementById('copyKeyBtn').onclick = copyKey;
+            document.getElementById('refreshRobotsBtn').onclick = loadRobots;
+
+            await Promise.all([loadKeys(), loadRobots()]);
+        }
+
+        // ─── API Keys ───────────────────────────────────────────────────────
+        async function createKey() {
+            const name = document.getElementById('key-name').value.trim();
+            const robotId = document.getElementById('key-robot-id').value.trim() || null;
+            if (!name) { alert('Please provide a key name'); return; }
+            try {
+                const data = await api('POST', '/keys', { name, robot_id: robotId });
+                document.getElementById('new-key-value').textContent = data.api_key;
+                document.getElementById('new-key-reveal').classList.remove('hidden');
+                document.getElementById('create-key-form').classList.add('hidden');
+                document.getElementById('key-name').value = '';
+                document.getElementById('key-robot-id').value = '';
+                await loadKeys();
+            } catch (err) {
+                alert('Failed to create key: ' + err.message);
+            }
+        }
+
+        function copyKey() {
+            const key = document.getElementById('new-key-value').textContent;
+            navigator.clipboard.writeText(key);
+            const btn = document.getElementById('copyKeyBtn');
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+        }
+
+        async function loadKeys() {
+            const listEl = document.getElementById('keys-list');
+            try {
+                const data = await api('GET', '/keys');
+                if (!data.keys || data.keys.length === 0) {
+                    listEl.innerHTML = '<p class="text-gray-500 text-sm py-4 text-center">No API keys yet. Create one to connect a robot.</p>';
+                    return;
+                }
+                listEl.innerHTML = data.keys.map(k => `
+                    <div class="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <span class="text-white text-sm font-medium">${escHtml(k.name)}</span>
+                                ${k.robot_id ? `<span class="text-xs px-2 py-0.5 bg-gray-700 rounded text-gray-300">${escHtml(k.robot_id)}</span>` : ''}
+                            </div>
+                            <div class="flex items-center gap-3 mt-1">
+                                <code class="text-gray-400 text-xs">${escHtml(k.key_prefix)}...</code>
+                                <span class="text-gray-600 text-xs">${k.last_used_at ? 'Last used ' + timeAgo(k.last_used_at) : 'Never used'}</span>
+                            </div>
+                        </div>
+                        <button data-id="${k.id}" data-name="${escHtml(k.name)}"
+                            class="revoke-btn px-3 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors">
+                            Revoke
+                        </button>
+                    </div>
+                `).join('');
+                listEl.querySelectorAll('.revoke-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        revokeKey(e.target.dataset.id, e.target.dataset.name);
+                    });
+                });
+            } catch (err) {
+                listEl.innerHTML = `<p class="text-red-400 text-sm">${escHtml(err.message)}</p>`;
+            }
+        }
+
+        async function revokeKey(id, name) {
+            if (!confirm(`Revoke key "${name}"? This cannot be undone.`)) return;
+            try {
+                await api('DELETE', `/keys/${id}`);
+                document.getElementById('new-key-reveal').classList.add('hidden');
+                await loadKeys();
+            } catch (err) {
+                alert('Failed to revoke: ' + err.message);
+            }
+        }
+
+        // ─── Robot list ─────────────────────────────────────────────────────
+        async function loadRobots() {
+            const listEl = document.getElementById('robots-list');
+            await xrDetection;
+            try {
+                const robots = await api('GET', '/sessions');
+                // Broker returns a flat list per sessions.py:list_sessions response_model.
+                const arr = Array.isArray(robots) ? robots : (robots.sessions || []);
+                if (arr.length === 0) {
+                    listEl.innerHTML = '<p class="text-gray-500 text-sm py-4 text-center">No robots online. Start a robot with a registered API key.</p>';
+                    return;
+                }
+                listEl.innerHTML = arr.map(s => `
+                    <div class="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
+                        <div class="flex items-center gap-3">
+                            <div class="w-2 h-2 rounded-full ${s.state === 'active' ? 'bg-green-400' : s.state === 'idle' ? 'bg-yellow-400' : 'bg-gray-500'}"></div>
+                            <div>
+                                <span class="text-white text-sm font-medium">${escHtml(s.robot_name)}</span>
+                                <span class="text-gray-500 text-xs ml-2">${escHtml(s.robot_id)}</span>
+                                ${s.rtt_ms ? `<span class="text-gray-500 text-xs ml-2">${Math.round(s.rtt_ms)}ms</span>` : ''}
+                            </div>
+                        </div>
+                        <button data-id="${s.session_id}" data-name="${escHtml(s.robot_name)}"
+                            class="connect-btn px-4 py-2 bg-dim-600 hover:bg-dim-700 text-white text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            ${s.state === 'active' ? 'disabled' : ''}>
+                            ${s.state === 'active' ? 'Busy' : 'Connect'}
+                        </button>
+                    </div>
+                `).join('');
+                const handler = xrSupported ? connectToRobot : connectKeyboard;
+                listEl.querySelectorAll('.connect-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        handler(e.target.dataset.id, e.target.dataset.name);
+                    });
+                });
+            } catch (err) {
+                listEl.innerHTML = `<p class="text-red-400 text-sm py-4 text-center">${escHtml(err.message)}</p>`;
+            }
+        }
+
+        // ─── Connect (called from Connect button — user-gesture context) ────
+        async function connectToRobot(sessionId, robotName) {
+            activeRobot = { session_id: sessionId, robot_name: robotName };
+            try {
+                if (!navigator.xr) throw new Error('WebXR not supported. Use Quest 3 browser.');
+
+                navigate('teleop');
+                // VR FIRST — gesture activation must be alive when requestSession() runs.
+                await startVR();
+
+                try {
+                    await setupWebRTC(sessionId);
+                } catch (rtcError) {
+                    if (xrSession) { await xrSession.end().catch(() => {}); xrSession = null; }
+                    throw rtcError;
+                }
+                setStatus(`Connected — ${robotName}`);
+            } catch (e) {
+                console.error(e);
+                setStatus(`Connection failed: ${e.message}`);
+                setTimeout(() => navigate('dashboard'), 3000);
+            }
+        }
+
+        // ─── Keyboard mode ──────────────────────────────────────────────────
+        // WASD-driven TwistStamped over the same cmd_unreliable channel as VR,
+        // sent at the shared `sendInterval` (80 Hz).
+        let kbInterval = null;
+        const kbKeys = new Set();
+
+        async function connectKeyboard(sessionId, robotName) {
+            activeRobot = { session_id: sessionId, robot_name: robotName };
+            try {
+                navigate('keyboard');
+                await setupWebRTC(sessionId);
+                setStatus(`Connected — ${robotName}`);
+                startKeyboardLoop();
+            } catch (e) {
+                console.error(e);
+                setStatus(`Connection failed: ${e.message}`);
+                setTimeout(() => navigate('dashboard'), 3000);
+            }
+        }
+
+        function renderKeyboard(c) {
+            c.innerHTML = `
+            <div class="min-h-screen flex flex-col items-center justify-center p-6 fade-in select-none">
+                <div class="w-full max-w-xl text-center">
+                    <h1 class="text-3xl font-bold text-white mb-2">${escHtml(activeRobot?.robot_name || 'Keyboard teleop')}</h1>
+                    <div id="teleop-status" class="text-lg text-gray-300 px-4 py-3 bg-gray-900 border border-gray-800 rounded-lg my-4">
+                        Negotiating...
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4 my-6 text-left">
+                        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                            <div class="text-xs text-gray-500 mb-2">Controls</div>
+                            <div class="text-sm text-gray-300 space-y-1">
+                                <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">W</kbd> / <kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">S</kbd> — forward / back</div>
+                                <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">A</kbd> / <kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">D</kbd> — turn left / right</div>
+                                <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">Shift</kbd> — 2× faster (any)</div>
+                                <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">Ctrl</kbd>+<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">W</kbd>/<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">S</kbd> — slow (½×)</div>
+                                <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">Ctrl</kbd>+<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">A</kbd>/<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">D</kbd> — strafe</div>
+                            </div>
+                        </div>
+                        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                            <div class="text-xs text-gray-500 mb-2">Live twist</div>
+                            <pre id="twist-readout" class="text-sm text-green-300 font-mono">linear.x  = 0
+linear.y  = 0
+linear.z  = 0
+angular.z = 0</pre>
+                        </div>
+                    </div>
+
+                    <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 my-6">
+                        <div class="flex flex-col items-center gap-2">
+                            <div id="key-w" class="kb-key">W</div>
+                            <div class="flex gap-2">
+                                <div id="key-a" class="kb-key">A</div>
+                                <div id="key-s" class="kb-key">S</div>
+                                <div id="key-d" class="kb-key">D</div>
+                            </div>
+                            <div class="flex gap-2 mt-3">
+                                <div id="key-shift" class="kb-key wide">Shift</div>
+                                <div id="key-ctrl" class="kb-key wide">Ctrl</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button id="disconnectBtn" class="mt-4 px-6 py-2.5 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors">
+                        Disconnect
+                    </button>
+                </div>
+            </div>`;
+            document.getElementById('disconnectBtn').onclick = disconnect;
+        }
+
+        function trackedKey(e) {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return null;
+            const k = e.key.toLowerCase();
+            if (k === 'w' || k === 'a' || k === 's' || k === 'd') return k;
+            if (e.key === 'Shift' || e.key === 'Control') return e.key;
+            return null;
+        }
+        function onKeyDown(e) {
+            const k = trackedKey(e);
+            if (k === null) return;
+            kbKeys.add(k);
+            e.preventDefault();
+        }
+        function onKeyUp(e) {
+            const k = trackedKey(e);
+            if (k === null) return;
+            kbKeys.delete(k);
+        }
+
+        function buildTwist() {
+            // Shift = 2×, Ctrl + W/S = ½×, Ctrl + A/D = strafe; both held = neither.
+            const shift = kbKeys.has('Shift') && !kbKeys.has('Control');
+            const ctrl  = kbKeys.has('Control') && !kbKeys.has('Shift');
+            const fwd = (kbKeys.has('w') ? 1 : 0) - (kbKeys.has('s') ? 1 : 0);
+            const lr  = (kbKeys.has('a') ? 1 : 0) - (kbKeys.has('d') ? 1 : 0);
+
+            const fwdScale = shift ? 2.0 : (ctrl ? 0.5 : 1.0);
+            const lrScale  = shift ? 2.0 : 1.0;
+            return {
+                linear_x:  fwd * fwdScale,
+                linear_y:  ctrl ? lr : 0,
+                linear_z:  0,
+                angular_z: ctrl ? 0  : lr * lrScale,
+            };
+        }
+
+        function startKeyboardLoop() {
+            window.addEventListener('keydown', onKeyDown);
+            window.addEventListener('keyup', onKeyUp);
+            let twistSeq = 0;
+            kbInterval = setInterval(() => {
+                // Always update key visuals; only send/readout when channel is up.
+                updateKeyVisuals();
+                if (!cmdChannel || cmdChannel.readyState !== 'open') return;
+                const t = buildTwist();
+                const nowMs = Date.now();
+                const ts = new std_msgs.Time({
+                    sec: Math.floor(nowMs / 1000),
+                    nsec: (nowMs % 1000) * 1_000_000,
+                });
+                twistSeq = (twistSeq + 1) & 0x7fffffff;
+                const twist = new geometry_msgs.TwistStamped({
+                    header: new std_msgs.Header({ stamp: ts, frame_id: 'keyboard', seq: twistSeq }),
+                    twist: new geometry_msgs.Twist({
+                        linear: new geometry_msgs.Vector3({ x: t.linear_x, y: t.linear_y, z: t.linear_z }),
+                        angular: new geometry_msgs.Vector3({ x: 0, y: 0, z: t.angular_z }),
+                    }),
+                });
+                cmdChannel.send(twist.encode());
+                const out = document.getElementById('twist-readout');
+                if (out) out.textContent =
+                    `linear.x  = ${t.linear_x.toFixed(2)}\n` +
+                    `linear.y  = ${t.linear_y.toFixed(2)}\n` +
+                    `linear.z  = ${t.linear_z.toFixed(2)}\n` +
+                    `angular.z = ${t.angular_z.toFixed(2)}`;
+            }, sendInterval);
+        }
+
+        function updateKeyVisuals() {
+            const map = { 'w': 'key-w', 's': 'key-s', 'a': 'key-a', 'd': 'key-d',
+                          'Shift': 'key-shift', 'Control': 'key-ctrl' };
+            for (const [k, id] of Object.entries(map)) {
+                const el = document.getElementById(id);
+                if (el) el.classList.toggle('pressed', kbKeys.has(k));
+            }
+        }
+
+        function stopKeyboardLoop() {
+            window.removeEventListener('keydown', onKeyDown);
+            window.removeEventListener('keyup', onKeyUp);
+            if (kbInterval) { clearInterval(kbInterval); kbInterval = null; }
+            kbKeys.clear();
+        }
+
+        // ─── Teleop view ────────────────────────────────────────────────────
+        function renderTeleop(c) {
+            c.innerHTML = `
+            <div class="min-h-screen flex flex-col items-center justify-center p-6 fade-in">
+                <div class="w-full max-w-md text-center">
+                    <h1 class="text-3xl font-bold text-white mb-2">${escHtml(activeRobot?.robot_name || 'Teleop')}</h1>
+                    <div id="teleop-status" class="text-lg text-gray-300 px-4 py-3 bg-gray-900 border border-gray-800 rounded-lg my-4">
+                        Negotiating...
+                    </div>
+                    <button id="disconnectBtn" class="mt-4 px-6 py-2.5 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors">
+                        Disconnect
+                    </button>
+                </div>
+            </div>`;
+            document.getElementById('disconnectBtn').onclick = disconnect;
+        }
+
+        function setStatus(msg) {
+            const el = document.getElementById('teleop-status');
+            if (el) el.textContent = msg;
+        }
+
+        // ─── WebRTC ─────────────────────────────────────────────────────────
+        async function setupWebRTC(sessionId) {
+            setStatus('Negotiating WebRTC...');
+            pc = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }]
+            });
+
+            const sctpPlaceholder = pc.createDataChannel('_sctp_init');
+
+            const iceFailed = new Promise((_, reject) => {
+                pc.oniceconnectionstatechange = () => {
+                    if (pc.iceConnectionState === 'failed' ||
+                        pc.iceConnectionState === 'disconnected') {
+                        reject(new Error('ICE ' + pc.iceConnectionState));
+                    }
+                };
+            });
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            // Non-trickle ICE
+            await new Promise(resolve => {
+                if (pc.iceGatheringState === 'complete') return resolve();
+                pc.onicegatheringstatechange = () => {
+                    if (pc.iceGatheringState === 'complete') resolve();
+                };
+            });
+
+            const data = await api('POST', `/sessions/${sessionId}/join`, {
+                role: 'operator',
+                sdp_offer: pc.localDescription.sdp,
+            });
+            await pc.setRemoteDescription({ type: 'answer', sdp: data.sdp_answer });
+
+            // CF rejects /datachannels/new until the PC is 'connected'.
+            await Promise.race([
+                new Promise((resolve, reject) => {
+                    const check = () => {
+                        if (pc.connectionState === 'connected') resolve();
+                        else if (pc.connectionState === 'failed' ||
+                                 pc.connectionState === 'closed') {
+                            reject(new Error('PC ' + pc.connectionState));
+                        }
+                    };
+                    check();
+                    pc.addEventListener('connectionstatechange', check);
+                }),
+                iceFailed,
+            ]);
+
+            try { sctpPlaceholder.close(); } catch (_) {}
+
+            const bridge = await api('POST', `/sessions/${sessionId}/bridge-datachannel`);
+            if (bridge.cmd_channel_id == null) {
+                throw new Error('Broker did not return cmd_channel_id');
+            }
+
+            cmdChannel = pc.createDataChannel('cmd_unreliable', {
+                negotiated: true,
+                id: bridge.cmd_channel_id,
+                ordered: false,
+                maxRetransmits: 0,
+            });
+            cmdChannel.binaryType = 'arraybuffer';
+
+            await Promise.race([
+                new Promise((resolve, reject) => {
+                    if (cmdChannel.readyState === 'open') return resolve();
+                    cmdChannel.onopen = () => resolve();
+                    cmdChannel.onerror = (e) => reject(e);
+                }),
+                iceFailed,
+            ]);
+        }
+
+        function send(bytes) {
+            if (cmdChannel && cmdChannel.readyState === 'open') {
+                cmdChannel.send(bytes);
+            }
+        }
+
+        // ─── WebXR ──────────────────────────────────────────────────────────
+        function initGL() {
+            const canvas = document.getElementById('canvas');
+            gl = canvas.getContext('webgl', { xrCompatible: true, alpha: true });
+            if (!gl) throw new Error('WebGL not supported');
+            gl.clearColor(0, 0, 0, 0);
+        }
+
+        function processTracking(frame) {
+            const now = performance.now();
+            if (now - lastSendTime < sendInterval) return;
+            lastSendTime = now;
+
+            for (const inputSource of frame.session.inputSources) {
+                const trackingSpace = inputSource.gripSpace || inputSource.targetRaySpace;
+                if (!trackingSpace) continue;
+                const handedness = inputSource.handedness;
+                if (handedness !== 'left' && handedness !== 'right') continue;
+
+                const pose = frame.getPose(trackingSpace, xrRefSpace);
+                if (!pose) continue;
+
+                const pos = pose.transform.position;
+                const rot = pose.transform.orientation;
+                const nowMs = Date.now();
+                const stamp = new std_msgs.Time({
+                    sec: Math.floor(nowMs / 1000),
+                    nsec: (nowMs % 1000) * 1_000_000,
+                });
+
+                const poseStamped = new geometry_msgs.PoseStamped({
+                    header: new std_msgs.Header({ stamp, frame_id: handedness }),
+                    pose: new geometry_msgs.Pose({
+                        position: new geometry_msgs.Point({ x: pos.x, y: pos.y, z: pos.z }),
+                        orientation: new geometry_msgs.Quaternion({ x: rot.x, y: rot.y, z: rot.z, w: rot.w }),
+                    }),
+                });
+                send(poseStamped.encode());
+
+                const gamepad = inputSource.gamepad;
+                if (gamepad) {
+                    const axes = [
+                        gamepad.axes[0] ?? 0.0,
+                        gamepad.axes[1] ?? 0.0,
+                        gamepad.buttons[0]?.value ?? 0.0,
+                        gamepad.buttons[1]?.value ?? 0.0,
+                    ];
+                    const buttons = [];
+                    for (let i = 0; i < gamepad.buttons.length; i++) {
+                        buttons.push(gamepad.buttons[i]?.pressed ? 1 : 0);
+                    }
+                    const joyMsg = new sensor_msgs.Joy({
+                        header: new std_msgs.Header({ stamp, frame_id: handedness }),
+                        axes_length: axes.length,
+                        buttons_length: buttons.length,
+                        axes,
+                        buttons,
+                    });
+                    send(joyMsg.encode());
+                }
+            }
+        }
+
+        function onXRFrame(time, frame) {
+            if (!xrSession) return;
+            xrSession.requestAnimationFrame(onXRFrame);
+            processTracking(frame);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+        }
+
+        async function startVR() {
+            const canvas = document.getElementById('canvas');
+            canvas.style.display = 'block';
+            initGL();
+
+            let session = null;
+            try {
+                session = await navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['local-floor'],
+                    optionalFeatures: ['hand-tracking'],
+                });
+            } catch (e) {
+                session = await navigator.xr.requestSession('immersive-vr', {
+                    requiredFeatures: ['local-floor'],
+                    optionalFeatures: ['hand-tracking'],
+                });
+            }
+
+            xrSession = session;
+            const glLayer = new XRWebGLLayer(session, gl);
+            await session.updateRenderState({ baseLayer: glLayer });
+            xrRefSpace = await session.requestReferenceSpace('local-floor');
+
+            session.addEventListener('end', () => {
+                xrSession = null;
+                disconnect();
+            });
+            session.requestAnimationFrame(onXRFrame);
+        }
+
+        // ─── Disconnect ─────────────────────────────────────────────────────
+        async function disconnect() {
+            try {
+                if (activeRobot && token) {
+                    api('POST', `/sessions/${activeRobot.session_id}/leave`, { reason: 'user_initiated' })
+                        .catch(() => {});
+                }
+            } catch (_) {}
+
+            stopKeyboardLoop();
+            if (xrSession) { await xrSession.end().catch(() => {}); xrSession = null; }
+            if (cmdChannel) { try { cmdChannel.close(); } catch (_) {} cmdChannel = null; }
+            if (pc) { try { pc.close(); } catch (_) {} pc = null; }
+
+            const canvas = document.getElementById('canvas');
+            canvas.style.display = 'none';
+            activeRobot = null;
+            navigate('dashboard');
+        }
+
+        // ─── Init ───────────────────────────────────────────────────────────
+        if (token) navigate('dashboard');
+        else navigate('auth');
+
+        // DevTools-only preview hook — no broker required.
+        window._teleopDev = {
+            previewKeyboard() {
+                cmdChannel = { readyState: 'open', send: () => {} };
+                activeRobot = { session_id: 'preview', robot_name: 'Preview Bot' };
+                navigate('keyboard');
+            },
+            previewVR() {
+                activeRobot = { session_id: 'preview', robot_name: 'Preview Bot' };
+                navigate('teleop');
+            },
+            navigate,
+        };
+    </script>
+</body>
+</html>

@@ -19,6 +19,8 @@ Single sim/real blueprints — pass `--simulation` to run inside MuJoCo, omit fo
 hardware. The underlying coordinator blueprints branch on `global_config.simulation`.
 """
 
+from pathlib import Path
+
 from dimos.control.blueprints.teleop import (
     coordinator_teleop_dual,
     coordinator_teleop_piper,
@@ -26,7 +28,9 @@ from dimos.control.blueprints.teleop import (
     coordinator_teleop_xarm7,
 )
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
+from dimos.memory2.module import Recorder, RecorderConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 from dimos.teleop.quest.quest_types import Buttons
@@ -59,7 +63,22 @@ teleop_quest_xarm7 = autoconnect(
 )
 
 
-# Piper teleop (sim with --simulation, real otherwise): left controller -> piper arm
+class TeleopRecorderConfig(RecorderConfig):
+    db_path: str | Path = "recording_teleop.db"
+
+
+class TeleopRecorder(Recorder):
+    """Records right-controller pose and button state from any quest teleop blueprint.
+
+    Compose at the CLI: ``dimos run teleop-quest-xarm7 teleop-recorder``.
+    """
+
+    right_controller_output: In[PoseStamped]
+    buttons: In[Buttons]
+    config: TeleopRecorderConfig
+
+
+# Single Piper teleop: left controller -> piper arm
 teleop_quest_piper = autoconnect(
     ArmTeleopModule.blueprint(task_names={"left": "teleop_piper"}),
     coordinator_teleop_piper,
@@ -105,6 +124,8 @@ teleop_quest_dual = autoconnect(
 
 
 __all__ = [
+    "TeleopRecorder",
+    "TeleopRecorderConfig",
     "teleop_quest_dual",
     "teleop_quest_piper",
     "teleop_quest_rerun",
