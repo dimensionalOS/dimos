@@ -21,8 +21,19 @@ const SKY    = {
   sunHeight:   0.6,
 };
 
-export default async function build({ scene, THREE, physics, setSky }) {
+export default async function build({ scene, THREE, physics, setSky, setEmbodiment }) {
   setSky(SKY);
+
+  setEmbodiment({
+    embodimentType: 'drone',
+    avatarUrl: '/agent-model/dimsim_unitree_stub.glb',
+    radius: 0.3,
+    halfHeight: 0.1,
+    gravity: 0,
+    maxSpeed: 3.0,
+    turnRate: 2.0,
+    maxAltitude: 8,
+  });
 
   // ── Floor ────────────────────────────────────────────────────────────────
   const floor = new THREE.Mesh(
@@ -142,6 +153,15 @@ export default async function build({ scene, THREE, physics, setSky }) {
   );
   dockDoor.position.set(FLOOR.width / 2 - 0.1, 1.8, 12);
   scene.add(dockDoor);
+
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(0.4, 32, 32),
+    new THREE.MeshPhysicalMaterial({ color: 0x2196f3, roughness: 0.35, metalness: 0.1 }),
+  );
+  ball.position.set(0, 3.0, -10);
+  ball.castShadow = ball.receiveShadow = true;
+  scene.add(ball);
+  physics.dynamicCollider(ball, { shape: 'sphere', mass: 1.0, restitution: 0.6 });
 
   // ── Lights ───────────────────────────────────────────────────────────────
   scene.add(new THREE.HemisphereLight(0xc8d4e0, 0x303030, 0.45));

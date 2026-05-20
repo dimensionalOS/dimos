@@ -68,8 +68,51 @@ The whole `build()` re-runs on every save, so iteration is cheap. Try changing `
 | `physics.staticCollider(mesh, shape)` | Make a mesh solid (agent can't walk through, lidar hits it). `shape`: `'box'` \| `'trimesh'` \| `'sphere'`. |
 | `physics.dynamicCollider(mesh, {mass, shape})` | Mesh becomes a rigid body — falls, can be pushed. Engine syncs `mesh.position` each frame. |
 | `setSky({...})` | Atmosphere. Keys: `topColor`, `horizonColor`, `bottomColor`, `brightness`, `softness`, `sunStrength`, `sunHeight`. |
+| `setEmbodiment({...})` | Declare the agent — avatar GLB + capsule dimensions + physics mode + control params. See "Robot embodiment" below. |
 | `loadGLTF(url)` | Async GLB load — `await loadGLTF('./forklift.glb')` returns `{scene, animations, …}`. |
 | `agent`, `camera`, `renderer`, `RAPIER`, `rapierWorld` | Live engine refs if you need them. |
+
+## Robot embodiment
+
+`setEmbodiment(config)` swaps the avatar mesh **and** reconfigures the bridge's server-side physics + lidar mount — so changing `embodimentType` from `'ground'` to `'drone'` instantly switches the cmd_vel → motion mapping from differential-drive (with gravity) to 6DoF flight (no gravity, altitude clamp).
+
+```js
+// ground robot (default)
+setEmbodiment({
+  embodimentType: 'ground',
+  avatarUrl:    '/agent-model/dimsim_unitree_stub.glb',
+  radius:       0.18,
+  halfHeight:   0.25,
+  maxSpeed:     1.5,
+  turnRate:     2.5,
+  gravity:      -9.81,
+});
+
+// drone
+setEmbodiment({
+  embodimentType: 'drone',
+  avatarUrl:    '/agent-model/dimsim_unitree_stub.glb',
+  radius:       0.3,
+  halfHeight:   0.1,
+  gravity:       0,
+  maxSpeed:      3.0,
+  turnRate:      2.0,
+  maxAltitude:   8,
+});
+```
+
+| Field | What |
+|---|---|
+| `embodimentType` | `'ground'` (differential-drive + gravity) or `'drone'` (6DoF). |
+| `avatarUrl` | URL of the GLB to render. Bridge serves `/agent-model/*` from `public/`. |
+| `radius`, `halfHeight` | Capsule collider dimensions. Also drive lidar mount height. |
+| `maxSpeed` | Linear cmd_vel scale. |
+| `turnRate` | Angular.z cmd_vel scale. |
+| `gravity` | m/s². `0` for flight, `-9.81` for ground. |
+| `maxAltitude` | Drone-only ceiling. |
+| `lidarMountHeight`, `maxStepHeight`, `groundSnapDist`, `maxSlopeAngle`, `friction` | Optional fine-tuning. |
+
+Call it once at scene-build time (anywhere in `build()`), or call it again later to swap mid-scene.  `scenes/warehouse/index.js` declares a drone as its first line — see it for a working example.
 
 ## Return value
 
