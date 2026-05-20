@@ -41,7 +41,7 @@ _a750_cfg = _catalog_a750(
 # Piper 6-DOF mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_a750 = autoconnect(
     KeyboardTeleopModule.blueprint(
-        model_path=str(A750_FK_MODEL),
+        model_path=A750_FK_MODEL,
         ee_joint_id=_a750_cfg.dof,
         home_joints=_a750_cfg.home_joints,
     ),
