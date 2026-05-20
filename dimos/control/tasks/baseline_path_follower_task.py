@@ -46,14 +46,17 @@ from dimos.control.tasks.velocity_tracking_pid import (
     VelocityTrackingConfig,
     VelocityTrackingPID,
 )
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.replanning_a_star.controllers import PController
 from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
+from dimos.utils.benchmarking.velocity_profile import PathSpeedCap, VelocityProfileConfig
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 
 if TYPE_CHECKING:
     from dimos.core.global_config import GlobalConfig
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.nav_msgs.Path import Path
 
 logger = setup_logger()
@@ -80,6 +83,8 @@ class BaselinePathFollowerTaskConfig:
     # Optional static feedforward plant-gain compensator (Strategy B).
     # cmd_to_robot = controller_cmd / K_plant. No actual feedback needed.
     ff_config: FeedforwardGainConfig | None = None
+    # Optional curvature velocity-profile cap. None ⟹ off
+    velocity_profile_config: VelocityProfileConfig | None = None
 
 
 class BaselinePathFollowerTask(BaseControlTask):
@@ -111,6 +116,11 @@ class BaselinePathFollowerTask(BaseControlTask):
         self._ff: FeedforwardGainCompensator | None = (
             FeedforwardGainCompensator(config.ff_config) if config.ff_config else None
         )
+        self._profile_cap: PathSpeedCap | None = (
+            PathSpeedCap(config.velocity_profile_config)
+            if config.velocity_profile_config is not None
+            else None
+        )
 
         self._state: BaselineState = "idle"
         self._path: Path | None = None
@@ -141,7 +151,22 @@ class BaselinePathFollowerTask(BaseControlTask):
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         if not self.is_active():
             return None
-        if self._path is None or self._distancer is None or self._current_odom is None:
+        if self._path is None or self._distancer is None:
+            return None
+
+        # Pull pose from CoordinatorState. The twist-base ConnectedHardware
+        # routes adapter.read_odometry() -> [x, y, yaw]
+        pos = state.joints.joint_positions
+        x = pos.get(self._joint_names_list[0])
+        y = pos.get(self._joint_names_list[1])
+        yaw = pos.get(self._joint_names_list[2])
+        if x is not None and y is not None and yaw is not None:
+            self._current_odom = PoseStamped(
+                ts=state.t_now,
+                position=Vector3(float(x), float(y), 0.0),
+                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(yaw))),
+            )
+        if self._current_odom is None:
             return None
 
         match self._state:
@@ -163,6 +188,12 @@ class BaselinePathFollowerTask(BaseControlTask):
         elif self._ff is not None:
             # Static gain compensation: cmd_to_robot = controller_cmd / K_plant
             vx, vy, wz = self._ff.compute(vx, vy, wz)
+
+        # Curvature velocity-profile cap (preserves commanded turn radius).
+        if self._profile_cap is not None:
+            vx, vy, wz = self._profile_cap.cap(
+                self._current_odom.position.x, self._current_odom.position.y, vx, vy, wz
+            )
 
         return JointCommandOutput(
             joint_names=self._joint_names_list,
@@ -268,6 +299,8 @@ class BaselinePathFollowerTask(BaseControlTask):
             self._pid.reset()
         if self._ff is not None:
             self._ff.reset()
+        if self._profile_cap is not None:
+            self._profile_cap.for_path(path)
 
         first_yaw = path.poses[0].orientation.euler[2]
         robot_yaw = current_odom.orientation.euler[2]
@@ -290,6 +323,10 @@ class BaselinePathFollowerTask(BaseControlTask):
         return True
 
     def update_odom(self, odom: PoseStamped) -> None:
+        # Pose now flows in through compute()'s CoordinatorState (sourced
+        # from the twist-base adapter's read_odometry → joint positions).
+        # This setter is kept as a no-op-or-override seam so out-of-tree
+        # callers that still pump odom externally don't break.
         self._current_odom = odom
 
     def cancel(self) -> bool:
