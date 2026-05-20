@@ -9,6 +9,38 @@ Entries are listed in reverse chronological order.
 ## 2026-05-20
 
 - Branch: `refactor/go2-architecture-layers`
+- Summary: Started Go2 Layer 5 construction by adding a static skill-interface
+  contract registry, connecting it into the full Go2 skill-interface layer, and
+  exposing the contract summary to Layer 3 `ContextProvider`. The Layer 5
+  package entrypoint now lazily builds blueprint variables so lightweight spec
+  imports do not pull in the full skill dependency stack.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_5_skill_interface/__init__.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_5_skill_interface/skill_interface_registry.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_5_skill_interface/skill_interface_spec.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_5_skill_interface/test_skill_interface_registry.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_5_skill_interface/DESIGN.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/DESIGN.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/GOAL_1.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran `python -m py_compile` for the new Layer 5 spec/registry/test files,
+    the Layer 5 package entrypoint, and the changed Layer 3 ContextProvider
+    files.
+  - Copied the working tree to `~/dimos-layer-test` in WSL and ran the focused
+    Layer 3 + Layer 4 + Layer 5 test suite with a minimal pytest dependency
+    set: `27 passed, 1 warning`.
+- Open items:
+  - Compare the static Layer 5 contracts against the MCP server tool list in a
+    later version so renamed or missing skills are detected automatically.
+  - Add more precise constraints for Unitree sport commands and perception
+    callback payloads.
+
+## 2026-05-20
+
+- Branch: `refactor/go2-architecture-layers`
 - Summary: Started Go2 Layer 4 construction by adding RPC-only
   semantic-temporal memory and structured world-state facades, then connected
   Layer 3 `ContextProvider` to prefer the Layer 4 world snapshot when present.

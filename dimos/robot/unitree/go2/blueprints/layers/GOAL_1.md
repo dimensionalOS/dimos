@@ -45,6 +45,10 @@ layers/
     test_*.py                    # focused Layer 4 tests
   layer_5_skill_interface/
     __init__.py                  # Go2 skill-interface blueprint pieces
+    skill_interface_registry.py  # static Go2 skill contract registry
+    skill_interface_spec.py      # Layer 5 RPC spec
+    DESIGN.md                    # Layer 5 implementation logic
+    test_*.py                    # focused Layer 5 tests
   layer_6_robot_body/
     __init__.py                  # Go2 robot-body/local-policy blueprint piece
 ```
@@ -94,6 +98,23 @@ Current Layer 4 modules:
 Layer 4 V1 is intentionally a facade over existing modules. The existing
 `SpatialMemory` and lazy `TemporalMemory` implementations stay in their current
 packages.
+
+## Layer 5 Direction
+
+Layer 5 owns the skill-interface boundary. It should tell upper layers which
+Go2 skills exist, what arguments each skill expects, which skills are
+motion-sensitive, and what preflight checks should run before execution.
+
+Current Layer 5 V1 keeps existing skill containers unchanged and adds
+`_Go2SkillInterfaceRegistry` as an RPC-only contract registry. The registry
+does not execute skills. It returns static contracts for current Go2 skills,
+including navigation, person following, Unitree motion/utility commands,
+perception lookout, security patrol, and speech. `ContextProvider` reads this
+registry through `SkillInterfaceSpec` and includes a compact skill-interface
+summary in `get_context(...)`.
+
+Layer 5 V2 should compare the static contracts with the MCP server tool list so
+renamed or missing skills are detected automatically.
 
 ## ExpertRouter Direction
 

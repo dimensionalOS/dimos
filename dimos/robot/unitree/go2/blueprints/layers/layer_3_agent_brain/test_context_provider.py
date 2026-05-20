@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
 import json
+from typing import Any
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.navigation.base import NavigationState
@@ -76,6 +76,33 @@ class StubSkillOutcomes:
                 "error_code": "EXECUTION_FAILED",
             }
         ][:limit]
+
+
+class StubSkillInterface:
+    def get_skill_interface_snapshot(self, domain: str = "") -> dict[str, Any]:
+        return {
+            "available": True,
+            "version": "v1",
+            "domain_filter": domain,
+            "domains": ["navigation"],
+            "skill_count": 1,
+            "skills": [
+                {
+                    "skill_name": "navigate_with_text",
+                    "domain": "navigation",
+                    "required_args": ["query"],
+                    "motion_sensitive": True,
+                }
+            ],
+        }
+
+    def get_skill_contract(self, skill_name: str) -> dict[str, Any] | None:
+        if skill_name == "navigate_with_text":
+            return self.get_skill_interface_snapshot()["skills"][0]
+        return None
+
+    def validate_skill_request(self, skill_name: str, args_json: str = "{}") -> dict[str, Any]:
+        return {"valid": True, "skill_name": skill_name, "errors": [], "warnings": []}
 
 
 class StubCausalWorldModel:
@@ -147,6 +174,7 @@ def test_get_context_aggregates_available_sources() -> None:
         provider._temporal_memory = StubTemporalMemory()  # type: ignore[assignment]
         provider._navigation = StubNavigation()  # type: ignore[assignment]
         provider._skill_outcomes = StubSkillOutcomes()  # type: ignore[assignment]
+        provider._skill_interface = StubSkillInterface()  # type: ignore[assignment]
         provider._causal_world_model = StubCausalWorldModel()  # type: ignore[assignment]
         provider._latest_odom = PoseStamped(position=[1.0, 2.0, 0.0], frame_id="map")
 
@@ -160,6 +188,8 @@ def test_get_context_aggregates_available_sources() -> None:
         assert result.metadata["world_state"]["spatial"]["matches"][0]["distance"] == 0.12
         assert result.metadata["world_state"]["temporal"]["rolling_summary"]
         assert result.metadata["skill_state"]["recent_outcomes"][0]["success"] is False
+        assert result.metadata["skill_state"]["interface"]["skill_count"] == 1
+        assert "Skill interface: 1 contract(s)" in result.message
         assert result.metadata["causal_state"]["recent_transitions"][0]["outcome_success"] is False
 
         encoded = json.loads(result.agent_encode()[0]["text"])

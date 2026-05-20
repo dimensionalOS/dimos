@@ -39,6 +39,9 @@ from dimos.robot.unitree.go2.blueprints.layers.layer_3_agent_brain.skill_outcome
 from dimos.robot.unitree.go2.blueprints.layers.layer_4_world_state.world_state_spec import (
     WorldStateSpec,
 )
+from dimos.robot.unitree.go2.blueprints.layers.layer_5_skill_interface.skill_interface_spec import (
+    SkillInterfaceSpec,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -53,6 +56,7 @@ class _Go2ContextProvider(Module):
     _navigation: NavigationInterfaceSpec | None = None
     _skill_outcomes: SkillOutcomeStoreSpec | None = None
     _causal_world_model: CausalWorldModelSpec | None = None
+    _skill_interface: SkillInterfaceSpec | None = None
     _latest_odom: PoseStamped | None = None
 
     odom: In[PoseStamped]
@@ -120,6 +124,7 @@ class _Go2ContextProvider(Module):
             "navigation": self._navigation is not None or bool(layer4_sources.get("navigation")),
             "skill_outcomes": self._skill_outcomes is not None,
             "causal_world_model": self._causal_world_model is not None,
+            "skill_interface": self._skill_interface is not None,
             "runtime": True,
         }
 
@@ -201,15 +206,38 @@ class _Go2ContextProvider(Module):
         }
 
     def _skill_context(self, errors: list[str]) -> dict[str, Any]:
+        skill_interface = self._skill_interface_context(errors)
         if self._skill_outcomes is None:
-            return {"available": False, "recent_outcomes": []}
+            return {
+                "available": False,
+                "recent_outcomes": [],
+                "interface": skill_interface,
+            }
         try:
             recent = self._skill_outcomes.get_recent_outcomes(limit=5)
         except Exception as exc:
             logger.warning("Failed to read skill-outcome context", exc_info=True)
             errors.append(f"skill_outcomes: {exc}")
-            return {"available": True, "recent_outcomes": []}
-        return {"available": True, "recent_outcomes": recent}
+            return {
+                "available": True,
+                "recent_outcomes": [],
+                "interface": skill_interface,
+            }
+        return {
+            "available": True,
+            "recent_outcomes": recent,
+            "interface": skill_interface,
+        }
+
+    def _skill_interface_context(self, errors: list[str]) -> dict[str, Any]:
+        if self._skill_interface is None:
+            return {"available": False, "skills": []}
+        try:
+            return self._skill_interface.get_skill_interface_snapshot()
+        except Exception as exc:
+            logger.warning("Failed to read skill-interface context", exc_info=True)
+            errors.append(f"skill_interface: {exc}")
+            return {"available": True, "skills": []}
 
     def _causal_context(self, errors: list[str]) -> dict[str, Any]:
         if self._causal_world_model is None:
@@ -338,6 +366,14 @@ class _Go2ContextProvider(Module):
             lines.append("Skill outcomes: available, no recorded outcomes")
         else:
             lines.append("Skill outcomes: unavailable")
+
+        skill_interface = skill_state.get("interface") or {}
+        if skill_interface.get("available"):
+            lines.append(
+                f"Skill interface: {skill_interface.get('skill_count', 0)} contract(s)"
+            )
+        else:
+            lines.append("Skill interface: unavailable")
 
         causal_state = metadata.get("causal_state", {})
         recent_transitions = causal_state.get("recent_transitions") or []

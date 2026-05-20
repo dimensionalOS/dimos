@@ -122,7 +122,8 @@ Each implementation note should cover:
   - Direct arguments: `task`, `focus`, `spatial_limit`.
   - Stream state: latest `odom` message cached by `_on_odom`.
   - Optional injected Specs: `SpatialMemorySpec`, `TemporalMemorySpec`,
-    `NavigationInterfaceSpec`, `SkillOutcomeStoreSpec`.
+    `NavigationInterfaceSpec`, `SkillOutcomeStoreSpec`,
+    `SkillInterfaceSpec`.
   - Runtime config: `global_config.simulation`, `replay`, `robot_ip`, `viewer`,
     `mcp_port`, and `n_workers`.
 - Storage:
@@ -135,6 +136,7 @@ Each implementation note should cover:
   - Temporal memory: `get_rolling_summary()` and `get_state()`.
   - Navigation: `get_state()` and `is_goal_reached()`.
   - Skill history: `get_recent_outcomes(limit=5)`.
+  - Skill interface: `get_skill_interface_snapshot()`.
 - Algorithm:
   - Trim `task` and `focus`.
   - Reject empty `task` with `SkillResult.fail("INVALID_INPUT", ...)`.
@@ -143,6 +145,8 @@ Each implementation note should cover:
     `world_state`, `skill_state`, and `external_context`.
   - Catch dependency failures per source and append readable warnings to
     `errors` instead of failing the whole context request.
+  - Include Layer 5 skill-interface contracts under
+    `skill_state.interface` when the registry is wired.
   - Convert metadata through `_to_jsonable(...)` so MCP responses stay compact
     and serializable.
   - Format a short text summary for the LLM.
@@ -154,6 +158,8 @@ Each implementation note should cover:
   - External context is represented as unavailable.
   - Context compression is deterministic formatting, not learned retrieval.
   - It reads existing stores but does not decide whether a skill should run.
+  - Layer 5 contract details are summarized; full contract validation stays in
+    `SkillInterfaceRegistry`.
 
 ### `_Go2ExpertRouter.route_task(...)`
 
