@@ -129,8 +129,14 @@ export async function runEvalsMultiPage(options: RunEvalsMultiPageOptions): Prom
   if (workflows.length === 0 || options.channels.length === 0) return [];
 
   // Open one socket per channel.
+  // Two query params:
+  //   channel=<name>  → routes the WS to that channel's bridge state
+  //   ch=control      → marks it as a control (not sensor) socket so text
+  //                     frames (the `runEval` JSON) are processed, not dropped
   const sockets = await Promise.all(
-    options.channels.map((ch) => _connect(`${options.wsUrl}/?ch=${encodeURIComponent(ch)}`)),
+    options.channels.map((ch) =>
+      _connect(`${options.wsUrl}/?channel=${encodeURIComponent(ch)}&ch=control`),
+    ),
   );
 
   // Round-robin workflows across sockets.
@@ -191,13 +197,18 @@ function _connect(wsUrl: string): Promise<WebSocket> {
 
 function _runOne(ws: WebSocket, wf: WorkflowEntry): Promise<EvalResult> {
   return new Promise((resolve) => {
+    const cleanup = () => {
+      ws.removeEventListener("message", onMessage);
+      ws.removeEventListener("error", onFail);
+      ws.removeEventListener("close", onFail);
+    };
     const onMessage = (event: MessageEvent) => {
       if (typeof event.data !== "string") return;
       let msg: any;
       try { msg = JSON.parse(event.data); } catch { return; }
       if (msg.type !== "evalResult") return;
       if (msg.workflowUrl && msg.workflowUrl !== wf.url) return;
-      ws.removeEventListener("message", onMessage);
+      cleanup();
       resolve({
         scene: wf.scene,
         workflow: wf.workflow,
@@ -209,7 +220,27 @@ function _runOne(ws: WebSocket, wf: WorkflowEntry): Promise<EvalResult> {
         durationMs: msg.durationMs ?? 0,
       });
     };
+    // If the socket closes or errors before the result lands, fail the eval
+    // instead of hanging the entire runEvals call forever.
+    const onFail = (event: Event) => {
+      cleanup();
+      const reason = event.type === "close"
+        ? "websocket closed before evalResult"
+        : "websocket error before evalResult";
+      resolve({
+        scene: wf.scene,
+        workflow: wf.workflow,
+        workflowUrl: wf.url,
+        task: "",
+        passed: false,
+        reason,
+        score: null,
+        durationMs: 0,
+      });
+    };
     ws.addEventListener("message", onMessage);
+    ws.addEventListener("error", onFail);
+    ws.addEventListener("close", onFail);
     ws.send(JSON.stringify({ type: "runEval", workflowUrl: wf.url }));
   });
 }

@@ -77,8 +77,14 @@ export async function startBridgeServer(options: BridgeServerOptions) {
   } = options;
 
   // Scene the engine boots into.  Injected as window.__dimosScene below so
-  // engine.js dynamically imports /scenes/<name>/index.js.
-  const activeSceneName: string = scene || "empty";
+  // engine.js dynamically imports /scenes/<name>/index.js. Sanitize to a
+  // restricted charset so the value can't escape the <script> string literal
+  // it ends up interpolated into.
+  const rawScene = scene || "empty";
+  if (!/^[a-zA-Z0-9_-]+$/.test(rawScene)) {
+    throw new Error(`invalid --scene "${rawScene}" — must match [a-zA-Z0-9_-]+`);
+  }
+  const activeSceneName: string = rawScene;
 
   // Event-loop lag probe — fire setTimeout(0) every 50ms; difference between
   // expected and actual fire time is contention-induced lag. If physics misses

@@ -189,7 +189,7 @@ async function main() {
   // ── Dev ─────────────────────────────────────────────────────────────
   if (subcommand === "dev") {
     const distDir = await resolveDistDir();
-    const scene = (opts.scene as string) || "apt";
+    const scene = (opts.scene as string) || "apartment";
     const headless = opts.headless === true;
     const render = ((opts.render as string) === "cpu" ? "cpu" : "gpu") as RenderMode;
     const numChannels = Math.max(1, parseInt(opts.channels as string) || 1);
