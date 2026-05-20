@@ -142,13 +142,6 @@ main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 main.add_typer(go2tool_app, name="go2tool")
 
 
-def _format_arg_default(value: Any) -> str:
-    with suppress(AttributeError):
-        filename = object.__getattribute__(value, "_lfs_filename")
-        return f"LfsPath({filename})"
-    return str(value)
-
-
 def arg_help(
     config: type[BaseModel],
     blueprint: Blueprint,
@@ -183,7 +176,7 @@ def arg_help(
             display_type = t.__name__ if isinstance(t, type) else t
             required = "[Required] " if info.is_required() and k not in _atom.kwargs else ""
             d = _atom.kwargs.get(k, info.default)
-            default = f" (default: {_format_arg_default(d)})" if d is not PydanticUndefined else ""
+            default = f" (default: {d})" if d is not PydanticUndefined else ""
             output += f"{indent}* {required}{module}{k}: {display_type}{default}\n"
     return output
 
