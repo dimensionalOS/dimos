@@ -8,28 +8,16 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <!-- Import map so eval workflows can `import { runEval } from '@dimsim/eval'`.
-         Vite pins the harness chunk (src/evals/harness.ts) to a stable
-         filename (see vite.config.js → chunkFileNames), so workflow files
-         get the same module the engine loaded — sharing the singleton
-         state registered via setEvalHarness(). -->
+    <!-- Eval workflows import from '@dimsim/eval' via this map; Vite pins the chunk in vite.config.js. -->
     <script type="importmap">
     { "imports": { "@dimsim/eval": "/assets/dimsim-eval.js" } }
     </script>
   </head>
   <body>
-    <!-- Force sim mode before main.js loads -->
-    <script>
-      localStorage.setItem("sparkWorldMode", "sim");
-      window.__SIM_PROFILE__ = "sim-only";
-    </script>
-
     <canvas id="c"></canvas>
     <div id="overlay">
-      <!-- Status for Sim mode -->
       <div id="status-sim" class="status-floating sim-only"></div>
-      <!-- Also provide hidden #status for main.js compat -->
-      <div id="status" style="display:none;"></div>
+      <div id="status" hidden></div>
 
       <!-- Crosshair -->
       <div id="crosshair" aria-hidden="true"></div>
@@ -40,16 +28,8 @@
           <span class="panel-title">DimSim</span>
           <button id="sim-panel-collapse" class="mode-toggle" type="button" title="Collapse panel">◀</button>
         </div>
-        
+
         <div class="panel-content">
-          <!-- Load Scene (DimSim: dropdown from sims/ folder) -->
-          <div class="panel-section" style="padding:10px 12px; border-bottom: 1px solid rgba(255,255,255,0.06);">
-            <div style="display:flex; gap:6px; align-items:center;">
-              <select id="sim-select" class="tb-select" style="flex:1;" title="Select scene">
-                <option value="">Select a scene...</option>
-              </select>
-              <button id="sim-load-btn" type="button" class="tb-btn tb-primary" title="Load">Load</button>
-            </div>
             <div id="scene-info" style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:4px;">No scene loaded</div>
             <input id="sim-level-import" type="file" accept=".json" style="display:none;" />
 
@@ -135,15 +115,7 @@
             <div id="agent-log" class="agent-log"></div>
           </details>
         </div>
-        
-        <div class="panel-footer">
-          <div class="shortcuts">
-            <span><b>WASD</b> move</span>
-            <span><b>E</b> interact</span>
-            <span><b>B</b> spawn</span>
-            <span><b>G</b> ghost</span>
-          </div>
-        </div>
+
       </div>
       <button id="sim-panel-open" class="sim-panel-open sim-only hidden" type="button" title="Open panel">☰</button>
 
@@ -169,52 +141,8 @@
       </div>
 
     </div>
-    
+
     <img src="/logo.svg" alt="" class="watermark-logo" />
     <script type="module" src="/src/main.js"></script>
-    <script type="module">
-      // Populate sim dropdown from manifest
-      async function populateSimDropdown() {
-        const select = document.getElementById("sim-select");
-        if (!select) return;
-        try {
-          const resp = await fetch("/sims/manifest.json");
-          if (!resp.ok) return;
-          const sims = await resp.json();
-          for (const name of sims) {
-            const opt = document.createElement("option");
-            opt.value = `/sims/${name}.json`;
-            opt.textContent = name.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-            select.appendChild(opt);
-          }
-        } catch (e) { console.warn("Could not load sim manifest:", e); }
-      }
-      populateSimDropdown();
-
-      // Load selected sim
-      document.getElementById("sim-load-btn")?.addEventListener("click", async () => {
-        const select = document.getElementById("sim-select");
-        const url = select?.value;
-        if (!url) return;
-        const info = document.getElementById("scene-info");
-        try {
-          if (info) info.textContent = "Loading...";
-          const resp = await fetch(url);
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const json = await resp.json();
-          const blob = new Blob([JSON.stringify(json)], { type: "application/json" });
-          const file = new File([blob], url.split("/").pop(), { type: "application/json" });
-          const dt = new DataTransfer();
-          dt.items.add(file);
-          const input = document.getElementById("sim-level-import");
-          if (input) { input.files = dt.files; input.dispatchEvent(new Event("change", { bubbles: true })); }
-          const name = url.split("/").pop().replace(".json", "");
-          if (info) info.textContent = `Loaded: ${name}`;
-        } catch (e) {
-          console.error(e);
-          if (info) info.textContent = `Failed: ${e.message}`;
-        }
-      });
-    </script>
   </body>
 </html>

@@ -26,7 +26,7 @@ const AGENT_PY = resolve(CLI_DIR, "agent.py");
 /**
  * Build dist/ from the repo's own sources using Deno's npm compat.
  * Everything needed is already in-tree: src/ (engine), public/ (scenes,
- * agent-model, logo). Vite bundles src/ and copies public/ verbatim, so
+ * embodiment, logo). Vite bundles src/ and copies public/ verbatim, so
  * no assets need to be downloaded from GitHub releases, and npm/Node are
  * not required — Deno runs Vite directly.
  *

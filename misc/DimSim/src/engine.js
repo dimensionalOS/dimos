@@ -3,14 +3,6 @@ import "./style.css";
 import * as THREE from "three";
 import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
 import { AiAvatar } from "./AiAvatar.js";
-// Side-effect: assigning to a window global keeps Vite from tree-shaking
-// the dynamic-import expression, so the IFC bundle is emitted as a chunk
-// (dist/assets/dimsim-ifc.js) regardless of whether engine.js actually
-// uses it.  Scenes import via `@dimsim/ifc` through the importmap.
-if (typeof window !== "undefined") {
-  /** @internal — escape hatch if a scene wants to load IFC programmatically. */
-  window.__loadIfcLoader = () => import("./ifc-loader.ts");
-}
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
@@ -5581,17 +5573,19 @@ function despawnEphemeralAgents(reason = "task-end") {
   for (const a of doomed) removeAiAgent(a, reason);
 }
 
-function createAiAgent({ ephemeral = false, avatarUrl } = {}) {
+function createAiAgent({ ephemeral = false, avatarUrl, radius, halfHeight } = {}) {
   const id = `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const _avatarUrl = avatarUrl !== undefined
     ? avatarUrl
-    : ["/agent-model/dimsim_unitree_stub.glb"];
+    : ["/embodiment/dimsim_unitree_stub.glb"];
   const agent = new AiAvatar({
     id,
     scene,
     rapierWorld,
     RAPIER,
     avatarUrl: _avatarUrl,
+    radius,
+    halfHeight,
     // Headless mode in dimos: skip visual rendering, keep colliders for physics
     headless: false,
   });
@@ -6187,9 +6181,14 @@ function _findSceneFloorY(x = 0, z = 0) {
     0,
     fromY + 500,
   );
+  // Pure-Three.js scenes (e.g. apartment loading structure.glb directly via
+  // loadGLTF + scene.add) put their floor outside of assetsGroup/primitivesGroup.
+  // Ray-cast the full scene as a third target — the worldN.y >= 0.5 filter
+  // below still rules out walls, ceilings, and the skybox.
   const hits = [
     ...raycaster.intersectObject(assetsGroup, true),
     ...raycaster.intersectObject(primitivesGroup, true),
+    ...raycaster.intersectObject(scene, true),
   ];
   let floorY = null;
   for (const h of hits) {
@@ -7142,7 +7141,13 @@ if (dimosMode) {
       // default avatarUrl (the dimsim_unitree_stub.glb) take over.  The legacy
       // "hide the group when no embodiment" path predates dimos integration and
       // is no longer reached here.
-      const agent = createAiAgent({ ephemeral: false });
+      const pendingEmb = sceneApi._getPendingEmbodiment?.();
+      const agent = createAiAgent({
+        ephemeral: false,
+        avatarUrl: pendingEmb?.avatarUrl,
+        radius: pendingEmb?.radius,
+        halfHeight: pendingEmb?.halfHeight,
+      });
       aiAgents.push(agent);
       sceneApi._setAgent(agent);
       const spawnPos = sceneCfg.spawnPoint || { x: 2, y: 0.5, z: 3 };

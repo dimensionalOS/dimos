@@ -10,8 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@sparkjsdev/spark": "latest",
     "@dimforge/rapier3d-compat": "^0.14.0",
+    "@sparkjsdev/spark": "latest",
     "three": "^0.168.0"
   },
   "devDependencies": {

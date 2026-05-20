@@ -6,3 +6,4 @@ dist/
 .deno/
 scenes.json
 scenes/**/apt.json
+scripts/

@@ -99,10 +99,10 @@ export function setSky(opts: Record<string, any>): void {
  * the GLB and re-asserts visibility immediately.
  *
  * Typical configs:
- *   setEmbodiment({ embodimentType: 'ground', avatarUrl: '/agent-model/dimsim_unitree_stub.glb',
+ *   setEmbodiment({ embodimentType: 'ground', avatarUrl: '/embodiment/dimsim_unitree_stub.glb',
  *                   radius: 0.18, halfHeight: 0.25, maxSpeed: 1.5, turnRate: 2.5 });
  *
- *   setEmbodiment({ embodimentType: 'drone',  avatarUrl: '/agent-model/drone.glb',
+ *   setEmbodiment({ embodimentType: 'drone',  avatarUrl: '/embodiment/drone.glb',
  *                   radius: 0.3, halfHeight: 0.1, gravity: 0, maxSpeed: 3.0 });
  *
  * All fields are forwarded to the bridge's EmbodimentConfig (see
@@ -111,17 +111,21 @@ export function setSky(opts: Record<string, any>): void {
  */
 let _pendingEmbodiment: Record<string, any> | null = null;
 
+export function _getPendingEmbodiment(): Record<string, any> | null {
+  return _pendingEmbodiment;
+}
+
 export function setEmbodiment(config: Record<string, any>): void {
   if (!_sendPhysics) throw new Error("scene-api not initialized");
   const w = window as any;
   if (w.__dimosBridge) {
+    console.log("[sceneApi] setEmbodiment applying:", config.embodimentType, "gravity=" + config.gravity);
     if (w.__dimosBridge._handleEmbodimentConfig) {
       w.__dimosBridge._handleEmbodimentConfig(config);
     }
     _sendPhysics({ type: "embodimentConfig", ...config });
   } else {
-    // Scene build() runs before engine.js wires up window.__dimosBridge.
-    // Queue and flush from engine.js once the bridge is constructed.
+    console.log("[sceneApi] setEmbodiment queued (bridge not ready):", config.embodimentType);
     _pendingEmbodiment = config;
   }
 }

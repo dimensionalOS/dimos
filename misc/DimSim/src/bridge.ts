@@ -153,6 +153,7 @@ export class DimosBridge {
       console.log("[DimosBridge] control WS connected");
       this._connected = true;
       this._startPublishing();
+      this._flushPendingCommands();
     };
 
     this.wsControl.onmessage = (event: MessageEvent) => {
@@ -525,12 +526,26 @@ export class DimosBridge {
     }
   }
 
-  /** Send a JSON command on the control WebSocket (used by EvalHarness). */
+  _pendingCommands: Record<string, any>[] = [];
+
+  /** Send a JSON command on the control WebSocket.  Queues if the socket
+   * isn't OPEN yet — _flushPendingCommands() drains on onopen. */
   sendCommand(cmd: Record<string, any>): void {
     const ws = this.wsControl;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(cmd));
+    } else {
+      this._pendingCommands.push(cmd);
     }
+  }
+
+  _flushPendingCommands(): void {
+    const ws = this.wsControl;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const pending = this._pendingCommands;
+    this._pendingCommands = [];
+    if (pending.length) console.log(`[DimosBridge] flushing ${pending.length} queued command(s)`);
+    for (const cmd of pending) ws.send(JSON.stringify(cmd));
   }
 
   dispose(): void {

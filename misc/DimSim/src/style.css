@@ -1048,11 +1048,14 @@ html[data-mode="sim"] .side-panel {
   padding: 1px 5px;
 }
 
-/* Dimos-only: hide the sim side panel and command bar — leave only
-   top-left status + bottom-left WASD shortcuts visible. */
+/* Dimos-only: hide the sim side panel + command bar + top-left status
+   pill (the small "Click to look around" + B/G chip is the human-player
+   prompt; the agent is driven externally).  Bottom-left WASD shortcuts
+   stay visible. */
 body.dimos-mode #agent-panel,
 body.dimos-mode #sim-panel-open,
-body.dimos-mode #agent-command-bar {
+body.dimos-mode #agent-command-bar,
+body.dimos-mode .status-floating {
   display: none !important;
 }
 

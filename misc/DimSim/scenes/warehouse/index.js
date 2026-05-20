@@ -21,8 +21,18 @@ const SKY    = {
   sunHeight:   0.6,
 };
 
-export default async function build({ scene, THREE, physics, setSky }) {
+export default async function build({ scene, THREE, physics, setSky, setEmbodiment, loadGLTF }) {
   setSky(SKY);
+
+  setEmbodiment({
+    embodimentType: 'ground',
+    radius: 0.3,
+    halfHeight: 0.85,
+    lidarMountHeight: 1.6,
+    gravity: -9.81,
+    maxSpeed: 1.4,
+    turnRate: 2.5,
+  });
 
   // ── Floor ────────────────────────────────────────────────────────────────
   const floor = new THREE.Mesh(
@@ -152,6 +162,18 @@ export default async function build({ scene, THREE, physics, setSky }) {
   scene.add(ball);
   physics.dynamicCollider(ball, { shape: 'sphere', mass: 1.0, restitution: 0.6 });
 
+  // ── Cross-scene GLB import test: pull the sectional out of apartment ─────
+  // The dedup'd GLB references textures via `../_textures/<hash>.png` which
+  // resolves relative to the GLB's URL — so loading it from any other scene
+  // still resolves correctly into /scenes/apartment/objects/_textures/.
+  const sectional = await loadGLTF('../apartment/objects/modern-l-shaped-sectional/state-default.glb');
+  sectional.scene.traverse((o) => {
+    if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+  });
+  sectional.scene.position.set(0, 0.5, -8);
+  scene.add(sectional.scene);
+  physics.staticCollider(sectional.scene, 'trimesh');
+
   // ── Lights ───────────────────────────────────────────────────────────────
   scene.add(new THREE.HemisphereLight(0xc8d4e0, 0x303030, 0.45));
 
@@ -183,6 +205,6 @@ export default async function build({ scene, THREE, physics, setSky }) {
 
   return {
     embodiment: null,
-    spawnPoint: { x: 0, y: 0.5, z: -15 },
+    spawnPoint: { x: 0, y: 1.0, z: -15 },
   };
 }
