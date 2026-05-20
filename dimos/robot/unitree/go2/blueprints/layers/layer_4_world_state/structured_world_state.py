@@ -31,6 +31,9 @@ from dimos.perception.temporal_memory_spec import TemporalMemorySpec
 from dimos.robot.unitree.go2.blueprints.layers.layer_4_world_state.world_state_spec import (
     SemanticTemporalMapSpec,
 )
+from dimos.robot.unitree.go2.blueprints.layers.layer_6_robot_body.robot_body_spec import (
+    RobotBodyStateSpec,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -49,6 +52,7 @@ class _Go2StructuredWorldState(Module):
     _spatial_memory: SpatialMemorySpec | None = None
     _temporal_memory: TemporalMemorySpec | None = None
     _navigation: NavigationInterfaceSpec | None = None
+    _robot_body: RobotBodyStateSpec | None = None
     _latest_odom: PoseStamped | None = None
 
     odom: In[PoseStamped]
@@ -84,9 +88,15 @@ class _Go2StructuredWorldState(Module):
     @rpc
     def get_robot_state(self) -> dict[str, Any]:
         """Return robot state owned or normalized by Layer 4."""
+        body_snapshot = self._robot_body_snapshot()
         state: dict[str, Any] = {
             "odom": self._pose_to_dict(self._latest_odom),
             "navigation": None,
+            "body": body_snapshot,
+            "connection": _section(body_snapshot, "connection"),
+            "sensors": _section(body_snapshot, "sensors"),
+            "local_policy": _section(body_snapshot, "local_policy"),
+            "safety": _section(body_snapshot, "safety"),
         }
 
         if self._navigation is None:
@@ -142,8 +152,18 @@ class _Go2StructuredWorldState(Module):
             "temporal_memory": self._temporal_memory is not None
             or bool(semantic_sources.get("temporal_memory")),
             "semantic_temporal_map": self._semantic_temporal_map is not None,
+            "robot_body": self._robot_body is not None,
             "runtime": True,
         }
+
+    def _robot_body_snapshot(self) -> dict[str, Any] | None:
+        if self._robot_body is None:
+            return None
+        try:
+            return self._robot_body.get_robot_body_snapshot()
+        except Exception as exc:
+            logger.warning("Failed to read Layer 6 robot body state", exc_info=True)
+            return {"available": True, "error": str(exc)}
 
     def _semantic_temporal_section(
         self, task: str, spatial_limit: int, errors: list[str]
@@ -257,6 +277,15 @@ def _summarize_spatial_match(match: dict[str, Any]) -> dict[str, Any]:
     if not summary:
         summary["keys"] = sorted(match.keys())
     return _to_jsonable(summary)
+
+
+def _section(snapshot: dict[str, Any] | None, key: str) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    value = snapshot.get(key)
+    if isinstance(value, dict):
+        return value
+    return None
 
 
 def _to_jsonable(value: Any, max_string_length: int = 500) -> Any:

@@ -9,6 +9,39 @@ Entries are listed in reverse chronological order.
 ## 2026-05-20
 
 - Branch: `refactor/go2-architecture-layers`
+- Summary: Started Go2 Layer 6 construction by adding an observational
+  robot-body/local-policy state facade, connecting it into the internal Go2
+  robot-body layer, and exposing the Layer 6 snapshot through Layer 4 and Layer
+  3 context.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_6_robot_body/__init__.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_6_robot_body/robot_body_state.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_6_robot_body/robot_body_spec.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_6_robot_body/test_robot_body_state.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_6_robot_body/DESIGN.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/structured_world_state.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/test_world_state.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/DESIGN.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_3_agent_brain/test_context_provider.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/GOAL_1.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran `python -m py_compile` for the new Layer 6 spec/state/test files,
+    the Layer 6 package entrypoint, the changed Layer 4 world-state files, and
+    the changed Layer 3 ContextProvider files.
+  - Ran `git diff --check`.
+  - Copied the working tree to `~/dimos-layer-test` in WSL and ran the focused
+    Layer 3 + Layer 4 + Layer 5 + Layer 6 test suite with a minimal pytest
+    dependency set: `30 passed, 1 warning`.
+- Open items:
+  - Add real connection heartbeat/health if `GO2Connection` exposes it.
+  - Add command-stream tracking after confirming it will not interfere with
+    movement-manager fan-out.
+
+## 2026-05-20
+
+- Branch: `refactor/go2-architecture-layers`
 - Summary: Started Go2 Layer 5 construction by adding a static skill-interface
   contract registry, connecting it into the full Go2 skill-interface layer, and
   exposing the contract summary to Layer 3 `ContextProvider`. The Layer 5

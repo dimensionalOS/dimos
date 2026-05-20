@@ -51,6 +51,10 @@ layers/
     test_*.py                    # focused Layer 5 tests
   layer_6_robot_body/
     __init__.py                  # Go2 robot-body/local-policy blueprint piece
+    robot_body_state.py          # Layer 6 body/local-policy state facade
+    robot_body_spec.py           # Layer 6 RPC spec
+    DESIGN.md                    # Layer 6 implementation logic
+    test_*.py                    # focused Layer 6 tests
 ```
 
 The public internal import paths intentionally stay stable at the layer level,
@@ -115,6 +119,20 @@ summary in `get_context(...)`.
 
 Layer 5 V2 should compare the static contracts with the MCP server tool list so
 renamed or missing skills are detected automatically.
+
+## Layer 6 Direction
+
+Layer 6 owns the robot body and local-policy boundary. It includes the existing
+Go2 connection, sensor streams, mapping, navigation, patrolling, movement
+manager, and local safety behavior. Current Layer 6 V1 keeps those
+implementations in place and adds `_Go2RobotBodyState` as an RPC-only
+observational facade.
+
+`_Go2RobotBodyState` tracks odom, color-image, and lidar stream liveness,
+reports runtime connection mode/configuration, and exposes conservative
+local-policy/safety context. It does not move the robot or replace physical
+safety checks. Layer 4 reads it through `RobotBodyStateSpec` and includes the
+body/local-policy sections in `robot_state`.
 
 ## ExpertRouter Direction
 

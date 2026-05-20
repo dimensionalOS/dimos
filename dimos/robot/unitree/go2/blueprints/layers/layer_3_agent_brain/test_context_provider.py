@@ -144,6 +144,12 @@ class StubWorldState:
                     "yaw_degrees": 0.0,
                 },
                 "navigation": {"state": "following_path", "goal_reached": False},
+                "connection": {"available": True, "mode": "replay"},
+                "safety": {
+                    "available": True,
+                    "body_pose_available": True,
+                    "obstacle_avoidance_configured": True,
+                },
             },
             "memory_state": {
                 "spatial": {"available": True, "matches": [{"distance": 0.3}]},
@@ -236,6 +242,8 @@ def test_get_context_prefers_layer4_structured_world_state() -> None:
         assert result.metadata["sources"]["spatial_memory"] is True
         assert result.metadata["runtime"]["mode"] == "replay"
         assert result.metadata["robot_state"]["odom"]["position"]["x"] == 3.0
+        assert "Connection: mode=replay, available=True" in result.message
+        assert "Safety: body_pose_available=True, obstacle_avoidance=True" in result.message
         assert result.metadata["world_state"]["source"] == "structured_world_state"
         assert result.metadata["world_state"]["spatial"]["matches"][0]["distance"] == 0.3
     finally:

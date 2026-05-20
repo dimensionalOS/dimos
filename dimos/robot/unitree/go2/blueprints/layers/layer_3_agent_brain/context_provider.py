@@ -334,6 +334,21 @@ class _Go2ContextProvider(Module):
                 f"state={navigation['state']}, goal_reached={navigation['goal_reached']}"
             )
 
+        connection = robot_state.get("connection")
+        if connection:
+            lines.append(
+                "Connection: "
+                f"mode={connection.get('mode')}, available={connection.get('available')}"
+            )
+
+        safety = robot_state.get("safety")
+        if safety:
+            lines.append(
+                "Safety: "
+                f"body_pose_available={safety.get('body_pose_available')}, "
+                f"obstacle_avoidance={safety.get('obstacle_avoidance_configured')}"
+            )
+
         spatial = world_state.get("spatial", {})
         matches = spatial.get("matches") or []
         if matches:

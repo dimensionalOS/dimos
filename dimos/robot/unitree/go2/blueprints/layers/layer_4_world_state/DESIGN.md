@@ -17,6 +17,8 @@ Layer 4 currently contains:
   temporal memory evidence for one query.
 - `_Go2StructuredWorldState`: a lightweight RPC facade that returns a single
   structured world snapshot.
+- Optional `RobotBodyStateSpec`: Layer 6 body/local-policy state read by
+  `_Go2StructuredWorldState` when wired.
 
 ## Runtime Flow
 
@@ -24,6 +26,7 @@ Layer 4 currently contains:
 Layer 6 odom/navigation/perception
   -> SpatialMemory / TemporalMemory
   -> _Go2SemanticTemporalMap.query_semantic_temporal_map(...)
+  -> _Go2RobotBodyState.get_robot_body_snapshot(...)
   -> _Go2StructuredWorldState.get_world_snapshot(...)
   -> Layer 3 ContextProvider.get_context(...)
 ```
@@ -72,7 +75,8 @@ memory, navigation, and odom remain as a fallback.
   - Direct arguments: `task`, `spatial_limit`.
   - Stream state: latest `odom` message cached by `_on_odom`.
   - Optional injected Specs: `SemanticTemporalMapSpec`,
-    `NavigationInterfaceSpec`, `SpatialMemorySpec`, and `TemporalMemorySpec`.
+    `NavigationInterfaceSpec`, `RobotBodyStateSpec`, `SpatialMemorySpec`, and
+    `TemporalMemorySpec`.
   - Runtime config: `global_config`.
 - Storage:
   - No new database.
@@ -87,7 +91,8 @@ memory, navigation, and odom remain as a fallback.
   - `semantic_temporal_map`
   - optional `errors`
 - Current limits:
-  - Robot safety state and connection health are not normalized yet.
+  - Robot safety and connection state are read from Layer 6 when wired, but
+    they are still descriptive context rather than physical safety guarantees.
   - The module currently reads navigation state by RPC when available.
 
 ## Version Boundaries
@@ -103,7 +108,6 @@ V1 implemented:
 
 V2 planned:
 
-- Add connection/safety/local-control status to `robot_state`.
 - Add named object/location summaries to `memory_state`.
 - Make semantic-temporal map entries more explicit: entity, location, time,
   evidence source, and confidence.

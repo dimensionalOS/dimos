@@ -90,6 +90,27 @@ class StubSemanticTemporalMap:
         }
 
 
+class StubRobotBody:
+    def get_robot_body_snapshot(self) -> dict[str, Any]:
+        return {
+            "available": True,
+            "version": "v1",
+            "connection": {"available": True, "mode": "replay"},
+            "sensors": {"odom": {"available": True, "count": 3}},
+            "local_policy": {"available": True, "obstacle_avoidance": True},
+            "safety": {"available": True, "body_pose_available": True},
+        }
+
+    def get_connection_state(self) -> dict[str, Any]:
+        return {"available": True, "mode": "replay"}
+
+    def get_sensor_state(self) -> dict[str, Any]:
+        return {"odom": {"available": True, "count": 3}}
+
+    def get_local_policy_state(self) -> dict[str, Any]:
+        return {"available": True, "obstacle_avoidance": True}
+
+
 def test_semantic_temporal_map_combines_memory_sources() -> None:
     semantic_map = _Go2SemanticTemporalMap()
     try:
@@ -113,14 +134,19 @@ def test_structured_world_state_returns_snapshot() -> None:
     try:
         world_state._semantic_temporal_map = StubSemanticTemporalMap()  # type: ignore[assignment]
         world_state._navigation = StubNavigation()  # type: ignore[assignment]
+        world_state._robot_body = StubRobotBody()  # type: ignore[assignment]
         world_state._latest_odom = PoseStamped(position=[1.0, 2.0, 0.0], frame_id="map")
 
         snapshot = world_state.get_world_snapshot("find the hallway", spatial_limit=2)
 
         assert snapshot["sources"]["semantic_temporal_map"] is True
+        assert snapshot["sources"]["robot_body"] is True
         assert snapshot["sources"]["spatial_memory"] is True
         assert snapshot["robot_state"]["navigation"]["state"] == "following_path"
         assert snapshot["robot_state"]["odom"]["position"]["x"] == 1.0
+        assert snapshot["robot_state"]["connection"]["mode"] == "replay"
+        assert snapshot["robot_state"]["sensors"]["odom"]["count"] == 3
+        assert snapshot["robot_state"]["safety"]["body_pose_available"] is True
         assert snapshot["memory_state"]["spatial"]["matches"][0]["distance"] == 0.2
         assert snapshot["semantic_temporal_map"]["fused"]["spatial_match_count"] == 1
     finally:

@@ -13,8 +13,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
+from __future__ import annotations
 
-_go2_robot_body = unitree_go2
+from typing import Any
 
 __all__ = ["_go2_robot_body"]
+
+_LAYER_BLUEPRINTS: dict[str, Any] = {}
+
+
+def __getattr__(name: str) -> Any:
+    if name not in __all__:
+        raise AttributeError(name)
+    _build_layer_blueprints()
+    return _LAYER_BLUEPRINTS[name]
+
+
+def _build_layer_blueprints() -> None:
+    if _LAYER_BLUEPRINTS:
+        return
+
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.robot.unitree.go2.blueprints.layers.layer_6_robot_body.robot_body_state import (
+        _Go2RobotBodyState,
+    )
+    from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
+
+    robot_body = autoconnect(
+        unitree_go2,
+        _Go2RobotBodyState.blueprint(),
+    )
+
+    _LAYER_BLUEPRINTS["_go2_robot_body"] = robot_body
+    globals().update(_LAYER_BLUEPRINTS)
