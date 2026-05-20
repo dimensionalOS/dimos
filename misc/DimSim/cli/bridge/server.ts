@@ -495,7 +495,7 @@ export async function startBridgeServer(options: BridgeServerOptions) {
 
 if (import.meta.main) {
   const distDir = new URL("../../dist", import.meta.url).pathname;
-  const scene = Deno.args.find((_a: string, i: number, arr: string[]) => arr[i - 1] === "--scene") || "apt";
+  const scene = Deno.args.find((_a: string, i: number, arr: string[]) => arr[i - 1] === "--scene") || "apartment";
   const port = parseInt(Deno.args.find((_a: string, i: number, arr: string[]) => arr[i - 1] === "--port") || "8090");
   await startBridgeServer({ port, distDir, scene });
 }
