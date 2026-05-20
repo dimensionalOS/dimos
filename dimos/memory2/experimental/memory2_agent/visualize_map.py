@@ -26,10 +26,10 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=FsPath, required=True,
-                        help="Recording .db path (required).")
-    parser.add_argument("--out", type=FsPath, default=None,
-                        help="Output PNG path (default: /tmp/<db-stem>_map.png)")
+    parser.add_argument("--db", type=FsPath, required=True, help="Recording .db path (required).")
+    parser.add_argument(
+        "--out", type=FsPath, default=None, help="Output PNG path (default: /tmp/<db-stem>_map.png)"
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -45,8 +45,10 @@ def main() -> None:
 
     print("[viz] simple_occupancy(resolution=0.10)...")
     grid = simple_occupancy(global_cloud, resolution=0.10)
-    print(f"      grid {grid.width}x{grid.height}  origin=({grid.origin.position.x:.2f}, "
-          f"{grid.origin.position.y:.2f})  res={grid.resolution}")
+    print(
+        f"      grid {grid.width}x{grid.height}  origin=({grid.origin.position.x:.2f}, "
+        f"{grid.origin.position.y:.2f})  res={grid.resolution}"
+    )
 
     # Trajectory from odom — convert observations into a Path message
     print("[viz] building odom trajectory...")
@@ -67,7 +69,9 @@ def main() -> None:
 
     # Upscale before drawing labels so text is readable.
     SCALE = 5
-    up = cv2.resize(bgr, (bgr.shape[1] * SCALE, bgr.shape[0] * SCALE), interpolation=cv2.INTER_NEAREST)
+    up = cv2.resize(
+        bgr, (bgr.shape[1] * SCALE, bgr.shape[0] * SCALE), interpolation=cv2.INTER_NEAREST
+    )
 
     def _overlay(stream_name: str, color_bgr: tuple[int, int, int]) -> None:
         for obs in store.stream(stream_name, str).to_list():
@@ -82,30 +86,42 @@ def main() -> None:
             # Short label — drop trailing words after the first 2-3
             short = " ".join(obs.data.split()[:3])
             cv2.putText(
-                up, short, (cx + 8, cy + 4),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, cv2.LINE_AA,
+                up,
+                short,
+                (cx + 8, cy + 4),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (0, 0, 0),
+                3,
+                cv2.LINE_AA,
             )
             cv2.putText(
-                up, short, (cx + 8, cy + 4),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, color_bgr, 1, cv2.LINE_AA,
+                up,
+                short,
+                (cx + 8, cy + 4),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                color_bgr,
+                1,
+                cv2.LINE_AA,
             )
 
-    _overlay("map_objects", (0, 0, 255))          # red dots — objects
-    _overlay("map_structural", (0, 220, 220))     # yellow dots — structural
+    _overlay("map_objects", (0, 0, 255))  # red dots — objects
+    _overlay("map_structural", (0, 220, 220))  # yellow dots — structural
 
     # Legend bar on top
     legend = [
-        ("red = occupied",            (0, 0, 255)),
-        ("blue = free",               (180, 100, 30)),
-        ("grey = unknown",            (180, 180, 180)),
-        ("black line = trajectory",   (0, 0, 0)),
-        ("red dot = map_objects",     (0, 0, 255)),
+        ("red = occupied", (0, 0, 255)),
+        ("blue = free", (180, 100, 30)),
+        ("grey = unknown", (180, 180, 180)),
+        ("black line = trajectory", (0, 0, 0)),
+        ("red dot = map_objects", (0, 0, 255)),
         ("yellow dot = map_structural", (0, 220, 220)),
     ]
     y = 18
     for txt, col in legend:
         cv2.putText(up, txt, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, cv2.LINE_AA)
-        cv2.putText(up, txt, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, col,    1, cv2.LINE_AA)
+        cv2.putText(up, txt, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1, cv2.LINE_AA)
         y += 14
 
     cv2.imwrite(str(out_png), up)

@@ -39,9 +39,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path as DimosPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-
-SCALE = 5             # output canvas upscale factor (target = grid.width * SCALE px)
-VOXEL_SIZE = 0.10     # m, lidar fusion + occupancy resolution
+SCALE = 5  # output canvas upscale factor (target = grid.width * SCALE px)
+VOXEL_SIZE = 0.10  # m, lidar fusion + occupancy resolution
 
 # Agent marker styling for the Space-rendered map. Two-color (white body
 # under a red arrow) so the agent dot is unmistakable on busy maps. Sizes
@@ -184,14 +183,14 @@ class MapRenderer:
 # Shared points overlay for top-down map renders
 
 POINT_COLORS_BGR: dict[str, tuple[int, int, int]] = {
-    "red":     (0, 0, 255),
-    "green":   (60, 200, 60),
-    "blue":    (255, 50, 50),
-    "yellow":  (0, 255, 255),
-    "cyan":    (255, 255, 0),
+    "red": (0, 0, 255),
+    "green": (60, 200, 60),
+    "blue": (255, 50, 50),
+    "yellow": (0, 255, 255),
+    "cyan": (255, 255, 0),
     "magenta": (255, 50, 255),
-    "orange":  (0, 165, 255),
-    "white":   (255, 255, 255),
+    "orange": (0, 165, 255),
+    "white": (255, 255, 255),
 }
 POINT_COLORS_ALLOWED: list[str] = list(POINT_COLORS_BGR.keys())
 POINT_DEFAULT_COLOR = "yellow"
@@ -271,33 +270,39 @@ def add_points_to_space(
 
         # Numeric index as the on-image label so the legend (text) and the
         # marker (image) line up one-to-one.
-        space.add(SpacePoint(
-            GeoPoint(wx, wy, 0.0),
-            color=_POINT_COLOR_TO_MEMORY2[color_name],
-            radius=_POINT_OVERLAY_RADIUS_M,
-            shape="dot",
-            halo=True,
-            label=str(idx),
-        ))
+        space.add(
+            SpacePoint(
+                GeoPoint(wx, wy, 0.0),
+                color=_POINT_COLOR_TO_MEMORY2[color_name],
+                radius=_POINT_OVERLAY_RADIUS_M,
+                shape="dot",
+                halo=True,
+                label=str(idx),
+            )
+        )
 
         line = f"  {idx:>2}  ({color_name:<7s})  at ({wx:+.2f}, {wy:+.2f})"
         if label:
             line += f"  — {label}"
         lines.append(line)
 
-    legend = "Points ({}):\n".format(len(pts)) + "\n".join(lines)
+    legend = f"Points ({len(pts)}):\n" + "\n".join(lines)
     if dropped:
         legend += f"\n  [dropped {dropped} points beyond soft cap of {POINT_SOFT_CAP}]"
     if invalid_colors:
         legend += (
-            "\n  [invalid color(s) " + ", ".join(sorted(set(invalid_colors)))
+            "\n  [invalid color(s) "
+            + ", ".join(sorted(set(invalid_colors)))
             + f"; defaulted to '{POINT_DEFAULT_COLOR}'. Allowed: "
-            + ", ".join(POINT_COLORS_ALLOWED) + "]"
+            + ", ".join(POINT_COLORS_ALLOWED)
+            + "]"
         )
     return legend
 
 
-def encode_space_as_multimodal(space: Space, caption: str, *, width_px: int) -> list[dict[str, Any]]:
+def encode_space_as_multimodal(
+    space: Space, caption: str, *, width_px: int
+) -> list[dict[str, Any]]:
     """Render *space* to PNG and return LangChain multimodal content blocks."""
     png = space.to_png(width_px=width_px, padding_m=0.0)
     b64 = base64.b64encode(png).decode("ascii")
@@ -350,9 +355,9 @@ class PartitionStats:
     polygon: list[tuple[float, float]]
     area_m2: float
     odom_samples_inside: int
-    n_visible_inside: int          # FREE cells (lidar saw open space) in polygon
-    n_unknown_inside: int          # UNKNOWN cells (lidar never observed) in polygon — overclaim
-    overclaim_m2: float            # n_unknown_inside * cell_area
+    n_visible_inside: int  # FREE cells (lidar saw open space) in polygon
+    n_unknown_inside: int  # UNKNOWN cells (lidar never observed) in polygon — overclaim
+    overclaim_m2: float  # n_unknown_inside * cell_area
     overlap_with: dict[Any, float]
 
 
@@ -395,7 +400,7 @@ def verify_room_partition(
 
     def _world_poly_to_grid_mask(poly_world: list[tuple[float, float]]) -> np.ndarray:
         grid_pts = []
-        for (wx, wy) in poly_world:
+        for wx, wy in poly_world:
             grid_pts.append([int((wx - ox) / res), int((wy - oy) / res)])
         mask = np.zeros((H_g, W_g), dtype=np.uint8)
         if len(grid_pts) >= 3:
@@ -418,9 +423,7 @@ def verify_room_partition(
     # overlap detection, and the per-room visible-cell counts.
     room_masks: list[np.ndarray] = [_world_poly_to_grid_mask(p) for p in polys_world]
     room_masks_bool: list[np.ndarray] = [(m > 0) for m in room_masks]
-    room_areas_m2: list[float] = [
-        float(m.sum()) * res * res for m in room_masks_bool
-    ]
+    room_areas_m2: list[float] = [float(m.sum()) * res * res for m in room_masks_bool]
     any_room_mask = np.zeros((H_g, W_g), dtype=bool)
     for m in room_masks_bool:
         any_room_mask |= m
@@ -428,16 +431,14 @@ def verify_room_partition(
     # Per-room UNKNOWN cell count (cells lidar never observed that the
     # polygon nonetheless claims) — the "overclaim" — and a combined
     # overclaim mask for the visual overlay.
-    unknown_mask_grid = (grid.grid == -1)
+    unknown_mask_grid = grid.grid == -1
     per_room_unknown = [int((m & unknown_mask_grid).sum()) for m in room_masks_bool]
     overclaim_combined_grid = np.zeros((H_g, W_g), dtype=bool)
     for m in room_masks_bool:
-        overclaim_combined_grid |= (m & unknown_mask_grid)
+        overclaim_combined_grid |= m & unknown_mask_grid
 
     # Pairwise overlaps (cells -> m^2)
-    overlap_with_per_room: list[dict[Any, float]] = [
-        {} for _ in range(len(rooms))
-    ]
+    overlap_with_per_room: list[dict[Any, float]] = [{} for _ in range(len(rooms))]
     for i in range(len(rooms)):
         for j in range(i + 1, len(rooms)):
             inter = room_masks_bool[i] & room_masks_bool[j]
@@ -458,14 +459,16 @@ def verify_room_partition(
         col = PALETTE[i % len(PALETTE)].hex()
         ident = room.get("id", i + 1)
         desc = (room.get("desc", "") or "")[:22]
-        space.add(SpacePolygon(
-            vertices=poly_world,
-            fill=col,
-            stroke=col,
-            fill_opacity=0.35,
-            stroke_width=0.06,
-            label=f"#{ident}  {desc}",
-        ))
+        space.add(
+            SpacePolygon(
+                vertices=poly_world,
+                fill=col,
+                stroke=col,
+                fill_opacity=0.35,
+                stroke_width=0.06,
+                label=f"#{ident}  {desc}",
+            )
+        )
 
     # Overclaim red wash — RGBA at grid resolution, world-frame placement.
     # Y-flipped relative to grid array convention so origin = lower-left
@@ -473,15 +476,17 @@ def verify_room_partition(
     if overclaim_combined_grid.any():
         rgba = np.zeros((H_g, W_g, 4), dtype=np.uint8)
         mask = overclaim_combined_grid
-        rgba[mask, 0] = 220   # R
-        rgba[mask, 1] = 40    # G
-        rgba[mask, 2] = 40    # B
-        rgba[mask, 3] = 115   # alpha ~ 0.45
-        space.add(SpaceRasterOverlay(
-            rgba=rgba,
-            origin=(ox, oy),
-            resolution=res,
-        ))
+        rgba[mask, 0] = 220  # R
+        rgba[mask, 1] = 40  # G
+        rgba[mask, 2] = 40  # B
+        rgba[mask, 3] = 115  # alpha ~ 0.45
+        space.add(
+            SpaceRasterOverlay(
+                rgba=rgba,
+                origin=(ox, oy),
+                resolution=res,
+            )
+        )
 
     def _inside_any(x: float, y: float) -> int | None:
         gx = int((x - ox) / res)
@@ -506,22 +511,26 @@ def verify_room_partition(
         idx = _inside_any(x, y)
         if idx is None:
             n_outside += 1
-            space.add(SpacePoint(
-                GeoPoint(x, y, 0.0),
-                color="red",
-                radius=0.06,
-                halo=True,
-                shape="dot",
-            ))
+            space.add(
+                SpacePoint(
+                    GeoPoint(x, y, 0.0),
+                    color="red",
+                    radius=0.06,
+                    halo=True,
+                    shape="dot",
+                )
+            )
         else:
             per_room_odom[idx] += 1
-            space.add(SpacePoint(
-                GeoPoint(x, y, 0.0),
-                color="green",
-                radius=0.04,
-                halo=False,
-                shape="dot",
-            ))
+            space.add(
+                SpacePoint(
+                    GeoPoint(x, y, 0.0),
+                    color="green",
+                    radius=0.04,
+                    halo=False,
+                    shape="dot",
+                )
+            )
 
     # Clean the FREE mask: morphological opening removes single-cell
     # free-cell islands (lidar noise). Cheap first pass.
@@ -547,9 +556,7 @@ def verify_room_partition(
             min_cells = max(8, int(0.3 / (res * res)))
             if area_cells < min_cells:
                 continue
-            salient_blobs.append(
-                (float(centroids_cc[k, 0]), float(centroids_cc[k, 1]), area_cells)
-            )
+            salient_blobs.append((float(centroids_cc[k, 0]), float(centroids_cc[k, 1]), area_cells))
 
     # Visibility filter: a blob only counts if at least one lidar capture
     # pose had unobstructed line of sight to it through the occupancy.
@@ -559,11 +566,7 @@ def verify_room_partition(
     # SEVERAL nearby poses to be clear, not just one — a single lucky-
     # angle ray through a residual gap shouldn't validate the whole blob.
     lidar_obs = store.stream("lidar").to_list()
-    lidar_poses_xy = [
-        (float(o.pose[0]), float(o.pose[1]))
-        for o in lidar_obs
-        if o.pose is not None
-    ]
+    lidar_poses_xy = [(float(o.pose[0]), float(o.pose[1])) for o in lidar_obs if o.pose is not None]
     occ_dilated = cv2.dilate(
         (grid.grid == 100).astype(np.uint8) * 255,
         cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
@@ -599,7 +602,7 @@ def verify_room_partition(
         wy = oy + (cgy + 0.5) * res
         # Sort lidar poses by distance, take the 12 nearest within 8 m.
         nearby = []
-        for (px, py) in lidar_poses_xy:
+        for px, py in lidar_poses_xy:
             dx, dy = px - wx, py - wy
             d2 = dx * dx + dy * dy
             if d2 <= 64.0:
@@ -610,7 +613,7 @@ def verify_room_partition(
         # lucky-angle hit is not enough — it usually means a residual
         # gap in the wall, not a real sightline.
         clear = 0
-        for (_, px, py) in nearby:
+        for _, px, py in nearby:
             if not _ray_blocked_by_dilated((px, py), (wx, wy)):
                 clear += 1
                 if clear >= 2:
@@ -622,21 +625,23 @@ def verify_room_partition(
     salient_blobs = salient_blobs[:8]
 
     # Salient blob markers — orange dot scaled by sqrt(area), label = m^2.
-    for (cgx, cgy, area_cells) in salient_blobs:
+    for cgx, cgy, area_cells in salient_blobs:
         area_m2 = area_cells * res * res
         wx = ox + (cgx + 0.5) * res
         wy = oy + (cgy + 0.5) * res
         # World-frame radius matches the cv2 pixel-radius (~5..14 px @ SCALE=5)
         # so the marker looks similar at the agent's default canvas width.
-        radius_m = max(0.10, min(0.30, 0.05 + (area_m2 ** 0.5) * 0.04))
-        space.add(SpacePoint(
-            GeoPoint(wx, wy, 0.0),
-            color="orange",
-            radius=radius_m,
-            halo=True,
-            shape="dot",
-            label=f"{area_m2:.1f} m^2",
-        ))
+        radius_m = max(0.10, min(0.30, 0.05 + (area_m2**0.5) * 0.04))
+        space.add(
+            SpacePoint(
+                GeoPoint(wx, wy, 0.0),
+                color="orange",
+                radius=radius_m,
+                halo=True,
+                shape="dot",
+                label=f"{area_m2:.1f} m^2",
+            )
+        )
     n_visible_outside = len(salient_blobs)
 
     # Per-room stats
@@ -704,7 +709,7 @@ def _project_world_xy_to_pixel(
     qz_eff = 0.0 if query_z is None else query_z
     y_cam_floor = cam_z - qz_eff  # camera y is down, so positive when query below
     pixel_y_floor = GO2_FY * y_cam_floor / z_cam + GO2_CY
-    return int(round(pixel_x)), int(round(pixel_y_floor)), float(z_cam)
+    return round(pixel_x), round(pixel_y_floor), float(z_cam)
 
 
 def _annotate_query_in_frame(
@@ -737,8 +742,22 @@ def _annotate_query_in_frame(
     # Red cross with black halo at the projected pixel
     arm = 18
     for color, thick in ((0, 0, 0), 5), ((0, 0, 255), 2):  # black halo then red
-        cv2.line(bgr, (draw_x - arm, draw_y - arm), (draw_x + arm, draw_y + arm), color, thick, cv2.LINE_AA)
-        cv2.line(bgr, (draw_x - arm, draw_y + arm), (draw_x + arm, draw_y - arm), color, thick, cv2.LINE_AA)
+        cv2.line(
+            bgr,
+            (draw_x - arm, draw_y - arm),
+            (draw_x + arm, draw_y + arm),
+            color,
+            thick,
+            cv2.LINE_AA,
+        )
+        cv2.line(
+            bgr,
+            (draw_x - arm, draw_y + arm),
+            (draw_x + arm, draw_y - arm),
+            color,
+            thick,
+            cv2.LINE_AA,
+        )
     # Annotation text
     label = f"query ({query_x:.1f}, {query_y:.1f})  d={z_cam:.1f}m"
     if px < 0:
@@ -862,8 +881,12 @@ def frames_that_could_see_point(
                 break
 
     space = _build_visibility_space(
-        renderer, x=x, y=y, picks=picked,
-        fov_rad=fov_rad, max_range_m=max_range_m,
+        renderer,
+        x=x,
+        y=y,
+        picks=picked,
+        fov_rad=fov_rad,
+        max_range_m=max_range_m,
     )
     return picked, space
 
@@ -891,26 +914,30 @@ def _build_visibility_space(
         cam_x, cam_y = c.obs.pose[0], c.obs.pose[1]
         qx, qy, qz, qw = c.obs.pose[3:7]
         cam_yaw = _yaw_from_quat(qx, qy, qz, qw)
-        space.add(SpaceWedge(
-            origin=(cam_x, cam_y),
-            yaw=cam_yaw,
-            fov=fov_rad,
-            length=max_range_m,
-            color=_WEDGE_PALETTE[i % len(_WEDGE_PALETTE)],
-            stroke_width=0.05,
-            label=str(i + 1),
-        ))
+        space.add(
+            SpaceWedge(
+                origin=(cam_x, cam_y),
+                yaw=cam_yaw,
+                fov=fov_rad,
+                length=max_range_m,
+                color=_WEDGE_PALETTE[i % len(_WEDGE_PALETTE)],
+                stroke_width=0.05,
+                label=str(i + 1),
+            )
+        )
 
     # Query marker — yellow X with halo and inline label so the agent
     # can spot it even in a busy cone forest.
-    space.add(SpacePoint(
-        GeoPoint(x, y, 0.0),
-        color="yellow",
-        radius=0.30,
-        shape="x",
-        halo=True,
-        label=f"query ({x:.1f}, {y:.1f})",
-    ))
+    space.add(
+        SpacePoint(
+            GeoPoint(x, y, 0.0),
+            color="yellow",
+            radius=0.30,
+            shape="x",
+            halo=True,
+            label=f"query ({x:.1f}, {y:.1f})",
+        )
+    )
 
     return space
 
@@ -978,8 +1005,12 @@ def walkthrough_timestamps_only(
     just the schedule the caller can step through with show_image.
     """
     resolved = _resolve_walkthrough_range(
-        "walkthrough_timestamps", store, t_start, t_end,
-        step_seconds, WALKTHROUGH_TIMESTAMPS_MAX,
+        "walkthrough_timestamps",
+        store,
+        t_start,
+        t_end,
+        step_seconds,
+        WALKTHROUGH_TIMESTAMPS_MAX,
     )
     if isinstance(resolved, str):
         return resolved
@@ -1007,6 +1038,7 @@ def walkthrough_frames(
     Each frame is downsized by `scale` and overlaid with t=, pos=, yaw=.
     """
     import math
+
     import cv2 as _cv2  # local alias to avoid shadowing in tests
 
     img_obs = store.stream(stream).to_list()
@@ -1014,8 +1046,12 @@ def walkthrough_frames(
         return f"walkthrough: stream {stream!r} is empty"
 
     resolved = _resolve_walkthrough_range(
-        "walkthrough", store, t_start, t_end,
-        step_seconds, WALKTHROUGH_FRAMES_MAX,
+        "walkthrough",
+        store,
+        t_start,
+        t_end,
+        step_seconds,
+        WALKTHROUGH_FRAMES_MAX,
     )
     if isinstance(resolved, str):
         return resolved
@@ -1028,9 +1064,7 @@ def walkthrough_frames(
         obs = min(img_obs, key=lambda o: abs(o.ts - s_ts))
         x, y = obs.pose[0], obs.pose[1]
         qx, qy, qz, qw = obs.pose[3:7]
-        yaw_deg = math.degrees(
-            math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
-        )
+        yaw_deg = math.degrees(math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)))
 
         bgr = _cv2.cvtColor(obs.data.data, _cv2.COLOR_RGB2BGR)
         if scale != 1.0:
@@ -1040,8 +1074,10 @@ def walkthrough_frames(
 
         t_rel = obs.ts - t_zero
         cap = f"t={t_rel:5.1f}s  pos=({x:+.2f}, {y:+.2f})  yaw={yaw_deg:+.0f}deg"
-        _cv2.putText(bgr, cap, (8, 18), _cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0),     3, _cv2.LINE_AA)
-        _cv2.putText(bgr, cap, (8, 18), _cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, _cv2.LINE_AA)
+        _cv2.putText(bgr, cap, (8, 18), _cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3, _cv2.LINE_AA)
+        _cv2.putText(
+            bgr, cap, (8, 18), _cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, _cv2.LINE_AA
+        )
 
         out.append((bgr, obs.ts, obs.pose))
     return out
@@ -1060,15 +1096,14 @@ def encode_walkthrough_blocks(
         if not ok:
             continue
         b64 = base64.b64encode(bytes(buf)).decode("ascii")
-        cap = (
-            f"frame {i}/{len(frames)}  ts={ts:.2f}  "
-            f"pose=({pose[0]:+.2f}, {pose[1]:+.2f})"
-        )
+        cap = f"frame {i}/{len(frames)}  ts={ts:.2f}  pose=({pose[0]:+.2f}, {pose[1]:+.2f})"
         blocks.append({"type": "text", "text": cap})
-        blocks.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-        })
+        blocks.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+            }
+        )
     return blocks
 
 
@@ -1108,10 +1143,7 @@ def _resolve_position_and_heading(
     x, y = pose[0], pose[1]
     qx, qy, qz, qw = pose[3:7]
     body_yaw = _yaw_from_quat(qx, qy, qz, qw)
-    desc = (
-        f"at_ts={at_ts!r} -> ({x:.2f}, {y:.2f}, "
-        f"yaw={math.degrees(body_yaw):.1f}°)"
-    )
+    desc = f"at_ts={at_ts!r} -> ({x:.2f}, {y:.2f}, yaw={math.degrees(body_yaw):.1f}°)"
     return (x, y), body_yaw, ts, desc
 
 
@@ -1126,14 +1158,17 @@ def _resolve_target_yaw(
         return math.radians(yaw_deg), f"yaw_deg={yaw_deg:.1f}"  # type: ignore[arg-type]
     offsets = {
         "forward": 0.0,
-        "back":    math.pi,
-        "left":    math.pi / 2,
-        "right":  -math.pi / 2,
+        "back": math.pi,
+        "left": math.pi / 2,
+        "right": -math.pi / 2,
     }
     if direction not in offsets:  # type: ignore[operator]
         raise ValueError(f"direction must be one of {sorted(offsets)}, got {direction!r}")
     target = body_yaw + offsets[direction]  # type: ignore[index]
-    return target, f"direction={direction!r} (body_yaw={math.degrees(body_yaw):.1f}° -> target={math.degrees(target):.1f}°)"
+    return (
+        target,
+        f"direction={direction!r} (body_yaw={math.degrees(body_yaw):.1f}° -> target={math.degrees(target):.1f}°)",
+    )
 
 
 def recall_view(
@@ -1157,9 +1192,7 @@ def recall_view(
     Hard filters before ranking: yaw_diff <= max_yaw_deg and xy_dist <= max_xy.
     Top-k after de-dup that keeps frames at least dedup_time_s apart in time.
     """
-    (qx, qy), body_yaw, anchor_ts, pos_desc = _resolve_position_and_heading(
-        renderer, at_ts=at_ts
-    )
+    (qx, qy), body_yaw, anchor_ts, pos_desc = _resolve_position_and_heading(renderer, at_ts=at_ts)
     target_yaw, dir_desc = _resolve_target_yaw(body_yaw, direction, yaw_deg)
 
     max_yaw_rad = math.radians(max_yaw_deg)

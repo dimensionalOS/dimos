@@ -15,9 +15,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 import sys
 import time
-from pathlib import Path
 
 
 def _save_trace(path_str: str, args, res, elapsed: float) -> None:
@@ -45,7 +45,7 @@ def _save_trace(path_str: str, args, res, elapsed: float) -> None:
         f"iterations:  {record['iterations']}",
         f"elapsed:     {record['elapsed_s']}s",
         "",
-        f"Question:",
+        "Question:",
         record["question"],
         "",
         f"Tools used ({len(record['tool_calls'])}):",
@@ -65,22 +65,26 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("question", help="The question to ask the agent")
     parser.add_argument(
-        "--model", default="gpt-5.5",
+        "--model",
+        default="gpt-5.5",
         help="Chat model (default: gpt-5.5; also try gpt-4.1-mini, gpt-4o, gemini-2.5-flash)",
     )
     parser.add_argument(
-        "--db", required=True,
+        "--db",
+        required=True,
         help="Recording .db path (required).",
     )
     parser.add_argument(
-        "--quiet", action="store_true",
+        "--quiet",
+        action="store_true",
         help="Only print the final answer (no tool trace).",
     )
     parser.add_argument(
-        "--save", metavar="PATH",
+        "--save",
+        metavar="PATH",
         help="Save the full trace (question, model, tool calls, final answer, "
-             "timestamps) to a file. Extension '.json' writes JSON, anything "
-             "else writes a human-readable text trace.",
+        "timestamps) to a file. Extension '.json' writes JSON, anything "
+        "else writes a human-readable text trace.",
     )
     args = parser.parse_args()
 
@@ -92,10 +96,9 @@ def main() -> int:
         return 2
 
     # Imports lazy so --help is fast.
+    from dimos.memory2.experimental.memory2_agent.agent import run_question
     from dimos.memory2.store.sqlite import SqliteStore
     from dimos.models.embedding.clip import CLIPModel
-
-    from dimos.memory2.experimental.memory2_agent.agent import run_question
 
     store = SqliteStore(path=args.db)
     clip = CLIPModel()

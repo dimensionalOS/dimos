@@ -52,7 +52,7 @@ def _parse(path: Path) -> Skill:
                     name = v
                 elif k == "description":
                     description = v
-        body = text[m.end():]
+        body = text[m.end() :]
     return Skill(name=name, description=description, body=body, path=path)
 
 

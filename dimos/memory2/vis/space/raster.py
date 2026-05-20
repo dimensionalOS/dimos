@@ -74,7 +74,7 @@ def _alpha(el: object, base: float = 1.0) -> float:
 
 def _thick(value_world: float, res_px: float, minimum: int = 1) -> int:
     """Convert a world-unit thickness to a pixel-thickness, clamped at >= minimum."""
-    return max(minimum, int(round(value_world * res_px)))
+    return max(minimum, round(value_world * res_px))
 
 
 # Bounds pass — compute world-frame extent from elements
@@ -165,24 +165,24 @@ class _Canvas:
     the bounds pass and the draw pass don't duplicate work.
     """
 
-    __slots__ = ("bgr", "bounds", "res_px", "pc_cache")
+    __slots__ = ("bgr", "bounds", "pc_cache", "res_px")
 
     def __init__(
         self,
         bgr: np.ndarray,
         bounds: Bounds,
         res_px: float,
-        pc_cache: dict[int, "OccupancyGrid"] | None = None,
+        pc_cache: dict[int, OccupancyGrid] | None = None,
     ) -> None:
         self.bgr = bgr
         self.bounds = bounds
         self.res_px = res_px
-        self.pc_cache: dict[int, "OccupancyGrid"] = pc_cache if pc_cache is not None else {}
+        self.pc_cache: dict[int, OccupancyGrid] = pc_cache if pc_cache is not None else {}
 
     def w2p(self, wx: float, wy: float) -> tuple[int, int]:
         """World (x, y) → integer pixel (px, py); Y-flipped."""
-        px = int(round((wx - self.bounds.xmin) * self.res_px))
-        py = int(round((self.bounds.ymax - wy) * self.res_px))
+        px = round((wx - self.bounds.xmin) * self.res_px)
+        py = round((self.bounds.ymax - wy) * self.res_px)
         return px, py
 
 
@@ -200,8 +200,8 @@ def _draw_text_halo(
 
 def _draw_point(el: Point, c: _Canvas) -> None:
     cx, cy = c.w2p(el.msg.x, el.msg.y)
-    r_px = max(2, int(round(el.radius * c.res_px)))
-    halo_px = max(r_px + 1, int(round(r_px * 1.4)))
+    r_px = max(2, round(el.radius * c.res_px))
+    halo_px = max(r_px + 1, round(r_px * 1.4))
     col = _bgr_u8(el.color)
     alpha = _alpha(el)
 
@@ -212,7 +212,7 @@ def _draw_point(el: Point, c: _Canvas) -> None:
             cv2.circle(overlay, (cx, cy), halo_px, (0, 0, 0), -1, cv2.LINE_AA)
         cv2.circle(overlay, (cx, cy), r_px, col, -1, cv2.LINE_AA)
     elif el.shape == "cross":
-        sw = max(1, int(round(r_px * 0.45)))
+        sw = max(1, round(r_px * 0.45))
         if el.halo:
             halo_sw = sw + 2
             cv2.line(overlay, (cx - r_px, cy), (cx + r_px, cy), (0, 0, 0), halo_sw, cv2.LINE_AA)
@@ -220,8 +220,8 @@ def _draw_point(el: Point, c: _Canvas) -> None:
         cv2.line(overlay, (cx - r_px, cy), (cx + r_px, cy), col, sw, cv2.LINE_AA)
         cv2.line(overlay, (cx, cy - r_px), (cx, cy + r_px), col, sw, cv2.LINE_AA)
     elif el.shape == "x":
-        sw = max(1, int(round(r_px * 0.45)))
-        diag = int(round(r_px * 0.70710678))
+        sw = max(1, round(r_px * 0.45))
+        diag = round(r_px * 0.70710678)
         if el.halo:
             halo_sw = sw + 2
             cv2.line(
@@ -378,7 +378,7 @@ def _draw_box3d(el: Box3D, c: _Canvas) -> None:
     p1 = c.w2p(el.center.x - hw, el.center.y - hh)
     p2 = c.w2p(el.center.x + hw, el.center.y + hh)
     col = _bgr_u8(el.color)
-    thickness = max(1, int(round(min(el.size.x, el.size.y) * 0.04 * c.res_px)))
+    thickness = max(1, round(min(el.size.x, el.size.y) * 0.04 * c.res_px))
     alpha = _alpha(el)
     if alpha >= 0.999:
         cv2.rectangle(c.bgr, p1, p2, col, thickness, cv2.LINE_AA)
@@ -410,7 +410,7 @@ def _draw_camera(el: Camera, c: _Canvas) -> None:
         )
         _draw_wedge(wedge, c)
     else:
-        r_px = max(2, int(round(_CAMERA_DOT_RADIUS_M * c.res_px)))
+        r_px = max(2, round(_CAMERA_DOT_RADIUS_M * c.res_px))
         overlay = c.bgr if alpha >= 0.999 else c.bgr.copy()
         cv2.circle(overlay, (cx, cy), r_px, col, -1, cv2.LINE_AA)
         if alpha < 0.999:
@@ -568,7 +568,7 @@ _POINTCLOUD_INFLATE_M = 0.05
 
 
 def render(
-    space: "Space",
+    space: Space,
     *,
     width_px: int = 800,
     padding_m: float = 0.0,
@@ -598,7 +598,7 @@ def render(
 
     width_px = max(1, int(width_px))
     res_px = width_px / b.width
-    height_px = int(round(b.height * res_px))
+    height_px = round(b.height * res_px)
     height_px = max(1, min(height_px, width_px * _MAX_HEIGHT_RATIO))
 
     bgr = np.full((height_px, width_px, 3), background_bgr, dtype=np.uint8)

@@ -26,6 +26,7 @@ def _viewbox(svg: str) -> tuple[float, float, float, float]:
     assert m is not None, "no viewBox in SVG"
     return float(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4))
 
+
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
 from dimos.memory2.vis.color import ColorRange
 from dimos.memory2.vis.space.elements import (
@@ -378,12 +379,14 @@ class TestPolygonElement:
         from dimos.memory2.vis import color
 
         s = Space()
-        s.add(Polygon(
-            vertices=[(0, 0), (4, 0), (4, 3), (0, 3)],
-            fill="red",
-            stroke="blue",
-            label="kitchen",
-        ))
+        s.add(
+            Polygon(
+                vertices=[(0, 0), (4, 0), (4, 3), (0, 3)],
+                fill="red",
+                stroke="blue",
+                label="kitchen",
+            )
+        )
         svg = s.to_svg()
         assert "<polygon" in svg
         assert color.red.hex() in svg
@@ -420,16 +423,17 @@ class TestPolygonElement:
         s.add(Polygon(vertices=[(0, 0), (1, 0), (1, 1)], fill=cr(0.1), stroke=cr(0.9)))
         svg = s.to_svg()
         # After to_svg, deferred colors should have resolved to concrete hex.
-        assert "fill=\"#" in svg
-        assert "stroke=\"#" in svg
+        assert 'fill="#' in svg
+        assert 'stroke="#' in svg
 
 
 class TestWedgeElement:
     """Wedge: outlined viewing cone."""
 
     def test_wedge_renders_svg_polygon(self):
-        from dimos.memory2.vis import color
         import math as _math
+
+        from dimos.memory2.vis import color
 
         s = Space()
         s.add(Wedge(origin=(1, 2), yaw=0.0, fov=_math.radians(60), length=3, color="orange"))
@@ -473,7 +477,6 @@ class TestRasterOverlayElement:
         # SVG Y flipped → y ∈ [-20.4, -20] (± padding).
         assert xmin <= 10.0 and xmin + w >= 10.4
         assert ymin <= -20.4 and ymin + h >= -20.0
-
 
 
 class TestPointShapes:
@@ -550,11 +553,13 @@ class TestRasterRender:
     def test_raster_polygon_fill_pixel(self):
         # Polygon covers most of the canvas with opaque red.
         s = Space()
-        s.add(Polygon(
-            vertices=[(-1, -1), (1, -1), (1, 1), (-1, 1)],
-            fill="red",
-            fill_opacity=1.0,
-        ))
+        s.add(
+            Polygon(
+                vertices=[(-1, -1), (1, -1), (1, 1), (-1, 1)],
+                fill="red",
+                fill_opacity=1.0,
+            )
+        )
         bgr = s.to_bgr(width_px=200, padding_m=0.1)
         cy, cx = bgr.shape[0] // 2, bgr.shape[1] // 2
         b, g, r = bgr[cy, cx]
