@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import asyncio
 from enum import IntEnum
+import json
+import os
 import threading
 import time
 from typing import Any
@@ -60,10 +62,10 @@ class Hand(IntEnum):
 class HostedTeleopConfig(ModuleConfig):
     control_loop_hz: float = 50.0
 
-    broker_url: str = "https://teleop.dimensionalos.com"
-    broker_api_key: str = ""
-    robot_id: str = ""
-    robot_name: str = ""
+    broker_url: str = os.getenv("TELEOP_BROKER_URL", "https://teleop.dimensionalos.com")
+    broker_api_key: str = os.getenv("TELEOP_API_KEY", "")
+    robot_id: str = os.getenv("TELEOP_ROBOT_ID", "")
+    robot_name: str = os.getenv("TELEOP_ROBOT_NAME", "")
 
     stun_urls: list[str] = ["stun:stun.cloudflare.com:3478"]
     turn_urls: list[str] = []
@@ -112,6 +114,12 @@ class HostedTeleopModule(Module):
         # broker reports an SCTP id via heartbeat ack (after an operator joins).
         self._cmd_channel = None
         self._cmd_channel_id: int | None = None
+
+        # state_reliable mirrors cmd_unreliable but ordered+reliable, robot↔
+        # operator. Phase 1.5: carries JSON ping/pong for clock sync; future
+        # low-rate control-plane events (mode switch, etc.) ride here too.
+        self._state_channel = None
+        self._state_channel_id: int | None = None
 
         self._control_loop_thread: threading.Thread | None = None
         self._heartbeat_thread: threading.Thread | None = None
@@ -249,6 +257,8 @@ class HostedTeleopModule(Module):
                 logger.exception("Failed to deregister with broker")
         self._close_cmd_channel()
         self._cmd_channel_id = None
+        self._close_state_channel()
+        self._state_channel_id = None
         if self._pc is not None:
             await self._pc.close()
             self._pc = None
@@ -306,6 +316,15 @@ class HostedTeleopModule(Module):
             if sub_id_int is not None:
                 self._open_cmd_channel(sub_id_int)
 
+        state_sub_id = data.get("state_channel_subscriber_id")
+        state_sub_id_int = int(state_sub_id) if state_sub_id is not None else None
+
+        if state_sub_id_int != self._state_channel_id:
+            self._close_state_channel()
+            self._state_channel_id = state_sub_id_int
+            if state_sub_id_int is not None:
+                self._open_state_channel(state_sub_id_int)
+
     def _open_cmd_channel(self, sctp_id: int) -> None:
         if self._pc is None:
             return
@@ -340,6 +359,76 @@ class HostedTeleopModule(Module):
             except Exception:
                 pass
             self._cmd_channel = None
+
+    def _open_state_channel(self, sctp_id: int) -> None:
+        """Open the negotiated ``state_reliable`` channel on *sctp_id*.
+
+        Reliable + ordered (opposite of ``cmd_unreliable``). Carries JSON
+        messages — currently just the clock-sync ping/pong handshake; future
+        low-rate control-plane events will ride here too.
+        """
+        if self._pc is None:
+            return
+        logger.info(f"Operator joined — opening negotiated state_reliable on SCTP id {sctp_id}")
+        channel = self._pc.createDataChannel(
+            "state_reliable",
+            ordered=True,
+            negotiated=True,
+            id=sctp_id,
+        )
+
+        @channel.on("open")
+        def _on_open() -> None:
+            logger.info("state_reliable channel OPEN")
+
+        @channel.on("message")
+        def _on_message(data: Any) -> None:
+            self._on_state_message(data)
+
+        @channel.on("close")
+        def _on_close() -> None:
+            logger.info("state_reliable channel closed")
+
+        self._state_channel = channel
+
+    def _close_state_channel(self) -> None:
+        if self._state_channel is not None:
+            try:
+                self._state_channel.close()
+            except Exception:
+                pass
+            self._state_channel = None
+
+    def _on_state_message(self, data: Any) -> None:
+        """Handle one JSON message from ``state_reliable``.
+
+        Recognises ``{"type":"ping","client_ts":<seconds>}`` and echoes a
+        ``{"type":"pong","client_ts":<same>,"robot_ts":<seconds>}``. Unknown
+        types are logged and dropped — leaves room for future control-plane
+        messages without breaking older clients.
+        """
+        if isinstance(data, bytes):
+            try:
+                data = data.decode("utf-8")
+            except UnicodeDecodeError:
+                logger.warning("state_reliable: non-utf8 payload, dropping")
+                return
+        try:
+            msg = json.loads(data)
+        except Exception:
+            logger.warning(f"state_reliable: malformed JSON: {data[:80]!r}")
+            return
+
+        kind = msg.get("type")
+        if kind == "ping":
+            client_ts = msg.get("client_ts")
+            if client_ts is None:
+                return
+            pong = json.dumps({"type": "pong", "client_ts": client_ts, "robot_ts": time.time()})
+            if self._state_channel is not None and self._state_channel.readyState == "open":
+                self._state_channel.send(pong)
+        else:
+            logger.debug(f"state_reliable: unknown message type {kind!r}")
 
     def _dispatch_bytes(self, data: bytes) -> None:
         decoder = self._decoders.get(data[:8])

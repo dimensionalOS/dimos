@@ -45,6 +45,12 @@
         let userEmail = localStorage.getItem('teleop_email') || '';
         let brokerOverride = new URLSearchParams(window.location.search).get('broker') || '';
 
+        const isLocalDev = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
+        if (isLocalDev && !token) {
+            token = 'dev-token';
+            userEmail = 'dev@local';
+        }
+
         // WebRTC + WebXR state
         let pc = null;
         let cmdChannel = null;
@@ -54,6 +60,15 @@
         let lastSendTime = 0;
         let activeRobot = null;
         const sendInterval = 1000 / 80;
+
+        let stateChannel = null;
+        let clockOffsetMs = 0;
+        let bestRttMs = Infinity;
+        let clockSyncBurstTimer = null;
+        let clockSyncDriftTimer = null;
+        const CLOCK_SYNC_BURST_COUNT = 5;          // 5 pings…
+        const CLOCK_SYNC_BURST_INTERVAL_MS = 400;  // …~400ms apart → converge in ~2s
+        const CLOCK_SYNC_DRIFT_INTERVAL_MS = 30000; // then one every 30s for drift
 
         // Probed once at boot. Quest browser → true; desktop/mobile → false.
         let xrSupported = false;
@@ -526,7 +541,9 @@ angular.z = 0</pre>
                 updateKeyVisuals();
                 if (!cmdChannel || cmdChannel.readyState !== 'open') return;
                 const t = buildTwist();
-                const nowMs = Date.now();
+                // Stamp in the robot's clock frame (clockOffsetMs is 0 until
+                // the first pong lands; falls back gracefully on old brokers).
+                const nowMs = Date.now() + clockOffsetMs;
                 const ts = new std_msgs.Time({
                     sec: Math.floor(nowMs / 1000),
                     nsec: (nowMs % 1000) * 1_000_000,
@@ -661,6 +678,67 @@ angular.z = 0</pre>
                 }),
                 iceFailed,
             ]);
+
+            // state_reliable — opened best-effort. Older brokers won't return
+            // state_channel_id and clock sync simply doesn't run; cmdChannel
+            // still works and the rest of the page is unaffected.
+            if (bridge.state_channel_id != null) {
+                stateChannel = pc.createDataChannel('state_reliable', {
+                    negotiated: true,
+                    id: bridge.state_channel_id,
+                    ordered: true,
+                });
+                stateChannel.onopen = () => startClockSync(stateChannel);
+                stateChannel.onmessage = (e) => handleStateMessage(e.data);
+            }
+        }
+
+        // ─── Clock sync (Phase 1.5) ─────────────────────────────────────────
+        function startClockSync(channel) {
+            let sent = 0;
+            const sendPing = () => {
+                if (!channel || channel.readyState !== 'open') return;
+                channel.send(JSON.stringify({ type: 'ping', client_ts: Date.now() / 1000 }));
+            };
+            sendPing();  // fire one immediately so the user sees calibration ASAP
+            sent = 1;
+            clockSyncBurstTimer = setInterval(() => {
+                sendPing();
+                sent += 1;
+                if (sent >= CLOCK_SYNC_BURST_COUNT) {
+                    clearInterval(clockSyncBurstTimer);
+                    clockSyncBurstTimer = null;
+                    // Drift-correction: one ping every 30s. Keeps min-RTT
+                    // logic running so a transient stall doesn't pin us to a
+                    // bad offset for the rest of the session.
+                    clockSyncDriftTimer = setInterval(sendPing, CLOCK_SYNC_DRIFT_INTERVAL_MS);
+                }
+            }, CLOCK_SYNC_BURST_INTERVAL_MS);
+        }
+
+        function stopClockSync() {
+            if (clockSyncBurstTimer) { clearInterval(clockSyncBurstTimer); clockSyncBurstTimer = null; }
+            if (clockSyncDriftTimer) { clearInterval(clockSyncDriftTimer); clockSyncDriftTimer = null; }
+        }
+
+        function handleStateMessage(data) {
+            let msg;
+            try { msg = JSON.parse(data); } catch (_) { return; }
+            if (msg.type === 'pong') applyPong(msg);
+        }
+
+        // NTP-style offset estimate; keep the lowest-RTT sample we've seen so
+        // queueing-delay noise can't pin us to a bad offset.
+        function applyPong(pong) {
+            const recvTsSec = Date.now() / 1000;
+            const rttMs = (recvTsSec - pong.client_ts) * 1000;
+            if (rttMs < 0 || rttMs > 5000) return;  // discard clearly-bogus samples
+            if (rttMs >= bestRttMs) return;
+            bestRttMs = rttMs;
+            const offsetSec =
+                ((pong.robot_ts - pong.client_ts) + (pong.robot_ts - recvTsSec)) / 2;
+            clockOffsetMs = offsetSec * 1000;
+            console.log(`[clock-sync] rtt=${rttMs.toFixed(1)}ms offset=${clockOffsetMs.toFixed(1)}ms`);
         }
 
         function send(bytes) {
@@ -779,9 +857,13 @@ angular.z = 0</pre>
             } catch (_) {}
 
             stopKeyboardLoop();
+            stopClockSync();
             if (xrSession) { await xrSession.end().catch(() => {}); xrSession = null; }
             if (cmdChannel) { try { cmdChannel.close(); } catch (_) {} cmdChannel = null; }
+            if (stateChannel) { try { stateChannel.close(); } catch (_) {} stateChannel = null; }
             if (pc) { try { pc.close(); } catch (_) {} pc = null; }
+            clockOffsetMs = 0;
+            bestRttMs = Infinity;
 
             const canvas = document.getElementById('canvas');
             canvas.style.display = 'none';

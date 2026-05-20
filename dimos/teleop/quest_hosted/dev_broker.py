@@ -37,12 +37,18 @@ Usage
 
        python -m dimos.teleop.quest_hosted.dev_broker
 
-2. Run dimos pointing at this broker::
+2. Run dimos pointing at this broker. Module-config overrides go through
+   ``-o`` / ``--option`` (repeat for multiples). Only ``broker_url`` needs
+   overriding; ``robot_id``, ``robot_name``, ``broker_api_key`` come from
+   your ``.env``::
+
+       dimos run teleop-hosted-go2 teleop-benchmark \\
+         -o hostedtwistteleopmodule.broker_url=http://localhost:8000
+
+   …or xarm7 VR path::
 
        dimos run teleop-hosted-xarm7 \\
-         --hosted-arm-teleop-module.broker-url=http://localhost:8000 \\
-         --hosted-arm-teleop-module.robot-id=test-robot \\
-         --hosted-arm-teleop-module.robot-name="Test XArm7"
+         -o hostedarmteleopmodule.broker_url=http://localhost:8000
 
 3. Open the operator HTML in a browser. Easiest path: this broker also
    serves it at ``http://localhost:8000/teleop``. Set the broker URL field
@@ -91,6 +97,8 @@ logging.basicConfig(
 logger = logging.getLogger("dev_broker")
 
 STATIC_DIR = Path(__file__).parent / "static"
+CMD_CHANNEL_ID = 5
+STATE_CHANNEL_ID = 7
 
 
 # ─── Session state ──────────────────────────────────────────────────────────
@@ -120,6 +128,42 @@ def _wire_forwarding(label: str, src_channel: Any, dst_channels: dict[str, Any])
             dst.send(data)
 
 
+def _create_negotiated_channels(
+    pc: RTCPeerConnection,
+    own_channels: dict[str, Any],
+    peer_channels: dict[str, Any],
+    log_prefix: str,
+) -> None:
+    """Open broker-side negotiated ``cmd_unreliable`` + ``state_reliable``.
+
+    Mirrors the production broker's handshake — robot/operator each call
+    ``createDataChannel(negotiated=True, id=CMD/STATE_CHANNEL_ID, ...)`` and
+    the broker opens matching channels on its end of the same PC, then
+    forwards bytes by label to the opposite peer.
+
+    Populates *own_channels* so the opposite-peer forwarder can find these by
+    label; sets up message handlers that publish to *peer_channels* when the
+    opposite side's matching channel is up.
+    """
+    cmd = pc.createDataChannel(
+        "cmd_unreliable",
+        negotiated=True,
+        id=CMD_CHANNEL_ID,
+        ordered=False,
+        maxRetransmits=0,
+    )
+    state = pc.createDataChannel(
+        "state_reliable",
+        negotiated=True,
+        id=STATE_CHANNEL_ID,
+        ordered=True,
+    )
+    for ch in (cmd, state):
+        own_channels[ch.label] = ch
+        _wire_forwarding(ch.label, ch, peer_channels)
+        logger.info(f"{log_prefix} broker-side {ch.label} ready (sctp id={ch.id})")
+
+
 # ─── HTTP API ───────────────────────────────────────────────────────────────
 
 
@@ -132,14 +176,68 @@ app.add_middleware(
 )
 
 
-class SDPBody(BaseModel):
-    sdp: str
-    type: str
+# Request schemas — match the production broker API the robot module + HTML
+# already speak. ``sdp_offer`` (string) goes both ways; the type is implied
+# (always ``"offer"`` from clients, broker always answers).
 
 
-class RegisterBody(SDPBody):
+class RegisterBody(BaseModel):
     robot_id: str = ""
     robot_name: str = ""
+    sdp_offer: str
+
+
+class JoinBody(BaseModel):
+    role: str = "operator"
+    sdp_offer: str
+
+
+class AuthBody(BaseModel):
+    email: str
+    password: str
+
+
+# ─── Auth stubs ─────────────────────────────────────────────────────────────
+# Operator HTML expects /auth/login + /auth/register (prod broker has real
+# auth backed by the dimensional-teleop stack). dev_broker accepts any
+# credentials and returns a fake token — request handlers below ignore the
+# Authorization header entirely.
+
+
+@app.post("/api/v1/auth/login")
+async def login(body: AuthBody) -> dict[str, str]:
+    return {"token": "dev-token", "user_id": body.email}
+
+
+@app.post("/api/v1/auth/register")
+async def register(body: AuthBody) -> dict[str, str]:
+    return {"token": "dev-token", "user_id": body.email}
+
+
+# ─── API-key management stubs ───────────────────────────────────────────────
+# Dashboard renders an "API Keys" section. dev_broker returns an empty list /
+# echoes back a fake key — robots in dev are identified by free-form robot_id
+# at register time, no key gating.
+
+
+@app.get("/api/v1/keys")
+async def list_keys() -> list[dict[str, Any]]:
+    return []
+
+
+@app.post("/api/v1/keys")
+async def create_key(body: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "dev-key",
+        "key": "dev-key-secret",
+        "name": body.get("name", ""),
+        "robot_id": body.get("robot_id", ""),
+    }
+
+
+@app.delete("/api/v1/keys/{key_id}")
+async def delete_key(key_id: str) -> dict[str, bool]:
+    return {"ok": True}
 
 
 @app.post("/api/v1/sessions")
@@ -165,7 +263,16 @@ async def register_robot(body: RegisterBody) -> dict[str, str]:
     async def _on_state() -> None:
         logger.info(f"[{session.robot_name}] robot PC: {robot_pc.connectionState}")
 
-    await robot_pc.setRemoteDescription(RTCSessionDescription(sdp=body.sdp, type=body.type))
+    # Open broker-side negotiated channels eagerly. on("datachannel") above
+    # still catches anything else (e.g. the robot's _sctp_init throwaway).
+    _create_negotiated_channels(
+        robot_pc,
+        session.robot_channels,
+        session.operator_channels,
+        log_prefix=f"[{session.robot_name}] robot",
+    )
+
+    await robot_pc.setRemoteDescription(RTCSessionDescription(sdp=body.sdp_offer, type="offer"))
     answer = await robot_pc.createAnswer()
     await robot_pc.setLocalDescription(answer)
 
@@ -174,8 +281,7 @@ async def register_robot(body: RegisterBody) -> dict[str, str]:
 
     return {
         "session_id": session_id,
-        "sdp": robot_pc.localDescription.sdp,
-        "type": robot_pc.localDescription.type,
+        "sdp_answer": robot_pc.localDescription.sdp,
     }
 
 
@@ -192,10 +298,33 @@ async def deregister(session_id: str) -> dict[str, bool]:
 
 
 @app.post("/api/v1/sessions/{session_id}/heartbeat")
-async def heartbeat(session_id: str) -> dict[str, bool]:
+async def heartbeat(session_id: str) -> dict[str, Any]:
+    session = _sessions.get(session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found")
+    body: dict[str, Any] = {"ok": True}
+    if session.operator_pc is not None:
+        # Operator joined — robot module reads these and lazy-opens its
+        # negotiated cmd_unreliable + state_reliable with matching SCTP ids.
+        body["cmd_channel_subscriber_id"] = CMD_CHANNEL_ID
+        body["state_channel_subscriber_id"] = STATE_CHANNEL_ID
+    return body
+
+
+@app.post("/api/v1/sessions/{session_id}/bridge-datachannel")
+async def bridge_datachannel(session_id: str) -> dict[str, int]:
+    """Operator HTML calls this after PC setup to learn which SCTP ids to bind
+    its negotiated ``cmd_unreliable`` + ``state_reliable`` channels to.
+
+    Mirrors the production broker; in dev these are constants because each PC
+    has its own SCTP association.
+    """
     if session_id not in _sessions:
         raise HTTPException(404, "Session not found")
-    return {"ok": True}
+    return {
+        "cmd_channel_id": CMD_CHANNEL_ID,
+        "state_channel_id": STATE_CHANNEL_ID,
+    }
 
 
 @app.get("/api/v1/sessions")
@@ -212,7 +341,7 @@ async def list_sessions() -> list[dict[str, Any]]:
 
 
 @app.post("/api/v1/sessions/{session_id}/join")
-async def operator_join(session_id: str, body: SDPBody) -> dict[str, str]:
+async def operator_join(session_id: str, body: JoinBody) -> dict[str, str]:
     """Operator joins — broker becomes the WebRTC peer answering their offer."""
     session = _sessions.get(session_id)
     if not session:
@@ -236,15 +365,19 @@ async def operator_join(session_id: str, body: SDPBody) -> dict[str, str]:
     async def _on_state() -> None:
         logger.info(f"[{session.robot_name}] operator PC: {operator_pc.connectionState}")
 
-    await operator_pc.setRemoteDescription(RTCSessionDescription(sdp=body.sdp, type=body.type))
+    _create_negotiated_channels(
+        operator_pc,
+        session.operator_channels,
+        session.robot_channels,
+        log_prefix=f"[{session.robot_name}] operator",
+    )
+
+    await operator_pc.setRemoteDescription(RTCSessionDescription(sdp=body.sdp_offer, type="offer"))
     answer = await operator_pc.createAnswer()
     await operator_pc.setLocalDescription(answer)
 
     logger.info(f"[{session.robot_name}] operator joined")
-    return {
-        "sdp": operator_pc.localDescription.sdp,
-        "type": operator_pc.localDescription.type,
-    }
+    return {"sdp_answer": operator_pc.localDescription.sdp}
 
 
 @app.post("/api/v1/sessions/{session_id}/leave")
@@ -269,6 +402,7 @@ async def index() -> dict[str, Any]:
             "POST   /api/v1/sessions",
             "DELETE /api/v1/sessions/:id",
             "POST   /api/v1/sessions/:id/heartbeat",
+            "POST   /api/v1/sessions/:id/bridge-datachannel",
             "GET    /api/v1/sessions",
             "POST   /api/v1/sessions/:id/join",
             "POST   /api/v1/sessions/:id/leave",
@@ -303,7 +437,7 @@ def main() -> None:
     args = parser.parse_args()
 
     logger.info(f"Starting dev broker on http://{args.host}:{args.port}")
-    logger.info("  • Point dimos with --hosted-arm-teleop-module.broker-url=...")
+    logger.info("  • Point dimos with -o hostedtwistteleopmodule.broker_url=...")
     logger.info(f"  • Operator HTML available at http://{args.host}:{args.port}/teleop")
     logger.info("  • Production: replace this with the Cloudflare Worker broker.")
 
