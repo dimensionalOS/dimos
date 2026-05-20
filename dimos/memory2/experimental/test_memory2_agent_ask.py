@@ -22,14 +22,16 @@ Important: Keep these tests, while this is experimental, out of the common test 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import os
 from pathlib import Path
 import re
-from typing import Callable
 
 import pytest
 
-DEFAULT_MODEL = "gpt-5.5"  # Matches `dimos/memory2/experimental/memory2_agent/ask.py`'s --model default.
+DEFAULT_MODEL = (
+    "gpt-5.5"  # Matches `dimos/memory2/experimental/memory2_agent/ask.py`'s --model default.
+)
 
 
 # Cardinal-only — ordinals ("first", "second") would create false positives

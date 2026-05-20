@@ -12,11 +12,10 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from pathlib import Path
+import sys
 
 from dimos.memory2.experimental.memory2_agent.agent import run_question
-
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.models.embedding.clip import CLIPModel
 
@@ -47,8 +46,7 @@ QUESTIONS = [
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=Path, required=True,
-                        help="Recording .db path (required).")
+    parser.add_argument("--db", type=Path, required=True, help="Recording .db path (required).")
     args = parser.parse_args()
 
     if not args.db.exists():

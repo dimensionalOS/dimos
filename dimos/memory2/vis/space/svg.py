@@ -362,7 +362,7 @@ def _render_polygon(el: Polygon, b: Bounds) -> str:
         return "<!-- polygon: no fill or stroke -->"
 
     # Only grow bounds once we know the polygon is actually visible.
-    for (px, py) in pts:
+    for px, py in pts:
         b.include(px, py)
 
     pts_str = " ".join(f"{px:.4f},{py:.4f}" for (px, py) in pts)
@@ -383,7 +383,7 @@ def _render_polygon(el: Polygon, b: Bounds) -> str:
         attrs.append(f'stroke-width="{el.stroke_width:.4f}"')
         attrs.append('stroke-linejoin="round"')
 
-    parts = [f'<polygon {" ".join(attrs)}/>']
+    parts = [f"<polygon {' '.join(attrs)}/>"]
 
     if el.label:
         # Anchor at the top-most vertex (smallest world y → smallest SVG y
@@ -406,6 +406,7 @@ def _render_wedge(el: Wedge, b: Bounds) -> str:
 
     ox, oy = el.origin[0], _y(el.origin[1])
     half = el.fov / 2.0
+
     # Left edge tip (yaw + half_fov), center tip (yaw), right edge tip (yaw - half_fov)
     def _tip(angle: float) -> tuple[float, float]:
         return (

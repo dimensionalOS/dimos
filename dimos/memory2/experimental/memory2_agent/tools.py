@@ -21,6 +21,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool as lc_tool
 from langgraph.types import Command
 
+from dimos.memory2.experimental.memory2_agent import skills_registry
 from dimos.memory2.experimental.memory2_agent.map_view import (
     MapRenderer,
     _annotate_query_in_frame,
@@ -33,13 +34,10 @@ from dimos.memory2.experimental.memory2_agent.map_view import (
     walkthrough_frames,
     walkthrough_timestamps_only,
 )
-from dimos.memory2.experimental.memory2_agent import skills_registry
-
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.type.observation import Observation
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.sensor_msgs.Image import Image as DimosImage
-
 
 _KNOWN_STREAMS = {
     "color_image",
@@ -124,9 +122,7 @@ def _multimodal_command(
     return Command(update={"messages": msgs})
 
 
-def build_tools(
-    store: SqliteStore, clip: CLIPModel
-) -> tuple[list[Any], dict[str, Any]]:
+def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[str, Any]]:
     """Build the LangChain tool list bound to a given store + CLIP model.
 
     Returns (tools, state) — `state` is retained for backwards-compat but
@@ -181,7 +177,7 @@ def build_tools(
 
         try:
             result = _calc_repl.feed_run(code, print_callback=_cb)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return f"calc error: {type(e).__name__}: {e}"
 
         out_parts = []
@@ -226,7 +222,7 @@ def build_tools(
             try:
                 s = store.stream(n)
                 parts.append(f"  {n}: {s.count()} items")
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 parts.append(f"  {n}: <error: {e}>")
         return "Available streams:\n" + "\n".join(parts)
 
@@ -261,7 +257,7 @@ def build_tools(
         try:
             qe = clip.embed_text(query)
             obs = store.stream(stream).search(qe, k=k).to_list()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return f"search_semantic failed on {stream!r}: {e}"
         header = (
             f"search_semantic({stream!r}, {query!r}) top {k}:\n"
@@ -285,11 +281,9 @@ def build_tools(
                 .limit(k)
                 .to_list()
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return f"near failed on {stream!r}: {e}"
-        return _fmt_obs_list(
-            obs, header=f"near({stream!r}, x={x}, y={y}, r={radius}) up to {k}:"
-        )
+        return _fmt_obs_list(obs, header=f"near({stream!r}, x={x}, y={y}, r={radius}) up to {k}:")
 
     @lc_tool
     def show_image(
@@ -316,7 +310,7 @@ def build_tools(
             if not all_obs:
                 return f"stream {stream!r} is empty"
             obs = min(all_obs, key=lambda o: abs(o.ts - float(ts)))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return f"show_image failed: {e}"
         summary = (
             f"frame from {stream!r}  ts={obs.ts:.2f}  pose={_fmt_pose(obs.pose)} "
@@ -357,9 +351,12 @@ def build_tools(
         """
         try:
             matches, desc = _recall_view_impl(
-                store, map_renderer,
+                store,
+                map_renderer,
                 at_ts=at_ts,
-                direction=direction, yaw_deg=yaw_deg, k=k,
+                direction=direction,
+                yaw_deg=yaw_deg,
+                k=k,
             )
         except ValueError as e:
             return f"recall_view: {e}"
@@ -446,7 +443,7 @@ def build_tools(
             space, stats, n_out_odom, n_total_odom, n_out_vis = _verify_room_partition_impl(
                 store, map_renderer, rooms
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return f"verify_room_partition failed: {e}"
 
         if not stats:
@@ -455,8 +452,10 @@ def build_tools(
         any_overlap = any(s.overlap_with for s in stats)
         any_overclaim = any(s.overclaim_m2 > 1.0 for s in stats)
         flags = []
-        if any_overlap: flags.append("OVERLAPS")
-        if any_overclaim: flags.append("OVERCLAIM (polygon over UNKNOWN cells)")
+        if any_overlap:
+            flags.append("OVERLAPS")
+        if any_overclaim:
+            flags.append("OVERCLAIM (polygon over UNKNOWN cells)")
         lines = [
             f"verify_room_partition: {len(stats)} room(s)"
             + (f"  ⚠ {' / '.join(flags)} — see per-room list" if flags else ""),
@@ -468,10 +467,7 @@ def build_tools(
         for s in stats:
             poly_repr = ", ".join(f"({x:+.2f},{y:+.2f})" for (x, y) in s.polygon)
             overclaim_pct = (s.overclaim_m2 / s.area_m2 * 100.0) if s.area_m2 > 0 else 0.0
-            lines.append(
-                f"  #{s.id}  area={s.area_m2:6.1f} m^2  "
-                f"polygon=[{poly_repr}]"
-            )
+            lines.append(f"  #{s.id}  area={s.area_m2:6.1f} m^2  polygon=[{poly_repr}]")
             lines.append(
                 f"        odom_in={s.odom_samples_inside}  "
                 f"free_cells_in={s.n_visible_inside}  "
@@ -539,12 +535,15 @@ def build_tools(
         """
         try:
             picks, map_space = frames_that_could_see_point(
-                store, map_renderer,
-                x=float(x), y=float(y), k=int(k),
+                store,
+                map_renderer,
+                x=float(x),
+                y=float(y),
+                k=int(k),
                 max_range_m=float(max_range_m),
                 check_occlusion=bool(check_occlusion),
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return f"frames_facing: {e}"
 
         if not picks:
@@ -588,7 +587,9 @@ def build_tools(
             image_blocks.append(map_blocks[1])
         # Then each candidate, with the query position projected into the frame.
         import base64 as _b64
+
         import cv2 as _cv2
+
         for i, c in enumerate(picks, 1):
             cap = (
                 f"frame {i}/{len(picks)}  ts={c.obs.ts:.2f}  "
@@ -605,13 +606,15 @@ def build_tools(
                 ok, buf = _cv2.imencode(".jpg", annotated, [_cv2.IMWRITE_JPEG_QUALITY, 80])
                 if ok:
                     b64 = _b64.b64encode(bytes(buf)).decode("ascii")
-                    image_blocks.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                    })
+                    image_blocks.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                        }
+                    )
                 else:
                     image_blocks.extend(c.obs.data.agent_encode())
-        summary_parts = [header] + per_frame_captions
+        summary_parts = [header, *per_frame_captions]
         if points_legend:
             summary_parts.append(points_legend)
         summary_parts.append("(annotated map + per-frame images follow)")
@@ -624,9 +627,7 @@ def build_tools(
         )
 
     @lc_tool
-    def walkthrough_timestamps(
-        t_start: str, t_end: str, step_seconds: float = 2.0
-    ) -> str:
+    def walkthrough_timestamps(t_start: str, t_end: str, step_seconds: float = 2.0) -> str:
         """Return evenly-spaced timestamps across a time range at ~step_seconds.
 
         Output is index → ts only, no images and no pose. Use it as a
@@ -685,22 +686,17 @@ def build_tools(
         `t_start` and `t_end` accept the same formats as show_map's
         `when`.
         """
-        result = walkthrough_frames(
-            store, t_start=t_start, t_end=t_end, step_seconds=step_seconds
-        )
+        result = walkthrough_frames(store, t_start=t_start, t_end=t_end, step_seconds=step_seconds)
         if isinstance(result, str):
             return result
         if not result:
             return "walkthrough: no frames sampled"
         header = (
-            f"walkthrough: {len(result)} frames sampled from t_start={t_start!r} "
-            f"to t_end={t_end!r}"
+            f"walkthrough: {len(result)} frames sampled from t_start={t_start!r} to t_end={t_end!r}"
         )
         blocks = encode_walkthrough_blocks(result, header=header)
         # First block is the header text; rest are alternating captions + images.
-        text_summary = (
-            f"{header} (images and per-frame captions follow as next user message)"
-        )
+        text_summary = f"{header} (images and per-frame captions follow as next user message)"
         return _multimodal_command(
             tool_call_id,
             tool_summary=text_summary,

@@ -16,13 +16,11 @@ from langchain.agents import AgentState, create_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.graph.message import add_messages
 
+from dimos.memory2.experimental.memory2_agent import skills_registry
 from dimos.memory2.experimental.memory2_agent.llm import build_chat_model
 from dimos.memory2.experimental.memory2_agent.tools import build_tools
-from dimos.memory2.experimental.memory2_agent import skills_registry
-
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.models.embedding.clip import CLIPModel
-
 
 SYSTEM_PROMPT = (
     "You're answering questions about a robot's memory store. The robot "
@@ -92,8 +90,7 @@ def _fix_parallel_tool_batches(messages: list[BaseMessage]) -> list[BaseMessage]
                     j += 1
                 elif (
                     isinstance(m, HumanMessage)
-                    and getattr(m, "additional_kwargs", {}).get("tool_call_id")
-                    in expected_ids
+                    and getattr(m, "additional_kwargs", {}).get("tool_call_id") in expected_ids
                 ):
                     other_msgs.append(m)
                     j += 1
@@ -158,27 +155,27 @@ def run_question(
         HumanMessage(content=f"Question: {question}"),
         AIMessage(
             content="",
-            tool_calls=[{
-                "name": "list_skills",
-                "args": {},
-                "id": _PRESEED_TOOL_CALL_ID,
-            }],
+            tool_calls=[
+                {
+                    "name": "list_skills",
+                    "args": {},
+                    "id": _PRESEED_TOOL_CALL_ID,
+                }
+            ],
         ),
         ToolMessage(content=_skills_listing(), tool_call_id=_PRESEED_TOOL_CALL_ID),
     ]
 
     try:
         result = agent.invoke({"messages": preseed})
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return AgentRun(final_answer="", error=f"agent error: {e}")
 
     # Collect tool calls from the conversation.
     tool_calls: list[dict] = []
     for msg in result.get("messages", []):
         for tc in getattr(msg, "tool_calls", None) or []:
-            tool_calls.append(
-                {"name": tc.get("name"), "args": tc.get("args", {})}
-            )
+            tool_calls.append({"name": tc.get("name"), "args": tc.get("args", {})})
 
     # Final answer = the text of the last AIMessage in the run.
     answer = ""

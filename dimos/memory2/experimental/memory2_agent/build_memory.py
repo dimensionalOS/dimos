@@ -16,8 +16,7 @@ from dimos.memory2.store.sqlite import SqliteStore
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=Path, required=True,
-                        help="Recording .db path (required).")
+    parser.add_argument("--db", type=Path, required=True, help="Recording .db path (required).")
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -30,7 +29,7 @@ def main() -> None:
         s = store.stream(name)
         try:
             print(f"  {s.summary()}")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"  {name}: <summary error: {e}>")
     store.stop()
     print("[verify] done")
