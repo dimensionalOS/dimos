@@ -183,8 +183,7 @@ class McpClient(Module):
 
             # Vision content can't be embedded inside a ToolMessage for OpenAI
             # (and others), so we use Command to append a follow-up HumanMessage
-            # carrying the image blocks within the same agent turn. Mirrors the
-            # pattern used by examples/memory2_agent/tools.py.
+            # carrying the image blocks within the same agent turn.
             #
             # The HumanMessage is tagged with `additional_kwargs["tool_call_id"]`
             # so the state reducer can pair it with the right ToolMessage when
