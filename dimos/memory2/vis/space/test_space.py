@@ -14,11 +14,32 @@
 
 """Tests for Space builder and element types."""
 
+import re
+
 import numpy as np
 import pytest
 
+
+def _viewbox(svg: str) -> tuple[float, float, float, float]:
+    """Parse the SVG viewBox attribute → (xmin, ymin, width, height)."""
+    m = re.search(r'viewBox="([\-\d\.]+) ([\-\d\.]+) ([\-\d\.]+) ([\-\d\.]+)"', svg)
+    assert m is not None, "no viewBox in SVG"
+    return float(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4))
+
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
-from dimos.memory2.vis.space.elements import Arrow, Box3D, Camera, Point, Polyline, Pose, Text
+from dimos.memory2.vis.color import ColorRange
+from dimos.memory2.vis.space.elements import (
+    Arrow,
+    Box3D,
+    Camera,
+    Point,
+    Polygon,
+    Polyline,
+    Pose,
+    RasterOverlay,
+    Text,
+    Wedge,
+)
 from dimos.memory2.vis.space.space import Space
 from dimos.msgs.geometry_msgs.Point import Point as GeoPoint
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -348,3 +369,281 @@ class TestSVGRender:
         s.to_svg(str(out))
         assert out.exists()
         assert "<svg" in out.read_text()
+
+
+class TestPolygonElement:
+    """Polygon: closed shape with optional fill + stroke + label."""
+
+    def test_polygon_renders_svg_polygon(self):
+        from dimos.memory2.vis import color
+
+        s = Space()
+        s.add(Polygon(
+            vertices=[(0, 0), (4, 0), (4, 3), (0, 3)],
+            fill="red",
+            stroke="blue",
+            label="kitchen",
+        ))
+        svg = s.to_svg()
+        assert "<polygon" in svg
+        assert color.red.hex() in svg
+        assert color.blue.hex() in svg
+        assert "fill-opacity" in svg
+        assert "kitchen" in svg
+
+    def test_polygon_no_fill(self):
+        s = Space()
+        s.add(Polygon(vertices=[(0, 0), (1, 0), (1, 1)], stroke="blue"))
+        svg = s.to_svg()
+        assert 'fill="none"' in svg
+
+    def test_polygon_lt_3_vertices_skipped(self):
+        s = Space()
+        s.add(Polygon(vertices=[(0, 0), (1, 0)], fill="red"))
+        svg = s.to_svg()
+        # No <polygon shape emitted; comment-only fallback OK.
+        assert "<polygon " not in svg and "<polygon\n" not in svg
+
+    def test_polygon_grows_bounds(self):
+        s = Space()
+        s.add(Polygon(vertices=[(100, 200), (105, 200), (105, 205)], stroke="red"))
+        svg = s.to_svg()
+        xmin, ymin, w, h = _viewbox(svg)
+        # Polygon spans world x ∈ [100, 105], y ∈ [200, 205]. SVG Y is flipped,
+        # so the viewBox covers x ∈ [100, 105] and y ∈ [-205, -200] (± padding).
+        assert xmin <= 100.0 and xmin + w >= 105.0
+        assert ymin <= -205.0 and ymin + h >= -200.0
+
+    def test_polygon_uses_deferred_color(self):
+        s = Space()
+        cr = ColorRange("turbo")
+        s.add(Polygon(vertices=[(0, 0), (1, 0), (1, 1)], fill=cr(0.1), stroke=cr(0.9)))
+        svg = s.to_svg()
+        # After to_svg, deferred colors should have resolved to concrete hex.
+        assert "fill=\"#" in svg
+        assert "stroke=\"#" in svg
+
+
+class TestWedgeElement:
+    """Wedge: outlined viewing cone."""
+
+    def test_wedge_renders_svg_polygon(self):
+        from dimos.memory2.vis import color
+        import math as _math
+
+        s = Space()
+        s.add(Wedge(origin=(1, 2), yaw=0.0, fov=_math.radians(60), length=3, color="orange"))
+        svg = s.to_svg()
+        assert "<polygon" in svg
+        assert color.orange.hex() in svg
+
+    def test_wedge_label_renders(self):
+        import math as _math
+
+        s = Space()
+        s.add(Wedge(origin=(0, 0), yaw=0, fov=_math.radians(45), length=2, label="cam0"))
+        svg = s.to_svg()
+        assert "cam0" in svg
+
+    def test_wedge_zero_fov_skipped(self):
+        s = Space()
+        s.add(Wedge(origin=(0, 0), yaw=0, fov=0, length=2))
+        svg = s.to_svg()
+        assert "<polygon" not in svg
+
+
+class TestRasterOverlayElement:
+    """RasterOverlay: world-frame RGBA bitmap."""
+
+    def test_raster_overlay_renders_image_tag(self):
+        rgba = np.full((4, 4, 4), 255, dtype=np.uint8)
+        s = Space()
+        s.add(RasterOverlay(rgba=rgba, origin=(0, 0), resolution=0.1))
+        svg = s.to_svg()
+        assert "<image" in svg
+        assert "data:image/png;base64," in svg
+
+    def test_raster_overlay_grows_bounds(self):
+        rgba = np.full((4, 4, 4), 255, dtype=np.uint8)
+        s = Space()
+        s.add(RasterOverlay(rgba=rgba, origin=(10, 20), resolution=0.1))
+        svg = s.to_svg()
+        xmin, ymin, w, h = _viewbox(svg)
+        # 4×4 grid at 0.1m resolution → world extent x ∈ [10, 10.4], y ∈ [20, 20.4].
+        # SVG Y flipped → y ∈ [-20.4, -20] (± padding).
+        assert xmin <= 10.0 and xmin + w >= 10.4
+        assert ymin <= -20.4 and ymin + h >= -20.0
+
+
+
+class TestPointShapes:
+    """Point.shape and Point.halo extensions."""
+
+    def test_point_dot_renders_circle(self):
+        s = Space()
+        s.add(Point(GeoPoint(1, 1, 0), shape="dot"))
+        svg = s.to_svg()
+        assert "<circle" in svg
+
+    def test_point_cross_renders_lines(self):
+        s = Space()
+        s.add(Point(GeoPoint(1, 1, 0), shape="cross"))
+        svg = s.to_svg()
+        assert svg.count("<line") >= 2
+
+    def test_point_x_renders_lines(self):
+        s = Space()
+        s.add(Point(GeoPoint(1, 1, 0), shape="x"))
+        svg = s.to_svg()
+        assert svg.count("<line") >= 2
+
+    def test_point_square_renders_rect(self):
+        s = Space()
+        s.add(Point(GeoPoint(1, 1, 0), shape="square"))
+        svg = s.to_svg()
+        assert "<rect" in svg
+
+    def test_point_halo_includes_black(self):
+        s = Space()
+        s.add(Point(GeoPoint(1, 1, 0), shape="dot", halo=True))
+        svg = s.to_svg()
+        assert "#000000" in svg
+
+
+class TestSpaceAddDispatch:
+    """Space.add() accepts new element types."""
+
+    def test_add_polygon(self):
+        p = Polygon(vertices=[(0, 0), (1, 0), (1, 1)], fill="red")
+        s = Space().add(p)
+        assert s.elements[0] is p
+
+    def test_add_raster_overlay(self):
+        rgba = np.zeros((2, 2, 4), dtype=np.uint8)
+        ro = RasterOverlay(rgba=rgba, origin=(0, 0), resolution=0.1)
+        s = Space().add(ro)
+        assert s.elements[0] is ro
+
+    def test_add_wedge(self):
+        import math as _math
+
+        w = Wedge(origin=(0, 0), yaw=0, fov=_math.radians(60), length=2)
+        s = Space().add(w)
+        assert s.elements[0] is w
+
+
+class TestRasterRender:
+    """cv2 raster backend output shape, dtype, and pixel correctness."""
+
+    def test_raster_empty_space(self):
+        bgr = Space().to_bgr(width_px=200)
+        assert bgr.dtype == np.uint8
+        assert bgr.ndim == 3 and bgr.shape[2] == 3
+        assert bgr.shape[1] == 200
+
+    def test_raster_width_px(self):
+        s = Space()
+        s.add(Point(GeoPoint(0, 0, 0)))
+        bgr = s.to_bgr(width_px=400)
+        assert bgr.shape[1] == 400
+
+    def test_raster_polygon_fill_pixel(self):
+        # Polygon covers most of the canvas with opaque red.
+        s = Space()
+        s.add(Polygon(
+            vertices=[(-1, -1), (1, -1), (1, 1), (-1, 1)],
+            fill="red",
+            fill_opacity=1.0,
+        ))
+        bgr = s.to_bgr(width_px=200, padding_m=0.1)
+        cy, cx = bgr.shape[0] // 2, bgr.shape[1] // 2
+        b, g, r = bgr[cy, cx]
+        # Allow large tolerance — the red palette color is ~#e74c3c, mostly red.
+        assert int(r) > int(b) and int(r) > int(g)
+
+    def test_raster_pose_marker_is_colored(self):
+        s = Space()
+        s.add(Pose(PoseStamped(0, 0, 0), color="red"))
+        bgr = s.to_bgr(width_px=200)
+        # Default background is (248, 248, 248); the Pose marker is not.
+        assert (bgr != 248).any()
+
+    def test_raster_to_png_round_trip(self):
+        import cv2
+
+        s = Space()
+        s.add(Point(GeoPoint(0, 0, 0), color="red"))
+        png = s.to_png(width_px=200)
+        decoded = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+        bgr_direct = s.to_bgr(width_px=200)
+        assert decoded.shape == bgr_direct.shape
+
+    def test_raster_occupancy_grid_used_as_base(self):
+        grid_data = np.zeros((10, 10), dtype=np.int8)
+        grid_data[3:7, 3:7] = 100  # occupied block
+        grid = OccupancyGrid(grid=grid_data, resolution=0.1)
+        s = Space().base_map(grid)
+        bgr = s.to_bgr(width_px=200)
+        # Not the default background everywhere.
+        assert (bgr != 248).any()
+
+    def test_raster_raster_overlay_blends(self):
+        rgba = np.zeros((10, 10, 4), dtype=np.uint8)
+        rgba[..., 0] = 220  # R
+        rgba[..., 3] = 255  # opaque alpha
+        s = Space()
+        s.add(RasterOverlay(rgba=rgba, origin=(0, 0), resolution=0.1))
+        bgr = s.to_bgr(width_px=200, padding_m=0.0)
+        cy, cx = bgr.shape[0] // 2, bgr.shape[1] // 2
+        b, g, r = bgr[cy, cx]
+        assert int(r) > 100 and int(r) > int(b) and int(r) > int(g)
+
+    def test_raster_wedge_draws_lines(self):
+        import math as _math
+
+        s = Space()
+        s.add(Wedge(origin=(0, 0), yaw=0, fov=_math.radians(90), length=3, color="orange"))
+        bgr = s.to_bgr(width_px=200)
+        assert (bgr != 248).any()
+
+    def test_raster_height_clamp(self):
+        # A tall sliver shouldn't blow up the canvas; height clamped to width * 10.
+        s = Space()
+        s.add(Polygon(vertices=[(0, 0), (0.01, 0), (0.01, 1000)], stroke="red"))
+        bgr = s.to_bgr(width_px=100)
+        assert bgr.shape[0] <= 100 * 10
+
+
+class TestSpaceToPNG:
+    """PNG serialisation."""
+
+    def test_to_png_returns_bytes_starting_with_png_magic(self):
+        s = Space()
+        s.add(Point(GeoPoint(0, 0, 0)))
+        png = s.to_png(width_px=200)
+        assert isinstance(png, (bytes, bytearray))
+        assert bytes(png[:8]) == b"\x89PNG\r\n\x1a\n"
+
+    def test_to_png_writes_path(self, tmp_path):
+        s = Space()
+        s.add(Point(GeoPoint(0, 0, 0)))
+        out = tmp_path / "x.png"
+        s.to_png(width_px=200, path=str(out))
+        assert out.exists()
+        assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+class TestResolveDeferredFillStroke:
+    """resolve_deferred walks color, fill, and stroke."""
+
+    def test_polygon_deferred_fill_resolves(self):
+        from dimos.memory2.vis.color import DeferredColor, resolve_deferred
+
+        cr = ColorRange("turbo")
+        p = Polygon(vertices=[(0, 0), (1, 0), (1, 1)], fill=cr(0.0), stroke=cr(1.0))
+        assert isinstance(p.fill, DeferredColor)
+        assert isinstance(p.stroke, DeferredColor)
+        resolve_deferred([p])
+        # After resolution both should be concrete Color objects.
+        assert not isinstance(p.fill, DeferredColor)
+        assert not isinstance(p.stroke, DeferredColor)

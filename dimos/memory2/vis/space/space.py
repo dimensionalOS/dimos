@@ -21,6 +21,7 @@ element), or observations (smart dispatch based on data type).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
@@ -30,10 +31,13 @@ from dimos.memory2.vis.space.elements import (
     Box3D,
     Camera,
     Point,
+    Polygon,
     Polyline,
     Pose,
+    RasterOverlay,
     SpaceElement,
     Text,
+    Wedge,
 )
 from dimos.msgs.geometry_msgs.Point import Point as GeoPoint
 from dimos.msgs.geometry_msgs.Pose import Pose as GeoPose
@@ -81,7 +85,10 @@ class Space:
         with ``**kwargs`` forwarded as style (color, label, etc.).
         """
 
-        if isinstance(element, (Pose, Arrow, Point, Box3D, Camera, Polyline, Text)):
+        if isinstance(
+            element,
+            (Pose, Arrow, Point, Box3D, Camera, Polyline, Text, Polygon, RasterOverlay, Wedge),
+        ):
             self._elements.append(element)
         elif isinstance(element, DimosMsg):
             self.add_dimos_msg(element, **kwargs)
@@ -150,6 +157,7 @@ class Space:
 
     def to_svg(self, path: str | None = None) -> str:
         """Render to SVG string. Optionally write to file."""
+        # TODO: widen `path` to `str | Path | None` to match `to_png`.
         from dimos.memory2.vis.space.svg import render
 
         resolve_deferred(self._elements)
@@ -165,6 +173,37 @@ class Space:
 
         resolve_deferred(self._elements)
         render(self, app_id=app_id, spawn=spawn)
+
+    def to_bgr(self, *, width_px: int = 800, padding_m: float = 0.0) -> Any:
+        """Render to a BGR ``np.ndarray`` via the cv2 raster backend."""
+        from dimos.memory2.vis.space.raster import render
+
+        resolve_deferred(self._elements)
+        return render(self, width_px=width_px, padding_m=padding_m)
+
+    def to_png(
+        self,
+        *,
+        width_px: int = 800,
+        padding_m: float = 0.0,
+        path: str | Path | None = None,
+    ) -> bytes:
+        """Render to PNG bytes. Optionally write to file.
+
+        Uses the cv2 raster backend (not SVG rasterisation), so the output is
+        the same pixels a vision-capable LLM would see when the Space is sent
+        as an inline image.
+        """
+        import cv2
+
+        bgr = self.to_bgr(width_px=width_px, padding_m=padding_m)
+        ok, buf = cv2.imencode(".png", bgr)
+        if not ok:
+            raise RuntimeError("cv2.imencode failed")
+        data = bytes(buf)
+        if path is not None:
+            Path(path).write_bytes(data)
+        return data
 
     def _repr_svg_(self) -> str:
         """Jupyter inline display."""

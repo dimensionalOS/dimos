@@ -22,7 +22,6 @@ automatically contribute to the viewport bounds.
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
 import io
 import math
 from pathlib import Path
@@ -34,49 +33,28 @@ from PIL import Image as PILImage
 from dimos.mapping.occupancy.visualizations import generate_rgba_texture
 from dimos.memory2.type.observation import Observation
 from dimos.memory2.vis.color import Color
+from dimos.memory2.vis.space.bounds import Bounds
 from dimos.memory2.vis.space.elements import (
     Arrow,
     Box3D,
     Camera,
+    ColorLike,
     Point,
+    Polygon,
     Polyline,
     Pose,
+    RasterOverlay,
     SpaceElement,
     Text,
+    Wedge,
 )
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
+__all__ = ["Bounds", "render"]
+
 if TYPE_CHECKING:
     from dimos.memory2.vis.space.space import Space
-
-
-@dataclass
-class Bounds:
-    """Accumulates world-space bounding box during rendering."""
-
-    xmin: float = float("inf")
-    xmax: float = float("-inf")
-    ymin: float = float("inf")
-    ymax: float = float("-inf")
-
-    def include(self, x: float, y: float) -> None:
-        self.xmin = min(self.xmin, x)
-        self.xmax = max(self.xmax, x)
-        self.ymin = min(self.ymin, y)
-        self.ymax = max(self.ymax, y)
-
-    @property
-    def empty(self) -> bool:
-        return self.xmin > self.xmax
-
-    @property
-    def width(self) -> float:
-        return max(self.xmax - self.xmin, 1.0)
-
-    @property
-    def height(self) -> float:
-        return max(self.ymax - self.ymin, 1.0)
 
 
 def _y(wy: float) -> float:
@@ -97,10 +75,75 @@ def _style(el: object) -> tuple[str, float]:
 def _render_point(el: Point, b: Bounds) -> str:
     x, y = el.msg.x, _y(el.msg.y)
     r = el.radius
-    b.include(x - r, y - r)
-    b.include(x + r, y + r)
+    halo_r = r * 1.4 if el.halo else r
+    b.include(x - halo_r, y - halo_r)
+    b.include(x + halo_r, y + halo_r)
     fill, alpha = _style(el)
-    parts = [f'<circle cx="{x:.4f}" cy="{y:.4f}" r="{r:.4f}" fill="{fill}" opacity="{alpha:.3f}"/>']
+
+    parts: list[str] = []
+    if el.shape == "dot":
+        if el.halo:
+            parts.append(
+                f'<circle cx="{x:.4f}" cy="{y:.4f}" r="{halo_r:.4f}" '
+                f'fill="#000000" opacity="{alpha:.3f}"/>'
+            )
+        parts.append(
+            f'<circle cx="{x:.4f}" cy="{y:.4f}" r="{r:.4f}" fill="{fill}" opacity="{alpha:.3f}"/>'
+        )
+    elif el.shape == "cross":
+        sw = r * 0.5
+        if el.halo:
+            halo_sw = sw * 2.2
+            parts.append(
+                f'<line x1="{x - r:.4f}" y1="{y:.4f}" x2="{x + r:.4f}" y2="{y:.4f}" '
+                f'stroke="#000000" stroke-width="{halo_sw:.4f}" stroke-linecap="round" opacity="{alpha:.3f}"/>'
+            )
+            parts.append(
+                f'<line x1="{x:.4f}" y1="{y - r:.4f}" x2="{x:.4f}" y2="{y + r:.4f}" '
+                f'stroke="#000000" stroke-width="{halo_sw:.4f}" stroke-linecap="round" opacity="{alpha:.3f}"/>'
+            )
+        parts.append(
+            f'<line x1="{x - r:.4f}" y1="{y:.4f}" x2="{x + r:.4f}" y2="{y:.4f}" '
+            f'stroke="{fill}" stroke-width="{sw:.4f}" stroke-linecap="round" opacity="{alpha:.3f}"/>'
+        )
+        parts.append(
+            f'<line x1="{x:.4f}" y1="{y - r:.4f}" x2="{x:.4f}" y2="{y + r:.4f}" '
+            f'stroke="{fill}" stroke-width="{sw:.4f}" stroke-linecap="round" opacity="{alpha:.3f}"/>'
+        )
+    elif el.shape == "x":
+        sw = r * 0.5
+        diag = r * 0.70710678  # r / sqrt(2)
+        if el.halo:
+            halo_sw = sw * 2.2
+            parts.append(
+                f'<line x1="{x - diag:.4f}" y1="{y - diag:.4f}" x2="{x + diag:.4f}" y2="{y + diag:.4f}" '
+                f'stroke="#000000" stroke-width="{halo_sw:.4f}" stroke-linecap="round" opacity="{alpha:.3f}"/>'
+            )
+            parts.append(
+                f'<line x1="{x - diag:.4f}" y1="{y + diag:.4f}" x2="{x + diag:.4f}" y2="{y - diag:.4f}" '
+                f'stroke="#000000" stroke-width="{halo_sw:.4f}" stroke-linecap="round" opacity="{alpha:.3f}"/>'
+            )
+        parts.append(
+            f'<line x1="{x - diag:.4f}" y1="{y - diag:.4f}" x2="{x + diag:.4f}" y2="{y + diag:.4f}" '
+            f'stroke="{fill}" stroke-width="{sw:.4f}" stroke-linecap="round" opacity="{alpha:.3f}"/>'
+        )
+        parts.append(
+            f'<line x1="{x - diag:.4f}" y1="{y + diag:.4f}" x2="{x + diag:.4f}" y2="{y - diag:.4f}" '
+            f'stroke="{fill}" stroke-width="{sw:.4f}" stroke-linecap="round" opacity="{alpha:.3f}"/>'
+        )
+    elif el.shape == "square":
+        if el.halo:
+            parts.append(
+                f'<rect x="{x - halo_r:.4f}" y="{y - halo_r:.4f}" '
+                f'width="{halo_r * 2:.4f}" height="{halo_r * 2:.4f}" '
+                f'fill="#000000" opacity="{alpha:.3f}"/>'
+            )
+        parts.append(
+            f'<rect x="{x - r:.4f}" y="{y - r:.4f}" '
+            f'width="{r * 2:.4f}" height="{r * 2:.4f}" '
+            f'fill="{fill}" opacity="{alpha:.3f}"/>'
+        )
+
     if el.label:
         parts.append(
             f'<text x="{x + r:.4f}" y="{y:.4f}" '
@@ -238,31 +281,162 @@ def _render_text(el: Text, b: Bounds) -> str:
     )
 
 
-def _render_occupancy_grid(el: OccupancyGrid, b: Bounds) -> str:
-    if el.grid.size == 0:
+def _rgba_image_to_svg(
+    rgba: np.ndarray,
+    *,
+    origin_world: tuple[float, float],
+    resolution: float,
+    opacity: float,
+    b: Bounds,
+) -> str:
+    """Shared <image> emitter for world-frame RGBA bitmaps.
+
+    Takes lower-left ``origin_world`` (world Y-up), the per-pixel
+    ``resolution`` in metres, and renders the bitmap into SVG with the
+    correct top-left + Y-flipped placement. Grows ``b`` with the four
+    overlay corners.
+    """
+    if rgba.size == 0:
         return ""
 
-    rgba = np.flipud(generate_rgba_texture(el))
-    img = PILImage.fromarray(rgba, "RGBA")
+    flipped = np.flipud(rgba)
+    img = PILImage.fromarray(flipped, "RGBA")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-    ox, oy = el.origin.x, el.origin.y
-    world_w = el.width * el.resolution
-    world_h = el.height * el.resolution
+    ox, oy = origin_world
+    world_w = rgba.shape[1] * resolution
+    world_h = rgba.shape[0] * resolution
 
-    # SVG top-left: world top-left with Y-flip
     sx = ox
     sy = _y(oy + world_h)
 
     b.include(sx, sy)
     b.include(sx + world_w, sy + world_h)
 
+    opacity_attr = "" if opacity >= 0.999 else f' opacity="{opacity:.3f}"'
     return (
         f'<image x="{sx:.4f}" y="{sy:.4f}" width="{world_w:.4f}" height="{world_h:.4f}" '
-        f'href="data:image/png;base64,{b64}" image-rendering="pixelated"/>'
+        f'href="data:image/png;base64,{b64}" image-rendering="pixelated"{opacity_attr}/>'
     )
+
+
+def _render_occupancy_grid(el: OccupancyGrid, b: Bounds) -> str:
+    if el.grid.size == 0:
+        return ""
+    rgba = generate_rgba_texture(el)
+    return _rgba_image_to_svg(
+        rgba,
+        origin_world=(el.origin.x, el.origin.y),
+        resolution=el.resolution,
+        opacity=1.0,
+        b=b,
+    )
+
+
+def _render_raster_overlay(el: RasterOverlay, b: Bounds) -> str:
+    return _rgba_image_to_svg(
+        el.rgba,
+        origin_world=el.origin,
+        resolution=el.resolution,
+        opacity=float(el.opacity),
+        b=b,
+    )
+
+
+def _color_attr(c: ColorLike | None) -> tuple[str, float]:
+    """Return (hex, alpha) for an optional ColorLike; (#000000, 0) for None."""
+    if c is None:
+        return "#000000", 0.0
+    col = Color.coerce(c)
+    return col.hex(), col.a
+
+
+def _render_polygon(el: Polygon, b: Bounds) -> str:
+    pts: list[tuple[float, float]] = [(wx, _y(wy)) for (wx, wy) in el.vertices]
+
+    if len(pts) < 3:
+        return f"<!-- polygon: <3 vertices ({len(pts)}) -->"
+    if el.fill is None and el.stroke is None:
+        return "<!-- polygon: no fill or stroke -->"
+
+    # Only grow bounds once we know the polygon is actually visible.
+    for (px, py) in pts:
+        b.include(px, py)
+
+    pts_str = " ".join(f"{px:.4f},{py:.4f}" for (px, py) in pts)
+
+    fill_hex, fill_a = _color_attr(el.fill)
+    stroke_hex, stroke_a = _color_attr(el.stroke)
+    op = float(el.opacity)
+
+    attrs: list[str] = [f'points="{pts_str}"']
+    if el.fill is not None:
+        attrs.append(f'fill="{fill_hex}"')
+        attrs.append(f'fill-opacity="{fill_a * el.fill_opacity * op:.3f}"')
+    else:
+        attrs.append('fill="none"')
+    if el.stroke is not None:
+        attrs.append(f'stroke="{stroke_hex}"')
+        attrs.append(f'stroke-opacity="{stroke_a * op:.3f}"')
+        attrs.append(f'stroke-width="{el.stroke_width:.4f}"')
+        attrs.append('stroke-linejoin="round"')
+
+    parts = [f'<polygon {" ".join(attrs)}/>']
+
+    if el.label:
+        # Anchor at the top-most vertex (smallest world y → smallest SVG y
+        # after Y-flip means largest world y; we want the one that reads
+        # topmost on screen, so pick the one with the smallest SVG y).
+        anchor_x, anchor_y = min(pts, key=lambda p: p[1])
+        label_color = stroke_hex if el.stroke is not None else fill_hex
+        label_alpha = (stroke_a if el.stroke is not None else fill_a) * op
+        parts.append(
+            f'<text x="{anchor_x:.4f}" y="{anchor_y:.4f}" '
+            f'font-size="{max(el.stroke_width * 6, 0.2):.4f}" '
+            f'fill="{label_color}" opacity="{label_alpha:.3f}">{_esc(el.label)}</text>'
+        )
+    return "\n".join(parts)
+
+
+def _render_wedge(el: Wedge, b: Bounds) -> str:
+    if el.fov <= 0 or el.length <= 0:
+        return "<!-- wedge: non-positive fov or length -->"
+
+    ox, oy = el.origin[0], _y(el.origin[1])
+    half = el.fov / 2.0
+    # Left edge tip (yaw + half_fov), center tip (yaw), right edge tip (yaw - half_fov)
+    def _tip(angle: float) -> tuple[float, float]:
+        return (
+            el.origin[0] + math.cos(angle) * el.length,
+            _y(el.origin[1] + math.sin(angle) * el.length),
+        )
+
+    lx, ly = _tip(el.yaw + half)
+    cx, cy = _tip(el.yaw)
+    rx, ry = _tip(el.yaw - half)
+
+    for px, py in [(ox, oy), (lx, ly), (cx, cy), (rx, ry)]:
+        b.include(px, py)
+
+    stroke, alpha = _style(el)
+    parts = [
+        f'<polygon points="{ox:.4f},{oy:.4f} {lx:.4f},{ly:.4f} {rx:.4f},{ry:.4f}" '
+        f'fill="none" stroke="{stroke}" opacity="{alpha:.3f}" '
+        f'stroke-width="{el.stroke_width:.4f}" stroke-linejoin="round"/>',
+        # centerline
+        f'<line x1="{ox:.4f}" y1="{oy:.4f}" x2="{cx:.4f}" y2="{cy:.4f}" '
+        f'stroke="{stroke}" stroke-width="{el.stroke_width:.4f}" '
+        f'opacity="{alpha:.3f}" stroke-linecap="round"/>',
+    ]
+    if el.label:
+        parts.append(
+            f'<text x="{ox + el.stroke_width * 4:.4f}" y="{oy:.4f}" '
+            f'font-size="{max(el.stroke_width * 8, 0.2):.4f}" '
+            f'fill="{stroke}" opacity="{alpha:.3f}">{_esc(el.label)}</text>'
+        )
+    return "\n".join(parts)
 
 
 # Dispatch + top-level render
@@ -277,6 +451,12 @@ def _render_element(el: SpaceElement, b: Bounds) -> str:
         return _render_arrow(el, b)
     elif isinstance(el, Polyline):
         return _render_polyline(el, b)
+    elif isinstance(el, Polygon):
+        return _render_polygon(el, b)
+    elif isinstance(el, Wedge):
+        return _render_wedge(el, b)
+    elif isinstance(el, RasterOverlay):
+        return _render_raster_overlay(el, b)
     elif isinstance(el, Box3D):
         return _render_box3d(el, b)
     elif isinstance(el, Camera):
@@ -305,7 +485,7 @@ def _render_element(el: SpaceElement, b: Bounds) -> str:
 def render(
     space: Space,
     path: str | Path | None = None,
-    width_px: float = 800,
+    width_px: int = 800,
     padding: float = 0.5,
 ) -> str:
     """Render a Space to an SVG string, optionally writing to *path*."""

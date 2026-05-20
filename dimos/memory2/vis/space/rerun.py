@@ -21,7 +21,17 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.memory2.type.observation import Observation
 from dimos.memory2.vis.color import Color
-from dimos.memory2.vis.space.elements import Arrow, Box3D, Camera, Point, Polyline, Pose, Text
+from dimos.memory2.vis.space.elements import (
+    Arrow,
+    Box3D,
+    Camera,
+    Point,
+    Polygon,
+    Polyline,
+    Pose,
+    Text,
+    Wedge,
+)
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -69,6 +79,8 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
     boxes: list[Box3D] = []
     cameras: list[Camera] = []
     polylines: list[Polyline] = []
+    polygons: list[Polygon] = []
+    wedges: list[Wedge] = []
     texts: list[Text] = []
     grids: list[OccupancyGrid] = []
     pointclouds: list[PointCloud2] = []
@@ -93,12 +105,17 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
             cameras.append(el)
         elif isinstance(el, Polyline):
             polylines.append(el)
+        elif isinstance(el, Polygon):
+            polygons.append(el)
+        elif isinstance(el, Wedge):
+            wedges.append(el)
         elif isinstance(el, Text):
             texts.append(el)
         elif isinstance(el, OccupancyGrid):
             grids.append(el)
         elif isinstance(el, PointCloud2):
             pointclouds.append(el)
+        # RasterOverlay: silently skipped — no first-class textured-plane archetype.
 
     # Build and send blueprint
     has_images = (
@@ -201,6 +218,66 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
                 strips=[[[p.x, p.y, 0] for p in el.msg.poses]],
                 colors=[_rgba(el)],
                 radii=[el.width / 2],
+            ),
+            static=True,
+        )
+
+    for i, el in enumerate(polygons):
+        if len(el.vertices) < 3:
+            continue
+        # Boundary as a closed LineStrip (repeat first vertex).
+        closed = [[wx, wy, 0.0] for (wx, wy) in el.vertices]
+        closed.append(closed[0])
+        # Prefer stroke color for the line, fall back to fill, then black.
+        line_color = el.stroke if el.stroke is not None else el.fill
+        opacity = float(el.opacity)
+        if line_color is None:
+            rgba = (0, 0, 0, round(255 * opacity))
+        else:
+            c = Color.coerce(line_color)
+            rgba = c.with_alpha(c.a * opacity).rgba_u8()
+        rr.log(
+            f"scene/polygons/{i}",
+            rr.LineStrips3D(
+                strips=[closed],
+                colors=[rgba],
+                radii=[max(el.stroke_width / 2, 0.005)],
+                labels=[el.label] if el.label else None,
+            ),
+            static=True,
+        )
+
+    for i, el in enumerate(wedges):
+        if el.fov <= 0 or el.length <= 0:
+            continue
+        half = el.fov / 2.0
+        ox, oy = el.origin
+        col = _rgba(el)
+        radius = max(el.stroke_width / 2, 0.005)
+
+        def _edge(ang: float) -> list[list[float]]:
+            return [
+                [ox, oy, 0.0],
+                [ox + math.cos(ang) * el.length, oy + math.sin(ang) * el.length, 0.0],
+            ]
+
+        # Label the centerline strip only; wings get their own unlabelled log.
+        rr.log(
+            f"scene/wedges/{i}/center",
+            rr.LineStrips3D(
+                strips=[_edge(el.yaw)],
+                colors=[col],
+                radii=[radius],
+                labels=[el.label] if el.label else None,
+            ),
+            static=True,
+        )
+        rr.log(
+            f"scene/wedges/{i}/wings",
+            rr.LineStrips3D(
+                strips=[_edge(el.yaw + half), _edge(el.yaw - half)],
+                colors=[col, col],
+                radii=[radius, radius],
             ),
             static=True,
         )
