@@ -179,7 +179,7 @@ dimos --simulation run unitree-g1-sim
 
 ```bash
 # Control a real robot (Unitree quadruped over WebRTC)
-export ROBOT_IP=<YOUR_ROBOT_IP>
+export ROBOT_PORT=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
 

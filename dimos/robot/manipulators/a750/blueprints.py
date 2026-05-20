@@ -34,8 +34,8 @@ from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _a750_cfg = _catalog_a750(
     name="arm",
-    adapter_type="a750" if global_config.device_path else "mock",
-    device_path=global_config.device_path or "/dev/ttyACM0",
+    adapter_type="a750" if global_config.robot_port else "mock",
+    device_path=global_config.robot_port or "/dev/ttyACM0",
 )
 
 # Piper 6-DOF mock sim + keyboard teleop + Drake visualization

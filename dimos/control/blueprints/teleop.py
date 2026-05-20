@@ -61,26 +61,26 @@ def _mujoco_if_sim(sim_path: str, dof: int) -> tuple[Blueprint, ...]:
     return (MujocoSimModule.blueprint(address=sim_path, headless=False, dof=dof),)
 
 
-_xarm6_cfg = _catalog_xarm6(name="arm", adapter_type="xarm", address=global_config.xarm6_ip)
+_xarm6_cfg = _catalog_xarm6(name="arm", adapter_type="xarm", address=global_config.robot_port)
 _piper_cfg = _catalog_piper(
-    name="arm", adapter_type="piper", address=global_config.can_port or "can0"
+    name="arm", adapter_type="piper", address=global_config.robot_port or "can0"
 )
 
 _xarm7_teleop_cfg = _catalog_xarm7(
     name="arm",
     adapter_type="sim_mujoco" if _is_sim else "xarm",
-    address=str(XARM7_SIM_PATH) if _is_sim else global_config.xarm7_ip,
+    address=str(XARM7_SIM_PATH) if _is_sim else global_config.robot_port,
     add_gripper=True,
 )
 _xarm6_teleop_cfg = _catalog_xarm6(
     name="arm",
     adapter_type="sim_mujoco" if _is_sim else "xarm",
-    address=str(XARM6_SIM_PATH) if _is_sim else global_config.xarm6_ip,
+    address=str(XARM6_SIM_PATH) if _is_sim else global_config.robot_port,
 )
 _piper_teleop_cfg = _catalog_piper(
     name="arm",
     adapter_type="sim_mujoco" if _is_sim else "piper",
-    address=str(PIPER_SIM_PATH) if _is_sim else (global_config.can_port or "can0"),
+    address=str(PIPER_SIM_PATH) if _is_sim else (global_config.can_robot_portport or "can0"),
 )
 
 # XArm6 servo - streaming position control
@@ -251,10 +251,10 @@ coordinator_teleop_piper = autoconnect(
 
 # Dual arm teleop: XArm6 + Piper with TeleopIK (real-only)
 _xarm6_dual_cfg = _catalog_xarm6(
-    name="xarm_arm", adapter_type="xarm", address=global_config.xarm6_ip
+    name="xarm_arm", adapter_type="xarm", address=global_config.robot_port
 )
 _piper_dual_cfg = _catalog_piper(
-    name="piper_arm", adapter_type="piper", address=global_config.can_port
+    name="piper_arm", adapter_type="piper", address=global_config.robot_port
 )
 
 coordinator_teleop_dual = ControlCoordinator.blueprint(

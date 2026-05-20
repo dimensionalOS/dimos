@@ -78,7 +78,7 @@ coordinator_mock = ControlCoordinator.blueprint(
 _xarm7_cfg = _catalog_xarm7(
     name="arm",
     adapter_type="sim_mujoco" if _is_sim else "xarm",
-    address=str(XARM7_SIM_PATH) if _is_sim else global_config.xarm7_ip,
+    address=str(XARM7_SIM_PATH) if _is_sim else global_config.robot_port,
 )
 
 coordinator_xarm7 = autoconnect(
@@ -97,7 +97,7 @@ coordinator_xarm7 = autoconnect(
 _xarm6_cfg = _catalog_xarm6(
     name="arm",
     adapter_type="sim_mujoco" if _is_sim else "xarm",
-    address=str(XARM6_SIM_PATH) if _is_sim else global_config.xarm6_ip,
+    address=str(XARM6_SIM_PATH) if _is_sim else global_config.robot_port,
 )
 
 coordinator_xarm6 = autoconnect(
@@ -116,7 +116,7 @@ coordinator_xarm6 = autoconnect(
 _piper_cfg = _catalog_piper(
     name="arm",
     adapter_type="sim_mujoco" if _is_sim else "piper",
-    address=str(PIPER_SIM_PATH) if _is_sim else (global_config.can_port or "can0"),
+    address=str(PIPER_SIM_PATH) if _is_sim else (global_config.robot_port or "can0"),
 )
 
 coordinator_piper = autoconnect(

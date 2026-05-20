@@ -63,7 +63,7 @@ execute()               # Execute via coordinator
 
 ```bash
 # Coordinator + perception + manipulation + LLM agent (single command)
-XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
+ROBOT_PORT=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 ```
 
 ## Architecture

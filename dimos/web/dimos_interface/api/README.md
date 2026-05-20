@@ -36,11 +36,11 @@ from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
 
-robot_ip = os.getenv("ROBOT_IP")
+robot_port = os.getenv("ROBOT_PORT")
 
 # Initialize robot
 logger.info("Initializing Unitree Robot")
-robot = UnitreeGo2(ip=robot_ip,
+robot = UnitreeGo2(ip=robot_port,
                     connection_method=connection_method,
                     output_dir=output_dir)
 

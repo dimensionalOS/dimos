@@ -22,7 +22,7 @@ Usage:
 
     # Create an adapter by name
     adapter = adapter_registry.create("xarm", ip="192.168.1.185", dof=6)
-    adapter = adapter_registry.create("piper", can_port="can0", dof=6)
+    adapter = adapter_registry.create("piper", robot_port="can0", dof=6)
     adapter = adapter_registry.create("mock", dof=7)
 
     # List available adapters

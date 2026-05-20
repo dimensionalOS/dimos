@@ -335,4 +335,4 @@ Also available as `dimos rerun-bridge`.
 |------|----------|
 | `~/.local/state/dimos/runs/<run-id>.json` | Run registry (PID, blueprint, args, ports). Used by `status`/`stop`/`restart`. Cleaned up when processes exit. |
 | `~/.local/state/dimos/logs/<run-id>/main.jsonl` | Structured logs (main process + all workers) |
-| `.env` | Local config overrides (`DIMOS_ROBOT_IP=192.168.123.161`) |
+| `.env` | Local config overrides (`DIMOS_ROBOT_PORT=192.168.123.161`) |
