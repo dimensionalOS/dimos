@@ -439,45 +439,6 @@ export async function startBridgeServer(options: BridgeServerOptions) {
       return response;
     }
 
-    // POST /export-asset?name=<slug>.glb  → write a single GLB
-    // POST /export-manifest                → write objects/manifest.json
-    // POST /export-structure               → write apartment/structure.glb
-    // Used by the in-browser GLTFExporter pipeline to decompose a scene's
-    // assets back to disk (see src/engine.js → window.dimsim.exportApartmentAssets).
-    if (req.method === "POST" && (url.pathname === "/export-asset" || url.pathname === "/export-manifest" || url.pathname === "/export-structure")) {
-      const writeRoot = Deno.env.get("DIMSIM_SCENES_DIR") || `${distDir}/../scenes`;
-      const objectsDir = `${writeRoot}/apartment/objects`;
-      const apartmentDir = `${writeRoot}/apartment`;
-      if (url.pathname === "/export-structure") {
-        await Deno.mkdir(apartmentDir, { recursive: true });
-        const body = new Uint8Array(await req.arrayBuffer());
-        const target = `${apartmentDir}/structure.glb`;
-        await Deno.writeFile(target, body);
-        console.log(`[bridge] wrote structure.glb (${(body.byteLength/1024).toFixed(1)} KB)`);
-        return new Response("ok");
-      }
-      await Deno.mkdir(objectsDir, { recursive: true });
-      if (url.pathname === "/export-asset") {
-        const name = url.searchParams.get("name") || "";
-        // Allow one level of nesting:  <asset-slug>/<state-slug>.glb
-        if (!/^[a-z0-9][a-z0-9-_]*(?:\/[a-z0-9][a-z0-9-_]*)?\.glb$/.test(name)) {
-          return new Response("bad name", { status: 400 });
-        }
-        const body = new Uint8Array(await req.arrayBuffer());
-        const target = `${objectsDir}/${name}`;
-        const slash = name.lastIndexOf("/");
-        if (slash !== -1) {
-          await Deno.mkdir(`${objectsDir}/${name.slice(0, slash)}`, { recursive: true });
-        }
-        await Deno.writeFile(target, body);
-        console.log(`[bridge] wrote ${name} (${(body.byteLength/1024).toFixed(1)} KB)`);
-        return new Response("ok");
-      }
-      const text = await req.text();
-      await Deno.writeTextFile(`${objectsDir}/manifest.json`, text);
-      console.log(`[bridge] wrote manifest.json`);
-      return new Response("ok");
-    }
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
       try {
