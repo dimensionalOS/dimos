@@ -1,0 +1,9 @@
+node_modules/
+*.tar.gz
+dist/
+.DS_Store
+**/.DS_Store
+.deno/
+scenes.json
+scenes/**/apt.json
+scripts/

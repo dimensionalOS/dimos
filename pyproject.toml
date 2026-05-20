@@ -609,4 +609,7 @@ ignore = [
     "dimos/manipulation/manipulation_module.py",
     "dimos/navigation/nav_stack/modules/*/main.cpp",
     "dimos/navigation/nav_stack/common/*.hpp",
+    "misc/DimSim/src/AiAvatar.js",
+    "misc/DimSim/src/style.css",
+    "misc/DimSim/src/engine.js",
 ]

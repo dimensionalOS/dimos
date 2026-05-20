@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en" data-mode="sim">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DimSim</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🎮%3C/text%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- Eval workflows import from '@dimsim/eval' via this map; Vite pins the chunk in vite.config.js. -->
+    <script type="importmap">
+    { "imports": { "@dimsim/eval": "/assets/dimsim-eval.js" } }
+    </script>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="overlay">
+      <div id="status-sim" class="status-floating sim-only"></div>
+      <div id="status" hidden></div>
+
+      <!-- Crosshair -->
+      <div id="crosshair" aria-hidden="true"></div>
+
+      <!-- Agent Panel (full sim panel — engine binds to #agent-panel) -->
+      <div id="agent-panel" class="side-panel sim-only">
+        <div class="panel-header">
+          <span class="panel-title">DimSim</span>
+          <button id="sim-panel-collapse" class="mode-toggle" type="button" title="Collapse panel">◀</button>
+        </div>
+
+        <div class="panel-content">
+            <div id="scene-info" style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:4px;">No scene loaded</div>
+            <input id="sim-level-import" type="file" accept=".json" style="display:none;" />
+
+            <div style="margin-top:6px; display:flex; gap:6px;">
+              <button id="sim-view-rgbd" type="button" class="tb-btn tb-muted" style="flex:1;" title="RGB-D view">RGB-D</button>
+              <button id="sim-view-lidar" type="button" class="tb-btn tb-muted" style="flex:1;" title="LiDAR view">LiDAR</button>
+              <button id="sim-view-compare" type="button" class="tb-btn tb-muted" style="flex:1;" title="Side-by-side RGB, RGB-D, LiDAR">Compare</button>
+            </div>
+            <details style="margin-top:8px;">
+              <summary class="tb-btn tb-muted" style="width:100%; text-align:left;">Sensor Debug</summary>
+              <div style="margin-top:6px; display:flex; gap:6px;">
+                <button id="sim-rgbd-gray" type="button" class="tb-btn tb-muted" style="flex:1;" title="Metric depth grayscale">RGB-D Gray</button>
+                <button id="sim-rgbd-colormap" type="button" class="tb-btn tb-muted" style="flex:1;" title="Metric depth heatmap">RGB-D Color</button>
+              </div>
+              <div style="margin-top:6px; display:flex; gap:6px;">
+                <button id="sim-rgbd-auto-range" type="button" class="tb-btn tb-muted" style="flex:1;" title="Auto range from p5/p95 depth percentiles">RGB-D Auto Range</button>
+              </div>
+              <div style="margin-top:6px; display:flex; gap:6px;">
+                <button id="sim-rgbd-noise" type="button" class="tb-btn tb-muted" style="flex:1;" title="Toggle depth quantization + dropout">RGB-D Noise</button>
+                <button id="sim-rgbd-speckle" type="button" class="tb-btn tb-muted" style="flex:1;" title="Toggle depth speckle noise">RGB-D Speckle</button>
+              </div>
+              <div style="margin-top:6px;">
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <span style="font-size:11px; color:#9ca3af; width:28px;">Min</span>
+                  <input id="sim-rgbd-min" type="range" min="0.1" max="30" step="0.1" value="0.2" style="flex:1;" />
+                  <span id="sim-rgbd-min-val" style="font-size:11px; color:#9ca3af; width:42px; text-align:right;">0.2m</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+                  <span style="font-size:11px; color:#9ca3af; width:28px;">Max</span>
+                  <input id="sim-rgbd-max" type="range" min="0.2" max="40" step="0.1" value="12.0" style="flex:1;" />
+                  <span id="sim-rgbd-max-val" style="font-size:11px; color:#9ca3af; width:42px; text-align:right;">12.0m</span>
+                </div>
+              </div>
+              <div style="margin-top:6px; display:flex; gap:6px;">
+                <button id="sim-lidar-color-range" type="button" class="tb-btn tb-muted" style="flex:1;" title="Toggle LiDAR color by range">LiDAR: Range Color</button>
+              </div>
+              <div style="margin-top:6px; display:flex; gap:6px;">
+                <button id="sim-lidar-ordered-debug" type="button" class="tb-btn tb-muted" style="flex:1;" title="Switch to single sweep ordered ring render">Single Sweep</button>
+              </div>
+              <div style="margin-top:6px; display:flex; gap:6px;">
+                <button id="sim-lidar-noise" type="button" class="tb-btn tb-muted" style="flex:1;" title="Toggle deterministic range noise + dropouts">LiDAR: Noise</button>
+                <button id="sim-lidar-multireturn" type="button" class="tb-btn tb-muted" style="flex:1;" title="Toggle multi-return mode (strongest/last)">LiDAR: Strongest</button>
+              </div>
+            </details>
+          </div>
+
+          <!-- Agent sensor views (auto-opened in dimos mode) -->
+          <details class="agent-collapse" id="agent-vision-details">
+            <summary>Agent Vision</summary>
+            <div class="agent-vision">
+              <div class="agent-sensor-label">RGB</div>
+              <img id="agent-shot-img" class="agent-shot-img" alt="Agent POV" />
+              <div class="agent-sensor-label">Depth</div>
+              <canvas id="agent-depth-canvas" class="agent-sensor-canvas"></canvas>
+              <div class="agent-sensor-label">LiDAR</div>
+              <canvas id="agent-lidar-canvas" class="agent-sensor-canvas"></canvas>
+            </div>
+            <div class="agent-collapse-content">
+              <div class="section-label">Last Decision</div>
+              <pre id="agent-last" class="agent-decision-content">Waiting...</pre>
+            </div>
+          </details>
+          <details class="agent-collapse">
+            <summary>Request Details</summary>
+            <div class="agent-collapse-content">
+              <div id="agent-req-meta" class="agent-meta">No request yet</div>
+              <details class="agent-sub-collapse">
+                <summary>Prompt</summary>
+                <pre id="agent-req-prompt" class="agent-pre"></pre>
+              </details>
+              <details class="agent-sub-collapse">
+                <summary>Context</summary>
+                <pre id="agent-req-context" class="agent-pre"></pre>
+              </details>
+              <details class="agent-sub-collapse">
+                <summary>Raw Output</summary>
+                <pre id="agent-resp-raw" class="agent-pre"></pre>
+              </details>
+            </div>
+          </details>
+          <details class="agent-collapse">
+            <summary>Activity Log</summary>
+            <div id="agent-log" class="agent-log"></div>
+          </details>
+        </div>
+
+      </div>
+      <button id="sim-panel-open" class="sim-panel-open sim-only hidden" type="button" title="Open panel">☰</button>
+
+      <!-- Floating Agent Command Bar (sim mode) -->
+      <div id="agent-command-bar" class="agent-cmd-bar sim-only">
+        <button id="spawn-ai" class="agent-cmd-spawn" type="button" title="Spawn AI agent (B)">+ Spawn</button>
+        <button id="sim-camera-toggle" class="agent-cmd-btn" type="button" title="Toggle user/agent camera">Camera: Agent</button>
+        <div id="agent-task-status" class="agent-cmd-status"></div>
+        <input id="agent-task-input" class="agent-cmd-input" type="text" placeholder='e.g. "Find and open the fridge"' />
+        <button id="agent-task-start" class="agent-cmd-btn" type="button">Start</button>
+        <button id="agent-task-end" class="agent-cmd-btn agent-cmd-stop" type="button">Stop</button>
+      </div>
+
+      <!-- Interaction Hint -->
+      <div id="interaction-hint" aria-hidden="true"></div>
+
+      <!-- Floating WASD shortcuts (always visible, bottom-left) -->
+      <div class="shortcuts shortcuts-floating sim-only">
+        <span><b>WASD</b> move</span>
+        <span><b>E</b> interact</span>
+        <span><b>B</b> spawn</span>
+        <span><b>G</b> ghost</span>
+      </div>
+
+    </div>
+
+    <img src="/logo.svg" alt="" class="watermark-logo" />
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

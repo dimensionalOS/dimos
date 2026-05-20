@@ -1,0 +1,20 @@
+{
+  "name": "dimsim",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Browser-based 3D simulator (Three.js + Rapier) + Deno bridge — runs as the simulation backend for dimos.",
+  "scripts": {
+    "dev": "vite --force",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.14.0",
+    "@sparkjsdev/spark": "latest",
+    "three": "^0.168.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10"
+  }
+}
