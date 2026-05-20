@@ -67,10 +67,7 @@ const _colliderMap = new Map<string, any>();
 const _dynamicBodies = new Map<string, { body: any; mesh: any }>();
 let _dynamicSyncRaf: number | null = null;
 
-const _loadedJson = new Set<string>();
-let _baselineChildren: Set<any> | null = null;
-let _baselineColliders: Set<string> | null = null;
-let _baselineDynamic: Set<string> | null = null;
+let _lastLoadedKey: string | null = null;
 
 // ── Initialization (called by engine.js once at boot) ────────────────────────
 
@@ -111,39 +108,6 @@ export function _setAgent(a: any): void {
   agent = a;
 }
 
-/** Snapshot scene + collider state before the first build() runs. */
-export function _captureBaseline(): void {
-  _baselineChildren = new Set(scene.children);
-  _baselineColliders = new Set(_colliderMap.keys());
-  _baselineDynamic = new Set(_dynamicBodies.keys());
-}
-
-/** Revert to baseline so build() can re-run cleanly (HMR). */
-export function _revertToBaseline(): void {
-  if (!_baselineChildren) return;
-  for (const obj of [...scene.children]) {
-    if (_baselineChildren.has(obj)) continue;
-    obj.traverse?.((c: any) => {
-      if (c.isMesh) {
-        c.geometry?.dispose?.();
-        if (Array.isArray(c.material)) c.material.forEach((m: any) => m?.dispose?.());
-        else c.material?.dispose?.();
-      }
-    });
-    scene.remove(obj);
-  }
-  for (const [uuid, coll] of [..._colliderMap.entries()]) {
-    if (_baselineColliders!.has(uuid)) continue;
-    try { rapierWorld?.removeCollider(coll, true); } catch { /* ignore */ }
-    _colliderMap.delete(uuid);
-  }
-  for (const [uuid, dyn] of [..._dynamicBodies.entries()]) {
-    if (_baselineDynamic!.has(uuid)) continue;
-    try { rapierWorld?.removeRigidBody(dyn.body); } catch { /* ignore */ }
-    _dynamicBodies.delete(uuid);
-  }
-}
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 export function loadGLTF(url: string): Promise<any> {
@@ -154,32 +118,47 @@ export function loadGLTF(url: string): Promise<any> {
 }
 
 /**
- * Load an existing JSON scene blob into the engine.  Path is resolved relative
- * to the scene module's folder, so `loadJson('./apt.json')` from
- * `scenes/apartment/index.js` fetches `/scenes/apartment/apt.json`.
+ * Load an existing JSON scene blob into the engine.  Idempotent — calling
+ * twice with the same URL is a no-op.
  */
 export async function loadJson(path: string): Promise<void> {
   if (!_importLevelFromJSON) throw new Error("scene-api not initialized");
   const url = new URL(path, _sceneBaseUrl).toString();
-  if (_loadedJson.has(url)) return;  // HMR skip — already in scene
+  const key = `json:${url}`;
+  if (_lastLoadedKey === key) return;
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`loadJson(${path}): HTTP ${resp.status}`);
   const json = await resp.json();
   _rewriteTexturePaths(json);
   await _importLevelFromJSON(json);
-  _loadedJson.add(url);
+  _lastLoadedKey = key;
 }
 
 /**
- * Feed an in-memory level blob (apt-shape) directly to the engine.  Use this
- * when scene data lives in JS modules rather than a JSON file on disk.  Any
- * material with `texturePath: 'foo.jpg'` (relative to the scene folder) is
- * rewritten to an absolute `textureDataUrl` before import.
+ * Feed an in-memory level blob directly to the engine.  Idempotent — if the
+ * caller hands us the same object reference twice we skip the second import.
+ * Materials with `texturePath: 'foo.jpg'` are rewritten to absolute
+ * `textureDataUrl` against the scene base before import.
  */
 export async function loadLevel(data: any): Promise<void> {
   if (!_importLevelFromJSON) throw new Error("scene-api not initialized");
+  const key = `level:${_identityOf(data)}`;
+  if (_lastLoadedKey === key) return;
   _rewriteTexturePaths(data);
   await _importLevelFromJSON(data);
+  _lastLoadedKey = key;
+}
+
+const _identitySym = Symbol("dimsim.loadLevel.id");
+let _identityCounter = 0;
+function _identityOf(o: any): string {
+  if (!o || typeof o !== "object") return String(o);
+  if (!o[_identitySym]) {
+    Object.defineProperty(o, _identitySym, {
+      value: String(++_identityCounter), enumerable: false, writable: false,
+    });
+  }
+  return o[_identitySym];
 }
 
 function _rewriteTexturePaths(node: any): void {

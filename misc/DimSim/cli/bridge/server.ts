@@ -179,44 +179,6 @@ export async function startBridgeServer(options: BridgeServerOptions) {
     channelMap.set(name, state);
   }
 
-  (async () => {
-    const candidates = [
-      Deno.env.get("DIMSIM_SCENES_DIR"),
-      `${distDir}/scenes`,
-      `${distDir}/../scenes`,
-    ].filter((d): d is string => !!d && d.length > 0);
-    let watchDir: string | null = null;
-    for (const d of candidates) {
-      try {
-        await Deno.stat(`${d}/${activeSceneName}`);
-        watchDir = `${d}/${activeSceneName}`;
-        break;
-      } catch { /* try next */ }
-    }
-    if (!watchDir) return;
-    console.log(`[bridge] hot-reload watching ${watchDir}`);
-    let last = 0;
-    try {
-      for await (const event of Deno.watchFs(watchDir)) {
-        if (event.kind !== "modify" && event.kind !== "create") continue;
-        const now = performance.now();
-        if (now - last < 250) continue;
-        last = now;
-        const msg = JSON.stringify({ type: "reload" });
-        for (const ch of channelMap.values()) {
-          for (const client of ch.controlClients) {
-            if (client.readyState === WebSocket.OPEN) {
-              try { client.send(msg); } catch { /* ignore */ }
-            }
-          }
-        }
-        console.log(`[bridge] hot-reload`);
-      }
-    } catch (e) {
-      console.warn(`[bridge] watcher failed: ${e}`);
-    }
-  })();
-
   /** Resolve channel from WS query param. Falls back to default ("") if not found. */
   function resolveChannel(channelParam: string | null): ChannelState {
     if (channelParam && channelMap.has(channelParam)) {
