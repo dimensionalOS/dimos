@@ -1,3 +1,4 @@
+/// <reference lib="deno.ns" />
 /**
  * Deno-side `@dimsim/eval` runEval — dispatch a workflow file to the
  * browser via the bridge instead of running it locally.

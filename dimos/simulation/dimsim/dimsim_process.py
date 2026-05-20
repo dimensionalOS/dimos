@@ -146,15 +146,15 @@ def _resolve_dimsim_dir() -> Path:
         path = dimos_root.parent / "DimSim"
     else:
         path = Path(local).expanduser().resolve()
-    if not (path / "dimos-cli" / "cli.ts").exists():
+    if not (path / "cli" / "cli.ts").exists():
         raise RuntimeError(
             f"DIMSIM_LOCAL={local} resolved to {path}, but "
-            f"{path}/dimos-cli/cli.ts does not exist"
+            f"{path}/cli/cli.ts does not exist"
         )
     logger.info(f"Using local DimSim from {path}")
     return path
 
 
 def _deno_cmd(deno_path: str, repo_dir: Path) -> list[str]:
-    cli_ts = repo_dir / "dimos-cli" / "cli.ts"
+    cli_ts = repo_dir / "cli" / "cli.ts"
     return [deno_path, "run", "--allow-all", "--unstable-net", str(cli_ts)]

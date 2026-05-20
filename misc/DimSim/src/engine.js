@@ -7551,7 +7551,7 @@ if (dimosMode) {
       // Browser no longer needs to publish odom — server is authoritative.
 
       // Eval harness — scores objectDistance rubric when triggered by dimsim eval runner
-      const harnessMod = await import("./evals/harness.ts");
+      const harnessMod = await import("../evals/harness.ts");
       const { EvalHarness, setEvalHarness } = harnessMod;
       const channel = new URLSearchParams(location.search).get("channel") || undefined;
       const evalHarness = new EvalHarness({

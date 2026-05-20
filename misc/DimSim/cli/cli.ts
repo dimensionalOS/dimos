@@ -14,7 +14,7 @@
 import { resolve, dirname, fromFileUrl } from "@std/path";
 import { startBridgeServer } from "./bridge/server.ts";
 import { launchHeadless, launchMultiPage, type RenderMode } from "./headless/launcher.ts";
-import { runEvals, runEvalsMultiPage, collectWorkflows, toJunitXml, type EvalResult } from "./eval/runner.ts";
+import { runEvals, runEvalsMultiPage, collectWorkflows, toJunitXml, type EvalResult } from "../evals/runner.ts";
 
 const CLI_DIR = dirname(fromFileUrl(import.meta.url));
 const PROJECT_DIR = resolve(CLI_DIR, "..");

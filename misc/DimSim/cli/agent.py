@@ -9,8 +9,8 @@ DimSim acts as the robot (like simplerobot.py but richer):
 This script runs the dimos brain that processes those sensors and sends commands.
 
 Usage (run with dimos venv):
-    ../dimos/.venv/bin/python dimos-cli/agent.py
-    ../dimos/.venv/bin/python dimos-cli/agent.py --nav-only    # no LLM agent, just exploration
+    ../dimos/.venv/bin/python cli/agent.py
+    ../dimos/.venv/bin/python cli/agent.py --nav-only    # no LLM agent, just exploration
 """
 
 import argparse
