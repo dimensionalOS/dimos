@@ -1,0 +1,3855 @@
+[
+  {
+    "id": "59a525468c75d8-19c73105016",
+    "title": "Modern L-shaped sectional",
+    "transform": {
+      "position": {
+        "x": 4.3815894523994166,
+        "y": 0.49017637093479277,
+        "z": 1.0556627709770972
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.1238777028003708,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.004147224596688148,
+      "y": 0.3749999998137355,
+      "z": 0.44999999254941947
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "modern-l-shaped-sectional/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "95e67f414e06f8-19c73110d54",
+    "title": "Wooden coffee table with glass top",
+    "transform": {
+      "position": {
+        "x": 3.953765809257721,
+        "y": 0.315281337994577,
+        "z": 1.7067945710626398
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": -0.0024741389971831285,
+      "y": 0.23709522248274384,
+      "z": 0.001997171270521708
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 1.25,
+    "bumpDamping": 0.78,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "wooden-coffee-table-with-glass-top/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "2f1b51866fa368-19c731443ef",
+    "title": "Console with cabinets",
+    "transform": {
+      "position": {
+        "x": 4.516290373580539,
+        "y": 0.3523583672864196,
+        "z": 4.64489994581474
+      },
+      "rotation": {
+        "x": 0,
+        "y": 3.141592653589793,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.24142332983411488,
+      "z": 0.027500016428739227
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlsncwfv-pq43",
+        "label": "to Open",
+        "from": "state-default",
+        "to": "state-mlsncwfv-pq43"
+      },
+      {
+        "id": "cycle-state-mlsncwfv-pq43-to-state-default",
+        "label": "to closed",
+        "from": "state-mlsncwfv-pq43",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "closed",
+        "file": "console-with-cabinets/state-default.glb"
+      },
+      {
+        "id": "state-mlsncwfv-pq43",
+        "name": "Open",
+        "file": "console-with-cabinets/state-mlsncwfv-pq43.glb"
+      }
+    ]
+  },
+  {
+    "id": "c7899f757219b-19c731bc6ff",
+    "title": "Television",
+    "transform": {
+      "position": {
+        "x": 4.500068482229571,
+        "y": 1.6470746382091632,
+        "z": 4.880000008134797
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-mlr4bgf0-u7gv",
+    "_shapePivotCenter": {
+      "x": 3.862724577460491,
+      "y": 0.5565298706483899,
+      "z": 1.7678768512278153
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-mlr4bgf0-u7gv-to-state-mlr4dvjl-fyw3",
+        "label": "to ON",
+        "from": "state-mlr4bgf0-u7gv",
+        "to": "state-mlr4dvjl-fyw3"
+      },
+      {
+        "id": "cycle-state-mlr4dvjl-fyw3-to-state-mlr4bgf0-u7gv",
+        "label": "to OFF",
+        "from": "state-mlr4dvjl-fyw3",
+        "to": "state-mlr4bgf0-u7gv"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-mlr4bgf0-u7gv",
+        "name": "OFF",
+        "file": "television/state-mlr4bgf0-u7gv.glb"
+      },
+      {
+        "id": "state-mlr4dvjl-fyw3",
+        "name": "ON",
+        "file": "television/state-mlr4dvjl-fyw3.glb"
+      }
+    ]
+  },
+  {
+    "id": "227cb298980678-19c731c8141",
+    "title": "Modern tripod floor lamp",
+    "transform": {
+      "position": {
+        "x": 2.567363667122909,
+        "y": 0.9266403965704086,
+        "z": 0.7462406515396548
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.021859171998984822,
+      "y": 0.8218468760394194,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlrpcv6c-bdvt",
+        "label": "to OFF",
+        "from": "state-default",
+        "to": "state-mlrpcv6c-bdvt"
+      },
+      {
+        "id": "cycle-state-mlrpcv6c-bdvt-to-state-default",
+        "label": "to ON",
+        "from": "state-mlrpcv6c-bdvt",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "ON",
+        "file": "modern-tripod-floor-lamp/state-default.glb"
+      },
+      {
+        "id": "state-mlrpcv6c-bdvt",
+        "name": "OFF",
+        "file": "modern-tripod-floor-lamp/state-mlrpcv6c-bdvt.glb"
+      }
+    ]
+  },
+  {
+    "id": "3b515be13388f-19c73217ec3",
+    "title": "Wooden bookcase",
+    "transform": {
+      "position": {
+        "x": -1.2346250672621193,
+        "y": 1.0120243146713455,
+        "z": 0.21597170828388723
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.2804687702858426,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.8999999999999999,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "wooden-bookcase/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "0d3779109193e-19c73221b10",
+    "title": "bookshelf decor",
+    "transform": {
+      "position": {
+        "x": -1.2161971652872015,
+        "y": 0.7367178620425292,
+        "z": 0.21783707347967085
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.08705190594401346,
+      "y": 0.10999999791383742,
+      "z": -0.0016066725690125835
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "bookshelf-decor/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "d76362662545e-19c73234c4d",
+    "title": "Books",
+    "transform": {
+      "position": {
+        "x": -1.4493133008996957,
+        "y": 1.4775923795984425,
+        "z": 0.2510956471722847
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.0012008581219888764,
+      "y": 0.04850000034272671,
+      "z": -0.0021056519411290844
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "books/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "578967ee4707-19c73238f45",
+    "title": "Hardcover books 1",
+    "transform": {
+      "position": {
+        "x": -0.8614216537918351,
+        "y": 1.14,
+        "z": 0.26
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 1.5707963267948966
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": -0.006083928007335378,
+      "y": 0.09999999932944774,
+      "z": 0.0030000000000000027
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "hardcover-books-1/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "1a72e35e19a66-19c73244ffc",
+    "title": "Small potted plant",
+    "transform": {
+      "position": {
+        "x": -1.4087380833018583,
+        "y": 1.184871881798844,
+        "z": 0.25297856262312113
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.14893394079338146,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "small-potted-plant/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "22db76c93c7648-19c7324b0a5",
+    "title": "Hardcover books",
+    "transform": {
+      "position": {
+        "x": -1.552216185656096,
+        "y": 0.29590875727765287,
+        "z": 0.24483101995851997
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": -0.004628634243017425,
+      "y": 0.048,
+      "z": 0.003862298942239717
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "hardcover-books/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "28f8380d2b909-19c7325a1fe",
+    "title": "Queen size bed",
+    "transform": {
+      "position": {
+        "x": -4.893117299804146,
+        "y": 0.68,
+        "z": -2.45
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.6000000000000001,
+      "z": -0.07500001341104512
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "queen-size-bed/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "c73ce00cad78a8-19c732af8bf",
+    "title": "Bedside table",
+    "transform": {
+      "position": {
+        "x": -5.64,
+        "y": 0.39,
+        "z": -1.2651768042674925
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.5019873160601556,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.275,
+      "z": 0.01249999839812517
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlsm2hfh-kpff",
+        "label": "to Open",
+        "from": "state-default",
+        "to": "state-mlsm2hfh-kpff"
+      },
+      {
+        "id": "cycle-state-mlsm2hfh-kpff-to-state-default",
+        "label": "to Closed",
+        "from": "state-mlsm2hfh-kpff",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "Closed",
+        "file": "bedside-table/state-default.glb"
+      },
+      {
+        "id": "state-mlsm2hfh-kpff",
+        "name": "Open",
+        "file": "bedside-table/state-mlsm2hfh-kpff.glb"
+      }
+    ]
+  },
+  {
+    "id": "392a951bb6f11-19c732bcfa3",
+    "title": "Bedside table",
+    "transform": {
+      "position": {
+        "x": -5.628831317188218,
+        "y": 0.372181049562469,
+        "z": -3.622031341394607
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.5,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.275,
+      "z": 0.01249999839812517
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlsm2hfh-kpff",
+        "label": "to Open",
+        "from": "state-default",
+        "to": "state-mlsm2hfh-kpff"
+      },
+      {
+        "id": "cycle-state-mlsm2hfh-kpff-to-state-default",
+        "label": "to Closed",
+        "from": "state-mlsm2hfh-kpff",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "Closed",
+        "file": "bedside-table/state-default.glb"
+      },
+      {
+        "id": "state-mlsm2hfh-kpff",
+        "name": "Open",
+        "file": "bedside-table/state-mlsm2hfh-kpff.glb"
+      }
+    ]
+  },
+  {
+    "id": "d1b8634521f5b-19c732c7954",
+    "title": "Hardcover books",
+    "transform": {
+      "position": {
+        "x": -5.536708061318499,
+        "y": 0.45461773108196735,
+        "z": -3.702951078012202
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": -0.004628634243017425,
+      "y": 0.048,
+      "z": 0.003862298942239717
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "hardcover-books/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "cffc759645ff18-19c732db260",
+    "title": "Books",
+    "transform": {
+      "position": {
+        "x": -5.580755687496764,
+        "y": 0.4376603227117231,
+        "z": -1.2697435441517564
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.0849412180967812,
+        "y": 0.77,
+        "z": 0.77
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.0012008581219888764,
+      "y": 0.04850000034272671,
+      "z": -0.0021056519411290844
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "books/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "bc6db6f4cbd0a-19c732ef8c8",
+    "title": "Modern Office Work Desk",
+    "transform": {
+      "position": {
+        "x": -1.7301176406514844,
+        "y": 0.4654592368201924,
+        "z": -0.43338758405308886
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.37499999267980455,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "modern-office-work-desk/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "5028f5326c4f1-19c73300d7f",
+    "title": "Work Chair",
+    "transform": {
+      "position": {
+        "x": -1.6718826945870606,
+        "y": 0.6166519299880042,
+        "z": -1.539229575343378
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 0.6439314083963319,
+        "y": 0.6439314083963319,
+        "z": 0.6439314083963319
+      }
+    },
+    "currentStateId": "state-mlrqdudw-h1ax",
+    "_shapePivotCenter": {
+      "x": -0.21270116532945352,
+      "y": -0.3700314207695614,
+      "z": -0.9905300125758202
+    },
+    "pickable": false,
+    "bumpable": true,
+    "bumpResponse": 0.65,
+    "bumpDamping": 0.77,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-mlrqdudw-h1ax",
+        "name": "default",
+        "file": "work-chair/state-mlrqdudw-h1ax.glb"
+      }
+    ]
+  },
+  {
+    "id": "ac7a816a60265-19c73317f64",
+    "title": "Arc floor lamp",
+    "transform": {
+      "position": {
+        "x": -2.333111809397252,
+        "y": 0.8985525485842618,
+        "z": -0.4373821778992827
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 0.7651227023559565,
+        "y": 0.7651227023559565,
+        "z": 0.7651227023559565
+      }
+    },
+    "currentStateId": "state-mlskixi4-xebf",
+    "_shapePivotCenter": {
+      "x": 0.7149999964237214,
+      "y": 1.055747293351406,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlskixi4-xebf",
+        "label": "to OFF",
+        "from": "state-default",
+        "to": "state-mlskixi4-xebf"
+      },
+      {
+        "id": "cycle-state-mlskixi4-xebf-to-state-default",
+        "label": "to ON",
+        "from": "state-mlskixi4-xebf",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "ON",
+        "file": "arc-floor-lamp/state-default.glb"
+      },
+      {
+        "id": "state-mlskixi4-xebf",
+        "name": "OFF",
+        "file": "arc-floor-lamp/state-mlskixi4-xebf.glb"
+      }
+    ]
+  },
+  {
+    "id": "1765e77823bda8-19c7334745f",
+    "title": "Large wardrobe",
+    "transform": {
+      "position": {
+        "x": -0.31533036247765267,
+        "y": 1.1536078665542793,
+        "z": -4.546448663974232
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.3917312529711456,
+        "y": 1,
+        "z": 1.091767035307015
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 1.0499999996274711,
+      "z": 0.02000000406056643
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlsmklqi-mykf",
+        "label": "to Open",
+        "from": "state-default",
+        "to": "state-mlsmklqi-mykf"
+      },
+      {
+        "id": "cycle-state-mlsmklqi-mykf-to-state-default",
+        "label": "to closed",
+        "from": "state-mlsmklqi-mykf",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "closed",
+        "file": "large-wardrobe/state-default.glb"
+      },
+      {
+        "id": "state-mlsmklqi-mykf",
+        "name": "Open",
+        "file": "large-wardrobe/state-mlsmklqi-mykf.glb"
+      }
+    ]
+  },
+  {
+    "id": "6eaff768b565c-19c7335c107",
+    "title": "Freestanding oval soaking bathtub with chrome fl...",
+    "transform": {
+      "position": {
+        "x": 4.522408021754294,
+        "y": 0.3904049244978556,
+        "z": -0.896791648070859
+      },
+      "rotation": {
+        "x": 0,
+        "y": 3.141592653589793,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.7873490005753465,
+        "y": 1,
+        "z": 1.3568453847354858
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.08813499016471649,
+      "y": 0.6175507578992459,
+      "z": 4.231659860618338
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlsiig1y-6e45",
+        "label": "to Full",
+        "from": "state-default",
+        "to": "state-mlsiig1y-6e45"
+      },
+      {
+        "id": "cycle-state-mlsiig1y-6e45-to-state-default",
+        "label": "to Empty",
+        "from": "state-mlsiig1y-6e45",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "Empty",
+        "file": "freestanding-oval-soaking-bathtub-with-chrome-fl/state-default.glb"
+      },
+      {
+        "id": "state-mlsiig1y-6e45",
+        "name": "Full",
+        "file": "freestanding-oval-soaking-bathtub-with-chrome-fl/state-mlsiig1y-6e45.glb"
+      }
+    ]
+  },
+  {
+    "id": "b500b00d33e638-19c735e91d7",
+    "title": "refrigerator",
+    "transform": {
+      "position": {
+        "x": -2.6390041499833767,
+        "y": 0.9876455923302134,
+        "z": 0.5193998030296436
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": -0.0032454665083127,
+      "y": 0.9003749143341613,
+      "z": -0.003915878407667384
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlsqs928-jonu",
+        "label": "to Open",
+        "from": "state-default",
+        "to": "state-mlsqs928-jonu"
+      },
+      {
+        "id": "cycle-state-mlsqs928-jonu-to-state-default",
+        "label": "to closed",
+        "from": "state-mlsqs928-jonu",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "closed",
+        "file": "refrigerator/state-default.glb"
+      },
+      {
+        "id": "state-mlsqs928-jonu",
+        "name": "Open",
+        "file": "refrigerator/state-mlsqs928-jonu.glb"
+      }
+    ]
+  },
+  {
+    "id": "669fe9f9f97588-19c736a9260",
+    "title": "kitchen base cabinet",
+    "transform": {
+      "position": {
+        "x": -3.6717847955793625,
+        "y": 0.529275586728742,
+        "z": 0.4720761398832385
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.8098083678676107,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": -0.0004609774656834098,
+      "y": 0.4399999994598329,
+      "z": 0.01919808945853102
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlsr95pw-kpf4",
+        "label": "to open",
+        "from": "state-default",
+        "to": "state-mlsr95pw-kpf4"
+      },
+      {
+        "id": "cycle-state-mlsr95pw-kpf4-to-state-default",
+        "label": "to closed",
+        "from": "state-mlsr95pw-kpf4",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "closed",
+        "file": "kitchen-base-cabinet/state-default.glb"
+      },
+      {
+        "id": "state-mlsr95pw-kpf4",
+        "name": "open",
+        "file": "kitchen-base-cabinet/state-mlsr95pw-kpf4.glb"
+      }
+    ]
+  },
+  {
+    "id": "a4013b97f887b8-19c736d15ce",
+    "title": "kitchen base cabinet",
+    "transform": {
+      "position": {
+        "x": -5.578769058377267,
+        "y": 0.5351143306110472,
+        "z": 4.341854069829404
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.7788682026204685,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": -0.0004609774656834098,
+      "y": 0.4399999994598329,
+      "z": 0.01919808945853102
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlsr95pw-kpf4",
+        "label": "to open",
+        "from": "state-default",
+        "to": "state-mlsr95pw-kpf4"
+      },
+      {
+        "id": "cycle-state-mlsr95pw-kpf4-to-state-default",
+        "label": "to closed",
+        "from": "state-mlsr95pw-kpf4",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "closed",
+        "file": "kitchen-base-cabinet/state-default.glb"
+      },
+      {
+        "id": "state-mlsr95pw-kpf4",
+        "name": "open",
+        "file": "kitchen-base-cabinet/state-mlsr95pw-kpf4.glb"
+      }
+    ]
+  },
+  {
+    "id": "414821fb84733-19c736ec63b",
+    "title": "kitchen base cabinet",
+    "transform": {
+      "position": {
+        "x": -5.581997975509333,
+        "y": 0.5282067101293415,
+        "z": 1.7664241653590549
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.4227205704111852,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": -0.0004609774656834098,
+      "y": 0.4399999994598329,
+      "z": 0.01919808945853102
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlsr95pw-kpf4",
+        "label": "to open",
+        "from": "state-default",
+        "to": "state-mlsr95pw-kpf4"
+      },
+      {
+        "id": "cycle-state-mlsr95pw-kpf4-to-state-default",
+        "label": "to closed",
+        "from": "state-mlsr95pw-kpf4",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "closed",
+        "file": "kitchen-base-cabinet/state-default.glb"
+      },
+      {
+        "id": "state-mlsr95pw-kpf4",
+        "name": "open",
+        "file": "kitchen-base-cabinet/state-mlsr95pw-kpf4.glb"
+      }
+    ]
+  },
+  {
+    "id": "80182e12bc169-19c73a10d27",
+    "title": "Professional Gas Range",
+    "transform": {
+      "position": {
+        "x": -4.746920983597513,
+        "y": 0.5687589957482349,
+        "z": 0.3873462875499325
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.1219595276194203,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.4899999935925007,
+      "z": 0.030999994091689576
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlssjm1p-xotl",
+        "label": "turn on front right",
+        "from": "state-default",
+        "to": "state-mlssjm1p-xotl"
+      },
+      {
+        "id": "it-mlsszajl-asw9",
+        "label": "turn on back right",
+        "from": "state-default",
+        "to": "state-mlsskac7-ywao"
+      },
+      {
+        "id": "it-mlsszdl0-9396",
+        "label": "turn on front left",
+        "from": "state-default",
+        "to": "state-mlssl1do-1yyl"
+      },
+      {
+        "id": "cycle-state-mlssjm1p-xotl-to-state-mlsskac7-ywao",
+        "label": "turn off",
+        "from": "state-mlssjm1p-xotl",
+        "to": "state-default"
+      },
+      {
+        "id": "cycle-state-mlsskac7-ywao-to-state-mlssl1do-1yyl",
+        "label": "turn off",
+        "from": "state-mlsskac7-ywao",
+        "to": "state-default"
+      },
+      {
+        "id": "cycle-state-mlssl1do-1yyl-to-state-default",
+        "label": "turn off",
+        "from": "state-mlssl1do-1yyl",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "off",
+        "file": "professional-gas-range/state-default.glb"
+      },
+      {
+        "id": "state-mlssjm1p-xotl",
+        "name": "front-right-on",
+        "file": "professional-gas-range/state-mlssjm1p-xotl.glb"
+      },
+      {
+        "id": "state-mlsskac7-ywao",
+        "name": "back-right-on",
+        "file": "professional-gas-range/state-mlsskac7-ywao.glb"
+      },
+      {
+        "id": "state-mlssl1do-1yyl",
+        "name": "front-left-on",
+        "file": "professional-gas-range/state-mlssl1do-1yyl.glb"
+      }
+    ]
+  },
+  {
+    "id": "5aca293afb4bc8-19c73a60e13",
+    "title": "Built-in stainless steel dishwasher",
+    "transform": {
+      "position": {
+        "x": -5.62,
+        "y": 0.52,
+        "z": 3.5
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.42500000000000004,
+      "z": 0.016000004224479197
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "built-in-stainless-steel-dishwasher/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "62797796e9767-19c73af66a5",
+    "title": "Sink",
+    "transform": {
+      "position": {
+        "x": -5.59988395161818,
+        "y": 0.9535132879737271,
+        "z": 2.6793443991438437
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 0.7160886522166464,
+        "y": 0.40892918087790386,
+        "z": 0.8280100914128449
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": -0.2733975025605969,
+      "y": 1.2202618787565602,
+      "z": 1.8803600531622169
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "sink/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "80c4a613fb7268-19c73c9ac7a",
+    "title": "Dining chair",
+    "transform": {
+      "position": {
+        "x": -1.0087908140402728,
+        "y": 0.5434133631727004,
+        "z": 4.26
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.42500000000000004,
+      "z": 0.00026035857325493184
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "dining-chair/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "9a67b23a28cf8-19c73cb7fe7",
+    "title": "Large ornate mahogany dining table",
+    "transform": {
+      "position": {
+        "x": -0.3670123249376638,
+        "y": 0.47636876395355976,
+        "z": 3.809280713021919
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.37499999936670064,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "large-ornate-mahogany-dining-table/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "b521e3d18de31-19c73cc4ab7",
+    "title": "Dining chair",
+    "transform": {
+      "position": {
+        "x": -1.021304087860674,
+        "y": 0.5331213412094118,
+        "z": 3.31
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.42455268602766005,
+      "z": 0.00026035857325493184
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "dining-chair/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "c4896d1ee8f58-19c73cca1c3",
+    "title": "Dining chair",
+    "transform": {
+      "position": {
+        "x": 0.0258311295758461,
+        "y": 0.5434518887030261,
+        "z": 4.257087223482772
+      },
+      "rotation": {
+        "x": 0,
+        "y": 4.71238898038469,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.42455268602766005,
+      "z": 0.00026035857325493184
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "dining-chair/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "5870c87d73e6e-19c73cd1041",
+    "title": "Dining chair",
+    "transform": {
+      "position": {
+        "x": 0.4759727625914219,
+        "y": 0.5487097275235999,
+        "z": 3.6356960320731617
+      },
+      "rotation": {
+        "x": 0,
+        "y": 4.71238898038469,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.42455268602766005,
+      "z": 0.00026035857325493184
+    },
+    "pickable": false,
+    "bumpable": true,
+    "bumpResponse": 1.25,
+    "bumpDamping": 0.86,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "dining-chair/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "86897b7437ec4-19c73d08c40",
+    "title": "kitchen wall cabinet",
+    "transform": {
+      "position": {
+        "x": -5.7339840704817675,
+        "y": 2.1862344570288634,
+        "z": 4.379152567928243
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.2867158952939255,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.44999999999999996,
+      "z": 0.01999999690800905
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "kitchen-wall-cabinet/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "d4e7cf45e14168-19c73d2c59e",
+    "title": "kitchen wall cabinet",
+    "transform": {
+      "position": {
+        "x": -5.734054470140882,
+        "y": 2.185881752908841,
+        "z": 3.4550831669585023
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.44999999999999996,
+      "z": 0.01999999690800905
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "kitchen-wall-cabinet/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "53ffa35fcc3b3-19c73d3c12b",
+    "title": "Wall-mounted stainless steel chimney range hood\n...",
+    "transform": {
+      "position": {
+        "x": -4.740618632346517,
+        "y": 2.4462029494015645,
+        "z": 0.3129874596416138
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1.3048132595239712,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.49499999426305297,
+      "z": 0.004999999888241291
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "wall-mounted-stainless-steel-chimney-range-hood/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "16b55c06139a58-19c73d4f998",
+    "title": "kitchen wall cabinet",
+    "transform": {
+      "position": {
+        "x": -5.7404835482395695,
+        "y": 2.183006970153812,
+        "z": 1.6857432491479991
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.5347140343971224,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.44999999999999996,
+      "z": 0.01999999690800905
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "kitchen-wall-cabinet/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "2841a95215e2b-19c73d6a74f",
+    "title": "Two-slice chrome toaster with browning control d...",
+    "transform": {
+      "position": {
+        "x": -5.53024050161023,
+        "y": 1.0784581482665967,
+        "z": 1.5159435448934113
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.02000000216066837,
+      "y": 0.0950000018440187,
+      "z": 0.006250037542275558
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "two-slice-chrome-toaster-with-browning-control-d/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "d146e81adcfb6-19c73d6f1d1",
+    "title": "Automatic drip coffee maker with glass carafe\n\nI...",
+    "transform": {
+      "position": {
+        "x": -5.528265138870446,
+        "y": 1.1498788004517702,
+        "z": 4.666337898166567
+      },
+      "rotation": {
+        "x": -3.141592653589793,
+        "y": 1.2353040676263245,
+        "z": -3.141592653589793
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.17499999983236195,
+      "z": 0.017000000141561028
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "automatic-drip-coffee-maker-with-glass-carafe-i/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "b9d431e7a8db-19c73d7935a",
+    "title": "Modern cordless electric kettle with brushed met...",
+    "transform": {
+      "position": {
+        "x": -4.737252095959948,
+        "y": 1.1082720912950728,
+        "z": 0.3542968078051474
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.125,
+      "z": -0.004422579425060177
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "modern-cordless-electric-kettle-with-brushed-met/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "d27de72b5e0e88-19c73d801ac",
+    "title": "High-speed kitchen blender with glass jar and me...",
+    "transform": {
+      "position": {
+        "x": -5.598440540578837,
+        "y": 1.1821618341549747,
+        "z": 0.39175803651442287
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.03320012858728233,
+      "y": 0.21249999860301613,
+      "z": 0.003750044043080797
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "high-speed-kitchen-blender-with-glass-jar-and-me/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "e9ad475608341-19c73d95aaf",
+    "title": "Art deco gold-finished bar cart with two glass s...",
+    "transform": {
+      "position": {
+        "x": 1.1617934539333223,
+        "y": 0.5389120073767927,
+        "z": 0.3863584703065891
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.43250041351490937,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "art-deco-gold-finished-bar-cart-with-two-glass-s/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "2366af35eadcf8-19c73da0dcc",
+    "title": "Detailed porcelain dinner plate with gold rim an...",
+    "transform": {
+      "position": {
+        "x": 1.2032666946891117,
+        "y": 0.35538681201078215,
+        "z": 0.457809393418966
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.015000253395232687,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "detailed-porcelain-dinner-plate-with-gold-rim-an/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "9614072b45308-19c73da284e",
+    "title": "Detailed porcelain dinner plate with gold rim an...",
+    "transform": {
+      "position": {
+        "x": 1.1965681617029897,
+        "y": 0.42327413092342614,
+        "z": 0.5170610864361298
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.015000253395232687,
+      "z": 0
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "detailed-porcelain-dinner-plate-with-gold-rim-an/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "b56a8224e0b41-19c73da6a7c",
+    "title": "Detailed porcelain dinner plate with gold rim an...",
+    "transform": {
+      "position": {
+        "x": 1.2651117557232083,
+        "y": 0.8539772864259029,
+        "z": 0.40488177152786675
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.015000253395232687,
+      "z": 0
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "detailed-porcelain-dinner-plate-with-gold-rim-an/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "35b2a660f6f678-19c73db81a7",
+    "title": "Detailed porcelain dinner plate with gold rim an...",
+    "transform": {
+      "position": {
+        "x": 1.264493009384819,
+        "y": 0.8980005677819676,
+        "z": 0.4371962543984047
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.015000253395232687,
+      "z": 0
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "detailed-porcelain-dinner-plate-with-gold-rim-an/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "995aeff211eac-19c73dc9250",
+    "title": "Wine glass",
+    "transform": {
+      "position": {
+        "x": 1.0177538809809166,
+        "y": 0.9429782021892605,
+        "z": 0.4498776100590399
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-mlrogc5m-n4t3",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.11125000042840838,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [
+      {
+        "id": "cycle-state-default-to-state-mlrogc5m-n4t3",
+        "label": "to full",
+        "from": "state-default",
+        "to": "state-mlrogc5m-n4t3"
+      },
+      {
+        "id": "cycle-state-mlrogc5m-n4t3-to-state-default",
+        "label": "to empty",
+        "from": "state-mlrogc5m-n4t3",
+        "to": "state-default"
+      }
+    ],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "empty",
+        "file": "wine-glass/state-default.glb"
+      },
+      {
+        "id": "state-mlrogc5m-n4t3",
+        "name": "full",
+        "file": "wine-glass/state-mlrogc5m-n4t3.glb"
+      }
+    ]
+  },
+  {
+    "id": "0695d8eaecdef-19c73dd202d",
+    "title": "Salt and pepper Shakers",
+    "transform": {
+      "position": {
+        "x": -3.9803931457097406,
+        "y": 1.0048145678774343,
+        "z": 0.5215084811167934
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.03500000027939677,
+      "z": 0
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "salt-and-pepper-shakers/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "3501961e59bfd-19c73dd7348",
+    "title": "Woven rattan placemat",
+    "transform": {
+      "position": {
+        "x": -0.6918154969521217,
+        "y": 0.8540616060927329,
+        "z": 3.2486867503780283
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.006163739011521584,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "woven-rattan-placemat/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "106836e6061308-19c73ddca05",
+    "title": "Woven rattan placemat",
+    "transform": {
+      "position": {
+        "x": -0.03199168640492356,
+        "y": 0.8639676887097529,
+        "z": 3.2080873974631094
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.006163739011521584,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "woven-rattan-placemat/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "a4d9f0c23dd5b-19c73ddea29",
+    "title": "Woven rattan placemat",
+    "transform": {
+      "position": {
+        "x": -0.6857401667092435,
+        "y": 0.859627743601119,
+        "z": 4.289689745315966
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.006163739011521584,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "woven-rattan-placemat/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "86bf2f5237ec6-19c73de0fe1",
+    "title": "Woven rattan placemat",
+    "transform": {
+      "position": {
+        "x": -0.04934858727521346,
+        "y": 0.8540464700703785,
+        "z": 4.288064914106616
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.006163739011521584,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "woven-rattan-placemat/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "bd9f45e625fdc-19c73de49ea",
+    "title": "Stainless steel cutlery set",
+    "transform": {
+      "position": {
+        "x": -0.696829349219807,
+        "y": 0.8586490872300028,
+        "z": 3.32
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 0.5,
+        "y": 0.5,
+        "z": 0.5
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.0025628975396361324,
+      "y": 0.0027103629905995495,
+      "z": 0.014999998435378074
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "stainless-steel-cutlery-set/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "0a096032464cd8-19c73df0150",
+    "title": "Stainless steel cutlery set",
+    "transform": {
+      "position": {
+        "x": -3.9286632656874647,
+        "y": 0.5386453681978114,
+        "z": 0.6449646063146555
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.0025628975396361324,
+      "y": 0.0027103629905995495,
+      "z": 0.014999998435378074
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "stainless-steel-cutlery-set/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "0202ee297f2a88-19c73df2eb8",
+    "title": "Stainless steel cutlery set",
+    "transform": {
+      "position": {
+        "x": -3.7662372755085376,
+        "y": 0.5388803818702548,
+        "z": 0.6515124115358037
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.0025628975396361324,
+      "y": 0.0027103629905995495,
+      "z": 0.014999998435378074
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "stainless-steel-cutlery-set/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "94ecfd5ada2578-19c73dfac8d",
+    "title": "Stainless steel cutlery set",
+    "transform": {
+      "position": {
+        "x": -3.4404169853090836,
+        "y": 0.5413681306400779,
+        "z": 0.6380915974649233
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.0025628975396361324,
+      "y": 0.0027103629905995495,
+      "z": 0.014999998435378074
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "stainless-steel-cutlery-set/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "e504c978d237c-19c73e648dc",
+    "title": "Sleek countertop microwave oven with digital dis...",
+    "transform": {
+      "position": {
+        "x": -5.59,
+        "y": 1.1109554476439747,
+        "z": 4.160795697533484
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.16000000309199097,
+      "z": 0.019999998398125177
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "sleek-countertop-microwave-oven-with-digital-dis/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "7c166d4a7b1fa-19c73e6b7ae",
+    "title": "Classic outdoor garden bench",
+    "transform": {
+      "position": {
+        "x": 3.6298746749997752,
+        "y": 0.46974768857104965,
+        "z": 7.2158786326308135
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.4101636643918064,
+      "z": -0.009999999776482582
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "classic-outdoor-garden-bench/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "30e5d8717fd2e8-19c7406b70c",
+    "title": "Bathroom vanity and sink",
+    "transform": {
+      "position": {
+        "x": 2.031272123883404,
+        "y": 0.6635385096694033,
+        "z": -4.330352147122318
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 1.456095909396544,
+      "y": 0.4909199642562849,
+      "z": 0.26005917572635695
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "bathroom-vanity-and-sink/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "3e3ea9b2cc2e58-19c74073206",
+    "title": "Contemporary white ceramic toilet with sleek lin...",
+    "transform": {
+      "position": {
+        "x": 4.454104862841407,
+        "y": 0.42316131113123934,
+        "z": -4.505567046787334
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.3957356681124615,
+        "y": 1.3957356681124615,
+        "z": 1.3957356681124615
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.37999999845400456,
+      "z": 0.0024999931454658397
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "contemporary-white-ceramic-toilet-with-sleek-lin/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "94e9a636240718-19c7407bbee",
+    "title": "Luxury rainfall shower head and wall-mounted mix...",
+    "transform": {
+      "position": {
+        "x": 1.9425969244634211,
+        "y": 1.3148567749089612,
+        "z": -0.36640908300765984
+      },
+      "rotation": {
+        "x": 0,
+        "y": 3.141592653589793,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 1.25,
+      "z": 0.26500000309199095
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "luxury-rainfall-shower-head-and-wall-mounted-mix/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "a2b85a007ca9d-19c7408763c",
+    "title": "Woven wicker laundry hamper with a fabric liner ...",
+    "transform": {
+      "position": {
+        "x": 3.25028196420934,
+        "y": 0.3302800075837711,
+        "z": -4.503918870307929
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 0.8583300892907466,
+        "y": 0.8583300892907466,
+        "z": 0.8583300892907466
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.29749999690800905,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "woven-wicker-laundry-hamper-with-a-fabric-liner/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "99c77c594d079-19c7408ea1d",
+    "title": "Polished chrome wall-mounted towel rack with fol...",
+    "transform": {
+      "position": {
+        "x": 1.2000208284940208,
+        "y": 1.53,
+        "z": -1.1057607374920708
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.4494794852373833,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.26249999122687057,
+      "z": 0.01807261087466902
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "polished-chrome-wall-mounted-towel-rack-with-fol/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "7e1f8523afa01-19c74098514",
+    "title": "Minimalist floating wooden wall shelves for bath...",
+    "transform": {
+      "position": {
+        "x": 4.491771043106426,
+        "y": 1.2101214572034933,
+        "z": -0.15247527825167362
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.1833166424840937,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 1.4399999997206032,
+      "z": 0.07500000000000001
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "minimalist-floating-wooden-wall-shelves-for-bath/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "ba520c65d11258-19c7409f996",
+    "title": "Matching ceramic soap dispenser, toothbrush hold...",
+    "transform": {
+      "position": {
+        "x": 1.3341187797982013,
+        "y": 1.1268225562070888,
+        "z": -4.449625881687194
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.019999999552965164,
+      "y": 0.08499999845400452,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "matching-ceramic-soap-dispenser-toothbrush-hold/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "9ea7f64c32fb7-19c740b89fc",
+    "title": "Wall-mounted medicine cabinet with a large mirro...",
+    "transform": {
+      "position": {
+        "x": 2.017737545060936,
+        "y": 1.9269932324049326,
+        "z": -4.810104392332999
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.303586220666433,
+        "y": 1.1705937734630785,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": -0.03941424555273487,
+      "y": 0.4,
+      "z": 0.022500016540531666
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "wall-mounted-medicine-cabinet-with-a-large-mirro/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "b45b699007c72-19c74300203",
+    "title": "Framed abstract oil painting",
+    "transform": {
+      "position": {
+        "x": 4.424584573788344,
+        "y": 1.9470570099444073,
+        "z": 0.08375157009131762
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.3643420085814393,
+        "y": 1.2248492171872085,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 1.5,
+      "z": 0.0017383729780349189
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "framed-abstract-oil-painting/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "0d071b9d15a778-19c74323057",
+    "title": "Framed landscape oil painting",
+    "transform": {
+      "position": {
+        "x": -3.608992492739797,
+        "y": 1.7361845431468765,
+        "z": -4.879999937970252
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 2.321890853006333,
+        "y": 2.518815242069379,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.30000000000000004,
+      "z": 0.002609475582382474
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "framed-landscape-oil-painting/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "8f61d882176858-19c743358f5",
+    "title": "Vintage poster",
+    "transform": {
+      "position": {
+        "x": -4.4079772102754955,
+        "y": 1.8962601991548873,
+        "z": -0.06366045843035233
+      },
+      "rotation": {
+        "x": 0,
+        "y": 3.141592653589793,
+        "z": 0
+      },
+      "scale": {
+        "x": 2.0446682506880354,
+        "y": 2.1001934576595302,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.32499999999999996,
+      "z": 0.004999999944120646
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "vintage-poster/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "46aa48c4bb14d-19c74347b30",
+    "title": "wall clock",
+    "transform": {
+      "position": {
+        "x": 5.862637492866764,
+        "y": 2.36,
+        "z": 2.88
+      },
+      "rotation": {
+        "x": 0,
+        "y": 4.71238898038469,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.4,
+      "z": 0.005000036787878975
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "wall-clock/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "ba2c0f11cedef-19c743507ed",
+    "title": "Wall mirror",
+    "transform": {
+      "position": {
+        "x": -1.8721821641931122,
+        "y": 1.8546174723983981,
+        "z": 3.9556118892043464
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.75,
+      "z": 0.027505963917087026
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "wall-mirror/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "39e52be49c9ec8-19c74363fc3",
+    "title": "Assorted decorative plants",
+    "transform": {
+      "position": {
+        "x": -2.9044516167844154,
+        "y": 0.6125478909283358,
+        "z": 5.464666979023578
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": -0.06828595502296761,
+      "y": 0.4995002142584293,
+      "z": 0.05005857882475222
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "assorted-decorative-plants/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "412ff4ad131ff-19c74372469",
+    "title": "Set of three canvas prints featuring detailed bo...",
+    "transform": {
+      "position": {
+        "x": -5.890814574323871,
+        "y": 2.1254741150774024,
+        "z": -2.4937709011301235
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.7741064961903168,
+        "y": 1.3607416183002867,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.30000000000000004,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "set-of-three-canvas-prints-featuring-detailed-bo/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "048418404b31-19c7437cce5",
+    "title": "Neon light wall art",
+    "transform": {
+      "position": {
+        "x": 0.9,
+        "y": 1.65,
+        "z": -0.94
+      },
+      "rotation": {
+        "x": 0,
+        "y": 4.71238898038469,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.0455026046119541,
+      "y": 0.31117674360714764,
+      "z": -0.009999999944120645
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "neon-light-wall-art/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "eedf6074a66ce-19c7438a204",
+    "title": "Bohemian style woven macrame",
+    "transform": {
+      "position": {
+        "x": 5.856553202676937,
+        "y": 1.79,
+        "z": -2.44
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.5152472768993592,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "bohemian-style-woven-macrame/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "998aaee1750c98-19c7441f967",
+    "title": "Chunky knit wool throw blanket with visible weav...",
+    "transform": {
+      "position": {
+        "x": -4.722957697499421,
+        "y": 0.5995631183491226,
+        "z": -2.443810500735502
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1.319078993031496,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.04748437812509175,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "chunky-knit-wool-throw-blanket-with-visible-weav/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "94d820b5be849-19c7442b3c5",
+    "title": "Pair of plush white bed pillows with cotton text...",
+    "transform": {
+      "position": {
+        "x": -5.649719211474874,
+        "y": 0.7187351739850696,
+        "z": -2.4659646636791352
+      },
+      "rotation": {
+        "x": 1.5707963267948963,
+        "y": 1.050976584154359,
+        "z": -1.5707963267948963
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.11000000000000001,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "pair-of-plush-white-bed-pillows-with-cotton-text/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "2668d614a5e848-19c7443bb04",
+    "title": "Soft fuzzy stuffed teddy bear with button eyes a...",
+    "transform": {
+      "position": {
+        "x": -0.8510426342848817,
+        "y": 1.0184118900507562,
+        "z": -4.745109333958126
+      },
+      "rotation": {
+        "x": 0,
+        "y": -0.35751964509038986,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.1524781208620488,
+      "z": 0.022493639105132107
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "soft-fuzzy-stuffed-teddy-bear-with-button-eyes-a/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "72878a8f5ffb28-19c74452ecd",
+    "title": "laptop open",
+    "transform": {
+      "position": {
+        "x": -1.7,
+        "y": 0.96,
+        "z": -0.41
+      },
+      "rotation": {
+        "x": 0,
+        "y": 3.141592653589793,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.11673651631330051,
+      "z": -0.04432948718632643
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "laptop-open/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "be0c1bf4a1e43-19c74455b1e",
+    "title": "Matte ceramic coffee mug with steam and realisti...",
+    "transform": {
+      "position": {
+        "x": -2.084297221134241,
+        "y": 0.9317528639491932,
+        "z": -0.46062232996302266
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.01750006346140766,
+      "y": 0.09077258996382548,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "matte-ceramic-coffee-mug-with-steam-and-realisti/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "e891daddeb566-19c7445a6c2",
+    "title": "Hardcover book lying open with paper pages and p...",
+    "transform": {
+      "position": {
+        "x": 5.107398196850658,
+        "y": 0.5789292014696342,
+        "z": 1.379850337825023
+      },
+      "rotation": {
+        "x": 0,
+        "y": -0.7614917198077298,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.010374427221847459,
+      "z": 0
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "hardcover-book-lying-open-with-paper-pages-and-p/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "466b5c32d8ffc8-19c7445fe6d",
+    "title": "Thin glass and metal smartphone with reflective ...",
+    "transform": {
+      "position": {
+        "x": -5.620367368438998,
+        "y": 0.6507814526590434,
+        "z": -3.5722425565895612
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0.5836908321898583,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.00625,
+      "z": -7.82310966007671e-10
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "thin-glass-and-metal-smartphone-with-reflective/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "bfeb41524c65f8-19c74468aea",
+    "title": "Light oak wooden bed tray with handles and short...",
+    "transform": {
+      "position": {
+        "x": -4.810490635848853,
+        "y": 0.696442809417525,
+        "z": -2.773194360540799
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.12499999903142453,
+      "z": 0
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "light-oak-wooden-bed-tray-with-handles-and-short/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "bf9beb5fb79a8-19c744766ad",
+    "title": "Thick quilted duvet neatly folded with soft fabr...",
+    "transform": {
+      "position": {
+        "x": -1.0909513930543349,
+        "y": 0.2944852328458841,
+        "z": -4.680966959464118
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 0.43288237437984695,
+        "y": 1,
+        "z": 0.6923437151644042
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 0.11199358191488266,
+      "z": 0.055000002682209004
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "thick-quilted-duvet-neatly-folded-with-soft-fabr/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "dbefaeda89b1d-19c744ed429",
+    "title": "Large detailed oak tree with textured bark and l...",
+    "transform": {
+      "position": {
+        "x": -1.5512307374727492,
+        "y": 2.5134853929878243,
+        "z": 8.016079845065434
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 0.6996114045873896,
+        "y": 0.6996114045873896,
+        "z": 0.6996114045873896
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0,
+      "y": 3.649999976158142,
+      "z": 0.25000003576278695
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "large-detailed-oak-tree-with-textured-bark-and-l/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "60e08e06242f38-19c74564e1e",
+    "title": "Galvanized steel watering can with a long spout ...",
+    "transform": {
+      "position": {
+        "x": 5.241405996940184,
+        "y": 0.21187023344930833,
+        "z": 5.203786043018361
+      },
+      "rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "scale": {
+        "x": 1,
+        "y": 1,
+        "z": 1
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.09620328438469122,
+      "y": 0.16122611763747985,
+      "z": 0
+    },
+    "pickable": true,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "galvanized-steel-watering-can-with-a-long-spout/state-default.glb"
+      }
+    ]
+  },
+  {
+    "id": "843c6307ab323-19c7456cda8",
+    "title": "Large terracotta garden pots with intricate flor...",
+    "transform": {
+      "position": {
+        "x": 5.795020447146578,
+        "y": 0.22466053141207248,
+        "z": 8.532342244184631
+      },
+      "rotation": {
+        "x": 0,
+        "y": 1.5707963267948966,
+        "z": 0
+      },
+      "scale": {
+        "x": 0.5624222520343933,
+        "y": 0.5624222520343933,
+        "z": 0.5624222520343933
+      }
+    },
+    "currentStateId": "state-default",
+    "_shapePivotCenter": {
+      "x": 0.32500000298023224,
+      "y": 0.31999999359250064,
+      "z": -2.980232227667301e-9
+    },
+    "pickable": false,
+    "bumpable": false,
+    "bumpResponse": 0.9,
+    "bumpDamping": 0.9,
+    "castShadow": false,
+    "receiveShadow": false,
+    "actions": [],
+    "states": [
+      {
+        "id": "state-default",
+        "name": "default",
+        "file": "large-terracotta-garden-pots-with-intricate-flor/state-default.glb"
+      }
+    ]
+  }
+]
