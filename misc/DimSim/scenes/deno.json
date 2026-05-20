@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "@dimsim/eval": "../dimos-cli/eval/deno-client.ts",
+    "@std/path": "jsr:@std/path@^1"
+  }
+}
