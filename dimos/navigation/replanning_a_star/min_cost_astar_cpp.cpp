@@ -242,7 +242,11 @@ std::vector<std::pair<int, int>> min_cost_astar_cpp(
     return {};
 }
 
-PYBIND11_MODULE(min_cost_astar_ext, m) {
+// Free-threaded build opt-in: this module has no shared mutable state — DX/DY/MOVE_COSTS are
+// constexpr, and every container (open_set, closed_set, parents, cost_score, dist_score) is
+// constructed inside min_cost_astar_cpp() and lives only on the calling thread's stack frame.
+// No GIL needed for safety. (pybind11 2.13+)
+PYBIND11_MODULE(min_cost_astar_ext, m, py::mod_gil_not_used()) {
     m.doc() = "C++ implementation of A* pathfinding for costmap grids";
 
     m.def("min_cost_astar_cpp", &min_cost_astar_cpp,

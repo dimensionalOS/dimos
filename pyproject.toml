@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=70", "wheel", "pybind11>=2.12"]
+# Upper-pin to keep release-time build inputs reproducible. pybind11>=2.13 is required for
+# the py::mod_gil_not_used() marker on free-threaded wheels.
+requires = ["setuptools>=70,<82", "wheel", "pybind11>=2.13,<3"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
