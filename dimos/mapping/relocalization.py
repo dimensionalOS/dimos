@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading, time, collections
+import threading, time
 from typing import Any
 
 import numpy as np
@@ -36,27 +36,26 @@ logger = setup_logger()
 FRAME_MAP = "map"
 FRAME_WORLD = "world"
 
-DEFAULT_Z_OFFSET = 2.0      # before the first relocalize() converges, offset map this much in z
-ACCUM_MAX = 30              # accumulated lidars scans to feed into relocalize() call
+DEFAULT_Z_OFFSET = 20.0     # before the first relocalize() converges, offset map this much in z
 PUBLISH_INTERVAL = 2.0      # for loaded_map + TF
 RELOC_INTERVAL = 2.0
-MIN_LOCAL_POINTS = 500000
+MIN_LOCAL_POINTS = 20000
 
 
 class RelocalizationModule(Module):
-    lidar: In[PointCloud2]
+    global_map: In[PointCloud2]
     loaded_map: Out[PointCloud2]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
-        self._map_data: PointCloud2 | None = None
+        self._premap: PointCloud2 | None = None
         self._running = False
         self._publish_thread: threading.Thread | None = None
         self._reloc_thread: threading.Thread | None = None
 
-        self._accum: collections.deque[PointCloud2] = collections.deque(maxlen=ACCUM_MAX)
-        self._accum_lock = threading.Lock()
+        self._local_map: PointCloud2 | None = None
+        self._local_lock = threading.Lock()
 
         self._scan_frame_id: str = FRAME_WORLD
 
@@ -73,12 +72,12 @@ class RelocalizationModule(Module):
     def start(self):
         super().start()
 
-        self._map_data = PointCloud2.lcm_decode(
+        self._premap = PointCloud2.lcm_decode(
             get_data("go2_hongkong_office_twopass_map.pc2.lcm").read_bytes()
         )
-        self._map_data.frame_id = FRAME_MAP
+        self._premap.frame_id = FRAME_MAP
         self._running = True
-        self.register_disposable(Disposable(self.lidar.subscribe(self._on_lidar)))
+        self.register_disposable(Disposable(self.global_map.subscribe(self._on_global_map)))
 
         self._publish_thread = threading.Thread(target=self._publish_loop, daemon=True)
         self._publish_thread.start()
@@ -87,7 +86,7 @@ class RelocalizationModule(Module):
 
         logger.info(
             f"Relocalization module started: "
-            f"loaded_map.frame_id={self._map_data.frame_id!r}  "
+            f"loaded_map.frame_id={self._premap.frame_id!r}  "
             f"placeholder TF {FRAME_WORLD!r} -> {FRAME_MAP!r}  "
             f"z_offset={DEFAULT_Z_OFFSET}"
         )
@@ -100,38 +99,33 @@ class RelocalizationModule(Module):
                 t.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
-    def _on_lidar(self, msg: PointCloud2) -> None:
-        with self._accum_lock:
-            self._accum.append(msg)
+    def _on_global_map(self, msg: PointCloud2) -> None:
+        with self._local_lock:
+            self._local_map = msg
 
     def _reloc_loop(self) -> None:
         while self._running:
-            if self._map_data is None:
+            if self._premap is None:
                 continue
 
-            with self._accum_lock:
-                scans = list(self._accum)
-            if not scans:
+            with self._local_lock:
+                local_map = self._local_map
+            if local_map is None:
                 continue
 
-            chunks = [s.points_f32() for s in scans if len(s) > 0]
-            if not chunks:
-                continue
-            local_pts = np.concatenate(chunks)
-            if len(local_pts) < MIN_LOCAL_POINTS:
+            n_pts = len(local_map)
+            if n_pts < MIN_LOCAL_POINTS:
                 now = time.monotonic()
                 if now - self._last_skip_log > 5.0:
                     logger.warning(
-                        f"relocalize skipped: n_pts={len(local_pts)} < MIN_LOCAL_POINTS={MIN_LOCAL_POINTS}"
+                        f"relocalize skipped: n_pts={n_pts} < MIN_LOCAL_POINTS={MIN_LOCAL_POINTS}"
                     )
                     self._last_skip_log = now
                 continue
 
-            local_map = PointCloud2.from_numpy(local_pts)
-
             t0 = time.monotonic()
             try:
-                T = _relocalize(self._map_data.pointcloud, local_map.pointcloud)
+                T = _relocalize(self._premap.pointcloud, local_map.pointcloud)
             except Exception:
                 logger.exception("relocalize() failed")
                 continue
@@ -152,7 +146,7 @@ class RelocalizationModule(Module):
                 self._relocalized = True
 
             logger.info(
-                f"relocalize: time_cost={dt:.1f}s n_pts={len(local_pts)} "
+                f"relocalize: time_cost={dt:.1f}s n_pts={n_pts} "
                 f"reloc_t={T[:3, 3].round(3).tolist()} "
                 f"TF {self._scan_frame_id!r} -> {FRAME_MAP!r} "
                 f"published_t={T_inv[:3, 3].round(3).tolist()} "
@@ -162,9 +156,9 @@ class RelocalizationModule(Module):
 
     def _publish_loop(self) -> None:
         while self._running:
-            if self._map_data is None or not self._relocalized:
+            if self._premap is None or not self._relocalized:
                 continue
-            self.loaded_map.publish(self._map_data)
+            self.loaded_map.publish(self._premap)
 
             with self._tf_lock:
                 tf = self._world_to_map
