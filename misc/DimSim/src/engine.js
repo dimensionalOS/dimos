@@ -7469,6 +7469,7 @@ if (dimosMode) {
       bridge.connect();
       bridge.sceneReady = true;
       window.__dimosBridge = bridge;
+      sceneApi._flushPendingEmbodiment?.();
       window.__dimosCapCam = _dimosCapCam;
       window.__dimosAgent = agent;
 

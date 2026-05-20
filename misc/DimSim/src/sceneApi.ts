@@ -109,13 +109,29 @@ export function setSky(opts: Record<string, any>): void {
  * cli/bridge/physics.ts).  Falsy fields are passed through unchanged so
  * partial reconfigures work — e.g. just bumping maxSpeed mid-scene.
  */
+let _pendingEmbodiment: Record<string, any> | null = null;
+
 export function setEmbodiment(config: Record<string, any>): void {
   if (!_sendPhysics) throw new Error("scene-api not initialized");
   const w = window as any;
-  if (w.__dimosBridge?._handleEmbodimentConfig) {
-    w.__dimosBridge._handleEmbodimentConfig(config);
+  if (w.__dimosBridge) {
+    if (w.__dimosBridge._handleEmbodimentConfig) {
+      w.__dimosBridge._handleEmbodimentConfig(config);
+    }
+    _sendPhysics({ type: "embodimentConfig", ...config });
+  } else {
+    // Scene build() runs before engine.js wires up window.__dimosBridge.
+    // Queue and flush from engine.js once the bridge is constructed.
+    _pendingEmbodiment = config;
   }
-  _sendPhysics({ type: "embodimentConfig", ...config });
+}
+
+/** engine.js calls this right after `window.__dimosBridge = bridge`. */
+export function _flushPendingEmbodiment(): void {
+  if (!_pendingEmbodiment) return;
+  const cfg = _pendingEmbodiment;
+  _pendingEmbodiment = null;
+  setEmbodiment(cfg);
 }
 
 /** Engine.js calls this before loading a new scene, to refresh the base url. */
