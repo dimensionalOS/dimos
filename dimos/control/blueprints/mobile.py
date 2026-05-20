@@ -20,6 +20,7 @@ Usage:
     dimos run coordinator-flowbase                       # FlowBase holonomic base (Portal RPC)
     dimos run coordinator-flowbase-keyboard-teleop       # FlowBase + WASD pygame teleop
     dimos run coordinator-flowbase-nav                   # FlowBase + FastLio2 + nav stack (click-to-drive)
+    dimos run coordinator-sim-fopdt                      # FOPDT sim plant on /go2/cmd_vel|odom (Go2-shaped)
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -43,6 +45,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.catalog.ufactory import xarm7 as _catalog_xarm7
+from dimos.robot.sim.fopdt_plant_connection import FopdtPlantConnection
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -239,10 +242,24 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
 )
 
 
+# FOPDT in-process sim plant exposed on the same LCM topic shape as the
+# real Go2 bring-up (/go2/cmd_vel + /go2/odom). Pair with the benchmark /
+# characterization tools (sim mode) — they drive transport_lcm with
+# hardware_id="go2", so this blueprint is the drop-in stand-in for
+# `unitree-go2-webrtc-keyboard-teleop` when no robot is present.
+coordinator_sim_fopdt = FopdtPlantConnection.blueprint().transports(
+    {
+        ("cmd_vel", Twist): LCMTransport("/go2/cmd_vel", Twist),
+        ("odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
+    }
+)
+
+
 __all__ = [
     "coordinator_flowbase",
     "coordinator_flowbase_keyboard_teleop",
     "coordinator_flowbase_nav",
     "coordinator_mobile_manip_mock",
     "coordinator_mock_twist_base",
+    "coordinator_sim_fopdt",
 ]

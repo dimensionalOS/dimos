@@ -51,6 +51,7 @@ unitree_go2_coordinator = (
                     type="velocity",
                     joint_names=_go2_joints,
                     priority=10,
+                    velocity_zero_on_timeout=False,
                 ),
             ],
         ),
