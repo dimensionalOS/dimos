@@ -49,9 +49,12 @@ as well as out-of-room lidar measurements, out-of-room odom measuremennts, and r
 
 ## Skills
 
-(5 skills, defined in `skills/*.md`)
+(7 skills, defined in `skills/*.md`)
 
-- **room_extents** — size, bounds, and map coordinates of each room (extends count_rooms with per-frame pose tracking + polygon tracing + verify_room_partition) - Also useful for counting total rooms.
+- **room_extents** — size, bounds, and map coordinates of each room (per-frame pose tracking + polygon tracing + `verify_room_partition`). Also doubles as room counting.
+- **describe_room** — what's in a given room, answered from frames inside that room (composes `room_extents` so the answer isn't biased by semantic-search priming).
+- **unexplored_spaces** — where to explore next: identifies frontiers from the orange unpartitioned blobs flagged by `verify_room_partition` that are NOT enclosed by walls.
+- **count_unique_things** — how many distinct instances of a kind of thing the robot saw, by localising each candidate to a world (x, y) and merging coincident positions.
 - **measure_distance** — measure a distance between two things, two coordinates, or along the robot's path.
 - **position_of_thing** — world (x, y) of an object the robot saw, primarily via bearing triangulation from two views.
 - **perspective** — questions framed from another entity's viewpoint ("what is to the right of X").

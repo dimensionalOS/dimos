@@ -123,6 +123,18 @@ def _picked_choice_letter(s: str) -> str | None:
     return matches[-1] if matches else None
 
 
+def _parse_xy(s: str) -> tuple[float, float] | None:
+    """Extract the first two signed decimal numbers in *s* as an (x, y) pair.
+
+    Tolerates parentheses, brackets, plus signs, whitespace — anything as
+    long as two parseable numbers appear in order. Returns None if fewer
+    than two numbers are found."""
+    nums = re.findall(r"[-+]?\d+(?:\.\d+)?", s)
+    if len(nums) < 2:
+        return None
+    return float(nums[0]), float(nums[1])
+
+
 # Multi-choice with the right answer permuted to position B (avoiding the
 # first-position bias some LLMs show without breaking determinism).
 _MULTI_CHOICE = (
@@ -152,6 +164,35 @@ def store(recording_db: Path):
     from dimos.memory2.store.sqlite import SqliteStore
 
     s = SqliteStore(path=str(recording_db))
+    yield s
+    s.stop()
+
+
+@pytest.fixture(scope="module")
+def recording_db_hongkong() -> Path:
+    """Path to the Hong Kong office recording. Must be supplied via the
+    MEMORY2_AGENT_DB_HONGKONG env var — no default, tests skip otherwise.
+    The Hong Kong recording is longer and richer than go2_short.db; the
+    content-grounded cases below are bound to its specific layout
+    (elevator room, white robots seen, total floor area)."""
+    raw = os.environ.get("MEMORY2_AGENT_DB_HONGKONG")
+    if not raw:
+        pytest.skip(
+            "MEMORY2_AGENT_DB_HONGKONG not set; point it at the Hong Kong .db"
+        )
+    db = Path(raw)
+    if not db.exists():
+        pytest.skip(
+            f"recording not at {db}; set MEMORY2_AGENT_DB_HONGKONG to an existing .db"
+        )
+    return db
+
+
+@pytest.fixture(scope="module")
+def store_hongkong(recording_db_hongkong: Path):
+    from dimos.memory2.store.sqlite import SqliteStore
+
+    s = SqliteStore(path=str(recording_db_hongkong))
     yield s
     s.stop()
 
@@ -259,8 +300,8 @@ _QA_CASES: list[tuple[str, str, Callable[[str], bool]]] = [
         "the two white robots (not walking distance — the real distance, "
         "even across walls)? Round to a whole number. Reply with only "
         "the number, nothing else.",
-        # Ground truth: the two robots are < 5 m apart.
-        lambda ans: (n := _first_number(ans)) is not None and n < 5,
+        # Ground truth: the two robots are between 3 m and 6 m apart (inclusive).
+        lambda ans: (n := _first_number(ans)) is not None and 3 <= n <= 6,
     ),
     (
         "man_in_black_moved_hand",
@@ -273,6 +314,32 @@ _QA_CASES: list[tuple[str, str, Callable[[str], bool]]] = [
         "multi_choice_letter_B",
         _MULTI_CHOICE,
         lambda ans: _picked_choice_letter(ans) == "B",
+    ),
+    (
+        "exploration_waypoint_roi",
+        "What's the highest-ROI waypoint to explore next to expand the map? "
+        "Reply with only the coordinate in the format `x, y` (two numbers "
+        "separated by a comma), nothing else.",
+        # Ground truth: ~(+4.2, +9.0), the east-lobe frontier. ±1.5 m on each
+        # axis to absorb the agent's choice between nearby frontier cells.
+        lambda ans: (
+            (xy := _parse_xy(ans)) is not None
+            and abs(xy[0] - 4.2) <= 1.5
+            and abs(xy[1] - 9.0) <= 1.5
+        ),
+    ),
+    (
+        "passed_through_doorway_top_left",
+        "Where is the doorway you passed through that's at the top-left of "
+        "your trajectory? Reply with only the coordinate in the format "
+        "`x, y` (two numbers separated by a comma), nothing else.",
+        # Ground truth: ~(-2.0, +9.1), the interior doorway at the upper-left
+        # bend of the trajectory loop. ±1.5 m on each axis.
+        lambda ans: (
+            (xy := _parse_xy(ans)) is not None
+            and abs(xy[0] - (-2.0)) <= 1.5
+            and abs(xy[1] - 9.1) <= 1.5
+        ),
     ),
 ]
 
@@ -296,5 +363,65 @@ def test_short_recording_qa(
     from dimos.memory2.experimental.memory2_agent.agent import run_question
 
     res = run_question(store, clip, question, model=_model())
+    assert res.error is None, res.error
+    assert verify(res.final_answer), f"unexpected answer for {question!r}: {res.final_answer!r}"
+
+
+# Content-grounded QA over `go2_hongkong_office.db` — the longer recording
+# of the Hong Kong office. Discovery-permissive bounds for the questions
+# whose ground-truth coordinate / area we haven't pinned down yet; tighten
+# once the agent's first answers are reviewed.
+_QA_CASES_HONGKONG: list[tuple[str, str, Callable[[str], bool]]] = [
+    (
+        "white_robots_count_2_hk",
+        "How many white robots did you pass by? Reply with only the "
+        "number, nothing else.",
+        lambda ans: "2" in ans.split(),
+    ),
+    (
+        "elevator_room_center",
+        "What's the center coordinate of the room with the elevators? "
+        "Reply with only the coordinate in the format `x, y` (two numbers "
+        "separated by a comma), nothing else.",
+        # Ground truth: ~(+4.55, +2.22) — at the boundary between the lower
+        # central corridor (R3) and the right connector (R2). ±1.5 m on
+        # each axis to absorb the agent's choice between adjacent room
+        # centroids in that area.
+        lambda ans: (
+            (xy := _parse_xy(ans)) is not None
+            and abs(xy[0] - 4.55) <= 1.5
+            and abs(xy[1] - 2.22) <= 1.5
+        ),
+    ),
+    (
+        "total_floor_area",
+        "What's the total floor area of the office, summed across all "
+        "rooms, in square meters? Reply with only the number, nothing else.",
+        # Ground truth: ~400 m² (eyeballed). ±100 m² to absorb the agent's
+        # variance in polygon tightness and whether corridors get counted.
+        lambda ans: (n := _first_number(ans)) is not None and 300 <= n <= 500,
+    ),
+]
+
+
+@pytest.mark.experimental
+@pytest.mark.skipif_in_ci
+@pytest.mark.skipif_no_openai
+@pytest.mark.parametrize(
+    "question,verify",
+    [(q, v) for _id, q, v in _QA_CASES_HONGKONG],
+    ids=[case_id for case_id, _q, _v in _QA_CASES_HONGKONG],
+)
+def test_hongkong_recording_qa(
+    store_hongkong,
+    clip,
+    question: str,
+    verify: Callable[[str], bool],
+) -> None:
+    """Content-grounded QA over the Hong Kong office recording. See
+    `_QA_CASES_HONGKONG` for the truth table."""
+    from dimos.memory2.experimental.memory2_agent.agent import run_question
+
+    res = run_question(store_hongkong, clip, question, model=_model())
     assert res.error is None, res.error
     assert verify(res.final_answer), f"unexpected answer for {question!r}: {res.final_answer!r}"

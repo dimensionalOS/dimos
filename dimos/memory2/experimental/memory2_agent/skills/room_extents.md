@@ -270,31 +270,6 @@ Use `calc` for all arithmetic.
    ''')
    ```
 
-7b. **Per-room visual verification.**
-   Before answering, sanity-check every room you defined by opening
-   at least 2 frames that you classified into it (pick frames whose
-   `(x, y)` is well inside the room's polygon — preferably one near
-   each end of the room). For each room:
-
-   - Call `show_image(stream="color_image", ts=<ts of the frame>)`.
-   - Confirm out loud that what you see matches the room's `desc`
-     (e.g. desc says "retail / pantry / shelving area" → the frame
-     should actually show shelves/products, not a sofa lounge).
-   - If a frame contradicts the assigned room (e.g. you labelled it
-     "shelving area" but it shows the elevator corridor), the
-     classification is wrong. Either move that frame to the correct
-     room, merge two rooms that were really one, or split a room
-     that lumped two distinct spaces together. Then re-run
-     `verify_room_partition`.
-
-   A room with only one classified frame is also a red flag — open
-   that frame and verify it's really a distinct space, not noise from
-   a doorway/transition. If unsure, merge it into a neighbour.
-
-   This catches the common failure mode where pose-based bbox or
-   polygon tracing looked clean but the underlying frame-to-room
-   assignment was wrong.
-
 8. **Reply.** End your turn with a plain-text answer. Match the
    answer shape to the question — the procedure above produces both
    the count AND the per-room geometry, so use only what was asked:
