@@ -26,7 +26,6 @@ from dimos.mapping.pointclouds.occupancy import (
     HeightCostConfig,
     OccupancyConfig,
 )
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
@@ -42,21 +41,18 @@ class Config(ModuleConfig):
 class CostMapper(Module):
     config: Config
     global_map: In[PointCloud2]
-    loaded_map: In[PointCloud2]
-    world_to_map: In[Transform]
+    merged_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
 
     @rpc
     def start(self) -> None:
         super().start()
 
-        def _maybe_merge(
-            triple: tuple[PointCloud2, PointCloud2 | None, Transform | None],
+        def _select_map(
+            pair: tuple[PointCloud2, PointCloud2 | None],
         ) -> PointCloud2:
-            gmap, lmap, tf = triple
-            if lmap is not None and tf is not None:
-                return gmap + lmap.transform(tf)
-            return gmap
+            gmap, merged = pair
+            return merged if merged is not None else gmap
 
         def _publish_costmap(grid: OccupancyGrid, calc_time_ms: float, rx_monotonic: float) -> None:
             self.global_costmap.publish(grid)
@@ -73,10 +69,9 @@ class CostMapper(Module):
         self.register_disposable(
             combine_latest(
                 self.global_map.observable(),  # type: ignore[no-untyped-call]
-                self.loaded_map.observable().pipe(ops.start_with(None)),  # type: ignore[no-untyped-call,arg-type]
-                self.world_to_map.observable().pipe(ops.start_with(None)),  # type: ignore[no-untyped-call,arg-type]
+                self.merged_map.observable().pipe(ops.start_with(None)),  # type: ignore[no-untyped-call,arg-type]
             )
-            .pipe(ops.map(_maybe_merge))
+            .pipe(ops.map(_select_map))
             .pipe(ops.map(_calculate_and_time))
             .subscribe(lambda result: _publish_costmap(result[0], result[1], result[2]))
         )

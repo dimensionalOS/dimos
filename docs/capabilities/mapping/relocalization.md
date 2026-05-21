@@ -112,7 +112,7 @@ quality, disable the gate:
 You can watch the alignment in Rerun. The loaded premap is published on
 its own entity — to compare the merged costmap (live scan + premap)
 against the live scan alone, click the eye icon next to the loaded-map
-entity to toggle it off.
+entity to toggle it off (you can hide both loaded_map and merged_map).
 
 ![toggle loaded map](assets/reloc_hide_loaded_map.webp)
 

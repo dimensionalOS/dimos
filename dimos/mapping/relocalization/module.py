@@ -24,6 +24,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.relocalize import relocalize as _relocalize
+from dimos.mapping.voxels import VoxelGrid
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -48,15 +49,15 @@ class Config(ModuleConfig):
         None  # e.g. `-o relocalizationmodule.map_file=go2_hongkong_office_twopass_map`
     )
     publish_loaded_map: bool = True
-    publish_merged: bool = False  # turn on by `-o relocalizationmodule.publish_merged=true`
     fitness_threshold: float = 0.6
+    use_carving: bool = True
 
 
 class RelocalizationModule(Module):
     config: Config
     global_map: In[PointCloud2]
     loaded_map: Out[PointCloud2]
-    merged_map_viz: Out[PointCloud2]
+    merged_map: Out[PointCloud2]
     world_to_map: Out[Transform]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -66,6 +67,7 @@ class RelocalizationModule(Module):
         self._running = False
         self._publish_thread: threading.Thread | None = None
         self._reloc_thread: threading.Thread | None = None
+        self._merge_thread: threading.Thread | None = None
 
         self._local_map: PointCloud2 | None = None
         self._local_lock = threading.Lock()
@@ -80,6 +82,8 @@ class RelocalizationModule(Module):
             frame_id=FRAME_WORLD,
             child_frame_id=FRAME_MAP,
         )
+
+        self._merge_event = threading.Event()
 
     @rpc
     def start(self) -> None:
@@ -99,6 +103,8 @@ class RelocalizationModule(Module):
         self._publish_thread.start()
         self._reloc_thread = threading.Thread(target=self._reloc_loop, daemon=True)
         self._reloc_thread.start()
+        self._merge_thread = threading.Thread(target=self._merge_loop, daemon=True)
+        self._merge_thread.start()
 
         logger.info(
             f"Relocalization module started: map_file={self.config.map_file!r}  "
@@ -110,7 +116,8 @@ class RelocalizationModule(Module):
     @rpc
     def stop(self) -> None:
         self._running = False
-        for t in (self._publish_thread, self._reloc_thread):
+        self._merge_event.set()
+        for t in (self._publish_thread, self._reloc_thread, self._merge_thread):
             if t is not None:
                 t.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
@@ -118,6 +125,7 @@ class RelocalizationModule(Module):
     def _on_global_map(self, msg: PointCloud2) -> None:
         with self._local_lock:
             self._local_map = msg
+        self._merge_event.set()
 
     def _reloc_loop(self) -> None:
         while self._running:
@@ -172,6 +180,7 @@ class RelocalizationModule(Module):
             with self._tf_lock:
                 self._world_to_map = new_tf
                 self._relocalized = True
+            self._merge_event.set()
 
             logger.info(
                 f"relocalize: fitness={fitness:.3f} time_cost={dt:.1f}s n_pts={n_pts} "
@@ -194,16 +203,40 @@ class RelocalizationModule(Module):
             if self.config.publish_loaded_map:
                 self.loaded_map.publish(self._premap)
 
-            if self.config.publish_merged:
-                with self._local_lock:
-                    local = self._local_map
-                if local is not None:
-                    self.merged_map_viz.publish(local + self._premap.transform(tf))
-
             self.tf.publish(tf)
             self.world_to_map.publish(tf)
 
             time.sleep(PUBLISH_INTERVAL)
+
+    def _merge_loop(self) -> None:
+        while self._running:
+            self._merge_event.wait(timeout=1.0)
+            self._merge_event.clear()
+
+            if not self._running:
+                return
+            with self._local_lock:
+                local = self._local_map
+            with self._tf_lock:
+                tf = self._world_to_map
+                relocalized = self._relocalized
+            if local is None or self._premap is None:
+                continue
+            if not relocalized:
+                self.merged_map.publish(local)
+                continue
+
+            premap_in_world = self._premap.transform(tf)
+            if self.config.use_carving:
+                grid = VoxelGrid(carve_columns=True, frame_id=local.frame_id)
+                try:
+                    grid.add_frame(premap_in_world)
+                    grid.add_frame(local)
+                    self.merged_map.publish(grid.get_global_pointcloud2())
+                finally:
+                    grid.dispose()
+            else:
+                self.merged_map.publish(local + premap_in_world)
 
 
 # class GlobalLookupModule:
