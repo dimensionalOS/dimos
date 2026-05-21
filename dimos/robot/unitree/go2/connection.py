@@ -63,7 +63,7 @@ class Go2Mode(str, Enum):
 
 
 class ConnectionConfig(ModuleConfig):
-    ip: str = Field(default_factory=lambda m: m["g"].robot_port)
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
 
 

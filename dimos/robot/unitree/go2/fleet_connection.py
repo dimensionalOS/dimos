@@ -44,7 +44,7 @@ logger = setup_logger()
 
 class FleetConnectionConfig(ConnectionConfig):
     ips: Sequence[str] = Field(
-        default_factory=lambda m: [ip.strip() for ip in m["g"].robot_port.split(",")]
+        default_factory=lambda m: [ip.strip() for ip in m["g"].robot_ips.split(",")]
     )
 
     @model_validator(mode="after")

@@ -41,14 +41,14 @@ from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 _xarm6_cfg = _catalog_xarm6(
     name="arm",
     add_gripper=False,
-    adapter_type="xarm" if global_config.robot_port else "mock",
-    address=global_config.robot_port or None,
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip or None,
 )
 _xarm7_cfg = _catalog_xarm7(
     name="arm",
     add_gripper=False,
-    adapter_type="xarm" if global_config.robot_port else "mock",
-    address=global_config.robot_port or None,
+    adapter_type="xarm" if global_config.xarm7_ip else "mock",
+    address=global_config.xarm7_ip or None,
 )
 
 # XArm6 mock sim + keyboard teleop + Drake visualization

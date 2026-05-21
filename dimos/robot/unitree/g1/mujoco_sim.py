@@ -41,7 +41,7 @@ logger = setup_logger()
 
 
 class G1SimConfig(ModuleConfig):
-    ip: str = Field(default_factory=lambda m: m["g"].robot_port)
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
 class G1SimConnection(G1ConnectionBase):
