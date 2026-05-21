@@ -27,7 +27,7 @@ The bottom of this module holds the per-robot plant + control config
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 
 
@@ -154,44 +154,53 @@ class RobotPlantProfile:
     the control-loop knobs that surround it. Add a robot by appending
     one instance to ``ROBOT_PLANT_PROFILES``.
 
-    ``robot_id`` doubles as the ``hardware_id`` on the ``transport_lcm``
-    adapter that the tools use to drive the robot (so the LCM topic
-    prefix is ``/{robot_id}/{cmd_vel|odom}``). The adapter is always
-    ``transport_lcm`` — sim/hw differ only in which connection module
-    the operator brings up on the robot side (the ``blueprint``).
+    The tuning tools talk to the operator's running coord on two
+    well-known LCM topics (the contract every coord blueprint already
+    honors):
+
+      * publish Twist on ``/cmd_vel`` (the coord's ``twist_command`` In)
+      * subscribe JointState on ``/coordinator/joint_state`` (the
+        coord's published Out — joint *positions* carry ``[x, y, yaw]``
+        because ``positions = adapter.read_odometry()``; see
+        :class:`~dimos.control.hardware_interface.ConnectedTwistBase`).
+
+    ``robot_id`` is provenance/cosmetic. ``joint_prefix`` is what the
+    operator coord's hardware uses for joint names — Go2's coord uses
+    ``go2/{vx,vy,wz}``, FlowBase's uses ``base/{vx,vy,wz}`` — so the
+    tool knows which positions to pick out of joint_state.
     """
 
     # identity / cosmetic
     name: str
-    robot_id: str
+    robot_id: str  # provenance + artifact filename
     # transport / bring-up
     blueprint: str  # the `dimos run <blueprint>` the operator starts (hw)
-    sim_blueprint: str  # the `dimos run <blueprint>` for sim (FOPDT plant)
+    sim_blueprint: str  # the `dimos run <blueprint>` for sim
+    # joint name prefix the operator coord's hardware uses. Defaults to
+    # robot_id; set explicitly when the coord blueprint uses a different
+    # prefix (e.g. flowbase coord uses "base/...").
+    joint_prefix: str | None = None
     # physical envelope
-    vx_max: float
-    wz_max: float
-    tick_rate_hz: float
-    odom_warmup_s: float
-    odom_stale_s: float
+    vx_max: float = 1.0
+    wz_max: float = 1.5
+    tick_rate_hz: float = 10.0
+    odom_warmup_s: float = 10.0
+    odom_stale_s: float = 1.0
     # SI plan / kinematics
-    excited_channels: tuple[str, ...]  # subset of (vx,vy,wz); omit vy => non-strafing
-    si_amplitudes: dict[str, list[float]]
-    step_s: float
-    pre_roll_s: float
-    max_dist_m: float
-    # Sim ground truth: drives FopdtPlantConnection (sim blueprint) +
-    # self-test path + DERIVE ceiling fallback.
-    sim_plant: TwistBasePlantParams
+    excited_channels: tuple[str, ...] = ("vx", "wz")  # omit vy => non-strafing
+    si_amplitudes: dict[str, list[float]] = field(
+        default_factory=lambda: {"vx": [0.3, 0.6, 0.9], "vy": [0.2, 0.4], "wz": [0.4, 0.8, 1.2]}
+    )
+    step_s: float = 8.0
+    pre_roll_s: float = 1.0
+    max_dist_m: float = 6.0
+    # Sim ground truth: drives the sim blueprint's FOPDT plant + the
+    # characterization self-test path + DERIVE ceiling fallback.
+    sim_plant: TwistBasePlantParams = field(default_factory=lambda: GO2_PLANT_FITTED)
 
     @property
-    def cmd_topic(self) -> str:
-        """LCM topic the transport_lcm adapter publishes Twist on."""
-        return f"/{self.robot_id}/cmd_vel"
-
-    @property
-    def odom_topic(self) -> str:
-        """LCM topic the transport_lcm adapter subscribes PoseStamped on."""
-        return f"/{self.robot_id}/odom"
+    def joints_prefix(self) -> str:
+        return self.joint_prefix if self.joint_prefix is not None else self.robot_id
 
 
 GO2_PLANT_PROFILE = RobotPlantProfile(
@@ -199,6 +208,7 @@ GO2_PLANT_PROFILE = RobotPlantProfile(
     robot_id="go2",
     blueprint="unitree-go2-webrtc-keyboard-teleop",
     sim_blueprint="coordinator-sim-fopdt",
+    joint_prefix="go2",  # unitree_go2_coordinator uses make_twist_base_joints("go2")
     vx_max=1.0,
     wz_max=1.5,
     tick_rate_hz=10.0,
@@ -212,10 +222,43 @@ GO2_PLANT_PROFILE = RobotPlantProfile(
     sim_plant=GO2_PLANT_FITTED,
 )
 
-ROBOT_PLANT_PROFILES: dict[str, RobotPlantProfile] = {"go2": GO2_PLANT_PROFILE}
+# FlowBase (holonomic Portal-RPC twist base). Operator-side blueprint:
+# the existing `coordinator-flowbase-keyboard-teleop` already publishes
+# /coordinator/joint_state with positions=[x,y,yaw] from the flowbase
+# adapter's read_odometry. No new blueprint, no bridge, no Connection
+# module needed — just this profile entry.
+#
+# Envelope values are placeholders pending real characterization. The
+# vy channel is excited (FlowBase strafes natively) so vy is in the
+# excited_channels tuple. sim_plant reuses the Go2 FOPDT shape until a
+# FlowBase-specific fit lands — the values are noise for `--mode hw`.
+FLOWBASE_PLANT_PROFILE = RobotPlantProfile(
+    name="FlowBase",
+    robot_id="flowbase",
+    blueprint="coordinator-flowbase-keyboard-teleop",
+    sim_blueprint="coordinator-sim-fopdt",
+    joint_prefix="base",  # coordinator_flowbase uses make_twist_base_joints("base")
+    vx_max=0.8,
+    wz_max=1.2,
+    tick_rate_hz=10.0,
+    odom_warmup_s=10.0,
+    odom_stale_s=1.0,
+    excited_channels=("vx", "vy", "wz"),  # holonomic — strafes
+    si_amplitudes={"vx": [0.2, 0.4, 0.6], "vy": [0.2, 0.4], "wz": [0.3, 0.6, 1.0]},
+    step_s=6.0,
+    pre_roll_s=1.0,
+    max_dist_m=4.0,
+    sim_plant=GO2_PLANT_FITTED,  # placeholder until FlowBase has its own fit
+)
+
+ROBOT_PLANT_PROFILES: dict[str, RobotPlantProfile] = {
+    "go2": GO2_PLANT_PROFILE,
+    "flowbase": FLOWBASE_PLANT_PROFILE,
+}
 
 
 __all__ = [
+    "FLOWBASE_PLANT_PROFILE",
     "GO2_PLANT_FITTED",
     "GO2_PLANT_PROFILE",
     "GO2_VX_RISE",

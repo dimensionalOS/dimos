@@ -56,13 +56,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.components import make_twist_base_joints
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+
+# Well-known LCM topics — every ControlCoordinator blueprint honors this
+# contract (twist_command In = /cmd_vel, joint_state Out =
+# /coordinator/joint_state). Adding a robot to the tools means adding a
+# RobotPlantProfile, not a new topic / module / adapter.
+_CMD_VEL_TOPIC = "/cmd_vel"
+_JOINT_STATE_TOPIC = "/coordinator/joint_state"
 from dimos.utils.benchmarking.plant import (
     ROBOT_PLANT_PROFILES,
     FopdtChannelParams,
@@ -243,8 +250,6 @@ class _JointStatePoseStream:
         # (emitted before the adapter receives its first /odom) does
         # not get latched as the start pose.
         now = time.perf_counter()
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-
         pose = PoseStamped(
             ts=now,
             position=Vector3(x, y, 0.0),
@@ -286,15 +291,15 @@ def _prereq_banner(profile: RobotPlantProfile) -> None:
         f"\n=== HARDWARE MODE ({profile.name}) ===\n"
         "Prereqs:\n"
         f"  1. Another terminal: `dimos run {profile.blueprint}`\n"
-        f"     (publishes {profile.odom_topic}, consumes "
-        f"{profile.cmd_topic}; if it includes a keyboard teleop it must\n"
-        "     be publish-only-when-active so it does not fight the SI\n"
-        "     commands — wrong topic => runtime 'no odom', not an error).\n"
-        "  2. This process: strip /nix/store from LD_LIBRARY_PATH (README)\n"
+        f"     (its ControlCoordinator listens on {_CMD_VEL_TOPIC} and\n"
+        f"     publishes {_JOINT_STATE_TOPIC} with positions=[x,y,yaw]).\n"
+        "     If it includes a keyboard teleop it must be\n"
+        "     publish-only-when-active so it does not fight the SI cmds.\n"
+        "  2. This process: strip /nix/store from LD_LIBRARY_PATH (README).\n"
         "Robot is STOPPED before every step. Reposition it, then press\n"
-        "ENTER here — the tool then owns the cmd topic for the step.\n"
-        "Each step ends at --max-dist travelled or --step-s, whichever\n"
-        "first. Velocity clamped; zero-Twist on exit / Ctrl-C.\n"
+        "ENTER here — the tool owns the cmd topic for the step. Each step\n"
+        "ends at --max-dist travelled or --step-s, whichever first.\n"
+        "Velocity clamped; zero-Twist on exit / Ctrl-C.\n"
     )
 
 
@@ -308,16 +313,21 @@ def _fit_hw(
     _prereq_banner(profile)
     hw_dt = 1.0 / profile.tick_rate_hz
 
-    # Signal-injection is open-loop and naturally external — we publish
-    # Twist directly onto the LCM cmd topic without going through the
-    # coordinator's task graph (the SI is not a task).
-    cmd_pub = LCMTransport(profile.cmd_topic, Twist)
+    # Signal-injection is open-loop — publish Twist directly on the coord's
+    # twist_command topic (/cmd_vel). The operator coord's velocity task
+    # picks it up and routes through whichever adapter (transport_lcm for
+    # Go2, flowbase Portal RPC for FlowBase, ...) the operator brought up.
+    cmd_pub = LCMTransport(_CMD_VEL_TOPIC, Twist)
 
     def publish(vx: float, vy: float, wz: float) -> None:
         cmd_pub.broadcast(
             None,
             Twist(
-                linear=Vector3(_clamp(vx, -profile.vx_max, profile.vx_max), 0.0, 0.0),
+                linear=Vector3(
+                    _clamp(vx, -profile.vx_max, profile.vx_max),
+                    _clamp(vy, -profile.vx_max, profile.vx_max),
+                    0.0,
+                ),
                 angular=Vector3(0.0, 0.0, _clamp(wz, -profile.wz_max, profile.wz_max)),
             ),
         )
@@ -327,37 +337,17 @@ def _fit_hw(
             publish(0.0, 0.0, 0.0)
             time.sleep(0.05)
 
-    # Observation goes through an in-process ControlCoordinator with the
-    # transport_lcm adapter — same path the benchmark uses. JointState
-    # positions = [x, y, yaw]; body velocity is recovered by pose-diff
-    # in the observer (transport_lcm.read_velocities returns last-cmd,
-    # not measured, so we always differentiate pose).
-    joints = make_twist_base_joints(profile.robot_id)
-    coord = ControlCoordinator(
-        tick_rate=profile.tick_rate_hz,
-        hardware=[
-            HardwareComponent(
-                hardware_id=profile.robot_id,
-                hardware_type=HardwareType.BASE,
-                joints=joints,
-                adapter_type="transport_lcm",
-                # READ-ONLY: we observe /{robot_id}/odom via this adapter,
-                # but the SI loop publishes its own Twist on /cmd_vel into
-                # the operator's coord. If we let this adapter write, it
-                # would also publish on /{robot_id}/cmd_vel and race the
-                # operator's coord.
-                auto_enable=False,
-            )
-        ],
-    )
+    # Observation: subscribe to the operator coord's /coordinator/joint_state
+    # Out directly over LCM. JointState positions carry [x, y, yaw] because
+    # ConnectedTwistBase populates them from adapter.read_odometry(). Body
+    # velocity recovered by pose-differentiation in the stream (commanded
+    # velocities in the JointState are not measured).
+    joints = make_twist_base_joints(profile.joints_prefix)
     stream = _JointStatePoseStream(joint_names=joints)
-    unsub = coord.joint_state.subscribe(stream.on_joint_state)
-    coord.start()
+    js_sub = LCMTransport(_JOINT_STATE_TOPIC, JointState)
+    unsub = js_sub.subscribe(stream.on_joint_state)
 
-    print(
-        f"[hw] waiting up to {warmup_s:.0f}s for {profile.odom_topic} (via coord.joint_state) ..."
-    )
-    time.sleep(0.5)  # grace: let adapter receive first /odom + one tick
+    print(f"[hw] waiting up to {warmup_s:.0f}s for {_JOINT_STATE_TOPIC} ...")
     deadline = time.perf_counter() + warmup_s
     while time.perf_counter() < deadline:
         p, _, _ = stream.latest()
@@ -367,8 +357,7 @@ def _fit_hw(
     if stream.latest()[0] is None:
         safe_stop()
         unsub()
-        coord.stop()
-        raise SystemExit(f"No {profile.odom_topic} — is `dimos run {profile.blueprint}` up?")
+        raise SystemExit(f"No {_JOINT_STATE_TOPIC} — is `dimos run {profile.blueprint}` up?")
 
     pooled: dict[str, FopdtChannelParams] = {}
     per_amplitude: dict[str, list[dict]] = {}
@@ -471,14 +460,13 @@ def _fit_hw(
                 L=float(np.mean([f.L for f in fits])),
             )
     except KeyboardInterrupt:
-        # finally below does safe_stop + unsub + coord.stop — don't duplicate
+        # finally below does safe_stop + unsub — don't duplicate
         raise SystemExit(
             "\n[hw] aborted by operator — robot stopped, no artifact written."
         ) from None
     finally:
         safe_stop()
         unsub()
-        coord.stop()
 
     # Channels not excited (e.g. vy on a non-strafing robot) are
     # placeholdered = vx so FF / profile stay sane; flagged in caveats.

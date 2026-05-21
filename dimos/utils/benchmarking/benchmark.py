@@ -22,13 +22,12 @@ speed ladder on a fixed real-space-constrained path set, scores each
 tolerance->max-safe-speed inversion (artifact section 5). Robot-agnostic:
 everything robot-specific comes from the ``RobotPlantProfile`` (``--robot``).
 
-Architecturally sim and hw are identical here. The benchmark always
-runs the baseline INSIDE a real ``ControlCoordinator`` tick loop driving
-the ``transport_lcm`` twist-base adapter. The only thing that changes
-between modes is which connection module is on the robot side of the
-LCM topics — sim: ``coordinator-sim-fopdt`` (FopdtPlantConnection), hw:
-``unitree-go2-webrtc-keyboard-teleop`` (GO2Connection). The operator
-brings that up in another terminal; the prereq banner reminds them.
+The tool talks to whichever operator coord is up via two well-known
+topics: publishes Twist on ``/cmd_vel`` (the coord's ``twist_command``
+In) and subscribes to ``/coordinator/joint_state`` (positions =
+[x,y,yaw] from the adapter's read_odometry). Adding a robot = adding a
+``RobotPlantProfile`` — no in-process coord, no new blueprint, no
+per-robot topic dance.
 
     uv run python -m dimos.utils.benchmarking.benchmark \\
         --robot go2 --config reports/go2_config_hw_<...>.json --mode hw
@@ -50,14 +49,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
+from dimos.control.components import make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator
-from dimos.control.tasks.baseline_path_follower_task import (
-    BaselinePathFollowerTask,
-    BaselinePathFollowerTaskConfig,
-)
 from dimos.control.tasks.feedforward_gain_compensator import FeedforwardGainConfig
-from dimos.core.global_config import global_config
+from dimos.core.rpc_client import RPCClient
+from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -74,6 +70,15 @@ from dimos.utils.benchmarking.tuning import (
     invert_tolerance,
 )
 from dimos.utils.benchmarking.velocity_profile import VelocityProfileConfig
+
+# Well-known topic the operator coord publishes its JointState Out on.
+# Positions carry [x,y,yaw] (ConnectedTwistBase populates them from
+# adapter.read_odometry). The tool subscribes to this for trajectory
+# recording; the baseline task — which actually drives the robot — lives
+# inside the operator coord (see TaskConfig type="baseline_path_follower"
+# wired into each robot's coord blueprint).
+_JOINT_STATE_TOPIC = "/coordinator/joint_state"
+_BASELINE_TASK_NAME = "baseline_follower"  # task name in operator coord blueprint
 
 _ARRIVED_STATES = frozenset({"arrived", "completed"})
 _FAILED_STATES = frozenset({"aborted"})
@@ -243,27 +248,29 @@ class _JointStateRecorder:
         with self._lock:
             return list(self._ticks)
 
+    def reset_trajectory(self) -> None:
+        """Clear recorded ticks and the t=0 anchor — called before each
+        run so each (path, speed) is scored on its own time axis."""
+        with self._lock:
+            self._ticks.clear()
+            self._t0 = None
 
-def _make_base_component(profile: RobotPlantProfile) -> HardwareComponent:
-    """In-process transport_lcm base — pubs Twist on /{robot_id}/cmd_vel,
-    subs PoseStamped on /{robot_id}/odom. Identical in sim and hw; the
-    only thing that differs is which connection module is the other end
-    of those topics (the operator's running blueprint)."""
-    return HardwareComponent(
-        hardware_id=profile.robot_id,
-        hardware_type=HardwareType.BASE,
-        joints=make_twist_base_joints(profile.robot_id),
-        adapter_type="transport_lcm",
-        # READ-ONLY: we observe /{robot_id}/odom via this adapter, but the
-        # tool publishes its own Twist on /cmd_vel into the operator's
-        # coord. If we let this adapter write, it would also publish on
-        # /{robot_id}/cmd_vel and race the operator's coord.
-        auto_enable=False,
+
+def _invoke(coord: RPCClient, method: str, **kwargs: object) -> object:
+    """RPC `task_invoke(_BASELINE_TASK_NAME, method, kwargs)` on the operator
+    coord. Centralises the .task_invoke wrapping so the run loop reads as
+    plain method calls on a remote object."""
+    return coord.task_invoke(
+        task_name=_BASELINE_TASK_NAME,
+        method=method,
+        kwargs=dict(kwargs),
     )
 
 
 def _run_baseline(
     profile: RobotPlantProfile,
+    coord: RPCClient,
+    recorder: _JointStateRecorder,
     path: NavPath,
     speed: float,
     k_angular: float,
@@ -272,51 +279,45 @@ def _run_baseline(
     timeout_s: float,
     label: str,
 ) -> tuple[ExecutedTrajectory, NavPath]:
-    """Stock baseline P-controller inside a real ControlCoordinator,
-    talking ``transport_lcm`` to whichever connection module the operator
-    brought up. ``ff_config``/``profile_config`` are OPTIONAL arms
-    (``None`` = bare = the physical-limit measurement).
+    """Send a path to the operator coord's ``baseline_follower`` task and
+    wait for it to terminate. The task is pre-added by the operator's
+    blueprint (priority 20, claims base/{vx,vy,wz}) so it preempts the
+    operator's teleop velocity task while a run is active. We only RPC
+    configure/start/cancel; the coord owns the tick-loop compute and the
+    adapter that drives the robot. ``ff_config``/``profile_config`` are
+    optional arms (``None`` = bare = the physical-limit measurement).
 
     Path is anchored to the robot's first observed pose so the operator
-    doesn't have to position the robot precisely — only roughly aim it.
-    Returns the executed trajectory and the anchored reference path
-    (scoring + plotting must use this, not the robot-centric input)."""
-    joints = make_twist_base_joints(profile.robot_id)
-    coord = ControlCoordinator(
-        tick_rate=profile.tick_rate_hz,
-        hardware=[_make_base_component(profile)],
-    )
-    task = BaselinePathFollowerTask(
-        name=f"baseline_{label}",
-        config=BaselinePathFollowerTaskConfig(
-            joint_names=joints,
-            speed=speed,
-            k_angular=k_angular,
-            control_frequency=profile.tick_rate_hz,
-            ff_config=ff_config,
-            velocity_profile_config=profile_config,
-        ),
-        global_config=global_config,
-    )
-    recorder = _JointStateRecorder(joint_names=joints)
-    unsub = coord.joint_state.subscribe(recorder.on_joint_state)
+    only has to roughly aim the robot. Returns the executed trajectory
+    (recorded from /coordinator/joint_state) and the anchored reference."""
+    pose0 = recorder.first_pose(timeout_s=profile.odom_warmup_s)
+    path_w = _shift_path_to_start_at_pose(path, pose0)
 
-    coord.start()
+    # Reset accumulated trajectory so each run starts at t=0.
+    recorder.reset_trajectory()
+
+    if not _invoke(
+        coord,
+        "configure",
+        speed=speed,
+        k_angular=k_angular,
+        ff_config=ff_config,
+        velocity_profile_config=profile_config,
+    ):
+        print(f"  [{label}] configure rejected — task still active from prior run?")
+        return ExecutedTrajectory(ticks=recorder.snapshot(), arrived=False), path_w
+
+    if not _invoke(coord, "start_path", path=path_w, current_odom=pose0):
+        print(f"  [{label}] start_path rejected")
+        return ExecutedTrajectory(ticks=recorder.snapshot(), arrived=False), path_w
+
     arrived = False
-    path_w = path
+    t_start = time.perf_counter()
+    deadline = t_start + timeout_s
+    terminated = False
     try:
-        pose0 = recorder.first_pose(timeout_s=profile.odom_warmup_s)
-        path_w = _shift_path_to_start_at_pose(path, pose0)
-        coord.add_task(task)
-        if not task.start_path(path_w, pose0):
-            print(f"  [{label}] start_path rejected; aborting run")
-            return ExecutedTrajectory(ticks=recorder.snapshot(), arrived=False), path_w
-
-        t_start = time.perf_counter()
-        deadline = t_start + timeout_s
-        terminated = False
         while time.perf_counter() < deadline:
-            st = task.get_state()
+            st = _invoke(coord, "get_state")
             if st in _ARRIVED_STATES:
                 arrived = True
                 terminated = True
@@ -328,14 +329,13 @@ def _run_baseline(
                 break
             time.sleep(0.05)
         if not terminated:
-            print(f"  [{label}] timeout {timeout_s:.0f}s")
+            print(f"  [{label}] timeout {timeout_s:.0f}s — cancelling")
     finally:
+        # Best-effort cancel; safe to ignore if already terminal.
         try:
-            task.cancel()
+            _invoke(coord, "cancel")
         except Exception:
             pass
-        unsub()
-        coord.stop()
     return ExecutedTrajectory(ticks=recorder.snapshot(), arrived=arrived), path_w
 
 
@@ -365,62 +365,77 @@ def _run_ladder(
     # measurement. FF / velocity profile are opt-in comparison arms.
     ff = cfg.feedforward.to_runtime() if use_ff else None
     k_angular = float(cfg.recommended_controller.params.get("k_angular", 0.5))
+
+    # Long-lived: RPC client to the operator's coord + LCM subscription
+    # to /coordinator/joint_state. Shared across all (path, speed) runs.
+    coord_rpc: RPCClient = RPCClient(None, ControlCoordinator)
+    joints = make_twist_base_joints(profile.joints_prefix)
+    recorder = _JointStateRecorder(joint_names=joints)
+    js_sub = LCMTransport(_JOINT_STATE_TOPIC, JointState)
+    js_unsub = js_sub.subscribe(recorder.on_joint_state)
+
     points: list[OperatingPoint] = []
     runs: list[dict] = []  # for the XY trajectory overlay
-    for name, path in _path_set().items():
-        for speed in speeds:
-            prof_cfg = (
-                cfg.velocity_profile.to_runtime(max_linear_speed=speed) if use_profile else None
-            )
-            if mode == "hw":
-                resp = (
-                    input(
-                        f"\n[{name} v={speed:.2f}] reposition+aim robot, "
-                        f"ENTER=run  s=skip  q=quit: "
+    try:
+        for name, path in _path_set().items():
+            for speed in speeds:
+                prof_cfg = (
+                    cfg.velocity_profile.to_runtime(max_linear_speed=speed) if use_profile else None
+                )
+                if mode == "hw":
+                    resp = (
+                        input(
+                            f"\n[{name} v={speed:.2f}] reposition+aim robot, "
+                            f"ENTER=run  s=skip  q=quit: "
+                        )
+                        .strip()
+                        .lower()
                     )
-                    .strip()
-                    .lower()
+                    if resp == "q":
+                        raise KeyboardInterrupt
+                    if resp == "s":
+                        print("  skipped")
+                        continue
+                traj, ref = _run_baseline(
+                    profile,
+                    coord_rpc,
+                    recorder,
+                    path,
+                    speed,
+                    k_angular,
+                    ff,
+                    prof_cfg,
+                    timeout_s,
+                    f"{name}@{speed:.2f}",
                 )
-                if resp == "q":
-                    raise KeyboardInterrupt
-                if resp == "s":
-                    print("  skipped")
-                    continue
-            traj, ref = _run_baseline(
-                profile,
-                path,
-                speed,
-                k_angular,
-                ff,
-                prof_cfg,
-                timeout_s,
-                f"{name}@{speed:.2f}",
-            )
-            # Score/plot against the executed-frame reference (the anchored path).
-            s = score_run(ref, traj)
-            points.append(
-                OperatingPoint(
-                    path=name,
-                    speed=speed,
-                    cte_max=s.cte_max,
-                    cte_rms=s.cte_rms,
-                    arrived=s.arrived,
+                # Score/plot against the executed-frame reference (anchored path).
+                s = score_run(ref, traj)
+                points.append(
+                    OperatingPoint(
+                        path=name,
+                        speed=speed,
+                        cte_max=s.cte_max,
+                        cte_rms=s.cte_rms,
+                        arrived=s.arrived,
+                    )
                 )
-            )
-            runs.append(
-                {
-                    "path": name,
-                    "speed": speed,
-                    "cte_max": s.cte_max,
-                    "arrived": s.arrived,
-                    "ref": [(p.position.x, p.position.y) for p in ref.poses],
-                    "exec": [(tk.pose.position.x, tk.pose.position.y) for tk in traj.ticks],
-                }
-            )
-            print(
-                f"  {name:14} v={speed:.2f}  cte_max={s.cte_max * 100:6.1f}cm  "
-                f"cte_rms={s.cte_rms * 100:6.1f}cm  arrived={s.arrived}"
-            )
+                runs.append(
+                    {
+                        "path": name,
+                        "speed": speed,
+                        "cte_max": s.cte_max,
+                        "arrived": s.arrived,
+                        "ref": [(p.position.x, p.position.y) for p in ref.poses],
+                        "exec": [(tk.pose.position.x, tk.pose.position.y) for tk in traj.ticks],
+                    }
+                )
+                print(
+                    f"  {name:14} v={speed:.2f}  cte_max={s.cte_max * 100:6.1f}cm  "
+                    f"cte_rms={s.cte_rms * 100:6.1f}cm  arrived={s.arrived}"
+                )
+    finally:
+        js_unsub()
+        coord_rpc.stop_rpc_client()
     return points, runs
 
 
@@ -533,10 +548,12 @@ def _prereq_banner(profile: RobotPlantProfile, mode: str) -> None:
         f"\n=== {kind} MODE ({profile.name}) ===\n"
         f"Prereqs:\n"
         f"  1. Another terminal: `dimos run {bp}`\n"
-        f"     (publishes {profile.odom_topic}, consumes {profile.cmd_topic}).\n"
+        f"     (its ControlCoordinator publishes {_JOINT_STATE_TOPIC} and\n"
+        f"     hosts the `{_BASELINE_TASK_NAME}` task at priority 20).\n"
         f"  2. This process: strip /nix/store from LD_LIBRARY_PATH (README).\n"
-        f"Each (path,speed): reposition+aim, then ENTER. Velocity-commanded\n"
-        f"baseline runs inside our ControlCoordinator; ticks at {profile.tick_rate_hz:g}Hz.\n"
+        f"Each (path,speed): reposition+aim, then ENTER. We RPC the operator\n"
+        f"coord to configure + start_path; the task drives the robot from\n"
+        f"inside its tick loop. Coord ticks at {profile.tick_rate_hz:g}Hz.\n"
     )
 
 
