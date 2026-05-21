@@ -35,6 +35,11 @@ except ImportError:
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.impl.webrtcpubsub import (
+    WEBRTC_AVAILABLE,
+    DataChannelProvider,
+    WebRTCPubSub,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -327,6 +332,99 @@ if DDS_AVAILABLE:
                 if not self._started:
                     self.start()
                 return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+
+class WebRTCTransport(PubSubTransport[T]):
+    """Transport over WebRTC DataChannels.
+
+    Backend-agnostic: accepts any :class:`DataChannelProvider`
+    (Cloudflare, LiveKit, broker, etc).
+
+    Two modes:
+
+    * **Raw bytes** (default, ``msg_type=None``): messages pass through
+      as raw ``bytes``. Caller is responsible for encode/decode.
+
+    * **Typed LCM** (``msg_type=SomeMsg``): messages are LCM-encoded on
+      ``broadcast()`` and LCM-decoded + fingerprint-filtered on
+      ``subscribe()``. This allows multiple transports sharing a single
+      multiplexed DataChannel to each receive only their message type.
+    """
+
+    _started: bool = False
+
+    def __init__(
+        self,
+        topic: str,
+        *,
+        msg_type: type[T] | None = None,
+        provider: DataChannelProvider | None = None,
+        **provider_kwargs: Any,
+    ) -> None:
+        super().__init__(topic)
+        if not WEBRTC_AVAILABLE:
+            raise RuntimeError(
+                "WebRTC support requires aiortc and httpx. Install with `pip install dimos[webrtc]`."
+            )
+        self._msg_type = msg_type
+        self._fingerprint: bytes | None = None
+        if msg_type is not None and hasattr(msg_type, "_get_packed_fingerprint"):
+            self._fingerprint = msg_type._get_packed_fingerprint()  # type: ignore[attr-defined]
+
+        if provider is not None:
+            self.webrtc = WebRTCPubSub(provider=provider)
+        else:
+            # Default: Cloudflare provider from env vars
+            from dimos.protocol.pubsub.impl.webrtc_providers.cloudflare import CloudflareProvider
+
+            self.webrtc = WebRTCPubSub(provider=CloudflareProvider(**provider_kwargs))
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        # Provider cannot be pickled (holds sockets/threads); on unpickle
+        # a new provider is created from env vars. Preserve msg_type so
+        # typed fingerprint filtering survives multiprocessing.
+        return (WebRTCTransport, (self.topic,), {"msg_type": self._msg_type})
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        msg_type = state.get("msg_type")
+        self.__init__(self.topic, msg_type=msg_type)  # type: ignore[misc]
+
+    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+        if not self._started:
+            self.start()
+        if self._msg_type is not None and hasattr(msg, "lcm_encode"):
+            data = msg.lcm_encode()
+        else:
+            data = msg
+        self.webrtc.publish(self.topic, data)
+
+    def subscribe(  # type: ignore[override]
+        self, callback: Callable[[T], None], selfstream: In[T] | None = None
+    ) -> Callable[[], None]:
+        if not self._started:
+            self.start()
+
+        if self._msg_type is not None and self._fingerprint is not None:
+            # Typed mode: decode LCM and filter by fingerprint
+            fp = self._fingerprint
+            msg_type = self._msg_type
+
+            def _typed_cb(data: bytes, _topic: str) -> None:
+                if len(data) >= 8 and data[:8] == fp:
+                    callback(msg_type.lcm_decode(data))  # type: ignore[attr-defined]
+
+            return self.webrtc.subscribe(self.topic, _typed_cb)
+        else:
+            # Raw bytes mode
+            return self.webrtc.subscribe(self.topic, lambda msg, _topic: callback(msg))  # type: ignore[arg-type]
+
+    def start(self) -> None:
+        self.webrtc.start()
+        self._started = True
+
+    def stop(self) -> None:
+        self.webrtc.stop()
+        self._started = False
 
 
 class ZenohTransport(PubSubTransport[T]): ...
