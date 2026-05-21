@@ -90,10 +90,10 @@ jobs:
         run: cargo fmt --all -- --check
       - name: cargo clippy
         working-directory: ${{ matrix.crate }}
-        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: cargo test
         working-directory: ${{ matrix.crate }}
-        run: cargo test --all-features --locked
+        run: cargo test --workspace --all-features --locked
 
   md-babel:
     timeout-minutes: 15
