@@ -159,7 +159,7 @@ To set up your system dependencies, follow one of these guides:
 ```bash
 uv venv --python "3.12"
 source .venv/bin/activate
-uv pip install 'dimos[unitree]'
+uv pip install 'dimos[base,unitree]'
 
 # Replay a recorded quadruped session (no hardware needed)
 # NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
@@ -167,11 +167,8 @@ dimos --replay run unitree-go2
 ```
 
 ```bash
-# Add perception (object detection, VLMs — heavy dependencies, needs to download GBs)
-uv pip install 'dimos[unitree,perception]'
-
-# Add simulation support
-uv pip install 'dimos[unitree,sim]'
+# Install with simulation support
+uv pip install 'dimos[base,unitree,sim]'
 
 # Run quadruped in MuJoCo simulation
 dimos --simulation run unitree-go2
@@ -193,7 +190,7 @@ dimos run unitree-go2
 | `dimos --replay run unitree-go2` | Quadruped navigation replay — SLAM, costmap, A* planning |
 | `dimos --replay --replay-db go2_bigoffice run unitree-go2-memory` | Quadruped temporal memory replay |
 | `dimos --simulation run unitree-go2-agentic` | Quadruped agentic + MCP server in simulation |
-| `dimos --simulation run unitree-g1` | Humanoid in MuJoCo simulation |
+| `dimos --simulation run unitree-g1-sim` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video + telemetry replay |
 | `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay) |
 | `dimos run demo-camera` | Webcam demo — no hardware needed |

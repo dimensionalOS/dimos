@@ -248,6 +248,7 @@ class VoxelGridMapperConfig(ModuleConfig):
     device: str = "CUDA:0"
     carve_columns: bool = True
     frame_id: str = "world"
+    emit_every: int = 1
 
 
 class VoxelGridMapper(StreamModule[PointCloud2, PointCloud2]):

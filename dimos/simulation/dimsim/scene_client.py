@@ -170,7 +170,7 @@ class SceneClient:
         port: int = 8090,
         channel: str = "",
         timeout: float = 30.0,
-    ):
+    ) -> None:
         self.host = host
         self.port = port
         self.channel = channel

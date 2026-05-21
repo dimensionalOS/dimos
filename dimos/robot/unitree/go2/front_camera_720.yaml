@@ -1,0 +1,54 @@
+image_width: 1280
+image_height: 720
+camera_name: go2_front_camera_720p
+distortion_model: equidistant
+camera_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 797.4756164864929
+  - 0.0
+  - 643.5352167821186
+  - 0.0
+  - 796.4872112769983
+  - 349.2783605343087
+  - 0.0
+  - 0.0
+  - 1.0
+distortion_coefficients:
+  rows: 1
+  cols: 4
+  data:
+  - -0.07309428880537933
+  - -0.02341140740909078
+  - -0.0069305931780026956
+  - 0.009238684474464793
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data:
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+projection_matrix:
+  rows: 3
+  cols: 4
+  data:
+  - 797.4756164864929
+  - 0.0
+  - 643.5352167821186
+  - 0.0
+  - 0.0
+  - 796.4872112769983
+  - 349.2783605343087
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 0.0

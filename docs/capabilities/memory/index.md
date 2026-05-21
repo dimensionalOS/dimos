@@ -23,8 +23,7 @@ for name, stream in store.streams.items():
    print(stream.summary())
 ```
 
-<!--Result:-->
-```
+```results
 Stream("color_image"): 4164 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s)
 Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
 Stream("lidar"): 2251 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.3s)
@@ -160,10 +159,9 @@ drawing.add(matches)
 drawing.to_svg("assets/embedding_focused.svg")
 ```
 
-<!--Result:-->
-```
+```results
 Stream("color_image_embedded") | vector_search(k=30)
-08:19:54.129 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
+13:15:15.190 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
 ```
 
 ![output](assets/embedding_focused.svg)

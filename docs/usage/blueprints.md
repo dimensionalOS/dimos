@@ -254,8 +254,7 @@ from dimos.robot.cli.dimos import arg_help
 print(arg_help(base_blueprint.config(), base_blueprint))
 ```
 
-<!--Result:-->
-```
+```results
     module1:
       * module1.default_rpc_timeout: float (default: 120.0)
       * module1.frame_id_prefix: str | None (default: None)
