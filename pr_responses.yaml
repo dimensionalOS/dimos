@@ -1,0 +1,147 @@
+- pr: 2099
+  comment_id: 3252661712
+  author: greptile-apps
+  file: dimos/navigation/nav_stack/benchmarks/pose_graph_kitti360/scoring.py
+  line: null
+  problem: P1 — `dataclasses.field()` used in a Pydantic `BaseModel` subclass. ModuleConfig inherits from BaseConfig which is pydantic.BaseModel. Using dataclasses.field(default_factory=list) here is not
+    equivalent to pydantic.Field…
+  solution: 'skipped: claim requires runtime/framework investigation (pydantic v2 vs dataclasses behavior); no concrete suggestion block; greptile may be wrong about ModuleConfig''s actual base class —
+    skipping per "unsure" rule'
+  commit: null
+- pr: 2099
+  comment_id: 3252730457
+  author: greptile-apps
+  file: dimos/navigation/nav_stack/main.py
+  line: 569
+  problem: P1 — `NavPath` likely missing `.to_rerun()`. The two new visualization functions call .to_rerun(z_offset=..., radii=...) on objects whose type is NavPath. NavPath is a standard nav_msgs message
+    type; it almost certainly does not have this method.
+  solution: 'skipped: runtime AttributeError claim — greptile is speculating ("likely", "almost certainly"); no suggestion block; risk of introducing a bug if wrong. Skipping per "unsure" rule'
+  commit: null
+- pr: 2099
+  comment_id: 3252798393
+  author: greptile-apps
+  file: dimos/navigation/nav_stack/benchmarks/pose_graph_kitti360/scoring.py
+  line: 205
+  problem: P1 — Recall numerator is edge count, not query count — metric is inflated. `_score_pairs` counts every correctly matched edge in true_positives, but false_negative is a count of queries that
+    got no correct detection…
+  solution: 'skipped: complex metric semantics change spanning multiple files (scoring.py + loop_groundtruth.py); requires understanding of intended metric definition; no suggestion block; exceeds 10-line
+    / 1-file easy limit'
+  commit: null
+- pr: 2099
+  comment_id: 3252810195
+  author: greptile-apps
+  file: dimos/navigation/nav_stack/benchmarks/pose_graph_kitti360/playback.py
+  line: null
+  problem: P1 — Playback task exception leaves `_playback_finished` False forever. `_run_playback` calls await asyncio.to_thread(self._sequence.scan_xyz, frame_id), which raises FileNotFoundError for any
+    missing .bin file…
+  solution: 'skipped: no suggestion block; fix is structural (wrap loop body in try/except/finally) and would touch >10 lines or add new state field (_playback_error). Exceeds easy threshold'
+  commit: null
+- pr: 2099
+  comment_id: 3252913460
+  author: greptile-apps
+  file: dimos/navigation/nav_stack/tests/rosbag_fixtures.py
+  line: 390
+  problem: P1 — Missing try/finally — poll loop can spin forever on exception. RosbagScanOdomPlaybackModule._run_playback sets _playback_finished = True only at the bottom of the function…
+  solution: 'skipped: file lives under tests/ directory (test fixture). Per spec "No test changes" — disqualified from easy'
+  commit: null
+- pr: 2099
+  comment_id: 3252925400
+  author: greptile-apps
+  file: dimos/navigation/nav_stack/modules/pgo/test_pgo_synthetic_drift.py
+  line: null
+  problem: P1 — `_playback_finished` is set only at the bottom of the happy path. If any statement inside the loop raises, the exception propagates out of the task without ever setting `_playback_finished
+    = True`…
+  solution: 'skipped: file is test_pgo_synthetic_drift.py (test file). Per spec "No test changes" — disqualified despite including a complete suggestion block'
+  commit: null
+- pr: 2099
+  comment_id: 3252935598
+  author: greptile-apps
+  file: dimos/navigation/nav_stack/benchmarks/pose_graph_kitti360/scoring.py
+  line: 185
+  problem: P1 — Precision metric is dimensionally inconsistent — false_positives is edge-count, true_positives is query-count. true_positives = len(seen_queries_with_hit) is now query-level, but false_positives
+    is still incremented once per detected edge…
+  solution: 'skipped: complex metric semantics change requiring new set tracking (seen_queries_without_hit); spans scoring.py + loop_groundtruth.py; exceeds 10-line / 1-file easy limit'
+  commit: null
+- pr: 2099
+  comment_id: 3252935628
+  author: greptile-apps
+  file: dimos/navigation/nav_stack/benchmarks/pose_graph_kitti360/loop_groundtruth.py
+  line: 132
+  problem: 'P1 — Same edge-vs-query dimension mismatch as `scoring._score_pairs`. score_detected_loops in this file has the identical issue: false_positives is incremented per edge while true_positives
+    = len(seen_queries_with_hit) is query-level.'
+  solution: 'skipped: same complex semantics issue as 3252935598; multi-file coordinated change; exceeds easy threshold'
+  commit: null
+- pr: 2099
+  comment_id: 3253752397
+  author: greptile-apps
+  file: dimos/navigation/nav_stack/modules/pgo/cpp/simple_pgo.cpp
+  line: 269
+  problem: P1 — SC false-positive still silently blocks the position fallback. When `searchByScanContext` returns a candidate (`loop_idx >= 0`) but ICP subsequently rejects it (poor fitness or divergence),
+    `searchForLoop…
+  solution: 'skipped: C++ behavioral restructuring of searchForLoopPairs to fall back to searchByPosition after ICP rejection. Structural change spanning multiple control flow paths; clearly exceeds 10-line
+    / 1-file easy limit. No suggestion block. Skipping per "unsure" rule and the easy threshold.'
+  commit: null
+- pr: 2099
+  comment_id: 3251884740
+  author: greptile-apps[bot]
+  file: dimos/navigation/nav_stack/modules/pgo/cpp/scan_context.h
+  line: 72
+  problem: P2 Dead branch in yaw_from_shift — guard 'if (yaw > M_PI) yaw -= 2.0 * M_PI' can never fire.
+  solution: 'skipped: stale — current code at lines 67-72 already matches the suggested fix (only has ''if (yaw < -M_PI)'' branch, no dead ''yaw > M_PI'' branch)'
+  commit: null
+- pr: 2099
+  comment_id: 3251905657
+  author: greptile-apps[bot]
+  file: dimos/navigation/nav_stack/modules/pgo/benchmark/run_kitti360_benchmark.py
+  line: null
+  problem: P1 Arg name typo — 'loop_score_tresh' missing trailing h — ICP threshold silently ignored by binary.
+  solution: 'skipped: wrong — main.cpp:222 uses correct ''loop_score_thresh'' (mod.arg_float("loop_score_thresh",...)); run_kitti360_benchmark.py path no longer contains loop_score references'
+  commit: null
+- pr: 2099
+  comment_id: 3252374150
+  author: greptile-apps[bot]
+  file: dimos/navigation/nav_stack/modules/pgo/benchmark/run_kitti360_benchmark.py
+  line: null
+  problem: P1 Timestamp cache keys disagree with timestamps sent to PGO — first_ts=1.0 enforcement breaks cache lookup for first ~10 keyframes.
+  solution: 'skipped: substantive harmonization across runner/cache data flow; needs Jeff''s design judgment; unsure → skip'
+  commit: null
+- pr: 2099
+  comment_id: 3252393699
+  author: greptile-apps[bot]
+  file: dimos/navigation/nav_stack/benchmarks/pose_graph_kitti360/kitti360_loader.py
+  line: 186
+  problem: P1 Silent empty timestamps on length mismatch corrupts benchmark metrics — recall=0 silently when timestamps file unusable.
+  solution: 'skipped: substantive loader-behavior change (warn vs raise) affecting benchmark metrics; design choice; unsure → skip'
+  commit: null
+- pr: 2099
+  comment_id: 3252527503
+  author: greptile-apps[bot]
+  file: dimos/navigation/nav_stack/modules/pgo/pgo.py
+  line: null
+  problem: P1 Output port type annotations don't match C++ binary — pgo_graph_nodes/edges declared Out[GraphNodes3D]/Out[LineSegments3D] but binary publishes nav_msgs::Path.
+  solution: 'skipped: stale — pgo.py no longer has pgo_graph_nodes/pgo_graph_edges ports; current ports use Graph3D and GraphDelta3D (pose_graph: Out[Graph3D], loop_closure_event: Out[GraphDelta3D])'
+  commit: null
+- pr: 2099
+  comment_id: 3252695036
+  author: greptile-apps[bot]
+  file: dimos/navigation/nav_stack/modules/pgo/test_pgo_loop_closure.py
+  line: null
+  problem: P1 Wrong LCM type annotations for new graph topics — GRAPH_NODES_LCM/GRAPH_EDGES_LCM embed nav_msgs.GraphNodes3D/LineSegments3D but binary publishes nav_msgs::Path.
+  solution: 'skipped: stale — test_pgo_loop_closure.py no longer defines GRAPH_NODES_LCM/GRAPH_EDGES_LCM constants; only imports GraphDelta3D from nav_msgs'
+  commit: null
+- pr: 2099
+  comment_id: 3254529445
+  author: greptile-apps[bot]
+  file: dimos/navigation/nav_stack/modules/pgo/test_pgo_synthetic_drift.py
+  line: 336
+  problem: P1 Missing playback_error() RPC — silent false-pass on PGO startup failure. SyntheticDriftPlaybackModule stores _playback_error but never exposes via @rpc.
+  solution: 'skipped: substantive — requires adding new @rpc method and changing _run_pgo polling pattern; exceeds 1-file/≤10-line easy budget; unsure if exact pattern matches runner.py; skip'
+  commit: null
+- pr: 2099
+  comment_id: 3254521439
+  author: jeff-hykin
+  file: dimos/core/native_module.py
+  line: 183
+  problem: shoulda done this a while ago on native modules (was causing a problem with replay tests)
+  solution: Author self-note (not a review request). No external comment to address; code change already implicit in the PR.
+  commit: null
