@@ -233,7 +233,8 @@ perception = [
 
 unitree = [
     "dimos[base]",
-    "unitree-webrtc-connect-leshy>=2.0.7"
+    "unitree-webrtc-connect-leshy>=2.0.7",
+    "gtsam>=4.3a0",  # PGO loop closure (alpha is the only release with numpy>=2 support + cp312 wheels)
 ]
 
 unitree-dds = [

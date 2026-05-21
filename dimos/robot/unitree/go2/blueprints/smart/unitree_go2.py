@@ -18,6 +18,7 @@ from pathlib import Path
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
 from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.memory2.module import Recorder, RecorderConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -59,6 +60,12 @@ unitree_go2_markers = autoconnect(
     MarkerTfModule.blueprint(marker_length_m=0.1),
 ).global_config(n_workers=11, robot_model="unitree_go2")
 
+unitree_go2_relocalization = autoconnect(
+    unitree_go2,
+    RelocalizationModule.blueprint(),
+).global_config(n_workers=11)
+
+__all__ = ["unitree_go2", "unitree_go2_memory", "unitree_go2_relocalization"]
 unitree_go2_memory = autoconnect(
     unitree_go2_markers,
     Go2Memory.blueprint(),
