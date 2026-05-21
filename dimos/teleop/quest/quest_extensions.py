@@ -17,18 +17,27 @@
 Available subclasses:
     - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track), task name routing
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
+    - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the Quest over /ws
 """
 
+import asyncio
 from typing import Any
 
+import cv2
+from fastapi import WebSocket
 from pydantic import Field
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.teleop.quest.quest_teleop_module import Hand, QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class TwistTeleopConfig(QuestTeleopConfig):
@@ -148,3 +157,67 @@ class ArmTeleopModule(QuestTeleopModule):
             right=right.trigger if right is not None else 0.0,
         )
         self.buttons.publish(buttons)
+
+
+class VideoArmTeleopConfig(ArmTeleopConfig):
+    """Configuration for VideoArmTeleopModule."""
+
+    video_jpeg_quality: int = 70
+
+
+class VideoArmTeleopModule(ArmTeleopModule):
+    """ArmTeleopModule + camera frames pushed to the Quest as JPEG over /ws.
+
+    Subscribes to color_image, JPEG-encodes each frame, and broadcasts raw
+    JPEG bytes to every connected /ws client as a binary message. The client
+    decodes via createObjectURL and uploads to a WebGL texture.
+
+    Inputs:
+        - color_image: In[Image] (required — wire to a camera output)
+
+    Outputs:
+        - left_controller_output: PoseStamped (inherited)
+        - right_controller_output: PoseStamped (inherited)
+        - buttons: Buttons (inherited)
+    """
+
+    config: VideoArmTeleopConfig
+
+    color_image: In[Image]
+
+    def _on_image(self, msg: Image) -> None:
+        """Encode incoming Image to JPEG and push to all connected /ws clients."""
+        try:
+            bgr = msg.to_opencv()
+            ok, buf = cv2.imencode(
+                ".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), self.config.video_jpeg_quality]
+            )
+            if not ok:
+                return
+            jpeg = buf.tobytes()
+        except Exception:
+            logger.exception("Failed to encode camera frame")
+            return
+
+        # _on_image runs on the RX thread; WebSocket sends must run on the
+        # asyncio loop captured when the first client connected.
+        loop = self._ws_loop
+        if loop is None or not self._connected_clients:
+            return
+        for ws in list(self._connected_clients):
+            asyncio.run_coroutine_threadsafe(self._safe_send(ws, jpeg), loop)
+
+    @staticmethod
+    async def _safe_send(ws: WebSocket, data: bytes) -> None:
+        try:
+            await ws.send_bytes(data)
+        except Exception:
+            # Client closed or write failed — drop the frame; the disconnect
+            # handler in the base /ws loop will evict the dead client.
+            pass
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(Disposable(self.color_image.subscribe(self._on_image)))
+        logger.info("Quest teleop: camera feed subscribed → /ws push")

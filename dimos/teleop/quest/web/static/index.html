@@ -135,7 +135,9 @@
         let videoAttribs = null;
         let videoUniforms = null;
         let videoReady = false;  // true after first frame loads
-        let videoDirty = false;  // true when a new MJPEG part has arrived
+        let videoDirty = false;  // true when a new JPEG has finished decoding
+        let videoAspect = 1.0;   // cached at load time — see videoEl.onload
+        let prevBlobUrl = null;  // revoked when the next-next blob arrives
         const videoModelMatrix = new Float32Array(16);
 
         const PANEL_POS_X = 0.0;
@@ -161,6 +163,7 @@
 
                 setStatus('Connecting to server...');
                 ws = new WebSocket(wsUrl);
+                ws.binaryType = 'blob';
 
                 ws.onopen = () => {
                     setStatus('Server connected');
@@ -173,6 +176,16 @@
                 };
                 ws.onclose = () => {
                     setStatus('WebSocket closed');
+                };
+                // Defer revoking the previous blob URL by one message — revoking
+                // immediately after setting src can race with the browser's load
+                // on some engines, briefly dropping naturalWidth to 0.
+                ws.onmessage = (e) => {
+                    if (!(e.data instanceof Blob)) return;
+                    const newUrl = URL.createObjectURL(e.data);
+                    if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
+                    prevBlobUrl = videoEl.src.startsWith('blob:') ? videoEl.src : null;
+                    videoEl.src = newUrl;
                 };
             });
         }
@@ -190,8 +203,8 @@
             initVideoPanel();
         }
 
-        // Compile + link a tiny textured-quad pipeline used to render the
-        // MJPEG feed as a head-locked panel inside the WebXR scene.
+        // Compile + link a textured-quad pipeline that renders the camera
+        // feed as a world-locked panel inside the WebXR scene.
         function initVideoPanel() {
             const vsSrc = `
                 attribute vec2 a_pos;
@@ -263,9 +276,15 @@
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
             gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
-            videoEl.onload = () => { videoReady = true; videoDirty = true; };
-            videoEl.onerror = () => { setStatus('Video feed failed to load'); };
-            videoEl.src = '/video';
+            // Cache aspect here — naturalWidth can transiently drop to 0
+            // between loads, which would collapse the panel to 1:1.
+            videoEl.onload = () => {
+                videoReady = true;
+                videoDirty = true;
+                if (videoEl.naturalHeight) {
+                    videoAspect = videoEl.naturalWidth / videoEl.naturalHeight;
+                }
+            };
         }
 
         function uploadVideoTexture() {
@@ -276,9 +295,8 @@
         }
 
         function updateModelMatrix() {
-            const aspect = videoEl.naturalWidth / videoEl.naturalHeight || 1.0;
             const halfH = PANEL_HEIGHT * 0.5;
-            const halfW = halfH * aspect;
+            const halfW = halfH * videoAspect;
             videoModelMatrix.fill(0);
             videoModelMatrix[0] = halfW;
             videoModelMatrix[5] = halfH;
@@ -408,8 +426,9 @@
             gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-            if (!videoReady || !videoEl.naturalWidth) return;
-            if (videoDirty) {
+            if (!videoReady) return;
+            // Keep rendering the existing texture between loads to avoid blinking.
+            if (videoDirty && videoEl.naturalWidth) {
                 uploadVideoTexture();
                 videoDirty = false;
             }
