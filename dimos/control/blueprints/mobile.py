@@ -20,6 +20,7 @@ Usage:
     dimos run coordinator-flowbase                       # FlowBase holonomic base (Portal RPC)
     dimos run coordinator-flowbase-keyboard-teleop       # FlowBase + WASD pygame teleop
     dimos run coordinator-flowbase-nav                   # FlowBase + FastLio2 + nav stack (click-to-drive)
+    dimos run coordinator-sim-fopdt                      # FOPDT sim plant on /go2/cmd_vel|odom (Go2-shaped)
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -43,6 +45,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.catalog.ufactory import xarm7 as _catalog_xarm7
+from dimos.robot.sim.fopdt_plant_connection import FopdtPlantConnection
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -87,6 +90,15 @@ coordinator_mock_twist_base = ControlCoordinator.blueprint(
             type="velocity",
             joint_names=_base_joints,
             priority=10,
+            velocity_zero_on_timeout=False,
+        ),
+        # Closed-loop path follower used by the benchmark tool.
+        # Inactive until the tool RPCs configure(...) + start_path(...).
+        TaskConfig(
+            name="baseline_follower",
+            type="baseline_path_follower",
+            joint_names=_base_joints,
+            priority=20,
         ),
     ],
 ).transports(
@@ -105,6 +117,15 @@ coordinator_flowbase = ControlCoordinator.blueprint(
             type="velocity",
             joint_names=_base_joints,
             priority=10,
+            velocity_zero_on_timeout=False,
+        ),
+        # Closed-loop path follower used by the benchmark tool.
+        # Inactive until the tool RPCs configure(...) + start_path(...).
+        TaskConfig(
+            name="baseline_follower",
+            type="baseline_path_follower",
+            joint_names=_base_joints,
+            priority=20,
         ),
     ],
 ).transports(
@@ -229,6 +250,15 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
             type="velocity",
             joint_names=_base_joints,
             priority=10,
+            velocity_zero_on_timeout=False,
+        ),
+        # Closed-loop path follower used by the benchmark tool.
+        # Inactive until the tool RPCs configure(...) + start_path(...).
+        TaskConfig(
+            name="baseline_follower",
+            type="baseline_path_follower",
+            joint_names=_base_joints,
+            priority=20,
         ),
     ],
 ).transports(
@@ -239,10 +269,66 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
 )
 
 
+# FOPDT in-process sim plant + a ControlCoordinator on top, so the
+# tuning tools see exactly the same /cmd_vel + /coordinator/joint_state
+# contract sim and hw. FopdtPlantConnection exposes /sim/cmd_vel (In)
+# and /sim/odom (Out); the coord drives /sim/cmd_vel via its
+# transport_lcm adapter (hardware_id="sim"), reads pose back via the
+# same adapter's /sim/odom subscription, and publishes JointState +
+# hosts the baseline_follower task. Drop-in stand-in for a real robot.
+_sim_joints = make_twist_base_joints("sim")
+
+coordinator_sim_fopdt = (
+    autoconnect(
+        FopdtPlantConnection.blueprint(),
+        ControlCoordinator.blueprint(
+            hardware=[
+                HardwareComponent(
+                    hardware_id="sim",
+                    hardware_type=HardwareType.BASE,
+                    joints=_sim_joints,
+                    adapter_type="transport_lcm",
+                ),
+            ],
+            tasks=[
+                TaskConfig(
+                    name="vel_sim",
+                    type="velocity",
+                    joint_names=_sim_joints,
+                    priority=10,
+                    velocity_zero_on_timeout=False,
+                ),
+                TaskConfig(
+                    name="baseline_follower",
+                    type="baseline_path_follower",
+                    joint_names=_sim_joints,
+                    priority=20,
+                ),
+            ],
+        ),
+    )
+    .remappings(
+        [
+            (FopdtPlantConnection, "cmd_vel", "sim_cmd_vel"),
+            (FopdtPlantConnection, "odom", "sim_odom"),
+        ]
+    )
+    .transports(
+        {
+            ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
+            ("sim_cmd_vel", Twist): LCMTransport("/sim/cmd_vel", Twist),
+            ("sim_odom", PoseStamped): LCMTransport("/sim/odom", PoseStamped),
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        }
+    )
+)
+
+
 __all__ = [
     "coordinator_flowbase",
     "coordinator_flowbase_keyboard_teleop",
     "coordinator_flowbase_nav",
     "coordinator_mobile_manip_mock",
     "coordinator_mock_twist_base",
+    "coordinator_sim_fopdt",
 ]

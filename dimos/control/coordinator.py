@@ -90,6 +90,9 @@ class TaskConfig:
     type: str = "trajectory"
     joint_names: list[str] = field(default_factory=lambda: [])
     priority: int = 10
+    # Velocity-task specific. zero_on_timeout=True keeps the task streaming zeros
+    velocity_timeout: float = 0.2
+    velocity_zero_on_timeout: bool = True
     # Cartesian IK / Teleop IK specific
     model_path: str | Path | None = None
     ee_joint_id: int = 6
@@ -320,7 +323,27 @@ class ControlCoordinator(Module):
                 JointVelocityTaskConfig(
                     joint_names=cfg.joint_names,
                     priority=cfg.priority,
+                    timeout=cfg.velocity_timeout,
+                    zero_on_timeout=cfg.velocity_zero_on_timeout,
                 ),
+            )
+
+        elif task_type == "baseline_path_follower":
+            from dimos.control.tasks.baseline_path_follower_task import (
+                BaselinePathFollowerTask,
+                BaselinePathFollowerTaskConfig,
+            )
+            from dimos.core.global_config import global_config as _gc
+
+            # Idle defaults; per-run params come from the tool via the
+            # task's `configure()` RPC immediately before `start_path()`.
+            return BaselinePathFollowerTask(
+                cfg.name,
+                BaselinePathFollowerTaskConfig(
+                    joint_names=cfg.joint_names,
+                    priority=cfg.priority,
+                ),
+                global_config=_gc,
             )
 
         elif task_type == "cartesian_ik":
