@@ -72,7 +72,6 @@ def _drain(queue: Queue, settle_timeout: float = 0.5) -> list[Any]:
             return items
 
 
-@pytest.mark.slow
 def test_bursts_are_coalesced_and_handler_is_serialized(
     start_burst_module, burst_a_transport, burst_record_transport
 ):
@@ -145,7 +144,6 @@ def interleave_record_transport():
     tr.stop()
 
 
-@pytest.mark.slow
 def test_handler_does_not_interleave_across_awaits(
     start_interleave_module, interleave_a_transport, interleave_record_transport
 ):
@@ -186,7 +184,6 @@ def cleanup_a_transport():
     tr.stop()
 
 
-@pytest.mark.slow
 def test_stop_cancels_in_flight_handler(cleanup_a_transport):
     """Stopping the coordinator while a handler is awaiting must complete
     quickly. The dispatcher cancels the handler instead of waiting for it."""

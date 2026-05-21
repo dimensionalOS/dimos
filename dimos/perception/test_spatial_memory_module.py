@@ -124,7 +124,7 @@ def dimos():
         dimos.stop()
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 @pytest.mark.asyncio
 async def test_spatial_memory_module_with_replay(dimos, tmp_path):

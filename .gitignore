@@ -2,6 +2,9 @@
 **/*.ignore
 **/*.ignore.*
 
+# Default output of `dimos apriltag`
+/apriltags.pdf
+
 .vscode/
 
 # Ignore Python cache files
@@ -38,6 +41,8 @@ __pycache__
 node_modules
 package.json
 package-lock.json
+!docs/package.json
+!docs/package-lock.json
 
 # Ignore build artifacts
 dist/

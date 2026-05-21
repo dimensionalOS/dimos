@@ -14,7 +14,6 @@
 
 from unittest.mock import MagicMock
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 import pytest
 
 from dimos.core.transport import LCMTransport
@@ -23,6 +22,8 @@ from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
+
+pytestmark = pytest.mark.self_hosted
 
 # Captured actual response from Qwen API for cafe.jpg with query "humans"
 # Added garbage around JSON to ensure we are robustly extracting it
@@ -153,7 +154,3 @@ def test_query_points() -> None:
     image_topic: LCMTransport[Image] = LCMTransport("/image", Image)
     image_topic.publish(image)
     image_topic.lcm.stop()
-
-    annotations: LCMTransport[ImageAnnotations] = LCMTransport("/annotations", ImageAnnotations)
-    annotations.publish(detections.to_foxglove_annotations())
-    annotations.lcm.stop()

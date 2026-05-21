@@ -1,6 +1,6 @@
 # Viewer Backends
 
-Dimos supports three visualization backends: `rerun` (default), `foxglove`, and `none`.
+Dimos supports Rerun as its visualization backend (`rerun` default, or `none` to disable).
 
 ## Quick Start
 
@@ -12,7 +12,6 @@ dimos run unitree-go2
 
 # Explicitly select the viewer backend:
 dimos --viewer rerun run unitree-go2
-dimos --viewer foxglove run unitree-go2
 dimos --viewer none run unitree-go2
 ```
 
@@ -57,22 +56,13 @@ dimos --rerun-web --rerun-open native run unitree-go2
 
 ---
 
-### Foxglove (`foxglove`)
-
-**What you get:**
-- Foxglove bridge on ws://localhost:8765
-- No Rerun (saves resources)
-- Better performance with larger maps/higher resolution
-- Open layout: `assets/foxglove_dashboards/old/foxglove_unitree_lcm_dashboard.json`
-
----
-
 ## Rendering with Custom Blueprints
 
 To enable visualization in your own blueprint, use `vis_module`:
 
-```python
+```python skip
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.visualization.vis_module import vis_module
 
@@ -127,7 +117,7 @@ voxel_mapper(voxel_size=0.1),   # 10cm voxels
 
 If you want to log data to Rerun directly from inside a module (e.g. for debugging or one-off visualizations), use `rerun_init` instead of calling `rr.init()` yourself. It handles colormap registration and can optionally start a gRPC server so a viewer can connect.
 
-```python
+```python skip
 import rerun as rr
 from dimos.visualization.rerun.init import rerun_init
 
@@ -135,11 +125,8 @@ from dimos.visualization.rerun.init import rerun_init
 rerun_init()
 rr.log("debug/my_points", rr.Points3D(positions=[[1, 2, 3]]))
 
-# Start a gRPC server so you can connect a viewer
-rerun_init(start_grpc=True)
-# Then connect with: dimos-viewer --connect rerun+http://127.0.0.1:9877/proxy
-
-# Custom gRPC config
+# Start a gRPC server so a viewer can connect.  `grpc_config` is required
+# whenever start_grpc=True; it carries the connect URL and the server memory cap.
 rerun_init(
     start_grpc=True,
     grpc_config={
@@ -147,6 +134,7 @@ rerun_init(
         "server_memory_limit": "4GB",
     },
 )
+# Then connect with: dimos-viewer --connect rerun+http://127.0.0.1:9999/proxy
 ```
 
 When a `RerunBridgeModule` is already part of your blueprint, you typically don't need `start_grpc` — just call `rerun_init()` and log directly with `rr.log()`. The data will appear in the existing viewer.

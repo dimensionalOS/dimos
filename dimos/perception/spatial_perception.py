@@ -79,6 +79,7 @@ class SpatialMemory(Module):
     """
 
     config: SpatialConfig
+    dedicated_worker = True
 
     # LCM inputs
     color_image: In[Image]
@@ -155,7 +156,7 @@ class SpatialMemory(Module):
                     logger.error(f"Error loading visual memory: {e}")
                     self._visual_memory = VisualMemory(output_dir=self.config.output_dir)
 
-        self.embedding_provider: ImageEmbeddingProvider = ImageEmbeddingProvider(
+        self.embedding_provider = ImageEmbeddingProvider(
             model_name=self.embedding_model, dimensions=self.embedding_dimensions
         )
 

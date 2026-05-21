@@ -40,7 +40,6 @@ text "same dockerfiles" at (D.e.x + 1.2in, D.e.y + 0.4in)
 
 </details>
 
-<!--Result:-->
 ![output](assets/docker-hierarchy.svg)
 
 

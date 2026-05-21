@@ -46,6 +46,9 @@ class WorkerInfo(Protocol):
     @property
     def module_names(self) -> list[str]: ...
 
+    @property
+    def dedicated(self) -> bool: ...
+
 
 @runtime_checkable
 class WorkerSource(Protocol):
@@ -95,6 +98,7 @@ class StatsMonitor(Resource):
         if self._thread is not None:
             self._thread.join(timeout=5.0)
             self._thread = None
+        self._logger.stop()
 
     def _loop(self) -> None:
         while not self._stop.wait(self._interval):
@@ -116,7 +120,11 @@ class StatsMonitor(Resource):
                 ps_dict["cpu_percent"] += sum(c.cpu_percent for c in children)
                 worker_stats.append(
                     WorkerStats(
-                        **ps_dict, worker_id=w.worker_id, modules=w.module_names, children=children
+                        **ps_dict,
+                        worker_id=w.worker_id,
+                        modules=w.module_names,
+                        dedicated=w.dedicated,
+                        children=children,
                     )
                 )
             else:
@@ -126,6 +134,7 @@ class StatsMonitor(Resource):
                         alive=False,
                         worker_id=w.worker_id,
                         modules=w.module_names,
+                        dedicated=w.dedicated,
                     )
                 )
 

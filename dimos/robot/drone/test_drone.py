@@ -24,6 +24,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -189,6 +190,7 @@ class TestMavlinkProcessing(unittest.TestCase):
         self.assertAlmostEqual(conn._position["y"], -4.0 * dt, places=2)
 
 
+@pytest.mark.self_hosted
 class TestReplayMode(unittest.TestCase):
     """Test replay mode functionality."""
 
@@ -425,14 +427,9 @@ class TestDroneFullIntegration(unittest.TestCase):
         self.pubsub_patch = patch("dimos.protocol.pubsub.lcm.autoconf")
         self.pubsub_patch.start()
 
-        # Mock FoxgloveBridge
-        self.foxglove_patch = patch("dimos.robot.drone.drone.FoxgloveBridge")
-        self.mock_foxglove = self.foxglove_patch.start()
-
     def tearDown(self) -> None:
         """Clean up patches."""
         self.pubsub_patch.stop()
-        self.foxglove_patch.stop()
 
     @patch("dimos.robot.drone.drone.ModuleCoordinator")
     @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")

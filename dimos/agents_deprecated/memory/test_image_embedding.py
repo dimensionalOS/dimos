@@ -28,7 +28,7 @@ from dimos.agents_deprecated.memory.image_embedding import ImageEmbeddingProvide
 from dimos.stream.video_provider import VideoProvider
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 class TestImageEmbedding:
     """Test class for CLIP image embedding functionality."""
 

@@ -22,7 +22,7 @@ class TestLegacyPickleStoreRealData:
     """Test LegacyPickleStore with real recorded data."""
 
     @pytest.mark.skipif_in_ci
-    @pytest.mark.slow
+    @pytest.mark.self_hosted
     def test_read_lidar_recording(self) -> None:
         """Test reading from unitree_go2_bigoffice/lidar recording."""
         store = LegacyPickleStore("unitree_go2_bigoffice/lidar")

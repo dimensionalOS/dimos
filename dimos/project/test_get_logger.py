@@ -35,12 +35,15 @@ WHITELIST = [
     ("dimos/utils/logging_config.py", "logger_obj = logging.getLogger(logger_name)"),
     ("dimos/utils/logging_config.py", "stdlib_logger = logging.getLogger(name)"),
     ("dimos/core/coordination/python_worker.py", "lg = logging.getLogger(name)"),
-    ("dimos/robot/foxglove_bridge.py", "logger = logging.getLogger(logger)"),
     (
         "dimos/hardware/sensors/camera/gstreamer/gstreamer_sender.py",
         'logger = logging.getLogger("gstreamer_tcp_sender")',
     ),
     ("dimos/core/test_async_module_main.py", 'target = logging.getLogger("dimos/core/module.py")'),
+    (
+        "dimos/agents/test_skill_result.py",
+        "lg = logging.getLogger(_ANNOTATION_LOGGER)",
+    ),
     (
         "dimos/visualization/rerun/websocket_server.py",
         'ws_logger = logging.getLogger("websockets.server")',

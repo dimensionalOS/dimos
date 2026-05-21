@@ -38,6 +38,8 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+DEFAULT_ADDRESS = "172.6.2.20:11323"
+
 
 class FlowBaseAdapter:
     """TwistBaseAdapter implementation for FlowBase holonomic platform.
@@ -47,14 +49,14 @@ class FlowBaseAdapter:
 
     Args:
         dof: Number of velocity DOFs (must be 3 for FlowBase)
-        address: Portal RPC address as "host:port" (default: "172.6.2.20:11323")
+        address: Portal RPC address as "host:port" (default: ``DEFAULT_ADDRESS``)
     """
 
     def __init__(self, dof: int = 3, address: str | None = None, **_: object) -> None:
         if dof != 3:
             raise ValueError(f"FlowBase only supports 3 DOF (holonomic), got {dof}")
 
-        self._address = address or "172.6.2.20:11323"
+        self._address = address or DEFAULT_ADDRESS
         self._client = None
         self._connected = False
         self._enabled = False

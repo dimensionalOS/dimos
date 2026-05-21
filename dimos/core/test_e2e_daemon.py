@@ -106,7 +106,6 @@ def registry_entry():
     entry.remove()
 
 
-@pytest.mark.slow
 class TestDaemonE2E:
     """End-to-end daemon lifecycle with real workers."""
 
@@ -223,7 +222,6 @@ def live_blueprint():
     entry.remove()
 
 
-@pytest.mark.slow
 class TestCLIWithRealBlueprint:
     """Exercise dimos status and dimos stop against a live DimOS blueprint."""
 
