@@ -36,6 +36,65 @@ jobs:
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
 
+  rust-discover:
+    # Auto discover the Rust workspaces by searching for Cargo.lock files
+    timeout-minutes: 1
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      crates: ${{ steps.find.outputs.crates }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Find Cargo workspace roots
+        id: find
+        run: |
+          crates=$(find . -name Cargo.lock \
+            -not -path './target/*' \
+            -not -path './.venv/*' \
+            -not -path './node_modules/*' \
+            -not -path './.git/*' \
+            -printf '%h\n' \
+            | sed 's|^\./||' \
+            | sort \
+            | jq -R . \
+            | jq -sc .)
+          echo "crates=$crates" >> "$GITHUB_OUTPUT"
+          echo "Found Rust workspace roots:"
+          echo "$crates" | jq
+
+  rust:
+    needs: rust-discover
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.rust-discover.outputs.crates) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.crate }}
+      - name: cargo fmt
+        working-directory: ${{ matrix.crate }}
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        working-directory: ${{ matrix.crate }}
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: cargo test
+        working-directory: ${{ matrix.crate }}
+        run: cargo test --workspace --all-features --locked
+
   md-babel:
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -280,6 +339,7 @@ jobs:
 
     needs:
     - lint
+    - rust
     - md-babel
     - docs-validate
     - tests
