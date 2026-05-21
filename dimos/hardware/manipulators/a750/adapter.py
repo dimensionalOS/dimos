@@ -259,7 +259,7 @@ class A750Adapter:
             return None
 
         state = self._robot.get_current_state()
-        return state.gripper.pos_m
+        return state.gripper.pos_m  # type: ignore[no-any-return]
 
     def write_gripper_position(self, position: float) -> bool:
         """Command gripper position."""

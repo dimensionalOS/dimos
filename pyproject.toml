@@ -526,6 +526,8 @@ exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/c
 [[tool.mypy.overrides]]
 module = [
     "annotation_protocol",
+    "a750_control",
+    "a750_control.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
