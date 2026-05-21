@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from dimos.control.components import HardwareId, JointName, TaskName
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.manipulators.spec import ControlMode
+    from dimos.hardware.whole_body.spec import IMUState
 
 logger = setup_logger()
 
@@ -174,7 +175,8 @@ class TickLoop:
         self._tick_count += 1
 
         joint_states = self._read_all_hardware()
-        state = CoordinatorState(joints=joint_states, t_now=t_now, dt=dt)
+        imu_states = self._read_all_imu()
+        state = CoordinatorState(joints=joint_states, imu=imu_states, t_now=t_now, dt=dt)
 
         commands = self._compute_all_tasks(state)
 
@@ -221,6 +223,29 @@ class TickLoop:
             joint_efforts=joint_efforts,
             timestamp=time.time(),
         )
+
+    def _read_all_imu(self) -> dict[str, IMUState]:
+        """Poll IMU from every whole-body hardware in the pool.
+
+        Tasks read this through ``CoordinatorState.imu[hardware_id]``
+        instead of reaching into adapters directly. Hardware without
+        IMU support is absent from the dict.
+        """
+        from dimos.control.hardware_interface import ConnectedWholeBody
+
+        out: dict[str, IMUState] = {}
+        with self._hardware_lock:
+            for hw_id, hw in self._hardware.items():
+                if not isinstance(hw, ConnectedWholeBody):
+                    continue
+                read_imu = getattr(hw.adapter, "read_imu", None)
+                if not callable(read_imu):
+                    continue
+                try:
+                    out[hw_id] = read_imu()
+                except Exception as e:
+                    logger.error(f"Failed to read IMU from {hw_id}: {e}")
+        return out
 
     def _compute_all_tasks(
         self, state: CoordinatorState

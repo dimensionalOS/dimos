@@ -142,7 +142,7 @@ uintree_g1_primitive_no_nav = (
     .transports(
         {
             # G1 uses Twist for movement commands
-            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+            ("tele_cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
             # State estimation from ROS
             ("state_estimation", Odometry): LCMTransport("/state_estimation", Odometry),
             ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),

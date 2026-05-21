@@ -51,7 +51,12 @@ logger = setup_logger()
 
 _NUM_MOTORS = 29
 _NUM_MOTOR_SLOTS = 35  # G1 hg LowCmd has 35 slots; only 29 are used
-_MODE_MACHINE_WAIT_S = 10.0
+# mode_machine is a static value identifying the G1 firmware/hardware
+# variant.  Older code read it back from the first LowState frame and
+# echoed it into LowCmd; that callback path is unreliable on macOS
+# cyclonedds, and the value never changes for a given robot, so we
+# hardcode it.  29-DOF G1 (gear) reports 5.
+_MODE_MACHINE_G1: int = 5
 
 # Joint names sourced from the canonical helper. Order matches the motor index
 # convention above. Single-source-of-truth so any coordinator-side adapter built
@@ -84,8 +89,12 @@ class G1WholeBodyConnection(Module):
         self._low_cmd: LowCmd_ | None = None
         self._low_state: LowState_ | None = None
         self._crc: CRC | None = None
-        # mode_machine: read from first LowState, echoed back in every LowCmd.
+        # mode_machine: hardcoded at start() to the static value for the
+        # 29-DOF G1.  We log a one-shot warning if the first LowState we
+        # read disagrees — that's the early signal of firmware drift on a
+        # variant that needs a different value.
         self._mode_machine: int | None = None
+        self._mode_machine_verified: bool = False
         # Guards _low_cmd / _low_state / _mode_machine across DDS, publish, and LCM threads.
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -119,12 +128,19 @@ class G1WholeBodyConnection(Module):
         self._publisher = ChannelPublisher("rt/lowcmd", LowCmd_)
         self._publisher.Init()
 
+        # Passive subscriber — Read() per tick from the publish loop.  The
+        # callback variant (Init(self._on_low_state, 10)) doesn't fire
+        # reliably under cyclonedds on macOS, which used to leave us
+        # blocked here forever waiting for a first LowState.
         self._subscriber = ChannelSubscriber("rt/lowstate", LowState_)
-        self._subscriber.Init(self._on_low_state, 10)
+        self._subscriber.Init(None, 0)
 
         # POS_STOP/VEL_STOP + zero gains so the robot can't twitch pre-command.
         self._low_cmd = unitree_hg_msg_dds__LowCmd_()
         self._low_cmd.mode_pr = 0  # PR (pitch/roll) mode
+        # mode_machine is a static value (see comment above the constant).
+        self._mode_machine = _MODE_MACHINE_G1
+        self._low_cmd.mode_machine = self._mode_machine
         for i in range(_NUM_MOTOR_SLOTS):
             self._low_cmd.motor_cmd[i].mode = 0x01  # enable
             self._low_cmd.motor_cmd[i].q = POS_STOP
@@ -141,16 +157,6 @@ class G1WholeBodyConnection(Module):
         else:
             logger.info("Skipping sport mode release (release_sport_mode=False)")
 
-        logger.info("Waiting for first LowState to capture mode_machine...")
-        deadline = time.time() + _MODE_MACHINE_WAIT_S
-        while self._mode_machine is None and time.time() < deadline:
-            time.sleep(0.1)
-        if self._mode_machine is None:
-            raise RuntimeError(
-                f"Timed out after {_MODE_MACHINE_WAIT_S:.1f}s waiting for "
-                f"first LowState — mode_machine never captured"
-            )
-
         logger.info(f"G1WholeBodyConnection connected (mode_machine={self._mode_machine})")
 
         self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
@@ -166,6 +172,29 @@ class G1WholeBodyConnection(Module):
         if self._publish_thread is not None and self._publish_thread.is_alive():
             self._publish_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._publish_thread = None
+
+        # Final safe-stop lowcmd: disable every motor (mode=0x00, kp=kd=0,
+        # tau=0).  Without this, the motors freeze stiffly at whatever
+        # the last commanded pose was and the next ``dimos run`` opens
+        # against a robot that's actively fighting its own controllers
+        # — observed as horrible mechanical noise during sport-mode
+        # release.  Best-effort: any failure is logged, not raised, so
+        # cleanup still drains the DDS endpoints.
+        if self._publisher is not None and self._low_cmd is not None and self._crc is not None:
+            try:
+                with self._lock:
+                    for i in range(_NUM_MOTOR_SLOTS):
+                        self._low_cmd.motor_cmd[i].mode = 0x00  # disable
+                        self._low_cmd.motor_cmd[i].q = POS_STOP
+                        self._low_cmd.motor_cmd[i].dq = VEL_STOP
+                        self._low_cmd.motor_cmd[i].kp = 0
+                        self._low_cmd.motor_cmd[i].kd = 0
+                        self._low_cmd.motor_cmd[i].tau = 0
+                    self._low_cmd.crc = self._crc.Crc(self._low_cmd)
+                    self._publisher.Write(self._low_cmd)
+                logger.info("Sent safe-stop lowcmd (motors disabled)")
+            except (OSError, RuntimeError, AttributeError) as e:
+                logger.warning(f"Safe-stop lowcmd failed: {e}")
 
         # Close DDS endpoints explicitly — GC-based cleanup races with in-flight
         # callbacks and segfaults on process exit (mirrors the Go2 adapter).
@@ -190,55 +219,122 @@ class G1WholeBodyConnection(Module):
         logger.info("G1WholeBodyConnection disconnected")
         super().stop()
 
+    # Identity quaternion + zeros while LowState hasn't arrived (start() blocks
+    # for it, but the publish loop may also see _low_state cleared during stop()).
+    _ZERO_QUAT = (1.0, 0.0, 0.0, 0.0)
+    _ZERO_VEC3 = (0.0, 0.0, 0.0)
+
+    def _drain_low_state(self) -> None:
+        """Pull the freshest LowState frame off the subscriber and stash it."""
+        sub = self._subscriber
+        if sub is None:
+            return
+        fresh = sub.Read()
+        if fresh is None:
+            return
+        with self._lock:
+            self._low_state = fresh
+        self._verify_mode_machine_once(fresh)
+
+    def _verify_mode_machine_once(self, sample: object) -> None:
+        """One-shot sanity check: log if the hardcoded mode_machine
+        doesn't match what the firmware reports. Commands with a
+        wrong mode_machine are silently rejected, so this prevents
+        a confusing "everything looks fine but the robot doesn't
+        move" failure mode on G1 variants we haven't tested."""
+        if self._mode_machine_verified:
+            return
+        self._mode_machine_verified = True
+        actual = int(getattr(sample, "mode_machine", -1))
+        if actual != self._mode_machine:
+            logger.warning(
+                f"mode_machine mismatch: hardcoded {self._mode_machine}, "
+                f"robot reports {actual}.  Commands may be silently rejected "
+                f"by firmware — set _MODE_MACHINE_G1 to {actual} for this variant."
+            )
+
+    def _snapshot_motor_imu(
+        self,
+    ) -> tuple[
+        list[float],
+        list[float],
+        list[float],
+        tuple[float, float, float, float],
+        tuple[float, float, float],
+        tuple[float, float, float],
+    ]:
+        """Return (positions, velocities, efforts, quat, gyro, accel) for
+        the latest cached LowState, or zero-defaults when none has been
+        received yet."""
+        with self._lock:
+            ls = self._low_state
+            if ls is None:
+                return (
+                    [0.0] * _NUM_MOTORS,
+                    [0.0] * _NUM_MOTORS,
+                    [0.0] * _NUM_MOTORS,
+                    self._ZERO_QUAT,
+                    self._ZERO_VEC3,
+                    self._ZERO_VEC3,
+                )
+            return (
+                [ls.motor_state[i].q for i in range(_NUM_MOTORS)],
+                [ls.motor_state[i].dq for i in range(_NUM_MOTORS)],
+                [ls.motor_state[i].tau_est for i in range(_NUM_MOTORS)],
+                tuple(ls.imu_state.quaternion),
+                tuple(ls.imu_state.gyroscope),
+                tuple(ls.imu_state.accelerometer),
+            )
+
+    def _publish_motor_state_and_imu(
+        self,
+        now: float,
+        frame_id: str,
+        positions: list[float],
+        velocities: list[float],
+        efforts: list[float],
+        quat: tuple[float, float, float, float],
+        gyro: tuple[float, float, float],
+        accel: tuple[float, float, float],
+    ) -> None:
+        self.motor_states.publish(
+            JointState(
+                ts=now,
+                frame_id=frame_id,
+                name=G1_JOINT_NAMES,
+                position=positions,
+                velocity=velocities,
+                effort=efforts,
+            )
+        )
+        # Unitree quat is (w,x,y,z); dimos Quaternion is (x,y,z,w).
+        self.imu.publish(
+            Imu(
+                ts=now,
+                frame_id=frame_id,
+                orientation=Quaternion(quat[1], quat[2], quat[3], quat[0]),
+                angular_velocity=Vector3(gyro[0], gyro[1], gyro[2]),
+                linear_acceleration=Vector3(accel[0], accel[1], accel[2]),
+            )
+        )
+
     def _publish_loop(self) -> None:
         period = 1.0 / float(self.config.publish_rate_hz)
         next_tick = time.perf_counter()
         frame_id = self.config.frame_id
 
-        # Identity quaternion + zeros while LowState hasn't arrived (start() blocks
-        # for it, but the publish loop may also see _low_state cleared during stop()).
-        zero_quat = (1.0, 0.0, 0.0, 0.0)
-        zero_vec3 = (0.0, 0.0, 0.0)
-
         while not self._stop_event.is_set():
-            with self._lock:
-                ls = self._low_state
-                if ls is None:
-                    positions: list[float] = [0.0] * _NUM_MOTORS
-                    velocities: list[float] = [0.0] * _NUM_MOTORS
-                    efforts: list[float] = [0.0] * _NUM_MOTORS
-                    quat = zero_quat
-                    gyro = zero_vec3
-                    accel = zero_vec3
-                else:
-                    positions = [ls.motor_state[i].q for i in range(_NUM_MOTORS)]
-                    velocities = [ls.motor_state[i].dq for i in range(_NUM_MOTORS)]
-                    efforts = [ls.motor_state[i].tau_est for i in range(_NUM_MOTORS)]
-                    quat = tuple(ls.imu_state.quaternion)
-                    gyro = tuple(ls.imu_state.gyroscope)
-                    accel = tuple(ls.imu_state.accelerometer)
-
-            now = time.time()
-            self.motor_states.publish(
-                JointState(
-                    ts=now,
-                    frame_id=frame_id,
-                    name=G1_JOINT_NAMES,
-                    position=positions,
-                    velocity=velocities,
-                    effort=efforts,
-                )
-            )
-
-            # Unitree quat is (w,x,y,z); dimos Quaternion is (x,y,z,w).
-            self.imu.publish(
-                Imu(
-                    ts=now,
-                    frame_id=frame_id,
-                    orientation=Quaternion(quat[1], quat[2], quat[3], quat[0]),
-                    angular_velocity=Vector3(gyro[0], gyro[1], gyro[2]),
-                    linear_acceleration=Vector3(accel[0], accel[1], accel[2]),
-                )
+            self._drain_low_state()
+            positions, velocities, efforts, quat, gyro, accel = self._snapshot_motor_imu()
+            self._publish_motor_state_and_imu(
+                now=time.time(),
+                frame_id=frame_id,
+                positions=positions,
+                velocities=velocities,
+                efforts=efforts,
+                quat=quat,
+                gyro=gyro,
+                accel=accel,
             )
 
             next_tick += period
@@ -276,15 +372,17 @@ class G1WholeBodyConnection(Module):
             self._low_cmd.crc = self._crc.Crc(self._low_cmd)
             self._publisher.Write(self._low_cmd)
 
-    def _on_low_state(self, msg: Any) -> None:
-        """rt/lowstate callback — captures mode_machine and the latest snapshot."""
-        with self._lock:
-            self._low_state = msg
-            if self._mode_machine is None:
-                self._mode_machine = msg.mode_machine
-
     def _release_sport_mode(self) -> None:
-        """Loop ReleaseMode until MotionSwitcher reports no active controller."""
+        """Loop ReleaseMode until MotionSwitcher reports no active controller.
+
+        Bails early if the first CheckMode reports nothing active.  That
+        matters for back-to-back ``dimos run`` invocations: the first run
+        already released sport mode, so on a clean second start there's
+        nothing to release.  Calling ReleaseMode anyway opens a window
+        where motor controllers are mid-handoff while we're already
+        publishing rt/lowcmd, which has been observed to cause horrible
+        mechanical noise from the gearboxes.
+        """
         from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import (
             MotionSwitcherClient,
         )
@@ -293,8 +391,14 @@ class G1WholeBodyConnection(Module):
         msc.SetTimeout(5.0)
         msc.Init()
 
-        # CheckMode returns (status, None) once nothing is active — null-tolerant.
+        # CheckMode returns (status, None) — or (status, {"name": ""}) on
+        # some firmwares — once nothing is active.  Treat both as "already
+        # released" and return without poking ReleaseMode.
         _status, result = msc.CheckMode()
+        if not result or not result.get("name"):
+            logger.info("Sport mode already released — skipping ReleaseMode")
+            return
+
         while result and result.get("name"):
             msc.ReleaseMode()
             _status, result = msc.CheckMode()

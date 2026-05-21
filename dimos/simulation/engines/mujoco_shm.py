@@ -40,26 +40,38 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Upper bound on joint count per sim. Arms + gripper are typically <= 10.
-MAX_JOINTS = 16
+# Upper bound on joint count per sim.  Manipulators use ≤10; humanoids
+# (Unitree G1: 29) push higher.  32 leaves headroom while keeping all
+# per-joint buffers tiny (32 floats = 256 B).
+MAX_JOINTS = 32
 _FLOAT_BYTES = 8  # float64
 _INT32_BYTES = 4
+
+# IMU layout: quat (4) + gyro (3) + accel (3) = 10 floats.
+_IMU_FLOATS = 10
 
 _joint_array_size = MAX_JOINTS * _FLOAT_BYTES  # float64 array
 
 # Element counts for control and sequence arrays.
 _NUM_CTRL_FIELDS = 4  # [ready, stop, command_mode, num_joints]
-_NUM_SEQ_COUNTERS = 8  # one per buffer type
+_NUM_SEQ_COUNTERS = 12  # one per buffer type (manipulator + WB additions)
 
 # Buffer sizes (in bytes).
 # Keys are short to stay under macOS PSHMNAMLEN (31 bytes).
 _shm_sizes = {
+    # Manipulator-shared layout
     "pos": _joint_array_size,
     "vel": _joint_array_size,
     "eff": _joint_array_size,
     "pos_t": _joint_array_size,
     "vel_t": _joint_array_size,
     "grp": 2 * _FLOAT_BYTES,  # [gripper_position, gripper_target]
+    # Whole-body additions (unused by manipulator path).
+    "imu": _IMU_FLOATS * _FLOAT_BYTES,  # [w,x,y,z, gx,gy,gz, ax,ay,az]
+    "kp_t": _joint_array_size,  # per-joint position-gain target
+    "kd_t": _joint_array_size,  # per-joint velocity-gain target
+    "tau_t": _joint_array_size,  # per-joint feedforward torque
+    # Bookkeeping
     "seq": _NUM_SEQ_COUNTERS * _FLOAT_BYTES,  # int64 counters
     "ctl": _NUM_CTRL_FIELDS * _INT32_BYTES,  # [ready, stop, command_mode, num_joints]
 }
@@ -72,6 +84,11 @@ SEQ_POSITION_CMD = 3
 SEQ_VELOCITY_CMD = 4
 SEQ_GRIPPER_STATE = 5
 SEQ_GRIPPER_CMD = 6
+# Whole-body additions
+SEQ_IMU = 7
+SEQ_KP_CMD = 8
+SEQ_KD_CMD = 9
+SEQ_TAU_CMD = 10
 
 # Control indices.
 CTRL_READY = 0
@@ -82,6 +99,9 @@ CTRL_NUM_JOINTS = 3
 # Command modes.
 CMD_MODE_POSITION = 0
 CMD_MODE_VELOCITY = 1
+# Whole-body PD-with-feedforward: ctrl = kp*(q_t - q) + kd*(0 - dq) + tau_t.
+# Per-step kp/kd lets a policy retune gains online if it wants to.
+CMD_MODE_PD_TAU = 2
 
 _NAME_PREFIX = "dmjm"
 
@@ -114,7 +134,13 @@ def _unregister(shm: SharedMemory) -> SharedMemory:
 
 @dataclass(frozen=True)
 class ManipShmSet:
-    """Frozen set of named SharedMemory buffers for manipulator IPC."""
+    """Frozen set of named SharedMemory buffers for sim ↔ adapter IPC.
+
+    Despite the name (kept for backward compat with existing manipulator
+    consumers), the layout now also covers whole-body needs: IMU, per-joint
+    PD gain commands, and per-joint feedforward torque commands.  The
+    extra buffers are unused by the manipulator path.
+    """
 
     pos: SharedMemory
     vel: SharedMemory
@@ -122,6 +148,12 @@ class ManipShmSet:
     pos_t: SharedMemory
     vel_t: SharedMemory
     grp: SharedMemory
+    # Whole-body additions
+    imu: SharedMemory
+    kp_t: SharedMemory
+    kd_t: SharedMemory
+    tau_t: SharedMemory
+    # Bookkeeping
     seq: SharedMemory
     ctl: SharedMemory
 
@@ -170,6 +202,9 @@ class ManipShmWriter:
         self._last_pos_cmd_seq = 0
         self._last_vel_cmd_seq = 0
         self._last_gripper_cmd_seq = 0
+        self._last_kp_cmd_seq = 0
+        self._last_kd_cmd_seq = 0
+        self._last_tau_cmd_seq = 0
         # Zero everything.
         for buf in self.shm.as_list():
             np.ndarray((buf.size,), dtype=np.uint8, buffer=buf.buf)[:] = 0
@@ -225,6 +260,47 @@ class ManipShmWriter:
 
     def read_command_mode(self) -> int:
         return int(self._control()[CTRL_COMMAND_MODE])
+
+    # Whole-body additions
+
+    def write_imu(
+        self,
+        quaternion: tuple[float, float, float, float],
+        gyroscope: tuple[float, float, float],
+        accelerometer: tuple[float, float, float],
+    ) -> None:
+        """Write IMU sample.  Quaternion is (w, x, y, z)."""
+        arr = self._array(self.shm.imu, _IMU_FLOATS, np.float64)
+        arr[0:4] = quaternion
+        arr[4:7] = gyroscope
+        arr[7:10] = accelerometer
+        self._increment_seq(SEQ_IMU)
+
+    def read_kp_command(self, num_joints: int) -> NDArray[np.float64] | None:
+        """Per-joint position-gain target if a new command landed since last call."""
+        seq = self._get_seq(SEQ_KP_CMD)
+        if seq <= self._last_kp_cmd_seq:
+            return None
+        self._last_kp_cmd_seq = seq
+        arr = self._array(self.shm.kp_t, MAX_JOINTS, np.float64)
+        return arr[:num_joints].copy()
+
+    def read_kd_command(self, num_joints: int) -> NDArray[np.float64] | None:
+        seq = self._get_seq(SEQ_KD_CMD)
+        if seq <= self._last_kd_cmd_seq:
+            return None
+        self._last_kd_cmd_seq = seq
+        arr = self._array(self.shm.kd_t, MAX_JOINTS, np.float64)
+        return arr[:num_joints].copy()
+
+    def read_tau_command(self, num_joints: int) -> NDArray[np.float64] | None:
+        """Per-joint feedforward torque if a new command landed since last call."""
+        seq = self._get_seq(SEQ_TAU_CMD)
+        if seq <= self._last_tau_cmd_seq:
+            return None
+        self._last_tau_cmd_seq = seq
+        arr = self._array(self.shm.tau_t, MAX_JOINTS, np.float64)
+        return arr[:num_joints].copy()
 
     def signal_ready(self, num_joints: int) -> None:
         ctrl = self._control()
@@ -313,6 +389,77 @@ class ManipShmReader:
         arr = np.ndarray((2,), dtype=np.float64, buffer=self.shm.grp.buf)
         arr[1] = position
         self._increment_seq(SEQ_GRIPPER_CMD)
+
+    # Whole-body additions
+
+    def read_imu(
+        self,
+    ) -> tuple[
+        tuple[float, float, float, float],
+        tuple[float, float, float],
+        tuple[float, float, float],
+    ]:
+        """Read IMU sample: ((qw, qx, qy, qz), (gx, gy, gz), (ax, ay, az))."""
+        arr = np.ndarray((_IMU_FLOATS,), dtype=np.float64, buffer=self.shm.imu.buf)
+        return (
+            (float(arr[0]), float(arr[1]), float(arr[2]), float(arr[3])),
+            (float(arr[4]), float(arr[5]), float(arr[6])),
+            (float(arr[7]), float(arr[8]), float(arr[9])),
+        )
+
+    def write_kp_command(self, kp: list[float]) -> None:
+        """Per-joint position-gain target.  Switches command mode to PD+τ."""
+        n = min(len(kp), MAX_JOINTS)
+        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.kp_t.buf)
+        arr[:n] = kp[:n]
+        self._set_command_mode(CMD_MODE_PD_TAU)
+        self._increment_seq(SEQ_KP_CMD)
+
+    def write_kd_command(self, kd: list[float]) -> None:
+        n = min(len(kd), MAX_JOINTS)
+        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.kd_t.buf)
+        arr[:n] = kd[:n]
+        self._set_command_mode(CMD_MODE_PD_TAU)
+        self._increment_seq(SEQ_KD_CMD)
+
+    def write_tau_command(self, tau: list[float]) -> None:
+        """Per-joint feedforward torque, applied on top of PD."""
+        n = min(len(tau), MAX_JOINTS)
+        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.tau_t.buf)
+        arr[:n] = tau[:n]
+        self._set_command_mode(CMD_MODE_PD_TAU)
+        self._increment_seq(SEQ_TAU_CMD)
+
+    def write_pd_tau_command(
+        self,
+        positions: list[float],
+        kp: list[float],
+        kd: list[float],
+        tau: list[float],
+    ) -> None:
+        """Write a whole-body PD+tau command without transient mode flips.
+
+        The sim engine runs in a different process, so setting position mode
+        first and PD mode later creates a small but real race. Write all arrays,
+        publish PD mode once, then bump the sequence counters.
+        """
+        n_pos = min(len(positions), MAX_JOINTS)
+        n_kp = min(len(kp), MAX_JOINTS)
+        n_kd = min(len(kd), MAX_JOINTS)
+        n_tau = min(len(tau), MAX_JOINTS)
+        np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.pos_t.buf)[:n_pos] = positions[
+            :n_pos
+        ]
+        np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.kp_t.buf)[:n_kp] = kp[:n_kp]
+        np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.kd_t.buf)[:n_kd] = kd[:n_kd]
+        np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.tau_t.buf)[:n_tau] = tau[:n_tau]
+        self._set_command_mode(CMD_MODE_PD_TAU)
+        self._increment_seq(SEQ_KP_CMD)
+        self._increment_seq(SEQ_KD_CMD)
+        self._increment_seq(SEQ_TAU_CMD)
+        # Position is the engine-side trigger for latching a new PD target,
+        # so publish it last after gains/torque are visible.
+        self._increment_seq(SEQ_POSITION_CMD)
 
     def is_ready(self) -> bool:
         return bool(self._control()[CTRL_READY] == 1)

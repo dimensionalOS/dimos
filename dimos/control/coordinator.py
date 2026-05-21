@@ -71,46 +71,30 @@ logger = setup_logger()
 
 @dataclass
 class TaskConfig:
-    """Configuration for a control task.
-
-    Attributes:
-        name: Task name (e.g., "traj_arm")
-        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik", "teleop_ik")
-        joint_names: List of joint names this task controls
-        priority: Task priority (higher wins arbitration)
-        model_path: Path to URDF/MJCF for IK solver (cartesian_ik/teleop_ik only)
-        ee_joint_id: End-effector joint ID in model (cartesian_ik/teleop_ik only)
-        hand: "left" or "right" controller hand (teleop_ik only)
-        gripper_joint: Joint name for gripper virtual joint
-        gripper_open_pos: Gripper position at trigger 0.0
-        gripper_closed_pos: Gripper position at trigger 1.0
-    """
+    """Configuration for a registered control task."""
 
     name: str
     type: str = "trajectory"
     joint_names: list[str] = field(default_factory=lambda: [])
     priority: int = 10
-    # Cartesian IK / Teleop IK specific
+    # Task-specific optional fields. Factories decide which fields they use.
     model_path: str | Path | None = None
     ee_joint_id: int = 6
     hand: Literal["left", "right"] | None = None  # teleop_ik only
-    # Teleop IK gripper specific
     gripper_joint: str | None = None
     gripper_open_pos: float = 0.0
     gripper_closed_pos: float = 0.0
+    hardware_id: str | None = None
+    default_positions: list[float] | None = None
+    auto_start: bool = False
+    auto_arm: bool = False
+    auto_dry_run: bool = False
+    default_ramp_seconds: float = 10.0
+    decimation: int | None = None
 
 
 class ControlCoordinatorConfig(ModuleConfig):
-    """Configuration for the ControlCoordinator.
-
-    Attributes:
-        tick_rate: Control loop frequency in Hz (default: 100)
-        publish_joint_state: Whether to publish aggregated JointState
-        joint_state_frame_id: Frame ID for published JointState
-        log_ticks: Whether to log tick information (verbose)
-        hardware: List of hardware configurations to create on start
-        tasks: List of task configurations to create on start
-    """
+    """Configuration for the ControlCoordinator."""
 
     tick_rate: float = 100.0
     publish_joint_state: bool = True
@@ -166,11 +150,13 @@ class ControlCoordinator(Module):
     # Input: Teleop buttons for engage/disengage signaling
     buttons: In[Buttons]
 
+    # Arming and dry-run are one-shot RPCs, not streams.
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
         # Connected hardware (keyed by hardware_id)
-        self._hardware: dict[HardwareId, ConnectedHardware] = {}
+        self._hardware: dict[HardwareId, ConnectedHardware | ConnectedWholeBody] = {}
         self._hardware_lock = threading.Lock()
 
         # Joint -> hardware mapping (built when hardware added)
@@ -203,6 +189,10 @@ class ControlCoordinator(Module):
             for task_cfg in self.config.tasks:
                 task = self._create_task_from_config(task_cfg)
                 self.add_task(task)
+                if task_cfg.auto_start:
+                    start = getattr(task, "start", None)
+                    if callable(start):
+                        start()
 
         except Exception:
             # Rollback: clean up all successfully added hardware
@@ -260,107 +250,23 @@ class ControlCoordinator(Module):
         )
 
     def _create_whole_body_adapter(self, component: HardwareComponent) -> WholeBodyAdapter:
-        """Create a whole-body adapter from component config.
-
-        ``component.address`` carries the DDS network interface — int (CAN port)
-        or str ("enp60s0"); cyclonedds requires the right type, so try int() first
-        and fall back to keeping the original string.
-        """
+        """Create a whole-body adapter from component config."""
         from dimos.hardware.whole_body.registry import whole_body_adapter_registry
-
-        addr: int | str | None = component.address
-        if addr is not None:
-            try:
-                addr = int(addr)
-            except ValueError:
-                pass  # keep as string (e.g. "enp60s0")
 
         return whole_body_adapter_registry.create(
             component.adapter_type,
             dof=len(component.joints),
             hardware_id=component.hardware_id,
-            network_interface=addr if addr is not None else "",
+            address=component.address,
+            domain_id=component.domain_id,
             **component.adapter_kwargs,
         )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
-        """Create a control task from config."""
-        task_type = cfg.type.lower()
+        """Create a control task from config via the task registry."""
+        from dimos.control.tasks.registry import control_task_registry
 
-        if task_type == "trajectory":
-            from dimos.control.tasks.trajectory_task import (
-                JointTrajectoryTask,
-                JointTrajectoryTaskConfig,
-            )
-
-            return JointTrajectoryTask(
-                cfg.name,
-                JointTrajectoryTaskConfig(
-                    joint_names=cfg.joint_names,
-                    priority=cfg.priority,
-                ),
-            )
-
-        elif task_type == "servo":
-            from dimos.control.tasks.servo_task import JointServoTask, JointServoTaskConfig
-
-            return JointServoTask(
-                cfg.name,
-                JointServoTaskConfig(
-                    joint_names=cfg.joint_names,
-                    priority=cfg.priority,
-                ),
-            )
-
-        elif task_type == "velocity":
-            from dimos.control.tasks.velocity_task import JointVelocityTask, JointVelocityTaskConfig
-
-            return JointVelocityTask(
-                cfg.name,
-                JointVelocityTaskConfig(
-                    joint_names=cfg.joint_names,
-                    priority=cfg.priority,
-                ),
-            )
-
-        elif task_type == "cartesian_ik":
-            from dimos.control.tasks.cartesian_ik_task import CartesianIKTask, CartesianIKTaskConfig
-
-            if cfg.model_path is None:
-                raise ValueError(f"CartesianIKTask '{cfg.name}' requires model_path in TaskConfig")
-
-            return CartesianIKTask(
-                cfg.name,
-                CartesianIKTaskConfig(
-                    joint_names=cfg.joint_names,
-                    model_path=cfg.model_path,
-                    ee_joint_id=cfg.ee_joint_id,
-                    priority=cfg.priority,
-                ),
-            )
-
-        elif task_type == "teleop_ik":
-            from dimos.control.tasks.teleop_task import TeleopIKTask, TeleopIKTaskConfig
-
-            if cfg.model_path is None:
-                raise ValueError(f"TeleopIKTask '{cfg.name}' requires model_path in TaskConfig")
-
-            return TeleopIKTask(
-                cfg.name,
-                TeleopIKTaskConfig(
-                    joint_names=cfg.joint_names,
-                    model_path=cfg.model_path,
-                    ee_joint_id=cfg.ee_joint_id,
-                    priority=cfg.priority,
-                    hand=cfg.hand,
-                    gripper_joint=cfg.gripper_joint,
-                    gripper_open_pos=cfg.gripper_open_pos,
-                    gripper_closed_pos=cfg.gripper_closed_pos,
-                ),
-            )
-
-        else:
-            raise ValueError(f"Unknown task type: {task_type}")
+        return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
 
     @rpc
     def add_hardware(
@@ -594,11 +500,44 @@ class ControlCoordinator(Module):
             joint_state = JointState(name=names, velocity=velocities)
             self._on_joint_command(joint_state)
 
+        # Velocity-capable tasks opt in with set_velocity_command().
+        t_now = time.perf_counter()
+        with self._task_lock:
+            for task in self._tasks.values():
+                set_vel = getattr(task, "set_velocity_command", None)
+                if set_vel is not None:
+                    set_vel(msg.linear.x, msg.linear.y, msg.angular.z, t_now)
+
     def _on_buttons(self, msg: Buttons) -> None:
         """Forward button state to all tasks."""
         with self._task_lock:
             for task in self._tasks.values():
                 task.on_buttons(msg)
+
+    @rpc
+    def set_activated(self, engaged: bool) -> None:
+        """Arm/disarm every task exposing ``arm()`` / ``disarm()``."""
+        with self._task_lock:
+            for task in self._tasks.values():
+                method_name = "arm" if engaged else "disarm"
+                handler = getattr(task, method_name, None)
+                if callable(handler):
+                    try:
+                        handler()
+                    except Exception:
+                        logger.exception(f"{method_name}() raised on task {task.name!r}")
+
+    @rpc
+    def set_dry_run(self, enabled: bool) -> None:
+        """Toggle dry-run on every task exposing ``set_dry_run``."""
+        with self._task_lock:
+            for task in self._tasks.values():
+                handler = getattr(task, "set_dry_run", None)
+                if callable(handler):
+                    try:
+                        handler(enabled)
+                    except Exception:
+                        logger.exception(f"set_dry_run() raised on task {task.name!r}")
 
     @rpc
     def task_invoke(
@@ -711,16 +650,21 @@ class ControlCoordinator(Module):
                     "Use task_invoke RPC or set transport via blueprint."
                 )
 
-        # Subscribe to twist commands if any twist base hardware configured
+        # Twist commands drive either base hardware or velocity-capable tasks.
         has_twist_base = any(c.hardware_type == HardwareType.BASE for c in self.config.hardware)
-        if has_twist_base:
+        with self._task_lock:
+            has_velocity_task = any(
+                callable(getattr(task, "set_velocity_command", None))
+                for task in self._tasks.values()
+            )
+        if has_twist_base or has_velocity_task:
             try:
                 self._twist_command_unsub = self.twist_command.subscribe(self._on_twist_command)
-                logger.info("Subscribed to twist_command for twist base control")
+                logger.info("Subscribed to twist_command for twist base / velocity-capable tasks")
             except Exception:
                 logger.warning(
-                    "Twist base configured but could not subscribe to twist_command. "
-                    "Use task_invoke RPC or set transport via blueprint."
+                    "Twist base or velocity-capable task configured but could not subscribe "
+                    "to twist_command. Use task_invoke RPC or set transport via blueprint."
                 )
 
         # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
@@ -728,6 +672,8 @@ class ControlCoordinator(Module):
         if has_teleop_ik:
             self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
             logger.info("Subscribed to buttons for engage/disengage")
+
+        # Arming + dry-run are RPC-only; no stream subscription here.
 
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
 

@@ -54,6 +54,25 @@ class IMUState:
     rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
+@dataclass(frozen=True)
+class WholeBodyConfig:
+    """Whole-body-specific component config.
+
+    Lives on ``HardwareComponent.wb_config`` for components of type WHOLE_BODY.
+    Keeps PD gains (and any future whole-body-only knobs) off the generic
+    HardwareComponent shared by all hardware kinds.
+
+    Attributes:
+        kp: Per-joint position gains used by ConnectedWholeBody when
+            translating position commands to MotorCommand. Length must
+            match the component's ``joints`` list when set.
+        kd: Per-joint velocity gains. Same length constraint.
+    """
+
+    kp: tuple[float, ...] | None = None
+    kd: tuple[float, ...] | None = None
+
+
 @runtime_checkable
 class WholeBodyAdapter(Protocol):
     """Joint-level whole-body motor IO. SI units (rad, rad/s, Nm)."""
@@ -64,6 +83,7 @@ class WholeBodyAdapter(Protocol):
     def read_motor_states(self) -> list[MotorState]: ...
     def has_motor_states(self) -> bool: ...
     def read_imu(self) -> IMUState: ...
+
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool: ...
 
 
@@ -74,4 +94,5 @@ __all__ = [
     "MotorCommand",
     "MotorState",
     "WholeBodyAdapter",
+    "WholeBodyConfig",
 ]

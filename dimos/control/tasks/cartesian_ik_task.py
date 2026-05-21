@@ -330,3 +330,17 @@ __all__ = [
     "CartesianIKTask",
     "CartesianIKTaskConfig",
 ]
+
+
+def create_task(cfg: Any, hardware: Any) -> CartesianIKTask:
+    if cfg.model_path is None:
+        raise ValueError(f"CartesianIKTask {cfg.name!r} requires model_path in TaskConfig")
+    return CartesianIKTask(
+        cfg.name,
+        CartesianIKTaskConfig(
+            joint_names=cfg.joint_names,
+            model_path=cfg.model_path,
+            ee_joint_id=cfg.ee_joint_id,
+            priority=cfg.priority,
+        ),
+    )

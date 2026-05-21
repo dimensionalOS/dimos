@@ -15,7 +15,8 @@
 """Transport-based whole-body adapter: bridges coordinator ↔ Module via pub/sub.
 
 Subscribes /{hardware_id}/motor_states + /{hardware_id}/imu, publishes
-/{hardware_id}/motor_command. ``network_interface`` is accepted but ignored.
+/{hardware_id}/motor_command. Address-style arguments are accepted via
+``**_`` and ignored — the transport layer owns the wire.
 """
 
 from __future__ import annotations
@@ -45,7 +46,6 @@ class TransportWholeBodyAdapter:
         dof: int = 29,
         hardware_id: str = "wholebody",
         transport_cls: type = LCMTransport,
-        network_interface: int | str = "",  # accepted-and-ignored — see module docstring
         **_: object,
     ) -> None:
         self._dof = dof

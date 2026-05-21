@@ -16,7 +16,10 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
+
+from dimos.hardware.whole_body.spec import WholeBodyConfig
 
 HardwareId = str
 JointName = str
@@ -61,16 +64,28 @@ class HardwareComponent:
         address: Connection address - IP for TCP, port for CAN
         auto_enable: Whether to auto-enable servos
         gripper_joints: Joints that use adapter gripper methods (separate from joints).
+        domain_id: DDS domain ID for adapters that use DDS transport
+            (e.g. Unitree G1). Real robot uses 0; unitree_mujoco sim
+            defaults to 1. Ignored by non-DDS adapters.
+        adapter_kwargs: Generic untyped kwargs forwarded to the adapter
+            constructor — use for adapter-specific knobs that don't
+            belong in the spec.
+        wb_config: Whole-body-specific config (PD gains etc.).  Populate
+            on hardware_type=WHOLE_BODY components.  Keeps WB-only knobs
+            off the generic HardwareComponent shared by manipulators,
+            bases, and grippers.
     """
 
     hardware_id: HardwareId
     hardware_type: HardwareType
     joints: list[JointName] = field(default_factory=list)
     adapter_type: str = "mock"
-    address: str | None = None
+    address: str | Path | None = None
     auto_enable: bool = True
     gripper_joints: list[JointName] = field(default_factory=list)
+    domain_id: int = 0
     adapter_kwargs: dict[str, Any] = field(default_factory=dict)
+    wb_config: WholeBodyConfig | None = None
 
     @property
     def all_joints(self) -> list[JointName]:

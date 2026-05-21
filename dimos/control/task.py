@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
 from dimos.hardware.manipulators.spec import ControlMode
+from dimos.hardware.whole_body.spec import IMUState
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Pose import Pose
@@ -106,13 +107,16 @@ class CoordinatorState:
 
     Attributes:
         joints: Aggregated joint states from all hardware
+        imu: Per-whole-body IMU readings, keyed by hardware_id.
+            Empty dict when no whole-body hardware exposes IMU this tick.
         t_now: Current tick time (time.perf_counter())
         dt: Time since last tick (seconds)
     """
 
     joints: JointStateSnapshot
-    t_now: float  # Coordinator time (perf_counter) - USE THIS, NOT time.time()!
-    dt: float  # Time since last tick
+    imu: dict[str, IMUState] = field(default_factory=dict)
+    t_now: float = 0.0  # Coordinator time (perf_counter) - USE THIS, NOT time.time()!
+    dt: float = 0.0  # Time since last tick
 
 
 @dataclass

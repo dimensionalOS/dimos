@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+import signal
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -29,7 +30,14 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.transport import LCMTransport
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.simulation.engines.base import SimulationEngine
+from dimos.simulation.engines.mujoco_shm import ManipShmWriter
+from dimos.simulation.engines.wholebody_sim_hooks import WholeBodySimHooks
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
@@ -86,13 +94,22 @@ class MujocoEngine(SimulationEngine):
         cameras: list[CameraConfig] | None = None,
         on_before_step: StepHook | None = None,
         on_after_step: StepHook | None = None,
+        assets: dict[str, bytes] | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
         self._on_after_step: StepHook | None = on_after_step
 
         xml_path = self._resolve_xml_path(config_path)
-        self._model = mujoco.MjModel.from_xml_path(str(xml_path))
+        if assets is not None:
+            # MJCFs that reference meshes by bare filename (e.g. menagerie
+            # G1) need the mesh bytes injected by name; from_xml_path can't
+            # find them on disk.
+            with open(xml_path) as f:
+                xml_str = f.read()
+            self._model = mujoco.MjModel.from_xml_string(xml_str, assets=assets)
+        else:
+            self._model = mujoco.MjModel.from_xml_path(str(xml_path))
         self._xml_path = xml_path
 
         self._data = mujoco.MjData(self._model)
@@ -208,12 +225,33 @@ class MujocoEngine(SimulationEngine):
             logger.error("connect() failed", cls=self.__class__.__name__, error=str(e))
             return False
 
+    def run_blocking(self, on_started: Callable[[], None] | None = None) -> None:
+        """Run the simulation loop on the current thread until stopped.
+
+        This is used by the subprocess entry point so ``mujoco.viewer`` runs
+        on that process's main thread. The normal Module path still uses
+        ``connect()``, which starts the loop on a worker thread.
+        """
+        logger.info("run_blocking()", cls=self.__class__.__name__)
+        with self._lock:
+            self._connected = True
+            self._stop_event.clear()
+        try:
+            self._sim_loop(on_started=on_started)
+        finally:
+            with self._lock:
+                self._connected = False
+
+    def request_stop(self) -> None:
+        """Ask the sim loop to stop without joining a thread."""
+        with self._lock:
+            self._connected = False
+        self._stop_event.set()
+
     def disconnect(self) -> bool:
         try:
             logger.info("disconnect()", cls=self.__class__.__name__)
-            with self._lock:
-                self._connected = False
-            self._stop_event.set()
+            self.request_stop()
             if self._sim_thread and self._sim_thread.is_alive():
                 self._sim_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._sim_thread = None
@@ -273,7 +311,7 @@ class MujocoEngine(SimulationEngine):
             state.rgb_renderer.close()
             state.depth_renderer.close()
 
-    def _sim_loop(self) -> None:
+    def _sim_loop(self, on_started: Callable[[], None] | None = None) -> None:
         logger.info("sim loop started", cls=self.__class__.__name__)
         dt = 1.0 / self._control_frequency
 
@@ -305,12 +343,16 @@ class MujocoEngine(SimulationEngine):
                 time.sleep(sleep_time)
 
         if self._headless:
+            if on_started is not None:
+                on_started()
             while not self._stop_event.is_set():
                 _step_once(sync_viewer=False)
         else:
             with viewer.launch_passive(
                 self._model, self._data, show_left_ui=False, show_right_ui=False
             ) as m_viewer:
+                if on_started is not None:
+                    on_started()
                 while m_viewer.is_running() and not self._stop_event.is_set():
                     _step_once(sync_viewer=True)
 
@@ -333,6 +375,14 @@ class MujocoEngine(SimulationEngine):
     @property
     def model(self) -> mujoco.MjModel:
         return self._model
+
+    @property
+    def data(self) -> mujoco.MjData:
+        """Live MjData. In-process consumers (sensors, PD hooks) read it
+        directly; physics integration in the sim thread mutates it under
+        ``self._lock`` so reads inside the same MujocoEngine instance are
+        coherent without extra locking."""
+        return self._data
 
     @property
     def joint_positions(self) -> list[float]:
@@ -458,9 +508,211 @@ class MujocoEngine(SimulationEngine):
         return float(self._model.cam_fovy[cam_id])
 
 
+def engine_main(
+    mjcf_path: str,
+    shm_key: str,
+    dof: int,
+    *,
+    headless: bool = True,
+    inject_legacy_assets: bool = True,
+    odom_topic: str = "/odom",
+    imu_topic: str = "/imu",
+    imu_gyro_sensor_names: tuple[str, ...] = (
+        "imu-pelvis-angular-velocity",
+        "imu-torso-angular-velocity",
+        "gyro_pelvis",
+        "imu_gyro",
+    ),
+    imu_accel_sensor_names: tuple[str, ...] = (
+        "imu-pelvis-linear-acceleration",
+        "imu-torso-linear-acceleration",
+        "accelerometer_pelvis",
+        "imu_accel",
+    ),
+) -> None:
+    """Standalone whole-body sim entry point.
+
+    Runs an in-process MuJoCo engine + the whole-body SHM bridge + (optionally)
+    a passive viewer, all on the main thread. ``MujocoSimModule`` spawns this
+    as a subprocess when ``engine_mode='subprocess'`` is set — that way MuJoCo
+    can render with ``viewer.launch_passive`` on macOS (which requires main
+    thread) while dimos workers remain free to be daemonic.
+
+    SHM layout matches ``ManipShmWriter`` so the same
+    ``WholeBodyAdapter`` (sim_mujoco_g1) reads commands + writes states from
+    the dimos side. The /odom + /imu LCM publishes mirror what
+    ``MujocoSimModule`` does in thread mode.
+    """
+    # SHM writer that mirrors the in-process module's layout — the
+    # dimos-side adapter reads the same buffers either way.
+    shm = ManipShmWriter(shm_key)
+
+    # Engine + asset injection (mirrors MujocoSimModule.start()).
+    assets: dict[str, bytes] | None = None
+    if inject_legacy_assets:
+        try:
+            from dimos.simulation.mujoco.model import get_assets
+
+            assets = get_assets()
+        except Exception as e:  # pragma: no cover - bare MJCFs don't need this
+            logger.warning(f"engine_main: asset injection skipped: {e}")
+    eng = MujocoEngine(
+        config_path=Path(mjcf_path),
+        headless=headless,
+        cameras=[],
+        assets=assets,
+    )
+
+    # Resolve IMU sensors + base-qpos slice once.
+    imu_gyro_slice = _find_sensor_slice_inline(eng.model, imu_gyro_sensor_names)
+    imu_accel_slice = _find_sensor_slice_inline(eng.model, imu_accel_sensor_names)
+    has_freejoint = bool(
+        eng.model.njnt > 0 and int(eng.model.jnt_type[0]) == int(mujoco.mjtJoint.mjJNT_FREE)
+    )
+
+    # SHM bridge — runs in the engine's sim loop.
+    hooks = WholeBodySimHooks(shm, dof=dof)
+
+    # LCM publishers (started lazily; .start() spawns the LCM thread).
+    odom_tx: LCMTransport[PoseStamped] = LCMTransport(odom_topic, PoseStamped)
+    odom_tx.start()
+    imu_tx: LCMTransport[Imu] = LCMTransport(imu_topic, Imu)
+    imu_tx.start()
+
+    def _on_after_step(engine: MujocoEngine) -> None:
+        """Composite post-step: SHM writes + LCM publishes."""
+        hooks.post_step(engine)
+
+        data = engine.data
+        ts = time.time()
+
+        # Base pose (qpos[0:7]) → /odom
+        if has_freejoint:
+            pos = data.qpos[0:3]
+            quat = data.qpos[3:7]  # (w, x, y, z) MuJoCo convention
+            odom_tx.publish(
+                PoseStamped(
+                    ts=ts,
+                    frame_id="world",
+                    position=Vector3(float(pos[0]), float(pos[1]), float(pos[2])),
+                    orientation=Quaternion(
+                        float(quat[1]), float(quat[2]), float(quat[3]), float(quat[0])
+                    ),
+                )
+            )
+
+        # IMU sensors → SHM + /imu
+        if imu_gyro_slice is None and imu_accel_slice is None and not has_freejoint:
+            return
+        quat_tup = (
+            (
+                float(data.qpos[3]),
+                float(data.qpos[4]),
+                float(data.qpos[5]),
+                float(data.qpos[6]),
+            )
+            if has_freejoint
+            else (1.0, 0.0, 0.0, 0.0)
+        )
+        if imu_gyro_slice is not None:
+            gyro_vals = data.sensordata[imu_gyro_slice]
+            gyro_tup = (float(gyro_vals[0]), float(gyro_vals[1]), float(gyro_vals[2]))
+        else:
+            gyro_tup = (0.0, 0.0, 0.0)
+        if imu_accel_slice is not None:
+            accel_vals = data.sensordata[imu_accel_slice]
+            accel_tup = (float(accel_vals[0]), float(accel_vals[1]), float(accel_vals[2]))
+        else:
+            accel_tup = (0.0, 0.0, 0.0)
+        shm.write_imu(quaternion=quat_tup, gyroscope=gyro_tup, accelerometer=accel_tup)
+        imu_tx.publish(
+            Imu(
+                ts=ts,
+                frame_id="pelvis",
+                orientation=Quaternion(quat_tup[1], quat_tup[2], quat_tup[3], quat_tup[0]),
+                angular_velocity=Vector3(*gyro_tup),
+                linear_acceleration=Vector3(*accel_tup),
+            )
+        )
+
+    eng._on_before_step = hooks.pre_step  # type: ignore[attr-defined]
+    eng._on_after_step = _on_after_step  # type: ignore[attr-defined]
+
+    def _handle_sig(signum: int, frame: object) -> None:
+        logger.info(f"engine_main: signal {signum} received, stopping")
+        eng.request_stop()
+
+    signal.signal(signal.SIGINT, _handle_sig)
+    signal.signal(signal.SIGTERM, _handle_sig)
+
+    def _mark_ready() -> None:
+        shm.signal_ready(num_joints=eng.num_joints)
+        logger.info(
+            "engine_main: ready",
+            mjcf=mjcf_path,
+            shm_key=shm_key,
+            dof=dof,
+            headless=headless,
+        )
+
+    try:
+        eng.run_blocking(on_started=_mark_ready)
+    finally:
+        try:
+            eng.request_stop()
+        except Exception as e:
+            logger.warning(f"engine_main: request_stop raised: {e}")
+        try:
+            shm.signal_stop()
+            shm.cleanup()
+        except Exception as e:
+            logger.warning(f"engine_main: shm cleanup raised: {e}")
+        odom_tx.stop()
+        imu_tx.stop()
+
+
+def _find_sensor_slice_inline(
+    model: mujoco.MjModel, names: tuple[str, ...], dim: int = 3
+) -> slice | None:
+    for n in names:
+        sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, n)
+        if sid >= 0:
+            adr = int(model.sensor_adr[sid])
+            return slice(adr, adr + dim)
+    return None
+
+
 __all__ = [
     "CameraConfig",
     "CameraFrame",
     "MujocoEngine",
     "StepHook",
+    "engine_main",
 ]
+
+
+if __name__ == "__main__":
+    import argparse
+
+    p = argparse.ArgumentParser(
+        description="Standalone MuJoCo whole-body sim subprocess.",
+        prog="python -m dimos.simulation.engines.mujoco_engine",
+    )
+    p.add_argument("mjcf", help="Path to MJCF XML")
+    p.add_argument("shm_key", help="SHM key (matches the dimos-side adapter)")
+    p.add_argument("dof", type=int, help="Number of motor DOFs")
+    p.add_argument("--view", action="store_true", help="Launch passive viewer")
+    p.add_argument("--no-asset-inject", action="store_true", help="Skip menagerie asset injection")
+    p.add_argument("--odom-topic", default="/odom")
+    p.add_argument("--imu-topic", default="/imu")
+    args = p.parse_args()
+
+    engine_main(
+        mjcf_path=args.mjcf,
+        shm_key=args.shm_key,
+        dof=args.dof,
+        headless=not args.view,
+        inject_legacy_assets=not args.no_asset_inject,
+        odom_topic=args.odom_topic,
+        imu_topic=args.imu_topic,
+    )

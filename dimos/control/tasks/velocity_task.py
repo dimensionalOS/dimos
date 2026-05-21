@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import threading
+from typing import Any
 
 from dimos.control.task import (
     BaseControlTask,
@@ -271,3 +272,13 @@ __all__ = [
     "JointVelocityTask",
     "JointVelocityTaskConfig",
 ]
+
+
+def create_task(cfg: Any, hardware: Any) -> JointVelocityTask:
+    return JointVelocityTask(
+        cfg.name,
+        JointVelocityTaskConfig(
+            joint_names=cfg.joint_names,
+            priority=cfg.priority,
+        ),
+    )
