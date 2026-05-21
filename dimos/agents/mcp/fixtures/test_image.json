@@ -12,10 +12,6 @@
       ]
     },
     {
-      "content": "I've taken a picture. Let me analyze and describe it for you.\nThe image features an expansive outdoor stadium. From the camera's perspective, the word 'stadium' best matches the image. Is there anything else you'd like to know or do?",
-      "tool_calls": []
-    },
-    {
       "content": "The image shows a group of people sitting and enjoying their time at an outdoor cafe. Therefore, the word 'cafe' best matches the image.",
       "tool_calls": []
     }
