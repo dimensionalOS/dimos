@@ -160,16 +160,16 @@ class DroneController:
             self,
             input_controller: InputController,
             drone_hover_thrust: float = 0.26487,
-            drone_input_scale: float = 0.02,
-            attitude_p: float = 1.0,
-            attitude_d: float = 0.2,
+            attitude_p: float = 0.5,
+            attitude_d: float = 2.0,
+            max_tilt_angle: float = 0.1,
             **kwargs: Any,
     ) -> None:
         self._input_controller = input_controller
         self._drone_hover_thrust = drone_hover_thrust
-        self._drone_input_scale = drone_input_scale
         self._attitude_p = attitude_p
         self._attitude_d = attitude_d
+        self._max_tilt_angle = max_tilt_angle
 
     def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         return self._input_controller.get_command().astype(np.float32)
@@ -197,13 +197,12 @@ class DroneController:
 
         roll_rate = data.qvel[3]
         pitch_rate = data.qvel[4]
-        # yaw_rate = data.qvel[5]
+        yaw_rate = data.qvel[5]
 
-        roll_correction = self._attitude_p * current_roll + self._attitude_d * roll_rate
-        pitch_correction = self._attitude_p * current_pitch + self._attitude_d * pitch_rate 
-        # yaw_correction = self._attitude_p * current_yaw + self._attitude_d * yaw_rate
+        desired_roll = roll * self._max_tilt_angle
+        desired_pitch = pitch * self._max_tilt_angle
 
         data.ctrl[0] = self._drone_hover_thrust
-        data.ctrl[1] = -roll * self._drone_input_scale + roll_correction
-        data.ctrl[2] = pitch * self._drone_input_scale + pitch_correction
-        data.ctrl[3] = -yaw * self._drone_input_scale
+        data.ctrl[1] = self._attitude_p * (current_roll - desired_roll) + self._attitude_d * roll_rate
+        data.ctrl[2] = self._attitude_p * (current_pitch - desired_pitch) + self._attitude_d * pitch_rate
+        data.ctrl[3] = self._attitude_p * (yaw - yaw_rate)
