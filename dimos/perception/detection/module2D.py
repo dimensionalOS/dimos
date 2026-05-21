@@ -14,9 +14,6 @@
 from collections.abc import Callable, Sequence
 from typing import Annotated, Any
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-)
 from pydantic.experimental.pipeline import validate_as
 from reactivex import operators as ops
 from reactivex.observable import Observable
@@ -60,8 +57,6 @@ class Detection2DModule(Module):
     color_image: In[Image]
 
     detections: Out[Detection2DArray]
-    annotations: Out[ImageAnnotations]
-
     detected_image_0: Out[Image]
     detected_image_1: Out[Image]
     detected_image_2: Out[Image]
@@ -142,10 +137,6 @@ class Detection2DModule(Module):
             lambda det: self.detections.publish(det.to_ros_detection2d_array())
         )
 
-        self.detection_stream_2d().subscribe(
-            lambda det: self.annotations.publish(det.to_foxglove_annotations())
-        )
-
         def publish_cropped_images(detections: ImageDetections2D) -> None:
             for index, detection in enumerate(detections[:3]):
                 image_topic = getattr(self, "detected_image_" + str(index))
@@ -170,7 +161,6 @@ def deploy(  # type: ignore[no-untyped-def]
     detector = Detection2DModule(**kwargs)
     detector.color_image.connect(camera.color_image)
 
-    detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
     detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
 
     detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)

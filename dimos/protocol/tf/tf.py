@@ -18,6 +18,7 @@ from abc import abstractmethod
 from collections import deque
 from dataclasses import field
 from functools import reduce
+import time
 
 from dimos.memory.timeseries.inmemory import InMemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -26,6 +27,10 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.spec import BaseConfig, Service
+from dimos.types.timestamped import to_human_readable
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 # generic configuration for transform service
@@ -85,8 +90,6 @@ class TBuffer(InMemoryStore[Transform]):
         first_item = self.first()
         time_range = self.time_range()
         if time_range and first_item:
-            from dimos.types.timestamped import to_human_readable
-
             start_time = to_human_readable(time_range[0])
             end_time = to_human_readable(time_range[1])
             duration = time_range[1] - time_range[0]
@@ -141,6 +144,13 @@ class MultiTBuffer:
         time_point: float | None = None,
         time_tolerance: float | None = None,
     ) -> Transform | None:
+        if parent_frame == child_frame:
+            return Transform(
+                frame_id=parent_frame,
+                child_frame_id=child_frame,
+                ts=time_point if time_point is not None else time.time(),
+            )
+
         # Check forward direction
         key = (parent_frame, child_frame)
         if key in self.buffers:
@@ -154,14 +164,24 @@ class MultiTBuffer:
 
         return None
 
-    def get(self, *args, **kwargs) -> Transform | None:  # type: ignore[no-untyped-def]
-        simple = self.get_transform(*args, **kwargs)
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> Transform | None:
+        simple = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
+
         if simple is not None:
             return simple
 
-        complex = self.get_transform_search(*args, **kwargs)
+        complex = self.get_transform_search(parent_frame, child_frame, time_point, time_tolerance)
 
         if complex is None:
+            logger.warning(
+                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}', {self}"
+            )
             return None
 
         return reduce(lambda t1, t2: t1 + t2, complex)
