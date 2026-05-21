@@ -53,11 +53,14 @@ jobs:
           echo "Releasing version: $version"
       - name: Verify version not already on PyPI
         run: |
-          if pip install "dimos==${{ steps.read-version.outputs.version }}" \
-              --dry-run --no-deps --ignore-installed --quiet 2>/dev/null; then
-            echo "::error::dimos ${{ steps.read-version.outputs.version }} already exists on PyPI"
-            exit 1
-          fi
+          version="${{ steps.read-version.outputs.version }}"
+          http_code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            "https://pypi.org/pypi/dimos/${version}/json" 2>/dev/null || true)
+          case "$http_code" in
+            200) echo "::error::dimos ${version} already exists on PyPI"; exit 1 ;;
+            404) echo "ok: ${version} not on PyPI" ;;
+            *)   echo "::error::PyPI version check failed (HTTP code: '${http_code}')"; exit 2 ;;
+          esac
       - name: Verify tag does not exist
         run: |
           if git ls-remote --tags origin "refs/tags/v${{ steps.read-version.outputs.version }}" | grep -q .; then
@@ -152,6 +155,7 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
           attestations: true
+          skip-existing: true
 
   publish-pypi:
     if: ${{ ! inputs.dry-run }}
