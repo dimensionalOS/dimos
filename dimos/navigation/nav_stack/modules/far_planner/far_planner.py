@@ -23,7 +23,7 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.ContourPolygons3D import ContourPolygons3D
-from dimos.msgs.nav_msgs.GraphNodes3D import GraphNodes3D
+from dimos.msgs.nav_msgs.Graph3D import Graph3D
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
@@ -34,7 +34,7 @@ class FarPlannerConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/far_planner_native"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-far-planner/v0.5.0 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-far-planner/v0.7.0 --no-write-lock-file"
     )
 
     # C++ binary uses snake_case CLI args.
@@ -107,7 +107,6 @@ class FarPlanner(NativeModule):
     stop_movement: In[Bool]
     way_point: Out[PointStamped]
     goal_path: Out[NavPath]
-    graph_nodes: Out[GraphNodes3D]
-    graph_edges: Out[LineSegments3D]
+    graph: Out[Graph3D]
     contour_polygons: Out[ContourPolygons3D]
     nav_boundary: Out[LineSegments3D]

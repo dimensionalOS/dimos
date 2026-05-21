@@ -30,9 +30,12 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Graph3D import Graph3D
+from dimos.msgs.nav_msgs.GraphDelta3D import GraphDelta3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.frames import FRAME_MAP, FRAME_ODOM
+from dimos.navigation.nav_stack.specs import LoopClosure
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -66,10 +69,19 @@ class PGOConfig(NativeModuleConfig):
     global_map_voxel_size: float = 0.1
     global_map_publish_rate: float = 1.0
 
+    # Scan Context place recognition (used by loop closure search)
+    use_scan_context: bool = True
+    scan_context_num_rings: int = 20
+    scan_context_num_sectors: int = 60
+    scan_context_max_range_m: float = 80.0
+    scan_context_top_k: int = 10
+    scan_context_match_threshold: float = 0.4
+    scan_context_lidar_height_m: float = 2.0
+
     debug: bool = False
 
 
-class PGO(NativeModule):
+class PGO(NativeModule, LoopClosure):
     """Pose graph optimization with loop closure using GTSAM iSAM2 + PCL ICP."""
 
     config: PGOConfig
@@ -78,13 +90,18 @@ class PGO(NativeModule):
     odometry: In[Odometry]
     corrected_odometry: Out[Odometry]
     global_map: Out[PointCloud2]
-    pgo_tf: Out[Odometry]
+    # NOTE: this corrected_tf gets refactored-out in the next PR
+    corrected_tf: Out[Odometry]
+    pose_graph: Out[Graph3D]
+    loop_closure_event: Out[GraphDelta3D]
 
     @rpc
     def start(self) -> None:
         super().start()
         self.register_disposable(
-            Disposable(self.pgo_tf.transport.subscribe(self._on_tf_correction, self.pgo_tf))
+            Disposable(
+                self.corrected_tf.transport.subscribe(self._on_tf_correction, self.corrected_tf)
+            )
         )
         # Seed identity TF so consumers can query map->body immediately.
         self._publish_tf(

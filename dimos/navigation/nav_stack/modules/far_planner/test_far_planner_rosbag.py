@@ -55,8 +55,7 @@ GOAL_LCM = "/rbfp_goal#geometry_msgs.PointStamped"
 STOP_LCM = "/rbfp_stop#std_msgs.Bool"
 WAYPOINT_OUT_LCM = "/rbfp_wp#geometry_msgs.PointStamped"
 GOAL_PATH_LCM = "/rbfp_gp#nav_msgs.Path"
-GRAPH_NODES_LCM = "/rbfp_gn#nav_msgs.GraphNodes3D"
-GRAPH_EDGES_LCM = "/rbfp_ge#nav_msgs.LineSegments3D"
+GRAPH_LCM = "/rbfp_g#nav_msgs.Graph3D"
 CONTOUR_LCM = "/rbfp_cp#nav_msgs.ContourPolygons3D"
 NAV_BOUNDARY_LCM = "/rbfp_nb#nav_msgs.LineSegments3D"
 
@@ -79,10 +78,8 @@ def _far_planner_args() -> list[str]:
         WAYPOINT_OUT_LCM,
         "--goal_path",
         GOAL_PATH_LCM,
-        "--graph_nodes",
-        GRAPH_NODES_LCM,
-        "--graph_edges",
-        GRAPH_EDGES_LCM,
+        "--graph",
+        GRAPH_LCM,
         "--contour_polygons",
         CONTOUR_LCM,
         "--nav_boundary",
@@ -217,7 +214,7 @@ class TestFarPlannerRosbag:
         assert len(ref_wp) > 0, "No reference waypoints in fixture"
 
         lcm = lcmlib.LCM()
-        wp_collector = LcmCollector(topic=WAYPOINT_OUT_LCM, msg_type=PointStamped)
+        wp_collector = LcmCollector(topic=WAYPOINT_OUT_LCM, message_type=PointStamped)
         wp_collector.start(lcm)
 
         stop_event = threading.Event()
