@@ -80,7 +80,7 @@ _xarm6_teleop_cfg = _catalog_xarm6(
 _piper_teleop_cfg = _catalog_piper(
     name="arm",
     adapter_type="sim_mujoco" if _is_sim else "piper",
-    address=str(PIPER_SIM_PATH) if _is_sim else (global_config.robot_port or "can0"),
+    address=str(PIPER_SIM_PATH) if _is_sim else (global_config.can_robot_portport or "can0"),
 )
 
 # XArm6 servo - streaming position control
