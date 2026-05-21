@@ -53,6 +53,15 @@ unitree_go2_coordinator = (
                     priority=10,
                     velocity_zero_on_timeout=False,
                 ),
+                # Closed-loop path follower used by the benchmark tool.
+                # Inactive until the tool RPCs configure(...) + start_path(...).
+                # Higher priority than vel_go2 so it preempts teleop during a run.
+                TaskConfig(
+                    name="baseline_follower",
+                    type="baseline_path_follower",
+                    joint_names=_go2_joints,
+                    priority=20,
+                ),
             ],
         ),
     )

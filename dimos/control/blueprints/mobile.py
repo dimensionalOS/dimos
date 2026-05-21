@@ -90,6 +90,15 @@ coordinator_mock_twist_base = ControlCoordinator.blueprint(
             type="velocity",
             joint_names=_base_joints,
             priority=10,
+            velocity_zero_on_timeout=False,
+        ),
+        # Closed-loop path follower used by the benchmark tool.
+        # Inactive until the tool RPCs configure(...) + start_path(...).
+        TaskConfig(
+            name="baseline_follower",
+            type="baseline_path_follower",
+            joint_names=_base_joints,
+            priority=20,
         ),
     ],
 ).transports(
@@ -108,6 +117,15 @@ coordinator_flowbase = ControlCoordinator.blueprint(
             type="velocity",
             joint_names=_base_joints,
             priority=10,
+            velocity_zero_on_timeout=False,
+        ),
+        # Closed-loop path follower used by the benchmark tool.
+        # Inactive until the tool RPCs configure(...) + start_path(...).
+        TaskConfig(
+            name="baseline_follower",
+            type="baseline_path_follower",
+            joint_names=_base_joints,
+            priority=20,
         ),
     ],
 ).transports(
@@ -232,6 +250,15 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
             type="velocity",
             joint_names=_base_joints,
             priority=10,
+            velocity_zero_on_timeout=False,
+        ),
+        # Closed-loop path follower used by the benchmark tool.
+        # Inactive until the tool RPCs configure(...) + start_path(...).
+        TaskConfig(
+            name="baseline_follower",
+            type="baseline_path_follower",
+            joint_names=_base_joints,
+            priority=20,
         ),
     ],
 ).transports(
@@ -242,16 +269,58 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
 )
 
 
-# FOPDT in-process sim plant exposed on the same LCM topic shape as the
-# real Go2 bring-up (/go2/cmd_vel + /go2/odom). Pair with the benchmark /
-# characterization tools (sim mode) — they drive transport_lcm with
-# hardware_id="go2", so this blueprint is the drop-in stand-in for
-# `unitree-go2-webrtc-keyboard-teleop` when no robot is present.
-coordinator_sim_fopdt = FopdtPlantConnection.blueprint().transports(
-    {
-        ("cmd_vel", Twist): LCMTransport("/go2/cmd_vel", Twist),
-        ("odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
-    }
+# FOPDT in-process sim plant + a ControlCoordinator on top, so the
+# tuning tools see exactly the same /cmd_vel + /coordinator/joint_state
+# contract sim and hw. FopdtPlantConnection exposes /sim/cmd_vel (In)
+# and /sim/odom (Out); the coord drives /sim/cmd_vel via its
+# transport_lcm adapter (hardware_id="sim"), reads pose back via the
+# same adapter's /sim/odom subscription, and publishes JointState +
+# hosts the baseline_follower task. Drop-in stand-in for a real robot.
+_sim_joints = make_twist_base_joints("sim")
+
+coordinator_sim_fopdt = (
+    autoconnect(
+        FopdtPlantConnection.blueprint(),
+        ControlCoordinator.blueprint(
+            hardware=[
+                HardwareComponent(
+                    hardware_id="sim",
+                    hardware_type=HardwareType.BASE,
+                    joints=_sim_joints,
+                    adapter_type="transport_lcm",
+                ),
+            ],
+            tasks=[
+                TaskConfig(
+                    name="vel_sim",
+                    type="velocity",
+                    joint_names=_sim_joints,
+                    priority=10,
+                    velocity_zero_on_timeout=False,
+                ),
+                TaskConfig(
+                    name="baseline_follower",
+                    type="baseline_path_follower",
+                    joint_names=_sim_joints,
+                    priority=20,
+                ),
+            ],
+        ),
+    )
+    .remappings(
+        [
+            (FopdtPlantConnection, "cmd_vel", "sim_cmd_vel"),
+            (FopdtPlantConnection, "odom", "sim_odom"),
+        ]
+    )
+    .transports(
+        {
+            ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
+            ("sim_cmd_vel", Twist): LCMTransport("/sim/cmd_vel", Twist),
+            ("sim_odom", PoseStamped): LCMTransport("/sim/odom", PoseStamped),
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        }
+    )
 )
 
 
