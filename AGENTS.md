@@ -188,7 +188,7 @@ Expose as a module-level variable for `dimos run` to find it. Add to the registr
 
 ### GlobalConfig
 
-Singleton config. Values cascade: defaults → `.env` → env vars → blueprint → CLI flags. Env vars prefixed `DIMOS_`. Key fields: `robot_port`, `simulation`, `replay`, `viewer`, `n_workers`, `mcp_port`.
+Singleton config. Values cascade: defaults → `.env` → env vars → blueprint → CLI flags. Env vars prefixed `DIMOS_`. Key fields: `robot_ip`, `simulation`, `replay`, `viewer`, `n_workers`, `mcp_port`.
 
 ### Transports
 

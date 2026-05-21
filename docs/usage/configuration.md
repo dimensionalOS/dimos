@@ -84,7 +84,11 @@ Config(
     frame_id_prefix=None,
     frame_id='frame_id_override',
     g=GlobalConfig(
-        robot_port=None,
+        robot_ip=None,
+        robot_ips=None,
+        xarm7_ip=None,
+        xarm6_ip=None,
+        can_port=None,
         simulation='',
         replay=False,
         replay_db='go2_short',

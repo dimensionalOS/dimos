@@ -34,7 +34,7 @@ logger = setup_logger()
 
 
 class G1Config(ModuleConfig):
-    ip: str = Field(default_factory=lambda m: m["g"].robot_port)
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     connection_type: str = Field(default_factory=lambda m: m["g"].unitree_connection_type)
 
 

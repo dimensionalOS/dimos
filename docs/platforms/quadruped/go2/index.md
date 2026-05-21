@@ -66,14 +66,14 @@ dimos go2tool discover
 Prints `SOURCE NAME IP MAC SERIAL` for every robot it sees over BLE and LAN. Export the IP:
 
 ```bash
-export ROBOT_PORT=<discovered_ip>
+export ROBOT_IP=<discovered_ip>
 ```
 
 ### Pre-flight checks
 
 1. Robot is reachable and low latency <10ms, 0% packet loss
 ```bash
-ping $ROBOT_PORT
+ping $ROBOT_IP
 ```
 
 2. Built-in obstacle avoidance is on. (DimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots)
@@ -81,7 +81,7 @@ ping $ROBOT_PORT
 ### Ready to run DimOS
 
 ```bash
-export ROBOT_PORT=<YOUR_GO2_IP>
+export ROBOT_IP=<YOUR_GO2_IP>
 dimos run unitree-go2
 ```
 
@@ -121,7 +121,7 @@ Natural language control with an LLM agent that understands physical space:
 
 ```bash
 export OPENAI_API_KEY=<YOUR_KEY>
-export ROBOT_PORT=<YOUR_GO2_IP>
+export ROBOT_IP=<YOUR_GO2_IP>
 dimos run unitree-go2-agentic
 ```
 
