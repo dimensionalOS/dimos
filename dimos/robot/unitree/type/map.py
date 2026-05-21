@@ -20,17 +20,14 @@ import open3d as o3d  # type: ignore[import-untyped]
 from reactivex import interval
 from reactivex.disposable import Disposable
 
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport
 from dimos.mapping.pointclouds.accumulators.general import GeneralPointCloudAccumulator
 from dimos.mapping.pointclouds.accumulators.protocol import PointCloudAccumulator
 from dimos.mapping.pointclouds.occupancy import general_occupancy
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.go2.connection import Go2ConnectionProtocol
 
 
 class MapConfig(ModuleConfig):
@@ -109,12 +106,3 @@ class Map(Module):
             occupancygrid = self._preloaded_occupancy
 
         self.global_costmap.publish(occupancygrid)
-
-
-def deploy(dimos: ModuleCoordinator, connection: Go2ConnectionProtocol):  # type: ignore[no-untyped-def]
-    mapper = dimos.deploy(Map, global_publish_interval=1.0)
-    mapper.global_map.transport = LCMTransport("/global_map", PointCloud2)
-    mapper.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
-    mapper.lidar.connect(connection.pointcloud)  # type: ignore[attr-defined]
-    mapper.start()
-    return mapper

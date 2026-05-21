@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unitree Go2 ControlCoordinator — GO2Connection + coordinator via LCM transport adapter.
+"""Unitree Go2 ControlCoordinator — Go2WebRtcConnection + coordinator via LCM transport adapter.
 
 Usage:
     dimos run unitree-go2-coordinator
@@ -29,13 +29,13 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection_webrtc import Go2WebRtcConnection
 
 _go2_joints = make_twist_base_joints("go2")
 
 unitree_go2_coordinator = (
     autoconnect(
-        GO2Connection.blueprint(),
+        Go2WebRtcConnection.blueprint(),
         ControlCoordinator.blueprint(
             hardware=[
                 HardwareComponent(
@@ -57,8 +57,8 @@ unitree_go2_coordinator = (
     )
     .remappings(
         [
-            (GO2Connection, "cmd_vel", "go2_cmd_vel"),
-            (GO2Connection, "odom", "go2_odom"),
+            (Go2WebRtcConnection, "cmd_vel", "go2_cmd_vel"),
+            (Go2WebRtcConnection, "odom", "go2_odom"),
         ]
     )
     .transports(

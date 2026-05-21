@@ -81,9 +81,9 @@ class PersonFollowSkillContainer(Module):
         # Use simulator camera intrinsics in simulation mode
         camera_info = self.config.camera_info
         if self.config.g.simulation == "mujoco":
-            from dimos.robot.unitree.mujoco_connection import MujocoConnection
+            from dimos.robot.unitree.mujoco_camera_constants import MUJOCO_CAMERA_INFO_STATIC
 
-            camera_info = MujocoConnection.camera_info_static
+            camera_info = MUJOCO_CAMERA_INFO_STATIC
         elif self.config.g.simulation == "dimsim":
             from dimos.robot.unitree.dimsim_connection import DimSimConnection
 

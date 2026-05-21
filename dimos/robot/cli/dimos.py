@@ -276,7 +276,16 @@ def run(
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
     set_run_log_dir(log_dir)
 
+    # Apply CLI overrides to global_config before importing blueprints so any
+    # blueprint-time conditionals (e.g. reading global_config.simulator) see
+    # the requested values.
+    if cli_config_overrides:
+        global_config.update(**cli_config_overrides)
+
     blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
+
+    if backend := global_config.effective_simulator:
+        blueprint = blueprint.with_backend(backend)
 
     if disable:
         disabled_classes = tuple(

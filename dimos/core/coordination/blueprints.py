@@ -195,6 +195,66 @@ class Blueprint:
     def configurators(self, *checks: "SystemConfigurator") -> "Blueprint":
         return replace(self, configurator_checks=self.configurator_checks + tuple(checks))
 
+    def with_backend(self, backend: str) -> "Blueprint":
+        """Swap tagged connection modules for the matching `(robot, backend)` variant.
+
+        For each atom whose module carries a `_connection_tag` with a backend
+        different from the requested one, look up the same-robot module for
+        `backend` in the connection registry and substitute it. Streams,
+        remappings, and disabled-modules entries are rewritten to point at the
+        new class.
+
+        If the blueprint has no tagged atoms this is a no-op (with a warning).
+        """
+        # Lazy import to keep blueprints.py free of robot deps.
+        from dimos.robot.connection_registry import backends_for, get_connection
+
+        swap_map: dict[type[ModuleBase], type[ModuleBase]] = {}
+        for atom in self.blueprints:
+            tag = getattr(atom.module, "_connection_tag", None)
+            if tag is None or tag.backend == backend:
+                continue
+            target = get_connection(tag.robot, backend)
+            if target is None:
+                available = sorted(backends_for(tag.robot))
+                raise ValueError(
+                    f"No connection registered for robot={tag.robot!r} "
+                    f"backend={backend!r} (have: {available})"
+                )
+            swap_map[atom.module] = target
+
+        if not swap_map:
+            tagged = any(getattr(a.module, "_connection_tag", None) for a in self.blueprints)
+            if not tagged:
+                logger.warning(
+                    "Blueprint.with_backend(%r) had no tagged connection atoms — "
+                    "returning blueprint unchanged",
+                    backend,
+                )
+            return self
+
+        new_atoms: list[BlueprintAtom] = []
+        for atom in self.blueprints:
+            target = swap_map.get(atom.module)
+            if target is None:
+                new_atoms.append(atom)
+                continue
+            _check_stream_parity(atom.module, target, atom)
+            _check_kwargs_compat(target, atom.kwargs)
+            new_atoms.append(BlueprintAtom.create(target, atom.kwargs))
+
+        new_remappings = {
+            (swap_map.get(m, m), name): v for (m, name), v in self.remapping_map.items()
+        }
+        new_disabled = tuple(swap_map.get(m, m) for m in self.disabled_modules_tuple)
+
+        return replace(
+            self,
+            blueprints=tuple(new_atoms),
+            remapping_map=MappingProxyType(new_remappings),
+            disabled_modules_tuple=new_disabled,
+        )
+
     @cached_property
     def active_blueprints(self) -> tuple[BlueprintAtom, ...]:
         if not self.disabled_modules_tuple:
@@ -239,3 +299,38 @@ def _eliminate_duplicates(blueprints: list[BlueprintAtom]) -> list[BlueprintAtom
             seen.add(bp.module)
             unique_blueprints.append(bp)
     return list(reversed(unique_blueprints))
+
+
+def _stream_signature(streams: tuple[StreamRef, ...]) -> set[tuple[str, str]]:
+    return {(s.name, s.direction) for s in streams}
+
+
+def _check_stream_parity(old: type[ModuleBase], new: type[ModuleBase], atom: BlueprintAtom) -> None:
+    new_atom = BlueprintAtom.create(new, atom.kwargs)
+    old_sig = _stream_signature(atom.streams)
+    new_sig = _stream_signature(new_atom.streams)
+    if old_sig != new_sig:
+        only_old = sorted(old_sig - new_sig)
+        only_new = sorted(new_sig - old_sig)
+        raise ValueError(
+            f"Stream surface drift swapping {old.__name__} -> {new.__name__}: "
+            f"only on {old.__name__}={only_old}, only on {new.__name__}={only_new}"
+        )
+
+
+def _check_kwargs_compat(new: type[ModuleBase], kwargs: dict[str, Any]) -> None:
+    if not kwargs:
+        return
+    try:
+        config_type = get_type_hints(new).get("config")
+    except Exception:
+        return
+    if config_type is None:
+        return
+    valid_fields = set(getattr(config_type, "model_fields", {}))
+    invalid = set(kwargs) - valid_fields
+    if invalid:
+        raise ValueError(
+            f"Kwargs from blueprint atom are incompatible with {new.__name__}'s "
+            f"config ({config_type.__name__}): unknown field(s) {sorted(invalid)}"
+        )

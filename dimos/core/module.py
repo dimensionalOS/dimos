@@ -105,6 +105,12 @@ class _BlueprintPartial(Protocol):
     def __call__(self, **kwargs: Any) -> "Blueprint": ...
 
 
+@dataclass(frozen=True)
+class ConnectionTag:
+    robot: str
+    backend: str
+
+
 class ModuleBase(Configurable, CompositeResource):
     config: ModuleConfig
 
@@ -128,6 +134,7 @@ class ModuleBase(Configurable, CompositeResource):
     _main_gen: AsyncGenerator[None, None] | None = None
     _tools: dict[str, Any]
     _tools_lock: threading.Lock
+    _connection_tag: ConnectionTag | None = None
 
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)

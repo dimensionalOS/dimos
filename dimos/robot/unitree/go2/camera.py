@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,17 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic G1 stack: base sensors plus real robot connection and ROS nav."""
+from importlib import resources
 
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.g1.blueprints.primitive.uintree_g1_primitive_no_nav import (
-    uintree_g1_primitive_no_nav,
-)
-from dimos.robot.unitree.g1.connection import G1WebRtcConnection
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
-unitree_g1_basic = autoconnect(
-    uintree_g1_primitive_no_nav,
-    G1WebRtcConnection.blueprint(),
+_FRONT_CAMERA_720_YAML = resources.files("dimos.robot.unitree.go2").joinpath(
+    "front_camera_720.yaml"
 )
 
-__all__ = ["unitree_g1_basic"]
+
+def _camera_info_static() -> CameraInfo:
+    with resources.as_file(_FRONT_CAMERA_720_YAML) as yaml_path:
+        return CameraInfo.from_yaml(str(yaml_path))
+
+
+GO2_CAMERA_INFO_STATIC: CameraInfo = _camera_info_static()

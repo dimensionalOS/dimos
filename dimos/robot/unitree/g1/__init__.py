@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,17 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic G1 stack: base sensors plus real robot connection and ROS nav."""
-
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.g1.blueprints.primitive.uintree_g1_primitive_no_nav import (
-    uintree_g1_primitive_no_nav,
+# Eager-import G1 connection variants so the connection registry is fully
+# populated by the time `Blueprint.with_backend(...)` runs. The Mujoco
+# variant defers its mujoco-engine import to instance __init__.
+from dimos.robot.unitree.g1 import (  # noqa: F401
+    connection,
+    mujoco_sim,
 )
-from dimos.robot.unitree.g1.connection import G1WebRtcConnection
-
-unitree_g1_basic = autoconnect(
-    uintree_g1_primitive_no_nav,
-    G1WebRtcConnection.blueprint(),
-)
-
-__all__ = ["unitree_g1_basic"]

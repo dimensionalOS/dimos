@@ -119,9 +119,9 @@ def _create_visual_servo(
 ) -> VisualServoing2D:
     camera_info = config.camera_info
     if global_config.simulation:
-        from dimos.robot.unitree.mujoco_connection import MujocoConnection
+        from dimos.robot.unitree.mujoco_camera_constants import MUJOCO_CAMERA_INFO_STATIC
 
-        camera_info = MujocoConnection.camera_info_static
+        camera_info = MUJOCO_CAMERA_INFO_STATIC
 
     return VisualServoing2D(camera_info, bool(global_config.simulation))
 

@@ -20,13 +20,13 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.camera import GO2_CAMERA_INFO_STATIC
 
 unitree_go2_detection = (
     autoconnect(
         unitree_go2,
         Detection3DModule.blueprint(
-            camera_info=GO2Connection.camera_info_static,
+            camera_info=GO2_CAMERA_INFO_STATIC,
         ),
     )
     .remappings(

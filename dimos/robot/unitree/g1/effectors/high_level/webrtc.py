@@ -15,6 +15,7 @@
 from typing import Any
 
 from reactivex.disposable import Disposable
+from unitree_webrtc_connect.constants import RTC_TOPIC, SPORT_CMD
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -23,7 +24,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.g1.effectors.high_level.commands import (
     ARM_API_ID,
     ARM_COMMANDS,
@@ -36,6 +36,7 @@ from dimos.robot.unitree.g1.effectors.high_level.commands import (
     execute_g1_command,
 )
 from dimos.robot.unitree.g1.effectors.high_level.high_level_spec import HighLevelG1Spec
+from dimos.robot.unitree.webrtc_session import UnitreeWebRtcSession
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -52,52 +53,57 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
     cmd_vel: In[Twist]
     config: G1HighLevelWebRtcConfig
 
-    connection: UnitreeWebRTCConnection | None
+    session: UnitreeWebRtcSession | None
 
     def __init__(self, *args: Any, g: GlobalConfig = global_config, **kwargs: Any) -> None:
         super().__init__(*args, g=g, **kwargs)
         self._global_config = g
+        self.session = None
 
     @rpc
     def start(self) -> None:
         super().start()
         assert self.config.ip is not None, "ip must be set in G1HighLevelWebRtcConfig"
-        self.connection = UnitreeWebRTCConnection(self.config.ip, self.config.connection_mode)
-        self.connection.start()
+        self.session = UnitreeWebRtcSession(self.config.ip, mode_name=self.config.connection_mode)
+        self.session.start()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
     @rpc
     def stop(self) -> None:
-        if self.connection is not None:
-            self.connection.stop()
+        if self.session is not None:
+            self.session.stop()
         super().stop()
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
-        assert self.connection is not None
-        return self.connection.move(twist, duration)
+        assert self.session is not None
+        return self.session.move(twist, duration)
 
     @rpc
     def get_state(self) -> str:
-        if self.connection is None:
+        if self.session is None:
             return "Not connected"
         return "Connected (WebRTC)"
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[str, Any]:
         logger.info(f"Publishing request to topic: {topic} with data: {data}")
-        assert self.connection is not None
-        return self.connection.publish_request(topic, data)  # type: ignore[no-any-return]
+        assert self.session is not None
+        return self.session.publish_request(topic, data)  # type: ignore[no-any-return]
 
     @rpc
     def stand_up(self) -> bool:
-        assert self.connection is not None
-        return self.connection.standup()
+        assert self.session is not None
+        return bool(
+            self.session.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
+        )
 
     @rpc
     def lie_down(self) -> bool:
-        assert self.connection is not None
-        return self.connection.liedown()
+        assert self.session is not None
+        return bool(
+            self.session.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
+        )
 
     @skill
     def move_velocity(

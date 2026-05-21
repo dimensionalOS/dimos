@@ -29,7 +29,7 @@ from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.camera import GO2_CAMERA_INFO_STATIC
 from dimos.utils.data import get_data, get_data_dir
 
 if TYPE_CHECKING:
@@ -192,7 +192,7 @@ class TestVisualizer:
                 det3d = Detection3DPC.from_2d(
                     det,
                     lidar_frame,
-                    camera_info=GO2Connection.camera_info_static,
+                    camera_info=GO2_CAMERA_INFO_STATIC,
                     world_to_optical_transform=Transform(
                         ts=obs.ts,
                         translation=obs.pose_stamped.position,

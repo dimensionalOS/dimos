@@ -90,6 +90,18 @@ class GlobalConfig(BaseSettings):
         return "webrtc"
 
     @property
+    def effective_simulator(self) -> str | None:
+        """Connection backend to swap blueprint atoms to via `with_backend`.
+
+        `--replay` and `--simulation <name>` each map onto a registered
+        `(robot, backend)` connection. Returns None for the real-hardware
+        default (webrtc), which leaves the blueprint's atoms unchanged.
+        """
+        if self.replay:
+            return "replay"
+        return self.simulation or None
+
+    @property
     def mujoco_start_pos_float(self) -> tuple[float, float]:
         x, y = _get_all_numbers(self.mujoco_start_pos)
         return (x, y)

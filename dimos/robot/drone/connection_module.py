@@ -32,12 +32,12 @@ from dimos.core.stream import In, Out
 from dimos.mapping.models import LatLon
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
+from dimos.robot.tf_utils import odom_to_tf
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -171,31 +171,16 @@ class DroneConnectionModule(Module):
         self.video.publish(frame)
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        """Publish odometry and TF transforms."""
         self._odom = msg
-
-        # Publish odometry
         self.odom.publish(msg)
-
-        # Publish base_link transform
-        base_link = Transform(
-            translation=msg.position,
-            rotation=msg.orientation,
-            frame_id="world",
-            child_frame_id="base_link",
-            ts=msg.ts if hasattr(msg, "ts") else time.time(),
+        # 10cm forward, 5cm down. No optical frame published — gimbal not modeled yet.
+        self.tf.publish(
+            *odom_to_tf(
+                msg,
+                camera_link_offset=Vector3(0.1, 0.0, -0.05),
+                with_optical=False,
+            )
         )
-        self.tf.publish(base_link)
-
-        # Publish camera_link transform (camera mounted on front of drone, no gimbal factored in yet)
-        camera_link = Transform(
-            translation=Vector3(0.1, 0.0, -0.05),  # 10cm forward, 5cm down
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # No rotation relative to base
-            frame_id="base_link",
-            child_frame_id="camera_link",
-            ts=time.time(),
-        )
-        self.tf.publish(camera_link)
 
     def _publish_status(self, status: dict[str, Any]) -> None:
         """Publish drone status as JSON string."""

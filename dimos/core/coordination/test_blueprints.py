@@ -33,9 +33,11 @@ from dimos.core.coordination.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
+from dimos.robot import connection_registry
+from dimos.robot.connection_registry import connection
 from dimos.spec.utils import Spec
 
 
@@ -232,3 +234,139 @@ def test_active_blueprints_filters_disabled() -> None:
     active_modules = {bp.module for bp in blueprint.active_blueprints}
     assert ModuleA not in active_modules
     assert ModuleB in active_modules
+
+
+@pytest.fixture
+def isolated_registry(monkeypatch):
+    monkeypatch.setattr(connection_registry, "_REGISTRY", {})
+    yield connection_registry._REGISTRY
+
+
+class _BotConfig(ModuleConfig):
+    setting: str = "default"
+
+
+def _bot_modules():
+    """Create three (robot=bot) connection variants in an isolated registry."""
+
+    @connection(robot="bot", backend="real")
+    class BotReal(Module):
+        config: _BotConfig
+        cmd: In[Data1]
+        odom: Out[Data2]
+
+    @connection(robot="bot", backend="sim")
+    class BotSim(Module):
+        config: _BotConfig
+        cmd: In[Data1]
+        odom: Out[Data2]
+
+    @connection(robot="bot", backend="replay")
+    class BotReplay(Module):
+        config: ModuleConfig
+        cmd: In[Data1]
+        odom: Out[Data2]
+
+    return BotReal, BotSim, BotReplay
+
+
+def test_with_backend_no_op_when_no_tagged_atoms(isolated_registry) -> None:
+    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+    swapped = blueprint.with_backend("sim")
+    assert swapped is blueprint
+
+
+def test_with_backend_swaps_tagged_atom(isolated_registry) -> None:
+    BotReal, BotSim, _ = _bot_modules()
+
+    blueprint = autoconnect(ModuleA.blueprint(), BotReal.blueprint(setting="x"))
+    swapped = blueprint.with_backend("sim")
+
+    swapped_modules = [a.module for a in swapped.blueprints]
+    assert BotSim in swapped_modules
+    assert BotReal not in swapped_modules
+    assert ModuleA in swapped_modules
+
+    bot_atom = next(a for a in swapped.blueprints if a.module is BotSim)
+    assert bot_atom.kwargs == {"setting": "x"}
+    # Streams were re-extracted from the new class.
+    assert {s.name for s in bot_atom.streams} == {"cmd", "odom"}
+
+
+def test_with_backend_no_op_when_already_target(isolated_registry) -> None:
+    BotReal, _, _ = _bot_modules()
+
+    blueprint = BotReal.blueprint()
+    swapped = blueprint.with_backend("real")
+    assert swapped is blueprint  # no atoms needed swapping; returns self
+
+
+def test_with_backend_unknown_backend_raises(isolated_registry) -> None:
+    BotReal, _, _ = _bot_modules()
+
+    blueprint = BotReal.blueprint()
+    with pytest.raises(ValueError, match="No connection registered.*backend='nope'"):
+        blueprint.with_backend("nope")
+
+
+def test_with_backend_rewrites_remappings(isolated_registry) -> None:
+    BotReal, BotSim, _ = _bot_modules()
+
+    blueprint = BotReal.blueprint().remappings([(BotReal, "cmd", "remapped_cmd")])
+    swapped = blueprint.with_backend("sim")
+
+    assert (BotReal, "cmd") not in swapped.remapping_map
+    assert swapped.remapping_map[(BotSim, "cmd")] == "remapped_cmd"
+
+
+def test_with_backend_rewrites_disabled_modules(isolated_registry) -> None:
+    BotReal, BotSim, _ = _bot_modules()
+
+    blueprint = autoconnect(BotReal.blueprint(), ModuleA.blueprint()).disabled_modules(BotReal)
+    swapped = blueprint.with_backend("sim")
+
+    assert BotReal not in swapped.disabled_modules_tuple
+    assert BotSim in swapped.disabled_modules_tuple
+
+
+def test_with_backend_eager_kwarg_validation_raises(isolated_registry) -> None:
+    @connection(robot="bot", backend="real")
+    class BotReal2(Module):
+        class Cfg(ModuleConfig):
+            mode: str = "default"
+            speed: int = 1
+
+        config: Cfg
+        cmd: In[Data1]
+
+    @connection(robot="bot", backend="sim")
+    class BotSim2(Module):
+        class Cfg(ModuleConfig):
+            speed: int = 1  # NOTE: no `mode` field
+
+        config: Cfg
+        cmd: In[Data1]
+
+    blueprint = BotReal2.blueprint(mode="rage")
+    with pytest.raises(ValueError, match="unknown field.*mode"):
+        blueprint.with_backend("sim")
+
+
+def test_with_backend_stream_parity_drift_raises(isolated_registry) -> None:
+    @connection(robot="bot", backend="real")
+    class BotReal3(Module):
+        config: ModuleConfig
+        cmd: In[Data1]
+        odom: Out[Data2]
+
+    @connection(robot="bot", backend="sim")
+    class BotSim3(Module):
+        config: ModuleConfig
+        cmd: In[Data1]
+        # missing odom; adds extra stream
+
+        extra: Out[Data3]
+
+    blueprint = BotReal3.blueprint()
+    with pytest.raises(ValueError, match="Stream surface drift"):
+        blueprint.with_backend("sim")
