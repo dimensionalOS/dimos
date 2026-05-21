@@ -52,14 +52,17 @@ class DimosCliCall:
         # `McpServer.start` to bind) and `McpClient.mcp_server_url` (which
         # defaults to a hard-coded `http://localhost:9990/mcp`) so server
         # and client agree on the same port.
+        #
+        # The McpClient URL goes through an env var rather than a `-o`
+        # blueprint override: `load_config_args` silently skips env-var
+        # overrides whose module is absent from the blueprint, but rejects
+        # unknown `-o` keys outright. Blueprints without an mcpclient (e.g.
+        # `coordinator-mock`) would otherwise fail config validation.
         global_overrides: list[str] = []
-        blueprint_overrides: list[str] = []
+        env = os.environ.copy()
         if self.mcp_port is not None:
             global_overrides += ["--mcp-port", str(self.mcp_port)]
-            blueprint_overrides += [
-                "-o",
-                f"mcpclient.mcp_server_url=http://localhost:{self.mcp_port}/mcp",
-            ]
+            env["MCPCLIENT__MCP_SERVER_URL"] = f"http://localhost:{self.mcp_port}/mcp"
 
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         fd, log_path_str = tempfile.mkstemp(prefix="blueprint-", suffix=".log", dir=str(LOG_DIR))
@@ -81,12 +84,12 @@ class DimosCliCall:
                 "--simulation",
                 self.simulator,
                 *args,
-                *blueprint_overrides,
             ],
             stdout=self._log_file,
             stderr=subprocess.STDOUT,
             env=env,
             start_new_session=True,
+            env=env,
         )
 
     def check_alive(self) -> None:

@@ -3,20 +3,58 @@ requires = ["setuptools>=70", "wheel", "pybind11>=2.12"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
+# Data files (yaml/json/urdf/html/...) are attached to the top-level `dimos`
+# package via [tool.setuptools.package-data] below. They are keyed to `dimos`
+# (not the data file's own subpackage) and use recursive `**` globs on
+# purpose: this is relative-path based and does NOT depend on every data dir
+# having an __init__.py / being discovered as a package. The repo has no
+# __init__.py files, so include-package-data / per-subpackage globs map data
+# into the wheel only nondeterministically (this is how dimos/models/
+# segmentation/configs/edgetam.yaml went missing). MANIFEST.in still governs
+# the sdist; keep its recursive-include extension list in sync with the globs
+# here.
 include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dimos*"]
-exclude = ["dimos.web.websocket_vis.node_modules*"]
+# Web frontends / vendored node_modules: not part of the Python runtime
+# (MANIFEST.in already prunes these from the sdist; this keeps their stray
+# .py modules out of the wheel too).
+exclude = [
+    "dimos.web.websocket_vis.node_modules*",
+    "dimos.web.command-center-extension*",
+    "dimos.web.dimos_interface*",
+]
 
 [tool.setuptools.package-data]
-"dimos" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml"]
-"dimos.utils.cli" = ["*.tcss"]
-"dimos.robot.unitree.go2" = ["*.urdf"]
-"dimos.robot.unitree_webrtc.params" = ["*.yaml", "*.yml"]
-"dimos.web.templates" = ["*"]
-"dimos.rxpy_backpressure" = ["*.txt"]
+# Recursive: matches the extension anywhere under dimos/. Add a line when code
+# starts loading a new data type. NOTE: ".txt" is intentionally scoped (a bare
+# "**/*.txt" would grab CMakeLists.txt from native build dirs).
+"dimos" = [
+    "**/*.yaml",
+    "**/*.yml",
+    "**/*.json",
+    "**/*.urdf",
+    "**/*.html",
+    "**/*.css",
+    "**/*.js",
+    "**/*.tcss",
+    "rxpy_backpressure/*.txt",
+]
+
+[tool.setuptools.exclude-package-data]
+# Trims data the recursive globs above would otherwise pull in: test fixtures
+# and the native (C++/nix) build tree, which is built separately.
+"dimos" = [
+    "agents/fixtures/**",
+    "agents/mcp/fixtures/**",
+    "mapping/google_maps/fixtures/**",
+    "web/command-center-extension/**",
+    "web/websocket_vis/node_modules/**",
+    "web/dimos_interface/**",
+    "hardware/sensors/lidar/fastlio2/cpp/**",
+]
 
 [project]
 name = "dimos"
@@ -96,10 +134,9 @@ dependencies = [
 
 [project.scripts]
 lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
-foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 humancli = "dimos.utils.cli.human.humanclianim:main"
-dimos = "dimos.robot.cli.dimos:main"
+dimos = "dimos.robot.cli.dimos:cli_main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.utils.docs.doclinks:main"
 dtop = "dimos.utils.cli.dtop:main"
@@ -299,7 +336,7 @@ docker = [
 ]
 
 base = [
-    "dimos[agents,web,visualization]",
+    "dimos[agents,web,perception,visualization]",
 ]
 
 # All extras except dds and unitree-dds (which require special system setup).
@@ -353,7 +390,7 @@ tests = [
     # Misc dev tools
     "pre_commit==4.2.0",
     "watchdog>=3.0.0",
-    "md-babel-py>=1.1.4",
+    "md-babel-py>=1.2.0",
     "py-spy",
 
     # LSP
@@ -410,7 +447,9 @@ tests-self-hosted = [
 ]
 
 [tool.uv]
+required-version = ">=0.9.17"
 default-groups = ["tests"]
+exclude-newer = "7 days"
 override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
@@ -502,6 +541,8 @@ module = [
     "pyzed",
     "pyzed.*",
     "rclpy.*",
+    "reportlab",
+    "reportlab.*",
     "sam2.*",
     "scipy",
     "scipy.*",

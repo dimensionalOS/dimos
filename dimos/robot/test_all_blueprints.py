@@ -29,6 +29,7 @@ OPTIONAL_ERROR_SUBSTRINGS = {
 # These need git LFS, so can't be run on the ubuntu runners.
 SELF_HOSTED_BLUEPRINTS = frozenset(
     {
+        "alfred-nav",
         "coordinator-basic",
         "coordinator-cartesian-ik-mock",
         "coordinator-cartesian-ik-piper",

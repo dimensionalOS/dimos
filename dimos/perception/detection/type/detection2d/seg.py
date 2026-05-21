@@ -18,14 +18,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import cv2
-from dimos_lcm.foxglove_msgs.ImageAnnotations import PointsAnnotation
-from dimos_lcm.foxglove_msgs.Point2 import Point2
 import numpy as np
 import torch
 
-from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
-from dimos.types.timestamped import to_ros_stamp
 
 if TYPE_CHECKING:
     from ultralytics.engine.results import Results
@@ -169,38 +165,3 @@ class Detection2DSeg(Detection2DBBox):
             image=image,
             mask=mask,
         )
-
-    def to_points_annotation(self) -> list[PointsAnnotation]:
-        """Override to include mask outline."""
-        annotations = super().to_points_annotation()
-
-        # Find contours
-        contours, _ = cv2.findContours(self.mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        for contour in contours:
-            # Simplify contour to reduce points
-            epsilon = 0.005 * cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, epsilon, True)
-
-            points = []
-            for i in range(len(approx)):
-                x_coord = float(approx[i, 0, 0])
-                y_coord = float(approx[i, 0, 1])
-                points.append(Point2(x=x_coord, y=y_coord))
-
-            if len(points) < 3:
-                continue
-
-            annotations.append(
-                PointsAnnotation(
-                    timestamp=to_ros_stamp(self.ts),
-                    outline_color=Color.from_string(str(self.class_id), alpha=1.0, brightness=1.25),
-                    fill_color=Color.from_string(str(self.track_id), alpha=0.4),
-                    thickness=1.0,
-                    points_length=len(points),
-                    points=points,
-                    type=PointsAnnotation.LINE_LOOP,
-                )
-            )
-
-        return annotations

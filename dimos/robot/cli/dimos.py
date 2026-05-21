@@ -54,6 +54,26 @@ main = typer.Typer(
 
 load_dotenv()
 
+SIMULATORS = ("mujoco", "dimsim")
+
+
+def _normalize_simulation_argv(argv: list[str]) -> list[str]:
+    """Keep `--simulation` backwards compatible.
+
+    Without an argument it should be `mujoco`, but can be overridden.
+    """
+    out: list[str] = []
+    for arg, nxt in zip(argv, [*argv[1:], None], strict=False):
+        out.append(arg)
+        if arg == "--simulation" and nxt not in SIMULATORS:
+            out.append(SIMULATORS[0])
+    return out
+
+
+def cli_main() -> None:
+    sys.argv = _normalize_simulation_argv(sys.argv)
+    main()
+
 
 def create_dynamic_callback():  # type: ignore[no-untyped-def]
     fields = GlobalConfig.model_fields
@@ -666,6 +686,84 @@ def send(
 
 
 @main.command()
+def cameracalibrate(
+    source: str = typer.Option(..., "--source", help="Frame source: webcam, folder, or topic"),
+    device_index: int = typer.Option(0, "--device-index", help="Webcam device index"),
+    images: Path | None = typer.Option(
+        None, "--images", help="Directory of calibration images for --source folder"
+    ),
+    topic: str | None = typer.Option(
+        None,
+        "--topic",
+        help=(
+            "Pubsub URI for --source topic (proto:channel), "
+            "e.g. 'jpeg_lcm:/color_image' or 'pshm:color_image'."
+        ),
+    ),
+    topic_timeout_sec: float = typer.Option(
+        60.0,
+        "--topic-timeout-sec",
+        help="Abort --source topic if no frames arrive within this many seconds.",
+    ),
+    cols: int = typer.Option(..., "--cols", help="Inner chessboard corner columns"),
+    rows: int = typer.Option(..., "--rows", help="Inner chessboard corner rows"),
+    square_size_m: float = typer.Option(
+        ..., "--square-size-m", help="Chessboard square size in meters"
+    ),
+    out: Path | None = typer.Option(None, "--out", help="Optional ROS CameraInfo YAML output path"),
+    preview_out: Path | None = typer.Argument(
+        None, help="Optional preview PNG output path. Requires --out."
+    ),
+    camera_name: str = typer.Option("webcam", "--camera-name", help="Camera name in YAML"),
+    target_count: int = typer.Option(20, "--target-count", help="Accepted webcam frame count"),
+    no_display: bool = typer.Option(False, "--no-display", help="Disable OpenCV preview windows"),
+    distortion_model: str = typer.Option(
+        "plumb_bob",
+        "--distortion-model",
+        help=(
+            "Lens model: 'plumb_bob' (5 coeffs, near-pinhole) or 'fisheye' "
+            "(4 coeffs, wide-angle / fisheye; written as ROS 'equidistant')."
+        ),
+    ),
+) -> None:
+    """Calibrate camera intrinsics and write ROS CameraInfo YAML."""
+    from dimos.utils.cli.cameracalibrate.cameracalibrate import run_calibration
+
+    if preview_out is not None and out is None:
+        raise typer.BadParameter("preview output requires --out")
+
+    try:
+        result = run_calibration(
+            source=source,
+            device_index=device_index,
+            images=images,
+            topic=topic,
+            topic_timeout_sec=topic_timeout_sec,
+            cols=cols,
+            rows=rows,
+            square_size_m=square_size_m,
+            out=out,
+            preview_out=preview_out,
+            camera_name=camera_name,
+            target_count=target_count,
+            no_display=no_display,
+            distortion_model=distortion_model,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(f"RMS: {float(result['rms']):.6f} px ({int(result['n_used'])} frame(s) used)")
+    typer.echo(
+        f"Detected pattern: {tuple(result.get('pattern_size', (cols, rows)))} "
+        f"({result.get('pattern_label', 'requested inner corners')})"
+    )
+    if out is not None:
+        typer.echo(f"Wrote camera info YAML to {out}")
+    if preview_out is not None:
+        typer.echo(f"Wrote preview overlay PNG to {preview_out}")
+
+
+@main.command()
 def apriltag(
     out: Path = typer.Option(Path("apriltags.pdf"), "--out", "-o", help="Output PDF path"),
     ids: str = typer.Option("0-11", "--ids", help="ID spec, e.g. '0-49' or '0,1,5,10-20'"),
@@ -718,4 +816,4 @@ def rerun_bridge_cmd(
 
 
 if __name__ == "__main__":
-    main()
+    cli_main()

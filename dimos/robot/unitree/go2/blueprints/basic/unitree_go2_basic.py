@@ -22,7 +22,6 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.vis_module import vis_module
 
@@ -124,7 +123,6 @@ _with_vis = autoconnect(
     vis_module(
         viewer_backend=global_config.viewer,
         rerun_config=rerun_config,
-        foxglove_config={"shm_channels": ["/color_image#sensor_msgs.Image"]},
     ),
 )
 
@@ -133,9 +131,13 @@ unitree_go2_basic = (
     autoconnect(
         _with_vis,
         GO2Connection.blueprint(),
-    )
-    .global_config(n_workers=4, robot_model="unitree_go2")
-    .configurators(ClockSyncConfigurator())
+    ).global_config(n_workers=4, robot_model="unitree_go2")
+    # we temporarily disabled sensor timestamps
+    # and are derriving all timestmaps upon reception
+    # this is because image webrtc stream doesn't have timestamps,
+    # so it's difficult to corelate the streams otherwise
+    #
+    #    .configurators(ClockSyncConfigurator())
 )
 
 __all__ = [
