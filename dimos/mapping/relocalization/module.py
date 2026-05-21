@@ -39,7 +39,7 @@ FRAME_WORLD = "world"
 
 PUBLISH_INTERVAL = 2.0  # for loaded_map + TF
 RELOC_INTERVAL = 2.0
-MIN_LOCAL_POINTS = 20000
+MIN_LOCAL_POINTS = 50_000
 MAP_SUFFIX = ".pc2.lcm"
 
 
@@ -48,7 +48,7 @@ class Config(ModuleConfig):
         None  # e.g. `-o relocalizationmodule.map_file=go2_hongkong_office_twopass_map`
     )
     publish_loaded_map: bool = False
-    fitness_threshold: float = 0.6
+    fitness_threshold: float = 0.45
     use_carving: bool = True
 
 
