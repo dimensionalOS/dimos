@@ -138,7 +138,7 @@ coordinator_flowbase_keyboard_teleop = autoconnect(
 # FlowBase + Livox MID-360 + FastLio2 SLAM + nav stack with click-to-drive in Rerun. The velocity
 # sink is ControlCoordinator + FlowBaseAdapter
 
-_flowbase_mid360_mount = Pose(0.20, -0.20, 0.10, *Quaternion.from_euler(Vector3(0, 0, 0)))
+_flowbase_mid360_mount = Pose(0.22, -0.185, 0.381, *Quaternion.from_euler(Vector3(0, 0, 0)))
 
 coordinator_flowbase_nav = (
     autoconnect(
