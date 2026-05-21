@@ -64,6 +64,7 @@ class KeyboardTeleop(Module):
         angular_speed: float = DEFAULT_ANGULAR_SPEED,
         boost_multiplier: float = DEFAULT_BOOST_MULTIPLIER,
         slow_multiplier: float = DEFAULT_SLOW_MULTIPLIER,
+        publish_only_when_active: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -72,6 +73,12 @@ class KeyboardTeleop(Module):
         self.angular_speed = angular_speed
         self.boost_multiplier = boost_multiplier
         self.slow_multiplier = slow_multiplier
+        # When True, only publish while a movement key is held; on
+        # release publish a single zero Twist (stop) then go silent.
+        # Lets the teleop coexist with another /cmd_vel publisher
+        # (e.g. the SI / benchmark tools) instead of flooding zeros.
+        self.publish_only_when_active = publish_only_when_active
+        self._was_active = False
 
     @rpc
     def start(self) -> None:
@@ -164,7 +171,16 @@ class KeyboardTeleop(Module):
             twist.linear.y *= speed_multiplier
             twist.angular.z *= speed_multiplier
 
-            self.cmd_vel.publish(twist)
+            if self.publish_only_when_active:
+                active = twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0
+                # Publish while active; publish exactly one zero on the
+                # active->idle transition (clean stop); then stay silent
+                # so a co-publisher owns /cmd_vel.
+                if active or self._was_active:
+                    self.cmd_vel.publish(twist)
+                self._was_active = active
+            else:
+                self.cmd_vel.publish(twist)
 
             self._update_display(twist)
 

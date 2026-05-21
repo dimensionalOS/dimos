@@ -1,0 +1,27 @@
+name: backport
+
+on:
+  pull_request_target:
+    types: [closed, labeled]
+
+permissions: {}
+
+jobs:
+  backport:
+    name: Open backport PR
+    if: >-
+      github.event.pull_request.merged == true &&
+      (
+        (github.event.action == 'closed' && contains(join(github.event.pull_request.labels.*.name, ' '), 'backport release/')) ||
+        (github.event.action == 'labeled' && startsWith(github.event.label.name, 'backport release/'))
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # For creating backport/* branch
+      pull-requests: write  # To create the PR from backport branch
+    steps:
+      - uses: actions/checkout@v6
+      - uses: korthout/backport-action@v4
+        with:
+          label_pattern: '^backport (release/.+)$'
+          branch_name: 'backport/${pull_number}-to-${target_branch}'

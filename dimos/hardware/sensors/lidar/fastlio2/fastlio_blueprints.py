@@ -179,7 +179,6 @@ mid360_fastlio_ray_trace_replay = autoconnect(
     ),
 ).global_config(n_workers=3, robot_model="mid360_fastlio2_ray_trace_replay")
 
-
 mid360_fastlio_ray_trace = autoconnect(
     FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
     RayTracingVoxelMap.blueprint(voxel_size=voxel_size),
@@ -191,4 +190,4 @@ mid360_fastlio_ray_trace = autoconnect(
             },
         },
     ),
-).global_config(n_workers=3, robot_model="mid360_fastlio2_ray_trace")
+).global_config(n_workers=5, robot_model="mid360_fastlio2_ray_trace")

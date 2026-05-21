@@ -37,7 +37,6 @@ text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 
 </details>
 
-<!--Result:-->
 ![output](assets/go2nav_dataflow.svg)
 ## Pipeline Steps
 
