@@ -37,6 +37,8 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
+from dimos.memory2.replay import Replay, resolve_db_path
+from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -47,7 +49,6 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.decorators.decorators import simple_mcache
-from dimos.utils.testing.replay import TimedSensorReplay, TimedSensorStorage
 
 if sys.version_info < (3, 13):
     from typing_extensions import TypeVar
@@ -138,11 +139,23 @@ class ReplayConnection(UnitreeWebRTCConnection):
         **kwargs,
     ) -> None:
         self.dataset = dataset
-        self.replay_config = {
-            "loop": kwargs.get("loop", True),
-            "seek": kwargs.get("seek"),
-            "duration": kwargs.get("duration"),
-        }
+        self._loop = kwargs.get("loop", True)
+        self._seek = kwargs.get("seek")
+        self._duration = kwargs.get("duration")
+        self._store: SqliteStore | None = None
+        self._replay: Replay | None = None
+
+    @property
+    def replay(self) -> Replay:
+        # One shared store + Replay so lidar/odom/video advance against the
+        # same wall-clock anchor on subscribe.
+        if self._replay is None:
+            self._store = SqliteStore(path=str(resolve_db_path(self.dataset)), must_exist=True)
+            self._store.start()
+            self._replay = self._store.replay(
+                loop=self._loop, seek=self._seek, duration=self._duration
+            )
+        return self._replay
 
     def connect(self) -> None:
         pass
@@ -166,19 +179,16 @@ class ReplayConnection(UnitreeWebRTCConnection):
         return True
 
     @simple_mcache
-    def lidar_stream(self):  # type: ignore[no-untyped-def]
-        lidar_store = TimedSensorReplay(f"{self.dataset}/lidar")  # type: ignore[var-annotated]
-        return lidar_store.stream(**self.replay_config)
+    def lidar_stream(self) -> Observable[PointCloud2]:
+        return self.replay.streams.lidar.observable()
 
     @simple_mcache
-    def odom_stream(self):  # type: ignore[no-untyped-def]
-        odom_store = TimedSensorReplay(f"{self.dataset}/odom")  # type: ignore[var-annotated]
-        return odom_store.stream(**self.replay_config)
+    def odom_stream(self) -> Observable[PoseStamped]:
+        return self.replay.streams.odom.observable()
 
     @simple_mcache
-    def video_stream(self):  # type: ignore[no-untyped-def]
-        video_store: TimedSensorReplay[Image] = TimedSensorReplay(f"{self.dataset}/color_image")
-        return video_store.stream(**self.replay_config)
+    def video_stream(self) -> Observable[Image]:
+        return self.replay.streams.color_image.observable()
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         return True
@@ -223,17 +233,6 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
-
-    @rpc
-    def record(self, recording_name: str) -> None:
-        lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")  # type: ignore[type-arg]
-        lidar_store.consume_stream(self.connection.lidar_stream())
-
-        odom_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/odom")  # type: ignore[type-arg]
-        odom_store.consume_stream(self.connection.odom_stream())
-
-        video_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/video")  # type: ignore[type-arg]
-        video_store.consume_stream(self.connection.video_stream())
 
     @rpc
     def start(self) -> None:

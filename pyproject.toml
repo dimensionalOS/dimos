@@ -119,8 +119,8 @@ dependencies = [
     "llvmlite>=0.42.0", # Required by numba 0.60+
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
-    "rerun-sdk>=0.20.0",
-    "dimos-viewer==0.30.0a6.dev99",
+    "rerun-sdk==0.32.0a1",
+    "dimos-viewer==0.32.0a1",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
@@ -190,8 +190,8 @@ misc = [
 ]
 
 visualization = [
-    "rerun-sdk>=0.20.0",
-    "dimos-viewer>=0.30.0a4",
+    "rerun-sdk==0.32.0a1",
+    "dimos-viewer==0.32.0a1",
 ]
 
 agents = [
@@ -450,6 +450,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
+exclude-newer-package = { md-babel-py = "2026-05-16", dimos-viewer = "2026-05-22" }
 override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
