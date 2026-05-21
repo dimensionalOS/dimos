@@ -815,5 +815,35 @@ def rerun_bridge_cmd(
     )
 
 
+@main.command(name="eval")
+def eval_cmd(
+    arm: str = typer.Option("xarm6", help="Which arm to evaluate (xarm6, xarm7, piper)."),
+    json_out: Path | None = typer.Option(None, "--json", help="Write results to this JSON file."),
+    viz: bool = typer.Option(False, help="Open a Meshcat viewer and animate each planned path."),
+) -> None:
+    """Run the planner eval suite for an arm.
+
+    Tests motion planning (IK + RRT) against a tuned set of reach,
+    obstacle-avoidance, and pick-and-place scenarios. See
+    docs/capabilities/manipulation/eval.md for the full reference.
+    """
+    from dimos.manipulation.eval import scenarios_for, evaluate, print_scores, to_json
+    from dimos.manipulation.eval import _load_arm
+
+    try:
+        arm_config = _load_arm(arm)
+        scenarios = scenarios_for(arm)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+    scores = evaluate(arm_config, scenarios, viz=viz)
+    print_scores(scores)
+    if json_out:
+        to_json(scores, str(json_out))
+    if not all(s.passed for s in scores):
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     cli_main()
