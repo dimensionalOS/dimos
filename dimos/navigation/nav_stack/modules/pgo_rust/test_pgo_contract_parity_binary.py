@@ -12,18 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Contract parity between PGOCpp and PGORust (and the LoopClosure Spec).
+"""Structural parity between PGOCpp, PGORust, and the LoopClosure Spec.
 
-The DoD says nav_stack must be able to pick between `pgo_cpp` and `pgo_rust`
-backends behind the same `loop_closure` parameter. That swap is only safe if
-both modules declare the *same* set of input/output streams with the *same*
-types.  This is the structural check — it does NOT spin up either binary, so
-it runs in <1s and never flakes on host LCM noise.
-
-Originally this file lived on the `jeff/feat/rtabmap` branch, where rtab_map
-was the alternative SLAM provider to pgo. On this branch (`jeff/feat/rust_pgo`)
-the alternative is pgo_rust, so the parity check is PGOCpp ↔ PGORust ↔
-LoopClosure Spec instead.
+nav_stack picks one or the other via the `loop_closure` parameter, which
+is only safe if both modules declare the same In/Out streams with the same
+types. This test reads class annotations only — no binaries spin up — so it
+runs in <1s.
 """
 
 from __future__ import annotations
@@ -50,7 +44,9 @@ def _stream_annotations(cls: type) -> dict[str, type]:
     keep_origins = {"In", "Out", "Optional"}
     streams: dict[str, type] = {}
     for name, hint in hints.items():
-        origin = getattr(hint, "__name__", "") or getattr(getattr(hint, "__class__", None), "__name__", "")
+        origin = getattr(hint, "__name__", "") or getattr(
+            getattr(hint, "__class__", None), "__name__", ""
+        )
         # In[T] and Out[T] are generic; their repr shape lives in the stream module.
         type_repr = repr(hint)
         if "In[" in type_repr or "Out[" in type_repr:
@@ -66,7 +62,7 @@ def _signature_of(streams: dict[str, type]) -> set[str]:
     Each entry becomes "name: repr(type)" so we catch both rename and type
     changes (e.g. `Out[PoseStamped]` vs `Out[Odometry]`).
     """
-    return {f"{name}: {repr(hint)}" for name, hint in streams.items()}
+    return {f"{name}: {hint!r}" for name, hint in streams.items()}
 
 
 CPP_STREAMS = _stream_annotations(PGOCpp)
@@ -99,7 +95,14 @@ def test_both_backends_implement_loop_closure_spec() -> None:
 
 @pytest.mark.parametrize(
     "stream_name",
-    ["registered_scan", "odometry", "corrected_odometry", "global_map", "pose_graph", "loop_closure_event"],
+    [
+        "registered_scan",
+        "odometry",
+        "corrected_odometry",
+        "global_map",
+        "pose_graph",
+        "loop_closure_event",
+    ],
 )
 def test_each_required_stream_present_on_both(stream_name: str) -> None:
     """Spot-check each named stream individually for clearer failure output
