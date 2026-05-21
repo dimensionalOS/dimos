@@ -21,12 +21,15 @@ import uuid
 
 import httpx
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage, RemoveMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 
+from dimos.agents.compaction_middleware import DimosCompactionMiddleware
 from dimos.agents.mcp import tool_stream
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
@@ -40,12 +43,55 @@ from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
 
+# Compaction defaults are expressed as a fraction of the agent model's
+# `profile["max_input_tokens"]` (exposed by langchain 1.1+). This lets the
+# thresholds scale with whatever model is wired in instead of being hardcoded
+# at a value tuned for one specific context window. Override the resolved
+# absolute counts per agent with e.g. `-o mcpclient.agent_compaction_threshold=20000`.
+DEFAULT_COMPACTION_THRESHOLD_FRACTION = 0.6
+DEFAULT_COMPACTION_TARGET_FRACTION = 0.05
+DEFAULT_COMPACTION_SUMMARY_FRACTION = 0.03
+# Fallback when the model object doesn't expose `.profile["max_input_tokens"]`
+# (test fakes, custom wrappers, older provider integrations).
+DEFAULT_MODEL_CONTEXT_TOKENS = 128_000
+
+
+def _model_max_input_tokens(model: Any) -> int:
+    """Return `model.profile["max_input_tokens"]` if exposed; else a fallback."""
+    profile = getattr(model, "profile", None)
+    if isinstance(profile, dict):
+        v = profile.get("max_input_tokens")
+        if isinstance(v, int) and v > 0:
+            return v
+    logger.warning(
+        "Model does not expose .profile['max_input_tokens']; "
+        "compaction defaults will use a hardcoded fallback.",
+        model=type(model).__name__,
+        fallback=DEFAULT_MODEL_CONTEXT_TOKENS,
+    )
+    return DEFAULT_MODEL_CONTEXT_TOKENS
+
 
 class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-4o"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
+
+    # Compaction: agent-scoped, on by default.
+    #
+    # Defaults are computed as `<fraction> * model.profile["max_input_tokens"]`
+    # so they track whatever model is wired in. Tune via `-o`:
+    #   - the fraction (`-o mcpclient.agent_compaction_threshold_fraction=0.5`)
+    #   - or an absolute integer that wins over the fraction
+    #     (`-o mcpclient.agent_compaction_threshold=20000`).
+    agent_compaction_threshold_fraction: float = DEFAULT_COMPACTION_THRESHOLD_FRACTION
+    agent_compaction_target_fraction: float = DEFAULT_COMPACTION_TARGET_FRACTION
+    agent_compaction_summary_fraction: float = DEFAULT_COMPACTION_SUMMARY_FRACTION
+    agent_compaction_threshold: int | None = None
+    agent_compaction_target: int | None = None
+    agent_compaction_summary_size: int | None = None
+    agent_compaction_model: str | None = None
 
 
 class McpClient(Module):
@@ -64,6 +110,7 @@ class McpClient(Module):
     _http_client: httpx.Client
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
+    _turn: int
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -81,6 +128,7 @@ class McpClient(Module):
         self._http_client = httpx.Client(timeout=120.0)
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
+        self._turn = 0
 
     def __reduce__(self) -> Any:
         return (self.__class__, (), {})
@@ -212,17 +260,72 @@ class McpClient(Module):
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
         tools = self._fetch_tools()
 
-        model: str | Any = self.config.model
+        model: Any
         if self.config.model_fixture is not None:
             from dimos.agents.testing import MockModel
 
             model = MockModel(json_path=self.config.model_fixture)
+        else:
+            # Resolve to a ChatModel instance up front so we can read
+            # `.profile["max_input_tokens"]` for compaction defaults; `create_agent`
+            # accepts either a string or an instance.
+            model = init_chat_model(self.config.model)
+
+        if self.config.agent_compaction_model:
+            summarizer = init_chat_model(self.config.agent_compaction_model)
+        else:
+            summarizer = model
+
+        max_input_tokens = _model_max_input_tokens(model)
+        threshold = (
+            self.config.agent_compaction_threshold
+            if self.config.agent_compaction_threshold is not None
+            else int(max_input_tokens * self.config.agent_compaction_threshold_fraction)
+        )
+        target = (
+            self.config.agent_compaction_target
+            if self.config.agent_compaction_target is not None
+            else int(max_input_tokens * self.config.agent_compaction_target_fraction)
+        )
+        summary_size = (
+            self.config.agent_compaction_summary_size
+            if self.config.agent_compaction_summary_size is not None
+            else int(max_input_tokens * self.config.agent_compaction_summary_fraction)
+        )
+
+        middleware: list[Any] = [
+            DimosCompactionMiddleware(
+                summarizer=summarizer,
+                threshold_tokens=threshold,
+                target_tokens=target,
+                summary_size_tokens=summary_size,
+                system_prompt=self.config.system_prompt,
+                # Pass JSON schemas (dicts), not pydantic class objects —
+                # otherwise json.dumps inside the middleware falls back to
+                # str() and produces a useless tiny string, leading to
+                # massive undercount of tool-definition tokens.
+                tool_schemas=[
+                    t.args_schema.model_json_schema()
+                    for t in tools
+                    if t.args_schema is not None and hasattr(t.args_schema, "model_json_schema")
+                ],
+            )
+        ]
+        logger.info(
+            "Compaction middleware enabled.",
+            threshold=threshold,
+            target=target,
+            summary_size=summary_size,
+            max_input_tokens=max_input_tokens,
+            summarizer_model=self.config.agent_compaction_model or "(reuse agent)",
+        )
 
         with self._lock:
             self._state_graph = create_agent(
                 model=model,
                 tools=tools,
                 system_prompt=self.config.system_prompt,
+                middleware=middleware,
             )
             if not self._thread.is_alive():
                 self._thread.start()
@@ -315,23 +418,106 @@ class McpClient(Module):
                     raise ValueError("No state graph initialized")
                 self._process_message(self._state_graph, message)
 
+    def _apply_messages_update(self, node_messages: list[BaseMessage], turn: int) -> None:
+        """Merge a node's emitted messages into `self._history`, mirroring the
+        `add_messages` reducer langgraph uses internally.
+
+        Honors `RemoveMessage(id=REMOVE_ALL_MESSAGES)` as "wipe history and use
+        what came after" so compaction-middleware replacements don't accrete
+        in our local history. Specific-id RemoveMessages prune matching entries.
+        Already-tagged messages (re-emitted by middleware) keep their tags;
+        new messages get the current turn id.
+
+        Publish discipline: a message is printed and published on the `agent`
+        stream at most once per session. When compaction replays previously-seen
+        messages alongside a fresh summary, we publish only the genuinely-new
+        ones (identified by `msg.id` against the pre-wipe history), so
+        downstream subscribers don't see duplicates. We use `msg.id` rather than
+        Python `id()` because compaction's `_strip_images` produces new Python
+        objects via `model_copy` while preserving `.id` — id()-based dedup
+        would treat the stripped version as fresh and re-publish it.
+        """
+        wipe_idx: int | None = None
+        for i, m in enumerate(node_messages):
+            if isinstance(m, RemoveMessage) and m.id == REMOVE_ALL_MESSAGES:
+                wipe_idx = i
+
+        if wipe_idx is not None:
+            pre_wipe_msg_ids = {h.id for h in self._history if getattr(h, "id", None) is not None}
+            self._history = []
+            iter_msgs = node_messages[wipe_idx + 1 :]
+            is_replay = True
+        else:
+            pre_wipe_msg_ids = set()
+            iter_msgs = node_messages
+            is_replay = False
+
+        for msg in iter_msgs:
+            if isinstance(msg, RemoveMessage):
+                # Specific-id removal: drop matching from history.
+                self._history = [h for h in self._history if getattr(h, "id", None) != msg.id]
+                continue
+            if not is_replay:
+                _tag_turn(msg, turn)
+            _ensure_id(msg)
+            self._history.append(msg)
+            if is_replay and msg.id in pre_wipe_msg_ids:
+                continue
+            pretty_print_langchain_message(msg)
+            self.agent.publish(msg)
+
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
     ) -> None:
         self.agent_idle.publish(False)
+        self._turn += 1
+        turn = self._turn
+        _tag_turn(message, turn)
+        _ensure_id(message)
         self._history.append(message)
         pretty_print_langchain_message(message)
         self.agent.publish(message)
 
         for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
             for node_output in update.values():
-                for msg in node_output.get("messages", []):
-                    self._history.append(msg)
-                    pretty_print_langchain_message(msg)
-                    self.agent.publish(msg)
+                # Middleware hooks (e.g. compaction's before_model) may emit
+                # updates whose value is None when they made no change.
+                if not isinstance(node_output, dict):
+                    continue
+                self._apply_messages_update(node_output.get("messages") or [], turn)
 
         if self._message_queue.empty():
             self.agent_idle.publish(True)
+
+
+def _tag_turn(message: BaseMessage, turn: int) -> None:
+    """Stamp a turn id into the message's additional_kwargs.
+
+    Used by prompt-compaction to group/score messages by the turn that produced them.
+    """
+    kwargs = getattr(message, "additional_kwargs", None)
+    if isinstance(kwargs, dict):
+        kwargs["dimos_turn"] = turn
+
+
+def _ensure_id(message: BaseMessage) -> None:
+    """Assign a UUID `id` to a message that doesn't have one yet.
+
+    The publish discipline in `_apply_messages_update` dedups re-emitted
+    messages by `msg.id`. Manually-constructed HumanMessages (user input, tool
+    artefacts) and the middleware's summary SystemMessage arrive with
+    `id=None`; if they reached `_history` without an id we couldn't tell
+    "previously-seen, now image-stripped" from "genuinely new" on the next
+    compaction replay.
+    """
+    if getattr(message, "id", None):
+        return
+    try:
+        message.id = str(uuid.uuid4())
+    except Exception:
+        # Some message subclasses may freeze `id`; tolerate it and accept
+        # the noisier publish stream for that subclass rather than crash.
+        pass
 
 
 def _append_image_to_history(
