@@ -26,9 +26,6 @@ print(app.skills)
 # Access a module directly.
 app.ReplanningAStarPlanner
 
-# Access a private variable.
-print(app.ReplanningAStarPlanner._planner._safe_goal_clearance)
-
 # Add another module dynamically.
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 app.run(KeyboardTeleop)
@@ -51,14 +48,10 @@ subscriber:
 img = app.peek_stream("color_image", 1.0)
 
 # Display it in a window.
-import cv2, numpy as np
-cv2.imshow("color_image", np.array(img.data))
+import cv2
+cv2.imshow("color_image", img.data)
 cv2.waitKey(0)
 ```
-
-Note, `np.array` is used to turn it into a real numpy array. `img.data` is a
-proxy object. That works in most cases, but `cv2.imshow` checks the actual
-class, so it needs a real numpy array.
 
 ## Remote mode
 
@@ -85,10 +78,10 @@ Connect to a specific instance:
 ```python skip
 # By run ID (from `dimos status`)
 app = Dimos.connect(run_id="20260306-143022-unitree-go2")
-
-# By host and port
-app = Dimos.connect(host="192.168.1.50", port=18861)
 ```
+
+`Dimos.connect()` discovers the daemon over the local LCM bus. Cross-host
+connection is set with the standard `LCM_DEFAULT_URL` environment variable.
 
 `run()` and `restart()` also work against a daemon:
 
@@ -107,7 +100,7 @@ be picklable.
 
 ## Limitations
 
-- `stop()` on a connected instance closes the RPyC connection but does not terminate the remote process. Use `dimos stop` for that.
+- `stop()` on a connected instance closes the LCM connection but does not terminate the remote process. Use `dimos stop` for that.
 
 ## Restarting modules
 

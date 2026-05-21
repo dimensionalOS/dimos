@@ -50,9 +50,9 @@ def running_app() -> Iterator[Dimos]:
 
 @pytest.fixture
 def client(running_app: Dimos) -> Iterator[Dimos]:
-    """Rpyc client paired with the per-test `running_app`."""
-    port = running_app._coordinator.start_rpyc_service()
-    instance = Dimos.connect(host="localhost", port=port)
+    """LCM @rpc client paired with the per-test `running_app`."""
+    running_app._coordinator.start_rpc_service()
+    instance = Dimos.connect_in_process()
     try:
         yield instance
     finally:

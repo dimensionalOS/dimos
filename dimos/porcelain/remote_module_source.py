@@ -14,114 +14,139 @@
 
 from __future__ import annotations
 
-import copyreg
-import pickle
+import importlib
 import threading
-import time
-from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
-import rpyc
-
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.porcelain.module_source import ModuleSource
 from dimos.utils.logging_config import setup_logger
 
-_CONNECT_RETRY_DEADLINE_S = 2.0
-
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
+    from dimos.protocol.rpc.pubsubrpc import LCMRPC
 
 logger = setup_logger()
 
 
-# `Blueprint` carries `mappingproxy` fields (e.g. `global_config_overrides`,
-# `remapping_map`) that are not picklable by default — `MappingProxyType` lives
-# at `builtins.mappingproxy` which isn't a real builtins attribute, so pickle
-# can't reference the constructor by name. Round-trip through a module-level
-# factory so `load_blueprint_pickled` can ship blueprints over RPyC.
-def _rebuild_mappingproxy(d: dict) -> MappingProxyType:  # type: ignore[type-arg]
-    return MappingProxyType(d)
+class _RemoteProxy:
+    """Names-only proxy for a remote module whose class can't be imported.
+
+    Exposes only the @rpc methods the remote daemon advertised; any other
+    attribute access raises `AttributeError`.
+    """
+
+    def __init__(self, rpc: LCMRPC, remote_name: str, rpc_names: set[str]) -> None:
+        self._rpc = rpc
+        self._remote_name = remote_name
+        self._rpc_names = rpc_names
+        self._unsub_fns: list = []  # type: ignore[type-arg]
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if name not in self._rpc_names:
+            raise AttributeError(f"{self._remote_name!r} has no @rpc method named {name!r}")
+        return RpcCall(None, self._rpc, name, self._remote_name, self._unsub_fns, None)
+
+    def __dir__(self) -> list[str]:
+        return sorted(self._rpc_names)
 
 
-def _reduce_mappingproxy(m: MappingProxyType) -> tuple[Any, ...]:  # type: ignore[type-arg]
-    return (_rebuild_mappingproxy, (dict(m),))
+class ModuleDescriptor(NamedTuple):
+    """Returned by `Coordinator/list_modules` so a remote client can build a proxy."""
 
-
-copyreg.pickle(MappingProxyType, _reduce_mappingproxy)  # type: ignore[arg-type]
+    class_name: str
+    qualified_path: str
+    rpc_names: list[str]
 
 
 class RemoteModuleSource(ModuleSource):
-    """Module source backed by a remote `CoordinatorService` RPyC endpoint."""
+    """Module source that drives a remote daemon over the Coordinator @rpc service."""
 
     is_remote = True
 
-    def __init__(self, host: str, port: int) -> None:
-        self._coord_conn = _rpyc_connect(
-            host, port, config={"sync_request_timeout": 30, "allow_pickle": True}
-        )
-        self._cache: dict[str, tuple[rpyc.Connection, Any]] = {}
+    def __init__(self, *, timeout: float = 5.0) -> None:
+        self._timeout = timeout
+        self._cache: dict[str, RPCClient | _RemoteProxy] = {}
+        self._descriptors: dict[str, ModuleDescriptor] | None = None
         self._lock = threading.RLock()
 
-    def list_module_names(self) -> list[str]:
-        return list(self._coord_conn.root.list_modules())
+        try:
+            self._coord = CoordinatorRPC.connect(timeout=timeout)
+        except TimeoutError:
+            raise RuntimeError(
+                "No running DimOS instance. Start one with `dimos run <blueprint>`."
+            ) from None
 
-    def get_rpyc_module(self, name: str) -> Any:
+    def _refresh_descriptors(self) -> dict[str, ModuleDescriptor]:
+        descriptors = self._coord.call("list_modules")
+        self._descriptors = {d.class_name: d for d in descriptors}
+        return self._descriptors
+
+    def _get_descriptor(self, name: str) -> ModuleDescriptor:
+        with self._lock:
+            if self._descriptors is None or name not in self._descriptors:
+                self._refresh_descriptors()
+            assert self._descriptors is not None
+            if name not in self._descriptors:
+                raise KeyError(name)
+            return self._descriptors[name]
+
+    def list_module_names(self) -> list[str]:
+        with self._lock:
+            descriptors = self._refresh_descriptors()
+            return list(descriptors.keys())
+
+    def get_module(self, name: str) -> Any:
         with self._lock:
             cached = self._cache.get(name)
-            if cached is not None and not cached[0].closed:
-                return cached[1]
+            if cached is not None:
+                return cached
 
-            endpoint = self._coord_conn.root.get_module_endpoint(name)
-            host, port, module_id = endpoint[0], int(endpoint[1]), int(endpoint[2])
-            conn = _rpyc_connect(
-                host, port, config={"sync_request_timeout": 30, "allow_pickle": True}
-            )
-            module = conn.root.get_module(module_id)
-            self._cache[name] = (conn, module)
-            return module
+            descriptor = self._get_descriptor(name)
+            proxy: RPCClient | _RemoteProxy
+            try:
+                module_path, class_name = descriptor.qualified_path.rsplit(".", 1)
+                cls = getattr(importlib.import_module(module_path), class_name)
+                proxy = RPCClient(None, cls, rpc=self._coord.rpc)
+            except (ImportError, AttributeError):
+                proxy = _RemoteProxy(self._coord.rpc, name, set(descriptor.rpc_names))
+            self._cache[name] = proxy
+            return proxy
 
     def invalidate(self, name: str) -> None:
         with self._lock:
             entry = self._cache.pop(name, None)
-        if entry is not None:
+            self._descriptors = None
+        if isinstance(entry, RPCClient):
             try:
-                entry[0].close()
+                entry.stop_rpc_client()
             except Exception:
-                logger.warning("Failed to close RPyC connection for module %s", name, exc_info=True)
+                logger.warning("Failed to release proxy for %s", name, exc_info=True)
 
     def load_blueprint_by_name(self, name: str) -> None:
-        self._coord_conn.root.load_blueprint_by_name(name)
+        self._coord.call("load_blueprint_by_name", name)
 
-    def load_blueprint_pickled(self, blueprint: Blueprint) -> None:
-        data = pickle.dumps(blueprint)
-        self._coord_conn.root.load_blueprint_pickled(data)
+    def load_blueprint(self, blueprint: Blueprint) -> None:
+        self._coord.call("load_blueprint", blueprint)
 
     def restart_module_by_class_name(self, class_name: str, *, reload_source: bool) -> None:
-        self._coord_conn.root.restart_module_by_class_name(class_name, reload_source)
+        self._coord.call("restart_module_by_class_name", class_name, reload_source=reload_source)
         self.invalidate(class_name)
 
     def close(self) -> None:
         with self._lock:
-            for conn, _ in self._cache.values():
-                try:
-                    conn.close()
-                except Exception:
-                    pass
+            for entry in self._cache.values():
+                if isinstance(entry, RPCClient):
+                    try:
+                        entry.stop_rpc_client()
+                    except Exception:
+                        pass
             self._cache.clear()
+            self._descriptors = None
         try:
-            self._coord_conn.close()
+            self._coord.stop()
         except Exception:
             pass
-
-
-def _rpyc_connect(host: str, port: int, **kwargs: Any) -> rpyc.Connection:
-    deadline = time.monotonic() + _CONNECT_RETRY_DEADLINE_S
-    delay = 0.010
-    while True:
-        try:
-            return rpyc.connect(host, port, **kwargs)
-        except ConnectionRefusedError:
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(delay)
-            delay = min(delay * 2, 0.200)

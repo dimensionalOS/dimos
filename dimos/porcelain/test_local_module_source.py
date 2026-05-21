@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from dimos.porcelain.local_module_source import LocalModuleSource
 
 
@@ -27,35 +29,24 @@ def test_list_module_names(running_app):
     assert "StressTestModule" in names
 
 
-def test_get_rpyc_module(running_app):
-    module = running_app._source.get_rpyc_module("StressTestModule")
-    assert module._module_closed is False
+def test_get_module_returns_callable_proxy(running_app):
+    module = running_app._source.get_module("StressTestModule")
+    assert module.ping() == "pong"
 
 
-def test_get_rpyc_module_caches_connection(running_app):
+def test_get_module_returns_same_proxy(running_app):
     source = running_app._source
-    m1 = source.get_rpyc_module("StressTestModule")
-    m2 = source.get_rpyc_module("StressTestModule")
+    m1 = source.get_module("StressTestModule")
+    m2 = source.get_module("StressTestModule")
     assert m1 is m2
 
 
-def test_invalidate_allows_reconnect(running_app):
-    source = running_app._source
-    m1 = source.get_rpyc_module("StressTestModule")
-    source.invalidate("StressTestModule")
-    m2 = source.get_rpyc_module("StressTestModule")
-    assert m1 is not m2
-    assert m2._module_closed is False
+def test_get_module_unknown_raises(running_app):
+    with pytest.raises(KeyError):
+        running_app._source.get_module("NonexistentModule")
 
 
-def test_invalidate_unknown_name_is_noop(running_app):
+def test_invalidate_is_noop(running_app):
+    # Coordinator owns the proxy; the source has no per-call cache.
+    running_app._source.invalidate("StressTestModule")
     running_app._source.invalidate("NonexistentModule")
-
-
-def test_close_then_get_reconnects(running_app):
-    source = running_app._source
-    m1 = source.get_rpyc_module("StressTestModule")
-    source.close()
-    m2 = source.get_rpyc_module("StressTestModule")
-    assert m1 is not m2
-    assert m2._module_closed is False

@@ -316,7 +316,7 @@ def run(
 
         daemonize(log_dir)
 
-        rpyc_port = coordinator.start_rpyc_service()  # After daemonize().
+        coordinator.start_rpc_service()  # After daemonize().
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -325,7 +325,6 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
@@ -333,7 +332,7 @@ def run(
         install_signal_handlers(entry, coordinator)
         coordinator.loop()
     else:
-        rpyc_port = coordinator.start_rpyc_service()
+        coordinator.start_rpc_service()
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -342,7 +341,6 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()

@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 import importlib
 import inspect
 import shutil
@@ -23,7 +23,7 @@ import sys
 import threading
 from typing import TYPE_CHECKING, Any, cast
 
-from dimos.core.coordination.rpyc_server import RpycServer
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_docker import WorkerManagerDocker
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
@@ -31,6 +31,7 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
 from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
+from dimos.porcelain.remote_module_source import ModuleDescriptor
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -63,7 +64,7 @@ class ModuleCoordinator(Resource):
         self._module_transports: dict[type[ModuleBase], dict[str, PubSubTransport[Any]]] = {}
         self._started = False
         self._modules_lock = threading.RLock()
-        self._rpyc = RpycServer(self)
+        self._coordinator_rpc: CoordinatorRPC | None = None
 
     def start(self) -> None:
         from dimos.core.o3dpickle import register_picklers
@@ -74,7 +75,9 @@ class ModuleCoordinator(Resource):
         self._started = True
 
     def stop(self) -> None:
-        self._rpyc.stop()
+        if self._coordinator_rpc is not None:
+            self._coordinator_rpc.stop()
+            self._coordinator_rpc = None
 
         for module_class, module in reversed(self._deployed_modules.items()):
             logger.info("Stopping module...", module=module_class.__name__)
@@ -92,25 +95,50 @@ class ModuleCoordinator(Resource):
 
         safe_thread_map(tuple(self._managers.values()), _stop_manager)
 
-    def start_rpyc_service(self) -> int:
-        return self._rpyc.start()
+    def start_rpc_service(self) -> None:
+        """Expose the coordinator's API as @rpc methods over LCM."""
+        if self._coordinator_rpc is not None:
+            return
+        self._coordinator_rpc = CoordinatorRPC.serve(self)
+
+    @property
+    def rpcs(self) -> dict[str, Callable[..., Any]]:
+        """Methods exposed via the Coordinator @rpc service."""
+        return {
+            "ping": self.ping,
+            "list_modules": self.list_modules,
+            "load_blueprint_by_name": self.load_blueprint_by_name,
+            "load_blueprint": self.load_blueprint,
+            "restart_module_by_class_name": self.restart_module_by_class_name,
+        }
+
+    def ping(self) -> str:
+        """Used by clients to check if the coordinator is alive and responsive."""
+        return "pong"
+
+    def list_modules(self) -> list[ModuleDescriptor]:
+        with self._modules_lock:
+            descriptors: list[ModuleDescriptor] = []
+            for cls in self._deployed_modules:
+                qualified = f"{cls.__module__}.{cls.__name__}"
+                descriptors.append(
+                    ModuleDescriptor(
+                        class_name=cls.__name__,
+                        qualified_path=qualified,
+                        rpc_names=list(cls.rpcs.keys()),
+                    )
+                )
+            return descriptors
+
+    def load_blueprint_by_name(self, name: str) -> None:
+        # Avoid circular import.
+        from dimos.robot.get_all_blueprints import get_by_name
+
+        self.load_blueprint(get_by_name(name))
 
     def list_module_names(self) -> list[str]:
         with self._modules_lock:
             return [cls.__name__ for cls in self._deployed_modules]
-
-    def get_module_endpoint(self, class_name: str) -> tuple[str, int, int]:
-        """Return (host, worker_rpyc_port, module_id) for the given class name.
-
-        Lazily starts the worker-side RPyC server on first use.
-        """
-        with self._modules_lock:
-            for cls, proxy in self._deployed_modules.items():
-                if cls.__name__ == class_name:
-                    actor = cast("ModuleProxy", proxy).actor_instance
-                    port = actor.start_rpyc()
-                    return ("localhost", int(port), int(actor._module_id))
-        raise KeyError(class_name)
 
     def health_check(self) -> bool:
         return all(m.health_check() for m in self._managers.values())
@@ -404,11 +432,12 @@ class ModuleCoordinator(Resource):
         class_name: str,
         *,
         reload_source: bool = True,
-    ) -> ModuleProxyProtocol:
+    ) -> None:
         with self._modules_lock:
             for cls in self._deployed_modules:
                 if cls.__name__ == class_name:
-                    return self._restart_module(cls, reload_source=reload_source)
+                    self._restart_module(cls, reload_source=reload_source)
+                    return
         raise ValueError(f"No deployed module with class name {class_name!r}")
 
     def restart_module(
