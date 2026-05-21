@@ -32,6 +32,7 @@ Usage::
 from __future__ import annotations
 
 import ipaddress
+import math
 from pathlib import Path
 import socket
 from typing import TYPE_CHECKING, Annotated
@@ -53,7 +54,6 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_POINT_DATA_PORT,
     SDK_PUSH_MSG_PORT,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM
@@ -79,13 +79,19 @@ class FastLio2Config(NativeModuleConfig):
     # as a static TF; no longer pre-folded into SLAM outputs.  Consumers
     # wanting the body's pose compose (odom → sensor) ∘ (body → sensor)^-1.
     #
+    # Orientation is roll/pitch/yaw in radians (XYZ Tait-Bryan, applied
+    # extrinsically: yaw, then pitch, then roll about world axes).
+    # Quaternion is computed internally in model_post_init.
+    #
     # ARCHITECTURAL NOTE: In strict REP-105 the mount belongs in URDF and
     # would be published by robot_state_publisher (or equivalent), not by
     # the sensor driver.  DimOS has no such central static-TF source today,
     # so fastlio2 owns this as a workaround.  Replicating it per-sensor
-    # won't scale — when a URDF/static-TF module lands, body_frame, mount,
-    # mount_publish_hz, and publish_static_mount_tf should move there.
-    mount: Pose = Pose()
+    # won't scale — when a URDF/static-TF module lands, body_frame,
+    # mount_xyz_m, mount_rpy_rad, mount_publish_hz, and the static-TF
+    # publishing should all move there.
+    mount_xyz_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    mount_rpy_rad: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     # Frame chain (REP-105).
     #   frame_id    → parent of dynamic Odometry/TF.  "odom" reflects that
@@ -151,28 +157,29 @@ class FastLio2Config(NativeModuleConfig):
     # Resolved in __post_init__, passed as --config_path to the binary
     config_path: str | None = None
 
-    # 7-float marshaling of `mount` for the CLI (Pose isn't directly
-    # serializable as a single arg).  Set in model_post_init.
+    # Quaternion marshaling of mount_xyz_m + mount_rpy_rad for the CLI.
+    # Set in model_post_init from the user-facing rpy + xyz fields.
     mount_xyz_quat: list[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
-    cli_exclude: frozenset[str] = frozenset({"config", "mount"})
+    cli_exclude: frozenset[str] = frozenset({"config", "mount_xyz_m", "mount_rpy_rad"})
 
     def model_post_init(self, __context: object) -> None:
-        """Resolve config_path and flatten mount for the CLI."""
+        """Resolve config_path and convert mount rpy+xyz to a quaternion."""
         super().model_post_init(__context)
         cfg = self.config
         if not cfg.is_absolute():
             cfg = _CONFIG_DIR / cfg
         self.config_path = str(cfg.resolve())
-        m = self.mount
-        self.mount_xyz_quat = [
-            m.x,
-            m.y,
-            m.z,
-            m.orientation.x,
-            m.orientation.y,
-            m.orientation.z,
-            m.orientation.w,
-        ]
+        roll, pitch, yaw = self.mount_rpy_rad
+        # XYZ Tait-Bryan extrinsic → quaternion (qx, qy, qz, qw)
+        cr, sr = math.cos(roll / 2), math.sin(roll / 2)
+        cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
+        cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
+        qx = sr * cp * cy - cr * sp * sy
+        qy = cr * sp * cy + sr * cp * sy
+        qz = cr * cp * sy - sr * sp * cy
+        qw = cr * cp * cy + sr * sp * sy
+        x, y, z = self.mount_xyz_m
+        self.mount_xyz_quat = [x, y, z, qx, qy, qz, qw]
 
 
 class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.GlobalPointcloud):
