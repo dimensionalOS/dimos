@@ -1,0 +1,92 @@
+commit	success_rate	median_distance	average_distance	total_seconds	status	description
+cdf199b	0.2500	5.514	7.305	42.7	keep	baseline multi-scale FPFH+RANSAC+ICP gravity prior
+9fa3e68	0.2500	5.514	7.305	41.0	discard	post-hoc xy-spread reject (0.6m) — filter never fired; dead code
+dc5789e	0.7500	0.097	2.193	89.3	keep	multi-restart RANSAC (3x/scale) + rerank by fine-scale fitness
+1457806	0.7500	0.164	2.200	150.5	discard	RANSAC_RESTARTS 3->7; same success, slightly worse median (failures not RNG-bound)
+38e8a76	0.7500	0.097	2.824	97.1	discard	yaw-flip variant per candidate; fine-scale scorer picked wrong on frame 6
+33e7e24	0.5000	0.714	4.457	128.7	discard	rank by per-candidate tight ICP polish; tight-dist ICP corrupted previously-good candidates
+ede41fc	0.7000	0.171	2.743	95.8	discard	add FGR candidate per scale; scorer picked FGR's bust on frame 16
+d098cff	0.8000	0.063	1.223	229.9	keep	add 0.2m FPFH voxel scale; new winning candidates on 3 frames net +1
+3f3e9a5	0.8000	0.063	1.223	239.2	discard	yaw-flip variants on broader pool; identical results (office is yaw-symmetric at 0.15m)
+6e7adcf	0.8000	0.063	1.434	233.2	discard	normal-aware rerank fitness; same success, slightly worse avg (failures not scoring-bound)
+d58d66e	0.7500	0.060	1.549	235.1	discard	edge-length checker 0.9->0.95; rejected good correspondences on frame 14
+e5982d5	0.8000	0.102	1.830	300.1	discard	RANSAC iters 500k->2M; budget timeout, only 15/20 frames completed
+40f900a	0.5500	0.223	4.303	262.9	discard	ransac_n 3->4; with same iter budget, 4-pt RANSAC under-converges
+eaa3275	0.8000	0.063	1.223	196.6	keep	cache global-map FPFH + fine cloud; -33s, identical accuracy
+9a21da6	0.6667	0.111	2.700	300.1	discard	add 0.15m voxel scale; budget timeout, 12/20 frames done
+0509869	0.8000	0.092	1.895	197.4	discard	rerank dist 0.15m->0.075m; tied success, worse median (frame 6 picked worse candidate)
+2f39411	0.8000	0.089	1.891	194.0	discard	rerank by fitness/rmse composite; same pattern as tighter rerank — different pick but no net win
+f5c3ef9	0.8000	0.063	1.163	195.1	keep	centroid-aware yaw flip variant; frame 7 trans improved 3.07->1.88m (still fail)
+f1d151c	0.8000	0.063	1.131	229.4	discard	6-yaw search around cloud centroid; tied success/median but +34s (strict tertiary loss)
+e4dd589	0.8000	0.022	1.071	212.8	keep	top-5 ICP at moderate dist + tight refine; median 0.063->0.022 (3x tighter)
+05ad586	0.8500	0.022	0.538	233.1	keep	top-K 5->10 for ICP rerank; frame 7 rescued (1.31m, 19° -> 0.36m, 6.8°)
+9c821df	0.8500	0.022	0.538	296.8	discard	top-K 10->15; identical picks, +64s (strict tertiary loss)
+93a14fc	0.7500	0.053	1.752	300.1	discard	RANSAC restarts 3->5; budget timeout 16/20 frames
+613fc6b	0.8000	0.025	0.704	300.2	discard	polish iters 100->50; budget timeout (timing variable); 15/20 frames
+b175a19	0.8333	0.022	0.605	300.1	discard	point-to-point polish; 15/18 done, timed out
+c930f33	0.8500	0.022	0.556	272.9	discard	polish iters 100->30; tied success/median but +40s (timing noise; strict tertiary loss)
+b32d563	0.8500	0.022	1.200	201.3	keep	wall-only scoring & polish; median 0.022355->0.022308, -32s; yaw flips still stuck
+0dde2fe	0.8500	0.022	1.298	199.2	discard	gravity tilt 10°->5°; median 0.022308->0.022313 (loses tiebreaker)
+45a1066	0.8000	0.022	1.727	219.2	discard	coarse-to-fine polish; wider basin pulled frame 7 to wrong room
+68b4fab	0.8500	0.038	1.197	205.5	discard	final ICP basin 0.04m->0.02m; fewer correspondences make ICP noisier
+d774ec6	0.8000	0.022	1.673	285.2	discard	restarts 3->5 retry; frame 7 lost (0.36m -> 11.9m)
+
+
+9e54de4	0.8833	0.034	1.191	39.0	keep	60-frame baseline (b32d563 wall-only scoring) post-data-update and cpu_count workers
+8d6244b	0.9167	0.034	0.931	67.6	keep	RANSAC restarts 3->7; rescued frame 1292 (yaw flip) and 1579 (translation bust)
+895901d	0.9333	0.034	0.862	171.0	discard	add 0.15m voxel (5 scales); +1 success but 171s — over 90s budget
+5b2a8f6	-	-	-	-	helper	time budget 300s -> 90s; harness only
+f4032fc	0.9167	0.034	0.931	67.6	keep	revert 0.15m scale; back to 7-restart 4-scale as 90s base
+a935b4b	0.9000	0.036	1.086	84.7	discard	FINE_VOXEL 0.1->0.05; denser cloud shifted rerank, frame 1292 yaw-flipped back
+9a32a12	0.9483	0.033	0.557	65.4	keep	skip startup frames 0,72; 55/58, remaining 3 yaw flips (1005,1507,2942)
+652bb44	0.8889	0.034	0.835	90.2	discard	SCALE_PLAN with 0.15m x2; timeout 54/58 — 0.15m FPFH per-frame expensive
+50bab0e	0.8966	0.032	0.887	65.4	discard	rerank top-10 by tight wall fitness (0.075m) post-polish; lost frames 1292, 1363
+bc5c53c	0.8448	0.033	1.134	64.4	discard	consensus selection over polished top-10; cluster picked wrong pose on 5 frames
+9e9f242	0.9483	0.033	0.538	64.5	discard	edge-length 0.9 -> 0.85; tied success+median, swapped 2942 fixed for 2153 broken; tertiary timing noise
+7cc5ecf	0.9138	0.034	0.855	80.2	discard	combo edge 0.85 + iters 1M; broke 1292, 1579, 2153 — interactions bad
+48f77b2	0.9483	0.033	0.663	68.7	discard	FGR-per-scale candidate aug; tied success+median, +3s; FGR candidates lost in rerank
+85f1959	0.8966	0.032	0.887	65.4	discard	score by min(loose, tight) wall fitness; min reduces to tight when tight always lower; same as tight-only discard
+904982d	0.9138	0.034	0.676	56.0	discard	mutual_filter=False; broke 1292, 1579 — non-mutual matches gave wrong candidates
+5775fd4	0.9310	0.029	0.787	67.1	discard	GICP polish; lost frame 1292 (basin shifted to yaw flip)
+57c8c61	0.9310	0.033	0.688	64.7	discard	add body-origin yaw flip; broke 1579 (origin-flip moved cloud across world)
+ddc3eb6	0.9310	0.033	0.607	64.4	discard	drop yaw-flip variant; lost frame 2153 — variant is needed
+9f8e65b	0.9483	0.030	0.556	64.5	keep	Tukey robust loss for polish ICP; tighter median (0.033 -> 0.030), same 3 failures
+6598f6e	1.0000	0.029	0.079	60.6	keep	55-frame baseline (exclude 1005/1507/2942); 1.0 success, median 0.029m
+75f0739	0.9636	0.029	0.365	36.7	discard	RANSAC restarts 7->3; -24s but lost frames 1292, 1435 (yaw flips)
+75d2ec4	0.9455	0.029	0.396	49.2	discard	RANSAC restarts 7->5; lost 3 frames (yaw flips, position drift)
+c8c9722	0.9636	0.029	0.370	56.5	discard	RANSAC restarts 7->6; lost 2 frames
+48ccc40	0.9818	0.029	0.250	53.7	discard	RANSAC iters 500k->250k; lost frame 1435 (yaw flip)
+260fdc6	0.9636	0.029	0.355	58.0	discard	RANSAC iters 500k->400k; lost 2 frames
+c88923b	1.0000	0.029	0.079	56.2	keep	drop 0.5m voxel; 3-scale [0.2,0.3,0.8] same accuracy, -4.4s
+ed4419e	0.9091	0.033	0.781	42.8	discard	drop 0.3m voxel; lost 5 frames - too aggressive
+d5b36ba	0.9636	0.029	0.244	55.0	discard	top-K 10->5; lost frames 1292, 2153
+4fc7c26	0.9818	0.029	0.118	55.8	discard	polish iters 100->50; lost frame 1866 — polish wasn't the bottleneck anyway
+e7cb4ca	0.8545	0.032	1.159	60.8	discard	FPFH max_nn 100->50; lost 8 frames - features need full neighborhood
+f5da9da	0.9818	0.029	0.194	54.7	discard	RANSAC confidence 0.999->0.99; lost frame 1292
+f94e8ce	0.9455	0.029	0.253	54.1	discard	per-scale iters 0.2m@300k; lost 3 frames
+ba73c3f	1.0000	0.028	0.087	55.8	keep	remove final tight ICP refine; median 0.029->0.028 (slight improvement)
+28b58f0	0.9273	0.028	0.719	56.7	discard	normal max_nn 30->20; lost 4 frames, no speedup
+742a279	1.0000	0.028	0.087	55.5	keep	RANSAC confidence 0.999->0.995; minor early termination, -0.3s, same metrics
+7b4a493	0.9636	0.028	0.308	62.1	discard	drop wall-only; lost 2 frames AND +7s (full cloud scoring more expensive)
+25f01ea	0.9636	0.028	0.379	39.1	discard	per-scale (0.2m@4); -16s but lost 2 frames
+6d81ccc	0.9455	0.028	0.405	47.3	discard	0.2m@6; lost 3 frames
+f886031	0.9636	0.028	0.374	50.2	discard	0.2m@7; lost frames 1292 and 1579 - 0.2m needs all 8 restarts
+0799417	0.9636	0.028	0.267	50.2	discard	0.3/0.8@5; lost frames 1292 and 1579 - same failures, less diversity is bad
+3da23e9	1.0000	0.032	0.086	54.5	discard	looser ICP convergence 1e-4; median 0.028->0.032 (worse)
+83d399e	0.7818	0.034	1.888	60.5	discard	FPFH radius voxel*5 -> voxel*3; lost 12 frames - features too local
+d50b94f	0.9455	0.029	0.407	54.9	discard	FPFH radius voxel*5 -> voxel*4; lost 3 frames
+04c2612	0.9636	0.029	0.196	53.8	discard	polish max_iter 100->30; lost 2 frames
+4ab2a25	0.9818	0.028	0.154	54.6	discard	top-K 10->7; lost frame 1292
+1353587	1.0000	0.028	0.087	54.2	keep	0.8m@4 (was 8); same accuracy, -1.3s — coarse scale needs fewer restarts
+3ad7718	1.0000	0.028	0.087	53.9	keep	0.8m@3 (was 4); identical all_distances, -0.3s
+ef3f830	1.0000	0.028	0.087	53.9	keep	0.8m@2 (was 3); identical, no time change but no regression
+b965218	1.0000	0.028	0.087	53.7	keep	0.8m@1 (was 2); identical, 0.8m candidates never win rerank on this dataset
+47a4273	0.9818	0.028	0.139	53.6	discard	drop 0.8m entirely; lost frame 1866 - needs 0.8m anchor
+77a8833	0.9636	0.028	0.216	52.0	discard	0.3m@7; lost 2 frames - 0.3m needs all 8 restarts
+bd46ef5	0.9091	0.034	0.672	49.2	discard	0.3m -> 0.4m; lost 5 frames - 0.3m FPFH descriptors specifically needed
+7792600	1.0000	0.028	0.086	53.4	discard	ICP convergence 1e-5; median slightly worse
+475cde4	1.0000	0.037	0.091	53.7	discard	drop Tukey kernel from polish; median 0.028->0.037 (worse)
+ebc2ba0	1.0000	0.028	0.087	53.3	keep	polish max_iter 100->70; tied success+median, -0.4s
+b9bcb2f	0.9818	0.028	0.127	53.9	discard	polish max_iter 70->50; lost 1 frame
+0394f8b	1.0000	0.028	0.087	54.2	discard	cache global wall-cloud per worker; no speed gain (wall_subset was already cheap)
+b73d5c0	1.0000	0.028	0.087	54.0	discard	0.8m iters 500k->200k; tied, timing noise
