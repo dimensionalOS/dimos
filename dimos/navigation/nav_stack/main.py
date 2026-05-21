@@ -265,7 +265,7 @@ def nav_stack_rerun_config(
     resolved.setdefault("static", {})
     visual_override = dict(resolved["visual_override"])
     visual_override.setdefault("world/sensor_scan", _sensor_scan_colors)
-    visual_override.setdefault("world/terrain_map", _terrain_map_colors)
+    visual_override.setdefault("world/terrain_map", _hide)
     visual_override.setdefault("world/terrain_map_ext", _terrain_map_colors)
     visual_override.setdefault("world/global_map", _global_map_colors)
     visual_override.setdefault("world/_pgo_global_map", _hide)
