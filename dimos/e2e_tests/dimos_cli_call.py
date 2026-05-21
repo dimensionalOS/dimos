@@ -87,7 +87,6 @@ class DimosCliCall:
             ],
             stdout=self._log_file,
             stderr=subprocess.STDOUT,
-            env=env,
             start_new_session=True,
             env=env,
         )
