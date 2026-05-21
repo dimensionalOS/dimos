@@ -171,12 +171,6 @@ class MultiTBuffer:
         time_point: float | None = None,
         time_tolerance: float | None = None,
     ) -> Transform | None:
-        if parent_frame == child_frame:
-            raise ValueError(
-                f"tf.get() called with same parent and child frame {parent_frame!r}; "
-                "this is almost always a caller bug — the data is already in that frame"
-            )
-
         simple = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
 
         if simple is not None:
