@@ -81,6 +81,22 @@ class ThirdModule(Module):
         return self.multiplier
 
 
+class HeavyModule(Module):
+    dedicated_worker = True
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+
+class AnotherHeavyModule(Module):
+    dedicated_worker = True
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+
 @pytest.fixture
 def create_worker_manager():
     manager = None
@@ -304,3 +320,39 @@ def test_load_balancing_distributes_modules(manager_and_modules):
     # Each worker should have 2 modules (even distribution)
     counts = [w.module_count for w in manager._workers]
     assert counts == [2, 2]
+
+
+@pytest.mark.skipif_macos_bug
+def test_dedicated_worker_gets_own_process(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=2)
+
+    heavy = manager.deploy(HeavyModule, global_config, {})
+    modules.append(heavy)
+    heavy.start()
+
+    for _ in range(3):
+        m = manager.deploy(SimpleModule, global_config, {})
+        modules.append(m)
+        m.start()
+
+    counts = sorted(w.module_count for w in manager._workers)
+    # One worker hosts only the dedicated module; the other hosts the 3 light ones.
+    assert counts == [1, 3]
+    assert sum(1 for w in manager._workers if w.dedicated) == 1
+
+
+@pytest.mark.skipif_macos_bug
+def test_dedicated_workers_trigger_autoscale(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=2)
+
+    heavy1 = manager.deploy(HeavyModule, global_config, {})
+    modules.append(heavy1)
+    heavy1.start()
+    heavy2 = manager.deploy(AnotherHeavyModule, global_config, {})
+    modules.append(heavy2)
+    heavy2.start()
+
+    # 2 dedicated modules require >= 4 total workers so non-dedicated workers
+    # at least match the dedicated count.
+    assert len(manager._workers) == 4
+    assert sum(1 for w in manager._workers if w.dedicated) == 2

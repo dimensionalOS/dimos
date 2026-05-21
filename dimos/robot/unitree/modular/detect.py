@@ -109,12 +109,7 @@ def broadcast(  # type: ignore[no-untyped-def]
     video_frame: Image,
     odom_frame: Odometry,
     detections,
-    annotations,
 ) -> None:
-    from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-        ImageAnnotations,
-    )
-
     from dimos.core.transport import LCMTransport
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -134,8 +129,6 @@ def broadcast(  # type: ignore[no-untyped-def]
     print(video_frame)
     print(odom_frame)
     video_transport = LCMTransport("/image", Image)
-    annotations_transport = LCMTransport("/annotations", ImageAnnotations)  # type: ignore[var-annotated]
-    annotations_transport.broadcast(None, annotations)
 
 
 def process_data():  # type: ignore[no-untyped-def]
@@ -143,7 +136,6 @@ def process_data():  # type: ignore[no-untyped-def]
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.detection.module2D import (  # type: ignore[attr-defined]
         Detection2DModule,
-        build_imageannotations,
     )
     from dimos.robot.unitree.type.odometry import Odometry
     from dimos.utils.data import get_data
@@ -166,9 +158,8 @@ def process_data():  # type: ignore[no-untyped-def]
 
     detector = Detection2DModule()
     detections = detector.detect(video_frame)  # type: ignore[attr-defined]
-    annotations = build_imageannotations(detections)
 
-    data = (target, lidar_frame, video_frame, odom_frame, detections, annotations)
+    data = (target, lidar_frame, video_frame, odom_frame, detections)
 
     with open("filename.pkl", "wb") as file:
         pickle.dump(data, file)

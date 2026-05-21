@@ -52,6 +52,8 @@ class Config(ModuleConfig):
 class DroneConnectionModule(Module):
     """Module that handles drone sensor data and movement commands."""
 
+    dedicated_worker = True
+
     config: Config
 
     # Inputs

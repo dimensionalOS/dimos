@@ -33,7 +33,7 @@ Connection + camera + visualization. The foundation layer.
 | `DroneConnectionModule` | MAVLink communication, movement skills |
 | `DroneCameraModule` | Camera intrinsics, image processing |
 | `WebsocketVisModule` | Web-based visualization |
-| `RerunBridgeModule` / `FoxgloveBridge` | 3D viewer (selected by `--viewer`) |
+| `RerunBridgeModule` | 3D viewer (selected by `--viewer`) |
 
 **Indoor vs Outdoor:** By default, the drone uses velocity integration for odometry (indoor mode). For outdoor flights with GPS, set `outdoor=true` — this switches to GPS-only positioning which is more reliable in open environments but less precise for close-range maneuvers.
 
@@ -239,16 +239,6 @@ dimos --viewer rerun run drone-basic
 ```
 Split layout with camera feed + 3D world view. Includes static drone body visualization and LCM transport integration.
 
-### Foxglove Studio
-```bash
-dimos --viewer foxglove run drone-basic
-```
-Connect Foxglove Studio to `ws://localhost:8765` to see:
-- Live video with tracking overlay
-- 3D drone position
-- Telemetry plots
-- Transform tree
-
 ### Web Visualization
 Always available at `http://localhost:7779` via `WebsocketVisModule`.
 
@@ -297,7 +287,6 @@ dimos --replay run drone-basic
 | 14550 | UDP | MAVLink commands/telemetry |
 | 5600 | UDP | Video stream |
 | 7779 | WebSocket | DimOS web visualization |
-| 8765 | WebSocket | Foxglove bridge |
 | 7667 | UDP | LCM messaging |
 
 ## Coordinate Systems

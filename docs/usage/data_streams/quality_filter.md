@@ -40,8 +40,7 @@ print("Selected:", [r["id"] for r in result])
 print("Qualities:", [r["quality"] for r in result])
 ```
 
-<!--Result:-->
-```
+```results
 Selected: [2]
 Qualities: [0.9]
 ```
@@ -287,8 +286,7 @@ result = rx.of(*detections).pipe(
 print(f"Selected: {result[0]['name']} (conf: {result[0]['confidence']})")
 ```
 
-<!--Result:-->
-```
+```results
 Selected: dog (conf: 0.95)
 ```
 

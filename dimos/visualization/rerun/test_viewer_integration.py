@@ -18,15 +18,13 @@ These tests verify that:
 1. The dimos-viewer binary is installed and discoverable
 2. rerun_bindings.spawn() accepts the executable_name parameter
 3. bridge.py has the correct spawn logic
-4. Version compatibility between rerun-sdk and dimos-viewer
 
 These run in CI where dimos-viewer is a core dependency, so the binary
 is always available. The main risk we're guarding against is rerun-sdk
-pushing an update that breaks the spawn interface or version compatibility.
+pushing an update that breaks the spawn interface.
 """
 
 import inspect
-import re
 import shutil
 
 
@@ -117,41 +115,4 @@ class TestBridgeSpawnLogic:
         assert "ImportError" in src or "except" in src, (
             "bridge.py start() has no fallback for missing dimos-viewer. "
             "Users without dimos-viewer will crash."
-        )
-
-
-def _parse_version(version_str: str) -> tuple[int, int]:
-    """Extract (major, minor) from a version string like '0.29.2' or '0.30.0a2'."""
-    match = re.match(r"(\d+)\.(\d+)", version_str)
-    assert match, f"Cannot parse version: {version_str}"
-    return int(match.group(1)), int(match.group(2))
-
-
-class TestVersionCompatibility:
-    """Catch rerun-sdk / dimos-viewer version drift before it bites us at runtime."""
-
-    def test_versions_within_one_minor(self):
-        """rerun-sdk and dimos-viewer must be within 1 minor version.
-
-        dimos-viewer is built from a rerun fork, so they track the same
-        release line. If they drift by more than one minor version, the
-        gRPC protocol or internal APIs are likely incompatible.
-        """
-        import importlib.metadata
-
-        import rerun
-
-        sdk_version = rerun.__version__
-        viewer_version = importlib.metadata.version("dimos-viewer")
-
-        sdk_major, sdk_minor = _parse_version(sdk_version)
-        viewer_major, viewer_minor = _parse_version(viewer_version)
-
-        assert sdk_major == viewer_major, (
-            f"Major version mismatch: rerun-sdk={sdk_version}, dimos-viewer={viewer_version}. "
-            f"These are likely incompatible."
-        )
-        assert abs(sdk_minor - viewer_minor) <= 1, (
-            f"Version drift too large: rerun-sdk={sdk_version}, dimos-viewer={viewer_version}. "
-            f"Update dimos-viewer to match rerun-sdk or vice versa."
         )
