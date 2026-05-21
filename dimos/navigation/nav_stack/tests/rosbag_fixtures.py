@@ -21,7 +21,11 @@ then capturing and comparing outputs with deviation scores.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+import itertools
+import os
 from pathlib import Path
 import subprocess
 import threading
@@ -32,6 +36,9 @@ import lcm as lcmlib
 import numpy as np
 import pytest
 
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -135,34 +142,53 @@ class LcmCollector:
     """Subscribes to an LCM topic and collects decoded messages with timestamps."""
 
     topic: str
-    msg_type: type
+    message_type: type
     messages: list[Any] = field(default_factory=list)
     timestamps: list[float] = field(default_factory=list)
-    _sub: Any = field(default=None, repr=False)
+    _subscription: Any = field(default=None, repr=False)
 
     def start(self, lcm: lcmlib.LCM) -> None:
-        msg_cls = self.msg_type
+        message_class = self.message_type
 
         def handler(_channel: str, data: bytes) -> None:
             try:
-                msg = msg_cls.lcm_decode(data)  # type: ignore[attr-defined]
-                self.messages.append(msg)
+                message = message_class.lcm_decode(data)  # type: ignore[attr-defined]
+                self.messages.append(message)
                 self.timestamps.append(time.monotonic())
             except Exception as exc:
                 logger.error(f"LcmCollector decode error on {self.topic}: {exc}")
 
-        self._sub = lcm.subscribe(self.topic, handler)
+        self._subscription = lcm.subscribe(self.topic, handler)
 
     def stop(self, lcm: lcmlib.LCM) -> None:
-        if self._sub is not None:
-            lcm.unsubscribe(self._sub)
-            self._sub = None
+        if self._subscription is not None:
+            lcm.unsubscribe(self._subscription)
+            self._subscription = None
 
 
 def lcm_handle_loop(lcm: lcmlib.LCM, stop_event: threading.Event, timeout_ms: int = 50) -> None:
     """Run LCM handle loop until stop_event is set."""
     while not stop_event.is_set():
         lcm.handle_timeout(timeout_ms)
+
+
+_isolated_lcm_url_counter = itertools.count()
+
+
+def make_isolated_lcm_url() -> str:
+    """Return an LCM URL that should not collide with concurrent runs.
+
+    Uses the standard multicast group with TTL=0 (so traffic never escapes
+    the local host) and a port picked from the high ephemeral range. The
+    monotonic counter guarantees back-to-back calls in the same process get
+    distinct ports; mixing in the PID disjoint-ifies concurrent CI workers.
+    """
+    # ports 49152..65535 are the IANA "dynamic/private" range
+    span = 16000
+    pid_offset = os.getpid() % span
+    call_offset = next(_isolated_lcm_url_counter)
+    port = 49152 + ((pid_offset + call_offset) % span)
+    return f"udpm://239.255.76.67:{port}?ttl=0"
 
 
 @dataclass
@@ -173,12 +199,22 @@ class NativeProcessRunner:
     args: list[str]
     process: subprocess.Popen[bytes] | None = field(default=None, repr=False)
 
-    def start(self, capture_stderr: bool = False) -> None:
+    def start(
+        self,
+        capture_stderr: bool = False,
+        env: dict[str, str] | None = None,
+    ) -> None:
+        process_env: dict[str, str] | None
+        if env is None:
+            process_env = None
+        else:
+            process_env = {**os.environ, **env}
         self.process = subprocess.Popen(
             [self.binary_path, *self.args],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
             start_new_session=True,
+            env=process_env,
         )
 
     def stop(self, timeout: float = 3.0) -> None:
@@ -277,3 +313,85 @@ def feed_at_original_timing(
         if target_offset > elapsed:
             time.sleep(target_offset - elapsed)
         lcm.publish(topic, msg.lcm_encode())
+
+
+PLAYBACK_STARTUP_DELAY_SEC = 2.0
+
+
+class RosbagScanOdomPlaybackConfig(ModuleConfig):
+    rosbag_path: str | None = None
+    odom_subsample: int = 4
+    startup_delay_sec: float = PLAYBACK_STARTUP_DELAY_SEC
+
+
+class RosbagScanOdomPlaybackModule(Module):
+    """Replays scan + odom from a rosbag fixture at original inter-message timing."""
+
+    config: RosbagScanOdomPlaybackConfig
+
+    registered_scan: Out[PointCloud2]
+    odometry: Out[Odometry]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._frames_published: int = 0
+        self._playback_finished: bool = False
+        self._playback_error: str | None = None
+
+    async def main(self) -> AsyncIterator[None]:
+        rosbag_path = Path(self.config.rosbag_path) if self.config.rosbag_path else None
+        self._window = load_rosbag_window(rosbag_path)
+        self._playback_task = asyncio.create_task(self._run_playback())
+        yield
+        self._playback_task.cancel()
+
+    async def _run_playback(self) -> None:
+        # finally guarantees is_finished() flips to True even if a frame
+        # raises. Without it, callers polling is_finished() would spin
+        # forever and the coordinator would never tear down.
+        try:
+            if self.config.startup_delay_sec > 0:
+                await asyncio.sleep(self.config.startup_delay_sec)
+            timeline: list[tuple[str, float, Any]] = []
+            for odom_index in range(0, len(self._window.odom), self.config.odom_subsample):
+                row = self._window.odom[odom_index]
+                timeline.append(
+                    ("odom", float(row[0]), make_odometry_msg(row[1:4], row[4:8], ts=row[0]))
+                )
+            for timestamp, points in self._window.scans:
+                timeline.append(
+                    ("scan", float(timestamp), make_pointcloud_msg(points, ts=timestamp))
+                )
+            timeline.sort(key=lambda entry: entry[1])
+            if not timeline:
+                return
+
+            bag_start_time = timeline[0][1]
+            wallclock_start = time.monotonic()
+            for kind, bag_timestamp, message in timeline:
+                target_wallclock = wallclock_start + (bag_timestamp - bag_start_time)
+                now = time.monotonic()
+                if target_wallclock > now:
+                    await asyncio.sleep(target_wallclock - now)
+                if kind == "odom":
+                    self.odometry.publish(message)
+                else:
+                    self.registered_scan.publish(message)
+                self._frames_published += 1
+        except Exception as exc:
+            self._playback_error = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            self._playback_finished = True
+
+    @rpc
+    def is_finished(self) -> bool:
+        return self._playback_finished
+
+    @rpc
+    def playback_error(self) -> str | None:
+        return self._playback_error
+
+    @rpc
+    def frames_published(self) -> int:
+        return self._frames_published

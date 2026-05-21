@@ -169,6 +169,10 @@ class UnityBridgeConfig(ModuleConfig):
     # Extra CLI args to pass to the Unity binary.
     unity_extra_args: list[str] = Field(default_factory=list)
 
+    frame_id: str = "map"
+    child_frame_id: str = "current_point"
+    parent_frame: str = "world"
+
     # Vehicle parameters
     vehicle_height: float = 0.75
 
@@ -764,8 +768,8 @@ class UnityBridgeModule(Module):
         self.odometry.publish(
             Odometry(
                 ts=now,
-                frame_id="map",
-                child_frame_id="sensor",
+                frame_id=self.config.frame_id,
+                child_frame_id=self.config.child_frame_id,
                 pose=Pose(
                     position=[odom_x, odom_y, z],
                     orientation=[quat.x, quat.y, quat.z, quat.w],
@@ -785,15 +789,15 @@ class UnityBridgeModule(Module):
             Transform(
                 translation=Vector3(x, y, z),
                 rotation=quat,
-                frame_id="map",
-                child_frame_id="sensor",
+                frame_id=self.config.frame_id,
+                child_frame_id=self.config.child_frame_id,
                 ts=now,
             ),
             Transform(
                 translation=Vector3(0.0, 0.0, 0.0),
                 rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="map",
-                child_frame_id="world",
+                frame_id=self.config.parent_frame,
+                child_frame_id=self.config.frame_id,
                 ts=now,
             ),
         )

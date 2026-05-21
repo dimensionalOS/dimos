@@ -55,6 +55,8 @@ class Mid360Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/mid360_native"
     build_command: str | None = "nix build .#mid360_native"
+    # The mid360 binary emits [DIMOS_NATIVE_READY] after Livox SDK is up.
+    ready_timeout_sec: float = 15.0
     host_ip: str = "192.168.1.5"
     lidar_ip: str = "192.168.1.155"
     frequency: float = 10.0

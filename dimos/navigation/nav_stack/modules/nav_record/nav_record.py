@@ -23,6 +23,10 @@ from dimos.core.stream import In
 from dimos.memory2.module import Recorder, RecorderConfig
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.ContourPolygons3D import ContourPolygons3D
+from dimos.msgs.nav_msgs.Graph3D import Graph3D
+from dimos.msgs.nav_msgs.GraphDelta3D import GraphDelta3D
+from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -32,6 +36,10 @@ from dimos.msgs.std_msgs.Int8 import Int8
 
 class NavRecordConfig(RecorderConfig):
     db_path: str = "nav_recording.db"
+    # Robot body frame, for unstamped messages.
+    default_frame_id: str = "current_point"
+    # Generous so PGO iSAM2 stalls (~500ms) don't cause lookup misses.
+    tf_tolerance: float = 3.0
 
 
 class NavRecord(Recorder):
@@ -47,23 +55,46 @@ class NavRecord(Recorder):
     def stop(self) -> None:
         super().stop()
 
-    # Core nav outputs
+    # MovementManager outputs (muxed nav + teleop)
     cmd_vel: In[Twist]
-    corrected_odometry: In[Odometry]
-    path: In[NavPath]
-    goal_path: In[NavPath]
-    way_point: In[PointStamped]
     goal: In[PointStamped]
     stop_movement: In[LcmBool]
 
-    # LocalPlanner details
+    # PathFollower output (raw nav cmd before MovementManager mux; remapped from "cmd_vel")
+    nav_cmd_vel: In[Twist]
+
+    # LocalPlanner outputs
+    path: In[NavPath]
     effective_cmd_vel: In[Twist]
+    free_paths: In[PointCloud2]
     slow_down: In[Int8]
     goal_reached: In[Bool]
 
-    # Point clouds
-    terrain_map: In[PointCloud2]
-    global_map: In[PointCloud2]
+    # SimplePlanner / FarPlanner / TarePlanner outputs
+    way_point: In[PointStamped]
+    goal_path: In[NavPath]
+    costmap_cloud: In[PointCloud2]  # SimplePlanner only
+    # FarPlanner-specific
+    graph: In[Graph3D]
+    contour_polygons: In[ContourPolygons3D]
+    nav_boundary: In[LineSegments3D]
 
+    # TerrainAnalysis / TerrainMapExt outputs
+    terrain_map: In[PointCloud2]
+    terrain_map_ext: In[PointCloud2]
+
+    # PGO outputs
+    corrected_odometry: In[Odometry]
+    global_map: In[PointCloud2]
+    pose_graph: In[Graph3D]
+    loop_closure_event: In[GraphDelta3D]
+
+    # FastLio2 outputs (SLAM source; blueprints typically remap FastLio2's
+    # "lidar" -> "registered_scan" and "global_map" -> "global_map_fastlio")
     odometry: In[Odometry]
     registered_scan: In[PointCloud2]
+    global_map_fastlio: In[PointCloud2]
+
+    # External inputs to the nav stack (recorded for context)
+    clicked_point: In[PointStamped]  # from rerun click-to-drive
+    tele_cmd_vel: In[Twist]  # from keyboard / quest / phone teleop

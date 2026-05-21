@@ -34,8 +34,11 @@ class PathFollowerConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/path_follower"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-path-follower/v0.2.0 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-path-follower/feat/dimos-native-ready"
+        " --no-write-lock-file"
     )
+    # The binary emits [DIMOS_NATIVE_READY] after LCM subscribes are live.
+    ready_timeout_sec: float = 10.0
 
     cli_name_override: dict[str, str] = {
         "look_ahead_distance": "lookAheadDis",

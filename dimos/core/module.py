@@ -128,12 +128,17 @@ class ModuleBase(Configurable, CompositeResource):
     _main_gen: AsyncGenerator[None, None] | None = None
     _tools: dict[str, Any]
     _tools_lock: threading.Lock
+    # Set by ModuleCoordinator after every module's start() has returned.
+    # Producers that publish into shared streams should await this before
+    # emitting their first message — see ModuleBase.wait_for_system_ready.
+    _system_ready: threading.Event
 
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
         self._tools = {}
         self._tools_lock = threading.Lock()
+        self._system_ready = threading.Event()
         self._loop, self._loop_thread = get_loop()
         try:
             self.rpc = self.config.rpc_transport(  # type: ignore[call-arg]
@@ -237,6 +242,7 @@ class ModuleBase(Configurable, CompositeResource):
         state.pop("_main_gen", None)
         state.pop("_tools", None)
         state.pop("_tools_lock", None)
+        state.pop("_system_ready", None)
         return state
 
     def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
@@ -251,12 +257,16 @@ class ModuleBase(Configurable, CompositeResource):
         self._main_gen = None
         self._tools = {}
         self._tools_lock = threading.Lock()
+        self._system_ready = threading.Event()
+
+    _tf_lock: threading.Lock = threading.Lock()
 
     @property
     def tf(self):  # type: ignore[no-untyped-def]
         if self._tf is None:
-            # self._tf = self.config.tf_transport()
-            self._tf = LCMTF()
+            with self._tf_lock:
+                if self._tf is None:
+                    self._tf = LCMTF()
         return self._tf
 
     @tf.setter

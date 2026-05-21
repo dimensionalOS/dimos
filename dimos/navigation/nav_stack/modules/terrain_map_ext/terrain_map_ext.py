@@ -29,7 +29,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_MAP
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -45,7 +44,7 @@ PLANAR_VOXEL_NUM = PLANAR_VOXEL_WIDTH * PLANAR_VOXEL_WIDTH
 
 
 class TerrainMapExtConfig(ModuleConfig):
-    world_frame: str = FRAME_MAP
+    frame_id: str = "map"
 
     # Scan voxel size for downsampling (PCL VoxelGrid leaf size equivalent)
     scan_voxel_size: float = 0.1
@@ -458,7 +457,7 @@ class TerrainMapExt(Module):
                 self.terrain_map_ext.publish(
                     PointCloud2.from_numpy(
                         output_array[:, :3],
-                        frame_id=config.world_frame,
+                        frame_id=config.frame_id,
                         timestamp=laser_cloud_time,
                         intensities=output_array[:, 3],
                     )

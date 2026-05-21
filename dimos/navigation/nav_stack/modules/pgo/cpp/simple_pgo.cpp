@@ -1,5 +1,8 @@
 #include "simple_pgo.h"
 
+#include <cstdio>
+#include <limits>
+
 SimplePGO::SimplePGO(const Config &config) : m_config(config)
 {
     gtsam::ISAM2Params isam2_params;
@@ -16,6 +19,13 @@ SimplePGO::SimplePGO(const Config &config) : m_config(config)
     m_icp.setTransformationEpsilon(1e-6);
     m_icp.setEuclideanFitnessEpsilon(1e-6);
     m_icp.setRANSACIterations(0);
+
+    m_scan_context_config.n_rings = m_config.scan_context_num_rings;
+    m_scan_context_config.n_sectors = m_config.scan_context_num_sectors;
+    m_scan_context_config.max_range_m = m_config.scan_context_max_range_m;
+    m_scan_context_config.candidate_top_k = m_config.scan_context_top_k;
+    m_scan_context_config.match_threshold = m_config.scan_context_match_threshold;
+    m_scan_context_config.lidar_height_m = m_config.scan_context_lidar_height_m;
 }
 
 bool SimplePGO::isKeyPose(const PoseWithTime &pose)
@@ -62,6 +72,18 @@ bool SimplePGO::addKeyPose(const CloudWithPose &cloud_with_pose)
     item.r_global = init_r;
     item.t_global = init_t;
     m_key_poses.push_back(item);
+
+    // Cache the Scan Context descriptor + ring-key for this keyframe.
+    if (cloud_with_pose.cloud) {
+        scan_context::Descriptor descriptor =
+            scan_context::make_descriptor(*cloud_with_pose.cloud, m_scan_context_config);
+        m_scan_context_ring_keys.push_back(scan_context::make_ring_key(descriptor));
+        m_scan_context_descriptors.push_back(std::move(descriptor));
+    } else {
+        m_scan_context_descriptors.emplace_back();
+        m_scan_context_ring_keys.emplace_back();
+    }
+
     return true;
 }
 
@@ -90,6 +112,101 @@ CloudType::Ptr SimplePGO::getSubMap(int idx, int half_range, double resolution)
     return ret;
 }
 
+int SimplePGO::searchByPosition() const
+{
+    size_t cur_idx = m_key_poses.size() - 1;
+    const KeyPoseWithCloud &last_item = m_key_poses.back();
+    pcl::PointXYZ last_pose_pt;
+    last_pose_pt.x = last_item.t_global(0);
+    last_pose_pt.y = last_item.t_global(1);
+    last_pose_pt.z = last_item.t_global(2);
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr key_poses_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    for (size_t i = 0; i < cur_idx; i++)
+    {
+        pcl::PointXYZ pt;
+        pt.x = m_key_poses[i].t_global(0);
+        pt.y = m_key_poses[i].t_global(1);
+        pt.z = m_key_poses[i].t_global(2);
+        key_poses_cloud->push_back(pt);
+    }
+    pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
+    kdtree.setInputCloud(key_poses_cloud);
+    std::vector<int> ids;
+    std::vector<float> sqdists;
+    int neighbors = kdtree.radiusSearch(last_pose_pt, m_config.loop_search_radius, ids, sqdists);
+    if (neighbors == 0)
+        return -1;
+
+    for (size_t i = 0; i < ids.size(); i++)
+    {
+        int idx = ids[i];
+        if (std::abs(last_item.time - m_key_poses[idx].time) > m_config.loop_time_thresh)
+        {
+            return idx;
+        }
+    }
+    return -1;
+}
+
+int SimplePGO::searchByScanContext(int& out_sector_shift) const
+{
+    out_sector_shift = 0;
+    if (m_scan_context_descriptors.empty() || m_scan_context_descriptors.back().size() == 0) {
+        return -1;
+    }
+    const auto& query = m_scan_context_descriptors.back();
+    const auto& query_key = m_scan_context_ring_keys.back();
+    const double current_time = m_key_poses.back().time;
+
+    // Two-stage retrieval: first rank candidates by ring-key L2 distance
+    // (fast coarse filter), then score the top-K via column-shifted cosine
+    // distance on the full descriptor.
+    std::vector<std::pair<float, int>> ranked;  // (ring-key dist, idx)
+    ranked.reserve(m_scan_context_descriptors.size());
+    const size_t cur_idx = m_key_poses.size() - 1;
+    for (size_t i = 0; i < cur_idx; i++) {
+        if (m_scan_context_descriptors[i].size() == 0) continue;
+        if (std::abs(current_time - m_key_poses[i].time) <= m_config.loop_time_thresh) {
+            continue;  // too recent — not a true loop candidate
+        }
+        const float key_dist = (m_scan_context_ring_keys[i] - query_key).norm();
+        ranked.emplace_back(key_dist, static_cast<int>(i));
+    }
+    if (ranked.empty()) return -1;
+
+    const int top_k_count = std::min(
+        static_cast<int>(ranked.size()), m_scan_context_config.candidate_top_k);
+    std::partial_sort(
+        ranked.begin(), ranked.begin() + top_k_count, ranked.end(),
+        [](const std::pair<float, int>& a, const std::pair<float, int>& b) {
+            return a.first < b.first;
+        });
+
+    float best_dist = std::numeric_limits<float>::max();
+    int best_idx_unfiltered = -1;
+    float best_dist_filtered = static_cast<float>(m_scan_context_config.match_threshold);
+    int best_idx = -1;
+    int best_shift = 0;
+    for (int rank = 0; rank < top_k_count; rank++) {
+        const int idx = ranked[rank].second;
+        const auto [distance, shift] = scan_context::best_distance(
+            query, m_scan_context_descriptors[idx]);
+        if (distance < best_dist) {
+            best_dist = distance;
+            best_idx_unfiltered = idx;
+        }
+        if (distance < best_dist_filtered) {
+            best_dist_filtered = distance;
+            best_idx = idx;
+            best_shift = shift;
+        }
+    }
+
+    out_sector_shift = best_shift;
+    return best_idx;
+}
+
 void SimplePGO::searchForLoopPairs()
 {
     if (m_key_poses.size() < 10)
@@ -106,52 +223,49 @@ void SimplePGO::searchForLoopPairs()
     }
 
     size_t cur_idx = m_key_poses.size() - 1;
-    const KeyPoseWithCloud &last_item = m_key_poses.back();
-    pcl::PointXYZ last_pose_pt;
-    last_pose_pt.x = last_item.t_global(0);
-    last_pose_pt.y = last_item.t_global(1);
-    last_pose_pt.z = last_item.t_global(2);
-
-    pcl::PointCloud<pcl::PointXYZ>::Ptr key_poses_cloud(new pcl::PointCloud<pcl::PointXYZ>);
-    for (size_t i = 0; i < m_key_poses.size() - 1; i++)
-    {
-        pcl::PointXYZ pt;
-        pt.x = m_key_poses[i].t_global(0);
-        pt.y = m_key_poses[i].t_global(1);
-        pt.z = m_key_poses[i].t_global(2);
-        key_poses_cloud->push_back(pt);
-    }
-    pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
-    kdtree.setInputCloud(key_poses_cloud);
-    std::vector<int> ids;
-    std::vector<float> sqdists;
-    int neighbors = kdtree.radiusSearch(last_pose_pt, m_config.loop_search_radius, ids, sqdists);
-    if (neighbors == 0)
-        return;
 
     int loop_idx = -1;
-    for (size_t i = 0; i < ids.size(); i++)
-    {
-        int idx = ids[i];
-        if (std::abs(last_item.time - m_key_poses[idx].time) > m_config.loop_time_tresh)
-        {
-            loop_idx = idx;
-            break;
-        }
+    int sector_shift = 0;
+    if (m_config.use_scan_context) {
+        loop_idx = searchByScanContext(sector_shift);
+    }
+    if (loop_idx < 0) {
+        // Fallback (or sole path if SC disabled): kdtree on past positions.
+        loop_idx = searchByPosition();
     }
 
-    if (loop_idx == -1)
+    if (loop_idx < 0)
         return;
 
+    // Use Scan Context's column shift to seed ICP with a yaw-aligned initial
+    // guess, which dramatically improves convergence on revisits at
+    // different headings. Both submaps are in *global* frame, so a naive
+    // rotation about the world origin would translate the source cloud
+    // kilometers off (e.g. at world position (3500, 350), rotating by 90°
+    // sends it to (-350, 3500)). Build a transform that rotates about the
+    // source keyframe's own global position instead:
+    //     init = T(source_position) · Rz(yaw) · T(-source_position)
+    // → init · p = rotation · (p - source_position) + source_position
+    Eigen::Matrix4f init_guess = Eigen::Matrix4f::Identity();
+    if (m_config.use_scan_context && sector_shift != 0) {
+        const double yaw = scan_context::yaw_from_shift(sector_shift, m_scan_context_config.n_sectors);
+        Eigen::AngleAxisf yaw_axis_angle(
+            static_cast<float>(yaw), Eigen::Vector3f::UnitZ());
+        Eigen::Matrix3f rotation = yaw_axis_angle.toRotationMatrix();
+        Eigen::Vector3f source_position = m_key_poses[cur_idx].t_global.cast<float>();
+        init_guess.block<3, 3>(0, 0) = rotation;
+        init_guess.block<3, 1>(0, 3) = source_position - rotation * source_position;
+    }
+
     CloudType::Ptr target_cloud = getSubMap(loop_idx, m_config.loop_submap_half_range, m_config.submap_resolution);
-    CloudType::Ptr source_cloud = getSubMap(m_key_poses.size() - 1, 0, m_config.submap_resolution);
+    CloudType::Ptr source_cloud = getSubMap(cur_idx, 0, m_config.submap_resolution);
     CloudType::Ptr align_cloud(new CloudType);
 
     m_icp.setInputSource(source_cloud);
     m_icp.setInputTarget(target_cloud);
-    m_icp.align(*align_cloud);
+    m_icp.align(*align_cloud, init_guess);
 
-    if (!m_icp.hasConverged() || m_icp.getFitnessScore() > m_config.loop_score_tresh)
+    if (!m_icp.hasConverged() || m_icp.getFitnessScore() > m_config.loop_score_thresh)
         return;
 
     M4F loop_transform = m_icp.getFinalTransformation();

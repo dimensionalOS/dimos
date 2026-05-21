@@ -83,6 +83,11 @@ else:
 
 logger = setup_logger()
 
+# Native binaries emit this marker on stderr after their LCM subscribes are
+# live. NativeModule.start() blocks until it sees it, ensuring upstream
+# publishers don't race ahead and drop messages.
+_READY_MARKER = "[DIMOS_NATIVE_READY]"
+
 
 class LogFormat(enum.Enum):
     TEXT = "text"
@@ -100,6 +105,11 @@ class NativeModuleConfig(ModuleConfig):
     shutdown_timeout: float = DEFAULT_THREAD_JOIN_TIMEOUT
     log_format: LogFormat = LogFormat.TEXT
     auto_build: bool = False
+    # How long start() blocks waiting for the subprocess to emit
+    # "[DIMOS_NATIVE_READY]" on stderr. Default 0 = no wait (legacy binaries
+    # that don't emit the marker). Subclasses whose binaries emit the marker
+    # should bump this to ~10s. See NativeModule.start.
+    ready_timeout_sec: float = 0.0
 
     # New version of Native Modules read json configs from stdin
     # Enable this to read from stdin instead of cli args
@@ -163,6 +173,7 @@ class NativeModule(Module):
     _watchdog: threading.Thread | None = None
     _stopping: bool = False
     _stop_lock: threading.Lock
+    _ready_event: threading.Event
 
     @functools.cached_property
     def _module_label(self) -> str:
@@ -172,12 +183,18 @@ class NativeModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_lock = threading.Lock()
+        self._ready_event = threading.Event()
 
         if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
             base_dir = Path(inspect.getfile(type(self))).resolve().parent
             self.config.cwd = str(base_dir / self.config.cwd)
         if not Path(self.config.executable).is_absolute() and self.config.cwd is not None:
             self.config.executable = str(Path(self.config.cwd) / self.config.executable)
+
+    @rpc
+    def build(self) -> None:
+        super().build()
+        self._maybe_build()
 
     @rpc
     def start(self) -> None:
@@ -189,8 +206,6 @@ class NativeModule(Module):
                 pid=self._process.pid,
             )
             return
-
-        self._maybe_build()
 
         topics = self._collect_topics()
 
@@ -234,15 +249,42 @@ class NativeModule(Module):
             pid=self._process.pid,
         )
 
+        self._ready_event.clear()
         watchdog = threading.Thread(
             target=self._watch_process,
             daemon=True,
             name=f"native-watchdog-{self._module_label}",
         )
+        # Capture proc before launching the watchdog — if the subprocess dies,
+        # the watchdog calls stop() which nulls out self._process and this loop
+        # would crash otherwise.
+        proc = self._process
         with self._stop_lock:
             self._stopping = False
             self._watchdog = watchdog
         watchdog.start()
+
+        # Block until the subprocess emits [DIMOS_NATIVE_READY] on stderr, or
+        # the timeout fires. The watchdog's stderr reader sets _ready_event
+        # when it sees the marker. If the subprocess exits before that, drop
+        # out and let the watchdog handle the cleanup — start() always
+        # returns; failures surface later via the watchdog's stop() path.
+        if self.config.ready_timeout_sec > 0:
+            deadline = time.monotonic() + self.config.ready_timeout_sec
+            while not self._ready_event.is_set():
+                if proc.poll() is not None:
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    logger.warning(
+                        "Native process did not emit [DIMOS_NATIVE_READY] within "
+                        f"{self.config.ready_timeout_sec}s — proceeding anyway. "
+                        "Upstream publishers may race the subprocess's LCM subscribes.",
+                        module=self._module_label,
+                        pid=proc.pid,
+                    )
+                    break
+                self._ready_event.wait(timeout=min(remaining, 0.5))
 
     @rpc
     def stop(self) -> None:
@@ -345,6 +387,9 @@ class NativeModule(Module):
         for raw in stream:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
+                continue
+            if _READY_MARKER in line:
+                self._ready_event.set()
                 continue
             if self.config.log_format == LogFormat.JSON:
                 try:

@@ -38,8 +38,11 @@ class LocalPlannerConfig(NativeModuleConfig):
     cwd: str | None = str(Path(__file__).resolve().parent)
     executable: str = "result/bin/local_planner"
     build_command: str | None = (
-        "nix build github:dimensionalOS/dimos-module-local-planner/v0.6.0 --no-write-lock-file"
+        "nix build github:dimensionalOS/dimos-module-local-planner/feat/configurable-body-frame"
+        " --no-write-lock-file"
     )
+    # The binary emits [DIMOS_NATIVE_READY] after LCM subscribes are live.
+    ready_timeout_sec: float = 10.0
 
     # C++ binary uses camelCase CLI args.
     cli_name_override: dict[str, str] = {
@@ -94,6 +97,8 @@ class LocalPlannerConfig(NativeModuleConfig):
     }
 
     paths_dir: str = ""
+
+    body_frame: str = "current_point"
 
     vehicle_length: float = 0.5  # m
     vehicle_width: float = 0.5  # m

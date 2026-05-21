@@ -67,12 +67,13 @@ def _reconstruct_path(
     costmap: OccupancyGrid,
     start_tuple: tuple[int, int],
     goal_tuple: tuple[int, int],
+    frame_id: str,
 ) -> Path:
     waypoints: list[PoseStamped] = []
     while current in parents:
         world_point = costmap.grid_to_world(current)
         pose = PoseStamped(
-            frame_id="world",
+            frame_id=frame_id,
             position=[world_point.x, world_point.y, 0.0],
             orientation=Quaternion(0, 0, 0, 1),  # Identity quaternion
         )
@@ -81,7 +82,7 @@ def _reconstruct_path(
 
     start_world_point = costmap.grid_to_world(start_tuple)
     start_pose = PoseStamped(
-        frame_id="world",
+        frame_id=frame_id,
         position=[start_world_point.x, start_world_point.y, 0.0],
         orientation=Quaternion(0, 0, 0, 1),
     )
@@ -97,31 +98,32 @@ def _reconstruct_path(
         or (waypoints[-1].x - goal_point.x) ** 2 + (waypoints[-1].y - goal_point.y) ** 2 > 1e-10
     ):
         goal_pose = PoseStamped(
-            frame_id="world",
+            frame_id=frame_id,
             position=[goal_point.x, goal_point.y, 0.0],
             orientation=Quaternion(0, 0, 0, 1),
         )
         waypoints.append(goal_pose)
 
-    return Path(frame_id="world", poses=waypoints)
+    return Path(frame_id=frame_id, poses=waypoints)
 
 
 def _reconstruct_path_from_coords(
     path_coords: list[tuple[int, int]],
     costmap: OccupancyGrid,
+    frame_id: str,
 ) -> Path:
     waypoints: list[PoseStamped] = []
 
     for gx, gy in path_coords:
         world_point = costmap.grid_to_world((gx, gy))
         pose = PoseStamped(
-            frame_id="world",
+            frame_id=frame_id,
             position=[world_point.x, world_point.y, 0.0],
             orientation=Quaternion(0, 0, 0, 1),
         )
         waypoints.append(pose)
 
-    return Path(frame_id="world", poses=waypoints)
+    return Path(frame_id=frame_id, poses=waypoints)
 
 
 def min_cost_astar(
@@ -131,6 +133,7 @@ def min_cost_astar(
     cost_threshold: int = 100,
     unknown_penalty: float = 0.8,
     use_cpp: bool = True,
+    frame_id: str = "world",
 ) -> Path | None:
     start_vector = costmap.world_to_grid(start)
     goal_vector = costmap.world_to_grid(goal)
@@ -154,7 +157,7 @@ def min_cost_astar(
             )
             if not path_coords:
                 return None
-            return _reconstruct_path_from_coords(path_coords, costmap)
+            return _reconstruct_path_from_coords(path_coords, costmap, frame_id)
         else:
             logger.warning(
                 "C++ A* module could not be imported (%s). Using Python.",
@@ -183,7 +186,7 @@ def min_cost_astar(
             continue
 
         if current == goal_tuple:
-            return _reconstruct_path(parents, current, costmap, start_tuple, goal_tuple)
+            return _reconstruct_path(parents, current, costmap, start_tuple, goal_tuple, frame_id)
 
         closed_set.add(current)
 

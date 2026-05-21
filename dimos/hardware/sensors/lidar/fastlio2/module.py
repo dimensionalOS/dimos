@@ -61,7 +61,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM
 from dimos.spec import mapping, perception
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
@@ -74,6 +73,8 @@ class FastLio2Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build .#fastlio2_native"
+    # The fastlio2 binary emits [DIMOS_NATIVE_READY] after Livox SDK is up.
+    ready_timeout_sec: float = 15.0
     # Livox SDK hardware config
     host_ip: str = "192.168.1.5"
     lidar_ip: str = "192.168.1.155"
@@ -83,11 +84,9 @@ class FastLio2Config(NativeModuleConfig):
     # Converted to init_pose CLI arg [x, y, z, qx, qy, qz, qw] in model_post_init.
     mount: Pose = Pose()
 
-    # Frame IDs for output messages.  "odom" reflects that FastLio2 provides
-    # locally-smooth, continuous odometry (no loop-closure jumps).  PGO
-    # publishes the map→odom correction via TF.
-    frame_id: str = FRAME_ODOM
-    child_frame_id: str = FRAME_BODY
+    frame_id: str = "start_point"
+    child_frame_id: str = "current_point"
+    sensor_frame: str = "mid360_link"
 
     # FAST-LIO internal processing rates
     msr_freq: float = 50.0
@@ -169,10 +168,11 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
         )
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
+        ts = msg.ts or time.time()
         self.tf.publish(
             Transform(
-                frame_id=FRAME_ODOM,
-                child_frame_id=FRAME_BODY,
+                frame_id=self.config.frame_id,
+                child_frame_id=self.config.child_frame_id,
                 translation=Vector3(
                     msg.pose.position.x,
                     msg.pose.position.y,
@@ -184,7 +184,23 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
                     msg.pose.orientation.z,
                     msg.pose.orientation.w,
                 ),
-                ts=msg.ts or time.time(),
+                ts=ts,
+            )
+        )
+        # Static sensor mount
+        mount = self.config.mount
+        self.tf.publish(
+            Transform(
+                frame_id=self.config.child_frame_id,
+                child_frame_id=self.config.sensor_frame,
+                translation=Vector3(mount.x, mount.y, mount.z),
+                rotation=Quaternion(
+                    mount.orientation.x,
+                    mount.orientation.y,
+                    mount.orientation.z,
+                    mount.orientation.w,
+                ),
+                ts=ts,
             )
         )
 
