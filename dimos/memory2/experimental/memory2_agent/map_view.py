@@ -825,6 +825,7 @@ def frames_that_could_see_point(
     y: float,
     k: int = 4,
     max_range_m: float = 8.0,
+    min_distance_m: float = 1.0,
     check_occlusion: bool = True,
     fov_horizontal_deg: float = GO2_HFOV_DEG,
     dedup_time_s: float = 3.0,
@@ -857,7 +858,11 @@ def frames_that_could_see_point(
         if ang > half_fov:
             continue
         d = math.hypot(x - cam_x, y - cam_y)
-        if d > max_range_m or d < 1e-3:
+        # min_distance_m drops cameras sitting essentially ON the query
+        # point. Those frames score well (tiny d) but the projected cross
+        # lands at the camera's own feet — useless for "does the cross sit
+        # on the object?" verification. Caller can pass 0.0 to inspect.
+        if d > max_range_m or d < max(min_distance_m, 1e-3):
             continue
         if check_occlusion and _ray_occluded(grid, (cam_x, cam_y), (x, y)):
             continue

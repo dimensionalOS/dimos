@@ -369,9 +369,23 @@ def test_short_recording_qa(
 # once the agent's first answers are reviewed.
 _QA_CASES_HONGKONG: list[tuple[str, str, Callable[[str], bool]]] = [
     (
-        "white_robots_count_2_hk",
+        "white_robots_count_4_hk",
         "How many white robots did you pass by? Reply with only the number, nothing else.",
-        lambda ans: "2" in ans.split(),
+        # Ground truth: 4 white robots in the recording. 3 is acceptable
+        # because one of them is barely visible in only two frames, so the
+        # agent reasonably under-counts it.
+        lambda ans: (n := _first_number(ans)) is not None and n in (3, 4),
+    ),
+    (
+        "acoustic_guitar_closest_robot_distance",
+        "What's the straight-line distance in meters between the acoustic "
+        "guitar and the closest robot to it? Round to a whole number. "
+        "Reply with only the number, nothing else.",
+        # Ground truth: ~11 m (manual triangulation places the acoustic
+        # guitar near (-2, +22) and the closest white service robot near
+        # (-5.7, +10.8), giving ~11.8 m). ±2 m to absorb the agent's
+        # depth-estimation noise from a short-baseline frame cluster.
+        lambda ans: (n := _first_number(ans)) is not None and 9 <= n <= 13,
     ),
     (
         "elevator_room_center",

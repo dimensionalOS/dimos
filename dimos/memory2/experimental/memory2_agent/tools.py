@@ -15,6 +15,9 @@ to query. Streams come straight from the recorded .db passed in via
 
 from __future__ import annotations
 
+import functools
+import math
+import threading
 from typing import Annotated, Any
 
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -43,6 +46,16 @@ from dimos.msgs.sensor_msgs.Image import Image as DimosImage
 def _fmt_pose(pose: Any) -> str:
     if pose is None:
         return "—"
+    if len(pose) >= 7:
+        # Pose carries an orientation quaternion (qx, qy, qz, qw at 3..6).
+        # Surface yaw alongside (x, y, z) so the agent doesn't have to rederive
+        # it from the quaternion every time it wants a bearing.
+        qx, qy, qz, qw = pose[3], pose[4], pose[5], pose[6]
+        yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+        return (
+            f"({pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f} "
+            f"| yaw={math.degrees(yaw):+.1f}°)"
+        )
     if len(pose) >= 3:
         return f"({pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f})"
     return repr(pose)
@@ -65,8 +78,12 @@ def _fmt_obs(obs: Observation, *, with_sim: bool = False) -> str:
     sim = ""
     if with_sim and getattr(obs, "similarity", None) is not None:
         sim = f" sim={float(obs.similarity):.3f}"
+    # `obs.id` is intentionally omitted: ids collide across streams
+    # (color_image:675 ≠ color_image_embedded:675), so showing them invites
+    # the agent to cross-look up a hit from one stream against another. ts is
+    # the canonical handle every other tool already accepts.
     return (
-        f"id={obs.id} ts={obs.ts:.2f}{sim} pose={_fmt_pose(obs.pose)} "
+        f"ts={obs.ts:.2f}{sim} pose={_fmt_pose(obs.pose)} "
         f"tags={obs.tags} data={_fmt_data(obs.data)}"
     )
 
@@ -76,6 +93,40 @@ def _fmt_obs_list(obs_list: list[Observation], header: str = "", *, with_sim: bo
         return f"{header}(no matches)" if header else "(no matches)"
     body = "\n".join(_fmt_obs(o, with_sim=with_sim) for o in obs_list)
     return f"{header}\n{body}" if header else body
+
+
+def _encode_with_column_mark(
+    image: DimosImage, mark_px: int, label: str | None
+) -> list[dict[str, Any]]:
+    """Encode a frame with a vertical guide line at column `mark_px`.
+
+    Returns the same multimodal block list shape as `image.agent_encode()`,
+    so callers can swap one for the other transparently.
+    """
+    import base64 as _b64
+
+    import cv2 as _cv2
+
+    rgb = image.as_numpy()
+    bgr = _cv2.cvtColor(rgb, _cv2.COLOR_RGB2BGR)
+    H, W = bgr.shape[:2]
+    px = max(0, min(W - 1, int(mark_px)))
+    # Black halo + bright yellow line so it's visible against any backdrop.
+    _cv2.line(bgr, (px, 0), (px, H - 1), (0, 0, 0), 5, _cv2.LINE_AA)
+    _cv2.line(bgr, (px, 0), (px, H - 1), (0, 255, 255), 2, _cv2.LINE_AA)
+    text = f"mark px={px}" + (f"  {label}" if label else "")
+    tx = max(8, min(W - 220, px + 8))
+    _cv2.putText(bgr, text, (tx, 28), _cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4, _cv2.LINE_AA)
+    _cv2.putText(
+        bgr, text, (tx, 28), _cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 1, _cv2.LINE_AA
+    )
+    ok, buf = _cv2.imencode(".jpg", bgr, [_cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ok:
+        return image.agent_encode()  # fall back to plain image
+    b64 = _b64.b64encode(bytes(buf)).decode("ascii")
+    return [
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+    ]
 
 
 def _multimodal_command(
@@ -134,7 +185,24 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
 
     _calc_repl = _pm.MontyRepl()
 
+    # Langgraph's tool_node runs parallel tool calls on a ThreadPoolExecutor,
+    # but every tool below shares one sqlite3.Connection (opened with
+    # check_same_thread=False) and one MontyRepl. Concurrent use of either
+    # corrupts results — most visibly a blob SELECT returning None for an
+    # id that exists. Serialize tool execution behind one per-build_tools
+    # lock so only one tool body runs at a time.
+    _tool_lock = threading.Lock()
+
+    def _locked(fn: Any) -> Any:
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            with _tool_lock:
+                return fn(*args, **kwargs)
+
+        return wrapper
+
     @lc_tool
+    @_locked
     def calc(code: str) -> str:
         """Run Python code in a sandboxed REPL for arithmetic and
         bookkeeping. State (variables, function defs) persists across
@@ -187,6 +255,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         return "\n".join(out_parts)
 
     @lc_tool
+    @_locked
     def list_skills() -> str:
         """List the available skills (named procedures), each with a short
         description of when it applies. Returns names + descriptions only.
@@ -198,6 +267,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         return "Available skills:\n" + body
 
     @lc_tool
+    @_locked
     def load_skill(name: str) -> str:
         """Return the full procedure for a named skill."""
         s = skills_registry.load_skill(name)
@@ -207,6 +277,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         return f"# skill: {s.name}\n{s.description}\n\n{s.body}"
 
     @lc_tool
+    @_locked
     def list_streams() -> str:
         """List the memory streams available to query, with item counts.
 
@@ -223,6 +294,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         return "Available streams:\n" + "\n".join(parts)
 
     @lc_tool
+    @_locked
     def summary(stream: str) -> str:
         """Return a one-line summary of a stream: count and time range."""
         if err := _validate_stream(stream):
@@ -230,6 +302,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         return store.stream(stream).summary()
 
     @lc_tool
+    @_locked
     def recent(stream: str, n: int = 5) -> str:
         """Return the n most recent observations from a stream (metadata only)."""
         if err := _validate_stream(stream):
@@ -239,6 +312,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         return _fmt_obs_list(obs, header=f"{n} most recent in {stream!r}:")
 
     @lc_tool
+    @_locked
     def search_semantic(stream: str, query: str, k: int = 5) -> str:
         """CLIP-embedding semantic search over a stream.
 
@@ -262,6 +336,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         return _fmt_obs_list(obs, header=header, with_sim=True)
 
     @lc_tool
+    @_locked
     def near(stream: str, x: float, y: float, radius: float = 2.0, k: int = 10) -> str:
         """Spatial filter: return observations whose pose is within `radius` of (x, y).
 
@@ -282,10 +357,13 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         return _fmt_obs_list(obs, header=f"near({stream!r}, x={x}, y={y}, r={radius}) up to {k}:")
 
     @lc_tool
+    @_locked
     def show_image(
         stream: str,
         ts: float,
         tool_call_id: Annotated[str, InjectedToolCallId],
+        mark_px: int | None = None,
+        mark_label: str | None = None,
     ) -> Any:
         """Fetch the recorded image closest to *ts* and return it inline.
 
@@ -296,6 +374,14 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
 
         Use ts (not an id) because timestamps are stream-independent: take
         the ts of any hit returned by other tools and pass it here.
+
+        Optional `mark_px` draws a vertical guide line at the given
+        horizontal pixel column (0..1280), with `mark_label` printed
+        beside it. Use this to confirm which object you've picked when
+        a frame contains several candidates — e.g. after estimating
+        `px=870` for a ray in `position_of_thing`, re-call show_image
+        with `mark_px=870, mark_label="ray 0"` to see whether the bar
+        actually lands on the object you intended.
         """
         if err := _validate_stream(stream):
             return err
@@ -319,18 +405,27 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
             obs = min(candidates, key=lambda o: abs(o.ts - target_ts))
         except Exception as e:
             return f"show_image failed: {e}"
+        mark_note = ""
+        if mark_px is not None:
+            image_blocks = _encode_with_column_mark(obs.data, int(mark_px), mark_label)
+            mark_note = f"  mark_px={int(mark_px)}"
+            if mark_label:
+                mark_note += f" mark_label={mark_label!r}"
+        else:
+            image_blocks = obs.data.agent_encode()
         summary = (
-            f"frame from {stream!r}  ts={obs.ts:.2f}  pose={_fmt_pose(obs.pose)} "
+            f"frame from {stream!r}  ts={obs.ts:.2f}  pose={_fmt_pose(obs.pose)}{mark_note} "
             "(image follows as next user message)"
         )
         return _multimodal_command(
             tool_call_id,
             tool_summary=summary,
-            image_blocks=obs.data.agent_encode(),
-            image_intro=f"Image from show_image  ts={obs.ts:.2f}  pose={_fmt_pose(obs.pose)}",
+            image_blocks=image_blocks,
+            image_intro=f"Image from show_image  ts={obs.ts:.2f}  pose={_fmt_pose(obs.pose)}{mark_note}",
         )
 
     @lc_tool
+    @_locked
     def recall_view(
         at_ts: str,
         direction: str | None = None,
@@ -393,6 +488,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         )
 
     @lc_tool
+    @_locked
     def verify_room_partition(
         rooms: list[dict[str, Any]],
         points: list[dict[str, Any]] | None = None,
@@ -505,11 +601,13 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         )
 
     @lc_tool
+    @_locked
     def frames_facing(
         x: float,
         y: float,
         k: int = 4,
         max_range_m: float = 8.0,
+        min_distance_m: float = 1.0,
         check_occlusion: bool = True,
         points: list[dict[str, Any]] | None = None,
         tool_call_id: Annotated[str, InjectedToolCallId] = "",
@@ -522,17 +620,24 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         ~76° horizontal viewing cone within `max_range_m` metres. If
         `check_occlusion` is True (default), candidate frames whose
         line-of-sight passes through an OCCUPIED cell of the global
-        occupancy grid are dropped.
+        occupancy grid are dropped. Frames within `min_distance_m` of
+        (x, y) are also dropped — the projected cross would land at
+        the camera's own feet and tells you nothing about whether the
+        object is really at (x, y). Pass `min_distance_m=0.0` to keep
+        them.
 
         Use this when you want to inspect a place the robot may have
         looked at but never walked to (e.g. an end wall, a far corner,
         an object in the distance). The agent gets:
-          1. an annotated top-down map showing the query point and the
-             surviving viewing cones, and
-          2. up to k of the camera frames themselves.
+          1. up to k camera frames, **sorted closest-first by camera-to-
+             query distance** (each caption still reports the exact
+             distance), and
+          2. an annotated top-down map showing the query point and the
+             surviving viewing cones, **at the END** of the image list
+             so you can peek at the first frame without reading past it.
 
-        Returns top-k by combined angular+distance score, time-deduped
-        so distinct visits surface separately.
+        Top-k selection uses the combined angular+distance score, time-
+        deduped so distinct visits surface separately.
 
         Argument `points` (optional): same schema as `show_map`'s
         `points` — list of {x, y, label?, color?} dicts. Drawn on the
@@ -548,6 +653,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
                 y=float(y),
                 k=int(k),
                 max_range_m=float(max_range_m),
+                min_distance_m=float(min_distance_m),
                 check_occlusion=bool(check_occlusion),
             )
         except Exception as e:
@@ -579,20 +685,15 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
             f"could see this point (range<{max_range_m} m, "
             f"occlusion={'on' if check_occlusion else 'off'})"
         )
+        # Display order is closest-first by distance, regardless of the
+        # score-based selection above — the agent typically wants the
+        # nearest verification frame first (cross-on-object check) and
+        # only needs the far ones as backdrop confirmations.
+        picks = sorted(picks, key=lambda c: c.distance_m)
         per_frame_captions = []
         image_blocks: list[dict[str, Any]] = []
-        # First the annotated map (with optional extra points overlaid)
-        points_legend = ""
-        if map_space is not None:
-            points_legend = add_points_to_space(map_space, points, map_renderer._grid)
-            map_blocks = encode_space_as_multimodal(
-                map_space, header, width_px=map_renderer.render_target_width()
-            )
-            image_blocks.append(
-                {"type": "text", "text": "Map: query point (yellow X) + viewing cones"}
-            )
-            image_blocks.append(map_blocks[1])
-        # Then each candidate, with the query position projected into the frame.
+        # Per-candidate frames come first, with the query position
+        # projected in as a red cross. Closest-first ordering.
         import base64 as _b64
 
         import cv2 as _cv2
@@ -621,10 +722,22 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
                     )
                 else:
                     image_blocks.extend(c.obs.data.agent_encode())
+        # Annotated top-down map LAST, so the agent reaches the first
+        # frame without scrolling past the map preview.
+        points_legend = ""
+        if map_space is not None:
+            points_legend = add_points_to_space(map_space, points, map_renderer._grid)
+            map_blocks = encode_space_as_multimodal(
+                map_space, header, width_px=map_renderer.render_target_width()
+            )
+            image_blocks.append(
+                {"type": "text", "text": "Map: query point (yellow X) + viewing cones"}
+            )
+            image_blocks.append(map_blocks[1])
         summary_parts = [header, *per_frame_captions]
         if points_legend:
             summary_parts.append(points_legend)
-        summary_parts.append("(annotated map + per-frame images follow)")
+        summary_parts.append("(per-frame images first, annotated map last)")
         summary = "\n".join(summary_parts)
         return _multimodal_command(
             tool_call_id,
@@ -634,6 +747,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         )
 
     @lc_tool
+    @_locked
     def walkthrough_timestamps(t_start: str, t_end: str, step_seconds: float = 2.0) -> str:
         """Return evenly-spaced timestamps across a time range at ~step_seconds.
 
@@ -669,6 +783,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         return "\n".join(lines)
 
     @lc_tool
+    @_locked
     def walkthrough(
         t_start: str,
         t_end: str,
@@ -712,6 +827,7 @@ def build_tools(store: SqliteStore, clip: CLIPModel) -> tuple[list[Any], dict[st
         )
 
     @lc_tool
+    @_locked
     def show_map(
         when: str = "now",
         points: list[dict[str, Any]] | None = None,

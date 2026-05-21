@@ -50,11 +50,16 @@ image_height = 720
    distinct objects matched, pick one and triangulate it; mention
    others separately.
 
-2. **Pick 2–4 frames for triangulation.** Aim for:
+2. **Pick at least 3 frames for triangulation** (2 is the brittle
+   minimum; with only 2 rays the residual is zero by construction and
+   tells you nothing — see step 5). Aim for:
    - clearly different camera positions (≥ ~1 m apart in xy),
    - the object should appear at meaningfully different horizontal
      positions across the frames (left in one, right in another → good;
-     same column in both → near-parallel rays, bad).
+     same column in both → near-parallel rays, bad),
+   - **ray bearings should differ pairwise by ≥30°** — camera positions
+     alone aren't enough; two cameras 2 m apart that both look due south
+     give nearly parallel rays and a useless triangulation.
    You only know "different positions" from the camera pose in each
    `search_semantic` hit — use that to pre-filter.
 
@@ -69,6 +74,12 @@ image_height = 720
    You can express it as a fraction of width first (e.g. "30% from
    the left") and convert: `px = fraction * 1280`. Be deliberate; this
    number drives the answer.
+
+   When a frame contains multiple instances of the object class (e.g.
+   two robots side by side), re-call show_image with `mark_px=<px>,
+   mark_label="ray N"` to draw a yellow guide bar at your chosen
+   column. If the bar lands on the wrong instance, fix the column
+   estimate before running the triangulation `calc`.
 
 4. **Compute world-frame bearings in `calc`** for every chosen frame.
    Use this exact pattern:
@@ -171,24 +182,51 @@ image_height = 720
      `bearing_offset = (px - cx) / fx` (small-angle approx) is within
      ~2% — fine. For `|px - cx| > 250` you can iterate:
      `t = (px - cx) / fx; offset = t - (t**3)/3 + (t**5)/5` (atan series).
-   - `camera_yaw_rad` comes from each frame's pose quaternion.
-     The captions of `show_image` give `pose=(x, y, z)`, which omits
-     yaw. For triangulation you DO need yaw — pull it via the
-     `search_semantic` output, which includes the full pose tuple
-     `pose=(x, y, z, qx, qy, qz, qw)` from which yaw is
-     `atan2(2(qw*qz + qx*qy), 1 - 2(qy^2 + qz^2))`. Compute that
-     conversion in the same `calc` block.
+   - `camera_yaw_rad` comes from each frame's pose. `show_image`,
+     `search_semantic`, `recent`, and `near` all print the camera
+     pose as `(x, y, z | yaw=±N°)` — read the yaw straight off that
+     string (convert deg → rad in `calc`: `yaw_rad = yaw_deg * 3.14159 / 180`).
+     If you ever face a tool whose output omits yaw, fall back to the
+     quaternion: `yaw = atan2(2(qw*qz + qx*qy), 1 - 2(qy^2 + qz^2))`.
 
-5. **Check the residual.** `solve_triangulation` returns
-   `(x, y, rms)`. The `rms` is the average perpendicular distance
-   (metres) from your computed point to each bearing ray.
+5. **Check the residual — and the geometry.** `solve_triangulation`
+   returns `(x, y, rms)`. The `rms` is the average perpendicular
+   distance (metres) from your computed point to each bearing ray.
+
+   **Required pre-check (N = number of rays):**
+   - `N == 2`: the rms is **zero by construction** (two unknowns, two
+     equations always solve exactly). It is NOT a quality signal —
+     reject the answer if you've used only two rays, even when rms is
+     0.000. Add a third ray with a clearly different bearing.
+   - `N >= 3`: compute the **min pairwise bearing angle** before
+     trusting rms. If the smallest angle between any two rays is
+     `< 10°`, the system is near-degenerate (rays nearly parallel)
+     and the (x, y) is unreliable regardless of rms. Drop one of the
+     parallel rays or add a more separated frame.
+
+   Sketch (add to your `solve_triangulation` `calc` block):
+   ```python
+   def min_pairwise_angle_deg(rays):
+       PI = 3.141592653589793
+       best = 360.0
+       n = len(rays)
+       for i in range(n):
+           for j in range(i+1, n):
+               d = abs(rays[i][2] - rays[j][2]) * 180.0 / PI
+               while d > 180: d -= 360
+               d = abs(d)
+               if d < best: best = d
+       return best
+   ```
+
+   **Once N≥3 and min angle ≥10°:**
    - `rms < 0.3 m` → tight fit; trust the answer.
    - `0.3 m ≤ rms < 1.0 m` → moderate fit; report the answer with the
      residual as an uncertainty estimate.
-   - `rms ≥ 1.0 m` → triangulation failed. Causes: rays too parallel,
-     wrong objects matched across frames, or pixel-column estimates
-     off. Reconsider your frame choice / column estimates, or fall
-     back to the alternative procedure below.
+   - `rms ≥ 1.0 m` → triangulation failed. Causes: wrong objects
+     matched across frames, or pixel-column estimates off.
+     Reconsider your frame choice / column estimates, or fall back
+     to the alternative procedure below.
 
 6. **Verify visually with `frames_facing`.**
    `frames_facing(x=<x>, y=<y>, k=4)`. The red cross should land near
