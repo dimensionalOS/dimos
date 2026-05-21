@@ -698,6 +698,11 @@ def export_premap_cmd(
         "--device",
         help="Open3D compute device (e.g. CUDA:0, CPU:0); fallback to CPU if unavailable",
     ),
+    block_count: int = typer.Option(
+        2_000_000,
+        "--block-count",
+        help="VoxelBlockGrid capacity",
+    ),
 ) -> None:
     """Export a twopass relocalization premap (.pc2.lcm) from a recorded SQLite dataset."""
     from dimos.mapping.relocalization.pgo import pgo_then_voxels
@@ -712,7 +717,9 @@ def export_premap_cmd(
         lidar = lidar.before(lidar.first().ts + duration)
 
     typer.echo(f"computing twopass map from {db_path} (voxel_size={voxel_size})...")
-    twopass_map = pgo_then_voxels(lidar, voxel_size=voxel_size, device=device)
+    twopass_map = pgo_then_voxels(
+        lidar, voxel_size=voxel_size, block_count=block_count, device=device
+    )
 
     if output is None:
         output = get_data_dir() / f"{db_path.stem}_twopass_map.pc2.lcm"

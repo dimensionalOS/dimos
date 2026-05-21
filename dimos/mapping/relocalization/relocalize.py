@@ -126,8 +126,8 @@ def relocalize(
 ) -> tuple[np.ndarray, float]:
     """Estimate the 4x4 transform placing ``local_map`` into ``global_map``.
 
-    Multi-scale × multi-restart FPFH+RANSAC → gravity-filtered, re-ranked by
-    fine-scale inlier ratio (not RANSAC's own fitness) → fine ICP. The
+    Multi-scale x multi-restart FPFH+RANSAC -> gravity-filtered, re-ranked by
+    fine-scale inlier ratio (not RANSAC's own fitness) -> fine ICP. The
     rerank catches z-degenerate and wrong-room busts: at FINE_VOXEL a
     5m-off candidate has ~0 inliers while RANSAC reports it as fit.
     """
@@ -177,7 +177,7 @@ def relocalize(
         nrm = np.asarray(cloud.normals)
         mask = np.abs(nrm[:, 2]) < 0.7  # roughly horizontal
         if mask.sum() < 100:
-            return cloud  # too sparse → fall back to full cloud
+            return cloud  # too sparse -> fall back to full cloud
         sub = o3d.geometry.PointCloud()
         sub.points = o3d.utility.Vector3dVector(np.asarray(cloud.points)[mask])
         sub.normals = o3d.utility.Vector3dVector(nrm[mask])

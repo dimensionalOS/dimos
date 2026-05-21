@@ -133,4 +133,3 @@ recorded `.db`:
 dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-relocalization \
   -o relocalizationmodule.map_file={DB_NAME}_twopass_map
 ```
-
