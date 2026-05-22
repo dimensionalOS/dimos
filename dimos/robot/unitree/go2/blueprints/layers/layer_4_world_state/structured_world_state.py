@@ -31,6 +31,9 @@ from dimos.perception.temporal_memory_spec import TemporalMemorySpec
 from dimos.robot.unitree.go2.blueprints.layers.layer_4_world_state.world_state_spec import (
     SemanticTemporalMapSpec,
 )
+from dimos.robot.unitree.go2.blueprints.layers.layer_4_world_state.semantic_temporal_map import (
+    _build_evidence_entries,
+)
 from dimos.robot.unitree.go2.blueprints.layers.layer_6_robot_body.robot_body_spec import (
     RobotBodyStateSpec,
 )
@@ -80,6 +83,7 @@ class _Go2StructuredWorldState(Module):
             "robot_state": self.get_robot_state(),
             "memory_state": self._memory_state(task, spatial_limit, semantic_temporal, errors),
             "semantic_temporal_map": semantic_temporal,
+            "snapshot_storage": self.get_snapshot_storage_policy(),
         }
         if errors:
             snapshot["errors"] = errors
@@ -142,6 +146,20 @@ class _Go2StructuredWorldState(Module):
             state["errors"] = errors
         return _to_jsonable(state)
 
+    @rpc
+    def get_snapshot_storage_policy(self) -> dict[str, Any]:
+        """Return the Layer 4 snapshot durability policy."""
+        return {
+            "durable": False,
+            "backend": None,
+            "policy": "ephemeral_read_through",
+            "reason": (
+                "Layer 4 snapshots normalize live source modules. Durable writes stay in "
+                "SpatialMemory and TemporalMemory until snapshot retention requirements "
+                "are validated."
+            ),
+        }
+
     def _source_status(self, semantic_temporal: dict[str, Any]) -> dict[str, bool]:
         semantic_sources = semantic_temporal.get("sources", {})
         return {
@@ -201,16 +219,30 @@ class _Go2StructuredWorldState(Module):
         errors: list[str],
     ) -> dict[str, Any]:
         if semantic_temporal.get("spatial") or semantic_temporal.get("temporal"):
+            spatial = semantic_temporal.get(
+                "spatial", {"available": False, "matches": []}
+            )
+            temporal = semantic_temporal.get("temporal", {"available": False})
+            summaries = _memory_summaries(spatial, temporal, semantic_temporal)
             return {
                 "query": task,
-                "spatial": semantic_temporal.get("spatial", {"available": False, "matches": []}),
-                "temporal": semantic_temporal.get("temporal", {"available": False}),
+                "spatial": spatial,
+                "temporal": temporal,
+                "named_objects": summaries["named_objects"],
+                "named_locations": summaries["named_locations"],
+                "summary": summaries["summary"],
             }
 
+        spatial = self._spatial_fallback(task, spatial_limit, errors)
+        temporal = self._temporal_fallback(errors)
+        summaries = _memory_summaries(spatial, temporal, semantic_temporal)
         return {
             "query": task,
-            "spatial": self._spatial_fallback(task, spatial_limit, errors),
-            "temporal": self._temporal_fallback(errors),
+            "spatial": spatial,
+            "temporal": temporal,
+            "named_objects": summaries["named_objects"],
+            "named_locations": summaries["named_locations"],
+            "summary": summaries["summary"],
         }
 
     def _spatial_fallback(
@@ -277,6 +309,125 @@ def _summarize_spatial_match(match: dict[str, Any]) -> dict[str, Any]:
     if not summary:
         summary["keys"] = sorted(match.keys())
     return _to_jsonable(summary)
+
+
+def _memory_summaries(
+    spatial: dict[str, Any],
+    temporal: dict[str, Any],
+    semantic_temporal: dict[str, Any],
+) -> dict[str, Any]:
+    entries = _evidence_entries(spatial, temporal, semantic_temporal)
+    named_objects = _named_objects(entries)
+    named_locations = _named_locations(entries)
+    return {
+        "named_objects": named_objects,
+        "named_locations": named_locations,
+        "summary": {
+            "named_object_count": len(named_objects),
+            "named_location_count": len(named_locations),
+            "evidence_entry_count": len(entries),
+            "sources": sorted(
+                {
+                    str(entry.get("evidence_source"))
+                    for entry in entries
+                    if entry.get("evidence_source")
+                }
+            ),
+        },
+    }
+
+
+def _evidence_entries(
+    spatial: dict[str, Any],
+    temporal: dict[str, Any],
+    semantic_temporal: dict[str, Any],
+) -> list[dict[str, Any]]:
+    fused = semantic_temporal.get("fused")
+    if isinstance(fused, dict) and isinstance(fused.get("entries"), list):
+        return [entry for entry in fused["entries"] if isinstance(entry, dict)]
+
+    matches = spatial.get("matches") or []
+    spatial_matches = [match for match in matches if isinstance(match, dict)]
+    return _build_evidence_entries(spatial_matches, temporal)
+
+
+def _named_objects(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    objects: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in entries:
+        entity = entry.get("entity")
+        if not isinstance(entity, dict):
+            continue
+        object_type = str(entity.get("type") or "unknown")
+        if object_type in {"location", "spatial_observation"}:
+            continue
+        object_id = str(entity.get("id") or entity.get("description") or "").strip()
+        if not object_id or object_id in seen:
+            continue
+        seen.add(object_id)
+        objects.append(
+            _to_jsonable(
+                {
+                    "id": object_id,
+                    "type": object_type,
+                    "description": entity.get("description"),
+                    "location": entry.get("location"),
+                    "last_seen": _last_seen(entry.get("time")),
+                    "evidence_source": entry.get("evidence_source"),
+                    "confidence": entry.get("confidence"),
+                }
+            )
+        )
+    return objects[:10]
+
+
+def _named_locations(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    locations: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in entries:
+        entity = entry.get("entity") if isinstance(entry.get("entity"), dict) else {}
+        location = entry.get("location")
+        entity_type = str(entity.get("type") or "")
+        if not isinstance(location, dict) and entity_type != "location":
+            continue
+
+        name = (
+            (location or {}).get("label")
+            or entity.get("description")
+            or entity.get("id")
+            or "unknown_location"
+        )
+        key = str(name)
+        if isinstance(location, dict):
+            key = f"{key}:{location.get('x')}:{location.get('y')}:{location.get('z')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        locations.append(
+            _to_jsonable(
+                {
+                    "name": name,
+                    "location": location,
+                    "entity_id": entity.get("id"),
+                    "last_seen": _last_seen(entry.get("time")),
+                    "evidence_source": entry.get("evidence_source"),
+                    "confidence": entry.get("confidence"),
+                }
+            )
+        )
+    return locations[:10]
+
+
+def _last_seen(time_value: Any) -> float | None:
+    if not isinstance(time_value, dict):
+        return None
+    for key in ("last_seen_ts", "timestamp", "first_seen_ts"):
+        value = time_value.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int | float):
+            return float(value)
+    return None
 
 
 def _section(snapshot: dict[str, Any] | None, key: str) -> dict[str, Any] | None:

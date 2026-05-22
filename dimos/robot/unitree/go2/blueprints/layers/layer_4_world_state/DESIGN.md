@@ -19,6 +19,12 @@ Layer 4 currently contains:
   structured world snapshot.
 - Optional `RobotBodyStateSpec`: Layer 6 body/local-policy state read by
   `_Go2StructuredWorldState` when wired.
+- V2 memory summaries: normalized `named_objects`, `named_locations`, and
+  explicit semantic-temporal evidence entries with entity, location, time,
+  evidence source, and confidence fields.
+- V3 snapshot policy: Layer 4 snapshots are explicitly ephemeral read-through
+  views. Durable writes remain in `SpatialMemory` and `TemporalMemory` until a
+  concrete snapshot retention requirement exists.
 
 ## Runtime Flow
 
@@ -61,6 +67,16 @@ memory, navigation, and odom remain as a fallback.
   - `temporal`
   - `fused`
   - optional `errors`
+- V2 data shape:
+  - `temporal.graph` is read from `TemporalMemorySpec.get_graph_db_stats()`
+    when available.
+  - `fused.entries` contains compact evidence entries. Each entry includes
+    `entity`, `location`, `time`, `evidence_source`, `confidence`, and
+    `summary`.
+  - Spatial entries use vector-memory metadata such as `pos_x`, `pos_y`,
+    `pos_z`, `timestamp`, `frame_id`, and labels when present.
+  - Temporal entries use state entities, currently-present entities,
+    `entity_roster`, and graph entities when those sections are available.
 - Current limits:
   - Fusion is deterministic metadata packaging.
   - It does not resolve contradictions between spatial and temporal evidence.
@@ -90,10 +106,35 @@ memory, navigation, and odom remain as a fallback.
   - `memory_state`
   - `semantic_temporal_map`
   - optional `errors`
+- V2 data shape:
+  - `memory_state.named_objects` summarizes entities from fused evidence that
+    are not typed as locations.
+  - `memory_state.named_locations` summarizes entries that include coordinates
+    or are typed as locations.
+  - `memory_state.summary` reports named object count, named location count,
+    evidence entry count, and contributing evidence sources.
+- V3 data shape:
+  - `snapshot_storage` reports the durability decision for this snapshot API.
+    The current policy is `ephemeral_read_through` with no separate durable
+    Layer 4 snapshot backend.
 - Current limits:
   - Robot safety and connection state are read from Layer 6 when wired, but
     they are still descriptive context rather than physical safety guarantees.
   - The module currently reads navigation state by RPC when available.
+
+### `_Go2StructuredWorldState.get_snapshot_storage_policy(...)`
+
+- File: `layer_4_world_state/structured_world_state.py`
+- Entry point: RPC-only helper; not an MCP skill.
+- Purpose: expose the V3 storage decision to callers. Layer 4 snapshots are
+  normalized read-through views and are not written to a separate durable
+  store in this stage.
+- Return shape:
+  - `durable`: `False`
+  - `backend`: `None`
+  - `policy`: `ephemeral_read_through`
+  - `reason`: short explanation that durable writes stay in existing memory
+    modules until snapshot retention requirements are validated.
 
 ## Version Boundaries
 
@@ -106,18 +147,21 @@ V1 implemented:
 - Make Layer 3 `ContextProvider` prefer Layer 4 world snapshots while keeping
   direct-read fallback behavior.
 
-V2 planned:
+V2 implemented:
 
 - Add named object/location summaries to `memory_state`.
 - Make semantic-temporal map entries more explicit: entity, location, time,
   evidence source, and confidence.
 
-V3 planned:
+V3 implemented:
 
-- Decide whether stable world snapshots should be written to a durable store
-  such as `memory2` SQLite, JSONL, or TemporalMemory.
-- Add tests that build the full Go2 agentic blueprint and verify the injected
-  Layer 3 -> Layer 4 RPC path.
+- Durable snapshot writes are deferred. Layer 4 snapshots remain ephemeral
+  read-through state; persistent source data remains in `SpatialMemory` and
+  `TemporalMemory`.
+- Added a focused full-Go2-agentic-blueprint static test that verifies the
+  injected RPC path from Layer 3 `ContextProvider` to Layer 4
+  `_Go2StructuredWorldState`, and from Layer 4 to semantic-temporal memory and
+  Layer 6 robot-body state.
 
 ## Design Rules
 

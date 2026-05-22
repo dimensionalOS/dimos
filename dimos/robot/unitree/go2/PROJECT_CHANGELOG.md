@@ -6,6 +6,79 @@ work so future contributors can understand why the fork differs from upstream.
 
 Entries are listed in reverse chronological order.
 
+## 2026-05-22
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Implemented the first Go2 Layer 5 V2 consistency check by comparing
+  static skill contracts against MCP tool names from the full Go2 agentic
+  blueprint, and filled previously missing contracts for MCP-exposed Go2 skills.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_5_skill_interface/skill_interface_registry.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_5_skill_interface/skill_interface_spec.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_5_skill_interface/test_skill_interface_registry.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_5_skill_interface/DESIGN.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/GOAL_1.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran `python -m py_compile` for the changed Layer 5 spec, registry, and
+    focused test file.
+  - Ran focused Layer 5 pytest in WSL Ubuntu against the current Windows
+    working tree using the existing WSL dependency environment:
+    `9 passed, 1 warning`.
+- Open items:
+  - Add more precise argument constraints for Unitree sport commands and
+    perception callback payloads.
+
+## 2026-05-22
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Implemented Go2 Layer 4 V3 by making the world-snapshot storage
+  policy explicit and adding a full Go2 agentic blueprint static test for the
+  Layer 3 -> Layer 4 -> Layer 6 RPC provider path.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/world_state_spec.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/structured_world_state.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/test_world_state.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/DESIGN.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/GOAL_1.md`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran `python -m py_compile` for the changed Layer 4 spec,
+    implementation, and focused test file.
+  - Ran focused Layer 4 pytest in WSL Ubuntu against the current Windows
+    working tree using the existing WSL dependency environment:
+    `3 passed, 1 warning`.
+- Open items:
+  - If snapshot retention becomes necessary, revisit whether to persist
+    normalized snapshots to `memory2` SQLite, JSONL, or TemporalMemory.
+
+## 2026-05-22
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Implemented Go2 Layer 4 V2 memory summaries by adding explicit
+  semantic-temporal evidence entries and normalized named object/location
+  summaries to the structured world snapshot.
+- Files/modules:
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/semantic_temporal_map.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/structured_world_state.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/test_world_state.py`
+  - `dimos/robot/unitree/go2/blueprints/layers/layer_4_world_state/DESIGN.md`
+  - `dimos/robot/unitree/go2/blueprints/layers/GOAL_1.md`
+- Validation:
+  - Ran `python -m py_compile` for the changed Layer 4 implementation and
+    focused test file.
+  - Ran `git diff --check`.
+  - Ran focused Layer 4 pytest in WSL Ubuntu against the current Windows
+    working tree using the existing WSL dependency environment:
+    `3 passed, 1 warning`.
+  - Attempted focused pytest with system Python; blocked because `pytest` is
+    not installed.
+  - Attempted focused pytest with `uv run`; blocked by local Windows
+    environment creation/cache errors before tests could run. Removed the
+    partial `.venv` left by that failed attempt.
+- Open items:
+  - Add full Go2 agentic blueprint tests for the Layer 3 -> Layer 4 RPC path.
+
 ## 2026-05-20
 
 - Branch: `refactor/go2-architecture-layers`

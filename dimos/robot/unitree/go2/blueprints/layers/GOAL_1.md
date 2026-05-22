@@ -103,22 +103,35 @@ Layer 4 V1 is intentionally a facade over existing modules. The existing
 `SpatialMemory` and lazy `TemporalMemory` implementations stay in their current
 packages.
 
+Layer 4 V2 adds normalized `memory_state.named_objects` and
+`memory_state.named_locations` summaries, plus explicit fused
+semantic-temporal evidence entries with entity, location, time, evidence source,
+and confidence fields.
+
+Layer 4 V3 makes the snapshot durability policy explicit:
+`get_world_snapshot(...)` reports `snapshot_storage.policy =
+"ephemeral_read_through"`. Stable Layer 4 snapshot writes are deferred until a
+real retention/query requirement exists; existing `SpatialMemory` and
+`TemporalMemory` remain the durable source stores.
+
 ## Layer 5 Direction
 
 Layer 5 owns the skill-interface boundary. It should tell upper layers which
 Go2 skills exist, what arguments each skill expects, which skills are
 motion-sensitive, and what preflight checks should run before execution.
 
-Current Layer 5 V1 keeps existing skill containers unchanged and adds
+Current Layer 5 keeps existing skill containers unchanged and adds
 `_Go2SkillInterfaceRegistry` as an RPC-only contract registry. The registry
 does not execute skills. It returns static contracts for current Go2 skills,
 including navigation, person following, Unitree motion/utility commands,
-perception lookout, security patrol, and speech. `ContextProvider` reads this
-registry through `SkillInterfaceSpec` and includes a compact skill-interface
-summary in `get_context(...)`.
+perception, exploration, patrolling, security patrol, and speech.
+`ContextProvider` reads this registry through `SkillInterfaceSpec` and includes
+a compact skill-interface summary in `get_context(...)`.
 
-Layer 5 V2 should compare the static contracts with the MCP server tool list so
-renamed or missing skills are detected automatically.
+Layer 5 V2 compares the static contracts with MCP tool names so renamed,
+missing, or unregistered Go2 skills are detected automatically in focused
+tests. Remaining Layer 5 V2 work is to add more precise constraints for Unitree
+sport commands and perception callback payloads.
 
 ## Layer 6 Direction
 

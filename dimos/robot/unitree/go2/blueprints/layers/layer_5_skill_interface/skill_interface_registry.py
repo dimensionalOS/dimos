@@ -65,8 +65,33 @@ class _SkillContract:
 
 _CONTEXT_PREFLIGHT = ("route_task", "get_context", "predict_skill_outcome")
 _LIGHT_PREFLIGHT = ("route_task",)
+_KNOWN_NON_LAYER5_MCP_TOOLS = frozenset(
+    {
+        "agent_send",
+        "get_context",
+        "list_modules",
+        "predict_skill_outcome",
+        "record_causal_transition",
+        "record_skill_outcome",
+        "route_task",
+        "server_status",
+        "summarize_causal_patterns",
+        "summarize_skill_outcomes",
+    }
+)
 
 _SKILL_CONTRACTS = (
+    _SkillContract(
+        skill_name="observe",
+        domain="perception",
+        module="GO2Connection",
+        summary="Return the latest robot camera frame for visual world queries.",
+        requires_context=False,
+        requires_robot_state=True,
+        risk_class="low",
+        recommended_preflight=_LIGHT_PREFLIGHT,
+        outcome_shape="Image | None",
+    ),
     _SkillContract(
         skill_name="tag_location",
         domain="memory",
@@ -101,6 +126,48 @@ _SKILL_CONTRACTS = (
         summary="Cancel the current navigation goal.",
         motion_sensitive=False,
         requires_context=False,
+        risk_class="stop",
+        recommended_preflight=(),
+    ),
+    _SkillContract(
+        skill_name="begin_exploration",
+        domain="exploration",
+        module="WavefrontFrontierExplorer",
+        summary="Start autonomous frontier exploration of the surrounding area.",
+        motion_sensitive=True,
+        requires_context=True,
+        requires_world_state=True,
+        requires_robot_state=True,
+        async_updates=True,
+        risk_class="high",
+        recommended_preflight=_CONTEXT_PREFLIGHT,
+    ),
+    _SkillContract(
+        skill_name="end_exploration",
+        domain="exploration",
+        module="WavefrontFrontierExplorer",
+        summary="Stop active frontier exploration and leave the robot at its current pose.",
+        risk_class="stop",
+        recommended_preflight=(),
+    ),
+    _SkillContract(
+        skill_name="start_patrol",
+        domain="navigation",
+        module="PatrollingModule",
+        summary="Start autonomous patrolling across known reachable goals.",
+        motion_sensitive=True,
+        requires_context=True,
+        requires_world_state=True,
+        requires_robot_state=True,
+        async_updates=True,
+        risk_class="high",
+        recommended_preflight=_CONTEXT_PREFLIGHT,
+    ),
+    _SkillContract(
+        skill_name="stop_patrol",
+        domain="navigation",
+        module="PatrollingModule",
+        summary="Stop the active autonomous patrol.",
         risk_class="stop",
         recommended_preflight=(),
     ),
@@ -249,7 +316,7 @@ class _Go2SkillInterfaceRegistry(Module):
         ]
         return {
             "available": True,
-            "version": "v1",
+            "version": "v2",
             "source": "static_go2_layer5_contracts",
             "domain_filter": domain,
             "domains": sorted({contract["domain"] for contract in contracts}),
@@ -309,6 +376,34 @@ class _Go2SkillInterfaceRegistry(Module):
             "contract": contract.to_dict(),
         }
 
+    @rpc
+    def compare_mcp_tools(self, tools_json: str) -> dict[str, Any]:
+        """Compare Layer 5 contracts with an MCP tools/list payload."""
+        tool_names, parse_error = _parse_mcp_tool_names(tools_json)
+        contract_names = {contract.skill_name for contract in _SKILL_CONTRACTS}
+        errors: list[str] = []
+        if parse_error:
+            errors.append(parse_error)
+
+        mcp_names = set(tool_names)
+        known_internal = sorted(mcp_names & _KNOWN_NON_LAYER5_MCP_TOOLS)
+        missing_contracts = sorted(contract_names - mcp_names) if tool_names else []
+        unregistered_mcp_tools = sorted(
+            mcp_names - contract_names - _KNOWN_NON_LAYER5_MCP_TOOLS
+        )
+
+        return {
+            "valid": not errors and not missing_contracts and not unregistered_mcp_tools,
+            "errors": errors,
+            "contract_skill_count": len(contract_names),
+            "mcp_tool_count": len(mcp_names),
+            "contract_skill_names": sorted(contract_names),
+            "mcp_tool_names": sorted(mcp_names),
+            "known_non_layer5_mcp_tools": known_internal,
+            "missing_contracts": missing_contracts,
+            "unregistered_mcp_tools": unregistered_mcp_tools,
+        }
+
 
 def _contract_by_name(skill_name: str) -> _SkillContract | None:
     for contract in _SKILL_CONTRACTS:
@@ -327,6 +422,38 @@ def _parse_args(args_json: str) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(parsed, dict):
         return None, "args_json must be a JSON object"
     return parsed, None
+
+
+def _parse_mcp_tool_names(tools_json: str) -> tuple[list[str], str | None]:
+    if not tools_json.strip():
+        return [], "tools_json is required"
+    try:
+        parsed = json.loads(tools_json)
+    except json.JSONDecodeError as exc:
+        return [], f"tools_json is invalid JSON: {exc.msg}"
+
+    tools_payload: Any = parsed
+    if isinstance(parsed, dict):
+        if isinstance(parsed.get("result"), dict):
+            tools_payload = parsed["result"].get("tools", [])
+        elif "tools" in parsed:
+            tools_payload = parsed["tools"]
+        elif "skills" in parsed:
+            tools_payload = parsed["skills"]
+
+    names: list[str] = []
+    if isinstance(tools_payload, list):
+        for item in tools_payload:
+            if isinstance(item, str):
+                names.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("name"), str):
+                names.append(item["name"])
+            elif isinstance(item, dict) and isinstance(item.get("func_name"), str):
+                names.append(item["func_name"])
+    else:
+        return [], "tools_json must contain a list of tool names or tool objects"
+
+    return sorted(set(names)), None
 
 
 def _is_missing(value: Any) -> bool:

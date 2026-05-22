@@ -37,6 +37,10 @@ Layer 3 ContextProvider
 The registry is read-only. It does not execute robot actions and does not
 replace the existing MCP skill containers.
 
+Layer 5 V2 compares the static contract registry against an MCP `tools/list`
+payload so renamed, missing, or unregistered Go2 skills are detected in focused
+tests before the agent relies on stale prompt context.
+
 ## Module Responsibilities
 
 `_Go2SkillInterfaceRegistry`
@@ -45,6 +49,8 @@ replace the existing MCP skill containers.
 - Returns all contracts or contracts filtered by domain.
 - Returns one contract by `skill_name`.
 - Validates planned arguments against required fields and simple JSON types.
+- Compares known contracts against MCP tool names while ignoring Layer 3 and
+  MCP server internal tools.
 - Does not call, retry, interrupt, or monitor the skill itself.
 
 Existing skill containers
@@ -125,6 +131,33 @@ Existing skill containers
     example, it can confirm that `query` exists, but not that a target location
     is actually reachable.
 
+### `_Go2SkillInterfaceRegistry.compare_mcp_tools(...)`
+
+- File: `layer_5_skill_interface/skill_interface_registry.py`
+- Entry point: RPC-only helper.
+- Purpose: detect drift between the static Layer 5 contracts and the MCP tool
+  names actually exposed by the full Go2 agentic blueprint.
+- Inputs:
+  - `tools_json`: JSON from MCP `tools/list`, a JSON-RPC result wrapper, a list
+    of tool-name strings, or a list of tool objects with `name` fields.
+- Storage:
+  - No database or persistent state.
+- Algorithm:
+  - Parse tool names from the payload.
+  - Compare them with `_SKILL_CONTRACTS`.
+  - Ignore known non-Layer-5 MCP tools from Layer 3 and `McpServer`, such as
+    `get_context`, `route_task`, `record_skill_outcome`, and `server_status`.
+  - Report missing contracts and unexpected MCP tools separately.
+- Return shape:
+  - `valid`, `errors`, `contract_skill_count`, `mcp_tool_count`,
+    `contract_skill_names`, `mcp_tool_names`, `known_non_layer5_mcp_tools`,
+    `missing_contracts`, and `unregistered_mcp_tools`.
+  - `valid` is true only when parsing succeeds and both drift lists are empty.
+- Current limits:
+  - The focused full-blueprint test uses static `@skill` inspection rather than
+    starting an MCP server process. That catches renamed or newly exposed skill
+    methods without needing robot hardware.
+
 ## Version Boundaries
 
 V1 implemented:
@@ -136,10 +169,16 @@ V1 implemented:
 - Lazy Layer 5 package imports so Layer 3 specs/tests do not pull in the full
   skill dependency stack.
 
-V2 planned:
+V2 implemented:
 
 - Compare the static contract registry against the MCP server tool list during
   tests or startup, so missing/renamed skills are detected automatically.
+- Added contracts for MCP-exposed Go2 skills that previously bypassed the
+  registry: `observe`, `begin_exploration`, `end_exploration`, `start_patrol`,
+  and `stop_patrol`.
+
+Remaining V2 work:
+
 - Add more precise argument constraints for Unitree sport commands and
   perception callbacks.
 
