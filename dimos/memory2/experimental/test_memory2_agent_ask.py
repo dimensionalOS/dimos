@@ -497,9 +497,13 @@ _QA_CASES_HONGKONG: list[_HKCase] = [
         "Could we have enough space for a standard singles tennis court in "
         "any of the rooms if we removed everything in it? If no room fits, "
         "say no. Otherwise, say which one.",
-        # Ground truth: no. A singles court needs a clear 23.77 m × 8.23 m
-        # rectangle (~196 m²) — larger than any single room in this ~400 m²
-        # office (split across multiple rooms), and no room is ~24 m long.
+        # Ground truth: no. The singles playing lines are 23.77 m x 8.23 m
+        # (~196 m²), but an actual ITF court needs ~36.58 m x 18.29 m including
+        # run-off (6.40 m behind each baseline, 3.66 m beyond each sideline) —
+        # larger than the whole office footprint (~24.5 m x 28 m). Even the bare
+        # lines don't fit any single room: the largest isolated room measured
+        # here is ~3.4 m x 8 m, and the entire connected floor is just ~289 m²
+        # (sprawling, not a clear rectangle). So no room comes close.
         lambda ans: (
             _has_word(ans, "no", "none", "not", "never", "negative")
             and not _has_word(ans, *_AFFIRMATIVES)
