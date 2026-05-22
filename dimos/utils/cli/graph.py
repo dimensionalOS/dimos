@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import importlib.util
 import json
 import os
+import re
 import sys
 import webbrowser
 
@@ -101,7 +102,10 @@ class _ColorAssigner:
 
 
 def _mermaid_id(name: str) -> str:
-    return name.replace(" ", "_").replace("-", "_")
+    sanitized = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    if not sanitized or not sanitized[0].isalpha():
+        sanitized = "n_" + sanitized
+    return sanitized
 
 
 def _find_package_root(filepath: str) -> str | None:
