@@ -1,6 +1,6 @@
 ---
 name: unexplored_spaces
-description: Use when asked where to explore next, what areas the robot hasn't visited, what's beyond the explored region, or which directions to prioritise for further mapping — "where should we explore next?", "what areas did you miss?", "what's in the unmapped part of this place?". Composes `room_extents`: after partitioning the explored area into rooms, the ORANGE blobs flagged by `verify_room_partition` are unpartitioned free space; the subset of those blobs that are NOT fully surrounded by occupied walls (magenta cells) point into unknown territory and are the exploration frontiers.
+description: Use when asked where to explore next, what areas the robot hasn't visited, what's beyond the explored region, or which directions to prioritise for further mapping — "where should we explore next?", "what areas did you miss?", "what's in the unmapped part of this place?". Composes `thinking_about_rooms`: after partitioning the explored area into rooms, the ORANGE blobs flagged by `verify_room_partition` are unpartitioned free space; the subset of those blobs that are NOT fully surrounded by occupied walls (magenta cells) point into unknown territory and are the exploration frontiers.
 ---
 
 # Finding exploration frontiers from the verified room partition
@@ -10,7 +10,7 @@ That's a classic robotics target for next-step exploration: you can drive
 there, and once there, the lidar will see further. To find them in this
 recording's map, we re-use the segmentation pipeline:
 
-1. `room_extents` partitions the explored area into rooms.
+1. `thinking_about_rooms` partitions the explored area into rooms.
 2. `verify_room_partition` highlights ORANGE blobs of free space that
    weren't covered by any room polygon.
 3. Each orange blob is either a *missed room* (fully enclosed by walls)
@@ -26,13 +26,13 @@ recording's map, we re-use the segmentation pipeline:
 
 ## Tools allowed
 
-- Everything `room_extents` uses (`walkthrough_timestamps`, `show_image`,
+- Everything `thinking_about_rooms` uses (`walkthrough_timestamps`, `show_image`,
   `show_map`, `verify_room_partition`, `calc`, `frames_facing`).
 - (When you're done, end with a plain text reply — no tool call.)
 
 ## Procedure
 
-1. **Run `room_extents`.** Follow its full procedure end-to-end. By the
+1. **Run `thinking_about_rooms`.** Follow its full procedure end-to-end. By the
    end you'll have, in `calc`, the `rooms` dict and a final
    `verify_room_partition` call that returned the annotated map +
    per-room stats. The orange markers on that map are the

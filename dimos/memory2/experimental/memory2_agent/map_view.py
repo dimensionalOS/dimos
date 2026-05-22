@@ -408,16 +408,25 @@ def verify_room_partition(
         return mask
 
     # Resolve each room's polygon (world coords). Accept either "polygon"
-    # or "rect" (a rect is just a 4-corner axis-aligned polygon).
+    # or "rect" (a rect is just a 4-corner axis-aligned polygon). Rooms with
+    # neither a valid "polygon" (>=3 corners) nor a valid "rect" are dropped.
+    # Keep the surviving room dicts paired with their polygons in `valid_rooms`
+    # so every per-room array below shares one index space — dropping a room
+    # from `polys_world` while still indexing the original `rooms` by position
+    # caused IndexErrors and drifted room labels/stats.
+    valid_rooms: list[dict[str, Any]] = []
     polys_world: list[list[tuple[float, float]]] = []
     for r in rooms:
         if "polygon" in r and isinstance(r["polygon"], list) and len(r["polygon"]) >= 3:
             polys_world.append([(float(p[0]), float(p[1])) for p in r["polygon"]])
+            valid_rooms.append(r)
         elif "rect" in r and len(r["rect"]) == 4:
             x_a, y_a, x_b, y_b = r["rect"]
             xmin, xmax = min(x_a, x_b), max(x_a, x_b)
             ymin, ymax = min(y_a, y_b), max(y_a, y_b)
             polys_world.append([(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)])
+            valid_rooms.append(r)
+    n_rooms = len(valid_rooms)
 
     # Rasterise each polygon once — these masks drive area, membership,
     # overlap detection, and the per-room visible-cell counts.
@@ -438,15 +447,15 @@ def verify_room_partition(
         overclaim_combined_grid |= m & unknown_mask_grid
 
     # Pairwise overlaps (cells -> m^2)
-    overlap_with_per_room: list[dict[Any, float]] = [{} for _ in range(len(rooms))]
-    for i in range(len(rooms)):
-        for j in range(i + 1, len(rooms)):
+    overlap_with_per_room: list[dict[Any, float]] = [{} for _ in range(n_rooms)]
+    for i in range(n_rooms):
+        for j in range(i + 1, n_rooms):
             inter = room_masks_bool[i] & room_masks_bool[j]
             ov_cells = int(inter.sum())
             if ov_cells > 0:
                 ov_m2 = ov_cells * res * res
-                id_i = rooms[i].get("id", i + 1)
-                id_j = rooms[j].get("id", j + 1)
+                id_i = valid_rooms[i].get("id", i + 1)
+                id_j = valid_rooms[j].get("id", j + 1)
                 overlap_with_per_room[i][id_j] = ov_m2
                 overlap_with_per_room[j][id_i] = ov_m2
 
@@ -455,7 +464,7 @@ def verify_room_partition(
 
     # Per-room fill + outline (Polygon handles fill_opacity + label anchor).
     for i, poly_world in enumerate(polys_world):
-        room = rooms[i]
+        room = valid_rooms[i]
         col = PALETTE[i % len(PALETTE)].hex()
         ident = room.get("id", i + 1)
         desc = (room.get("desc", "") or "")[:22]
@@ -502,7 +511,7 @@ def verify_room_partition(
     odom_obs = store.stream("odom").to_list()
     n_total = 0
     n_outside = 0
-    per_room_odom = [0] * len(rooms)
+    per_room_odom = [0] * n_rooms
     for k, obs in enumerate(odom_obs):
         if k % odom_stride != 0 or obs.pose is None:
             continue
@@ -647,7 +656,7 @@ def verify_room_partition(
     # Per-room stats
     stats: list[PartitionStats] = []
     for i, poly_world in enumerate(polys_world):
-        room = rooms[i]
+        room = valid_rooms[i]
         stats.append(
             PartitionStats(
                 id=room.get("id", i + 1),

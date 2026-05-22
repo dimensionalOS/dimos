@@ -1,6 +1,6 @@
 ---
 name: describe_room
-description: Use when asked what's IN a particular room, or what the robot would see if it walked into another room — "what's in the other room", "if you walked through the door, what would you see", "what's in the room at (x, y)", "describe the room with the vending machines". Composes `room_extents`: first identify the rooms and which frames belong to which room, then look at the frames belonging to the target room. The answer comes from those frames, not from semantic search — that avoids biasing the result toward whatever the question hints at.
+description: Use when asked what's IN a particular room, or what the robot would see if it walked into another room — "what's in the other room", "if you walked through the door, what would you see", "what's in the room at (x, y)", "describe the room with the vending machines". Composes `thinking_about_rooms`: first identify the rooms and which frames belong to which room, then look at the frames belonging to the target room. The answer comes from those frames, not from semantic search — that avoids biasing the result toward whatever the question hints at.
 ---
 
 # Describing a room's contents from its classified frames
@@ -8,7 +8,7 @@ description: Use when asked what's IN a particular room, or what the robot would
 The trap: if you `search_semantic("pantry with shelves and drinks")` to find
 what's in a room, CLIP returns the frames that best match that query — so the
 answer confirms the hypothesis you put in. To avoid this, identify the rooms
-*first* (geometrically, via `room_extents`), then describe the contents of
+*first* (geometrically, via `thinking_about_rooms`), then describe the contents of
 the target room by opening the frames that were classified into it.
 
 ## When to use
@@ -20,7 +20,7 @@ the target room by opening the frames that were classified into it.
 
 ## Tools allowed
 
-- Everything `room_extents` uses (`walkthrough_timestamps`, `show_image`,
+- Everything `thinking_about_rooms` uses (`walkthrough_timestamps`, `show_image`,
   `show_map`, `verify_room_partition`, `calc`, `frames_facing`).
 - (When you're done, end with a plain text reply — no tool call.)
 
@@ -30,7 +30,7 @@ when the question hints at content.
 
 ## Procedure
 
-1. **Run `room_extents`.** Follow its procedure end-to-end (visual pairwise
+1. **Run `thinking_about_rooms`.** Follow its procedure end-to-end (visual pairwise
    classification → map verification → per-room polygons and frame lists).
    When you finish, you should have, in `calc`:
    ```python
@@ -94,7 +94,7 @@ when the question hints at content.
   use the *last* few frames in which the doorway is visible and
   describe what's visible *through* it. State explicitly that the
   robot didn't enter, so the description is what was seen from outside.
-- **If `room_extents` only finds one room**, the question presupposing
+- **If `thinking_about_rooms` only finds one room**, the question presupposing
   "another room" can't be answered from this recording — say so.
 - Camera yaw / lighting differences are not new rooms; trust the
-  `room_extents` partition over your own visual second-guessing.
+  `thinking_about_rooms` partition over your own visual second-guessing.

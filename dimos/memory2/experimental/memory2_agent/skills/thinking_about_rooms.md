@@ -1,16 +1,34 @@
 ---
-name: room_extents
-description: Use for any room-level question — counting ("how many rooms did I walk through", "did I change rooms", "how many distinct spaces"), sizing ("how big is each room", "where is the biggest room", "what are the dimensions / bounding box of room X"), or location ("where on the map is room Y"). One procedure handles all of them: classify each sampled frame into a room by pairwise visual comparison, collect the camera (x, y) per frame, then verify against the lidar occupancy map. The final count is len(rooms) after verification; the sizes and extents come from the per-room polygons.
+name: thinking_about_rooms
+description: Use for ANY room-based reasoning — counting ("how many rooms did I walk through", "did I change rooms"), sizing ("how big is each room", "where is the biggest room", "bounding box of room X"), locating ("where on the map is room Y"), contents ("what's in the room at (x, y)"), measuring per room ("which room did I spend the longest time in", "how much of the walk was in each room"), or comparing rooms. There is no automatic room segmentation, so the rule is the same for all of these: SEGMENT the space into room polygons FIRST, then OPERATE on those polygons to answer whatever was asked. Every measurement — area, dwell time, contents, distances — is read off the verified partition, never eyeballed from a walkthrough.
 ---
 
-# Room analysis from per-frame poses + lidar verification
+# Thinking about rooms
 
-There is no automatic room segmentation. To answer any room-level
-question — count, size, position — we classify sampled camera frames
-into rooms pairwise, AND keep the camera (x, y) per frame, AND verify
-the resulting partition against the lidar occupancy map. The visual
-pass produces candidate rooms; the map pass refines them so visually
-distinct views of the same enclosed space don't get double-counted.
+There is no stored room map. Anything room-scoped — counting, sizing,
+locating, describing contents, or **measuring** something per room (how
+long you spent in each, how much floor each covers) — must start by
+SEGMENTING the space into room polygons, then operating on those
+polygons. Never answer a room-level question from visual impression
+alone: build the partition, then read your answer off it.
+
+Work in two phases:
+
+- **Phase A — Segment (always).** Classify sampled camera frames into
+  rooms pairwise, keep the camera `(x, y)` per frame, trace wall
+  polygons, and verify the partition against the lidar occupancy map.
+  The visual pass produces candidate rooms; the map pass refines them so
+  visually distinct views of the same enclosed space don't get
+  double-counted.
+- **Phase B — Operate (depends on the question).** Use the verified
+  polygons to compute the specific quantity asked — count, area,
+  centroid, contents, time spent, comparison. See *Operating on the
+  segments* at the end.
+
+Even when the question looks like it's "just" about time, contents, or a
+comparison, you still do Phase A first. The boundaries are what make the
+measurement meaningful — a dwell time or an area is only as good as the
+polygon it's measured over.
 
 ## When to use
 
@@ -18,6 +36,10 @@ distinct views of the same enclosed space don't get double-counted.
 - Size: "Where is the biggest room?", "How big are the rooms?"
 - Bounds: "What's the bounding box of room X?", "Where on the map is
   room Y?"
+- Contents: "What's in the room at (x, y)?" (compose `describe_room`).
+- Measurement per room: "Which room did I spend the longest time in?",
+  "How much of the walk happened in each room?"
+- Comparison: "Which room is biggest / which did I spend most time in?"
 
 The verification step is mandatory for all of these — the visual
 classifier alone over-segments (calls every distinct *scene* a new
@@ -28,18 +50,23 @@ room), and the lidar map is what disproves that.
 - `show_map`               (look at the map to draw room polygons)
 - `walkthrough_timestamps` (the sampling schedule for pairwise classification)
 - `show_image`             (per-frame visual classification)
-- `calc`                   (bookkeeping + area math)
+- `summary`                (recording duration + odom count, for dwell math)
+- `near`                   (pull observations near a point, if you need
+                            to inspect a specific room's frames/odom)
+- `calc`                   (bookkeeping + all arithmetic)
 - `frames_facing`          (verify a proposed polygon CORNER by
                             projecting that (x, y) back into the
                             camera frames — see step 5b)
 - `verify_room_partition`  (overlay your polygons on the map and
                             flag missed odom, lidar-free cells, and
-                            overclaim into UNKNOWN territory)
+                            overclaim into UNKNOWN territory; also
+                            reports per-room odom-sample counts used
+                            for dwell measurement)
 - (When you're done, end with a plain text reply — no tool call.)
 
 Use `calc` for all arithmetic.
 
-## Procedure
+## Phase A — Segment the space
 
 1. **Sample the walk — one chunk at a time.**
    Call `walkthrough_timestamps(t_start="start", t_end="<X>",
@@ -238,80 +265,139 @@ Use `calc` for all arithmetic.
    again, repeat until you're happy. Cap iterations at ~3 — diminishing
    returns after that.
 
-7. **Compute the final area from the verified polygons.**
-   `verify_room_partition` already returns per-polygon `area_m2` in
-   its text output. Copy those numbers into the answer; you don't
-   need a separate `calc` for the area when you used polygons.
+   The per-room text also reports `odom_in=<count>` (odom samples
+   inside each polygon). Keep the final output around — Phase B uses
+   those counts for dwell time, and `area=<…> m^2` for sizing.
 
-   If you DO want to recompute or centroid-summarise in `calc`, use
-   the shoelace formula:
-   ```python
-   calc('''
-   def poly_area(pts):
-       n = len(pts); s = 0.0
-       for i in range(n):
-           x1, y1 = pts[i]
-           x2, y2 = pts[(i+1) % n]
-           s += x1*y2 - x2*y1
-       return abs(s) / 2
-   def poly_centroid(pts):
-       n = len(pts)
-       return (sum(p[0] for p in pts)/n, sum(p[1] for p in pts)/n)
+## Phase B — Operating on the segments
 
-   verified = [
-       {"id": 1, "desc": "...", "polygon": [[x, y], ...]},
-       {"id": 2, "desc": "...", "polygon": [[x, y], ...]},
-   ]
-   for r in verified:
-       r["area_m2"]  = poly_area(r["polygon"])
-       r["centroid"] = poly_centroid(r["polygon"])
-   verified.sort(key=lambda r: -r["area_m2"])
-   verified
-   ''')
-   ```
+Once you have a verified partition, answer the *actual* question by
+computing one quantity per room from the polygons and then reading off
+or ranking the result. Pick the operation that matches the question:
 
-8. **Reply.** End your turn with a plain-text answer. Match the
-   answer shape to the question — the procedure above produces both
-   the count AND the per-room geometry, so use only what was asked:
+- **Count** — `len(rooms)` after verification.
 
-   - **Count question** ("how many rooms", "did I change rooms"):
-     reply with just the integer (or "yes"/"no"). If the user asked
-     for "only the number", give only that. Do NOT dump the per-room
-     description list unless they asked for one.
-   - **Biggest-room question** ("where is the biggest room", "how
-     big is the biggest"): lead with that room and its area /
-     polygon. "Biggest" = largest verified-polygon area.
-   - **Sizing / bounds question** ("how big are the rooms", "what
-     are the dimensions of room X"): list every room with id, short
-     description, polygon corners, centroid (x̄, ȳ), area (m²) from
-     the verified polygon, and number of sample frames classified
-     into it.
+- **Size / biggest room** — polygon area. `verify_room_partition`
+  already prints `area=<…> m^2` per room; use that, or recompute with
+  the shoelace helper (below). "Biggest" = largest verified area.
 
-   If the user added a format directive (e.g. "reply with only the
-   number, nothing else"), honour it strictly — the room polygons
-   and frame lists you computed are intermediate work, not the
-   final answer.
+- **Location / where is room Y** — the polygon corners plus its
+  centroid `(mean x, mean y)`.
+
+- **Contents / what's in the room at (x, y)** — the frames whose
+  recorded `(x, y)` fall inside that room's polygon. Look at those
+  frames (`show_image`) and describe from them. This is what
+  `describe_room` composes on top of the partition.
+
+- **Time spent per room / which room did I spend the longest in.**
+  Do NOT judge this by how many frames you looked at or how it *felt*
+  walking through — measure it from the partition. `odom` is recorded
+  at a roughly fixed rate and sampled uniformly in time by
+  `verify_room_partition`, so the per-room `odom_in=<count>` is
+  directly proportional to time spent there. Steps:
+    1. Read `odom_in` for every room from the `verify_room_partition`
+       output. The room with the largest `odom_in` is the one you
+       spent the longest in.
+    2. To put it in seconds, get the recording duration from
+       `summary("odom")` (it prints the time span), and the sampled
+       total `M` from the partition line
+       `odom samples outside any room: K / M sampled`. Then for each
+       room:
+       ```python
+       calc("time_s = odom_in / M * duration_s")
+       ```
+       (Equivalently `odom_in / (sum of all odom_in + K) * duration`.)
+    3. Report the ranking. If two rooms are within a few percent,
+       call them comparable rather than splitting hairs — the
+       sampling is approximate. If much of the time is `outside any
+       room` (open-plan space, corridors, transit), say so: the
+       answer is only as clean as the partition, and a mostly-open
+       floor may not have a single dominant "room".
+
+- **Comparison** — compute the relevant per-room quantity (area,
+  `odom_in`, frame count) for every room, then rank. Lead with the
+  winner; mention the runner-up if it's close.
+
+- **Distance between rooms** — distance between centroids (this is what
+  `measure_distance` composes).
+
+The principle is always the same: segment first, then compute the asked
+quantity for every room off the verified polygons, then answer.
+Measurements are grounded in the partition, never estimated from a
+walkthrough impression.
+
+The shoelace area / centroid helper, if you need it in `calc`:
+```python
+calc('''
+def poly_area(pts):
+    n = len(pts); s = 0.0
+    for i in range(n):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i+1) % n]
+        s += x1*y2 - x2*y1
+    return abs(s) / 2
+def poly_centroid(pts):
+    n = len(pts)
+    return (sum(p[0] for p in pts)/n, sum(p[1] for p in pts)/n)
+
+verified = [
+    {"id": 1, "desc": "...", "polygon": [[x, y], ...]},
+    {"id": 2, "desc": "...", "polygon": [[x, y], ...]},
+]
+for r in verified:
+    r["area_m2"]  = poly_area(r["polygon"])
+    r["centroid"] = poly_centroid(r["polygon"])
+verified.sort(key=lambda r: -r["area_m2"])
+verified
+''')
+```
+
+## Reply
+
+End your turn with a plain-text answer. Match the answer shape to the
+question — Phase A produces the partition, Phase B produces the specific
+quantity, so report only what was asked:
+
+- **Count question** ("how many rooms", "did I change rooms"): reply
+  with just the integer (or "yes"/"no"). If the user asked for "only
+  the number", give only that.
+- **Biggest-room question**: lead with that room and its area / polygon.
+- **Sizing / bounds question**: list every room with id, short
+  description, polygon corners, centroid, area (m²), and sample count.
+- **Time-spent question** ("which room did I spend the longest in"):
+  name the room (its description and centroid) with the measured
+  share/seconds, and note the runner-up if it's close.
+- **Contents question**: describe what's in the target room from its
+  frames.
+
+If the user added a format directive (e.g. "reply with only the number,
+nothing else"), honour it strictly — the polygons, frame lists, and
+dwell math are intermediate work, not the final answer.
 
 ## Discipline notes
 
-- The walked-coverage bbox from step 4 is a *lower bound*. The
-  verified rectangle in step 6 is what you actually report — extend
-  it on the map (step 5) to cover lidar-visible floor the robot
-  didn't step on but is clearly inside the room's walls.
-- Don't extend a rectangle through walls or doorways into the next
-  room. The orange markers from `verify_room_partition` show
-  unpartitioned floor; some of those markers will be in adjacent
-  rooms or outside the building. Use your visual judgement on the
-  map to decide which markers should be absorbed by extending an
+- The walked-coverage bbox from step 4 is a *lower bound*. The verified
+  polygon in step 6 is what you actually measure over — extend it on the
+  map (step 5) to cover lidar-visible floor the robot didn't step on but
+  is clearly inside the room's walls.
+- Don't extend a polygon through walls or doorways into the next room.
+  The orange markers from `verify_room_partition` show unpartitioned
+  floor; some will be in adjacent rooms or outside the building. Use
+  visual judgement on the map to decide which to absorb by extending an
   existing room vs which indicate genuinely separate rooms.
-- **Prefer extending an existing room's wall to inventing a new
-  room.** A new room only makes sense if the unpartitioned area is
-  clearly separated from existing rooms by walls or a doorway.
-- A "continuation" still adds the new frame's `(x, y)` to the
-  room's frame list — that's how the initial bbox grows.
-- Don't conjure a number when you only have one sample in a room.
-  Say "extent unknown (only one sample)".
+- **Prefer extending an existing room's wall to inventing a new room.**
+  A new room only makes sense if the unpartitioned area is clearly
+  separated by walls or a doorway.
+- A "continuation" still adds the new frame's `(x, y)` to the room's
+  frame list — that's how the initial bbox grows.
+- Don't conjure a number when you only have one sample in a room. Say
+  "extent unknown (only one sample)".
 - Camera yaw / facing changes are not room changes.
-- This procedure is geometry on top of the same pairwise visual
-  reasoning that `count_rooms` uses. If the visual classification is
-  wrong, the rectangles will be wrong too.
+- The whole partition rests on the pairwise visual classification in
+  Phase A. If that classification is wrong, the polygons — and every
+  measurement you derive from them — will be wrong too.
+- Open-plan reality check: if the floor is largely one connected space,
+  the lidar map and the odom dots will show it (few interior walls,
+  `odom_in` spread across many polygons or piling up in "outside any
+  room"). Don't force a crisp single-room answer onto an open floor —
+  say the space is open-plan and report the distribution.

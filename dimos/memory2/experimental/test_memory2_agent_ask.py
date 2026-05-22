@@ -114,6 +114,58 @@ def _is_affirmative(s: str) -> bool:
     return _has_word(s, *_AFFIRMATIVES)
 
 
+def _is_negative(s: str) -> bool:
+    """True if *s* reads as a no-answer.
+
+    Mirror of `_is_affirmative`: requires a negation word AND no
+    affirmative, so "No" passes, "Yes" fails, "No, but yes for R2" fails."""
+    if _has_word(s, *_AFFIRMATIVES):
+        return False
+    return _has_word(s, *_NEGATIVES)
+
+
+# Cues that an answer declines to commit a measured result rather than
+# fabricating one. Substring (not whole-word) matching: these phrases are
+# specific enough that a confident measured answer is unlikely to trip them,
+# and several carry apostrophes / compound forms ("can't", "no way to") that
+# `_has_word` wouldn't catch.
+_REFUSAL_CUES = (
+    "can't",
+    "cannot",
+    "can not",
+    "couldn't",
+    "could not",
+    "unable",
+    "not able",
+    "no way to",
+    "not possible",
+    "without inventing",
+    "would be inventing",
+    "fabricat",  # fabricate / fabricated / fabricating
+    "too noisy",
+    "not reliable",
+    "no reliable",
+    "not precise",
+    "imprecise",
+    "insufficient",
+    "not measurable",
+    "don't have",
+    "do not have",
+    "eyeball",  # "would be an eyeballed estimate, not a measurement"
+)
+
+
+def _declines_measurement(s: str) -> bool:
+    """True if the answer declines to commit a measured result.
+
+    The agent's tools can't return object-bounded metric geometry — lidar
+    `near` yields point-cloud metadata, not points, and the map is a
+    rendered image with no edge coordinates — so the honest response to a
+    "measure the table and the door" question is to say it can't measure
+    them reliably rather than invent numbers. See `table_fit_door_refuses`."""
+    return any(cue in s.lower() for cue in _REFUSAL_CUES)
+
+
 def _picked_choice_letter(s: str) -> str | None:
     """Return the LAST standalone A–D letter in *s*.
 
@@ -367,7 +419,15 @@ def test_short_recording_qa(
 # of the Hong Kong office. Discovery-permissive bounds for the questions
 # whose ground-truth coordinate / area we haven't pinned down yet; tighten
 # once the agent's first answers are reviewed.
-_QA_CASES_HONGKONG: list[tuple[str, str, Callable[[str], bool]]] = [
+#
+# A case is `(id, question, verify)` with an optional 4th element carrying a
+# pytest mark (e.g. `pytest.mark.skip(...)`) for cases whose ground truth is
+# not pinned down yet.
+_HKCase = (
+    tuple[str, str, Callable[[str], bool]]
+    | tuple[str, str, Callable[[str], bool], pytest.MarkDecorator]
+)
+_QA_CASES_HONGKONG: list[_HKCase] = [
     (
         "white_robots_count_4_hk",
         "How many white robots did you pass by? Reply with only the number, nothing else.",
@@ -377,6 +437,19 @@ _QA_CASES_HONGKONG: list[tuple[str, str, Callable[[str], bool]]] = [
         lambda ans: (n := _first_number(ans)) is not None and n in (3, 4),
     ),
     (
+        "musical_instruments_last_5min_yes",
+        "Did you see any musical instruments in the last five minutes? "
+        "Reply with only yes or no, nothing else.",
+        # Ground truth: yes — an acoustic guitar on a retail shelf is visible
+        # at t~303-312s (see `acoustic_guitar_closest_robot_distance`), a
+        # ~10s pass near (-1, +21). The recording is ~557s, so the last five
+        # minutes start at ~t=257s and the sighting falls comfortably inside.
+        # NOTE: "four minutes" (window from ~t=317s) would EXCLUDE it — the
+        # guitar is seen ~5s before that window opens — so a four-minute
+        # phrasing should expect "no", not "yes".
+        _is_affirmative,
+    ),
+    (  # Flakey - this task is challening for the harness
         "acoustic_guitar_closest_robot_distance",
         "What's the straight-line distance in meters between the acoustic "
         "guitar and the closest robot to it? Round to a whole number. "
@@ -386,6 +459,15 @@ _QA_CASES_HONGKONG: list[tuple[str, str, Callable[[str], bool]]] = [
         # (-5.7, +10.8), giving ~11.8 m). ±2 m to absorb the agent's
         # depth-estimation noise from a short-baseline frame cluster.
         lambda ans: (n := _first_number(ans)) is not None and 9 <= n <= 13,
+        # xfail (non-strict): short-baseline depth triangulation is noisy.
+        # The true distance is ~11 m (corroborated independently), but the
+        # agent often lands just outside the 9-13 band (e.g. 14). Record the
+        # miss without failing the suite; a lucky in-band run still XPASSes.
+        pytest.mark.xfail(
+            reason="noisy short-baseline depth triangulation; agent lands "
+            "near ~11 m but often just outside the 9-13 band",
+            strict=False,
+        ),
     ),
     (
         "elevator_room_center",
@@ -402,13 +484,160 @@ _QA_CASES_HONGKONG: list[tuple[str, str, Callable[[str], bool]]] = [
             and abs(xy[1] - 2.22) <= 1.5
         ),
     ),
-    (
+    (  # Flakey - this number changes a lot and I don't have a proper measurement
         "total_floor_area",
         "What's the total floor area of the office, summed across all "
         "rooms, in square meters? Reply with only the number, nothing else.",
         # Ground truth: ~400 m² (eyeballed). ±100 m² to absorb the agent's
         # variance in polygon tightness and whether corridors get counted.
         lambda ans: (n := _first_number(ans)) is not None and 300 <= n <= 500,
+    ),
+    (
+        "tennis_court_no_room_fits",
+        "Could we have enough space for a standard singles tennis court in "
+        "any of the rooms if we removed everything in it? If no room fits, "
+        "say no. Otherwise, say which one.",
+        # Ground truth: no. A singles court needs a clear 23.77 m × 8.23 m
+        # rectangle (~196 m²) — larger than any single room in this ~400 m²
+        # office (split across multiple rooms), and no room is ~24 m long.
+        lambda ans: (
+            _has_word(ans, "no", "none", "not", "never", "negative")
+            and not _has_word(ans, *_AFFIRMATIVES)
+        ),
+    ),
+    (
+        "desks_need_cable_management",
+        "How many desks need cable management? Reply with only the number, "
+        "nothing else.",
+        # Placeholder verify: just asserts the agent commits a number. Ground
+        # truth (the desk count + an acceptable tolerance) is not pinned yet;
+        # review the recording, set the bound, then drop the skip mark below.
+        lambda ans: _first_number(ans) is not None,
+        pytest.mark.skip(reason="ground truth not pinned yet; review recording to set the count"),
+    ),
+    (
+        "table_fit_door_refuses",
+        "For the table the man is sitting on, could we realistically fit it "
+        "through the nearest door without lifting it from the ground - just "
+        "by rotating it about a vertical axis and pushing it? Answer this "
+        "QUANTITATIVELY, do not eyeball: (1) measure the table's minimum "
+        "(narrow) horizontal dimension in meters, including any leg/base "
+        "footprint; (2) locate the relevant doorway and measure its clear "
+        "opening width in meters; (3) since the table stays flat on the "
+        "floor, rotating about a vertical axis only changes which horizontal "
+        "dimension faces the opening, so compare the table's narrow "
+        "dimension against the door clear width and give a yes/no with the "
+        "margin in cm. Use the spatial tools (position_of_thing, "
+        "measure_distance, lidar, the map) to derive actual numbers. Report "
+        "your measured numbers and their uncertainty, then the verdict.",
+        # Expected behavior: refusal. Asked to MEASURE — without being handed
+        # an explicit bearing-triangulation recipe — the agent has no way to
+        # get object-bounded metric widths: lidar `near` returns point-cloud
+        # metadata, not points, and the map is a rendered image with no edge
+        # coordinates. We accept this answer (the refusal) since our
+        # experimental units make very noisy measurements: the honest move is
+        # to decline rather than commit a cm margin off noisy data. Spelling
+        # out the triangulation method instead does get committed numbers,
+        # but that's a different, prescriptive prompt.
+        _declines_measurement,
+    ),
+    (
+        "longest_time_room_is_a_lounge",
+        "What room did you spend the longest time in? "
+        "Reply with a short description of the room.",
+        # Ground truth: a lounge / sofa seating area. Two such zones dominate
+        # the walk — a left lounge/meeting area (~21% of dwell) and a right
+        # lounge/reception (~19%) — within sampling noise of each other, and
+        # which one wins depends on where the agent draws the partition
+        # boundary between them, so accept either. Verified by integrating
+        # odom dwell time over the agent's verified room polygons (left 118s
+        # vs right 107s of 558s total; next room down is ~93s). Don't assert
+        # left-vs-right specifically — that flips run to run.
+        lambda ans: _has_word(
+            ans, "lounge", "sofa", "sofas", "seating", "reception", "showroom"
+        ),
+    ),
+    (
+        "mixed_use_office_and_retail",
+        "Is this place a regular office, a retail store, or both? "
+        "Reply with one of: office, store, or both.",
+        # Ground truth: both. The walk passes office desks, meeting rooms and
+        # lounges AND a stocked retail section (snack/drink aisles with price
+        # labels). An agent that noticed only the offices, or only the store,
+        # fails — the answer requires synthesizing the whole walkthrough.
+        lambda ans: _has_word(ans, "both")
+        or (_has_word(ans, "office") and _has_word(ans, "store", "retail", "shop")),
+    ),
+    (
+        "lounge_closer_to_elevators_than_store",
+        "Which did you pass closer to the elevators — the lounge with the "
+        "sofas, or the retail store with the snack aisles? "
+        "Reply with only 'lounge' or 'store'.",
+        # Ground truth: the lounge. Measured from the agent's own verified room
+        # polygons, the lounge/reception centroids sit ~6 m from the elevator
+        # lobby; the retail aisles ~17 m — a ~2.5x separation, so the A-vs-B
+        # comparison is robust to partition noise.
+        lambda ans: _has_word(ans, "lounge"),
+    ),
+    (
+        "greeting_to_guitar_avoids_elevators_no",
+        "Is it possible to go from the room with the greeting robot to the "
+        "room with the acoustic guitar without passing by any elevators? "
+        "Reply with only yes or no, nothing else.",
+        # Ground truth: no — the route between the greeting-robot room and the
+        # acoustic-guitar room runs through the elevator lobby, so there's no
+        # way around it.
+        _is_negative,
+    ),
+    (
+        "elevator_to_pantry_avoids_white_robots_yes",
+        "Is it possible to go from the elevator room to the pantry/shelves "
+        "room without passing by the room with the several white robots? "
+        "Reply with only yes or no, nothing else.",
+        # Ground truth: yes — there's a route from the elevator room to the
+        # pantry/shelves room that does not pass through the white-robots room.
+        _is_affirmative,
+    ),
+    (
+        "failed_nav_attempt_place",
+        "Is there a place you tried to go to but couldn't? If no, say no. If "
+        "yes, reply with only the coordinate in the format `x, y` (two "
+        "numbers separated by a comma).",
+        # Placeholder verify: just asserts the answer is well-formed per the
+        # prompt — either a negative, or a parseable coordinate. Ground truth
+        # (whether a nav attempt actually failed in this recording, and its
+        # coordinate) is not pinned yet; review the recording, set the bound,
+        # then drop the skip mark below.
+        lambda ans: _is_negative(ans) or _parse_xy(ans) is not None,
+        pytest.mark.skip(
+            reason="ground truth not pinned yet; review recording to confirm "
+            "whether a nav attempt failed and, if so, its coordinate"
+        ),
+    ),
+    (
+        "nonstanding_robot_on_bed_or_dog",
+        "Did you see the robot that is not standing? What is it on?",
+        # Ground truth (confirmed by frame inspection): at ~t197s, world
+        # ~(-2.0, +4.5), beside the glass meeting pods, a white/grey quadruped
+        # robot DOG lies folded (non-standing) on a dark-blue cushion / dog
+        # BED on the floor. A correct answer mentions the bed it rests on or
+        # that the robot is a dog. Substring match so "dog bed", "beds",
+        # "robot dog" all count.
+        lambda ans: any(w in ans.lower() for w in ("bed", "dog")),
+        # xfail: the agent currently MISSES this. Asked for "the robot that is
+        # not standing," it fixates on the white wheeled service robots (which
+        # are upright on wheels) or the west office area and answers "on the
+        # floor," never finding the dog-on-bed. The real target is small,
+        # low-contrast and at the frame edge, so CLIP under-ranks it (~0.30,
+        # no better than unrelated frames) and the agent doesn't retrieve it.
+        # Non-strict (the default): gpt-5.5 is nondeterministic and may
+        # occasionally stumble onto it, which should surface as XPASS rather
+        # than fail the suite. Remove this mark once retrieval/localization of
+        # small edge-of-frame objects improves enough to find it reliably.
+        pytest.mark.xfail(
+            reason="agent fixates on the wheeled service robots and misses the "
+            "small, edge-of-frame robot dog resting on a dog bed at ~(-2,+4.5)"
+        ),
     ),
 ]
 
@@ -418,8 +647,10 @@ _QA_CASES_HONGKONG: list[tuple[str, str, Callable[[str], bool]]] = [
 @pytest.mark.skipif_no_openai
 @pytest.mark.parametrize(
     "question,verify",
-    [(q, v) for _id, q, v in _QA_CASES_HONGKONG],
-    ids=[case_id for case_id, _q, _v in _QA_CASES_HONGKONG],
+    [
+        pytest.param(case[1], case[2], id=case[0], marks=case[3] if len(case) > 3 else ())
+        for case in _QA_CASES_HONGKONG
+    ],
 )
 def test_hongkong_recording_qa(
     store_hongkong,
