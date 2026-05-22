@@ -84,7 +84,6 @@ Simple example code:
 ```python
 import pytest
 
-
 class RobotArm:
     def __init__(self, device: str) -> None:
         self.device = device
@@ -102,7 +101,6 @@ class RobotArm:
     @property
     def position(self) -> tuple[float, float, float]:
         return self._position
-
 
 @pytest.fixture
 def arm():
