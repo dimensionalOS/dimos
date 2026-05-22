@@ -21,6 +21,7 @@ class Base(DeclarativeBase):
 # Alembic — so each additive column on the model also gets listed here so
 # old prod databases pick it up via ALTER TABLE on next boot.
 _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
+    ("teleop_sessions", "published_video_mid", "VARCHAR"),
     ("teleop_sessions", "published_video_track_name", "VARCHAR"),
 ]
 

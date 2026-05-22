@@ -20,9 +20,12 @@ class TeleopSession(Base):
     state: Mapped[str] = Column(String, default="idle")  # idle | active | disconnected
     cf_session_id: Mapped[str] = Column(String, nullable=True)
 
-    # msid trackId of the video the robot published via cf_client.add_tracks
-    # at create_session. None when the robot's offer had no sendonly m=video.
-    # join_session reads this to subscribe operators to the same trackName.
+    # Video the robot offered (sendonly m=video). Both extracted from the
+    # robot's SDP at create_session and persisted, but the actual CF
+    # add_tracks(local) publish happens later in bridge-datachannel — CF
+    # rejects /tracks/new until the robot's PC is connected, which isn't true
+    # yet at create_session time. Both None when the robot offered no video.
+    published_video_mid: Mapped[str | None] = Column(String, nullable=True)
     published_video_track_name: Mapped[str | None] = Column(String, nullable=True)
 
     # Active operator (null = no one controlling)

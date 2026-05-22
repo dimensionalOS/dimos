@@ -705,11 +705,18 @@ angular.z = 0</pre>
                     ordered: true,
                 });
                 stateChannel.onopen = () => startClockSync(stateChannel);
+                // Older brokers without state_back_channel_id: keep onmessage
+                // here as a fallback (CF won't actually route pongs through,
+                // but no harm). New brokers route pongs via stateBackChannel.
                 stateChannel.onmessage = (e) => handleStateMessage(e.data);
                 stateChannel.onerror = (e) => console.warn('[state-channel] error', e);
                 stateChannel.onclose = () => console.info('[state-channel] closed');
             }
 
+            // Reverse-direction channel — robot publishes pongs (and any
+            // future robot-originated state) here. CF datachannels are
+            // unidirectional in their bridging, so this is the only path
+            // robot → operator messages can take.
             if (bridge.state_back_channel_id != null) {
                 stateBackChannel = pc.createDataChannel('state_reliable_back', {
                     negotiated: true,
@@ -719,6 +726,27 @@ angular.z = 0</pre>
                 stateBackChannel.onmessage = (e) => handleStateMessage(e.data);
                 stateBackChannel.onerror = (e) => console.warn('[state-back-channel] error', e);
                 stateBackChannel.onclose = () => console.info('[state-back-channel] closed');
+            }
+
+            // Video subscribe (Phase 4) — DIAGNOSTIC ONLY for now. The broker
+            // returns CF's renegotiated SDP in video_sdp_answer, but applying
+            // it post-connect is a real renegotiation we haven't designed yet:
+            // the PC is 'stable' here, so setRemoteDescription(answer) would
+            // throw, and a half-applied offer could break the working
+            // cmd/clock-sync datachannels. So we only LOG it — combined with
+            // the broker's add_tracks response log, this pins down CF's exact
+            // shape so the renegotiation can be written correctly next.
+            if (bridge.video_sdp_answer) {
+                const sdp = bridge.video_sdp_answer;
+                // a=setup:actpass ⇒ offer; a=setup:active/passive ⇒ answer.
+                const setup = (sdp.match(/^a=setup:(\S+)/m) || [])[1] || 'unknown';
+                const inferredType = setup === 'actpass' ? 'offer'
+                    : (setup === 'active' || setup === 'passive') ? 'answer' : 'unknown';
+                console.log('[video] got video_sdp_answer: len=%d signalingState=%s a=setup:%s inferredType=%s',
+                    sdp.length, pc.signalingState, setup, inferredType);
+                console.log('[video] sdp head:\n%s', sdp.slice(0, 500));
+            } else {
+                console.info('[video] no video_sdp_answer (no published video, or older broker)');
             }
         }
 
