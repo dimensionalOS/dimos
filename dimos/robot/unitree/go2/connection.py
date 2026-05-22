@@ -139,7 +139,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
         **kwargs,
     ) -> None:
         self.dataset = dataset
-        self._loop = kwargs.get("loop", True)
+        self._loop = kwargs.get("loop", False)
         self._seek = kwargs.get("seek")
         self._duration = kwargs.get("duration")
         self._store: SqliteStore | None = None
