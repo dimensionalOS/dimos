@@ -55,6 +55,7 @@ from dimos.experimental.pimsim.geometry import (
     media_type,
     path_contains,
 )
+from dimos.experimental.pimsim.kinematic import KinematicBaseSim
 from dimos.experimental.pimsim.robot_meshes import (
     RobotMeshes,
     apply_state,
@@ -127,6 +128,11 @@ class BabylonSceneViewerModule(Module):
     clicked_point: Out[PointStamped]
     point_goal: Out[PointStamped]
     cmd_vel: Out[Twist]
+    # Authoritative robot pose when ``enable_sim=True``. Integrated from
+    # the WS Drive cmd_vel inside the module — lets the browser viewer
+    # stand in for MuJoCo entirely for nav-stack testing (lidar reads
+    # this as its sensor pose).
+    sim_odom: Out[PoseStamped]
     # Entity world (browser is authoritative; these republish for dimos consumers).
     entity_descriptors: Out[EntityDescriptor]
     entity_states: Out[EntityState]
@@ -157,6 +163,17 @@ class BabylonSceneViewerModule(Module):
         camera_jpeg_quality: int = _DEFAULT_CAMERA_JPEG_QUALITY,
         camera_name: str = "camera",
         workspace_name: str = "workspace",
+        # Browser-physics-only kinematic base. Set enable_sim=True to
+        # have the module integrate cmd_vel locally and publish sim_odom
+        # — lets the babylon viewer stand in for MuJoCo for nav testing.
+        enable_sim: bool = False,
+        sim_rate: float = 100.0,
+        vehicle_height: float = 0.75,
+        init_x: float = 0.0,
+        init_y: float = 0.0,
+        init_z: float = 0.0,
+        init_yaw: float = 0.0,
+        lock_z: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -208,9 +225,28 @@ class BabylonSceneViewerModule(Module):
         self._uvicorn_server: uvicorn.Server | None = None
         self._server_thread: threading.Thread | None = None
         self._broadcast_thread: threading.Thread | None = None
+        self._sim_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._server_loop: asyncio.AbstractEventLoop | None = None
         self._clients: set[WebSocket] = set()
+
+        # Browser-physics base. Off by default — only the smoketest
+        # blueprint enables it. When on, integrates incoming cmd_vel at
+        # sim_rate Hz, publishes sim_odom, and primes _latest_base_*
+        # so the robot mesh in the browser tracks the integrated pose.
+        if enable_sim:
+            self._base: KinematicBaseSim | None = KinematicBaseSim(
+                init_x=init_x,
+                init_y=init_y,
+                init_z=init_z,
+                init_yaw=init_yaw,
+                vehicle_height=vehicle_height,
+                sim_rate=sim_rate,
+                lock_z=lock_z,
+            )
+        else:
+            self._base = None
+        self._sim_dt = 1.0 / float(sim_rate)
 
         # Entity world. The browser owns physics state; this table is a
         # local mirror used for (a) reconnect replay (so a fresh tab can
@@ -258,6 +294,15 @@ class BabylonSceneViewerModule(Module):
             daemon=True,
         )
         self._broadcast_thread.start()
+
+        if self._base is not None:
+            self._sim_thread = threading.Thread(
+                target=self._sim_loop,
+                name="babylon-viewer-sim",
+                daemon=True,
+            )
+            self._sim_thread.start()
+
         logger.info("Babylon scene viewer: http://localhost:%s/", self._port)
 
     @rpc
@@ -267,6 +312,8 @@ class BabylonSceneViewerModule(Module):
             self._uvicorn_server.should_exit = True
         if self._broadcast_thread and self._broadcast_thread.is_alive():
             self._broadcast_thread.join(timeout=2.0)
+        if self._sim_thread and self._sim_thread.is_alive():
+            self._sim_thread.join(timeout=2.0)
         if self._server_thread and self._server_thread.is_alive():
             self._server_thread.join(timeout=2.0)
         super().stop()
@@ -479,6 +526,8 @@ class BabylonSceneViewerModule(Module):
             twist = self._parse_twist(message)
             if twist is not None:
                 self.cmd_vel.publish(twist)
+                if self._base is not None:
+                    self._base.set_command(twist)
             return
         if message_type == "arm_joint":
             name = message.get("name")
@@ -572,6 +621,45 @@ class BabylonSceneViewerModule(Module):
                         loop,
                     )
             time.sleep(self._broadcast_dt)
+
+    def _sim_loop(self) -> None:
+        """Integrate the kinematic base + publish sim_odom.
+
+        Updates ``_latest_base_pos`` / ``_latest_base_wxyz`` so the browser
+        robot mesh tracks the integrated pose (same path the external odom
+        IN uses). Runs at the configured sim_rate Hz; the broadcast loop
+        + the lidar consumer subsample as needed.
+        """
+        if self._base is None:
+            return
+        dt = self._sim_dt
+        next_tick = time.perf_counter()
+        while not self._stop_event.is_set():
+            snap = self._base.step(dt)
+            with self._state_lock:
+                self._latest_base_pos = np.array([snap.x, snap.y, snap.z], dtype=np.float64)
+                quat = snap.quaternion
+                self._latest_base_wxyz = np.array(
+                    [quat.w, quat.x, quat.y, quat.z], dtype=np.float64
+                )
+            try:
+                self.sim_odom.publish(
+                    PoseStamped(
+                        ts=time.time(),
+                        frame_id="map",
+                        position=[snap.x, snap.y, snap.z],
+                        orientation=[quat.x, quat.y, quat.z, quat.w],
+                    )
+                )
+            except Exception:
+                logger.exception("BabylonViewer: sim_odom publish failed")
+            next_tick += dt
+            sleep_for = next_tick - time.perf_counter()
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            else:
+                # Behind schedule (slow consumer) — skip catchup to avoid runaway.
+                next_tick = time.perf_counter()
 
     async def _broadcast_state(
         self,
