@@ -45,8 +45,7 @@ decoded = LCMVector3.lcm_decode(binary)
 print(f"Decoded: x={decoded.x}, y={decoded.y}, z={decoded.z}")
 ```
 
-<!--Result:-->
-```
+```results
 Encoded to 32 bytes: ae7e5fba5eeca11e3ff000000000000040000000000000004008000000000000
 Decoded: x=1.0, y=2.0, z=3.0
 ```
@@ -78,8 +77,7 @@ binary = v1.lcm_encode()
 print(f"LCM encoded: {len(binary)} bytes")
 ```
 
-<!--Result:-->
-```
+```results
 v1 + v2 = (5.0, 7.0, 9.0)
 v1 dot v2 = 32.0
 v1 x v2 = (-3.0, 6.0, -3.0)
@@ -117,8 +115,7 @@ pc2 = PointCloud2.lcm_decode(binary)
 print(f"Decoded: {len(pc2)} points")
 ```
 
-<!--Result:-->
-```
+```results
 PointCloud: 100 points, frame=camera
 Center: ↘ Vector Vector([0.47497518 0.49878164 0.43788878])
 Open3D type: PointCloud
@@ -151,8 +148,7 @@ decoded = Vector3.lcm_decode(binary)
 print(f"Raw binary transport: decoded {decoded}")
 ```
 
-<!--Result:-->
-```
+```results
 Memory transport: received ↘ Vector Vector([1. 2. 3.])
 Raw binary transport: decoded ↘ Vector Vector([1. 2. 3.])
 ```

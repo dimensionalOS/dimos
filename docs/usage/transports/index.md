@@ -70,8 +70,7 @@ text "pub/sub API" at P.s + (0, -0.2in)
 
 </details>
 
-<!--Result:-->
-![output](../assets/abstraction_layers.svg)
+<img src="../assets/abstraction_layers.svg" alt="output" />
 
 We’ll go through these layers top-down.
 
@@ -179,8 +178,7 @@ if __name__ == "__main__":
     dimos.stop()
 ```
 
-<!--Result:-->
-```
+```results
 02:57:31.428 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
 02:57:31.761 [inf][/coordination/python_worker.py] Deployed module. module=TickerCameraModule module_id=0 worker_id=0
 02:57:31.768 [inf][/coordination/python_worker.py] Deployed module. module=ImageListener module_id=1 worker_id=1
@@ -255,8 +253,7 @@ print(inspect.getsource(PubSub.publish))
 print(inspect.getsource(PubSub.subscribe))
 ```
 
-<!--Result:-->
-```
+```results
     @abstractmethod
     def publish(self, topic: TopicT, message: MsgT) -> None:
         """Publish a message to a topic."""
@@ -297,8 +294,7 @@ print(f"Received velocity: x={received[0].x}, y={received[0].y}, z={received[0].
 lcm.stop()
 ```
 
-<!--Result:-->
-```
+```results
 Received velocity: x=1.0, y=0.0, z=0.5
 ```
 
@@ -323,8 +319,7 @@ print(f"Received: {received}")
 shm.stop()
 ```
 
-<!--Result:-->
-```
+```results
 Received: [{'data': [1, 2, 3]}]
 ```
 
@@ -358,8 +353,7 @@ print(f"Received: {received}")
 dds.stop()
 ```
 
-<!--Result:-->
-```
+```results
 Received: [SensorReading(value=22.5)]
 ```
 ---
@@ -386,8 +380,7 @@ for msg in received:
 unsubscribe()
 ```
 
-<!--Result:-->
-```
+```results
 Received 2 messages:
   {'temperature': 22.5}
   {'temperature': 23.0}

@@ -33,8 +33,7 @@ except (TypeError, ValidationError) as e:
 
 ```
 
-<!--Result:-->
-```
+```results
 Config(x=3, hello='world')
 Config(x=3, hello='override')
 Error: 1 validation error for Config
@@ -76,8 +75,7 @@ myModule = MyModule(frame_id="frame_id_override", device="CPU")
 
 ```
 
-<!--Result:-->
-```
+```results
 Config(
     rpc_transport=<class 'dimos.protocol.rpc.pubsubrpc.LCMRPC'>,
     default_rpc_timeout=120.0,

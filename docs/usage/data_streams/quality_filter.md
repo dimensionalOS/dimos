@@ -40,8 +40,7 @@ print("Selected:", [r["id"] for r in result])
 print("Qualities:", [r["quality"] for r in result])
 ```
 
-<!--Result:-->
-```
+```results
 Selected: [2]
 Qualities: [0.9]
 ```
@@ -74,8 +73,7 @@ print("Sharpness scores:")
 show_frames(input_frames)
 ```
 
-<!--Result:-->
-```
+```results
 Loaded 20 frames from Go2 camera
 Frame resolution: 1280x720
 Sharpness scores:
@@ -105,8 +103,7 @@ print(f"Output: {len(sharp_frames)} frame(s) (selected sharpest per window)")
 show_frames(sharp_frames)
 ```
 
-<!--Result:-->
-```
+```results
 Output: 3 frame(s) (selected sharpest per window)
   Frame 0: 0.351
   Frame 1: 0.352
@@ -167,15 +164,13 @@ Visualizing which frames were selected (green border = selected as sharpest in w
 plot_mosaic(input_frames, sharp_frames, '{output}')
 ```
 
-<!--Result:-->
-![output](assets/frame_mosaic.jpg)
+<img src="assets/frame_mosaic.jpg" alt="output" />
 
 ```python skip session=qb output=assets/sharpness_graph.svg
 plot_sharpness(input_frames, sharp_frames, '{output}')
 ```
 
-<!--Result:-->
-![output](assets/sharpness_graph.svg)
+<img src="assets/sharpness_graph.svg" alt="output" />
 
 Let's request a higher frequency.
 
@@ -189,8 +184,7 @@ print(f"Output: {len(sharp_frames)} frame(s) (selected sharpest per window)")
 show_frames(sharp_frames)
 ```
 
-<!--Result:-->
-```
+```results
 Output: 6 frame(s) (selected sharpest per window)
   Frame 0: 0.351
   Frame 1: 0.348
@@ -204,16 +198,14 @@ Output: 6 frame(s) (selected sharpest per window)
 plot_mosaic(input_frames, sharp_frames, '{output}')
 ```
 
-<!--Result:-->
-![output](assets/frame_mosaic2.jpg)
+<img src="assets/frame_mosaic2.jpg" alt="output" />
 
 
 ```python skip session=qb output=assets/sharpness_graph2.svg
 plot_sharpness(input_frames, sharp_frames, '{output}')
 ```
 
-<!--Result:-->
-![output](assets/sharpness_graph2.svg)
+<img src="assets/sharpness_graph2.svg" alt="output" />
 
 As we can see the system is trying to strike a balance between requested frequency and quality that's available
 
@@ -261,8 +253,7 @@ print(f"Mean gradient magnitude: {magnitude.mean():.2f}")
 print(f"Normalized sharpness:    {img.sharpness:.3f}")
 ```
 
-<!--Result:-->
-```
+```results
 Mean gradient magnitude: 230.00
 Normalized sharpness:    0.332
 ```
@@ -287,8 +278,7 @@ result = rx.of(*detections).pipe(
 print(f"Selected: {result[0]['name']} (conf: {result[0]['confidence']})")
 ```
 
-<!--Result:-->
-```
+```results
 Selected: dog (conf: 0.95)
 ```
 

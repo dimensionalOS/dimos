@@ -22,8 +22,7 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
 to_svg(unitree_go2, "assets/go2_nav.svg")
 ```
-<!--Result:-->
-![output](assets/go2_nav.svg)
+<img src="assets/go2_nav.svg" alt="Go2 navigation blueprint" />
 
 ## Camera Module
 
@@ -43,8 +42,7 @@ from dimos.hardware.sensors.camera.module import CameraModule
 print(CameraModule.io())
 ```
 
-<!--Result:-->
-```
+```results
 ┌┴─────────────┐
 │ CameraModule │
 └┬─────────────┘
@@ -85,8 +83,7 @@ time.sleep(0.5)
 camera.stop()
 ```
 
-<!--Result:-->
-```
+```results
 Out color_image[Image] @ CameraModule
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)
@@ -110,8 +107,7 @@ from dimos.perception.detection.module2D import Detection2DModule, Config
 print(Detection2DModule.io())
 ```
 
-<!--Result:-->
-```
+```results
  ├─ color_image: Image
 ┌┴──────────────────┐
 │ Detection2DModule │
@@ -130,7 +126,7 @@ print(Detection2DModule.io())
  ├─ RPC stop() -> None
 ```
 
-<!-- TODO: add easy way to print config -->
+{/* TODO: add easy way to print config */}
 
 Looks like the detector just needs an image input and outputs some sort of detection and annotation messages. Let's connect it to a camera.
 
@@ -379,8 +375,7 @@ from dimos.robot.unitree_webrtc.unitree_go2_blueprints import agentic
 to_svg(agentic, "assets/go2_agentic.svg")
 ```
 
-<!--Result:-->
-![output](assets/go2_agentic.svg)
+<img src="assets/go2_agentic.svg" alt="Go2 agentic blueprint" />
 
 
 To see more information on how to use Blueprints, see [Blueprints](/docs/usage/blueprints.md).

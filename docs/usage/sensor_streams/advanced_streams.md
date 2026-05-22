@@ -26,8 +26,7 @@ text "items pile up!" at (Queue.x, Queue.y - 0.45in)
 
 </details>
 
-<!--Result:-->
-![output](assets/backpressure.svg)
+<img src="assets/backpressure.svg" alt="output" />
 
 
 **The solution:** The `backpressure()` wrapper handles this by:
@@ -67,8 +66,7 @@ print(f"slow got {len(slow_results)} items (skipped {len(fast_results) - len(slo
 scheduler.executor.shutdown(wait=True)
 ```
 
-<!--Result:-->
-```
+```results
 fast got 20 items: [0, 1, 2, 3, 4]...
 slow got 7 items (skipped 13)
 ```
@@ -96,8 +94,7 @@ Slow: box "Slow Sub" rad 5px fit wid 170% ht 170%
 
 </details>
 
-<!--Result:-->
-![output](assets/backpressure_solution.svg)
+<img src="assets/backpressure_solution.svg" alt="output" />
 
 The `LATEST` strategy means: when the slow subscriber finishes processing, it gets whatever the most recent value is, skipping any values that arrived while it was busy.
 
@@ -234,8 +231,7 @@ text "blocking" italic with .n at Blk2.n + (0, -0.05in)
 
 </details>
 
-<!--Result:-->
-![output](assets/getter_hot_cold.svg)
+<img src="assets/getter_hot_cold.svg" alt="output" />
 
 
 **Prefer `getter_cold()`** when you can afford to wait and warmup isn't expensive. It's simpler (no cleanup needed) and doesn't hold resources. Only use `getter_hot()` when you need instant reads or the source is expensive to start.
@@ -265,8 +261,7 @@ print("after 700ms:", get_val())
 get_val.dispose()  # Don't forget to clean up!
 ```
 
-<!--Result:-->
-```
+```results
 first call: 0
 after 350ms: 3
 after 700ms: 6
@@ -288,8 +283,7 @@ print("call 2:", get_val())  # subscribes again, gets 0, disposes
 print("call 3:", get_val())  # subscribes again, gets 0, disposes
 ```
 
-<!--Result:-->
-```
+```results
 call 1: 0
 call 2: 0
 call 3: 0

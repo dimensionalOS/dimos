@@ -23,8 +23,7 @@ Out: box "(image, pointcloud)" rad 5px fit wid 170% ht 170%
 
 </details>
 
-<!--Result:-->
-![output](assets/alignment_overview.svg)
+<img src="assets/alignment_overview.svg" alt="output" />
 
 
 ## Basic Usage
@@ -95,8 +94,7 @@ if aligned_pairs:
     print(f"\nFirst matched pair: Δ{dt*1000:.1f}ms")
 ```
 
-<!--Result:-->
-```
+```results
 Video: 29 frames, Lidar: 15 scans
 Aligned pairs: 11 out of 29 video frames
 
@@ -163,8 +161,7 @@ def plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, path):
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-<!--Result:-->
-![output](assets/alignment_timeline.png)
+<img src="assets/alignment_timeline.png" alt="output" />
 
 If we loosen up our match tolerance, we might get multiple pairs matching the same lidar frame.
 
@@ -180,8 +177,7 @@ print(f"Video: {len(video_frames)} frames, Lidar: {len(lidar_scans)} scans")
 print(f"Aligned pairs: {len(aligned_pairs)} out of {len(video_frames)} video frames")
 ```
 
-<!--Result:-->
-```
+```results
 Video: 58 frames, Lidar: 30 scans
 Aligned pairs: 23 out of 58 video frames
 ```
@@ -191,8 +187,7 @@ Aligned pairs: 23 out of 58 video frames
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-<!--Result:-->
-![output](assets/alignment_timeline2.png)
+<img src="assets/alignment_timeline2.png" alt="output" />
 
 ## Combine Frame Alignment with a Quality Filter
 
@@ -226,8 +221,7 @@ print(f"Aligned pairs: {len(aligned_pairs)} out of {len(video_frames)} video fra
 
 ```
 
-<!--Result:-->
-```
+```results
 Video: 6 frames, Lidar: 15 scans
 Aligned pairs: 1 out of 6 video frames
 ```
@@ -236,8 +230,7 @@ Aligned pairs: 1 out of 6 video frames
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-<!--Result:-->
-![output](assets/alignment_timeline3.png)
+<img src="assets/alignment_timeline3.png" alt="output" />
 
 We are very picky but data is high quality. Best frame, with closest lidar match in this window.
 
@@ -275,8 +268,7 @@ text "waiting..." at (Buffer.w.x - 0.4in, Buffer.w.y - 0.15in)
 
 </details>
 
-<!--Result:-->
-![output](assets/alignment_flow.svg)
+<img src="assets/alignment_flow.svg" alt="output" />
 
 ## Parameters
 

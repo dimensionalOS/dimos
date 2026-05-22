@@ -67,8 +67,7 @@ mylidar.imu.transport = LCMTransport("/imu", Imu)
 mylidar.start()
 ```
 
-<!--Result:-->
-```
+```results
 2026-02-14T11:22:12.123963Z [info     ] Starting native process   [dimos/core/native_module.py] cmd='./build/my_lidar --pointcloud /lidar#sensor_msgs.PointCloud2 --imu /imu#sensor_msgs.Imu --host_ip 192.168.1.5 --frequency 10.0' cwd=/home/lesh/coding/dimos/docs/usage/build
 ```
 
