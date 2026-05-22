@@ -31,12 +31,6 @@ STATE_BACK_CHANNEL_NAME = "state_reliable_back"
 # id under a role-appropriate field name.
 _robot_channel_ids: dict[str, dict[str, int]] = {}
 
-# Operator SDP offer captured at join, consumed at bridge-datachannel time for
-# the video subscribe renegotiation (CF needs the operator's offer to bind the
-# remote track). Short-lived: join → bridge is seconds. Lost on restart, which
-# is fine — the operator reconnects.
-_operator_offers: dict[str, str] = {}
-
 
 # ─── Request/Response schemas ────────────────────────────────────────
 
@@ -71,10 +65,6 @@ class BridgeDatachannelResponse(BaseModel):
     cmd_channel_id: int
     state_channel_id: int
     state_back_channel_id: int
-    # Renegotiated SDP answer the operator must apply if a video subscribe
-    # happened. None when the session has no published video. The operator
-    # applies it as a post-connect renegotiation to receive the routed track.
-    video_sdp_answer: str | None = None
 
 
 class HeartbeatRequest(BaseModel):
@@ -127,30 +117,34 @@ async def create_session(
     for old in existing.scalars():
         old.state = "disconnected"
 
-    # Create CF session
+    # Declare the robot's sendonly m=video as a publisher track in the SAME
+    # /sessions/new call. CF binds it during the initial offer/answer so the
+    # robot's PC connects with media set up. Deferring this to a later
+    # /tracks/new can't work: CF won't let the PC reach 'connected' while the
+    # m=video is unbound, and /tracks/new requires 'connected' — deadlock.
+    published_mid: str | None = None
+    published_track_name: str | None = None
+    tracks: list[dict] | None = None
+    video = extract_video_track(body.sdp_offer)
+    if video is not None:
+        published_mid, published_track_name = video
+        tracks = [
+            {"location": "local", "mid": published_mid, "trackName": published_track_name}
+        ]
+        log.info(
+            "Declaring robot video publisher robot=%s mid=%s trackName=%s",
+            robot_id, published_mid, published_track_name,
+        )
+
+    # Create CF session (with the publisher track declared, if any)
     try:
-        cf_result = await cf_client.create_session(body.sdp_offer)
+        cf_result = await cf_client.create_session(body.sdp_offer, tracks=tracks)
     except CloudflareRealtimeError as e:
         raise HTTPException(status_code=502, detail=f"Cloudflare error: {e.detail}")
     except Exception as e:
         raise HTTPException(
             status_code=502,
             detail=f"Cloudflare session create failed ({type(e).__name__}): {e}",
-        )
-
-    # Extract the robot's sendonly m=video (if any) and remember it, but DON'T
-    # call CF add_tracks here — CF rejects /tracks/new with "session not ready"
-    # until the robot's PC is connected, and at this point the robot hasn't
-    # even received this answer yet. The actual publish happens later in
-    # bridge-datachannel, where both PCs are connected.
-    published_mid: str | None = None
-    published_track_name: str | None = None
-    video = extract_video_track(body.sdp_offer)
-    if video is not None:
-        published_mid, published_track_name = video
-        log.info(
-            "Robot offered video robot=%s mid=%s trackName=%s (publish deferred to bridge)",
-            robot_id, published_mid, published_track_name,
         )
 
     # Store session
@@ -215,7 +209,6 @@ async def delete_session(
 
     session.state = "disconnected"
     _robot_channel_ids.pop(session_id, None)
-    _operator_offers.pop(session_id, None)
     await db.commit()
 
 
@@ -269,9 +262,25 @@ async def join_session(
                 detail=f"Session already has operator: {session.operator_id}",
             )
 
+    # Subscribe the operator to the robot's published video by declaring a
+    # remote track in this SAME /sessions/new call — symmetric to the
+    # publisher side. The operator's offer already carries the recvonly
+    # m=video, so CF binds the routed track and returns it in the normal join
+    # answer (no post-connect renegotiation). Skipped if the robot published
+    # no video, or for non-operator roles.
+    tracks: list[dict] | None = None
+    if session.published_video_track_name and body.role == "operator":
+        tracks = [
+            {
+                "location": "remote",
+                "sessionId": session.cf_session_id,
+                "trackName": session.published_video_track_name,
+            }
+        ]
+
     # Create a new CF session for this operator (they get their own PeerConnection)
     try:
-        cf_result = await cf_client.create_session(body.sdp_offer)
+        cf_result = await cf_client.create_session(body.sdp_offer, tracks=tracks)
     except CloudflareRealtimeError as e:
         raise HTTPException(status_code=502, detail=f"Cloudflare error: {e.detail}")
     except Exception as e:
@@ -282,15 +291,10 @@ async def join_session(
 
     operator_cf_id = cf_result["cf_session_id"]
 
-    # Don't subscribe the operator to the robot's video here — CF rejects
-    # /tracks/new until the operator's PC is connected, which won't happen
-    # until after they apply this answer. Stash the offer; the subscribe runs
-    # in bridge-datachannel (post-connect), same as the publisher side.
     if body.role == "operator":
         session.operator_id = user_id
         session.operator_cf_session_id = operator_cf_id
         session.state = "active"
-        _operator_offers[session.id] = body.sdp_offer
         await db.commit()
 
     return JoinSessionResponse(
@@ -321,39 +325,11 @@ async def bridge_datachannel(
     if not session.operator_cf_session_id or not session.cf_session_id:
         raise HTTPException(status_code=409, detail="CF sessions not ready")
 
-    # Publish the robot's video BEFORE bridging datachannels. An un-bound
-    # sendonly m=video keeps the robot's CF session "not ready", which makes
-    # the robot-side add_datachannels calls below fail — exactly the failure
-    # we bisected during P1. Binding it here (robot PC connected long ago)
-    # makes the session ready. Robot side needs no renegotiation: add_tracks
-    # just labels an m-section already present in the robot's offer.
-    if session.published_video_track_name and session.published_video_mid:
-        try:
-            await cf_client.add_tracks(
-                session.cf_session_id,
-                [
-                    {
-                        "location": "local",
-                        "mid": session.published_video_mid,
-                        "trackName": session.published_video_track_name,
-                    }
-                ],
-            )
-        except CloudflareRealtimeError as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Cloudflare add_tracks (robot publish) failed: {e.detail}",
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Robot publish failed ({type(e).__name__}): {e}",
-            )
-        log.info(
-            "Published video robot_cf=%s mid=%s trackName=%s",
-            session.cf_session_id, session.published_video_mid,
-            session.published_video_track_name,
-        )
+    # Note: video publishing is NOT done here — the robot's video track is
+    # declared at create_session time (CF /sessions/new tracks array), which
+    # is the only way a publisher binds cleanly. The operator subscribe is
+    # likewise declared at join_session. bridge-datachannel is datachannels
+    # only.
 
     # CF constraint: each /datachannels/new request body's `dataChannels`
     # array must be homogeneous in direction — all `location: "local"` OR
@@ -435,49 +411,10 @@ async def bridge_datachannel(
         STATE_BACK_CHANNEL_NAME: robot_pub_ids[STATE_BACK_CHANNEL_NAME],
     }
 
-    # Subscribe the operator to the robot's published video — AFTER the
-    # datachannel bridge, so the operator's CF session is already proven
-    # ready (the bridge calls above would have failed otherwise). CF
-    # renegotiates: it returns a new SDP answer the operator must apply to
-    # actually receive the routed track.
-    video_sdp_answer: str | None = None
-    operator_offer = _operator_offers.get(session.id)
-    if session.published_video_track_name and operator_offer:
-        try:
-            sub_result = await cf_client.add_tracks(
-                session.operator_cf_session_id,
-                [
-                    {
-                        "location": "remote",
-                        "sessionId": session.cf_session_id,
-                        "trackName": session.published_video_track_name,
-                    }
-                ],
-                sdp_offer=operator_offer,
-            )
-        except CloudflareRealtimeError as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Cloudflare add_tracks (operator subscribe) failed: {e.detail}",
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Operator subscribe failed ({type(e).__name__}): {e}",
-            )
-        video_sdp_answer = sub_result.get("sessionDescription", {}).get("sdp")
-        if not video_sdp_answer:
-            log.warning(
-                "CF add_tracks (operator subscribe) returned no SDP for operator_cf=%s; "
-                "video will not be routed",
-                session.operator_cf_session_id,
-            )
-
     return BridgeDatachannelResponse(
         cmd_channel_id=op_pub_ids[CMD_CHANNEL_NAME],
         state_channel_id=op_pub_ids[STATE_CHANNEL_NAME],
         state_back_channel_id=op_sub_ids[STATE_BACK_CHANNEL_NAME],
-        video_sdp_answer=video_sdp_answer,
     )
 
 
@@ -500,7 +437,6 @@ async def leave_session(
         session.operator_cf_session_id = None
         session.state = "idle"
         _robot_channel_ids.pop(session_id, None)
-        _operator_offers.pop(session_id, None)
         await db.commit()
 
     return {"session_id": session_id, "state": session.state}

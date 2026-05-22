@@ -39,13 +39,25 @@ class CloudflareRealtime:
             "Content-Type": "application/json",
         }
 
-    async def create_session(self, sdp_offer: str) -> dict:
-        """Create a new CF session. Returns sessionId + SDP answer."""
+    async def create_session(
+        self, sdp_offer: str, tracks: list[dict] | None = None
+    ) -> dict:
+        """Create a new CF session. Returns sessionId + SDP answer.
+
+        Pass `tracks` to declare publisher (location=local) or subscriber
+        (location=remote) tracks during the initial offer/answer. CF binds
+        them as part of session setup, so the PC connects with media properly
+        negotiated. Declaring an m=video here is required — a /tracks/new
+        call deferred to after connect can't work, because the PC won't reach
+        'connected' while the m-section is unbound (chicken-and-egg)."""
+        body: dict = {"sessionDescription": {"type": "offer", "sdp": sdp_offer}}
+        if tracks:
+            body["tracks"] = tracks
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{self.base_url}/sessions/new",
                 headers=self.headers,
-                json={"sessionDescription": {"type": "offer", "sdp": sdp_offer}},
+                json=body,
                 timeout=10.0,
             )
         if resp.status_code != 201:
@@ -55,40 +67,6 @@ class CloudflareRealtime:
             "cf_session_id": data["sessionId"],
             "sdp_answer": data["sessionDescription"]["sdp"],
         }
-
-    async def add_tracks(
-        self,
-        session_id: str,
-        tracks: list[dict],
-        sdp_offer: str | None = None,
-    ) -> dict:
-        """Add or subscribe to tracks on a CF session. Callers needing the
-        renegotiated SDP (subscribers, sometimes publishers) read it from
-        ``data["sessionDescription"]["sdp"]`` in the returned dict.
-
-        CF may return a 200 with an ``errorCode`` in the body (e.g.
-        ``invalid_params`` for direction-mixing) — surface those as
-        CloudflareRealtimeError just like ``add_datachannels`` does."""
-        url = f"{self.base_url}/sessions/{session_id}/tracks/new"
-        body: dict = {"tracks": tracks}
-        if sdp_offer:
-            body["sessionDescription"] = {"type": "offer", "sdp": sdp_offer}
-        log.info("CF add_tracks POST %s body=%s", url, body)
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, headers=self.headers, json=body, timeout=30.0)
-        log.info(
-            "CF add_tracks response status=%s body=%s",
-            resp.status_code, resp.text[:500],
-        )
-        if resp.status_code not in (200, 201):
-            raise CloudflareRealtimeError(resp.status_code, resp.text)
-        data = resp.json()
-        if data.get("errorCode"):
-            raise CloudflareRealtimeError(
-                resp.status_code,
-                f"{data['errorCode']}: {data.get('errorDescription', '')}",
-            )
-        return data
 
     async def add_datachannels(self, session_id: str, channels: list[dict]) -> list[dict]:
         url = f"{self.base_url}/sessions/{session_id}/datachannels/new"
