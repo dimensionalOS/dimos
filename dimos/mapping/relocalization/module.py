@@ -27,6 +27,7 @@ from dimos.mapping.voxels import VoxelGrid
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.DynamicCloud import DynamicCloud
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
@@ -43,6 +44,20 @@ MIN_LOCAL_POINTS = 50_000
 MAP_SUFFIX = ".pc2.lcm"
 
 
+def _dynamic_cloud_to_pointcloud2(dc: DynamicCloud) -> PointCloud2:
+    """Adapt a raycast-cleared DynamicCloud to PointCloud2 for relocalize.
+
+    Reprojects voxel indices to world-frame xyz via `dc.world_positions()`;
+    voxel quantity/health is intentionally dropped — relocalize.py only
+    cares about geometry.
+    """
+    return PointCloud2.from_numpy(
+        dc.world_positions(),
+        frame_id=dc.frame_id,
+        timestamp=dc.ts,
+    )
+
+
 class Config(ModuleConfig):
     map_file: str | None = (
         None  # e.g. `-o relocalizationmodule.map_file=go2_hongkong_office_twopass_map`
@@ -54,7 +69,12 @@ class Config(ModuleConfig):
 
 class RelocalizationModule(Module):
     config: Config
-    global_map: In[PointCloud2]
+    # Live map input is a raycast-cleared `DynamicCloud` (e.g. from
+    # RayTracingVoxelMap on the nav stack). The premap on disk is still a
+    # `.pc2.lcm` PointCloud2 file — we convert each incoming DynamicCloud
+    # to a PointCloud2 once at the input boundary so the rest of the
+    # pipeline (relocalize, merged_map, premap I/O) stays PointCloud2-only.
+    global_map: In[DynamicCloud]
     loaded_map: Out[PointCloud2]
     merged_map: Out[PointCloud2]
     world_to_map: Out[Transform]
@@ -76,9 +96,15 @@ class RelocalizationModule(Module):
         self._premap = PointCloud2.lcm_decode(path.read_bytes())
         self._premap.frame_id = FRAME_MAP
 
+        # Convert incoming DynamicCloud → PointCloud2 once at the boundary
+        # so downstream operators stay PointCloud2-typed.
+        global_map_pc2 = self.global_map.observable().pipe(  # type: ignore[no-untyped-call]
+            ops.map(_dynamic_cloud_to_pointcloud2),
+        )
+
         self.register_disposable(
             backpressure(
-                self.global_map.observable().pipe(  # type: ignore[no-untyped-call]
+                global_map_pc2.pipe(
                     ops.throttle_first(RELOC_INTERVAL),
                     ops.do_action(self._maybe_log_skip),
                     ops.filter(self._has_enough_points),
@@ -91,7 +117,7 @@ class RelocalizationModule(Module):
         self.register_disposable(
             backpressure(
                 combine_latest(
-                    self.global_map.observable(),  # type: ignore[no-untyped-call]
+                    global_map_pc2,
                     self.world_to_map.observable().pipe(ops.start_with(None)),  # type: ignore[no-untyped-call,arg-type]
                 )
             ).subscribe(self._on_merge_input)

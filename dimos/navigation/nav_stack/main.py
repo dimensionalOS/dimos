@@ -231,14 +231,17 @@ def create_nav_stack(
     if use_apply_closure:
         modules.append(ApplyClosure.blueprint(**(apply_closure or {})))
     if use_relocalization:
-        modules.append(
-            RelocalizationModule.blueprint(**(relocalization or {})).remappings(
-                [
-                    # Consume the PGO loop-closed global map; nav stack already
-                    # remaps PGO's `global_map` output to `_pgo_global_map` above.
-                    (RelocalizationModule, "global_map", "_pgo_global_map"),
-                ]
+        if not use_ray_tracing:
+            raise ValueError(
+                "use_relocalization=True requires use_ray_tracing=True: "
+                "RelocalizationModule consumes the RayTracingVoxelMap "
+                "global_map (DynamicCloud, raycast-cleared)."
             )
+        # Consume RayTracingVoxelMap's raycast-cleared `global_map` (DynamicCloud).
+        # PGO's `global_map` (PointCloud2, keyframe-sum, no clearing) is separately
+        # remapped to `_pgo_global_map` and is not what we want here.
+        modules.append(
+            RelocalizationModule.blueprint(**(relocalization or {})),
         )
     if record:
         # Lazy: breaks on G1 onboard (linux-aarch64 TLS allocation failure)
