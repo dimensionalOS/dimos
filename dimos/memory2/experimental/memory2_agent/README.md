@@ -18,6 +18,19 @@ How do we achieve this?
 as well as out-of-room lidar measurements, out-of-room odom measuremennts, and room intersections in order to iteratively refine the border between rooms.
 9. Skills - Any hard algorithms that can be achieved by a composition of the previous skills can be previously defined by text. These algorithms can be applied flexibly by the agent. One could think that skill development is a shortcut to providing the way to get the right answer.
 
+## Install
+
+This experimental agent is not covered by the core dependencies. Install the
+`agents` extra, which pulls in LangChain, `langchain-openai`, and
+`pydantic-monty` (the sandboxed REPL behind the `calc` tool):
+
+```
+pip install -e '.[agents]'
+```
+
+Set `OPENAI_API_KEY` (and `GOOGLE_API_KEY` if using a `gemini-*` model). For
+Gemini you also need `langchain-google-genai`, which is not in the extra.
+
 ## Tools
 
 (15 tools, defined in `tools.py`)
