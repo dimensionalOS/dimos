@@ -20,6 +20,7 @@ from typing import Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
+from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.diy.alfred.config import ALFRED, LOCAL_PLANNER_PRECOMPUTED_PATHS
@@ -79,4 +80,20 @@ alfred_nav = (
         ]
     )
     .global_config(n_workers=8)
+)
+
+# Relocalization variant: same nav stack, plus RelocalizationModule.
+# FastLio2 publishes the live accumulated map to `global_map_fastlio` (renamed
+# above), so we point RelocalizationModule.global_map at that topic.
+alfred_nav_relocalization = (
+    autoconnect(
+        alfred_nav,
+        RelocalizationModule.blueprint(),
+    )
+    .remappings(
+        [
+            (RelocalizationModule, "global_map", "global_map_fastlio"),
+        ]
+    )
+    .global_config(n_workers=9)
 )

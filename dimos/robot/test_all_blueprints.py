@@ -30,6 +30,7 @@ OPTIONAL_ERROR_SUBSTRINGS = {
 SELF_HOSTED_BLUEPRINTS = frozenset(
     {
         "alfred-nav",
+        "alfred-nav-relocalization",
         "coordinator-basic",
         "coordinator-cartesian-ik-mock",
         "coordinator-cartesian-ik-piper",
