@@ -1,6 +1,6 @@
 ---
 name: thinking_about_rooms
-description: Use for ANY room-based reasoning — counting ("how many rooms did I walk through", "did I change rooms"), sizing ("how big is each room", "where is the biggest room", "bounding box of room X"), locating ("where on the map is room Y"), contents ("what's in the room at (x, y)"), measuring per room ("which room did I spend the longest time in", "how much of the walk was in each room"), or comparing rooms. There is no automatic room segmentation, so the rule is the same for all of these: SEGMENT the space into room polygons FIRST, then OPERATE on those polygons to answer whatever was asked. Every measurement — area, dwell time, contents, distances — is read off the verified partition, never eyeballed from a walkthrough.
+description: Use for ANY room-based reasoning — counting ("how many rooms did I walk through", "did I change rooms"), sizing ("how big is each room", "where is the biggest room", "bounding box of room X"), locating ("where on the map is room Y"), contents ("what's in the room at (x, y)"), measuring per room ("which room did I spend the longest time in", "how much of the walk was in each room"), comparing rooms, or reachability/routing between rooms ("can I get from the X room to the Y room without passing the Z room", "which rooms are adjacent", "is room A reachable from B"). There is no automatic room segmentation, so the rule is the same for all of these: SEGMENT the space into room polygons FIRST, then OPERATE on those polygons to answer whatever was asked. Every measurement — area, dwell time, contents, distances, connectivity — is read off the verified partition, never eyeballed from a walkthrough.
 ---
 
 # Thinking about rooms
@@ -40,6 +40,9 @@ polygon it's measured over.
 - Measurement per room: "Which room did I spend the longest time in?",
   "How much of the walk happened in each room?"
 - Comparison: "Which room is biggest / which did I spend most time in?"
+- Reachability / routing: "Can I get from the X room to the Y room
+  without passing the Z room?", "Which rooms are adjacent?", "Is room A
+  reachable from B?"
 
 The verification step is mandatory for all of these — the visual
 classifier alone over-segments (calls every distinct *scene* a new
@@ -320,6 +323,15 @@ or ranking the result. Pick the operation that matches the question:
 
 - **Distance between rooms** — distance between centroids (this is what
   `measure_distance` composes).
+
+- **Reachability / routing between rooms** — "can I get from the X room to
+  the Y room without passing the Z room?". Segment the space first (Phase A
+  above) and identify which rooms hold the start, goal, and forbidden
+  landmarks. Then work toward the answer from the partition: see how those
+  rooms connect on the occupancy map and where the robot's path crossed
+  between them, and decide whether a route from start to goal exists that
+  avoids the forbidden room. Explain the route (or why there isn't one),
+  and be honest if the connectivity is genuinely ambiguous.
 
 The principle is always the same: segment first, then compute the asked
 quantity for every room off the verified polygons, then answer.

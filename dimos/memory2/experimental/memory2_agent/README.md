@@ -64,7 +64,7 @@ Gemini you also need `langchain-google-genai`, which is not in the extra.
 
 (7 skills, defined in `skills/*.md`)
 
-- **thinking_about_rooms** — any room-based reasoning: segment the space into verified room polygons first, then operate on them — count, size/bounds, map coordinates, contents, time spent per room (dwell via `odom_in` from `verify_room_partition`), and cross-room comparisons. Built on per-frame pose tracking + polygon tracing + `verify_room_partition`.
+- **thinking_about_rooms** — any room-based reasoning: segment the space into verified room polygons first, then operate on them — count, size/bounds, map coordinates, contents, time spent per room (dwell via `odom_in` from `verify_room_partition`), cross-room comparisons, and reachability/routing (after segmenting, reason about how the rooms connect on the map: "can I get from the X room to the Y room without passing Z"). Built on per-frame pose tracking + polygon tracing + `verify_room_partition`.
 - **describe_room** — what's in a given room, answered from frames inside that room (composes `thinking_about_rooms` so the answer isn't biased by semantic-search priming).
 - **unexplored_spaces** — where to explore next: identifies frontiers from the orange unpartitioned blobs flagged by `verify_room_partition` that are NOT enclosed by walls.
 - **count_unique_things** — how many distinct instances of a kind of thing the robot saw, by localising each candidate to a world (x, y) and merging coincident positions.
