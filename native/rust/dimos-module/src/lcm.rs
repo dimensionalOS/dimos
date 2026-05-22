@@ -34,8 +34,11 @@ impl LcmTransport {
     }
 }
 
-/// Parse the LCM URL format `udpm://<group>:<port>[?ttl=<n>]` into LcmOptions.
-/// Returns None on malformed input; the caller falls back to defaults.
+/// Parse the LCM URL format `udpm://<group>:<port>[?<k>=<v>&...]` into LcmOptions.
+/// Recognized query keys: `ttl`, `interface`. Unknown keys are logged via stderr
+/// so a typo (e.g. `tll=`) is visible instead of silent.
+/// Returns None on malformed scheme/host/port; the caller falls back to defaults.
+/// Note: multicast is IPv4 only in LCM, so `rsplit_once(':')` is safe here.
 fn parse_lcm_url(url: &str) -> Option<LcmOptions> {
     let rest = url.strip_prefix("udpm://")?;
     let (host_port, query) = match rest.split_once('?') {
@@ -53,9 +56,22 @@ fn parse_lcm_url(url: &str) -> Option<LcmOptions> {
     };
     if let Some(q) = query {
         for kv in q.split('&') {
-            if let Some(("ttl", v)) = kv.split_once('=') {
-                if let Ok(ttl) = v.parse::<u32>() {
-                    opts.ttl = ttl;
+            let Some((k, v)) = kv.split_once('=') else {
+                continue;
+            };
+            match k {
+                "ttl" => {
+                    if let Ok(ttl) = v.parse::<u32>() {
+                        opts.ttl = ttl;
+                    }
+                }
+                "interface" => {
+                    if let Ok(iface) = v.parse::<Ipv4Addr>() {
+                        opts.interface = iface;
+                    }
+                }
+                _ => {
+                    eprintln!("dimos_module: LCM_DEFAULT_URL: ignoring unknown query key {k:?}");
                 }
             }
         }
@@ -91,6 +107,13 @@ mod tests {
         let opts = parse_lcm_url("udpm://239.255.76.67:7667").unwrap();
         assert_eq!(opts.multicast_group, Ipv4Addr::new(239, 255, 76, 67));
         assert_eq!(opts.port, 7667);
+    }
+
+    #[test]
+    fn parses_nonzero_ttl_and_interface() {
+        let opts = parse_lcm_url("udpm://239.255.76.67:7667?ttl=5&interface=10.0.0.1").unwrap();
+        assert_eq!(opts.ttl, 5);
+        assert_eq!(opts.interface, Ipv4Addr::new(10, 0, 0, 1));
     }
 
     #[test]
