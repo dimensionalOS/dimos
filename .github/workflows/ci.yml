@@ -36,19 +36,17 @@ jobs:
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
 
-  rust-discover:
-    # Auto discover the Rust workspaces by searching for Cargo.lock files
-    timeout-minutes: 1
+  rust:
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
-    outputs:
-      crates: ${{ steps.find.outputs.crates }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
       - name: Find Cargo workspace roots
-        id: find
+        id: find-crates
         run: |
           crates=$(find . -name Cargo.lock \
             -not -path './target/*' \
@@ -57,27 +55,14 @@ jobs:
             -not -path './.git/*' \
             -printf '%h\n' \
             | sed 's|^\./||' \
-            | sort \
-            | jq -R . \
-            | jq -sc .)
-          echo "crates=$crates" >> "$GITHUB_OUTPUT"
+            | sort)
           echo "Found Rust workspace roots:"
-          echo "$crates" | jq
-
-  rust:
-    needs: rust-discover
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        crate: ${{ fromJSON(needs.rust-discover.outputs.crates) }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read  # For checkout
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+          echo "$crates"
+          {
+            echo "crates<<EOF"
+            echo "$crates"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -85,16 +70,28 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ${{ matrix.crate }}
+          workspaces: ${{ steps.find-crates.outputs.crates }}
       - name: cargo fmt
-        working-directory: ${{ matrix.crate }}
-        run: cargo fmt --all -- --check
+        env:
+          CRATES: ${{ steps.find-crates.outputs.crates }}
+        run: |
+          for crate in $CRATES; do
+            (cd "$crate" && cargo fmt --all -- --check)
+          done
       - name: cargo clippy
-        working-directory: ${{ matrix.crate }}
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        env:
+          CRATES: ${{ steps.find-crates.outputs.crates }}
+        run: |
+          for crate in $CRATES; do
+            (cd "$crate" && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings)
+          done
       - name: cargo test
-        working-directory: ${{ matrix.crate }}
-        run: cargo test --workspace --all-features --locked
+        env:
+          CRATES: ${{ steps.find-crates.outputs.crates }}
+        run: |
+          for crate in $CRATES; do
+            (cd "$crate" && cargo test --workspace --all-features --locked)
+          done
 
   md-babel:
     timeout-minutes: 15
