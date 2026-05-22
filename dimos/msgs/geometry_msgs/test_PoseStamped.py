@@ -12,10 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import math
 import pickle
 import time
 
+import pytest
+
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 def test_lcm_encode_decode() -> None:
@@ -53,3 +59,58 @@ def test_pickle_encode_decode() -> None:
     assert isinstance(pose_dest, PoseStamped)
     assert pose_dest is not pose_source
     assert pose_dest == pose_source
+
+
+def test_agent_encode_returns_absolute_fields() -> None:
+    """Test that agent_encode returns frame_id, position, and full orientation."""
+
+    pose = PoseStamped(
+        position=Vector3(1.0, 2.0, 3.0),
+        orientation=Quaternion.from_euler(
+            Vector3(math.radians(10.0), math.radians(20.0), math.radians(45.0))
+        ),
+        frame_id="map",
+    )
+    encoded = pose.agent_encode()
+
+    assert len(encoded) == 1
+    assert encoded[0]["type"] == "text"
+    data = json.loads(encoded[0]["text"])
+
+    assert set(data.keys()) == {
+        "frame_id",
+        "x",
+        "y",
+        "z",
+        "roll_deg",
+        "pitch_deg",
+        "yaw_deg",
+    }
+    assert data["frame_id"] == "map"
+    assert data["x"] == pytest.approx(1.0)
+    assert data["y"] == pytest.approx(2.0)
+    assert data["z"] == pytest.approx(3.0)
+    assert data["roll_deg"] == pytest.approx(10.0, abs=0.1)
+    assert data["pitch_deg"] == pytest.approx(20.0, abs=0.1)
+    assert data["yaw_deg"] == pytest.approx(45.0, abs=0.1)
+
+
+def test_agent_encode_rounds_values() -> None:
+    """Test that agent_encode rounds position to 3 dp and angles to 1 dp."""
+
+    pose = PoseStamped(
+        position=Vector3(1.23456, 2.34567, 3.45678),
+        orientation=Quaternion.from_euler(
+            Vector3(math.radians(10.123), math.radians(20.456), math.radians(45.789))
+        ),
+        frame_id="map",
+    )
+    encoded = pose.agent_encode()
+    data = json.loads(encoded[0]["text"])
+
+    assert data["x"] == pytest.approx(1.235)
+    assert data["y"] == pytest.approx(2.346)
+    assert data["z"] == pytest.approx(3.457)
+    assert data["roll_deg"] == pytest.approx(10.1, abs=0.05)
+    assert data["pitch_deg"] == pytest.approx(20.5, abs=0.05)
+    assert data["yaw_deg"] == pytest.approx(45.8, abs=0.05)
