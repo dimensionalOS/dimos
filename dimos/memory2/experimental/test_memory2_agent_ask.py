@@ -635,6 +635,28 @@ _QA_CASES_HONGKONG: list[_HKCase] = [
             "small, edge-of-frame robot dog resting on a dog bed at ~(-2,+4.5)"
         ),
     ),
+    (  # Flakey - the prompt is under-determined (several seen-but-not-walked
+    # regions exist), so a run that picks a different valid room would miss
+    # this bound. Pinned to the kitchenette as the cleanest, most prominent
+    # "looked clearly through glass into a room" instance.
+        "looked_into_kitchenette_not_entered",
+        "Were you able to look clearly into a room that you didn't walk into? "
+        "If no, say no. If yes, briefly name the room and give its "
+        "approximate center coordinate in the format `x, y`.",
+        # Ground truth: yes — a glass-fronted kitchenette/pantry (fridge + a
+        # green cabinet) the robot views head-on through a shut glass door at
+        # ~t57s (and again from the south at ~t554s) but never enters. Center
+        # ~(+5.5, -2.5); nearest trajectory approach ~2.85 m, so it's genuinely
+        # seen-but-not-walked. Verified with the place-in-frames tool:
+        # reprojecting (6, -3.5) lands on the kitchenette floor in two views
+        # ~90 deg apart (t554 from the south, t61 from the east). ±1.5 m per
+        # axis (house style) accepts any point inside the room.
+        lambda ans: (
+            (xy := _parse_xy(ans)) is not None
+            and abs(xy[0] - 5.5) <= 1.5
+            and abs(xy[1] - (-2.5)) <= 1.5
+        ),
+    ),
 ]
 
 
