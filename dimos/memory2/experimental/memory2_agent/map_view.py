@@ -1072,6 +1072,17 @@ def walkthrough_frames(
     if not img_obs:
         return f"walkthrough: stream {stream!r} is empty"
 
+    # Drop frames recorded before odometry was established (pose=None). The
+    # nearest-frame pick below would otherwise hand a poseless obs to
+    # obs.pose[...] and raise TypeError, which propagates uncaught through the
+    # walkthrough tool. Filtering up front (rather than a per-sample `continue`)
+    # also keeps every sample slot filled by the nearest *posed* frame instead
+    # of dropping a tile — poseless frames cluster at t~0, so a `continue`
+    # would lose the first tile of any walkthrough that starts at the beginning.
+    img_obs = [o for o in img_obs if o.pose is not None]
+    if not img_obs:
+        return f"walkthrough: stream {stream!r} has no frames with a pose"
+
     t_zero = odom_obs[0].ts
     out: list[tuple[np.ndarray, float, tuple[float, ...]]] = []
     for s_ts in sample_ts:
