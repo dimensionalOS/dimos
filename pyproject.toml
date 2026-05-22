@@ -456,6 +456,9 @@ override-dependencies = [
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
     "pillow>=12.2.0",
     "pytest==8.3.5", # because gtsam screwed up their dev dependencies
+    # langgraph-prebuilt>=1.0.9 imports ExecutionInfo from langgraph.runtime,
+    # which only exists in langgraph>=1.1; langchain==1.2.3 caps langgraph<1.1.
+    "langgraph-prebuilt<=1.0.8",
 ]
 
 [tool.ruff]
