@@ -180,6 +180,11 @@ class NativeModule(Module):
             self.config.executable = str(Path(self.config.cwd) / self.config.executable)
 
     @rpc
+    def build(self) -> None:
+        super().build()
+        self._maybe_build()
+
+    @rpc
     def start(self) -> None:
         super().start()
         if self._process is not None and self._process.poll() is None:
@@ -189,8 +194,6 @@ class NativeModule(Module):
                 pid=self._process.pid,
             )
             return
-
-        self._maybe_build()
 
         topics = self._collect_topics()
 
