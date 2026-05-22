@@ -22,8 +22,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.core.core import rpc
-from dimos.core.docker_module import DockerModuleConfig
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.msgs.std_msgs.Header import Header
@@ -41,13 +40,8 @@ OUTLIER_REMOVAL_THRESHOLD = 100
 COLLISION_FILTER_THRESHOLD = 0.02
 
 
-class GraspGenConfig(DockerModuleConfig):
+class GraspGenConfig(ModuleConfig):
     """Configuration for GraspGen module."""
-
-    # Docker defaults
-    docker_image: str = "dimos-graspgen:latest"
-    docker_gpus: str = "all"
-    docker_shm_size: str = "4g"
 
     # GraspGen settings
     gripper_type: str = (
@@ -63,7 +57,7 @@ class GraspGenConfig(DockerModuleConfig):
 
 class GraspGenModule(Module):
     config: GraspGenConfig
-    deployment = "docker"
+    deployment = "python"
     grasps: Out[PoseArray]
     _sampler = None
     _gripper_info = None
@@ -260,12 +254,6 @@ class GraspGenModule(Module):
             logger.warning(f"Failed to save visualization: {e}")
 
 
-def graspgen(
-    docker_file_path: Path | str, docker_build_context: Path | str | None = None, **kwargs: Any
-) -> Any:
+def graspgen(**kwargs: Any) -> Any:
     """Create a GraspGen module blueprint. All kwargs passed through to config."""
-    dockerfile = Path(docker_file_path)
-    build_context = Path(docker_build_context) if docker_build_context else dockerfile.parent
-    return GraspGenModule.blueprint(
-        docker_file=dockerfile, docker_build_context=build_context, **kwargs
-    )
+    return GraspGenModule.blueprint(**kwargs)
