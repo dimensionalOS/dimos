@@ -41,7 +41,7 @@ jobs:
     timeout-minutes: 1
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: read  # For checkout
     outputs:
       crates: ${{ steps.find.outputs.crates }}
     steps:
