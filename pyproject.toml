@@ -459,6 +459,10 @@ override-dependencies = [
     # langgraph-prebuilt>=1.0.9 imports ExecutionInfo from langgraph.runtime,
     # which only exists in langgraph>=1.1; langchain==1.2.3 caps langgraph<1.1.
     "langgraph-prebuilt<=1.0.8",
+    # opentelemetry-api>=1.39 requires importlib-metadata<8.8; without this cap
+    # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
+    # whose stale _pb2.py files crash with protobuf>=6.
+    "importlib-metadata<8.8.0",
 ]
 
 [tool.ruff]
