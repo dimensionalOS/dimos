@@ -35,6 +35,7 @@ from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
 from dimos.memory2.store.base import Store, StreamAccessor
+from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.data import get_data
 
 if TYPE_CHECKING:
@@ -60,50 +61,35 @@ def resolve_db_path(dataset: str | Path) -> Path:
     return get_data(f"{dataset}.db")
 
 
-class Replay:
+class ReplayConfig(BaseConfig):
+    speed: float = 1.0
+    seek: float | None = None
+    duration: float | None = None
+    from_timestamp: float | None = None
+    loop: bool = False
+
+
+class Replay(Configurable):
     """Time-bounded view over a :class:`Store` with a shared replay anchor.
 
     Constructed via :meth:`Store.replay`. Pass ``speed``, ``seek``,
     ``duration``, ``from_timestamp``, ``loop`` to control playback.
     """
 
-    def __init__(
-        self,
-        *,
-        store: Store,
-        speed: float = 1.0,
-        seek: float | None = None,
-        duration: float | None = None,
-        from_timestamp: float | None = None,
-        loop: bool = False,
-    ) -> None:
-        self._store = store
-        self._speed = speed
-        self._seek = seek
-        self._duration = duration
-        self._from_timestamp = from_timestamp
-        self._loop = loop
+    config: ReplayConfig
+
+    def __init__(self, store: Store, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.store = store
         self._anchor: tuple[float, float] | None = None
         self._anchor_lock = threading.Lock()
-
-    @property
-    def store(self) -> Store:
-        return self._store
-
-    @property
-    def speed(self) -> float:
-        return self._speed
-
-    @property
-    def loop(self) -> bool:
-        return self._loop
 
     @property
     def streams(self) -> StreamAccessor[ReplayStream[Any]]:
         return StreamAccessor(self)
 
     def list_streams(self) -> list[str]:
-        return self._store.list_streams()
+        return self.store.list_streams()
 
     def stream(self, name: str, autocast: Callable[[Any], T] | None = None) -> ReplayStream[T]:
         return ReplayStream(replay=self, name=name, autocast=autocast)
@@ -111,9 +97,9 @@ class Replay:
     def first_ts(self) -> float | None:
         """Earliest first_ts across non-empty streams in the underlying store."""
         candidates: list[float] = []
-        for name in self._store.list_streams():
+        for name in self.store.list_streams():
             try:
-                candidates.append(float(self._store.stream(name).first().ts))
+                candidates.append(float(self.store.stream(name).first().ts))
             except LookupError:
                 continue
         return min(candidates) if candidates else None
@@ -161,26 +147,27 @@ class ReplayStream(Generic[T]):
 
     def _base_stream(self) -> Stream[Any]:
         """Memory2 Stream bounded by the replay window, ordered by ts."""
+        cfg = self._replay.config
         s: Stream[Any] = self._replay.store.stream(self._name)
 
         start: float | None = None
-        if self._replay._from_timestamp is not None:
-            start = self._replay._from_timestamp
-        elif self._replay._seek is not None:
+        if cfg.from_timestamp is not None:
+            start = cfg.from_timestamp
+        elif cfg.seek is not None:
             recording_first = self._replay.first_ts()
             if recording_first is None:
                 return s.order_by("ts")
-            start = recording_first + self._replay._seek
+            start = recording_first + cfg.seek
 
         end: float | None = None
-        if self._replay._duration is not None:
+        if cfg.duration is not None:
             if start is not None:
-                end = start + self._replay._duration
+                end = start + cfg.duration
             else:
                 recording_first = self._replay.first_ts()
                 if recording_first is None:
                     return s.order_by("ts")
-                end = recording_first + self._replay._duration
+                end = recording_first + cfg.duration
 
         if start is not None and end is not None:
             bound = s.time_range(start, end)
@@ -211,7 +198,7 @@ class ReplayStream(Generic[T]):
             for obs in self._base_stream():
                 emitted = True
                 yield (obs.ts, self._decode(obs))
-            if not self._replay.loop or not emitted:
+            if not self._replay.config.loop or not emitted:
                 break
 
     def iterate(self) -> Iterator[T]:
@@ -242,8 +229,8 @@ class ReplayStream(Generic[T]):
         anchor per subscribe).
         """
         replay = self._replay
-        speed = replay.speed
-        loop = replay.loop
+        speed = replay.config.speed
+        loop = replay.config.loop
         decode = self._decode
         base = self._base_stream
 
