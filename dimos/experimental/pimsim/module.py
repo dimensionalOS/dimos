@@ -45,6 +45,7 @@ from dimos.experimental.pimsim.config import (
 from dimos.experimental.pimsim.entity import (
     EntityDescriptor,
     EntityState,
+    EntityStateBatch,
     pose_to_wire,
     twist_to_wire,
 )
@@ -129,6 +130,9 @@ class BabylonSceneViewerModule(Module):
     # Entity world (browser is authoritative; these republish for dimos consumers).
     entity_descriptors: Out[EntityDescriptor]
     entity_states: Out[EntityState]
+    # Aggregated snapshot for cross-process consumers (rust scene_lidar).
+    # Published every browser tick alongside the per-entity stream.
+    entity_state_batch: Out[EntityStateBatch]
     _mujoco_sim: MujocoRespawnSpec | None = None
     _robot_ctrl: HumanoidControlSpec | None = None
     _coordinator_ctrl: CoordinatorControlSpec | None = None
@@ -213,6 +217,10 @@ class BabylonSceneViewerModule(Module):
         # rebuild the world) and (b) `list_entities` queries.
         self._entity_lock = threading.Lock()
         self._entities: dict[str, EntityDescriptor] = {}
+        # Latest pose per entity, sourced from browser entity_states msgs.
+        # Used to build the aggregated EntityStateBatch the rust scene_lidar
+        # subscribes to.
+        self._entity_poses: dict[str, Pose] = {}
         self._test_entity_counter = 0
 
     @rpc
@@ -856,6 +864,7 @@ class BabylonSceneViewerModule(Module):
     def despawn_entity(self, entity_id: str) -> bool:
         with self._entity_lock:
             existed = self._entities.pop(entity_id, None) is not None
+            self._entity_poses.pop(entity_id, None)
         if not existed:
             return False
         self._broadcast_json_from_thread({"type": "entity_despawn", "entity_id": entity_id})
@@ -922,7 +931,15 @@ class BabylonSceneViewerModule(Module):
             self.despawn_entity(entity_id)
 
     def _publish_entity_states(self, states_wire: list[dict[str, Any]]) -> None:
-        """Browser → python entity state batch. Republish on the Out port."""
+        """Browser → python entity state batch. Republish:
+
+        * per-entity ``entity_states`` (for in-process Python consumers)
+        * aggregated ``entity_state_batch`` (for cross-process LCM
+          subscribers like the rust scene_lidar — single message per
+          browser tick instead of N).
+        """
+        batch_entries: list[tuple[EntityDescriptor, Pose]] = []
+        ts = time.time()
         for raw in states_wire:
             try:
                 state = EntityState.from_wire(raw)
@@ -930,11 +947,17 @@ class BabylonSceneViewerModule(Module):
                 logger.warning("BabylonViewer: dropping malformed entity_state: %s", exc)
                 continue
             with self._entity_lock:
-                if state.entity_id not in self._entities:
+                desc = self._entities.get(state.entity_id)
+                if desc is None:
                     # Browser sent state for an entity we don't know — most
                     # likely a despawn race. Drop silently.
                     continue
+                self._entity_poses[state.entity_id] = state.pose
             self.entity_states.publish(state)
+            batch_entries.append((desc, state.pose))
+            ts = max(ts, state.ts)
+        if batch_entries:
+            self.entity_state_batch.publish(EntityStateBatch(entries=batch_entries, ts=ts))
 
     def _entity_spawn_messages(self) -> list[dict[str, Any]]:
         """Replay payload: a fresh tab gets spawn commands for every entity.

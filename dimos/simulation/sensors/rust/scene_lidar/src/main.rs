@@ -14,6 +14,9 @@ use lcm_msgs::std_msgs::Header;
 use rayon::prelude::*;
 use serde::Deserialize;
 
+mod entity;
+use entity::{raycast as raycast_entity, Entity, EntityStateBatch};
+
 const LEAF_TRIANGLES: usize = 16;
 const RAY_EPSILON: f32 = 1.0e-6;
 
@@ -268,6 +271,9 @@ struct SceneLidar {
     #[input(decode = PoseStamped::decode, handler = on_pose)]
     pose: Input<PoseStamped>,
 
+    #[input(decode = EntityStateBatch::decode, handler = on_entities)]
+    entity_states: Input<EntityStateBatch>,
+
     #[output(encode = PointCloud2::encode)]
     lidar: Output<PointCloud2>,
 
@@ -277,6 +283,7 @@ struct SceneLidar {
     scene: SceneAccel,
     directions: Vec<Vec3>,
     last_scan: Option<Instant>,
+    entities: Vec<Entity>,
 }
 
 impl SceneLidar {
@@ -317,13 +324,25 @@ impl SceneLidar {
 
         let yaw_offset = Quat::from_rotation_z(self.config.yaw_offset_deg.to_radians());
         let max_range = self.config.max_range;
+        let entities: &[Entity] = &self.entities;
         let hits: Vec<(Vec3, f32)> = self
             .directions
             .par_iter()
             .filter_map(|direction| {
-                let world_direction = orientation * yaw_offset * *direction;
-                self.scene
-                    .raycast(origin, world_direction.normalize(), max_range)
+                let world_direction = (orientation * yaw_offset * *direction).normalize();
+                let mut best = self.scene.raycast(origin, world_direction, max_range);
+                let mut best_dist = best.map(|(_, d)| d).unwrap_or(max_range);
+                for entity in entities {
+                    if let Some((hit, dist)) =
+                        raycast_entity(entity, origin, world_direction, best_dist)
+                    {
+                        if dist < best_dist {
+                            best_dist = dist;
+                            best = Some((hit, dist));
+                        }
+                    }
+                }
+                best
             })
             .collect();
 
@@ -336,6 +355,14 @@ impl SceneLidar {
         if let Err(e) = self.lidar.publish(&cloud).await {
             eprintln!("scene_lidar: publish failed: {e}");
         }
+    }
+
+    async fn on_entities(&mut self, msg: EntityStateBatch) {
+        // Whole batch replaces the table — Python republishes every
+        // browser physics tick (~30 Hz), so we always have a fresh
+        // snapshot. Despawned entities drop out by simply not appearing
+        // in the next batch.
+        self.entities = msg.entries;
     }
 }
 

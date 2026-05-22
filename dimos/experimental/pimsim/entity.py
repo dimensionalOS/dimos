@@ -25,6 +25,10 @@ mirrors the table for reconnect replay and republishes upstream.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import BytesIO
+import json
+import struct
+import time
 from typing import Any, Literal
 
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -183,10 +187,80 @@ def twist_from_wire(d: dict[str, Any]) -> Twist:
     )
 
 
+class EntityStateBatch(Timestamped):
+    """Aggregated snapshot: every entity with its descriptor + current pose.
+
+    Wire format: JSON over LCM bytes (length-prefixed string payload),
+    matching the EntityMarkers pattern so the rust scene_lidar can
+    consume it via a custom decode without needing a new lcm_msgs type.
+    """
+
+    msg_name = "pimsim.EntityStateBatch"
+
+    def __init__(
+        self,
+        entries: list[tuple[EntityDescriptor, Pose]] | None = None,
+        ts: float | None = None,
+    ) -> None:
+        super().__init__(ts if ts is not None else time.time())
+        self.entries: list[tuple[EntityDescriptor, Pose]] = entries or []
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "ts": self.ts,
+            "entities": [
+                {
+                    "id": d.entity_id,
+                    "kind": d.kind,
+                    "shape": d.shape_hint,
+                    "extents": list(d.extents),
+                    "mass": float(d.mass),
+                    "pose": pose_to_wire(p),
+                }
+                for d, p in self.entries
+            ],
+        }
+
+    def encode(self) -> bytes:
+        body = json.dumps(self._payload()).encode()
+        buf = BytesIO()
+        buf.write(struct.pack(">I", len(body)))
+        buf.write(body)
+        return buf.getvalue()
+
+    @classmethod
+    def decode(cls, data: bytes) -> EntityStateBatch:
+        buf = BytesIO(data)
+        (length,) = struct.unpack(">I", buf.read(4))
+        payload = json.loads(buf.read(length).decode())
+        entries: list[tuple[EntityDescriptor, Pose]] = []
+        for entry in payload.get("entities", []):
+            desc = EntityDescriptor(
+                entity_id=str(entry["id"]),
+                kind=entry.get("kind", "kinematic"),
+                mesh_ref="",  # not transported — lidar doesn't need GLB path
+                shape_hint=entry.get("shape", "mesh"),
+                extents=tuple(float(x) for x in entry.get("extents", [])),
+                mass=float(entry.get("mass", 0.0)),
+            )
+            entries.append((desc, pose_from_wire(entry["pose"])))
+        return cls(entries=entries, ts=float(payload.get("ts", 0.0)))
+
+    # LCM transport hooks — same shape as EntityMarkers so autoconnect
+    # wires LCMTransport without needing a generated msg class.
+    def lcm_encode(self) -> bytes:
+        return self.encode()
+
+    @classmethod
+    def lcm_decode(cls, data: bytes, **_: object) -> EntityStateBatch:
+        return cls.decode(data)
+
+
 __all__ = [
     "EntityDescriptor",
     "EntityKind",
     "EntityState",
+    "EntityStateBatch",
     "ShapeHint",
     "pose_from_wire",
     "pose_to_wire",
