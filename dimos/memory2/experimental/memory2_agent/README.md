@@ -21,11 +21,12 @@ as well as out-of-room lidar measurements, out-of-room odom measuremennts, and r
 ## Install
 
 This experimental agent is not covered by the core dependencies. Install the
-`agents` extra, which pulls in LangChain, `langchain-openai`, and
-`pydantic-monty` (the sandboxed REPL behind the `calc` tool):
+`experimental` extra, which pulls the LangChain agent stack, transformers-CLIP
+for semantic search, and `pydantic-monty` (the sandboxed REPL behind the
+`calc` tool):
 
 ```
-pip install -e '.[agents]'
+pip install -e '.[experimental]'
 ```
 
 Set `OPENAI_API_KEY` (and `GOOGLE_API_KEY` if using a `gemini-*` model). For
