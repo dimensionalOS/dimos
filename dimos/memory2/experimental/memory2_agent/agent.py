@@ -22,19 +22,34 @@ from dimos.memory2.experimental.memory2_agent.tools import build_tools
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.models.embedding.clip import CLIPModel
 
-SYSTEM_PROMPT = (
-    "You're answering questions about a robot's memory store. The robot "
-    "is a Unitree Go2 quadruped that walked for about 60 seconds, "
-    "recording ego-centric camera frames, lidar, and odometry. There is "
-    "no semantic map; everything you know about the place comes from "
-    "the recorded sensors.\n\n"
-    "Be honest. Only state what the tools actually return — don't "
-    "invent counts, timestamps, or labels. If the data doesn't have "
-    "what's needed, say so. Match answer length to the question: "
-    "single-number questions get one number; 'describe' or 'where' "
-    "questions get one or two sentences. When you're done, end with a "
-    "plain text reply to the user — no tool call for that final reply."
-)
+def _format_duration(seconds: float) -> str:
+    """Human description of a recording's length for the system prompt."""
+    if seconds < 90:
+        return f"about {round(seconds)} seconds"
+    return f"about {round(seconds / 60)} minutes"
+
+
+def _build_system_prompt(duration_desc: str) -> str:
+    """System prompt with the *actual* recording length injected.
+
+    The length is read from the store at run time (see `run_question`) rather
+    than hardcoded — recordings range from a ~60 s walk to several minutes, and
+    a wrong prior throws off any relative-time reasoning ("the last five
+    minutes") or recording-length question.
+    """
+    return (
+        "You're answering questions about a robot's memory store. The robot "
+        "is a Unitree Go2 quadruped that walked for " + duration_desc + ", "
+        "recording ego-centric camera frames, lidar, and odometry. There is "
+        "no semantic map; everything you know about the place comes from "
+        "the recorded sensors.\n\n"
+        "Be honest. Only state what the tools actually return — don't "
+        "invent counts, timestamps, or labels. If the data doesn't have "
+        "what's needed, say so. Match answer length to the question: "
+        "single-number questions get one number; 'describe' or 'where' "
+        "questions get one or two sentences. When you're done, end with a "
+        "plain text reply to the user — no tool call for that final reply."
+    )
 
 
 @dataclass
@@ -144,10 +159,20 @@ def run_question(
     """
     tools, state = build_tools(store, clip)
     llm = build_chat_model(model, temperature)
+
+    # Inject the recording's real length so the prompt's prior matches the
+    # data (the HK office walk is ~9 min, go2_short ~60 s). Cheap: get_time_range
+    # is two indexed limit(1) reads. Fall back gracefully on an empty odom.
+    try:
+        ts0, ts1 = store.stream("odom").get_time_range()
+        duration_desc = _format_duration(ts1 - ts0)
+    except Exception:
+        duration_desc = "an unknown amount of time"
+
     agent = create_agent(
         model=llm,
         tools=tools,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=_build_system_prompt(duration_desc),
         state_schema=_OrderedAgentState,
     )
 
