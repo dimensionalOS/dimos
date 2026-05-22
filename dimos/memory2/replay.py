@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 import reactivex as rx
 from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
-from reactivex.disposable import Disposable, SerialDisposable
+from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
@@ -239,7 +239,6 @@ class ReplayStream(Generic[T]):
             scheduler: SchedulerBase | None = None,
         ) -> DisposableBase:
             sched = scheduler or TimeoutScheduler()
-            disp = SerialDisposable()
             is_disposed = False
 
             def make_iterator() -> Iterator[tuple[float, T]]:
@@ -273,7 +272,7 @@ class ReplayStream(Generic[T]):
                     cand_ts, cand_data = next(iterator)
                 except StopIteration:
                     observer.on_completed()
-                    return disp
+                    return Disposable()
                 if cand_ts < prev_skip:
                     wrap_offset += (prev_skip - cand_ts) + _LOOP_GAP
                     first_ts, first_data = cand_ts, cand_data
@@ -284,7 +283,6 @@ class ReplayStream(Generic[T]):
             prev_ts = first_ts
 
             def schedule(message: tuple[float, T], wrap_off: float, prev: float) -> None:
-                nonlocal is_disposed
                 ts, data = message
                 if ts < prev:
                     wrap_off += (prev - ts) + _LOOP_GAP
@@ -306,14 +304,13 @@ class ReplayStream(Generic[T]):
                     schedule(nxt, wrap_offset, prev_ts)
                     return None
 
-                disp.disposable = sched.schedule_relative(delay, emit)
+                sched.schedule_relative(delay, emit)
 
             schedule((first_ts, first_data), wrap_offset, prev_ts)
 
             def dispose() -> None:
                 nonlocal is_disposed
                 is_disposed = True
-                disp.dispose()
 
             return Disposable(dispose)
 
