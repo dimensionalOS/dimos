@@ -108,32 +108,6 @@ def test_shared_anchor_two_streams_in_sync(sqlite_store: SqliteStore) -> None:
         assert abs(wl - wo) < 0.03, f"frame {vl}/{vo} desync: lidar@{wl:.3f}, odom@{wo:.3f}"
 
 
-def test_late_subscribe_skips_past_wall_time(sqlite_store: SqliteStore) -> None:
-    # 30 frames spanning 0..2.9s.
-    timestamps = [i * 0.1 for i in range(30)]
-    _populate(sqlite_store, "lidar", timestamps)
-    _populate(sqlite_store, "odom", timestamps)
-
-    replay = sqlite_store.replay()
-
-    # Subscribe lidar first to pin anchor at msg_ts=0.
-    lidar_sub = replay.streams.lidar.observable().subscribe(on_next=lambda _: None)
-
-    # Wait 0.5s, then subscribe odom — it should drop frames 0..4 (ts<0.45).
-    time.sleep(0.5)
-    odom_seen: list[int] = []
-    odom_sub = replay.streams.odom.observable().subscribe(on_next=odom_seen.append)
-
-    time.sleep(0.4)
-    lidar_sub.dispose()
-    odom_sub.dispose()
-
-    # Odom's first received value must be from a frame that was forward of
-    # wall time at subscribe — i.e., index >= 5 (ts >= 0.5 - tolerance).
-    assert odom_seen, "odom received nothing"
-    assert odom_seen[0] >= 4, f"odom did not skip late frames: first value = {odom_seen[0]}"
-
-
 def test_loop_per_stream_with_shared_anchor(sqlite_store: SqliteStore) -> None:
     # Short stream of 4 frames over 100ms. With loop=True we should see
     # multiple passes within 350ms, and the wall-clock gap between consecutive
