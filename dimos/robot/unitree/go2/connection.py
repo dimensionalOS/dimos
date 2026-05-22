@@ -30,6 +30,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.spec.perception import Camera, Pointcloud
@@ -48,7 +49,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.utils.decorators.decorators import simple_mcache
+from dimos.utils.decorators.decorators import cached_property, simple_mcache
 
 if sys.version_info < (3, 13):
     from typing_extensions import TypeVar
@@ -131,8 +132,7 @@ def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
         raise ValueError(f"Unknown simulator {cfg.simulation!r}. Choose from: mujoco, dimsim")
 
 
-class ReplayConnection(UnitreeWebRTCConnection):
-    # we don't want UnitreeWebRTCConnection to init
+class ReplayConnection(CompositeResource):
     def __init__(  # type: ignore[no-untyped-def]
         self,
         dataset: str = "go2_china_office",
@@ -142,20 +142,16 @@ class ReplayConnection(UnitreeWebRTCConnection):
         self._loop = kwargs.get("loop", False)
         self._seek = kwargs.get("seek")
         self._duration = kwargs.get("duration")
-        self._store: SqliteStore | None = None
-        self._replay: Replay | None = None
 
-    @property
+    @cached_property
     def replay(self) -> Replay:
         # One shared store + Replay so lidar/odom/video advance against the
         # same wall-clock anchor on subscribe.
-        if self._replay is None:
-            self._store = SqliteStore(path=str(resolve_db_path(self.dataset)), must_exist=True)
-            self._store.start()
-            self._replay = self._store.replay(
-                loop=self._loop, seek=self._seek, duration=self._duration
-            )
-        return self._replay
+        store = self.register_disposable(
+            SqliteStore(path=str(resolve_db_path(self.dataset)), must_exist=True)
+        )
+        store.start()
+        return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
 
     def connect(self) -> None:
         pass
