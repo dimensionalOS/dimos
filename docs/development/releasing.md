@@ -66,4 +66,5 @@ When you need to ship a patch fix:
    git push -u origin release/X.Y.Z
    ```
 
-2. Apply any fixes and follow sections 2 and 3 as before.
+2. Apply a patch version bump: `uv version --bump patch`
+3. Apply any fixes and follow sections 2 and 3 as before.
