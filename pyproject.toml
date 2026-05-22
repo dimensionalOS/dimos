@@ -211,6 +211,19 @@ agents = [
     "faster-whisper>=1.0.0",
 ]
 
+# Opt-in OpenTelemetry tracing for `dimos.telemetry`. Base install ships
+# no OTEL packages; `dimos.telemetry` is fully no-op until this extra is
+# installed AND tracing is wired up (see dimos/telemetry/__init__.py).
+otel = [
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
+    "opentelemetry-instrumentation>=0.48b0",
+    # Auto-instrumentation for LangChain / LangGraph calls. Optional within
+    # the extra: enable() falls back gracefully if missing.
+    "openinference-instrumentation-langchain>=0.1.30",
+]
+
 web = [
     "fastapi>=0.115.6",
     "sse-starlette>=2.2.1",
