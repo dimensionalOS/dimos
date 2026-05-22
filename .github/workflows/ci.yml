@@ -72,7 +72,7 @@ jobs:
         crate: ${{ fromJSON(needs.rust-discover.outputs.crates) }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: read  # For checkout
 
     steps:
       - name: Checkout
