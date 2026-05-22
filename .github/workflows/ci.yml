@@ -45,7 +45,8 @@ jobs:
     outputs:
       crates: ${{ steps.find.outputs.crates }}
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v6
       - name: Find Cargo workspace roots
         id: find
         run: |
