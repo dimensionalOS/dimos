@@ -86,6 +86,11 @@ def pytest_configure(config):
     )
     config.addinivalue_line("markers", "mujoco: tests which open mujoco")
     config.addinivalue_line("markers", "dimsim: tests which require dimsim")
+    config.addinivalue_line(
+        "markers",
+        "experimental: opt-in tests for experimental features; excluded by "
+        "default, run with `pytest -m experimental`",
+    )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")

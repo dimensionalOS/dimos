@@ -510,7 +510,7 @@ incremental = true
 strict = true
 warn_unused_ignores = false
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|^dimos/memory2/experimental/memory2_agent(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
@@ -581,7 +581,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or self_hosted or mujoco or dimsim)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or self_hosted or mujoco or dimsim or experimental)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

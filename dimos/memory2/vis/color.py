@@ -167,11 +167,17 @@ class DeferredColor:
 
 
 def resolve_deferred(elements: Iterable[Any]) -> None:
-    """Mutate ``el.color`` from :class:`DeferredColor` → :class:`Color` for each element."""
+    """Mutate color-bearing attributes from :class:`DeferredColor` → :class:`Color`.
+
+    Walks ``color``, ``fill``, and ``stroke`` so elements like :class:`Polygon`
+    (which split style across fill + stroke instead of a single color) can also
+    use cmap-deferred colors.
+    """
     for el in elements:
-        c = getattr(el, "color", None)
-        if isinstance(c, DeferredColor):
-            el.color = c.resolve()
+        for attr in ("color", "fill", "stroke"):
+            v = getattr(el, attr, None)
+            if isinstance(v, DeferredColor):
+                setattr(el, attr, v.resolve())
 
 
 # Named palette: 12 visually-distinct colors that share visual weight.
