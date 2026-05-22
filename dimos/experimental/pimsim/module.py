@@ -135,9 +135,8 @@ class BabylonSceneViewerModule(Module):
     sim_odom: Out[PoseStamped]
     # Entity world (browser is authoritative; these republish for dimos consumers).
     entity_descriptors: Out[EntityDescriptor]
-    entity_states: Out[EntityState]
-    # Aggregated snapshot for cross-process consumers (rust scene_lidar).
-    # Published every browser tick alongside the per-entity stream.
+    # Aggregated per-tick snapshot — single source for cross-process
+    # consumers like the rust scene_lidar.
     entity_state_batch: Out[EntityStateBatch]
     _mujoco_sim: MujocoRespawnSpec | None = None
     _robot_ctrl: HumanoidControlSpec | None = None
@@ -1019,13 +1018,10 @@ class BabylonSceneViewerModule(Module):
             self.despawn_entity(entity_id)
 
     def _publish_entity_states(self, states_wire: list[dict[str, Any]]) -> None:
-        """Browser → python entity state batch. Republish:
-
-        * per-entity ``entity_states`` (for in-process Python consumers)
-        * aggregated ``entity_state_batch`` (for cross-process LCM
-          subscribers like the rust scene_lidar — single message per
-          browser tick instead of N).
-        """
+        """Browser → python entity state batch. Publish the aggregated
+        ``entity_state_batch`` for cross-process consumers (rust
+        scene_lidar). Entries for entities we don't know about are
+        dropped (despawn race)."""
         batch_entries: list[tuple[EntityDescriptor, Pose]] = []
         ts = time.time()
         for raw in states_wire:
@@ -1037,11 +1033,8 @@ class BabylonSceneViewerModule(Module):
             with self._entity_lock:
                 desc = self._entities.get(state.entity_id)
                 if desc is None:
-                    # Browser sent state for an entity we don't know — most
-                    # likely a despawn race. Drop silently.
                     continue
                 self._entity_poses[state.entity_id] = state.pose
-            self.entity_states.publish(state)
             batch_entries.append((desc, state.pose))
             ts = max(ts, state.ts)
         if batch_entries:
