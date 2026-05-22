@@ -232,9 +232,8 @@ perception = [
 ]
 
 unitree = [
-    "dimos[base]",
+    "dimos[base,mapping]",
     "unitree-webrtc-connect-leshy>=2.0.7",
-    "gtsam>=4.3a0",  # PGO loop closure (alpha is the only release with numpy>=2 support + cp312 wheels)
 ]
 
 unitree-dds = [
@@ -293,7 +292,9 @@ sim = [
     "pygame>=2.6.1",
 ]
 
-navigation = [
+mapping = [
+    # PGO for reloc premap + nav_stack experiments
+    # Jeff's https://github.com/jeff-hykin/gtsam-extended
     "gtsam-extended>=4.3a1.post1",
 ]
 

@@ -49,7 +49,7 @@ pip install 'dimos[base,unitree,manipulation]'       # + Arm control
 | `unitree-dds` | Unitree DDS bridge (superset of `unitree`) | unitree-sdk2py, cyclonedds | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
 | `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
-| `navigation` | GTSAM-backed pose graph optimization | gtsam-extended | No |
+| `mapping` | GTSAM-backed pose graph optimization (relocalization, nav_stack PGO) | gtsam-extended | No |
 | `cuda` | GPU acceleration | cupy, onnxruntime-gpu, xformers | **Yes** |
 | `cpu` | CPU inference backends | onnxruntime, ctransformers | No |
 | `misc` | Extra models, embeddings, hardware SDKs | cerebras, edgetam, sentence-transformers, tiktoken | Varies |
