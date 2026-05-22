@@ -696,29 +696,59 @@ def _project_world_xy_to_pixel(
     query_z: float | None = None,
 ) -> tuple[int, int, float] | None:
     """Project a world-frame (x, y) (with assumed `query_z` height, default
-    floor z=0) into the camera image. Returns (pixel_x_at_floor, pixel_x,
-    z_cam) where pixel_x is the column for the query direction
-    independent of height, and z_cam is the depth in metres (positive =
-    in front). Returns None if the point is behind the camera.
+    floor z=0) into the camera image, using the FULL camera rotation (yaw,
+    pitch AND roll). Returns (pixel_x, pixel_y, z_cam) with z_cam the depth
+    in metres (positive = in front), or None if behind the camera.
+
+    IMPORTANT — frame convention: ``cam_pose`` is a color_image pose, whose
+    ORIENTATION is the camera **optical frame** (X right, Y down, Z forward),
+    not the body frame. The recording bakes the standard base->optical
+    rotation into it (verified empirically: R_body^T · R_image is a constant
+    -90 deg roll / -90 deg yaw across the whole recording). So we transform
+    the world offset straight into the optical frame with R(q)^T and read off
+    (right, down, forward) directly — no yaw extraction, no body->optical
+    remap. Because the full quaternion is used, gait-induced head pitch/roll
+    is handled automatically (a yaw-only model left the floor row swinging).
+
+    The translation is used as recorded (~trunk height; the camera
+    lever-arm / true mount height is NOT modelled), so a small constant
+    vertical offset remains.
     """
-    cam_x, cam_y, cam_z = cam_pose[0], cam_pose[1], cam_pose[2]
-    qx, qy, qz, qw = cam_pose[3:7]
-    yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
-
-    dx = query_x - cam_x
-    dy = query_y - cam_y
-    # Camera optical frame: +Z forward, +X right, +Y down. World yaw=0 means
-    # the camera looks along +x_world; camera-X is world's right.
-    z_cam = dx * math.cos(yaw) + dy * math.sin(yaw)
-    if z_cam <= 0.05:
+    tx, ty, tz = cam_pose[0], cam_pose[1], cam_pose[2]
+    qx, qy, qz, qw = cam_pose[3], cam_pose[4], cam_pose[5], cam_pose[6]
+    norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if norm < 1e-9:
         return None
-    x_cam = dx * math.sin(yaw) - dy * math.cos(yaw)
+    qx, qy, qz, qw = qx / norm, qy / norm, qz / norm, qw / norm
 
-    pixel_x = GO2_FX * x_cam / z_cam + GO2_CX
     qz_eff = 0.0 if query_z is None else query_z
-    y_cam_floor = cam_z - qz_eff  # camera y is down, so positive when query below
-    pixel_y_floor = GO2_FY * y_cam_floor / z_cam + GO2_CY
-    return round(pixel_x), round(pixel_y_floor), float(z_cam)
+    dx = query_x - tx
+    dy = query_y - ty
+    dz = qz_eff - tz
+
+    # p_optical = R(q)^T · d, with R(q) = optical->world. The rows of R^T are
+    # the optical axes expressed in world, so the three dot products are the
+    # offset's components along optical X (right), Y (down), Z (forward).
+    x_right = (
+        (1 - 2 * (qy * qy + qz * qz)) * dx
+        + 2 * (qx * qy + qz * qw) * dy
+        + 2 * (qx * qz - qy * qw) * dz
+    )
+    y_down = (
+        2 * (qx * qy - qz * qw) * dx
+        + (1 - 2 * (qx * qx + qz * qz)) * dy
+        + 2 * (qy * qz + qx * qw) * dz
+    )
+    z_fwd = (
+        2 * (qx * qz + qy * qw) * dx
+        + 2 * (qy * qz - qx * qw) * dy
+        + (1 - 2 * (qx * qx + qy * qy)) * dz
+    )
+    if z_fwd <= 0.05:
+        return None
+    pixel_x = GO2_FX * x_right / z_fwd + GO2_CX
+    pixel_y = GO2_FY * y_down / z_fwd + GO2_CY
+    return round(pixel_x), round(pixel_y), float(z_fwd)
 
 
 def _annotate_query_in_frame(
@@ -861,7 +891,9 @@ def frames_that_could_see_point(
             continue
         cam_x, cam_y = obs.pose[0], obs.pose[1]
         qx, qy, qz, qw = obs.pose[3:7]
-        cam_yaw = _yaw_from_quat(qx, qy, qz, qw)
+        # color_image poses are in the camera optical frame, so derive the
+        # viewing direction from the optical +Z axis, not a body-yaw read.
+        cam_yaw = _camera_heading_from_optical(qx, qy, qz, qw)
         bearing = math.atan2(y - cam_y, x - cam_x)
         ang = _angle_diff(bearing, cam_yaw)
         if ang > half_fov:
@@ -927,7 +959,7 @@ def _build_visibility_space(
     for i, c in enumerate(picks):
         cam_x, cam_y = c.obs.pose[0], c.obs.pose[1]
         qx, qy, qz, qw = c.obs.pose[3:7]
-        cam_yaw = _yaw_from_quat(qx, qy, qz, qw)
+        cam_yaw = _camera_heading_from_optical(qx, qy, qz, qw)
         space.add(
             SpaceWedge(
                 origin=(cam_x, cam_y),
@@ -1089,7 +1121,8 @@ def walkthrough_frames(
         obs = min(img_obs, key=lambda o: abs(o.ts - s_ts))
         x, y = obs.pose[0], obs.pose[1]
         qx, qy, qz, qw = obs.pose[3:7]
-        yaw_deg = math.degrees(math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)))
+        # color_image poses are optical-frame; report the viewing heading.
+        yaw_deg = math.degrees(_camera_heading_from_optical(qx, qy, qz, qw))
 
         bgr = _cv2.cvtColor(obs.data.data, _cv2.COLOR_RGB2BGR)
         if scale != 1.0:
@@ -1136,8 +1169,33 @@ def encode_walkthrough_blocks(
 
 
 def _yaw_from_quat(qx: float, qy: float, qz: float, qw: float) -> float:
-    """Planar yaw (z-axis rotation) from a unit quaternion."""
+    """Planar yaw (z-axis rotation) from a unit quaternion.
+
+    For a BODY/odom pose (X forward), this is the robot heading. Do NOT use
+    it on a color_image pose — those are in the camera OPTICAL frame
+    (X right, Y down, Z forward), so this returns the optical-frame yaw,
+    not the viewing direction. Use `_camera_heading_from_optical` for those.
+    """
     return math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+
+
+def _camera_heading_from_optical(qx: float, qy: float, qz: float, qw: float) -> float:
+    """World-frame ground bearing the camera looks along, for a color_image
+    OPTICAL-frame pose (X right, Y down, Z forward).
+
+    The camera looks down its optical +Z axis; in world coordinates that
+    axis is the third column of R(q), and its (x, y) bearing is the heading.
+    Equals the robot body yaw (the optical +Z axis is the body +X / forward
+    axis), but is recovered correctly from the optical quaternion — unlike
+    `_yaw_from_quat`, which would be ~90 deg off on these poses. See the
+    frame-convention note in `_project_world_xy_to_pixel`.
+    """
+    n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if n > 1e-9:
+        qx, qy, qz, qw = qx / n, qy / n, qz / n, qw / n
+    fwd_x = 2.0 * (qx * qz + qy * qw)
+    fwd_y = 2.0 * (qy * qz - qx * qw)
+    return math.atan2(fwd_y, fwd_x)
 
 
 def _angle_diff(a: float, b: float) -> float:
@@ -1227,7 +1285,9 @@ def recall_view(
             continue
         fx, fy = obs.pose[0], obs.pose[1]
         fqx, fqy, fqz, fqw = obs.pose[3:7]
-        frame_yaw = _yaw_from_quat(fqx, fqy, fqz, fqw)
+        # color_image poses are optical-frame; compare viewing heading to the
+        # body-frame target (target_yaw derives from the odom anchor yaw).
+        frame_yaw = _camera_heading_from_optical(fqx, fqy, fqz, fqw)
         yaw_d = _angle_diff(frame_yaw, target_yaw)
         if yaw_d > max_yaw_rad:
             continue
