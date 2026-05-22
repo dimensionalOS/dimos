@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import math
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from dimos.visualization.rerun.bridge import RerunData, RerunMulti
+    from dimos.visualization.rerun.bridge import RerunData
 
 # Import LCM types
 from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo
@@ -401,7 +401,7 @@ class CameraInfo(Timestamped):
         fx, fy = self.K[0], self.K[4]
         cx, cy = self.K[2], self.K[5]
 
-        pinhole = rr.Pinhole(
+        pinhole_kwargs: dict[str, Any] = dict(
             focal_length=[fx, fy],
             principal_point=[cx, cy],
             width=self.width,
@@ -412,39 +412,15 @@ class CameraInfo(Timestamped):
         # If no image topic is specified, We don't know which Image this CameraInfo refers to
         # return just the pinhole
         if not image_topic:
-            return pinhole
+            return rr.Pinhole(**pinhole_kwargs)
 
-        ret: RerunMulti = []
+        if optical_frame:
+            # Re-parent the camera entity to the optical tf frame. Logging a
+            # separate Transform3D for the same entity would create a second
+            # parent and Rerun rejects that.
+            pinhole_kwargs["parent_frame"] = f"tf#/{optical_frame}"
 
-        # Add pinhole under world/image_topic (we know which Image this CameraInfo refers to)
-        # Note: parent_frame is supposed to work according to:
-        # https://rerun.io/docs/reference/types/archetypes/pinhole
-        # But it doesn't, so we add the transform separately below
-        ret.append(
-            (
-                image_topic,
-                rr.Pinhole(
-                    focal_length=[fx, fy],
-                    principal_point=[cx, cy],
-                    width=self.width,
-                    height=self.height,
-                    image_plane_distance=image_plane_distance,
-                ),
-            )
-        )
-
-        if not optical_frame:
-            return ret
-
-        # Add 3d transform from optical frame to world/image_topic (We know where the camera is)
-        ret.append(
-            (
-                image_topic,
-                rr.Transform3D(parent_frame=f"tf#/{optical_frame}"),
-            )
-        )
-
-        return ret
+        return [(image_topic, rr.Pinhole(**pinhole_kwargs))]
 
 
 class CalibrationProvider:
