@@ -507,8 +507,7 @@ _QA_CASES_HONGKONG: list[_HKCase] = [
     ),
     (
         "desks_need_cable_management",
-        "How many desks need cable management? Reply with only the number, "
-        "nothing else.",
+        "How many desks need cable management? Reply with only the number, nothing else.",
         # Placeholder verify: just asserts the agent commits a number. Ground
         # truth (the desk count + an acceptable tolerance) is not pinned yet;
         # review the recording, set the bound, then drop the skip mark below.
@@ -543,8 +542,7 @@ _QA_CASES_HONGKONG: list[_HKCase] = [
     ),
     (
         "longest_time_room_is_a_lounge",
-        "What room did you spend the longest time in? "
-        "Reply with a short description of the room.",
+        "What room did you spend the longest time in? Reply with a short description of the room.",
         # Ground truth: a lounge / sofa seating area. Two such zones dominate
         # the walk — a left lounge/meeting area (~21% of dwell) and a right
         # lounge/reception (~19%) — within sampling noise of each other, and
@@ -553,9 +551,7 @@ _QA_CASES_HONGKONG: list[_HKCase] = [
         # odom dwell time over the agent's verified room polygons (left 118s
         # vs right 107s of 558s total; next room down is ~93s). Don't assert
         # left-vs-right specifically — that flips run to run.
-        lambda ans: _has_word(
-            ans, "lounge", "sofa", "sofas", "seating", "reception", "showroom"
-        ),
+        lambda ans: _has_word(ans, "lounge", "sofa", "sofas", "seating", "reception", "showroom"),
     ),
     (
         "mixed_use_office_and_retail",

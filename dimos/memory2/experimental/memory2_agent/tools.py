@@ -52,10 +52,7 @@ def _fmt_pose(pose: Any) -> str:
         # it from the quaternion every time it wants a bearing.
         qx, qy, qz, qw = pose[3], pose[4], pose[5], pose[6]
         yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
-        return (
-            f"({pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f} "
-            f"| yaw={math.degrees(yaw):+.1f}°)"
-        )
+        return f"({pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f} | yaw={math.degrees(yaw):+.1f}°)"
     if len(pose) >= 3:
         return f"({pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f})"
     return repr(pose)
@@ -124,9 +121,7 @@ def _encode_with_column_mark(
     if not ok:
         return image.agent_encode()  # fall back to plain image
     b64 = _b64.b64encode(bytes(buf)).decode("ascii")
-    return [
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
-    ]
+    return [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}]
 
 
 def _multimodal_command(
