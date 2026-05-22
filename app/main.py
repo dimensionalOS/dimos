@@ -1,9 +1,21 @@
 """dimos-teleop: Session microservice for hosted teleoperation."""
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Configure the root logger before any module-level loggers get created so
+# log.info / log.error calls in services/* and routers/* actually reach
+# uvicorn's stderr (and therefore journald). Without this the root logger
+# stays at WARNING and every INFO log below is silently dropped — which is
+# why CF SDP exchange / track-add / datachannel-bridge detail wasn't
+# showing up in journal even though the log calls exist.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 from config import settings
 from models.database import init_db
