@@ -636,9 +636,9 @@ _QA_CASES_HONGKONG: list[_HKCase] = [
         ),
     ),
     (  # Flakey - the prompt is under-determined (several seen-but-not-walked
-    # regions exist), so a run that picks a different valid room would miss
-    # this bound. Pinned to the kitchenette as the cleanest, most prominent
-    # "looked clearly through glass into a room" instance.
+        # regions exist), so a run that picks a different valid room would miss
+        # this bound. Pinned to the kitchenette as the cleanest, most prominent
+        # "looked clearly through glass into a room" instance.
         "looked_into_kitchenette_not_entered",
         "Were you able to look clearly into a room that you didn't walk into? "
         "If no, say no. If yes, briefly name the room and give its "
