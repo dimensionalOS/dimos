@@ -404,9 +404,7 @@ class TestMultiTBuffer:
     def test_forward_tolerance_times_out(self) -> None:
         ttbuffer = MultiTBuffer()
         t0 = time.monotonic()
-        result = ttbuffer.get(
-            "world", "robot", time_point=time.time(), forward_tolerance=0.1
-        )
+        result = ttbuffer.get("world", "robot", time_point=time.time(), forward_tolerance=0.1)
         elapsed = time.monotonic() - t0
         assert result is None
         assert 0.05 < elapsed < 1.0
@@ -424,9 +422,7 @@ class TestMultiTBuffer:
         )
 
         t0 = time.monotonic()
-        result = ttbuffer.get(
-            "world", "robot", time_point=base_time, forward_tolerance=10.0
-        )
+        result = ttbuffer.get("world", "robot", time_point=base_time, forward_tolerance=10.0)
         elapsed = time.monotonic() - t0
 
         assert result is not None

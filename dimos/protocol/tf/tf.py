@@ -358,7 +358,13 @@ class PubSubTF(MultiTBuffer, TFSpec):
         *,
         forward_tolerance: float = 0.0,
     ) -> Transform | None:
-        return super().get(parent_frame, child_frame, time_point, time_tolerance, forward_tolerance=forward_tolerance)
+        return super().get(
+            parent_frame,
+            child_frame,
+            time_point,
+            time_tolerance,
+            forward_tolerance=forward_tolerance,
+        )
 
     def get_pose(
         self,
@@ -369,7 +375,13 @@ class PubSubTF(MultiTBuffer, TFSpec):
         *,
         forward_tolerance: float = 0.0,
     ) -> PoseStamped | None:
-        tf = self.get(parent_frame, child_frame, time_point, time_tolerance, forward_tolerance=forward_tolerance)
+        tf = self.get(
+            parent_frame,
+            child_frame,
+            time_point,
+            time_tolerance,
+            forward_tolerance=forward_tolerance,
+        )
         if not tf:
             return None
         return tf.to_pose()
