@@ -48,7 +48,6 @@ def create_nav_stack(
     terrain_voxel_size: float = 0.2,
     replan_rate: float = 0.5,
     record: bool = False,
-    world_frame: str = "world",
     map_frame: str = "map",
     odom_frame: str = "odom",
     base_link_frame: str = "base_link",
@@ -85,7 +84,6 @@ def create_nav_stack(
 
     pgo_module: Blueprint = PGO.blueprint(
         **{
-            "parent_frame": world_frame,
             "frame_id": map_frame,
             "child_frame_id": odom_frame,
             "body_frame": base_link_frame,

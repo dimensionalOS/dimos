@@ -119,14 +119,9 @@ static geometry_msgs::TransformStamped build_tf(const M3D& r, const V3D& t, doub
 static tf2_msgs::TFMessage build_tf_message(const M3D& correction_r,
                                               const V3D& correction_t,
                                               double ts,
-                                              const std::string& parent_frame,
                                               const std::string& world_frame,
                                               const std::string& local_frame) {
     tf2_msgs::TFMessage msg;
-    // Identity anchor parent_frame -> world_frame.
-    msg.transforms.push_back(
-        build_tf(M3D::Identity(), V3D::Zero(), ts, parent_frame, world_frame));
-    // SLAM correction world_frame -> local_frame.
     msg.transforms.push_back(
         build_tf(correction_r, correction_t, ts, world_frame, local_frame));
     msg.transforms_length = static_cast<int32_t>(msg.transforms.size());
@@ -269,7 +264,6 @@ int main(int argc, char** argv)
     config.scan_context_lidar_height_m = native_module.arg_float("scan_context_lidar_height_m", 2.0f);
 
     // Node-level config
-    std::string parent_frame = native_module.arg("parent_frame", "world");
     std::string world_frame = native_module.arg("world_frame", "map");
     std::string local_frame = native_module.arg("local_frame", "odom");
     std::string body_frame = native_module.arg("body_frame", "base_link");
@@ -322,7 +316,7 @@ int main(int argc, char** argv)
                 std::chrono::system_clock::now().time_since_epoch())
                 .count();
         auto seed = build_tf_message(M3D::Identity(), V3D::Zero(), seed_ts,
-                                     parent_frame, world_frame, local_frame);
+                                     world_frame, local_frame);
         lcm.publish(tf_channel, &seed);
     }
 
@@ -383,7 +377,7 @@ int main(int argc, char** argv)
             lcm.publish(corrected_odom_topic, &corrected);
 
             auto tf_msg = build_tf_message(
-                pgo.offsetR(), pgo.offsetT(), cur_time, parent_frame, world_frame, local_frame);
+                pgo.offsetR(), pgo.offsetT(), cur_time, world_frame, local_frame);
             lcm.publish(tf_channel, &tf_msg);
 
             std::this_thread::sleep_for(std::chrono::milliseconds(timer_period_ms));
@@ -431,7 +425,7 @@ int main(int argc, char** argv)
         lcm.publish(corrected_odom_topic, &corrected);
 
         auto tf_msg = build_tf_message(
-            pgo.offsetR(), pgo.offsetT(), cur_time, parent_frame, world_frame, local_frame);
+            pgo.offsetR(), pgo.offsetT(), cur_time, world_frame, local_frame);
         lcm.publish(tf_channel, &tf_msg);
 
         // Publish pose graph (on every keyframe — iSAM2 may have

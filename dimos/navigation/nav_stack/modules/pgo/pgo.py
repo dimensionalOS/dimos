@@ -44,7 +44,6 @@ class PGOConfig(NativeModuleConfig):
 
     frame_id: str = "map"
     child_frame_id: str = "odom"
-    parent_frame: str = "world"
     body_frame: str = "base_link"
     tf_channel: str = "/tf#tf2_msgs.TFMessage"
 
