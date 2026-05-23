@@ -128,7 +128,7 @@ class MultiTBuffer:
 
     def get_frames(self) -> set[str]:
         frames = set()
-        for parent, child in self.buffers:
+        for parent, child in list(self.buffers):
             frames.add(parent)
             frames.add(child)
         return frames
@@ -136,7 +136,7 @@ class MultiTBuffer:
     def get_connections(self, frame_id: str) -> set[str]:
         """Get all frames connected to the given frame (both as parent and child)."""
         connections = set()
-        for parent, child in self.buffers:
+        for parent, child in list(self.buffers):
             if parent == frame_id:
                 connections.add(child)
             if child == frame_id:

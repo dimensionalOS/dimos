@@ -407,7 +407,7 @@ class TestMultiTBuffer:
         result = ttbuffer.get("world", "robot", time_point=time.time(), forward_tolerance=0.1)
         elapsed = time.monotonic() - t0
         assert result is None
-        assert 0.05 < elapsed < 1.0
+        assert 0.08 < elapsed < 1.0
 
     def test_forward_tolerance_fast_path_when_already_available(self) -> None:
         ttbuffer = MultiTBuffer()
