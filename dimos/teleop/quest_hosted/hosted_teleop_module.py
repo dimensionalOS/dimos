@@ -26,11 +26,13 @@ import asyncio
 from enum import IntEnum
 import json
 import os
+import re
 import threading
 import time
 from typing import Any
 
 from aiortc import (
+    RTCBundlePolicy,
     RTCConfiguration,
     RTCIceServer,
     RTCPeerConnection,
@@ -61,6 +63,39 @@ logger = setup_logger()
 class Hand(IntEnum):
     LEFT = 0
     RIGHT = 1
+
+
+def _propagate_bundle_candidates(sdp: str) -> str:
+    """Copy ICE candidate lines into every bundled m-section that lacks them.
+
+    Workaround for an aiortc MAX_BUNDLE bug: aiortc keys remote candidates by
+    transport, and under one bundled transport the LAST m-section processed wins
+    the dict. CF Realtime puts a=candidate / a=end-of-candidates only on the
+    first (video) section; the empty SCTP section then overwrites it, so the one
+    transport gets zero remote candidates and ICE stalls at 'checking'.
+    Replicating the candidate block into the candidate-less sections makes the
+    applied set correct no matter which section wins.
+    """
+    sections = re.split(r"(?m)^(?=m=)", sdp)
+    cand_lines: list[str] = []
+    for s in sections:
+        if s.startswith("m="):
+            found = re.findall(r"(?m)^(a=(?:candidate:|end-of-candidates).*)$", s)
+            if found:
+                cand_lines = found
+                break
+    if not cand_lines:
+        return sdp  # nothing to propagate
+
+    block = "\r\n".join(cand_lines) + "\r\n"
+    out = []
+    for s in sections:
+        if s.startswith("m=") and not re.search(r"(?m)^a=candidate:", s):
+            # Append the candidate block at the end of this section.
+            out.append(s.rstrip("\r\n") + "\r\n" + block)
+        else:
+            out.append(s)
+    return "".join(out)
 
 
 # ImageFormat → PyAV pixel-format string. Anything not listed falls back to
@@ -291,21 +326,42 @@ class HostedTeleopModule(Module):
                 )
             )
 
-        self._pc = RTCPeerConnection(RTCConfiguration(iceServers=ice_servers))
+        # Single bundled transport for video + datachannel. Two pieces are BOTH
+        # required against aiortc 1.14 + CF:
+        #  1. MAX_BUNDLE — make aiortc put video + SCTP on ONE ICE transport
+        #     (default BALANCED gives two; the video one fails ICE against CF's
+        #     single bundled transport).
+        #  2. addTrack BEFORE createDataChannel — so a transceiver exists when
+        #     the SCTP transport is created, which makes aiortc mark
+        #     sctp._bundled=True up front. Without it, setRemoteDescription's
+        #     bundle-collapse hits `not sctp._bundled`, discards the SHARED
+        #     transport (nTransports 1→0), and ICE never starts. Verified:
+        #     track-first + MAX_BUNDLE ⇒ sctp._bundled=True ⇒ discard skipped.
+        self._pc = RTCPeerConnection(
+            RTCConfiguration(
+                iceServers=ice_servers,
+                bundlePolicy=RTCBundlePolicy.MAX_BUNDLE,
+            )
+        )
 
-        # Throwaway DataChannel — forces an SCTP m-line into the offer so
-        # the SFU has a transport to bind cmd_unreliable to later. Closed
-        # as soon as the answer is applied.
-        sctp_init = self._pc.createDataChannel("_sctp_init")
-
-        # Robot→operator camera. Adds an m=video (sendonly) line to the offer;
-        # the broker declares the matching publisher track in the /sessions/new
-        # tracks array so the SFU binds it.
+        # Robot→operator camera. MUST be added before the datachannel (see above)
+        # — adds the sendonly m=video the broker declares as a publisher track.
         self._pc.addTrack(self._video_track)
+
+        # Throwaway DataChannel — forces an SCTP m-line into the offer so the SFU
+        # has a transport to bind the real channels to later. Pinned to
+        # negotiated id=0: a plain createDataChannel auto-grabs SCTP id 1 at
+        # connect, which is the SAME id the broker assigns cmd_unreliable →
+        # createDataChannel(id=1) then collides and throws. id=0 is reserved and
+        # never handed out by the broker (it assigns 1,2,3…), so cmd/state/
+        # state_back stay collision-free. Kept open: under MAX_BUNDLE it shares
+        # the one transport with video; closing it would risk that transport.
+        sctp_init = self._pc.createDataChannel("_sctp_init", negotiated=True, id=0)
 
         @self._pc.on("connectionstatechange")
         async def _on_state() -> None:
-            assert self._pc is not None
+            if self._pc is None:  # fired during shutdown
+                return
             logger.info(f"PC state: {self._pc.connectionState}")
             if self._pc.connectionState == "connected":
                 self._video_track.arm()
@@ -319,7 +375,8 @@ class HostedTeleopModule(Module):
 
             @self._pc.on("icegatheringstatechange")
             def _on_gathering() -> None:
-                assert self._pc is not None
+                if self._pc is None:  # fired during shutdown
+                    return
                 if self._pc.iceGatheringState == "complete" and not done.done():
                     done.set_result(None)
 
@@ -345,14 +402,22 @@ class HostedTeleopModule(Module):
         data = resp.json()
         self._session_id = data["session_id"]
 
+        # Work around aiortc's MAX_BUNDLE candidate-dict overwrite: CF puts ICE
+        # candidates only on the video section, but both bundled sections share
+        # one transport and the empty SCTP section wins → remote=0. Replicate the
+        # candidates into the candidate-less section(s) so they're applied.
+        answer_sdp = _propagate_bundle_candidates(data["sdp_answer"])
+
         await self._pc.setRemoteDescription(
-            RTCSessionDescription(sdp=data["sdp_answer"], type="answer")
+            RTCSessionDescription(sdp=answer_sdp, type="answer")
         )
 
-        try:
-            sctp_init.close()
-        except Exception:
-            pass
+        # NOTE: do NOT close sctp_init here. Under MAX_BUNDLE the SCTP shares
+        # the single bundled ICE/DTLS transport with video; closing the only
+        # datachannel would tear that transport down. The throwaway DC is
+        # harmless to leave open — the real negotiated channels reuse the same
+        # SCTP association by id later.
+        _ = sctp_init  # keep a reference; intentionally left open
 
         logger.info(
             f"Registered with broker: session_id={self._session_id}, "
@@ -395,7 +460,11 @@ class HostedTeleopModule(Module):
                             timeout=2.0
                         )
                     except Exception:
-                        logger.warning("Heartbeat failed (broker unreachable?)")
+                        # Log the full exception: this path also opens the
+                        # negotiated channels (_open_cmd_channel etc.), so a
+                        # failure here can be a channel bug, not just an
+                        # unreachable broker — don't swallow it as a bare warning.
+                        logger.exception("Heartbeat/channel-open failed")
                 self._stop_event.wait(interval)
 
         self._heartbeat_thread = threading.Thread(
