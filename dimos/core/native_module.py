@@ -89,6 +89,19 @@ class LogFormat(enum.Enum):
     JSON = "json"
 
 
+_NATIVE_TO_PYTHON_LEVELS = {
+    "trace": "debug",
+    "debug": "debug",
+    "info": "info",
+    "warn": "warning",
+    "warning": "warning",
+    "err": "error",
+    "error": "error",
+    "fatal": "critical",
+    "critical": "critical",
+}
+
+
 class NativeModuleConfig(ModuleConfig):
     """Configuration for a native (C/C++) subprocess module."""
 
@@ -344,7 +357,7 @@ class NativeModule(Module):
     ) -> None:
         if stream is None:
             return
-        log_fn = getattr(logger, level)
+        default_log_fn = getattr(logger, level)
         for raw in stream:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
@@ -352,12 +365,21 @@ class NativeModule(Module):
             if self.config.log_format == LogFormat.JSON:
                 try:
                     data = json.loads(line)
-                    event = data.pop("event", line)
-                    log_fn(event, module=self._module_label, pid=pid, **data)
+                    fields = data.pop("fields", None)
+                    if fields:
+                        data.update(fields)
+                    message = data.pop("message", None) or line
+                    msg_level = data.pop("level", None)
+                    method = (
+                        _NATIVE_TO_PYTHON_LEVELS.get(msg_level.lower(), level)
+                        if msg_level
+                        else level
+                    )
+                    getattr(logger, method)(message, module=self._module_label, pid=pid, **data)
                     continue
-                except (json.JSONDecodeError, TypeError):
+                except (json.JSONDecodeError, TypeError, AttributeError):
                     pass
-            log_fn(line, module=self._module_label, pid=pid)
+            default_log_fn(line, module=self._module_label, pid=pid)
         stream.close()
 
     def _maybe_build(self) -> None:
