@@ -111,7 +111,7 @@ class NativeModuleConfig(ModuleConfig):
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
     shutdown_timeout: float = DEFAULT_THREAD_JOIN_TIMEOUT
-    log_format: LogFormat = LogFormat.TEXT
+    log_format: LogFormat = LogFormat.JSON
     auto_build: bool = False
 
     # New version of Native Modules read json configs from stdin
