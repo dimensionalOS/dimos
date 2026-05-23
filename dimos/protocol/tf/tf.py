@@ -18,6 +18,7 @@ from abc import abstractmethod
 from collections import deque
 from dataclasses import field
 from functools import reduce
+import threading
 import time
 
 from dimos.memory.timeseries.inmemory import InMemoryStore
@@ -59,6 +60,8 @@ class TFSpec(Service):
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
     ) -> Transform | None: ...
 
     def receive_transform(self, *args: Transform) -> None: ...
@@ -112,13 +115,16 @@ class MultiTBuffer:
     def __init__(self, buffer_size: float = 10.0) -> None:
         self.buffers: dict[tuple[str, str], TBuffer] = {}
         self.buffer_size = buffer_size
+        self._cv = threading.Condition()
 
     def receive_transform(self, *args: Transform) -> None:
-        for transform in args:
-            key = (transform.frame_id, transform.child_frame_id)
-            if key not in self.buffers:
-                self.buffers[key] = TBuffer(self.buffer_size)
-            self.buffers[key].add(transform)
+        with self._cv:
+            for transform in args:
+                key = (transform.frame_id, transform.child_frame_id)
+                if key not in self.buffers:
+                    self.buffers[key] = TBuffer(self.buffer_size)
+                self.buffers[key].add(transform)
+            self._cv.notify_all()
 
     def get_frames(self) -> set[str]:
         frames = set()
@@ -164,7 +170,7 @@ class MultiTBuffer:
 
         return None
 
-    def get(
+    def _get(
         self,
         parent_frame: str,
         child_frame: str,
@@ -179,12 +185,39 @@ class MultiTBuffer:
         complex = self.get_transform_search(parent_frame, child_frame, time_point, time_tolerance)
 
         if complex is None:
-            logger.warning(
-                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}', {self}"
-            )
             return None
 
         return reduce(lambda t1, t2: t1 + t2, complex)
+
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
+    ) -> Transform | None:
+        result = self._get(parent_frame, child_frame, time_point, time_tolerance)
+        if result is not None:
+            return result
+
+        if forward_tolerance > 0:
+            deadline = time.monotonic() + forward_tolerance
+            with self._cv:
+                while True:
+                    result = self._get(parent_frame, child_frame, time_point, time_tolerance)
+                    if result is not None:
+                        return result
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self._cv.wait(timeout=remaining)
+
+        logger.warning(
+            f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}', {self}"
+        )
+        return None
 
     def get_transform_search(
         self,
@@ -322,8 +355,10 @@ class PubSubTF(MultiTBuffer, TFSpec):
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
     ) -> Transform | None:
-        return super().get(parent_frame, child_frame, time_point, time_tolerance)
+        return super().get(parent_frame, child_frame, time_point, time_tolerance, forward_tolerance=forward_tolerance)
 
     def get_pose(
         self,
@@ -331,8 +366,10 @@ class PubSubTF(MultiTBuffer, TFSpec):
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
+        *,
+        forward_tolerance: float = 0.0,
     ) -> PoseStamped | None:
-        tf = self.get(parent_frame, child_frame, time_point, time_tolerance)
+        tf = self.get(parent_frame, child_frame, time_point, time_tolerance, forward_tolerance=forward_tolerance)
         if not tf:
             return None
         return tf.to_pose()
