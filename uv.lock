@@ -44,8 +44,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-dimos-viewer = "2026-05-23T00:00:00Z"
-md-babel-py = "2026-05-17T00:00:00Z"
+dimos-viewer = false
 
 [manifest]
 overrides = [
