@@ -184,3 +184,23 @@
     required; this comment is the bot's regenerated summary triggered by the autofix.ci commit
     (273fd2252) which only re-wrapped one argparse argument and added no new behavior.
   commit: null
+- pr: 2099
+  comment_id: 3291129372
+  author: greptile-apps[bot]
+  file: dimos/navigation/nav_stack/modules/pgo/test_pgo_loop_closure.py
+  line: 205
+  problem: |
+    P1 Playback error silently becomes a `pytest.skip`. RosbagScanOdomPlaybackModule
+    exposes playback_error() via @rpc, but the test never reads it. If _run_playback
+    raises mid-stream (rosbag decode error or publish exception), the finally block
+    still flips _playback_finished=True, the poll loop exits normally, 0 events are
+    collected, and the test calls pytest.skip("rosbag trajectory didn't trigger any
+    PGO loop closures") — hiding the real failure. Same pattern missing in
+    test_pgo_rosbag.py. Both should call playback.playback_error() after the poll
+    loop and pytest.fail() if non-None.
+  solution: |
+    Applied. Added `playback.playback_error()` check after the poll loop in both
+    test_pgo_loop_closure.py and test_pgo_rosbag.py; raises pytest.fail with the
+    error string if non-None, before the existing analysis/skip path. 8-line change
+    across 2 files (~3 lines each + blank lines), well within the easy budget.
+  commit: 2af929987
