@@ -12,10 +12,20 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
+#include "dimos_native_module.hpp"
+
 struct CloudFilterConfig {
     float voxel_size = 0.1f;
     int sor_mean_k = 50;
     float sor_stddev = 1.0f;
+
+    static CloudFilterConfig from_args(const dimos::NativeModule& mod) {
+        CloudFilterConfig c;
+        c.voxel_size = mod.arg_float("voxel_size", c.voxel_size);
+        c.sor_mean_k = mod.arg_int  ("sor_mean_k", c.sor_mean_k);
+        c.sor_stddev = mod.arg_float("sor_stddev", c.sor_stddev);
+        return c;
+    }
 };
 
 /// Apply voxel grid downsample + statistical outlier removal in-place.
