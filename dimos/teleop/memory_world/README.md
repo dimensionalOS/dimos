@@ -10,6 +10,18 @@ python scripts/run_memory_world.py --db data/go2_bigoffice.db --map data/unitree
 
 Flags: `--port 8443`, `--voxel-size 0.05` (m, cloud downsample), `--max-points 250000`.
 
+Point-cloud source (`--cloud-source`):
+- `pickle` (default) — load the prebuilt `--map` PointCloud2; keeps true RGB.
+- `lidar` — accumulate a voxel map live from the store's `lidar` stream (no pickle needed, height-coloured, rebuilds from current data). First connect takes a few seconds while it accumulates ~150 scans, then it's cached.
+
+```bash
+python scripts/run_memory_world.py --cloud-source lidar
+```
+
+Density knobs:
+- `--voxel-scans N` — how many lidar scans to accumulate (default 150). `--voxel-scans 0` uses **every** frame for the densest map (slower build; output stays bounded by `--voxel-size` since voxels dedupe).
+- `--image-markers N` — how many capture-pose markers to sample (default 200).
+
 ## Viewing in VR
 
 1. On the Quest 3, open the browser and go to `https://<host-ip>:8443/memory_world`.
@@ -22,6 +34,7 @@ Flags: `--port 8443`, `--voxel-size 0.05` (m, cloud downsample), `--max-points 2
    - **Both hands pinch** (hand-tracking mode) — same gesture with thumb+index pinch
    - **Left X** — toggle image thumbnails at capture poses
    - **Left Y** — reset view to the cloud's centroid
+   - **Right B** — toggle voxel rendering: solid cubes ↔ points
 
 A GTA-style minimap sits to the lower-left of your view with a red dot for your position and a needle for your heading. The top-down density of the cloud is also pasted on the ground.
 

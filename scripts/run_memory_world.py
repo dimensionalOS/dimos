@@ -61,6 +61,32 @@ def main() -> None:
     )
     p.add_argument("--port", type=int, default=8443, help="HTTPS port to serve on")
     p.add_argument(
+        "--cloud-source",
+        choices=["pickle", "lidar"],
+        default="pickle",
+        help="pickle: prebuilt map (RGB). lidar: voxel map accumulated live "
+        "from the lidar stream (height-coloured, no pickle needed).",
+    )
+    p.add_argument(
+        "--lidar-world-frame",
+        action="store_true",
+        help="lidar mode: scans are already map/world-registered, so don't "
+        "re-apply pose. Use this if voxels look scattered everywhere.",
+    )
+    p.add_argument(
+        "--voxel-scans",
+        type=int,
+        default=150,
+        help="lidar mode: how many lidar scans to accumulate. 0 = use ALL "
+        "frames (densest map, slowest build).",
+    )
+    p.add_argument(
+        "--image-markers",
+        type=int,
+        default=200,
+        help="How many capture-pose image markers to sample across the run.",
+    )
+    p.add_argument(
         "--voxel-size",
         type=float,
         default=0.05,
@@ -75,11 +101,23 @@ def main() -> None:
     args = p.parse_args()
 
     db_path = _resolve(args.db, "memory store")
-    map_path = _resolve(args.map, "global map")
+    # The pickle is only needed for the top-down map and the "pickle" cloud
+    # source. In lidar mode we still try to resolve it (for the minimap) but
+    # don't hard-fail if it's missing.
+    try:
+        map_path = _resolve(args.map, "global map")
+    except SystemExit:
+        if args.cloud_source == "pickle":
+            raise
+        map_path = None
 
     module = MemoryWorldModule(
         store_path=str(db_path),
-        global_map_path=str(map_path),
+        global_map_path=str(map_path) if map_path else "",
+        cloud_source=args.cloud_source,
+        lidar_world_frame=args.lidar_world_frame,
+        n_voxel_scans=args.voxel_scans,
+        n_image_markers=args.image_markers,
         voxel_size=args.voxel_size,
         max_points=args.max_points,
         server_port=args.port,

@@ -8,6 +8,7 @@
 //   { type: 'scale_delta',      factor, pivotWorld:[x,y,z] }        // while both hands pinching
 //   { type: 'reset_view' }                                          // Y button on left controller
 //   { type: 'toggle_images' }                                       // X button on left controller
+//   { type: 'toggle_render' }                                       // B button on right controller (cubes <-> points)
 //
 // Quest 3 gamepad button mapping (per WebXR spec / Meta docs):
 //   buttons[0] = trigger
@@ -95,6 +96,10 @@ export class InputAdapter {
                     const mag = (Math.abs(axisX) - STICK_DEADZONE) / (1 - STICK_DEADZONE);
                     yawRate = sign * mag * YAW_RATE_MAX_RAD_PER_S;
                 }
+                // Right B button (index 5) = toggle cubes <-> points (press edge).
+                const bButton = gp.buttons[5]?.pressed ?? false;
+                if (bButton && !this._rightBWas) this.onGesture({ type: 'toggle_render' });
+                this._rightBWas = bButton;
                 // Teleport: aim while trigger held, commit on release.
                 this._handleTriggerTeleport(inputSource, frame, xrRefSpace, triggerVal, scene);
             }

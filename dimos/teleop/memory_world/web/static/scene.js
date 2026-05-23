@@ -91,7 +91,10 @@ export class WorldScene {
         this._frameRotate.add(grid);
 
         // Containers we (re)populate on payload receive.
-        this._pointsObj = null;
+        this._pointsObj = null;               // THREE.Points or THREE.InstancedMesh
+        this._cloudData = null;               // {n, positions, colors, voxelSize}
+        this._renderMode = 'cubes';           // 'cubes' | 'points', from header / toggle
+        this._basePointSize = POINT_SIZE;     // overwritten by cloud header's voxel_size
         this._imagePoseGroup = new THREE.Group();     // always-on ring markers
         this._frameRotate.add(this._imagePoseGroup);
         this._imageQuadGroup = new THREE.Group();     // textured quads, toggleable
@@ -190,6 +193,16 @@ export class WorldScene {
         if (dt > 0 && Math.abs(this._pendingYawRate) > 1e-3) {
             const pivot = this.getCameraPositionWorld();
             this._rotateWorldAround(pivot, this._pendingYawRate * dt);
+        }
+
+        // Points mode only: keep sprite size matched to voxel spacing as the
+        // world scales, so they stay gap-free. Cubes are real geometry and
+        // scale with the world group automatically.
+        if (this._pointsObj && this._renderMode === 'points') {
+            const want = this._basePointSize * (this._worldGroup.scale.x || 1);
+            if (Math.abs(this._pointsObj.material.size - want) > 1e-4) {
+                this._pointsObj.material.size = want;
+            }
         }
 
         this._updateHud();
@@ -442,43 +455,83 @@ export class WorldScene {
             this.diag('point_cloud_empty');
             return;
         }
-        const posBytes = n * 12;                              // 3 * float32
-        const positions = new Float32Array(payloadArrayBuffer, 0, n * 3);
-
-        const geom = new THREE.BufferGeometry();
-        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-        let mat;
+        // Keep the parsed cloud so we can re-render it in either mode without a
+        // server round-trip when the user toggles points <-> cubes.
+        const positions = new Float32Array(payloadArrayBuffer.slice(0, n * 12));
+        let colors = null;
         if (header.has_colors) {
-            const rgb = new Uint8Array(payloadArrayBuffer, posBytes, n * 3);
-            const colors = new Float32Array(n * 3);
+            const rgb = new Uint8Array(payloadArrayBuffer, n * 12, n * 3);
+            colors = new Float32Array(n * 3);
             for (let i = 0; i < n * 3; i++) colors[i] = rgb[i] / 255;
-            geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-            mat = new THREE.PointsMaterial({
-                size: POINT_SIZE,
-                vertexColors: true,
-                sizeAttenuation: true,
-            });
-        } else {
-            mat = new THREE.PointsMaterial({
-                color: 0x7af0a8,
-                size: POINT_SIZE,
-                sizeAttenuation: true,
-            });
         }
+        this._cloudData = {
+            n,
+            positions,
+            colors,
+            voxelSize: (header.voxel_size && header.voxel_size > 0) ? header.voxel_size : POINT_SIZE,
+        };
+        this._renderMode = header.render === 'points' ? 'points' : 'cubes';
+        this._basePointSize = this._cloudData.voxelSize;
+
+        this._rebuildCloud();
+
+        this._cloudBounds = header.bounds || null;
+        if (!this._hasSpawned) this._spawnAtCentroid();
+        this.diag('point_cloud_loaded', { n, mode: this._renderMode, has_colors: !!header.has_colors });
+    }
+
+    _rebuildCloud() {
+        const d = this._cloudData;
+        if (!d) return;
 
         if (this._pointsObj) {
             this._frameRotate.remove(this._pointsObj);
             this._pointsObj.geometry.dispose();
-            this._pointsObj.material.dispose();
+            if (this._pointsObj.material) this._pointsObj.material.dispose();
+            this._pointsObj = null;
         }
-        this._pointsObj = new THREE.Points(geom, mat);
-        this._frameRotate.add(this._pointsObj);
 
-        // Remember the cloud bounds for spawn / reset.
-        this._cloudBounds = header.bounds || null;
-        if (!this._hasSpawned) this._spawnAtCentroid();
-        this.diag('point_cloud_loaded', { n, has_colors: !!header.has_colors });
+        if (this._renderMode === 'cubes') {
+            // One InstancedMesh of unit cubes scaled to the voxel size. Real
+            // geometry, so it scales correctly with the world group on zoom.
+            const box = new THREE.BoxGeometry(d.voxelSize, d.voxelSize, d.voxelSize);
+            const mat = new THREE.MeshBasicMaterial({ vertexColors: false });
+            const mesh = new THREE.InstancedMesh(box, mat, d.n);
+            mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+            const dummy = new THREE.Object3D();
+            const col = new THREE.Color();
+            for (let i = 0; i < d.n; i++) {
+                dummy.position.set(d.positions[i * 3], d.positions[i * 3 + 1], d.positions[i * 3 + 2]);
+                dummy.updateMatrix();
+                mesh.setMatrixAt(i, dummy.matrix);
+                if (d.colors) {
+                    col.setRGB(d.colors[i * 3], d.colors[i * 3 + 1], d.colors[i * 3 + 2]);
+                    mesh.setColorAt(i, col);
+                }
+            }
+            mesh.instanceMatrix.needsUpdate = true;
+            if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+            this._pointsObj = mesh;
+        } else {
+            const geom = new THREE.BufferGeometry();
+            geom.setAttribute('position', new THREE.BufferAttribute(d.positions, 3));
+            const size = d.voxelSize * (this._worldGroup.scale.x || 1);
+            let mat;
+            if (d.colors) {
+                geom.setAttribute('color', new THREE.BufferAttribute(d.colors, 3));
+                mat = new THREE.PointsMaterial({ size, vertexColors: true, sizeAttenuation: true });
+            } else {
+                mat = new THREE.PointsMaterial({ color: 0x7af0a8, size, sizeAttenuation: true });
+            }
+            this._pointsObj = new THREE.Points(geom, mat);
+        }
+        this._frameRotate.add(this._pointsObj);
+    }
+
+    toggleRenderMode() {
+        this._renderMode = this._renderMode === 'cubes' ? 'points' : 'cubes';
+        this._rebuildCloud();
+        this.diag('render_mode', { mode: this._renderMode });
     }
 
     setImagePoses(header, payloadArrayBuffer) {
@@ -531,9 +584,13 @@ export class WorldScene {
         if (this._imageQuadsByIndex.has(index)) return;
 
         // Decode JPEG via Blob + ImageBitmap so it's GPU-friendly + async.
+        // Three.js doesn't reliably apply flipY to ImageBitmap textures, so we
+        // flip at decode time and disable the texture's own flip — otherwise
+        // the photos render upside down.
         const blob = new Blob([jpegArrayBuffer], { type: 'image/jpeg' });
-        createImageBitmap(blob).then((bitmap) => {
+        createImageBitmap(blob, { imageOrientation: 'flipY' }).then((bitmap) => {
             const tex = new THREE.Texture(bitmap);
+            tex.flipY = false;
             tex.colorSpace = THREE.SRGBColorSpace;
             tex.needsUpdate = true;
             const mat = new THREE.MeshBasicMaterial({

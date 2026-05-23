@@ -174,6 +174,7 @@ function dispatchGesture(g) {
         case 'scale_delta': scene.applyScale(g); break;
         case 'reset_view': scene.resetView(); break;
         case 'toggle_images': scene.toggleImages(); break;
+        case 'toggle_render': scene.toggleRenderMode(); break;
         default: break;
     }
     // Lightweight diag — only on discrete events, not continuous.
