@@ -68,6 +68,23 @@ def test_mcp_module_request_flow() -> None:
     rpc_calls["add"].assert_called_once_with(x=2, y=3)
 
 
+def test_tools_list_includes_lane_when_set() -> None:
+    """Lane is included in the tools/list response for annotated skills and
+    omitted entirely for skills without a lane."""
+    schema = json.dumps({"type": "object", "properties": {}})
+    skills = [
+        SkillInfo(class_name="TestSkills", func_name="move", args_schema=schema, lane="motion"),
+        SkillInfo(class_name="TestSkills", func_name="query", args_schema=schema),
+    ]
+    rpc_calls = _make_rpc_calls(skills, {})
+
+    response = asyncio.run(handle_request({"method": "tools/list", "id": 1}, skills, rpc_calls))
+    tools = {t["name"]: t for t in response["result"]["tools"]}
+
+    assert tools["move"]["lane"] == "motion"
+    assert "lane" not in tools["query"]
+
+
 def test_mcp_module_injects_progress_token_as_mcp_context() -> None:
     """When the client sends `_meta.progressToken`, the RPC call receives it as
     an `_mcp_context` kwarg so the `@skill` wrapper can stash it in the

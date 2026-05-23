@@ -374,6 +374,31 @@ class SomeSkill(Module):
         return "result"
 ```
 
+### Lanes
+
+By default, when the agent decides to call multiple independent skills in a single turn, they execute in parallel. Skills that must not overlap — for example, motion commands that would conflict if sent simultaneously — can be assigned to a **lane**:
+
+```python
+class MotionSkills(Module):
+
+    @skill(lane="motion")
+    def move_forward(self) -> str:
+        """Move the robot forward."""
+        ...
+
+    @skill(lane="motion")
+    def turn_left(self) -> str:
+        """Turn the robot left."""
+        ...
+
+    @skill
+    def take_photo(self) -> str:
+        """Take a picture."""
+        ...
+```
+
+Skills sharing a lane execute one at a time. Skills in different lanes, or with no lane, run concurrently. In the example above, `move_forward` and `turn_left` will never overlap, but either can run at the same time as `take_photo`.
+
 ## Building
 
 All you have to do to build a blueprint is call:

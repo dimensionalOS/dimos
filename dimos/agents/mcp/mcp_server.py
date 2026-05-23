@@ -89,6 +89,8 @@ def _handle_tools_list(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
         tool: dict[str, Any] = {"name": s.func_name, "inputSchema": schema}
         if description:
             tool["description"] = description
+        if s.lane is not None:
+            tool["lane"] = s.lane
         tools.append(tool)
 
     return _jsonrpc_result(req_id, {"tools": tools})

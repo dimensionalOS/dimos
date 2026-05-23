@@ -40,6 +40,18 @@ class MySkillContainer(Module):
 - Docstrings become the tool description the LLM sees. Write them clearly so the agent has sufficent context.
 - The function must return a string or image which with be used by the agent to decide what to do next.
 
+Skills in different modules can run in parallel when the agent calls them in the same turn. Use `lane=` to serialize skills that must not overlap (e.g. motion commands):
+
+```python
+@skill(lane="motion")
+def move_forward(self) -> str: ...
+
+@skill(lane="motion")
+def turn_left(self) -> str: ...  # will not run at the same time as move_forward
+```
+
+See [Lanes](../usage/blueprints.md#lanes) for details.
+
 ### Built-in Skills
 
 | Skill | Module | Description |

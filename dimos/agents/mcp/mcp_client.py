@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 from collections.abc import Callable
 from queue import Empty, Queue
+import threading
 from threading import Event, RLock, Thread
 import time
 from typing import Any
@@ -58,6 +60,7 @@ class McpClient(Module):
     _state_graph: CompiledStateGraph[Any, Any, Any, Any] | None
     _message_queue: Queue[BaseMessage]
     _tool_registry: dict[str, dict[str, Any]]
+    _lane_locks: dict[str, threading.Lock]
     _history: list[BaseMessage]
     _thread: Thread
     _stop_event: Event
@@ -71,6 +74,7 @@ class McpClient(Module):
         self._state_graph = None
         self._message_queue = Queue()
         self._tool_registry = {}
+        self._lane_locks = {}
         self._history = []
         self._thread = Thread(
             target=self._thread_loop,
@@ -163,13 +167,21 @@ class McpClient(Module):
 
         return self._mcp_request("tools/list")
 
+    def _invoke_tool(self, name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+        lane = self._tool_registry.get(name, {}).get("lane")
+        if lane:
+            with self._lane_locks.setdefault(lane, threading.Lock()):
+                return self._mcp_tool_call(name, kwargs)
+        return self._mcp_tool_call(name, kwargs)
+
     def _mcp_tool_to_langchain(self, mcp_tool: dict[str, Any]) -> StructuredTool:
         name = mcp_tool["name"]
         description = mcp_tool.get("description", "")
         input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
 
-        def call_tool(**kwargs: Any) -> str:
-            result = self._mcp_tool_call(name, kwargs)
+        async def call_tool(**kwargs: Any) -> str:
+            result = await asyncio.to_thread(self._invoke_tool, name, kwargs)
+
             content = result.get("content", [])
             parts = [c.get("text", "") for c in content if c.get("type") == "text"]
             text = "\n".join(parts)
@@ -188,7 +200,7 @@ class McpClient(Module):
         return StructuredTool(
             name=name,
             description=description,
-            func=call_tool,
+            coroutine=call_tool,
             args_schema=input_schema,
         )
 
@@ -285,7 +297,7 @@ class McpClient(Module):
                     tool_args[key] = continuation_context[context_key]
 
         try:
-            result = self._mcp_tool_call(tool_name, tool_args)
+            result = self._invoke_tool(tool_name, tool_args)
             content = result.get("content", [])
             parts = [c.get("text", "") for c in content if c.get("type") == "text"]
             text = "\n".join(parts)
@@ -323,13 +335,17 @@ class McpClient(Module):
         pretty_print_langchain_message(message)
         self.agent.publish(message)
 
-        for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
-            for node_output in update.values():
-                for msg in node_output.get("messages", []):
-                    self._history.append(msg)
-                    pretty_print_langchain_message(msg)
-                    self.agent.publish(msg)
+        async def run() -> None:
+            async for update in state_graph.astream(
+                {"messages": self._history}, stream_mode="updates"
+            ):
+                for node_output in update.values():
+                    for msg in node_output.get("messages", []):
+                        self._history.append(msg)
+                        pretty_print_langchain_message(msg)
+                        self.agent.publish(msg)
 
+        asyncio.run(run())
         if self._message_queue.empty():
             self.agent_idle.publish(True)
 

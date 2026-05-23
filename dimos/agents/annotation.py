@@ -66,7 +66,17 @@ def _stamp_and_log(func_name: str, result: Any, elapsed_ms: float) -> Any:
     return result
 
 
-def skill(func: F) -> F:
+def skill(func: F | None = None, *, lane: str | None = None) -> F | Callable[[F], F]:
+    """Mark a method as an agent-callable skill, optionally assigned to a lane."""
+    if func is None:
+        def decorator(f: F) -> F:
+            return _make_skill(f, lane=lane)
+        return decorator  # type: ignore[return-value]
+
+    return _make_skill(func, lane=lane)
+
+
+def _make_skill(func: F, *, lane: str | None) -> F:
     if inspect.iscoroutinefunction(func):
 
         @functools.wraps(func)
@@ -108,4 +118,5 @@ def skill(func: F) -> F:
 
     wrapped = rpc(context_wrapper)
     wrapped.__skill__ = True  # type: ignore[attr-defined]
+    wrapped.__skill_lane__ = lane  # type: ignore[attr-defined]
     return cast("F", wrapped)

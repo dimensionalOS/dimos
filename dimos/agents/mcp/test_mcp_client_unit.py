@@ -13,8 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
 import json
 from queue import Empty, Queue
+import time
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import HumanMessage
@@ -53,6 +56,7 @@ def _mock_post(url: str, **kwargs: object) -> MagicMock:
                         },
                         "required": ["x", "y"],
                     },
+                    "lane": "motion",
                 },
                 {
                     "name": "greet",
@@ -105,9 +109,17 @@ def mcp_client() -> McpClient:
 
     client._http_client = mock_http
     client._seq_ids = SequentialIds()
+    client._lane_locks = {}
     client.config = MagicMock()
     client.config.mcp_server_url = "http://localhost:9990/mcp"
     return client
+
+
+def test_lane_stored_in_tool_registry(mcp_client: McpClient) -> None:
+    mcp_client._fetch_tools()
+
+    assert mcp_client._tool_registry["add"].get("lane") == "motion"
+    assert mcp_client._tool_registry["greet"].get("lane") is None
 
 
 def test_fetch_tools_from_mcp_server(mcp_client: McpClient) -> None:
@@ -123,8 +135,8 @@ def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:
     add_tool = next(t for t in tools if t.name == "add")
     greet_tool = next(t for t in tools if t.name == "greet")
 
-    assert add_tool.func(x=2, y=3) == "5"
-    assert greet_tool.func(name="Alice") == "Hello, Alice!"
+    assert asyncio.run(add_tool.coroutine(x=2, y=3)) == "5"  # type: ignore[arg-type, misc]
+    assert asyncio.run(greet_tool.coroutine(name="Alice")) == "Hello, Alice!"  # type: ignore[arg-type, misc]
 
 
 def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:
@@ -229,3 +241,89 @@ def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
     assert isinstance(meta, dict)
     token = meta["progressToken"]
     assert isinstance(token, str) and len(token) > 0
+
+
+def test_same_lane_tools_execute_serially(mcp_client: McpClient) -> None:
+    """Tools sharing a lane never overlap — the second waits for the first."""
+    events: list[str] = []
+
+    def slow_call(name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+        events.append(f"{name}:start")
+        time.sleep(0.05)
+        events.append(f"{name}:end")
+        return {"content": [{"type": "text", "text": "ok"}]}
+
+    mcp_client._mcp_tool_call = slow_call  # type: ignore[assignment]
+    mcp_client._tool_registry = {
+        "a": {"name": "a", "lane": "motion"},
+        "b": {"name": "b", "lane": "motion"},
+    }
+    tool_a = mcp_client._mcp_tool_to_langchain(
+        {
+            "name": "a",
+            "description": "",
+            "inputSchema": {"type": "object", "properties": {}},
+            "lane": "motion",
+        }
+    )
+    tool_b = mcp_client._mcp_tool_to_langchain(
+        {
+            "name": "b",
+            "description": "",
+            "inputSchema": {"type": "object", "properties": {}},
+            "lane": "motion",
+        }
+    )
+
+    async def run() -> None:
+        mcp_client._lane_locks.clear()
+        await asyncio.gather(tool_a.coroutine(), tool_b.coroutine())  # type: ignore[misc]
+
+    asyncio.run(run())
+
+    a_start, a_end = events.index("a:start"), events.index("a:end")
+    b_start, b_end = events.index("b:start"), events.index("b:end")
+    assert a_end < b_start or b_end < a_start
+
+
+def test_different_lane_tools_run_in_parallel(mcp_client: McpClient) -> None:
+    """Tools in different lanes overlap — neither waits for the other."""
+    timestamps: dict[str, float] = {}
+
+    def slow_call(name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+        timestamps[f"{name}:start"] = time.monotonic()
+        time.sleep(0.05)
+        timestamps[f"{name}:end"] = time.monotonic()
+        return {"content": [{"type": "text", "text": "ok"}]}
+
+    mcp_client._mcp_tool_call = slow_call  # type: ignore[assignment]
+    mcp_client._tool_registry = {
+        "cam": {"name": "cam", "lane": "camera"},
+        "nav": {"name": "nav", "lane": "motion"},
+    }
+    tool_cam = mcp_client._mcp_tool_to_langchain(
+        {
+            "name": "cam",
+            "description": "",
+            "inputSchema": {"type": "object", "properties": {}},
+            "lane": "camera",
+        }
+    )
+    tool_nav = mcp_client._mcp_tool_to_langchain(
+        {
+            "name": "nav",
+            "description": "",
+            "inputSchema": {"type": "object", "properties": {}},
+            "lane": "motion",
+        }
+    )
+
+    async def run() -> None:
+        mcp_client._lane_locks.clear()
+        await asyncio.gather(tool_cam.coroutine(), tool_nav.coroutine())  # type: ignore[misc]
+
+    asyncio.run(run())
+
+    # Intervals overlap: each tool starts before the other finishes
+    assert timestamps["cam:start"] < timestamps["nav:end"]
+    assert timestamps["nav:start"] < timestamps["cam:end"]
