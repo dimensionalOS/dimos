@@ -89,6 +89,7 @@ class LogFormat(enum.Enum):
     JSON = "json"
 
 
+# to convert most native namings to Python levels
 _NATIVE_TO_PYTHON_LEVELS = {
     "trace": "debug",
     "debug": "debug",
@@ -99,6 +100,15 @@ _NATIVE_TO_PYTHON_LEVELS = {
     "error": "error",
     "fatal": "critical",
     "critical": "critical",
+}
+
+# to set Rust level to match Python level
+_PYTHON_TO_RUST_LEVELS = {
+    "DEBUG": "debug",
+    "INFO": "info",
+    "WARNING": "warn",
+    "ERROR": "error",
+    "CRITICAL": "error",
 }
 
 
@@ -217,6 +227,11 @@ class NativeModule(Module):
         cmd.extend(self.config.extra_args)
 
         env = {**os.environ, **self.config.extra_env}
+
+        # set Rust logging to match Python level
+        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
+            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
+        )
         cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
 
         logger.info(
