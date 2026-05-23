@@ -46,8 +46,8 @@ const HUD_OFFSET_DOWN = 0.25;
 const HUD_OFFSET_LEFT = 0.32;
 const HUD_FOLLOW_LERP = 0.18;         // damping per frame
 // Image-thumbnail quads at capture poses.
-const IMAGE_QUAD_W = 0.35;
-const IMAGE_QUAD_H = 0.20;            // 16:9-ish
+const IMAGE_QUAD_W = 0.60;
+const IMAGE_QUAD_H = 0.34;            // 16:9-ish
 const IMAGE_QUAD_HEIGHT = 0.9;        // robot z (metres) — chest height in VR
 
 export class WorldScene {
