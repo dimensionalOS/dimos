@@ -83,6 +83,7 @@ dependencies = [
  "lcm-msgs",
  "serde",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
