@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 use serde::de::DeserializeOwned;
@@ -24,8 +24,6 @@ fn init_tracing() {
 
 const INPUT_CHANNEL_CAPACITY: usize = 1024;
 const PUBLISH_CHANNEL_CAPACITY: usize = 1024;
-/// Maximum drop-warning log lines per second per route.
-const MAX_ERROR_LOG_RATE: u32 = 1;
 
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's mpsc channel.
@@ -38,7 +36,6 @@ struct TypedRoute<T: Send + 'static> {
     decode: fn(&[u8]) -> io::Result<T>,
     sender: mpsc::Sender<T>,
     drop_count: AtomicU64,
-    last_log: Mutex<Option<Instant>>,
 }
 
 impl<T: Send + 'static> Route for TypedRoute<T> {
@@ -48,21 +45,13 @@ impl<T: Send + 'static> Route for TypedRoute<T> {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     let n = self.drop_count.fetch_add(1, Ordering::Relaxed) + 1;
-                    let interval = Duration::from_secs(1) / MAX_ERROR_LOG_RATE;
-                    let mut last = self.last_log.lock().unwrap();
-                    let now = Instant::now();
-                    if last
-                        .map(|t| now.duration_since(t) >= interval)
-                        .unwrap_or(true)
-                    {
-                        *last = Some(now);
-                        warn!(
-                            topic = %self.topic,
-                            dropped = n,
-                            queue_cap = INPUT_CHANNEL_CAPACITY,
-                            "input queue full — handler can't keep up",
-                        );
-                    }
+                    crate::warn_throttled!(
+                        Duration::from_secs(1),
+                        topic = %self.topic,
+                        dropped = n,
+                        queue_cap = INPUT_CHANNEL_CAPACITY,
+                        "Dispatcher could not send message because handler was full.",
+                    );
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {}
             },
@@ -185,7 +174,6 @@ impl Builder {
                 decode,
                 sender: tx,
                 drop_count: AtomicU64::new(0),
-                last_log: Mutex::new(None),
             }));
         Input {
             topic,
@@ -604,22 +592,18 @@ mod tests {
     }
 
     #[test]
-    fn typed_route_logs_error_on_drop() {
+    #[tracing_test::traced_test]
+    fn typed_route_warns_and_counts_on_drop() {
         let (tx, _rx) = mpsc::channel::<Vec<u8>>(1);
         let route = TypedRoute {
             topic: "/test".to_string(),
             decode: |b| Ok(b.to_vec()),
             sender: tx,
             drop_count: AtomicU64::new(0),
-            last_log: Mutex::new(None),
         };
-        // Fill the queue, then force a drop.
-        route.try_dispatch(&[1u8]);
-        route.try_dispatch(&[1u8]);
+        route.try_dispatch(&[1u8]); // fill queue
+        route.try_dispatch(&[1u8]); // now we warn
         assert_eq!(route.drop_count.load(Ordering::Relaxed), 1);
-        assert!(
-            route.last_log.lock().unwrap().is_some(),
-            "drop must trigger a log",
-        );
+        assert!(logs_contain("handler was full"));
     }
 }
