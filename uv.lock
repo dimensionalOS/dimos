@@ -1916,6 +1916,7 @@ all = [
     { name = "filterpy" },
     { name = "gdown" },
     { name = "googlemaps" },
+    { name = "gtsam-extended" },
     { name = "hydra-core" },
     { name = "ipykernel" },
     { name = "jinja2" },
@@ -2080,6 +2081,9 @@ manipulation = [
     { name = "xacro" },
     { name = "xarm-python-sdk" },
 ]
+mapping = [
+    { name = "gtsam-extended" },
+]
 misc = [
     { name = "catkin-pkg" },
     { name = "cerebras-cloud-sdk" },
@@ -2106,9 +2110,6 @@ misc = [
     { name = "xarm-python-sdk" },
     { name = "yapf" },
 ]
-navigation = [
-    { name = "gtsam-extended" },
-]
 perception = [
     { name = "filterpy" },
     { name = "hydra-core" },
@@ -2134,6 +2135,7 @@ unitree = [
     { name = "faster-whisper" },
     { name = "ffmpeg-python" },
     { name = "filterpy" },
+    { name = "gtsam-extended" },
     { name = "hydra-core" },
     { name = "jinja2" },
     { name = "langchain" },
@@ -2166,6 +2168,7 @@ unitree-dds = [
     { name = "faster-whisper" },
     { name = "ffmpeg-python" },
     { name = "filterpy" },
+    { name = "gtsam-extended" },
     { name = "hydra-core" },
     { name = "jinja2" },
     { name = "langchain" },
@@ -2367,7 +2370,7 @@ requires-dist = [
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
     { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "docker", "drone", "manipulation", "misc", "perception", "psql", "sim", "unitree", "visualization", "web"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
-    { name = "dimos", extras = ["base"], marker = "extra == 'unitree'" },
+    { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
     { name = "dimos-lcm" },
     { name = "dimos-lcm", marker = "extra == 'docker'" },
@@ -2384,7 +2387,7 @@ requires-dist = [
     { name = "filterpy", marker = "extra == 'perception'", specifier = ">=1.4.5" },
     { name = "gdown", marker = "extra == 'misc'", specifier = ">=5.2.2" },
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
-    { name = "gtsam-extended", marker = "extra == 'navigation'", specifier = ">=4.3a1.post1" },
+    { name = "gtsam-extended", marker = "extra == 'mapping'", specifier = ">=4.3a1.post1" },
     { name = "hydra-core", marker = "extra == 'perception'", specifier = ">=1.3.0" },
     { name = "ipykernel", marker = "extra == 'misc'" },
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1.6" },
@@ -2492,7 +2495,7 @@ requires-dist = [
     { name = "xformers", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
-provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "psql", "sim", "navigation", "drone", "dds", "docker", "base", "apriltag", "all"]
+provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "psql", "sim", "mapping", "drone", "dds", "docker", "base", "apriltag", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
