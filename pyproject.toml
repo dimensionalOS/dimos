@@ -453,7 +453,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { md-babel-py = "2026-05-16", dimos-viewer = "2026-05-22" }
+exclude-newer-package = { dimos-viewer = false }
 override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
