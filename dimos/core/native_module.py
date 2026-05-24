@@ -89,7 +89,7 @@ class LogFormat(enum.Enum):
     JSON = "json"
 
 
-# convert most native namings to Python levels
+# convert to Python levels
 _NATIVE_TO_PYTHON_LEVELS = {
     "trace": "debug",
     "debug": "debug",
@@ -102,7 +102,7 @@ _NATIVE_TO_PYTHON_LEVELS = {
     "critical": "critical",
 }
 
-# set Rust level to match Python level
+# convert to Rust levels
 _PYTHON_TO_RUST_LEVELS = {
     "DEBUG": "debug",
     "INFO": "info",
