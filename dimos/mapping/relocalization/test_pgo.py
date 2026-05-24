@@ -28,7 +28,6 @@ from dimos.mapping.relocalization.pgo import (
     _r_t_from_transform,
     _transform_from_r_t,
     apply_corrections,
-    correction_at,
     keyframes_to_corrections,
     make_interpolator,
     pgo_keyframes,
@@ -243,17 +242,6 @@ class TestInterpolator:
         assert interp(100.0).translation.x == pytest.approx(10.0, abs=1e-10)
         # In-range midpoint
         assert interp(6.0).translation.x == pytest.approx(5.0, abs=1e-10)
-
-    def test_correction_at_oneshot(self) -> None:
-        R = np.eye(3)
-        a = _transform_from_r_t(R, np.array([0.0, 0.0, 0.0]), ts=1.0)
-        b = _transform_from_r_t(R, np.array([10.0, 0.0, 0.0]), ts=11.0)
-        mem = MemoryStore()
-        stream: Stream[Transform] = mem.stream("corrections", Transform)
-        stream.append(a, ts=1.0)
-        stream.append(b, ts=11.0)
-        result = correction_at(stream, 6.0)
-        assert result.translation.x == pytest.approx(5.0, abs=1e-10)
 
 
 class TestApplyCorrections:

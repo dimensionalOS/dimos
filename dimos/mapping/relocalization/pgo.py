@@ -14,28 +14,47 @@
 
 """PGO drift corrections as composable Stream stages.
 
+A lidar/odom stream comes in with poses that drift over time — the robot's
+estimate of where it is in the world slowly diverges from ground truth as
+small per-frame errors accumulate. PGO ("pose graph optimization") detects
+revisited places via loop closure and pulls the trajectory back into
+self-consistency. The result is a stream of *corrections*: a Transform per
+keyframe that maps every drifted ("raw") pose to its corrected one.
+
 Pipeline:
 
-    lidar: Stream[PointCloud2]
-        -> pgo_keyframes(...)            -> Stream[Keyframe]
-        -> keyframes_to_corrections(...) -> Stream[Transform]   (world_corrected <- world_raw)
-        -> apply_corrections(any_stream, corrections) -> Stream[T]   (obs.pose shuffled)
+    lidar: Stream[PointCloud2]                         # pose-stamped scans
+        -> pgo_keyframes(...)             -> Stream[Keyframe]    # one per kf
+        -> keyframes_to_corrections(...)  -> Stream[Transform]   # world_corrected <- world_raw
+        -> apply_corrections(any_stream, corrections) -> Stream[T]  # obs.pose shuffled
 
-The math: per keyframe, the drift correction is
-    R_corr = R_global @ R_local.T
-    t_corr = t_global - R_corr @ t_local
-and at arbitrary ts we SLERP R between the two bracketing keyframes and linear-lerp t,
-clipping out-of-range to endpoints.
+`pgo_keyframes` runs ISAM2 + ICP loop closure across the input, emitting
+each kept keyframe with both its raw odom pose (`local`) and its optimized
+pose (`optimized`) as Transforms.
 
-`gtsam` and `open3d` are imported lazily inside hot helpers so importing this module
-stays cheap and gtsam-free for consumers that only need `Keyframe` / `apply_corrections`.
+`keyframes_to_corrections` is pure arithmetic: per keyframe, the drift
+correction is `optimized @ local^-1` (Transform composition). The resulting
+stream has one entry per keyframe — sparse in time.
+
+`make_interpolator` materializes the sparse correction stream into a
+ts -> Transform function: SLERP for rotation, linear lerp for translation,
+clipping out-of-range queries to the endpoints.
+
+`apply_corrections` shuffles `obs.pose` on any stream using the interpolated
+correction at each obs.ts. It's read-only on `obs.data`, so the same lidar
+stream can be re-applied — or a different recording from the same physical
+space, if the corrections generalize.
+
+`gtsam` is imported lazily inside hot helpers so importing this module
+stays cheap and gtsam-free for consumers that only need `Keyframe` /
+`apply_corrections`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, Unpack
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
@@ -85,6 +104,24 @@ class PGOConfig(BaseConfig):
     max_icp_correspondence_dist: float = 1.0
 
 
+class PGOKwargs(TypedDict, total=False):
+    """Typed kwargs for `pgo_keyframes`; mirrors `PGOConfig` fields."""
+
+    key_pose_delta_trans: float
+    key_pose_delta_deg: float
+    loop_search_radius: float
+    loop_time_thresh: float
+    loop_score_thresh: float
+    loop_submap_half_range: int
+    min_icp_inliers: int
+    min_keyframes_for_loop_search: int
+    loop_closure_extra_iterations: int
+    submap_resolution: float
+    min_loop_detect_duration: float
+    max_icp_iterations: int
+    max_icp_correspondence_dist: float
+
+
 @dataclass(frozen=True)
 class Keyframe:
     """Keyframe emitted by `pgo_keyframes`.
@@ -102,7 +139,7 @@ def pgo_keyframes(
     stream: Stream[PointCloud2],
     *,
     on_frame: Callable[[Any], None] | None = None,
-    **pgo_cfg: Any,
+    **pgo_cfg: Unpack[PGOKwargs],
 ) -> Stream[Keyframe]:
     """Run PGO across a pose-stamped point-cloud stream; emit one obs per keyframe."""
     cfg = PGOConfig(**pgo_cfg)
@@ -188,11 +225,6 @@ def make_interpolator(corrections: Stream[Transform]) -> Callable[[float], Trans
         return _transform_from_r_t(R, t, ts=float(ts))
 
     return interp
-
-
-def correction_at(corrections: Stream[Transform], ts: float) -> Transform:
-    """One-off lookup. For hot paths build `make_interpolator` once and reuse."""
-    return make_interpolator(corrections)(ts)
 
 
 def apply_corrections(
