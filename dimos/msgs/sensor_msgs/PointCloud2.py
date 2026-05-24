@@ -373,10 +373,6 @@ class PointCloud2(Timestamped):
         new_pcd = o3d.geometry.PointCloud()
         new_pcd.points = o3d.utility.Vector3dVector(transformed_xyz)
 
-        # Copy colors if available
-        if self.pointcloud.has_colors():
-            new_pcd.colors = self.pointcloud.colors
-
         return PointCloud2(
             pointcloud=new_pcd,
             frame_id=tf.frame_id,
