@@ -245,7 +245,8 @@ def run(
 
     cli_config_overrides: dict[str, Any] = ctx.obj
 
-    # Apply CLI config before importing blueprints that branch on global_config.
+    # this is a workaround until we have a proper way to have delayed-module-choice in blueprints
+    # ex: vis_module(viewer=global_config.viewer) is wrong (viewer will always be default value) without this patch
     global_config.update(**cli_config_overrides)
 
     # Clean stale registry entries
@@ -682,6 +683,49 @@ def send(
     from dimos.robot.cli.topic import topic_send
 
     topic_send(topic, message_expr)
+
+
+@main.command(name="export-premap")
+def export_premap_cmd(
+    dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
+    output: Path | None = typer.Option(None, "-o", "--output", help="Output .pc2.lcm path"),
+    voxel_size: float = typer.Option(0.05, "--voxel-size", help="Voxel size for the rebuild"),
+    duration: float | None = typer.Option(
+        None, "--duration", help="Limit to first N seconds (default: full log)"
+    ),
+    device: str = typer.Option(
+        "CUDA:0",
+        "--device",
+        help="Open3D compute device (e.g. CUDA:0, CPU:0); fallback to CPU if unavailable",
+    ),
+    block_count: int = typer.Option(
+        2_000_000,
+        "--block-count",
+        help="VoxelBlockGrid capacity",
+    ),
+) -> None:
+    """Export a twopass relocalization premap (.pc2.lcm) from a recorded SQLite dataset."""
+    from dimos.mapping.relocalization.pgo import pgo_then_voxels
+    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.utils.data import get_data_dir, resolve_named_path
+
+    db_path = resolve_named_path(dataset, ".db")
+
+    store = SqliteStore(path=db_path)
+    lidar = store.streams.lidar
+    if duration is not None:
+        lidar = lidar.before(lidar.first().ts + duration)
+
+    typer.echo(f"computing twopass map from {db_path} (voxel_size={voxel_size})...")
+    twopass_map = pgo_then_voxels(
+        lidar, voxel_size=voxel_size, block_count=block_count, device=device
+    )
+
+    if output is None:
+        output = get_data_dir() / f"{db_path.stem}_twopass_map.pc2.lcm"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(twopass_map.lcm_encode())
+    typer.echo(f"wrote {output}")
 
 
 @main.command()
