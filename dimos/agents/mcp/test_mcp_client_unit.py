@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 from queue import Empty, Queue
+import threading
 import time
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -258,6 +259,7 @@ def test_same_lane_tools_execute_serially(mcp_client: McpClient) -> None:
         "a": {"name": "a", "lane": "motion"},
         "b": {"name": "b", "lane": "motion"},
     }
+    mcp_client._lane_locks = {"motion": threading.Lock()}
     tool_a = mcp_client._mcp_tool_to_langchain(
         {
             "name": "a",
@@ -276,7 +278,6 @@ def test_same_lane_tools_execute_serially(mcp_client: McpClient) -> None:
     )
 
     async def run() -> None:
-        mcp_client._lane_locks.clear()
         await asyncio.gather(tool_a.coroutine(), tool_b.coroutine())  # type: ignore[misc]
 
     asyncio.run(run())
@@ -301,6 +302,7 @@ def test_different_lane_tools_run_in_parallel(mcp_client: McpClient) -> None:
         "cam": {"name": "cam", "lane": "camera"},
         "nav": {"name": "nav", "lane": "motion"},
     }
+    mcp_client._lane_locks = {"camera": threading.Lock(), "motion": threading.Lock()}
     tool_cam = mcp_client._mcp_tool_to_langchain(
         {
             "name": "cam",
@@ -319,7 +321,6 @@ def test_different_lane_tools_run_in_parallel(mcp_client: McpClient) -> None:
     )
 
     async def run() -> None:
-        mcp_client._lane_locks.clear()
         await asyncio.gather(tool_cam.coroutine(), tool_nav.coroutine())  # type: ignore[misc]
 
     asyncio.run(run())

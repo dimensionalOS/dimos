@@ -143,6 +143,9 @@ class McpClient(Module):
 
         raw_tools = result.get("tools", [])
         self._tool_registry = {t["name"]: t for t in raw_tools}
+        for t in raw_tools:
+            if lane := t.get("lane"):
+                self._lane_locks.setdefault(lane, threading.Lock())
         tools = [self._mcp_tool_to_langchain(t) for t in raw_tools]
 
         if not tools:
@@ -170,7 +173,7 @@ class McpClient(Module):
     def _invoke_tool(self, name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
         lane = self._tool_registry.get(name, {}).get("lane")
         if lane:
-            with self._lane_locks.setdefault(lane, threading.Lock()):
+            with self._lane_locks[lane]:
                 return self._mcp_tool_call(name, kwargs)
         return self._mcp_tool_call(name, kwargs)
 
