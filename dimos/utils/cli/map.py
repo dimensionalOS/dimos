@@ -167,28 +167,38 @@ def main(
             )
         if pgo_map is not None:
             rr.log("world/pgo_map/pointcloud", pgo_map.to_rerun(size=voxel), static=True)
+        STEM_HEIGHT = 2.0  # lift pose-graph viz above the map for legibility
         if pgo_path:
             rr.log(
                 "world/pgo_map/path",
                 rr.LineStrips3D(strips=[pgo_path], colors=[[255, 255, 255]], radii=[0.05]),
                 static=True,
             )
+            hovered = [(x, y, z + STEM_HEIGHT) for (x, y, z) in pgo_path]
             rr.log(
                 "world/pgo_map/keyframes",
-                rr.Points3D(positions=pgo_path, colors=[[255, 200, 0]], radii=[0.05]),
+                rr.Points3D(positions=hovered, colors=[[255, 255, 255]], radii=[0.05]),
                 static=True,
             )
         if pgo and loops:
             loop_strips = [
                 [
-                    (lc.source.translation.x, lc.source.translation.y, lc.source.translation.z),
-                    (lc.target.translation.x, lc.target.translation.y, lc.target.translation.z),
+                    (
+                        lc.source.translation.x,
+                        lc.source.translation.y,
+                        lc.source.translation.z + STEM_HEIGHT,
+                    ),
+                    (
+                        lc.target.translation.x,
+                        lc.target.translation.y,
+                        lc.target.translation.z + STEM_HEIGHT,
+                    ),
                 ]
                 for lc in loops
             ]
             rr.log(
                 "world/pgo_map/loop_closures",
-                rr.LineStrips3D(strips=loop_strips, colors=[[231, 76, 60]], radii=[0.02]),
+                rr.LineStrips3D(strips=loop_strips, colors=[[231, 76, 60]], radii=[0.05]),
                 static=True,
             )
 
