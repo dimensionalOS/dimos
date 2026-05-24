@@ -364,7 +364,7 @@ class PubSubTF(MultiTBuffer, TFSpec):
         with self._cv:
             for buffer in self.buffers.values():
                 # Get the latest transform from each buffer
-                latest = buffer.get()   # get() with no args returns latest
+                latest = buffer.get()  # get() with no args returns latest
                 if latest:
                     all_transforms.append(latest)
 
