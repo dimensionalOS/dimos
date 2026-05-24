@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import time
+from typing import Any
 
 import rerun as rr
 import rerun.blueprint as rrb
@@ -20,22 +22,24 @@ import typer
 
 from dimos.mapping.voxels import VoxelMapTransformer
 from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory2.type.observation import Observation
 from dimos.utils.data import resolve_named_path
 from dimos.visualization.rerun.init import rerun_init
 
 
-def progress(total: int, label: str = ""):
+def progress(total: int, label: str = "") -> Callable[[Observation[Any]], None]:
     seen = 0
     wall_start: float | None = None
     last_wall: float | None = None
     first_ts: float | None = None
 
-    def _progress(obs):
+    def _progress(obs: Observation[Any]) -> None:
         nonlocal seen, wall_start, last_wall, first_ts
         now = time.monotonic()
         if wall_start is None:
             wall_start = now
             first_ts = obs.ts
+        assert first_ts is not None  # narrowed by the same `if` above
         frame_ms = (now - last_wall) * 1000 if last_wall is not None else 0.0
         last_wall = now
         seen += 1
@@ -84,7 +88,7 @@ def main(
 
     path: list[tuple[float, float, float]] = []
 
-    def collect_path(obs):
+    def collect_path(obs: Observation[Any]) -> None:
         if obs.pose is None:
             return
         # Reject placeholder poses at the world origin (translation = 0,0,0).
