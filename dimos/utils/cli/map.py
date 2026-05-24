@@ -118,7 +118,7 @@ def main(
     )
 
     if not no_gui:
-        rerun_init("coloring", spawn=True)
+        rerun_init("dimos map tool", spawn=True)
         rr.send_blueprint(rrb.Blueprint(rrb.Spatial3DView(origin="world")))
         rr.log("world/raw_map/pointcloud", global_map.to_rerun(size=voxel), static=True)
         if path:
