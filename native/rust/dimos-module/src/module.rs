@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use serde::de::DeserializeOwned;
@@ -36,6 +36,7 @@ struct TypedRoute<T: Send + 'static> {
     decode: fn(&[u8]) -> io::Result<T>,
     sender: mpsc::Sender<T>,
     drop_count: AtomicU64,
+    last_log_ns: AtomicU64,
 }
 
 impl<T: Send + 'static> Route for TypedRoute<T> {
@@ -44,14 +45,20 @@ impl<T: Send + 'static> Route for TypedRoute<T> {
             Ok(msg) => match self.sender.try_send(msg) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
+                    // throttle the warning logging per route
+                    // we can't use warn_throttled! because this code is shared across all route instances
                     let n = self.drop_count.fetch_add(1, Ordering::Relaxed) + 1;
-                    crate::warn_throttled!(
-                        Duration::from_secs(1),
-                        topic = %self.topic,
-                        dropped = n,
-                        queue_cap = INPUT_CHANNEL_CAPACITY,
-                        "Dispatcher could not send message because handler was full.",
-                    );
+                    if crate::log::check_and_record(
+                        &self.last_log_ns,
+                        Duration::from_secs(1).as_nanos() as u64,
+                    ) {
+                        warn!(
+                            topic = %self.topic,
+                            dropped = n,
+                            queue_cap = INPUT_CHANNEL_CAPACITY,
+                            "Dispatcher could not send message because handler was full.",
+                        );
+                    }
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {}
             },
@@ -174,6 +181,7 @@ impl Builder {
                 decode,
                 sender: tx,
                 drop_count: AtomicU64::new(0),
+                last_log_ns: AtomicU64::new(0),
             }));
         Input {
             topic,
@@ -600,6 +608,7 @@ mod tests {
             decode: |b| Ok(b.to_vec()),
             sender: tx,
             drop_count: AtomicU64::new(0),
+            last_log_ns: AtomicU64::new(0),
         };
         route.try_dispatch(&[1u8]); // fill queue
         route.try_dispatch(&[1u8]); // now we warn
