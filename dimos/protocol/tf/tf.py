@@ -128,19 +128,21 @@ class MultiTBuffer:
 
     def get_frames(self) -> set[str]:
         frames = set()
-        for parent, child in list(self.buffers):
-            frames.add(parent)
-            frames.add(child)
+        with self._cv:
+            for parent, child in self.buffers:
+                frames.add(parent)
+                frames.add(child)
         return frames
 
     def get_connections(self, frame_id: str) -> set[str]:
         """Get all frames connected to the given frame (both as parent and child)."""
         connections = set()
-        for parent, child in list(self.buffers):
-            if parent == frame_id:
-                connections.add(child)
-            if child == frame_id:
-                connections.add(parent)
+        with self._cv:
+            for parent, child in self.buffers:
+                if parent == frame_id:
+                    connections.add(child)
+                if child == frame_id:
+                    connections.add(parent)
         return connections
 
     def get_transform(
@@ -198,13 +200,13 @@ class MultiTBuffer:
         *,
         forward_tolerance: float = 0.0,
     ) -> Transform | None:
-        result = self._get(parent_frame, child_frame, time_point, time_tolerance)
-        if result is not None:
-            return result
+        with self._cv:
+            result = self._get(parent_frame, child_frame, time_point, time_tolerance)
+            if result is not None:
+                return result
 
-        if forward_tolerance > 0:
-            deadline = time.monotonic() + forward_tolerance
-            with self._cv:
+            if forward_tolerance > 0:
+                deadline = time.monotonic() + forward_tolerance
                 while True:
                     result = self._get(parent_frame, child_frame, time_point, time_tolerance)
                     if result is not None:
@@ -214,10 +216,10 @@ class MultiTBuffer:
                         break
                     self._cv.wait(timeout=remaining)
 
-        logger.warning(
-            f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}', {self}"
-        )
-        return None
+            logger.warning(
+                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
+            )
+            return None
 
     def get_transform_search(
         self,
