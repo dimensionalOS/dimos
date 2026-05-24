@@ -22,8 +22,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.tf.tf import TF
-from dimos.robot.unitree.go2 import connection
-from dimos.robot.unitree.go2.config import Go2Config
+from dimos.robot.unitree.go2.config import Go2Config, camera_info_static
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import Moment, SensorMoment
 
@@ -69,7 +68,7 @@ class Go2Moment(Moment):
         t.publish(*self.transforms)
         t.stop()
 
-        camera_info = connection._camera_info_static()
+        camera_info = camera_info_static()
         camera_info.ts = time.time()
         camera_info_transport: LCMTransport[CameraInfo] = LCMTransport("/camera_info", CameraInfo)
         camera_info_transport.publish(camera_info)
