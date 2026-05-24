@@ -111,6 +111,68 @@ def test_lcm_no_intensity_round_trip() -> None:
     np.testing.assert_allclose(decoded_pts.astype(np.float32), points, atol=1e-6)
 
 
+def test_lcm_per_point_time_round_trip() -> None:
+    """Per-point time survives an lcm_encode → lcm_decode round trip alongside intensity."""
+    points = np.array(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [0.0, 0.0, 0.0]],
+        dtype=np.float32,
+    )
+    intensities = np.array([0.25, 1.1, 0.0, 3.0], dtype=np.float32)
+    # Seconds relative to the scan-start timestamp (small => exact in float32).
+    times = np.array([0.0, 0.03, 0.06, 0.099], dtype=np.float32)
+
+    original = PointCloud2.from_numpy(
+        points, frame_id="lidar", timestamp=42.5, intensities=intensities, times=times
+    )
+
+    # Getter works before encoding.
+    src_t = original.times_f32()
+    assert src_t is not None
+    np.testing.assert_allclose(src_t, times, rtol=0, atol=1e-7)
+
+    decoded = PointCloud2.lcm_decode(original.lcm_encode())
+
+    op, _ = original.as_numpy()
+    dp, _ = decoded.as_numpy()
+    assert len(op) == len(dp) == 4
+    np.testing.assert_allclose(op, dp, rtol=1e-6, atol=1e-6)
+
+    dec_t = decoded.times_f32()
+    assert dec_t is not None, "times_f32() returned None after decode"
+    np.testing.assert_allclose(dec_t, times, rtol=0, atol=1e-7)
+
+    dec_i = decoded.intensities_f32()
+    assert dec_i is not None
+    np.testing.assert_allclose(dec_i, intensities, rtol=0, atol=1e-7)
+
+    assert decoded.frame_id == "lidar"
+    assert decoded.ts is not None and abs(decoded.ts - 42.5) < 1e-6
+
+
+def test_lcm_no_time_round_trip() -> None:
+    """Clouds without per-point time should round-trip with times_f32() still None."""
+    points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+    original = PointCloud2.from_numpy(points, frame_id="map", timestamp=1.0)
+    assert original.times_f32() is None
+
+    decoded = PointCloud2.lcm_decode(original.lcm_encode())
+    assert decoded.times_f32() is None
+
+
+def test_lcm_empty_cloud_with_times_metadata() -> None:
+    """An empty cloud built via from_numpy(times=...) encodes/decodes cleanly."""
+    empty = PointCloud2.from_numpy(
+        np.zeros((0, 3), dtype=np.float32),
+        frame_id="lidar",
+        timestamp=7.0,
+        times=np.zeros((0,), dtype=np.float32),
+    )
+    decoded = PointCloud2.lcm_decode(empty.lcm_encode())
+    assert len(decoded) == 0
+    # Empty cloud has no per-point data on the wire, so times_f32 is None after decode.
+    assert decoded.times_f32() is None
+
+
 def test_bounding_box_intersects() -> None:
     """Test bounding_box_intersects method with various scenarios."""
     # Test 1: Overlapping boxes

@@ -178,6 +178,7 @@ class PointCloud2(Timestamped):
         frame_id: str = "world",
         timestamp: float | None = None,
         intensities: np.ndarray | None = None,
+        times: np.ndarray | None = None,
     ) -> PointCloud2:
         """Create PointCloud2 from numpy array of shape (N, 3).
 
@@ -186,6 +187,8 @@ class PointCloud2(Timestamped):
             frame_id: Frame ID for the point cloud
             timestamp: Timestamp for the point cloud (defaults to current time)
             intensities: Optional Nx1 or (N,) float array of per-point intensity values
+            times: Optional Nx1 or (N,) float array of per-point times (seconds, typically
+                frame-relative to ``timestamp``). Used by motion-deskew consumers.
 
         Returns:
             PointCloud2 instance
@@ -197,6 +200,11 @@ class PointCloud2(Timestamped):
             if arr.ndim == 1:
                 arr = arr.reshape(-1, 1)
             pcd_t.point["intensities"] = o3c.Tensor(arr, dtype=o3c.float32)
+        if times is not None:
+            tarr = times.astype(np.float32)
+            if tarr.ndim == 1:
+                tarr = tarr.reshape(-1, 1)
+            pcd_t.point["t"] = o3c.Tensor(tarr, dtype=o3c.float32)
         return cls(pointcloud=pcd_t, ts=timestamp, frame_id=frame_id)
 
     @classmethod
@@ -422,6 +430,15 @@ class PointCloud2(Timestamped):
             return arr.astype(np.float32) if arr.dtype != np.float32 else arr  # type: ignore[no-any-return]
         return None
 
+    def times_f32(self) -> np.ndarray | None:
+        """Get per-point times as a flat float32 array, or ``None`` if absent.
+        """
+        self._ensure_tensor_initialized()
+        if "t" in self._pcd_tensor.point:
+            arr = self._pcd_tensor.point["t"].numpy().flatten()
+            return arr.astype(np.float32) if arr.dtype != np.float32 else arr  # type: ignore[no-any-return]
+        return None
+
     @functools.cached_property
     def axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
         """Get axis-aligned bounding box of the point cloud."""
@@ -475,21 +492,27 @@ class PointCloud2(Timestamped):
 
         points, _ = self.as_numpy()
 
-        # Check if pointcloud has colors
+        # Check if pointcloud has colors / per-point times
         self._ensure_tensor_initialized()
         has_colors = "colors" in self._pcd_tensor.point
+        times = self.times_f32()
 
         if len(points) == 0:
             msg.height = 0
             msg.width = 0
-            msg.point_step = 16
+            msg.point_step = 20 if times is not None else 16
             msg.row_step = 0
             msg.data_length = 0
             msg.data = b""
             msg.is_dense = True
             msg.is_bigendian = False
-            msg.fields_length = 4
-            msg.fields = self._create_xyzrgb_fields() if has_colors else self._create_xyz_fields()
+            base_fields = (
+                self._create_xyzrgb_fields() if has_colors else self._create_xyz_fields()
+            )
+            if times is not None:
+                base_fields.append(self._create_time_field())
+            msg.fields = base_fields
+            msg.fields_length = len(base_fields)
             return msg.lcm_encode()  # type: ignore[no-any-return]
 
         msg.height = 1
@@ -531,6 +554,13 @@ class PointCloud2(Timestamped):
 
             point_data = np.column_stack([points, intensities]).astype(np.float32)
 
+        # Append optional per-point time at offset 16 (FLOAT32).
+        if times is not None:
+            msg.fields = [*msg.fields, self._create_time_field()]
+            msg.fields_length = len(msg.fields)
+            msg.point_step = 20
+            point_data = np.column_stack([point_data, times]).astype(np.float32)
+
         msg.row_step = msg.point_step * msg.width
         data_bytes = point_data.tobytes()
         msg.data_length = len(data_bytes)
@@ -556,7 +586,8 @@ class PointCloud2(Timestamped):
             )
 
         # Parse field offsets
-        x_offset = y_offset = z_offset = rgb_offset = intensity_offset = None
+        x_offset = y_offset = z_offset = rgb_offset = intensity_offset = t_offset = None
+        t_datatype: int | None = None
         for msgfield in msg.fields:
             if msgfield.name == "x":
                 x_offset = msgfield.offset
@@ -568,6 +599,9 @@ class PointCloud2(Timestamped):
                 rgb_offset = msgfield.offset
             elif msgfield.name == "intensity":
                 intensity_offset = msgfield.offset
+            elif msgfield.name == "t":
+                t_offset = msgfield.offset
+                t_datatype = msgfield.datatype
 
         if any(offset is None for offset in [x_offset, y_offset, z_offset]):
             raise ValueError("PointCloud2 message missing X, Y, or Z msgfields")
@@ -620,6 +654,23 @@ class PointCloud2(Timestamped):
                     intensities.reshape(-1, 1), dtype=o3c.float32
                 )
 
+        # Extract per-point time if present
+        if t_offset is not None:
+            t_wire_dtype = "<f8" if t_datatype == 8 else "<f4"
+            t_wire_size = 8 if t_datatype == 8 else 4
+            spec: list[tuple[str, str]] = []
+            if t_offset > 0:
+                spec.append(("_pre", f"V{t_offset}"))
+            spec.append(("t", t_wire_dtype))
+            post = point_step - t_offset - t_wire_size
+            if post > 0:
+                spec.append(("_post", f"V{post}"))
+            times = (
+                np.frombuffer(raw_data, dtype=np.dtype(spec), count=num_points)["t"]
+                .astype(np.float32)
+            )
+            pcd_t.point["t"] = o3c.Tensor(times.reshape(-1, 1), dtype=o3c.float32)
+
         # Extract RGB colors if present
         if rgb_offset is not None:
             dt = np.dtype(
@@ -656,6 +707,15 @@ class PointCloud2(Timestamped):
             field.count = 1
             fields.append(field)
         return fields
+
+    def _create_time_field(self) -> PointField:
+        """Create the optional per-point time (``t``) field at offset 16 (FLOAT32)."""
+        field = PointField()
+        field.name = "t"
+        field.offset = 16
+        field.datatype = 7  # FLOAT32
+        field.count = 1
+        return field
 
     def _create_xyzrgb_fields(self) -> list:  # type: ignore[type-arg]
         """Create X, Y, Z, RGB field definitions for colored pointclouds."""
