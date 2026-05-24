@@ -179,17 +179,39 @@ class MultiTBuffer:
         time_point: float | None = None,
         time_tolerance: float | None = None,
     ) -> Transform | None:
-        simple = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
+        with self._cv:
+            simple = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
 
-        if simple is not None:
-            return simple
+            if simple is not None:
+                return simple
 
-        complex = self.get_transform_search(parent_frame, child_frame, time_point, time_tolerance)
+            complex = self.get_transform_search(
+                parent_frame, child_frame, time_point, time_tolerance
+            )
 
-        if complex is None:
-            return None
+            if complex is None:
+                return None
 
-        return reduce(lambda t1, t2: t1 + t2, complex)
+            return reduce(lambda t1, t2: t1 + t2, complex)
+
+    def _wait_get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None,
+        time_tolerance: float | None,
+        forward_tolerance: float,
+    ) -> Transform | None:
+        deadline = time.monotonic() + forward_tolerance
+        with self._cv:
+            while True:
+                result = self._get(parent_frame, child_frame, time_point, time_tolerance)
+                if result is not None:
+                    return result
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                self._cv.wait(timeout=remaining)
 
     def get(
         self,
@@ -200,26 +222,16 @@ class MultiTBuffer:
         *,
         forward_tolerance: float = 0.0,
     ) -> Transform | None:
-        with self._cv:
-            result = self._get(parent_frame, child_frame, time_point, time_tolerance)
-            if result is not None:
-                return result
-
-            if forward_tolerance > 0:
-                deadline = time.monotonic() + forward_tolerance
-                while True:
-                    result = self._get(parent_frame, child_frame, time_point, time_tolerance)
-                    if result is not None:
-                        return result
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        break
-                    self._cv.wait(timeout=remaining)
-
+        result = self._get(parent_frame, child_frame, time_point, time_tolerance)
+        if result is None and forward_tolerance > 0:
+            result = self._wait_get(
+                parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
+            )
+        if result is None:
             logger.warning(
                 f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
             )
-            return None
+        return result
 
     def get_transform_search(
         self,
