@@ -36,6 +36,7 @@ from dimos.perception.detection.type.detection3d.imageDetections3DPC import Imag
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.protocol.tf.tf import TF
 from dimos.robot.unitree.go2 import connection
+from dimos.robot.unitree.go2.config import Go2Config, camera_info_static
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
 
@@ -97,7 +98,19 @@ def get_moment(tf):
         if odom_frame is None:
             raise ValueError("No odom frame found")
 
-        transforms = connection.GO2Connection._odom_to_tf(odom_frame)
+        transforms = [
+            Transform.from_pose(Go2Config.body_frame, odom_frame),
+            *[
+                Transform(
+                    translation=t.translation,
+                    rotation=t.rotation,
+                    frame_id=t.frame_id,
+                    child_frame_id=t.child_frame_id,
+                    ts=odom_frame.ts,
+                )
+                for t in Go2Config.static_transforms.values()
+            ],
+        ]
 
         tf.receive_transform(*transforms)
 
@@ -105,7 +118,7 @@ def get_moment(tf):
             "odom_frame": odom_frame,
             "lidar_frame": lidar_frame,
             "image_frame": image_frame,
-            "camera_info": connection._camera_info_static(),
+            "camera_info": camera_info_static(),
             "transforms": transforms,
             "tf": tf,
         }
