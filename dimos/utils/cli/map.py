@@ -103,6 +103,7 @@ def main(
         from scipy.spatial.transform import Rotation
 
         from dimos.mapping.relocalization.pgo import (
+            LoopClosure,
             keyframes_to_corrections,
             make_interpolator,
             pgo_keyframes,
@@ -112,7 +113,12 @@ def main(
 
         total = lidar.count()
         print("running PGO twopass map...")
-        keyframes = pgo_keyframes(lidar, on_frame=progress(total, "pgo pass 1 (optimizing)"))
+        loops: list[LoopClosure] = []
+        keyframes = pgo_keyframes(
+            lidar,
+            on_frame=progress(total, "pgo pass 1 (optimizing)"),
+            loop_closures_out=loops,
+        )
         corrections = keyframes_to_corrections(keyframes)
         interp = make_interpolator(corrections)
 
@@ -165,6 +171,24 @@ def main(
             rr.log(
                 "world/pgo_map/path",
                 rr.LineStrips3D(strips=[pgo_path], colors=[[255, 255, 255]], radii=[0.05]),
+                static=True,
+            )
+            rr.log(
+                "world/pgo_map/keyframes",
+                rr.Points3D(positions=pgo_path, colors=[[255, 200, 0]], radii=[0.05]),
+                static=True,
+            )
+        if pgo and loops:
+            loop_strips = [
+                [
+                    (lc.source.translation.x, lc.source.translation.y, lc.source.translation.z),
+                    (lc.target.translation.x, lc.target.translation.y, lc.target.translation.z),
+                ]
+                for lc in loops
+            ]
+            rr.log(
+                "world/pgo_map/loop_closures",
+                rr.LineStrips3D(strips=loop_strips, colors=[[231, 76, 60]], radii=[0.02]),
                 static=True,
             )
 

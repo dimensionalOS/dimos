@@ -30,7 +30,9 @@ Pipeline:
 
 `pgo_keyframes` runs ISAM2 + ICP loop closure across the input, emitting
 each kept keyframe with both its raw odom pose (`local`) and its optimized
-pose (`optimized`) as Transforms.
+pose (`optimized`) as Transforms. Pass `loop_closures_out=[]` to also
+collect each accepted ICP loop edge as a `LoopClosure` (source+target
+optimized poses + ICP fitness) — useful for visualizing the pose graph.
 
 `keyframes_to_corrections` is pure arithmetic: per keyframe, the drift
 correction is `optimized @ local^-1` (Transform composition). The resulting
@@ -135,13 +137,33 @@ class Keyframe:
     optimized: Transform
 
 
+@dataclass(frozen=True)
+class LoopClosure:
+    """An accepted ICP loop-closure edge in the pose graph.
+
+    `source` and `target` are the final optimized body poses (in
+    `world_corrected`) of the two keyframes the loop connected. `score` is
+    the ICP fitness used as the loop's translation variance — lower is a
+    tighter match.
+    """
+
+    source: Transform
+    target: Transform
+    score: float
+
+
 def pgo_keyframes(
     stream: Stream[PointCloud2],
     *,
     on_frame: Callable[[Any], None] | None = None,
+    loop_closures_out: list[LoopClosure] | None = None,
     **pgo_cfg: Unpack[PGOKwargs],
 ) -> Stream[Keyframe]:
-    """Run PGO across a pose-stamped point-cloud stream; emit one obs per keyframe."""
+    """Run PGO across a pose-stamped point-cloud stream; emit one obs per keyframe.
+
+    If `loop_closures_out` is provided, accepted loop edges are appended to
+    it (in detection order) using each keyframe's final optimized pose.
+    """
     cfg = PGOConfig(**pgo_cfg)
     pgo = _PGO(cfg)
 
@@ -167,6 +189,8 @@ def pgo_keyframes(
     out: Stream[Keyframe] = mem.stream("keyframes", Keyframe)
     for kf in pgo.finalize():
         out.append(kf, ts=kf.ts)
+    if loop_closures_out is not None:
+        loop_closures_out.extend(pgo.loop_closures())
     return out
 
 
@@ -312,6 +336,7 @@ class _PGO:
         self._cfg = config
         self._key_poses: list[_KeyPose] = []
         self._pending_loops: list[_LoopPair] = []
+        self._accepted_loops: list[_LoopPair] = []
         self._last_loop_ts: float | None = None
         self._world_correction: gtsam.Pose3 = gtsam.Pose3()  # identity
 
@@ -363,6 +388,31 @@ class _PGO:
                         frame_id=FRAME_WORLD_CORRECTED,
                         child_frame_id=FRAME_BODY,
                     ),
+                )
+            )
+        return out
+
+    def loop_closures(self) -> list[LoopClosure]:
+        """Accepted loop edges, resolved to final optimized poses."""
+        out: list[LoopClosure] = []
+        for pair in self._accepted_loops:
+            src = self._key_poses[pair.source]
+            tgt = self._key_poses[pair.target]
+            out.append(
+                LoopClosure(
+                    source=_pose3_to_transform(
+                        src.optimized,
+                        ts=src.timestamp,
+                        frame_id=FRAME_WORLD_CORRECTED,
+                        child_frame_id=FRAME_BODY,
+                    ),
+                    target=_pose3_to_transform(
+                        tgt.optimized,
+                        ts=tgt.timestamp,
+                        frame_id=FRAME_WORLD_CORRECTED,
+                        child_frame_id=FRAME_BODY,
+                    ),
+                    score=pair.score,
                 )
             )
         return out
@@ -521,6 +571,7 @@ class _PGO:
                 np.array([rot_var, rot_var, rot_var, trans_var, trans_var, trans_var])
             )
             self._graph.add(gtsam.BetweenFactorPose3(pair.target, pair.source, pair.offset, noise))
+        self._accepted_loops.extend(self._pending_loops)
         self._pending_loops.clear()
 
         self._isam2.update(self._graph, self._values)
