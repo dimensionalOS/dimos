@@ -24,6 +24,9 @@
 #include "geometry_msgs/Pose.hpp"
 #include "geometry_msgs/Quaternion.hpp"
 #include "geometry_msgs/Point.hpp"
+#include "geometry_msgs/Transform.hpp"
+#include "geometry_msgs/TransformStamped.hpp"
+#include "tf2_msgs/TFMessage.hpp"
 
 static std::atomic<bool> g_running{true};
 static void signal_handler(int) { g_running.store(false); }
@@ -111,6 +114,31 @@ static nav_msgs::Odometry build_odometry(const M3D& r, const V3D& t, double ts,
     return odom;
 }
 
+static tf2_msgs::TFMessage build_tf_message(const M3D& r, const V3D& t, double ts,
+                                            const std::string& frame_id,
+                                            const std::string& child_frame_id) {
+    geometry_msgs::TransformStamped stamped;
+    stamped.header = dimos::make_header(frame_id, ts);
+    stamped.child_frame_id = child_frame_id;
+
+    Eigen::Quaterniond q(r);
+    stamped.transform.translation.x = t.x();
+    stamped.transform.translation.y = t.y();
+    stamped.transform.translation.z = t.z();
+    stamped.transform.rotation.x = q.x();
+    stamped.transform.rotation.y = q.y();
+    stamped.transform.rotation.z = q.z();
+    stamped.transform.rotation.w = q.w();
+
+    tf2_msgs::TFMessage msg;
+    msg.transforms_length = 1;
+    msg.transforms.push_back(stamped);
+    return msg;
+}
+
+// Canonical dimos TF channel.
+static const std::string TF_TOPIC = "/tf#tf2_msgs.TFMessage";
+
 int main(int argc, char** argv)
 {
     signal(SIGTERM, signal_handler);
@@ -123,7 +151,6 @@ int main(int argc, char** argv)
     std::string odom_topic = mod.topic("odometry");
     std::string corrected_odom_topic = mod.topic("corrected_odometry");
     std::string global_map_topic = mod.topic("global_map");
-    std::string tf_topic = mod.topic("pgo_tf");
 
     // Config parameters
     Config config;
@@ -137,8 +164,9 @@ int main(int argc, char** argv)
     config.min_loop_detect_duration = mod.arg_float("min_loop_detect_duration", 5.0f);
 
     // Node-level config
-    std::string world_frame = mod.arg("world_frame", "map");
-    std::string local_frame = mod.arg("local_frame", "odom");
+    std::string config_frame_id = mod.arg("frame_id", "map");
+    std::string config_child_frame_id = mod.arg("child_frame_id", "odom");
+    std::string config_body_frame = mod.arg("body_frame", "base_link");
     float global_map_voxel_size = mod.arg_float("global_map_voxel_size", 0.1f);
     float global_map_publish_rate = mod.arg_float("global_map_publish_rate", 1.0f);
     double global_map_interval = global_map_publish_rate > 0
@@ -170,7 +198,6 @@ int main(int argc, char** argv)
         fprintf(stderr, "  odometry: %s\n", odom_topic.c_str());
         fprintf(stderr, "  corrected_odometry: %s\n", corrected_odom_topic.c_str());
         fprintf(stderr, "  global_map: %s\n", global_map_topic.c_str());
-        fprintf(stderr, "  pgo_tf: %s\n", tf_topic.c_str());
     }
 
     double last_global_map_time = 0.0;
@@ -226,12 +253,14 @@ int main(int argc, char** argv)
             V3D corr_t = pgo.offsetR() * cp.pose.t + pgo.offsetT();
 
             nav_msgs::Odometry corrected = build_odometry(
-                corr_r, corr_t, cur_time, world_frame, "base_link");
+                corr_r, corr_t, cur_time, config_frame_id, config_body_frame);
             lcm.publish(corrected_odom_topic, &corrected);
 
-            nav_msgs::Odometry tf_msg = build_odometry(
-                pgo.offsetR(), pgo.offsetT(), cur_time, world_frame, local_frame);
-            lcm.publish(tf_topic, &tf_msg);
+            // Publish map -> odom offset on the canonical /tf channel.
+            tf2_msgs::TFMessage tf_broadcast = build_tf_message(
+                pgo.offsetR(), pgo.offsetT(), cur_time,
+                config_frame_id, config_child_frame_id);
+            lcm.publish(TF_TOPIC, &tf_broadcast);
 
             std::this_thread::sleep_for(std::chrono::milliseconds(timer_period_ms));
             continue;
@@ -251,13 +280,14 @@ int main(int argc, char** argv)
         M3D corr_r = pgo.offsetR() * cp.pose.r;
         V3D corr_t = pgo.offsetR() * cp.pose.t + pgo.offsetT();
         nav_msgs::Odometry corrected = build_odometry(
-            corr_r, corr_t, cur_time, world_frame, "base_link");
+            corr_r, corr_t, cur_time, config_frame_id, config_body_frame);
         lcm.publish(corrected_odom_topic, &corrected);
 
-        // Publish TF correction (map -> odom offset)
-        nav_msgs::Odometry tf_msg = build_odometry(
-            pgo.offsetR(), pgo.offsetT(), cur_time, world_frame, local_frame);
-        lcm.publish(tf_topic, &tf_msg);
+        // Publish updated map -> odom offset (loop-closure correction) on /tf.
+        tf2_msgs::TFMessage tf_broadcast = build_tf_message(
+            pgo.offsetR(), pgo.offsetT(), cur_time,
+            config_frame_id, config_child_frame_id);
+        lcm.publish(TF_TOPIC, &tf_broadcast);
 
         // Publish global map (throttled)
         double now = cur_time;
@@ -283,7 +313,7 @@ int main(int argc, char** argv)
                 voxel.setLeafSize(global_map_voxel_size, global_map_voxel_size, global_map_voxel_size);
                 voxel.filter(*filtered);
 
-                sensor_msgs::PointCloud2 map_msg = smartnav::from_pcl(*filtered, world_frame, now);
+                sensor_msgs::PointCloud2 map_msg = smartnav::from_pcl(*filtered, config_frame_id, now);
                 lcm.publish(global_map_topic, &map_msg);
             }
         }

@@ -22,8 +22,6 @@ from __future__ import annotations
 from pathlib import Path
 import time
 
-from reactivex.disposable import Disposable
-
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
@@ -32,7 +30,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.frames import FRAME_MAP, FRAME_ODOM
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -43,9 +40,9 @@ class PGOConfig(NativeModuleConfig):
     executable: str = "result/bin/pgo"
     build_command: str | None = "nix build .#default --no-write-lock-file"
 
-    # Frame names
-    world_frame: str = FRAME_MAP
-    local_frame: str = FRAME_ODOM
+    frame_id: str = "map"
+    child_frame_id: str = "odom"
+    body_frame: str = "base_link"
 
     # Keyframe detection
     key_pose_delta_deg: float = 10.0
@@ -59,7 +56,6 @@ class PGOConfig(NativeModuleConfig):
     submap_resolution: float = 0.1
     min_loop_detect_duration: float = 5.0
 
-    # Input mode: transform world-frame scans to body-frame using odom
     unregister_input: bool = True
 
     # Global map publishing
@@ -78,19 +74,20 @@ class PGO(NativeModule):
     odometry: In[Odometry]
     corrected_odometry: Out[Odometry]
     global_map: Out[PointCloud2]
-    pgo_tf: Out[Odometry]
 
     @rpc
     def start(self) -> None:
         super().start()
-        self.register_disposable(
-            Disposable(self.pgo_tf.transport.subscribe(self._on_tf_correction, self.pgo_tf))
-        )
-        # Seed identity TF so consumers can query map->body immediately.
-        self._publish_tf(
-            translation=(0.0, 0.0, 0.0),
-            rotation=(0.0, 0.0, 0.0, 1.0),
-            ts=time.time(),
+        # Seed identity TF so consumers can query map->odom immediately, before
+        # the first PGO correction lands.
+        self.tf.publish(
+            Transform(
+                frame_id=self.config.frame_id,
+                child_frame_id=self.config.child_frame_id,
+                translation=Vector3(0.0, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                ts=time.time(),
+            )
         )
         if self.config.debug:
             logger.info("PGO native module started (C++ iSAM2 + PCL ICP)")
@@ -98,35 +95,3 @@ class PGO(NativeModule):
     @rpc
     def stop(self) -> None:
         super().stop()
-
-    def _on_tf_correction(self, msg: Odometry) -> None:
-        self._publish_tf(
-            translation=(
-                msg.pose.position.x,
-                msg.pose.position.y,
-                msg.pose.position.z,
-            ),
-            rotation=(
-                msg.pose.orientation.x,
-                msg.pose.orientation.y,
-                msg.pose.orientation.z,
-                msg.pose.orientation.w,
-            ),
-            ts=msg.ts or time.time(),
-        )
-
-    def _publish_tf(
-        self,
-        translation: tuple[float, float, float],
-        rotation: tuple[float, float, float, float],
-        ts: float,
-    ) -> None:
-        self.tf.publish(
-            Transform(
-                frame_id=self.config.world_frame,
-                child_frame_id=self.config.local_frame,
-                translation=Vector3(*translation),
-                rotation=Quaternion(*rotation),
-                ts=ts,
-            )
-        )
