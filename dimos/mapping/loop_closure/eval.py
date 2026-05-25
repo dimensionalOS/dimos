@@ -22,8 +22,8 @@ hk_village recordings and reports two totals to minimize:
   loop closures.
 
 Usage:
-    uv run python -m dimos.utils.cli.marker_eval
-    uv run python -m dimos.utils.cli.marker_eval hk_village1
+    uv run python -m dimos.mapping.loop_closure.marker_eval
+    uv run python -m dimos.mapping.loop_closure.marker_eval hk_village1
 """
 
 from __future__ import annotations
@@ -34,11 +34,9 @@ import os
 import time
 from typing import Any
 
-from rich.console import Console
-from rich.table import Table
 import typer
 
-from dimos.mapping.relocalization.pgo import (
+from dimos.mapping.loop_closure.pgo import (
     LoopClosure,
     keyframes_to_corrections,
     make_interpolator,
@@ -153,7 +151,6 @@ def main(
     ),
 ) -> None:
     names = datasets or DEFAULT_DATASETS
-    console = Console()
 
     n_workers = workers or min(len(names), os.cpu_count() or 1)
     wall_start = time.perf_counter()
@@ -161,7 +158,7 @@ def main(
 
     if n_workers <= 1 or len(names) <= 1:
         for name in names:
-            console.print(f"[dim]eval {name}...[/dim]")
+            print(f"eval {name}...")
             results[name] = _eval_recording(
                 name,
                 marker_size=marker_size,
@@ -171,7 +168,7 @@ def main(
                 marker_smoothing=marker_smoothing,
             )
     else:
-        console.print(f"[dim]running {len(names)} recordings on {n_workers} workers[/dim]")
+        print(f"running {len(names)} recordings on {n_workers} workers")
         # "spawn" — workers are fresh interpreters. Forking after cv2/openmp
         # have spun threads in the parent deadlocks because the threads
         # don't survive fork; spawn sidesteps it entirely.
@@ -192,30 +189,23 @@ def main(
                 name = futures[f]
                 results[name] = f.result()
                 pgo_time, spread = results[name]
-                console.print(f"  done {name:>14} ({pgo_time:5.2f}s, spread {spread:7.3f}m)")
+                print(f"  done {name:>14}  pgo={pgo_time:5.2f}s  spread={spread:7.3f}m")
 
     wall = time.perf_counter() - wall_start
 
-    table = Table(title="loop-closure eval")
-    table.add_column("recording")
-    table.add_column("pgo_time_s", justify="right")
-    table.add_column("spread_m", justify="right")
-
     total_pgo = 0.0
     total_spread = 0.0
+    print()
+    print(f"{'recording':<14}  {'pgo_time_s':>10}  {'spread_m':>10}")
+    print("-" * 40)
     for name in names:  # original order
         pgo_time, spread = results[name]
-        table.add_row(name, f"{pgo_time:.2f}", f"{spread:.3f}")
+        print(f"{name:<14}  {pgo_time:>10.2f}  {spread:>10.3f}")
         total_pgo += pgo_time
         total_spread += spread
-
-    table.add_section()
-    table.add_row(
-        "[bold]TOTAL[/bold]",
-        f"[bold]{total_pgo:.2f}[/bold]",
-        f"[bold]{total_spread:.3f}[/bold]",
-    )
-    console.print(table)
+    print("-" * 40)
+    print(f"{'TOTAL':<14}  {total_pgo:>10.2f}  {total_spread:>10.3f}")
+    print()
     print(f"TOTAL_PGO_TIME={total_pgo:.2f}")
     print(f"TOTAL_SPREAD={total_spread:.3f}")
     print(f"WALL_TIME={wall:.2f}")

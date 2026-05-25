@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from dimos.mapping.relocalization.pgo import (
+from dimos.mapping.loop_closure.pgo import (
     Keyframe,
     PGOConfig,
     _obs_to_pose3,

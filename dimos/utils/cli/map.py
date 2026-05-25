@@ -167,7 +167,7 @@ def main(
     loops: list[Any] = []
     interp: Any | None = None
     if pgo:
-        from dimos.mapping.relocalization.pgo import (
+        from dimos.mapping.loop_closure.pgo import (
             LoopClosure,
             keyframes_to_corrections,
             make_interpolator,
