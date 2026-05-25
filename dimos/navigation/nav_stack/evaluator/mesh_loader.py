@@ -49,6 +49,7 @@ def load_voxelized_mesh(
         triangles=len(mesh.triangles),
     )
 
+    o3d.utility.random.seed(42)
     pcd = mesh.sample_points_uniformly(number_of_points=num_sample_points)
     points = np.asarray(pcd.points)
 
