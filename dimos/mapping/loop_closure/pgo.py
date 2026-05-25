@@ -254,8 +254,9 @@ def make_interpolator(corrections: Stream[Transform]) -> Callable[[float], Trans
             t = t_stack[-1]
         else:
             t_lo, t_hi = ts_arr[idx - 1], ts_arr[idx]
-            alpha = (ts_clip - t_lo) / (t_hi - t_lo) if t_hi > t_lo else 0.0
-            t = (1 - alpha) * t_stack[idx - 1] + alpha * t_stack[idx]
+            # Nearest-neighbor in time: avoids blending two adjacent
+            # corrections that may straddle a loop-closure update.
+            t = t_stack[idx - 1] if (ts_clip - t_lo) < (t_hi - ts_clip) else t_stack[idx]
         return _transform_from_r_t(R, t, ts=float(ts))
 
     return interp
