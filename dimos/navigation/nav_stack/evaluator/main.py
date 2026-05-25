@@ -24,13 +24,37 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+from scipy.sparse.csgraph import connected_components
+
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.navigation.nav_stack.evaluator.evaluator import Evaluator
-from dimos.navigation.nav_stack.modules.mls_planner.mls_planner import MLSPlanner
+from dimos.navigation.nav_stack.modules.mls_planner.mls_planner import (
+    NODE_STEP_THRESHOLD_M,
+    MLSPlanner,
+    _build_surface_adjacency,
+    _build_surface_lookup,
+)
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _POSE_MARKER_RADIUS = 0.4
+_SURFACE_VOXEL = 0.1
+_SURFACE_COMPONENT_PALETTE = np.array(
+    [
+        [220, 50, 50],
+        [50, 180, 50],
+        [50, 100, 220],
+        [240, 180, 50],
+        [180, 50, 220],
+        [50, 200, 200],
+        [240, 130, 50],
+        [120, 200, 100],
+        [200, 60, 130],
+        [80, 80, 200],
+    ],
+    dtype=np.uint8,
+)
 
 
 def _render_start_pose(msg: Any) -> Any:
@@ -54,11 +78,30 @@ def _render_goal_pose(msg: Any) -> Any:
 
 
 def _render_global_map(msg: Any) -> Any:
-    return msg.to_rerun(voxel_size=0.03)
+    return msg.to_rerun(voxel_size=0.03, colors=[128, 128, 128])  # gray
 
 
 def _render_surface_map(msg: Any) -> Any:
-    return msg.to_rerun(mode="spheres", voxel_size=0.05, colors=[128, 0, 128])  # purple
+    import rerun as rr
+
+    pts, _ = msg.as_numpy()
+    if pts is None or len(pts) == 0:
+        return rr.Points3D([])
+    indices = np.floor(pts / _SURFACE_VOXEL).astype(np.int64)
+    ix, iy, iz = indices[:, 0], indices[:, 1], indices[:, 2]
+    surface_lookup = _build_surface_lookup(ix, iy, iz)
+    step_cells = max(0, int(NODE_STEP_THRESHOLD_M / _SURFACE_VOXEL))
+    adj, cell_to_idx, _ = _build_surface_adjacency(surface_lookup, _SURFACE_VOXEL, step_cells)
+    _, labels = connected_components(adj, directed=False)
+    point_labels = np.array(
+        [
+            labels[cell_to_idx[cell]]
+            for cell in zip(ix.tolist(), iy.tolist(), iz.tolist(), strict=True)
+        ],
+        dtype=np.int64,
+    )
+    colors = _SURFACE_COMPONENT_PALETTE[point_labels % len(_SURFACE_COMPONENT_PALETTE)]
+    return rr.Points3D(positions=pts, colors=colors, radii=[0.05])
 
 
 # raise the path and way points out of the surface

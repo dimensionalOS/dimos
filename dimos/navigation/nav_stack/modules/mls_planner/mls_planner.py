@@ -38,7 +38,7 @@ import networkx as nx
 import numpy as np
 from scipy import ndimage
 from scipy.sparse import csr_matrix
-from scipy.sparse.csgraph import dijkstra
+from scipy.sparse.csgraph import connected_components, dijkstra
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -56,7 +56,7 @@ SURFACE_EROSION_PASSES = 3
 NODE_SPACING_M = 2.0
 NODE_Z_TOLERANCE_M = 1.0
 NODE_STEP_THRESHOLD_M = 0.25
-NODE_MAX_EDGE_COST_M = 3.0
+NODE_MAX_EDGE_COST_M = 2.5
 NODE_SUB_SAMPLE_STRIDE = 20
 
 
@@ -359,26 +359,24 @@ def place_nodes(
 
 def add_node_edges(
     graph: nx.Graph,
-    surface_lookup: dict[tuple[int, int], np.ndarray],
+    adj: csr_matrix,
+    cell_to_idx: dict[tuple[int, int, int], int],
+    idx_to_cell: list[tuple[int, int, int]],
     voxel_size: float,
     *,
-    step_threshold: float,
     max_edge_cost: float,
 ) -> None:
     """Connect each node to nearby nodes the surface Dijkstra can reach.
 
-    Builds a sparse adjacency over surface cells once, then runs scipy's
-    native bounded Dijkstra from each node and looks up the cost to every
-    higher-id candidate within ``max_edge_cost`` (euclidean). Edges get the
-    reconstructed cell path stored under ``data["path"]``.
+    For each source node, runs scipy's bounded Dijkstra over the surface
+    adjacency and reads the cost to every higher-id candidate within
+    ``max_edge_cost`` (euclidean). Edges get the reconstructed cell path
+    stored under ``data["path"]``.
     """
     if graph.number_of_nodes() == 0:
         return
 
-    step_cells = max(0, int(step_threshold / voxel_size))
     edge_radius_cells = max(1, int(max_edge_cost / voxel_size))
-
-    adj, cell_to_idx, idx_to_cell = _build_surface_adjacency(surface_lookup, voxel_size, step_cells)
 
     grid = _GridHash(edge_radius_cells)
     cells: dict[int, tuple[int, int, int]] = {}
@@ -424,6 +422,77 @@ def add_node_edges(
                     predecessors, src_idx, tgt_idx, idx_to_cell
                 ),
             )
+
+
+def add_connectivity_bridges(
+    graph: nx.Graph,
+    adj: csr_matrix,
+    cell_to_idx: dict[tuple[int, int, int], int],
+    idx_to_cell: list[tuple[int, int, int]],
+) -> int:
+    """Bridge graph components that share a surface component but aren't connected.
+
+    Flood-fills the surface adjacency to label every cell with its connected
+    component, then for each surface component containing more than one
+    graph component, iteratively connects the closest cell-distance pair of
+    nodes across two unmerged components with an uncapped surface Dijkstra
+    edge. Returns the number of bridges added.
+    """
+    if graph.number_of_nodes() == 0:
+        return 0
+
+    _, surf_labels = connected_components(adj, directed=False)
+
+    nodes_by_surf_cc: dict[int, list[int]] = {}
+    for node_id in graph.nodes():
+        cell = graph.nodes[node_id]["cell"]
+        cell_idx = cell_to_idx.get(cell)
+        if cell_idx is None:
+            continue
+        nodes_by_surf_cc.setdefault(int(surf_labels[cell_idx]), []).append(node_id)
+
+    bridges_added = 0
+    for node_ids in nodes_by_surf_cc.values():
+        components = [list(c) for c in nx.connected_components(graph.subgraph(node_ids))]
+        while len(components) > 1:
+            best_cost_sq = math.inf
+            best_i = best_j = best_ai = best_bi = -1
+            for i in range(len(components)):
+                cells_i = np.array([graph.nodes[n]["cell"] for n in components[i]], dtype=np.int64)
+                for j in range(i + 1, len(components)):
+                    cells_j = np.array(
+                        [graph.nodes[n]["cell"] for n in components[j]], dtype=np.int64
+                    )
+                    diff = cells_i[:, None, :] - cells_j[None, :, :]
+                    dist_sq = (diff * diff).sum(-1)
+                    flat = int(dist_sq.argmin())
+                    ai, bi = divmod(flat, len(components[j]))
+                    c = int(dist_sq[ai, bi])
+                    if c < best_cost_sq:
+                        best_cost_sq = c
+                        best_i, best_j, best_ai, best_bi = i, j, ai, bi
+            node_a = components[best_i][best_ai]
+            node_b = components[best_j][best_bi]
+            src_idx = cell_to_idx[graph.nodes[node_a]["cell"]]
+            tgt_idx = cell_to_idx[graph.nodes[node_b]["cell"]]
+            dist, predecessors = dijkstra(adj, indices=src_idx, return_predecessors=True)
+            if math.isfinite(dist[tgt_idx]):
+                graph.add_edge(
+                    node_a,
+                    node_b,
+                    weight=float(dist[tgt_idx]),
+                    path=_reconstruct_path_from_predecessors(
+                        predecessors, src_idx, tgt_idx, idx_to_cell
+                    ),
+                )
+                bridges_added += 1
+            merged = components[best_i] + components[best_j]
+            components = [
+                components[k] for k in range(len(components)) if k not in (best_i, best_j)
+            ]
+            components.append(merged)
+
+    return bridges_added
 
 
 class _PublishableLineSegments3D(LineSegments3D):
@@ -551,22 +620,38 @@ class MLSPlanner(Module):
             place_ms=round(place_ms, 1),
         )
 
+        step_cells = max(0, int(NODE_STEP_THRESHOLD_M / self.config.voxel_size))
+        adj, cell_to_idx, idx_to_cell = _build_surface_adjacency(
+            surface_lookup, self.config.voxel_size, step_cells
+        )
+
         logger.info("Building edges", max_edge_cost_m=NODE_MAX_EDGE_COST_M)
         t2 = time.perf_counter()
         add_node_edges(
             graph,
-            surface_lookup,
+            adj,
+            cell_to_idx,
+            idx_to_cell,
             self.config.voxel_size,
-            step_threshold=NODE_STEP_THRESHOLD_M,
             max_edge_cost=NODE_MAX_EDGE_COST_M,
         )
         edges_ms = (time.perf_counter() - t2) * 1000
-        self._graph = graph
         logger.info(
             "Edges built",
             edges=graph.number_of_edges(),
             edges_ms=round(edges_ms, 1),
         )
+
+        t3 = time.perf_counter()
+        n_bridges = add_connectivity_bridges(graph, adj, cell_to_idx, idx_to_cell)
+        bridges_ms = (time.perf_counter() - t3) * 1000
+        logger.info(
+            "Bridges added",
+            bridges=n_bridges,
+            bridges_ms=round(bridges_ms, 1),
+        )
+
+        self._graph = graph
         self.node_edges.publish(
             _PublishableLineSegments3D(
                 ts=time.time(),
