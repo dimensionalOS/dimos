@@ -354,6 +354,7 @@ class _PGO:
         params = gtsam.ISAM2Params()
         params.setRelinearizeThreshold(0.01)
         params.relinearizeSkip = 1
+        params.setOptimizationParams(gtsam.ISAM2DoglegParams())
         self._isam2 = gtsam.ISAM2(params)
         self._graph = gtsam.NonlinearFactorGraph()
         self._values = gtsam.Values()
