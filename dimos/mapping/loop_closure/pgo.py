@@ -390,7 +390,7 @@ class _PGO:
         # poses gives us another chance to anchor those segments.
         self._last_loop_ts = None
         for i in range(len(self._key_poses)):
-            self._search_for_loops(cur_idx=i, enforce_time_gate=False)
+            self._search_for_loops(cur_idx=i, enforce_time_gate=False, no_fallback=True)
         if self._pending_loops:
             self._smooth_and_update()
         kps = sorted(self._key_poses, key=lambda kp: kp.timestamp)
@@ -510,7 +510,15 @@ class _PGO:
             )
         return cloud.voxel_downsample(self._cfg.submap_resolution)
 
-    def _search_for_loops(self, cur_idx: int | None = None, *, enforce_time_gate: bool = True) -> None:
+    def _search_for_loops(
+        self,
+        cur_idx: int | None = None,
+        *,
+        enforce_time_gate: bool = True,
+        opt_radius: float | None = None,
+        force_fallback: bool = False,
+        no_fallback: bool = False,
+    ) -> None:
         if len(self._key_poses) < self._cfg.min_keyframes_for_loop_search:
             return
         if cur_idx is None:
@@ -557,11 +565,12 @@ class _PGO:
         # time-gap filter AND accumulated drift is large enough that we
         # likely need a relocalization, fall back to wider local-frame
         # search with a stricter time gap.
-        opt_idxs = set(KDTree(opt_positions).query_ball_point(cur_opt_t, self._cfg.loop_search_radius))
+        opt_radius_val = opt_radius if opt_radius is not None else self._cfg.loop_search_radius
+        opt_idxs = set(KDTree(opt_positions).query_ball_point(cur_opt_t, opt_radius_val))
         candidates = _collect(opt_idxs, self._cfg.loop_time_thresh)
         drift = float(np.linalg.norm(cur_opt_t - cur_loc_t))
         relocalizing = False
-        if not candidates and drift > self._cfg.loop_fallback_drift_thresh:
+        if not no_fallback and (force_fallback or (not candidates and drift > self._cfg.loop_fallback_drift_thresh)):
             loc_idxs = set(KDTree(loc_positions).query_ball_point(cur_loc_t, self._cfg.loop_search_radius_local))
             candidates = _collect(loc_idxs - opt_idxs, self._cfg.loop_time_thresh_local)
             relocalizing = True
