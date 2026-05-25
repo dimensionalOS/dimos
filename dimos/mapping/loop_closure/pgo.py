@@ -467,7 +467,7 @@ class _PGO:
             prev_drift = float(np.linalg.norm(
                 np.asarray(prev.optimized.translation()) - np.asarray(prev.local.translation())
             ))
-            trans_var = 5e-4 if prev_drift > 1.5 else 1e-4
+            trans_var = 8e-4 if prev_drift > 1.5 else 1e-4
             noise = gtsam.noiseModel.Diagonal.Variances(
                 np.array([1e-6, 1e-6, 1e-6, trans_var, trans_var, 1e-6])
             )
