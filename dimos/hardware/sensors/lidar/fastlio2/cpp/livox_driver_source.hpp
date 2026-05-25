@@ -28,9 +28,10 @@
 #include "dimos_native_module.hpp"
 #include "fast_lio.hpp"
 #include "fast_lio_debug.hpp"
+#include "lidar_imu_source.hpp"
 #include "livox_sdk_config.hpp"
 
-class LivoxDriverSource {
+class LivoxDriverSource : public LidarImuSource {
 public:
     // Everything the source needs that comes from the CLI / outer config.
     // Defaults mirror the binary's documented defaults.
@@ -77,7 +78,7 @@ public:
     LivoxDriverSource(const LivoxDriverSource&) = delete;
     LivoxDriverSource& operator=(const LivoxDriverSource&) = delete;
 
-    bool start() {
+    bool start() override {
         if (started_) return true;
         if (!livox_common::init_livox_sdk(cfg_.host_ip, cfg_.lidar_ip, cfg_.ports, cfg_.debug)) {
             return false;
@@ -104,7 +105,7 @@ public:
         return true;
     }
 
-    void stop() {
+    void stop() override {
         if (!started_) return;
         LivoxLidarSdkUninit();
         started_ = false;
@@ -113,7 +114,7 @@ public:
     // Called once per main-loop iteration. Builds a CustomMsg from points
     // accumulated by on_point_cloud and feeds it to FAST-LIO at the
     // configured frame rate.
-    void tick(std::chrono::steady_clock::time_point now) {
+    void tick(std::chrono::steady_clock::time_point now) override {
         if (now - last_emit_ < frame_interval_) return;
 
         std::vector<custom_messages::CustomPoint> points;
