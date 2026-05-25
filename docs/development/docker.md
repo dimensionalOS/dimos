@@ -104,9 +104,9 @@ Use the helper script:
 
 ## CI/CD Pipeline
 
-Images are built by [docker-build.yml](https://github.com/dimensionalOS/dimos/blob/main/.github/workflows/docker-build.yml#L4) on merges to `main`/`dev` (when Docker files change) and weekly for base image security patches.
+Images are built by [`.github/workflows/docker-build.yml`](/.github/workflows/docker-build.yml#L4) on merges to `main`/`dev` (when Docker files change) and weekly for base image security patches.
 
-Tests and type checking run in [ci.yml](https://github.com/dimensionalOS/dimos/blob/main/.github/workflows/ci.yml) using pre-built images.
+Tests and type checking run in [`.github/workflows/ci.yml`](/.github/workflows/ci.yml) using pre-built images.
 
 ### Build Trigger Paths
 
@@ -143,7 +143,7 @@ RUN uv pip install '.[misc,cpu,sim,drone,unitree,web,perception,visualization]'
 
 ### Dev Image Features
 
-The dev image ([docker/dev/Dockerfile](https://github.com/dimensionalOS/dimos/blob/main/docker/dev/Dockerfile)) adds:
+The dev image ([`docker/dev/Dockerfile`](/docker/dev/Dockerfile)) adds:
 
 - Git, git-lfs, pre-commit
 - Editors (nano, vim)
