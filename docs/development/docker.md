@@ -151,4 +151,3 @@ The dev image ([`docker/dev/Dockerfile`](/docker/dev/Dockerfile)) adds:
 - Node.js (via nvm)
 - Custom bash prompt with version info
 - Entrypoint script that sources ROS setup
-

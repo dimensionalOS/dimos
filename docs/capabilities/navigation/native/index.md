@@ -178,4 +178,3 @@ unitree_go2 = autoconnect(
 to_svg(unitree_go2, "assets/go2_blueprint.svg")
 ```
 ![output](assets/go2_blueprint.svg)
-

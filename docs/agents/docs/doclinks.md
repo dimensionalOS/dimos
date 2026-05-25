@@ -5,11 +5,11 @@ Full documentation if needed: [`utils/docs/doclinks.md`](/dimos/utils/docs/docli
 ## Syntax
 
 
-| Pattern     | Example                                             |
-|-------------|-----------------------------------------------------|
-| Code file   | `[`service/spec.py`]()` → resolves path             |
-| With symbol | `Configurable` in `[`spec.py`]()` → adds `#L<line>` |
-| Doc link    | `[Configuration](.md)` → resolves to doc            |
+| Pattern     | Example                                                                 |
+|-------------|-------------------------------------------------------------------------|
+| Code file   | `[`service/spec.py`](/dimos/protocol/service/spec.py#L29)` → resolves path |
+| With symbol | `Configurable` in `[`service/spec.py`](/dimos/protocol/service/spec.py#L25)` → adds `#L<line>` |
+| Doc link    | `[Configuration](/docs/usage/configuration.md)` → resolves to doc       |
 
 
 ## Usage
