@@ -39,9 +39,10 @@ impl Ping {
     }
 
     async fn handle_confirm(&mut self, echo: Twist) {
-        println!(
-            "ping: echo received (seq={}, sample_config={})",
-            echo.linear.x as u64, echo.angular.z as i64,
+        tracing::info!(
+            seq = echo.linear.x as u64,
+            sample_config = echo.angular.z as i64,
+            "echo received",
         );
     }
 }

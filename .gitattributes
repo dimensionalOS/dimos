@@ -18,3 +18,4 @@
 *.foxe filter=lfs diff=lfs merge=lfs -text binary
 docs/capabilities/memory/assets/** filter=lfs diff=lfs merge=lfs -text
 docs/capabilities/memory/assets/.gitattributes -filter -diff -merge text
+docs/capabilities/mapping/assets/** filter=lfs diff=lfs merge=lfs -text

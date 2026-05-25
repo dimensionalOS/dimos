@@ -12,15 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
-from dimos.core.coordination.python_worker import MethodCallProxy
+from dimos.core.coordination.python_worker import Actor, MethodCallProxy
 from dimos.core.stream import RemoteStream
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.module import ModuleBase
 
 logger = setup_logger()
 
@@ -95,14 +100,30 @@ class ModuleProxyProtocol(Protocol):
 
 
 class RPCClient:
-    def __init__(self, actor_instance, actor_class) -> None:  # type: ignore[no-untyped-def]
-        self.rpc = LCMRPC()
+    def __init__(
+        self,
+        actor_instance: Actor | None,
+        actor_class: type[ModuleBase],
+        *,
+        rpc: LCMRPC | None = None,
+    ) -> None:
+        if rpc is None:
+            self.rpc = LCMRPC()
+            self._owns_rpc = True
+            self.rpc.start()
+        else:
+            self.rpc = rpc
+            self._owns_rpc = False
         self.actor_class = actor_class
         self.remote_name = actor_class.__name__
         self.actor_instance = actor_instance
         self.rpcs = actor_class.rpcs.keys()
-        self.rpc.start()
-        self._unsub_fns = []  # type: ignore[var-annotated]
+        self._unsub_fns: list = []  # type: ignore[type-arg]
+
+    @classmethod
+    def remote(cls, actor_class: type[ModuleBase], *, rpc: LCMRPC | None = None) -> RPCClient:
+        """Build an RPCClient with no parent-side Actor (cross-process clients)."""
+        return cls(None, actor_class, rpc=rpc)
 
     def stop_rpc_client(self) -> None:
         for unsub in self._unsub_fns:
@@ -113,7 +134,7 @@ class RPCClient:
 
         self._unsub_fns = []
 
-        if self.rpc:
+        if self.rpc and self._owns_rpc:
             self.rpc.stop()
             self.rpc = None  # type: ignore[assignment]
 
@@ -148,6 +169,13 @@ class RPCClient:
                 self.remote_name,
                 self._unsub_fns,
                 self.stop_rpc_client,
+            )
+
+        if self.actor_instance is None:
+            raise AttributeError(
+                f"{self.remote_name!r} has no @rpc method named {name!r}; "
+                f"this client was constructed without a parent-side Actor "
+                f"(remote-mode), so non-@rpc attribute access is unavailable."
             )
 
         # return super().__getattr__(name)

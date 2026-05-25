@@ -17,7 +17,13 @@ import time
 import pytest
 
 from dimos.utils.decorators.accumulators import RollingAverageAccumulator
-from dimos.utils.decorators.decorators import limit, retry, simple_mcache, ttl_cache
+from dimos.utils.decorators.decorators import (
+    cached_property,
+    limit,
+    retry,
+    simple_mcache,
+    ttl_cache,
+)
 
 
 def test_limit() -> None:
@@ -317,6 +323,91 @@ def test_simple_mcache_separate_instances() -> None:
     obj1.expensive.invalidate_cache(obj1)
     assert obj1.expensive() == 3
     assert obj2.expensive() == 2  # still cached
+
+
+def test_cached_property_computes_once_per_instance() -> None:
+    call_count = 0
+
+    class Holder:
+        @cached_property
+        def value(self) -> int:
+            nonlocal call_count
+            call_count += 1
+            return 42
+
+    obj = Holder()
+    assert obj.value == 42
+    assert obj.value == 42
+    assert call_count == 1
+
+
+def test_cached_property_separate_instances() -> None:
+    call_count = 0
+
+    class Holder:
+        @cached_property
+        def value(self) -> int:
+            nonlocal call_count
+            call_count += 1
+            return call_count
+
+    a, b = Holder(), Holder()
+    assert a.value == 1
+    assert b.value == 2
+    assert a.value == 1
+    assert call_count == 2
+
+
+def test_cached_property_thread_safe_single_compute() -> None:
+    import threading
+
+    n_workers = 8
+    start_gate = threading.Barrier(n_workers)
+    inside_fget = threading.Event()
+    allow_finish = threading.Event()
+    call_count = 0
+
+    class Holder:
+        @cached_property
+        def value(self) -> int:
+            nonlocal call_count
+            call_count += 1
+            inside_fget.set()
+            allow_finish.wait()  # block until main thread releases
+            return 123
+
+    obj = Holder()
+    results: list[int] = []
+    results_lock = threading.Lock()
+
+    def worker() -> None:
+        start_gate.wait()  # all workers race past the gate together
+        v = obj.value
+        with results_lock:
+            results.append(v)
+
+    threads = [threading.Thread(target=worker) for _ in range(n_workers)]
+    for t in threads:
+        t.start()
+
+    inside_fget.wait(timeout=1.0)  # one thread is now inside fget; others queue on lock
+    assert inside_fget.is_set()
+    allow_finish.set()
+    for t in threads:
+        t.join(timeout=1.0)
+
+    assert call_count == 1
+    assert results == [123] * n_workers
+
+
+def test_cached_property_preserves_docstring() -> None:
+    class Holder:
+        @cached_property
+        def value(self) -> int:
+            """The cached number."""
+            return 1
+
+    assert Holder.value.__doc__ == "The cached number."
 
 
 def test_ttl_cache_returns_cached_value() -> None:

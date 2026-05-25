@@ -27,7 +27,6 @@ import pytest
 from dimos.core import run_registry
 from dimos.core.run_registry import (
     RunEntry,
-    check_port_conflicts,
     cleanup_stale,
     generate_run_id,
     list_runs,
@@ -44,7 +43,6 @@ def tmp_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def _make_entry(
     run_id: str = "20260306-120000-test",
     pid: int | None = None,
-    grpc_port: int = 9877,
 ) -> RunEntry:
     return RunEntry(
         run_id=run_id,
@@ -54,7 +52,6 @@ def _make_entry(
         log_dir="/tmp/test-logs",
         cli_args=["test"],
         config_overrides={},
-        grpc_port=grpc_port,
     )
 
 
@@ -69,7 +66,6 @@ class TestRunEntryCRUD:
         assert loaded.run_id == entry.run_id
         assert loaded.pid == entry.pid
         assert loaded.blueprint == entry.blueprint
-        assert loaded.grpc_port == entry.grpc_port
 
         entry.remove()
         assert not entry.registry_path.exists()
@@ -134,25 +130,6 @@ class TestCleanupStale:
         removed = cleanup_stale()
         assert removed == 1
         assert not bad.exists()
-
-
-class TestPortConflicts:
-    """Port conflict detection."""
-
-    def test_port_conflict_detection(self, tmp_registry: Path):
-        entry = _make_entry(pid=os.getpid(), grpc_port=9877)
-        entry.save()
-
-        conflict = check_port_conflicts(grpc_port=9877)
-        assert conflict is not None
-        assert conflict.run_id == entry.run_id
-
-    def test_port_conflict_no_false_positive(self, tmp_registry: Path):
-        entry = _make_entry(pid=os.getpid(), grpc_port=8001)
-        entry.save()
-
-        conflict = check_port_conflicts(grpc_port=9877)
-        assert conflict is None
 
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator

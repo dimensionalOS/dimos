@@ -1,4 +1,5 @@
 pub mod lcm;
+pub mod log;
 pub mod module;
 pub mod transport;
 
