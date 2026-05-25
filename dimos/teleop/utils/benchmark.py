@@ -321,9 +321,16 @@ class TeleopBenchmarkModule(Module):
                 jitter = s["jitter_ms"]
                 loss = s["loss_pct"]
                 loss_str = f"{loss:.1f}%" if loss is not None else "n/a"
+                # Uncalibrated E2E (wall - sender ts): only present on stamped
+                # streams (cmd_vel_stamped, poses), and reads noisy / can go
+                # negative without clock-offset correction — hence the "~"
+                # prefix. Omitted entirely when there's no ts (e.g. buttons).
+                e2e = s["e2e_ms"]
+                e2e_str = f" | ~e2e p50 {e2e['p50']:.1f}ms" if e2e else ""
                 print(
                     f"[benchmark] {name}: {s['rate_hz']:.1f}Hz | "
-                    f"jitter p95 {jitter['p95']:.1f}ms | loss {loss_str} | n={s['count']}",
+                    f"jitter p95 {jitter['p95']:.1f}ms | loss {loss_str}{e2e_str} | "
+                    f"n={s['count']}",
                     flush=True,
                 )
             self._stop_event.wait(interval)

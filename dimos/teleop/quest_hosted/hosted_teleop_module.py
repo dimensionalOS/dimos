@@ -305,15 +305,12 @@ class HostedTeleopModule(Module):
     def _connect_blocking(self) -> None:
         assert self._loop is not None
         future = asyncio.run_coroutine_threadsafe(self._connect(), self._loop)
-        # Must exceed the HTTP timeout below + ICE gathering. create_session
-        # on the broker now does multiple CF round-trips (session + publisher
-        # track add for video), so give it room.
+        # Must exceed the HTTP timeout below + ICE gathering round-trip.
         future.result(timeout=45.0)
 
     async def _connect(self) -> None:
-        # 30s read timeout: the broker's create_session makes 2 CF calls when
-        # video is enabled (session + add_tracks), and add_tracks itself has a
-        # 30s CF-side timeout. 10s here would give up before the broker can.
+        # Generous read timeout: registration is one POST, but the broker makes
+        # CF round-trips behind it; 10s can be too tight under a slow link.
         self._http = httpx.AsyncClient(timeout=30.0)
 
         ice_servers = [RTCIceServer(urls=u) for u in self.config.stun_urls]
@@ -326,17 +323,10 @@ class HostedTeleopModule(Module):
                 )
             )
 
-        # Single bundled transport for video + datachannel. Two pieces are BOTH
-        # required against aiortc 1.14 + CF:
-        #  1. MAX_BUNDLE — make aiortc put video + SCTP on ONE ICE transport
-        #     (default BALANCED gives two; the video one fails ICE against CF's
-        #     single bundled transport).
-        #  2. addTrack BEFORE createDataChannel — so a transceiver exists when
-        #     the SCTP transport is created, which makes aiortc mark
-        #     sctp._bundled=True up front. Without it, setRemoteDescription's
-        #     bundle-collapse hits `not sctp._bundled`, discards the SHARED
-        #     transport (nTransports 1→0), and ICE never starts. Verified:
-        #     track-first + MAX_BUNDLE ⇒ sctp._bundled=True ⇒ discard skipped.
+        # aiortc 1.14 + CF need MAX_BUNDLE so video + SCTP share ONE ICE
+        # transport (default BALANCED makes two; the video one fails ICE against
+        # CF's single bundled transport). DO NOT remove — and addTrack must come
+        # before createDataChannel below; see that comment.
         self._pc = RTCPeerConnection(
             RTCConfiguration(
                 iceServers=ice_servers,
@@ -344,8 +334,12 @@ class HostedTeleopModule(Module):
             )
         )
 
-        # Robot→operator camera. MUST be added before the datachannel (see above)
-        # — adds the sendonly m=video the broker declares as a publisher track.
+        # Robot→operator camera. MUST be added BEFORE createDataChannel: that
+        # makes a transceiver exist when the SCTP transport is created, so
+        # aiortc marks sctp._bundled=True. Otherwise setRemoteDescription's
+        # bundle-collapse discards the shared transport and ICE never starts.
+        # The track is the sendonly m=video the broker publishes to the SFU
+        # (via /tracks/new) and the operator pulls.
         self._pc.addTrack(self._video_track)
 
         # Throwaway DataChannel — forces an SCTP m-line into the offer so the SFU
@@ -517,7 +511,7 @@ class HostedTeleopModule(Module):
     def _open_cmd_channel(self, sctp_id: int) -> None:
         if self._pc is None:
             return
-        logger.info(f"Operator joined — opening negotiated cmd_unreliable on SCTP id {sctp_id}")
+        logger.info("Opening negotiated cmd_unreliable on SCTP id %d", sctp_id)
         channel = self._pc.createDataChannel(
             "cmd_unreliable",
             ordered=False,
@@ -526,20 +520,10 @@ class HostedTeleopModule(Module):
             id=sctp_id,
         )
 
-        @channel.on("open")
-        def _on_open() -> None:
-            logger.info("cmd_unreliable channel OPEN")
-
         @channel.on("message")
         def _on_message(data: Any) -> None:
             if isinstance(data, bytes):
                 self._dispatch_bytes(data)
-
-        @channel.on("close")
-        def _on_close() -> None:
-            logger.info("cmd_unreliable channel closed")
-
-        logger.info(f"cmd_unreliable readyState immediately after create: {channel.readyState}")
 
         self._cmd_channel = channel
 
@@ -560,7 +544,7 @@ class HostedTeleopModule(Module):
         """
         if self._pc is None:
             return
-        logger.info(f"Operator joined — opening negotiated state_reliable on SCTP id {sctp_id}")
+        logger.info("Opening negotiated state_reliable on SCTP id %d", sctp_id)
         channel = self._pc.createDataChannel(
             "state_reliable",
             ordered=True,
@@ -568,19 +552,9 @@ class HostedTeleopModule(Module):
             id=sctp_id,
         )
 
-        @channel.on("open")
-        def _on_open() -> None:
-            logger.info("state_reliable channel OPEN")
-
         @channel.on("message")
         def _on_message(data: Any) -> None:
             self._on_state_message(data)
-
-        @channel.on("close")
-        def _on_close() -> None:
-            logger.info("state_reliable channel closed")
-
-        logger.info(f"state_reliable readyState immediately after create: {channel.readyState}")
 
         self._state_channel = channel
 
@@ -602,28 +576,13 @@ class HostedTeleopModule(Module):
         """
         if self._pc is None:
             return
-        logger.info(
-            f"Operator joined — opening negotiated state_reliable_back on SCTP id {sctp_id}"
-        )
+        logger.info("Opening negotiated state_reliable_back on SCTP id %d", sctp_id)
         channel = self._pc.createDataChannel(
             "state_reliable_back",
             ordered=True,
             negotiated=True,
             id=sctp_id,
         )
-
-        @channel.on("open")
-        def _on_open() -> None:
-            logger.info("state_reliable_back channel OPEN")
-
-        @channel.on("close")
-        def _on_close() -> None:
-            logger.info("state_reliable_back channel closed")
-
-        logger.info(
-            f"state_reliable_back readyState immediately after create: {channel.readyState}"
-        )
-
         self._state_back_channel = channel
 
     def _close_state_back_channel(self) -> None:
@@ -667,11 +626,19 @@ class HostedTeleopModule(Module):
             out = self._state_back_channel or self._state_channel
             if out is not None and out.readyState == "open":
                 out.send(pong)
-                logger.info(
-                    f"state_reliable: ping received (client_ts={client_ts}), pong sent on {out.label}"
-                )
             else:
                 logger.warning("state_reliable: ping received but no open channel for pong")
+        elif kind == "clock_report":
+            # The operator computes RTT + clock offset (min-RTT over the ping
+            # burst); it can't be derived robot-side from one-way pings, so the
+            # browser reports it here for visibility in the robot terminal.
+            rtt = msg.get("rtt_ms")
+            off = msg.get("offset_ms")
+            logger.info(
+                "clock-sync: operator rtt=%.1fms offset=%.1fms",
+                float(rtt) if rtt is not None else float("nan"),
+                float(off) if off is not None else float("nan"),
+            )
         else:
             logger.debug(f"state_reliable: unknown message type {kind!r}")
 
