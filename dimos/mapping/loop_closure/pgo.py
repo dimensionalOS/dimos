@@ -390,7 +390,7 @@ class _PGO:
         # poses gives us another chance to anchor those segments.
         self._last_loop_ts = None
         for i in range(len(self._key_poses)):
-            self._search_for_loops(cur_idx=i, enforce_time_gate=False, no_fallback=True, submap_half_range=37)
+            self._search_for_loops(cur_idx=i, enforce_time_gate=False, no_fallback=True, submap_half_range=38)
         if self._pending_loops:
             self._smooth_and_update()
         kps = sorted(self._key_poses, key=lambda kp: kp.timestamp)
