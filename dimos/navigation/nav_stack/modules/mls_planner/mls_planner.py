@@ -36,6 +36,7 @@ from scipy.spatial import cKDTree
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path, sec_nsec
@@ -174,7 +175,7 @@ def _build_surface_adjacency(
     )
     cell_to_idx: dict[tuple[int, int, int], int] = {cell: i for i, cell in enumerate(idx_to_cell)}
 
-    # Pack (ix, iy) into one int64 key; padding so dx, dy ∈ {-1, 0, +1} don't collide.
+    # Pack (ix, iy) into one int64 key. Padding leaves room for dx, dy in -1, 0, 1.
     ix_pos = ix - ix.min() + 1
     iy_pos = iy - iy.min() + 1
     y_range = int(iy_pos.max()) + 2
@@ -242,7 +243,13 @@ def place_nodes(
     node_spacing: float,
     wall_buffer: float,
     step_threshold: float,
-) -> tuple[nx.Graph, csr_matrix, dict[tuple[int, int, int], int], list[tuple[int, int, int]]]:
+) -> tuple[
+    nx.Graph,
+    csr_matrix,
+    dict[tuple[int, int, int], int],
+    list[tuple[int, int, int]],
+    dict[tuple[int, int], np.ndarray],
+]:
     """Place nodes by greedy NMS on the dist-to-wall field from one Dijkstra.
 
     Run multisource Dijkstra with the surface edges as sources to find distance from wall.
@@ -250,7 +257,7 @@ def place_nodes(
     graph = nx.Graph()
     if len(surface_points) == 0:
         empty_adj = csr_matrix((0, 0), dtype=np.float64)
-        return graph, empty_adj, {}, []
+        return graph, empty_adj, {}, [], {}
 
     sx = np.floor(surface_points[:, 0] / voxel_size).astype(np.int64)
     sy = np.floor(surface_points[:, 1] / voxel_size).astype(np.int64)
@@ -262,7 +269,7 @@ def place_nodes(
 
     n_cells = adj.shape[0]
     if n_cells == 0:
-        return graph, adj, cell_to_idx, idx_to_cell
+        return graph, adj, cell_to_idx, idx_to_cell, surface_lookup
 
     neighbor_counts = np.diff(adj.indptr)
     boundary_indices = np.where(neighbor_counts < 8)[0]
@@ -277,7 +284,7 @@ def place_nodes(
     candidate_mask = np.isfinite(dist) & (dist >= wall_buffer)
     candidate_indices = np.where(candidate_mask)[0]
     if len(candidate_indices) == 0:
-        return graph, adj, cell_to_idx, idx_to_cell
+        return graph, adj, cell_to_idx, idx_to_cell, surface_lookup
     order = candidate_indices[np.argsort(-dist[candidate_indices])]
     positions = cell_positions[order]
 
@@ -302,7 +309,7 @@ def place_nodes(
         nearby = tree.query_ball_point(positions[i], r=node_spacing)
         killed[np.asarray(nearby, dtype=np.int64)] = True
 
-    return graph, adj, cell_to_idx, idx_to_cell
+    return graph, adj, cell_to_idx, idx_to_cell, surface_lookup
 
 
 def add_node_edges(
@@ -310,16 +317,15 @@ def add_node_edges(
     adj: csr_matrix,
     cell_to_idx: dict[tuple[int, int, int], int],
     idx_to_cell: list[tuple[int, int, int]],
-) -> None:
+) -> tuple[np.ndarray, dict[int, int]]:
     """Add Voronoi-adjacency edges between placed nodes.
 
-    One multi-source Dijkstra labels each cell with its closest node. Pairs
-    of adjacent cells with different labels mark Voronoi boundaries between
-    their owners. The cheapest crossing per node-pair becomes an edge with
-    the cell path stored on data["path"].
+    One multi-source Dijkstra labels each cell with its nearest node. The cheapest
+    boundary crossing per node-pair becomes an edge with the cell path on data["path"].
+    Returns source_cells (per-cell owner) and cell_idx_to_nid for pose-snapping.
     """
     if graph.number_of_nodes() == 0:
-        return
+        return np.full(adj.shape[0], -9999, dtype=np.int64), {}
 
     node_ids = list(graph.nodes())
     source_cell_indices = np.empty(len(node_ids), dtype=np.int64)
@@ -343,7 +349,7 @@ def add_node_edges(
     src_v = source_cells[cols]
     boundary = (src_u != src_v) & (src_u >= 0) & (src_v >= 0)
     if not boundary.any():
-        return
+        return source_cells, cell_idx_to_nid
 
     b_rows = rows[boundary]
     b_cols = cols[boundary]
@@ -373,9 +379,11 @@ def add_node_edges(
         full_path = np.array(path_a + path_b, dtype=np.int64)
         graph.add_edge(nid_a, nid_b, weight=cost, path=full_path)
 
+    return source_cells, cell_idx_to_nid
+
 
 class _PublishableLineSegments3D(LineSegments3D):
-    """LineSegments3D with a Python lcm_encode; upstream only implements decode."""
+    """LineSegments3D with a Python lcm_encode. Upstream only implements decode."""
 
     def lcm_encode(self) -> bytes:
         lcm_msg = LCMPath()
@@ -446,6 +454,10 @@ class MLSPlanner(Module):
         super().__init__(**kwargs)
         self._latest_start: Odometry | None = None
         self._graph: nx.Graph | None = None
+        self._cell_to_idx: dict[tuple[int, int, int], int] | None = None
+        self._surface_lookup: dict[tuple[int, int], np.ndarray] | None = None
+        self._source_cells: np.ndarray | None = None
+        self._cell_idx_to_nid: dict[int, int] | None = None
 
     async def handle_global_map(self, msg: PointCloud2) -> None:
         points, _ = msg.as_numpy()
@@ -468,7 +480,7 @@ class MLSPlanner(Module):
 
         logger.info("Placing nodes", spacing_m=NODE_SPACING_M)
         t1 = time.perf_counter()
-        graph, adj, cell_to_idx, idx_to_cell = place_nodes(
+        graph, adj, cell_to_idx, idx_to_cell, surface_lookup = place_nodes(
             surface_points,
             self.config.voxel_size,
             node_spacing=NODE_SPACING_M,
@@ -491,7 +503,7 @@ class MLSPlanner(Module):
 
         logger.info("Building edges")
         t2 = time.perf_counter()
-        add_node_edges(graph, adj, cell_to_idx, idx_to_cell)
+        source_cells, cell_idx_to_nid = add_node_edges(graph, adj, cell_to_idx, idx_to_cell)
         edges_ms = (time.perf_counter() - t2) * 1000
         logger.info(
             "Edges built",
@@ -500,6 +512,11 @@ class MLSPlanner(Module):
         )
 
         self._graph = graph
+        self._cell_to_idx = cell_to_idx
+        self._surface_lookup = surface_lookup
+        self._source_cells = source_cells
+        self._cell_idx_to_nid = cell_idx_to_nid
+
         self.node_edges.publish(
             _PublishableLineSegments3D(
                 ts=time.time(),
@@ -515,8 +532,163 @@ class MLSPlanner(Module):
         if self._latest_start is None:
             logger.warning("MLSPlanner received goal before start; skipping")
             return
+        if self._graph is None or self._graph.number_of_nodes() == 0:
+            logger.warning("MLSPlanner received goal before graph was built; skipping")
+            return
+
+        t0 = time.perf_counter()
+        start = (self._latest_start.x, self._latest_start.y, self._latest_start.z)
+        goal = (msg.x, msg.y, msg.z)
+
+        start_node = self._snap_pose_to_node(start)
+        goal_node = self._snap_pose_to_node(goal)
+        if start_node is None or goal_node is None:
+            logger.warning(
+                "Could not snap pose to graph",
+                start=start,
+                goal=goal,
+                start_node=start_node,
+                goal_node=goal_node,
+            )
+            return
+        assert self._graph is not None
         logger.info(
-            "MLSPlanner goal received (not yet implemented)",
-            start=(self._latest_start.x, self._latest_start.y, self._latest_start.z),
-            goal=(msg.x, msg.y, msg.z),
+            "Snapped poses to graph nodes",
+            start_pose=start,
+            start_node=start_node,
+            start_node_pos=self._graph.nodes[start_node]["pos"],
+            goal_pose=goal,
+            goal_node=goal_node,
+            goal_node_pos=self._graph.nodes[goal_node]["pos"],
         )
+
+        try:
+            node_seq = nx.shortest_path(
+                self._graph, source=start_node, target=goal_node, weight="weight"
+            )
+        except nx.NetworkXNoPath:
+            logger.warning(
+                "No path between start and goal nodes",
+                start_node=start_node,
+                goal_node=goal_node,
+            )
+            return
+
+        waypoints = self._assemble_waypoints(node_seq, start, goal)
+        plan_ms = (time.perf_counter() - t0) * 1000
+
+        now = time.time()
+        path_msg = Path(
+            ts=now,
+            frame_id=self.config.world_frame,
+            poses=[
+                PoseStamped(
+                    ts=now,
+                    frame_id=self.config.world_frame,
+                    position=[float(x), float(y), float(z)],
+                    orientation=[0.0, 0.0, 0.0, 1.0],
+                )
+                for x, y, z in waypoints
+            ],
+        )
+        self.path.publish(path_msg)
+        logger.info(
+            "Path planned",
+            waypoints=len(waypoints),
+            nodes_traversed=len(node_seq),
+            plan_ms=round(plan_ms, 1),
+        )
+
+    def _snap_pose_to_node(self, pose_xyz: tuple[float, float, float]) -> int | None:
+        """Snap pose to its owning node via the precomputed Voronoi labels.
+
+        Finds the surface cell in the pose's column, looks up its owner in source_cells.
+        Falls back to nearby columns if the pose's own column has no surface.
+        """
+        if (
+            self._graph is None
+            or self._cell_to_idx is None
+            or self._surface_lookup is None
+            or self._source_cells is None
+            or self._cell_idx_to_nid is None
+        ):
+            return None
+        if self._graph.number_of_nodes() == 0:
+            return None
+
+        voxel = self.config.voxel_size
+        x, y, z = pose_xyz
+        ix = int(np.floor(x / voxel))
+        iy = int(np.floor(y / voxel))
+        target_iz = int(np.floor(z / voxel)) - 1
+        tolerance_cells = int(np.ceil(self.config.robot_height / voxel))
+
+        cell = self._best_iz_in_column(ix, iy, target_iz, tolerance_cells)
+        if cell is None:
+            # Pose's column has no surface. Try nearby columns.
+            search_radius = 5
+            best_cell = None
+            best_d2 = -1
+            for dix in range(-search_radius, search_radius + 1):
+                for diy in range(-search_radius, search_radius + 1):
+                    if dix == 0 and diy == 0:
+                        continue
+                    c = self._best_iz_in_column(ix + dix, iy + diy, target_iz, tolerance_cells)
+                    if c is None:
+                        continue
+                    d2 = dix * dix + diy * diy
+                    if best_d2 < 0 or d2 < best_d2:
+                        best_d2 = d2
+                        best_cell = c
+            cell = best_cell
+            if cell is None:
+                return None
+
+        cell_idx = self._cell_to_idx.get(cell)
+        if cell_idx is None:
+            return None
+        owner_cell_idx = int(self._source_cells[cell_idx])
+        if owner_cell_idx < 0:
+            return None
+        return self._cell_idx_to_nid.get(owner_cell_idx)
+
+    def _best_iz_in_column(
+        self, ix: int, iy: int, target_iz: int, tolerance_cells: int
+    ) -> tuple[int, int, int] | None:
+        """Surface iz in column (ix, iy) closest to target_iz, within tolerance."""
+        if self._surface_lookup is None:
+            return None
+        zs = self._surface_lookup.get((ix, iy))
+        if zs is None or len(zs) == 0:
+            return None
+        distances = np.abs(zs - target_iz)
+        best = int(distances.argmin())
+        if int(distances[best]) > tolerance_cells:
+            return None
+        return (ix, iy, int(zs[best]))
+
+    def _assemble_waypoints(
+        self,
+        node_seq: list[int],
+        start_pose: tuple[float, float, float],
+        goal_pose: tuple[float, float, float],
+    ) -> list[tuple[float, float, float]]:
+        """Chain cached edge paths into a continuous waypoint list, bracketed by the actual poses."""
+        assert self._graph is not None
+        voxel = self.config.voxel_size
+        cells: list[tuple[int, int, int]] = []
+        for i in range(len(node_seq) - 1):
+            a, b = node_seq[i], node_seq[i + 1]
+            edge_path: np.ndarray = self._graph[a][b]["path"]
+            # Stored path runs from min(a, b) to max(a, b). Reverse if traversing the other way.
+            if a > b:
+                edge_path = edge_path[::-1]
+            tail = edge_path if i == 0 else edge_path[1:]
+            for c in tail:
+                cells.append((int(c[0]), int(c[1]), int(c[2])))
+
+        waypoints: list[tuple[float, float, float]] = [start_pose]
+        for cix, ciy, ciz in cells:
+            waypoints.append(((cix + 0.5) * voxel, (ciy + 0.5) * voxel, (ciz + 1.0) * voxel))
+        waypoints.append(goal_pose)
+        return waypoints
