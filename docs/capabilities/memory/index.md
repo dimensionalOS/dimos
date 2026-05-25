@@ -1,4 +1,5 @@
-<details><summary>Python</summary>
+<details>
+<summary>Python</summary>
 
 ```python fold session=mem output=none
 import pickle
@@ -23,8 +24,7 @@ for name, stream in store.streams.items():
    print(stream.summary())
 ```
 
-<!--Result:-->
-```
+```results
 Stream("color_image"): 4164 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s)
 Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
 Stream("lidar"): 2251 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.3s)
@@ -43,8 +43,6 @@ drawing.add(global_map)
 drawing.add(store.streams.color_image)
 drawing.to_svg("assets/color_image.svg")
 ```
-
-
 
 our drawing system applies turbo color scheme to timestamps by default
 
@@ -160,15 +158,15 @@ drawing.add(matches)
 drawing.to_svg("assets/embedding_focused.svg")
 ```
 
-<!--Result:-->
-```
+```results
 Stream("color_image_embedded") | vector_search(k=30)
 08:19:54.129 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
 ```
 
 ![output](assets/embedding_focused.svg)
 
-<details><summary>Python</summary>
+<details>
+<summary>Python</summary>
 
 ```python fold session=mem
 import matplotlib
