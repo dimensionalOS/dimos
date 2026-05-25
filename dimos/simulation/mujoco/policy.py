@@ -162,14 +162,18 @@ class DroneController:
             drone_hover_thrust: float = 0.26487,
             attitude_p: float = 0.5,
             attitude_d: float = 2.0,
+            yaw_p: float = 0.01,
             max_tilt_angle: float = 0.1,
+            max_yaw_rate: float = 1.0,
             **kwargs: Any,
     ) -> None:
         self._input_controller = input_controller
         self._drone_hover_thrust = drone_hover_thrust
         self._attitude_p = attitude_p
         self._attitude_d = attitude_d
+        self._yaw_p = yaw_p
         self._max_tilt_angle = max_tilt_angle
+        self._max_yaw_rate = max_yaw_rate
 
     def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         return self._input_controller.get_command().astype(np.float32)
@@ -205,4 +209,4 @@ class DroneController:
         data.ctrl[0] = self._drone_hover_thrust
         data.ctrl[1] = self._attitude_p * (current_roll - desired_roll) + self._attitude_d * roll_rate
         data.ctrl[2] = self._attitude_p * (current_pitch - desired_pitch) + self._attitude_d * pitch_rate
-        data.ctrl[3] = self._attitude_p * (yaw - yaw_rate)
+        data.ctrl[3] = self._yaw_p * (yaw * self._max_yaw_rate - yaw_rate)
