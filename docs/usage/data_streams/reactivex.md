@@ -60,7 +60,7 @@ rx.of(1, 2, 3).pipe(
 item_1
 item_2
 item_3
-<reactivex.disposable.disposable.Disposable object at 0x7fcedec40b90>
+<reactivex.disposable.disposable.Disposable object at 0x7f5fa44d0d10>
 ```
 
 ### Filter: `filter`
@@ -74,7 +74,7 @@ rx.of(1, 2, 3, 4, 5).pipe(
 ```results
 2
 4
-<reactivex.disposable.disposable.Disposable object at 0x7fcedec40c50>
+<reactivex.disposable.disposable.Disposable object at 0x7f5fa44d0c20>
 ```
 
 ### Limit emissions: `take`
@@ -89,7 +89,7 @@ rx.of(1, 2, 3, 4, 5).pipe(
 1
 2
 3
-<reactivex.disposable.disposable.Disposable object at 0x7fcedec40a40>
+<reactivex.disposable.disposable.Disposable object at 0x7f5fa44d0e60>
 ```
 
 ### Flatten nested observables: `flat_map`
@@ -108,7 +108,7 @@ rx.of(1, 2).pipe(
 2
 20
 200
-<reactivex.disposable.disposable.Disposable object at 0x7fcedec41a60>
+<reactivex.disposable.disposable.Disposable object at 0x7f5fa44d1b80>
 ```
 
 ## Rate Limiting
@@ -237,7 +237,7 @@ value: 1
 value: 2
 value: 3
 done
-<reactivex.disposable.disposable.Disposable object at 0x7fcedec42d20>
+<reactivex.disposable.disposable.Disposable object at 0x7f5fa44d33b0>
 ```
 
 ## Disposables: Cancelling Subscriptions

@@ -89,6 +89,29 @@ class LogFormat(enum.Enum):
     JSON = "json"
 
 
+# convert to Python levels
+_NATIVE_TO_PYTHON_LEVELS = {
+    "trace": "debug",
+    "debug": "debug",
+    "info": "info",
+    "warn": "warning",
+    "warning": "warning",
+    "err": "error",
+    "error": "error",
+    "fatal": "critical",
+    "critical": "critical",
+}
+
+# convert to Rust levels
+_PYTHON_TO_RUST_LEVELS = {
+    "DEBUG": "debug",
+    "INFO": "info",
+    "WARNING": "warn",
+    "ERROR": "error",
+    "CRITICAL": "error",
+}
+
+
 class NativeModuleConfig(ModuleConfig):
     """Configuration for a native (C/C++) subprocess module."""
 
@@ -98,7 +121,7 @@ class NativeModuleConfig(ModuleConfig):
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
     shutdown_timeout: float = DEFAULT_THREAD_JOIN_TIMEOUT
-    log_format: LogFormat = LogFormat.TEXT
+    log_format: LogFormat = LogFormat.JSON
     auto_build: bool = False
 
     # New version of Native Modules read json configs from stdin
@@ -180,6 +203,11 @@ class NativeModule(Module):
             self.config.executable = str(Path(self.config.cwd) / self.config.executable)
 
     @rpc
+    def build(self) -> None:
+        super().build()
+        self._maybe_build()
+
+    @rpc
     def start(self) -> None:
         super().start()
         if self._process is not None and self._process.poll() is None:
@@ -190,8 +218,6 @@ class NativeModule(Module):
             )
             return
 
-        self._maybe_build()
-
         topics = self._collect_topics()
 
         cmd = [self.config.executable]
@@ -201,6 +227,11 @@ class NativeModule(Module):
         cmd.extend(self.config.extra_args)
 
         env = {**os.environ, **self.config.extra_env}
+
+        # set Rust logging to match Python level
+        env["RUST_LOG"] = _PYTHON_TO_RUST_LEVELS.get(
+            os.environ.get("DIMOS_LOG_LEVEL", "").upper(), "info"
+        )
         cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
 
         logger.info(
@@ -341,7 +372,7 @@ class NativeModule(Module):
     ) -> None:
         if stream is None:
             return
-        log_fn = getattr(logger, level)
+        default_log_fn = getattr(logger, level)
         for raw in stream:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
@@ -349,12 +380,21 @@ class NativeModule(Module):
             if self.config.log_format == LogFormat.JSON:
                 try:
                     data = json.loads(line)
-                    event = data.pop("event", line)
-                    log_fn(event, module=self._module_label, pid=pid, **data)
+                    fields = data.pop("fields", None)
+                    if fields:
+                        data.update(fields)
+                    message = data.pop("message", None) or line
+                    msg_level = data.pop("level", None)
+                    method = (
+                        _NATIVE_TO_PYTHON_LEVELS.get(msg_level.lower(), level)
+                        if msg_level
+                        else level
+                    )
+                    getattr(logger, method)(message, module=self._module_label, pid=pid, **data)
                     continue
-                except (json.JSONDecodeError, TypeError):
+                except (json.JSONDecodeError, TypeError, AttributeError):
                     pass
-            log_fn(line, module=self._module_label, pid=pid)
+            default_log_fn(line, module=self._module_label, pid=pid)
         stream.close()
 
     def _maybe_build(self) -> None:

@@ -160,7 +160,7 @@ drawing.to_svg("assets/embedding_focused.svg")
 
 ```results
 Stream("color_image_embedded") | vector_search(k=30)
-08:19:54.129 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
+13:15:15.190 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
 ```
 
 ![output](assets/embedding_focused.svg)

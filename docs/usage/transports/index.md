@@ -71,7 +71,17 @@ text "pub/sub API" at P.s + (0, -0.2in)
 
 </details>
 
-![output](../assets/abstraction_layers.svg)
+![output](assets/abstraction_layers.svg)
+
+![output](assets/abstraction_layers.svg)
+
+![output](assets/abstraction_layers.svg)
+
+![output](assets/abstraction_layers.svg)
+
+![output](assets/abstraction_layers.svg)
+
+![output](assets/abstraction_layers.svg)
 
 We’ll go through these layers top-down.
 
@@ -176,22 +186,23 @@ if __name__ == "__main__":
 ```
 
 ```results
-02:57:31.428 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
-02:57:31.761 [inf][/coordination/python_worker.py] Deployed module. module=TickerCameraModule module_id=0 worker_id=0
-02:57:31.768 [inf][/coordination/python_worker.py] Deployed module. module=ImageListener module_id=1 worker_id=1
-02:57:33.778 [inf][dination/module_coordinator.py] Stopping module... module=ImageListener
-02:57:33.793 [inf][dination/module_coordinator.py] Module stopped. module=ImageListener
-02:57:33.793 [inf][dination/module_coordinator.py] Stopping module... module=TickerCameraModule
-02:57:33.802 [inf][dination/module_coordinator.py] Module stopped. module=TickerCameraModule
-02:57:33.802 [inf][ation/worker_manager_python.py] Shutting down all workers...
+13:11:40.135 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
+13:11:40.776 [inf][/coordination/python_worker.py] Deployed module. module=TickerCameraModule module_id=0 worker_id=0
+13:11:40.784 [inf][/coordination/python_worker.py] Deployed module. module=ImageListener module_id=1 worker_id=1
+13:11:42.805 [inf][dination/module_coordinator.py] Stopping module... module=ImageListener
+13:11:42.809 [inf][dination/module_coordinator.py] Module stopped. module=ImageListener
+13:11:42.809 [inf][dination/module_coordinator.py] Stopping module... module=TickerCameraModule
+13:11:42.860 [inf][dination/module_coordinator.py] Module stopped. module=TickerCameraModule
+13:11:42.861 [inf][ation/worker_manager_python.py] Shutting down all workers...
 Received: (480, 640, 3)
 Received: (480, 640, 3)
 Received: (480, 640, 3)
-02:57:33.803 [inf][/coordination/python_worker.py] Worker stopping module... module=ImageListener module_id=1 worker_id=1
-02:57:33.803 [inf][/coordination/python_worker.py] Worker module stopped. module=ImageListener module_id=1 worker_id=1
-02:57:33.861 [inf][/coordination/python_worker.py] Worker stopping module... module=TickerCameraModule module_id=0 worker_id=0
-02:57:33.862 [inf][/coordination/python_worker.py] Worker module stopped. module=TickerCameraModule module_id=0 worker_id=0
-02:57:33.892 [inf][ation/worker_manager_python.py] All workers shut down
+Received: (480, 640, 3)
+13:11:42.862 [inf][/coordination/python_worker.py] Worker stopping module... module=ImageListener module_id=1 worker_id=1
+13:11:42.862 [inf][/coordination/python_worker.py] Worker module stopped. module=ImageListener module_id=1 worker_id=1
+13:11:42.914 [inf][/coordination/python_worker.py] Worker stopping module... module=TickerCameraModule module_id=0 worker_id=0
+13:11:42.914 [inf][/coordination/python_worker.py] Worker module stopped. module=TickerCameraModule module_id=0 worker_id=0
+13:11:42.920 [inf][ation/worker_manager_python.py] All workers shut down
 ```
 
 See [Modules](/docs/usage/modules.md) for more on module architecture.

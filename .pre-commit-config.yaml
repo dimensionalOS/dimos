@@ -117,7 +117,7 @@ repos:
             git ls-files "*Cargo.toml" | while read -r m; do
               cargo locate-project --manifest-path "$m" --workspace --message-format plain
             done | sort -u | while read -r root; do
-              cargo fmt --manifest-path "$root" --all --check
+              cargo fmt --manifest-path "$root" --all
             done
           '
         language: system

@@ -117,7 +117,7 @@ print(f"Decoded: {len(pc2)} points")
 
 ```results
 PointCloud: 100 points, frame=camera
-Center: ↘ Vector Vector([0.47497518 0.49878164 0.43788878])
+Center: → Vector Vector([0.5448107  0.47434279 0.54832664])
 Open3D type: PointCloud
 LCM encoded: 1725 bytes
 Decoded: 100 points

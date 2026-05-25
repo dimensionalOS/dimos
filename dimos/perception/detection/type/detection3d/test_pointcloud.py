@@ -83,50 +83,6 @@ def test_detection3dpc(detection3dpc) -> None:
     assert center[1] == pytest.approx(-0.202, abs=0.1)
     assert center[2] == pytest.approx(0.160, abs=0.1)
 
-    # def test_foxglove_scene_entity_generation(detection3dpc):
-    """Test Foxglove scene entity creation and structure."""
-    entity = detection3dpc.to_foxglove_scene_entity("test_entity_123")
-
-    # Verify entity metadata
-    assert entity.id == "1", f"Expected entity ID '1', got '{entity.id}'"
-    assert entity.frame_id == "world", f"Expected frame_id 'world', got '{entity.frame_id}'"
-    assert entity.cubes_length == 1, f"Expected 1 cube, got {entity.cubes_length}"
-    assert entity.texts_length == 1, f"Expected 1 text, got {entity.texts_length}"
-
-    # def test_foxglove_cube_properties(detection3dpc):
-    """Test Foxglove cube primitive properties."""
-    entity = detection3dpc.to_foxglove_scene_entity("test_entity_123")
-    cube = entity.cubes[0]
-
-    # Verify position
-    assert cube.pose.position.x == pytest.approx(-3.325, abs=0.1)
-    assert cube.pose.position.y == pytest.approx(-0.250, abs=0.1)
-    assert cube.pose.position.z == pytest.approx(0.200, abs=0.1)
-
-    # Verify size
-    assert cube.size.x == pytest.approx(0.350, abs=0.1)
-    assert cube.size.y == pytest.approx(0.250, abs=0.1)
-    assert cube.size.z == pytest.approx(0.550, abs=0.1)
-
-    # Verify color (green with alpha)
-    assert cube.color.r == pytest.approx(0.08235294117647059, abs=0.1)
-    assert cube.color.g == pytest.approx(0.7176470588235294, abs=0.1)
-    assert cube.color.b == pytest.approx(0.28627450980392155, abs=0.1)
-    assert cube.color.a == pytest.approx(0.2, abs=0.1)
-
-    # def test_foxglove_text_label(detection3dpc):
-    """Test Foxglove text label properties."""
-    entity = detection3dpc.to_foxglove_scene_entity("test_entity_123")
-    text = entity.texts[0]
-
-    assert text.text in ["1/suitcase (81%)", "1/suitcase (82%)"], (
-        f"Expected text '1/suitcase (81%)' or '1/suitcase (82%)', got '{text.text}'"
-    )
-    assert text.pose.position.x == pytest.approx(-3.325, abs=0.1)
-    assert text.pose.position.y == pytest.approx(-0.250, abs=0.1)
-    assert text.pose.position.z == pytest.approx(0.575, abs=0.1)
-    assert text.font_size == 20.0, f"Expected font size 20.0, got {text.font_size}"
-
     # def test_detection_pose(detection3dpc):
     """Test detection pose and frame information."""
     assert detection3dpc.pose.x == pytest.approx(-3.327, abs=0.1)

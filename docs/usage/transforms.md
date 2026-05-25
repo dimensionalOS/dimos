@@ -362,7 +362,8 @@ Transform tree:
 └──────────────┘
 ```
 
-You can also run `foxglove-studio-bridge` in the next terminal (binary provided by DimOS and should be in your Python env) and `foxglove-studio` to view these transforms in 3D. (TODO we need to update this for rerun)
+
+You can view these transforms in 3D using the Rerun viewer (see [Visualization](/docs/usage/visualization.md)).
 
 ![transforms](assets/transforms.png)
 
@@ -445,8 +446,8 @@ print(tf)
 ```results
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
-LCMTF(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2025-12-29 18:19:18 - 2025-12-29 18:19:18])
+MultiTBuffer(1 buffers):
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-05-15 21:11:37 - 2026-05-15 21:11:37])
 ```
 
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.

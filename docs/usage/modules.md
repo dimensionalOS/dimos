@@ -156,6 +156,20 @@ For this, we use `dimos.core` and DimOS transport protocols.
 
 Defining message exchange protocols and message types also gives us the ability to write models in faster languages.
 
+### Dedicated workers
+
+By default the coordinator assigns modules to worker processes by least-load, so multiple modules share a worker. Heavy modules (robot connections, voxel mappers) should run alone so they don't contend with anything else for CPU or the GIL. Set `dedicated_worker = True` on the class and the coordinator will give that module a worker process to itself.
+
+```python
+from dimos.core.module import Module
+
+
+class HeavyModule(Module):
+    dedicated_worker = True
+```
+
+If declaring dedicated modules would push the pool past half-dedicated, the coordinator auto-grows it so non-dedicated workers always at least match the dedicated count.
+
 ## Restarting a module
 
 While iterating on a module it's often convenient to edit its source file

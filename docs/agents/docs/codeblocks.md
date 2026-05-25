@@ -55,7 +55,7 @@ echo "cwd: $(pwd)"
 ```
 
 ```results
-cwd: /work
+cwd: /home/lesh/coding/dimos
 ```
 
 ### Python
@@ -88,12 +88,14 @@ console.log(`Node version: ${process.version}`);
 
 ```results
 Hello from Node.js
-Node version: v22.21.1
+Node version: v24.11.1
 ```
 
 ### Matplotlib
 
 ```python output=assets/matplotlib-demo.svg
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 plt.style.use('dark_background')
@@ -187,15 +189,6 @@ A -> C
 ```
 
 ![output](assets/graph.svg)
-
-### OpenSCAD
-
-```openscad output=assets/cube-sphere.png
-cube([10, 10, 10]);
-sphere(r=7);
-```
-
-![output](assets/cube-sphere.png)
 
 ### Diagon
 

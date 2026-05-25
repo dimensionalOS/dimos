@@ -164,4 +164,5 @@ class WorkerStats(ProcessStats):
 
     worker_id: int = -1
     modules: list[str] = field(default_factory=list)
+    dedicated: bool = False
     children: list[ChildProcessStats] = field(default_factory=list)

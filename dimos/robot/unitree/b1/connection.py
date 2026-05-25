@@ -64,6 +64,8 @@ class B1ConnectionModule(Module):
     internally converts to B1Command format, and sends UDP packets at 50Hz.
     """
 
+    dedicated_worker = True
+
     config: B1ConnectionConfig
 
     # LCM ports (inter-module communication)

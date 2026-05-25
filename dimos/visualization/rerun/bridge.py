@@ -202,6 +202,7 @@ class RerunBridgeModule(Module):
     """
 
     config: Config
+    dedicated_worker = True
     _last_log: dict[str, float]
 
     # TODO this doesn't belong here, either hardcode it or put it to rerun bridge config
@@ -213,6 +214,7 @@ class RerunBridgeModule(Module):
         super().__init__(**kwargs)
         self._last_log = {}
         self._override_cache: dict[str, Callable[[Any], RerunData | None]] = {}
+        self._frame_attached: dict[str, str] = {}
 
     @property
     def host(self) -> str:
@@ -293,6 +295,13 @@ class RerunBridgeModule(Module):
                 rr.log(path, archetype)
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
+            # if source msg carries a frame_id, attach the entity to that TF frame
+            # should skip if archetype is a Transform3D
+            if not isinstance(rerun_data, rr.Transform3D):
+                frame_id = getattr(msg, "frame_id", None)
+                if frame_id and self._frame_attached.get(entity_path) != frame_id:
+                    rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
+                    self._frame_attached[entity_path] = frame_id
 
     @rpc
     def start(self) -> None:
@@ -301,6 +310,7 @@ class RerunBridgeModule(Module):
         logger.info("Rerun bridge starting")
 
         self._last_log = {}
+        self._frame_attached = {}
         self._min_intervals: dict[str, float] = {
             entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
         }
@@ -497,6 +507,7 @@ class RerunBridgeModule(Module):
     @rpc
     def stop(self) -> None:
         self._override_cache.clear()
+        self._frame_attached.clear()
         super().stop()
 
 
