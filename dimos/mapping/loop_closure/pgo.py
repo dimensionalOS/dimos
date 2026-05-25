@@ -390,12 +390,7 @@ class _PGO:
         # poses gives us another chance to anchor those segments.
         self._last_loop_ts = None
         for i in range(len(self._key_poses)):
-            kp = self._key_poses[i]
-            drift = float(np.linalg.norm(
-                np.asarray(kp.optimized.translation()) - np.asarray(kp.local.translation())
-            ))
-            if drift > self._cfg.loop_fallback_drift_thresh:
-                self._search_for_loops(cur_idx=i, enforce_time_gate=False)
+            self._search_for_loops(cur_idx=i, enforce_time_gate=False)
         if self._pending_loops:
             self._smooth_and_update()
         kps = sorted(self._key_poses, key=lambda kp: kp.timestamp)
