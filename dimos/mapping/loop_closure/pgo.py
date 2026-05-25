@@ -566,7 +566,7 @@ class _PGO:
             # — loops shouldn't be trusted to fix rotation tightly without
             # normals + p2plane.
             trans_var = max(0.01, float(pair.score))  # >= sigma_trans = 10 cm
-            rot_var = 0.05  # sigma_rot ~ 13 deg
+            rot_var = 0.01  # sigma_rot ~ 5.7 deg (p2plane ICP gives reliable rotation)
             noise = gtsam.noiseModel.Diagonal.Variances(
                 np.array([rot_var, rot_var, rot_var, trans_var, trans_var, trans_var])
             )
