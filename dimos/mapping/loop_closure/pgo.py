@@ -102,7 +102,7 @@ class PGOConfig(BaseConfig):
     loop_candidates_per_iter: int = 7
     min_icp_inliers: int = 10
     min_keyframes_for_loop_search: int = 10
-    loop_closure_extra_iterations: int = 4
+    loop_closure_extra_iterations: int = 2
     submap_resolution: float = 0.2
     min_loop_detect_duration: float = 3.0
 
