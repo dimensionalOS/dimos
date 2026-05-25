@@ -8,8 +8,8 @@ In robotics, we deal with hardware that produces data at its own pace - a camera
 
 **The problem:** A fast producer can overwhelm a slow consumer, causing memory buildup or dropped frames. We might have multiple subscribers to the same hardware that operate at different speeds.
 
-
-<details><summary>Pikchr</summary>
+<details>
+<summary>Pikchr</summary>
 
 ```pikchr fold output=assets/backpressure.svg
 color = white
@@ -26,8 +26,7 @@ text "items pile up!" at (Queue.x, Queue.y - 0.45in)
 
 </details>
 
-<img src="assets/backpressure.svg" alt="output" />
-
+![output](assets/backpressure.svg)
 
 **The solution:** The `backpressure()` wrapper handles this by:
 
@@ -73,8 +72,8 @@ slow got 7 items (skipped 13)
 
 ### How it works
 
-
-<details><summary>Pikchr</summary>
+<details>
+<summary>Pikchr</summary>
 
 ```pikchr fold output=assets/backpressure_solution.svg
 color = white
@@ -94,7 +93,7 @@ Slow: box "Slow Sub" rad 5px fit wid 170% ht 170%
 
 </details>
 
-<img src="assets/backpressure_solution.svg" alt="output" />
+![output](assets/backpressure_solution.svg)
 
 The `LATEST` strategy means: when the slow subscriber finishes processing, it gets whatever the most recent value is, skipping any values that arrived while it was busy.
 
@@ -116,7 +115,6 @@ class MLModel(Module):
        self.color_image.observable().subscribe(...)
        # non-backpressured - will pile up queue
        self.color_image.pure_observable().subscribe(...)
-
 
 ```
 
@@ -145,7 +143,6 @@ If you are doing this periodically as a part of a processing loop, it is very li
         ops.sample(0.05),
     ).subscribe(self.twist.publish) # shoots off the Twist out of the module
 ```
-
 
 If you'd still like to switch to synchronous fetching, we provide two approaches, `getter_hot()` and `getter_cold()`
 
@@ -189,7 +186,6 @@ box invis "instant" fit wid 150%
 
 text "always subscribed" italic with .n at Blk0.s + (0, -0.1in)
 
-
 # === getter_cold section ===
 C_Title: box "getter_cold()" rad 5px fit wid 170% ht 170% with .nw at H_Title.sw + (0, -1.6in)
 
@@ -231,8 +227,7 @@ text "blocking" italic with .n at Blk2.n + (0, -0.05in)
 
 </details>
 
-<img src="assets/getter_hot_cold.svg" alt="output" />
-
+![output](assets/getter_hot_cold.svg)
 
 **Prefer `getter_cold()`** when you can afford to wait and warmup isn't expensive. It's simpler (no cleanup needed) and doesn't hold resources. Only use `getter_hot()` when you need instant reads or the source is expensive to start.
 

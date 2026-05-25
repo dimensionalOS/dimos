@@ -34,11 +34,9 @@ class MyLidar(NativeModule):
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
 
-
 ```
 
 That's it. `MyLidar` is a full DimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
-
 
 ## How it works
 

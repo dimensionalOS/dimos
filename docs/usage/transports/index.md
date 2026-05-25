@@ -43,7 +43,8 @@ python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_b
 
 ## Abstraction layers
 
-<details><summary>Pikchr</summary>
+<details>
+<summary>Pikchr</summary>
 
 ```pikchr output=../assets/abstraction_layers.svg fold
 color = white
@@ -70,7 +71,7 @@ text "pub/sub API" at P.s + (0, -0.2in)
 
 </details>
 
-<img src="../assets/abstraction_layers.svg" alt="output" />
+![output](../assets/abstraction_layers.svg)
 
 We’ll go through these layers top-down.
 
@@ -124,10 +125,8 @@ from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
-
 class TickerCameraConfig(ModuleConfig):
     frequency_hz: float = 2.0
-
 
 class TickerCameraModule(Module):
     """Publish synthetic frames so this example runs without a webcam."""
@@ -150,13 +149,11 @@ class TickerCameraModule(Module):
         period = 1.0 / max(self.config.frequency_hz, 0.1)
         self.register_disposable(rx.interval(period).subscribe(emit))
 
-
 class ImageListener(Module):
     image: In[Image]
 
     async def handle_image(self, img: Image) -> None:
         print(f"Received: {img.shape}")
-
 
 if __name__ == "__main__":
     # Start local cluster and deploy modules to separate processes
@@ -413,7 +410,6 @@ import json
 
 from dimos.protocol.pubsub.encoders import PubSubEncoderMixin
 
-
 class JsonEncoderMixin(PubSubEncoderMixin[str, dict, bytes]):
     def encode(self, msg: dict, topic: str) -> bytes:
         return json.dumps(msg).encode("utf-8")
@@ -427,7 +423,6 @@ Combine with a pubsub implementation via multiple inheritance:
 ```python session=jsonencoder no-result
 from dimos.protocol.pubsub.impl.memory import Memory
 
-
 class MyJsonPubSub(JsonEncoderMixin, Memory):
     pass
 ```
@@ -437,7 +432,6 @@ Swap serialization by changing the mixin:
 ```python session=jsonencoder no-result
 from dimos.protocol.pubsub.encoders import PickleEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory
-
 
 class MyPicklePubSub(PickleEncoderMixin, Memory):
     pass

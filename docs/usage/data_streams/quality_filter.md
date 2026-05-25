@@ -164,13 +164,13 @@ Visualizing which frames were selected (green border = selected as sharpest in w
 plot_mosaic(input_frames, sharp_frames, '{output}')
 ```
 
-<img src="assets/frame_mosaic.jpg" alt="output" />
+![output](assets/frame_mosaic.jpg)
 
 ```python skip session=qb output=assets/sharpness_graph.svg
 plot_sharpness(input_frames, sharp_frames, '{output}')
 ```
 
-<img src="assets/sharpness_graph.svg" alt="output" />
+![output](assets/sharpness_graph.svg)
 
 Let's request a higher frequency.
 
@@ -198,14 +198,13 @@ Output: 6 frame(s) (selected sharpest per window)
 plot_mosaic(input_frames, sharp_frames, '{output}')
 ```
 
-<img src="assets/frame_mosaic2.jpg" alt="output" />
-
+![output](assets/frame_mosaic2.jpg)
 
 ```python skip session=qb output=assets/sharpness_graph2.svg
 plot_sharpness(input_frames, sharp_frames, '{output}')
 ```
 
-<img src="assets/sharpness_graph2.svg" alt="output" />
+![output](assets/sharpness_graph2.svg)
 
 As we can see the system is trying to strike a balance between requested frequency and quality that's available
 

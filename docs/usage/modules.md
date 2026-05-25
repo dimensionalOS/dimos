@@ -22,7 +22,7 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
 to_svg(unitree_go2, "assets/go2_nav.svg")
 ```
-<img src="assets/go2_nav.svg" alt="Go2 navigation blueprint" />
+![output](assets/go2_nav.svg)
 
 ## Camera Module
 
@@ -96,7 +96,6 @@ Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
 ```
-
 
 ## Connecting modules
 
@@ -194,7 +193,6 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 
-
 class MovementManager(Module):
     clicked_point: In[PointStamped]
     nav_cmd_vel: In[Twist]
@@ -233,7 +231,6 @@ Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are
 from dimos.core.core import rpc
 from dimos.core.module import Module
 
-
 class NameModule(Module):
     @rpc
     async def say_hello(self, name: str) -> str:
@@ -254,11 +251,9 @@ from typing import Protocol
 from dimos.core.module import Module
 from dimos.spec.utils import Spec
 
-
 class NameSpec(Spec, Protocol):
     async def say_hello(self, name: str) -> str: ...
     async def set_my_name(self, new_name: str) -> None: ...
-
 
 class StartModule(Module):
     _name_module: NameSpec
@@ -274,7 +269,6 @@ class StartModule(Module):
 from typing import Protocol
 
 from dimos.spec.utils import Spec
-
 
 class SyncNameSpec(Spec, Protocol):
     def say_hello(self, name: str) -> str: ...
@@ -294,7 +288,6 @@ import asyncio
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
-
 
 class TimerExample(Module):
     @rpc
@@ -339,7 +332,6 @@ from typing import Any
 
 from dimos.core.module import Module
 
-
 def create(name: str) -> Any:
     del name
     class _Model:
@@ -347,7 +339,6 @@ def create(name: str) -> Any:
             pass
 
     return _Model()
-
 
 class PersonFollowSkillContainer(Module):
     async def main(self) -> AsyncIterator[None]:
@@ -375,7 +366,6 @@ from dimos.robot.unitree_webrtc.unitree_go2_blueprints import agentic
 to_svg(agentic, "assets/go2_agentic.svg")
 ```
 
-<img src="assets/go2_agentic.svg" alt="Go2 agentic blueprint" />
-
+![output](assets/go2_agentic.svg)
 
 To see more information on how to use Blueprints, see [Blueprints](/docs/usage/blueprints.md).
