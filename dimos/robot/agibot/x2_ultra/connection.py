@@ -26,12 +26,13 @@ import open3d as o3d
 from pydantic import Field
 
 from dimos.agents.annotation import skill
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.constants import DEFAULT_ROBOT_FRAME, DEFAULT_THREAD_JOIN_TIMEOUT, DEFAULT_WORLD_FRAME
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -40,6 +41,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.agibot.x2_ultra._arm_ik import X2ArmIK
+from dimos.robot.agibot.x2_ultra.config import X2Config
 from dimos.spec.perception import IMU, Camera, Lidar, Pointcloud
 from dimos.utils.logging_config import setup_logger
 
@@ -203,6 +205,24 @@ class ConnectionConfig(ModuleConfig):
     enable_depth_cloud: bool = Field(
         default=False,
         description="Subscribe to the head depth pointcloud and publish it to DimOS.",
+    )
+    frame_id: str = Field(
+        default=DEFAULT_ROBOT_FRAME,
+        description="Robot body frame published on TF.",
+    )
+    parent_frame_id: str = Field(
+        default=DEFAULT_WORLD_FRAME,
+        description="Parent frame for the odom→base_link transform.",
+    )
+    static_publish_rate: float = Field(
+        default=1.0,
+        description="Rate (Hz) at which static TF frames are republished.",
+    )
+    static_transforms: dict[str, Transform] = Field(
+        default_factory=lambda: dict(X2Config.static_transforms)
+    )
+    frame_mapping: dict[str, str] = Field(
+        default_factory=lambda: {each: each for each in X2Config.all_frame_ids}
     )
 
 
@@ -383,6 +403,7 @@ class X2Connection(X2ConnectionBase, Camera, Pointcloud, IMU, Lidar):
     pointcloud: Out[PointCloud2]
     lidar: Out[PointCloud2]
     imu: Out[Imu]
+    odom: Out[PoseStamped]
     joint_state: Out[JointState]
 
     _ros_node: Any = None
@@ -395,6 +416,7 @@ class X2Connection(X2ConnectionBase, Camera, Pointcloud, IMU, Lidar):
     _cam_thread: Thread | None = None
     _arm_ik: X2ArmIK | None = None
     _arm_ctrl_thread: Thread | None = None
+    _static_publish_thread: Thread | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -420,10 +442,17 @@ class X2Connection(X2ConnectionBase, Camera, Pointcloud, IMU, Lidar):
     def start(self) -> None:
         super().start()
         self._start_ros()
+        self._static_publish_thread = Thread(
+            target=self._static_publish,
+            daemon=True,
+        )
+        self._static_publish_thread.start()
 
     @rpc
     def stop(self) -> None:
         self._stop_ros()
+        if self._static_publish_thread and self._static_publish_thread.is_alive():
+            self._static_publish_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
     def _start_ros(self) -> None:
@@ -1081,7 +1110,54 @@ class X2Connection(X2ConnectionBase, Camera, Pointcloud, IMU, Lidar):
         self.lidar.publish(_ros_pointcloud2_to_dimos(msg))
 
     def _on_imu(self, msg: Any) -> None:
-        self.imu.publish(_ros_imu_to_dimos(msg))
+        imu = _ros_imu_to_dimos(msg)
+        self.imu.publish(imu)
+        pose = PoseStamped(
+            position=Vector3(0.0, 0.0, 0.0),
+            orientation=imu.orientation,
+            frame_id=self.config.frame_id,
+            ts=imu.ts,
+        )
+        self.tf.publish(
+            Transform(
+                translation=pose.position,
+                rotation=pose.orientation,
+                frame_id=self.config.parent_frame_id,
+                child_frame_id=self.config.frame_id,
+                ts=imu.ts,
+            )
+        )
+        self.odom.publish(pose)
+
+    def _static_publish(self) -> None:
+        if self.config.static_publish_rate <= 0:
+            return
+        remap = {X2Config.body_frame: self.config.frame_id, **self.config.frame_mapping}
+        remapped_statics = [
+            Transform(
+                translation=transform.translation,
+                rotation=transform.rotation,
+                frame_id=remap.get(transform.frame_id, transform.frame_id),
+                child_frame_id=remap.get(transform.child_frame_id, transform.child_frame_id),
+            )
+            for transform in self.config.static_transforms.values()
+        ]
+        period = 1.0 / self.config.static_publish_rate
+        while True:
+            now = time.time()
+            self.tf.publish(
+                *(
+                    Transform(
+                        translation=transform.translation,
+                        rotation=transform.rotation,
+                        frame_id=transform.frame_id,
+                        child_frame_id=transform.child_frame_id,
+                        ts=now,
+                    )
+                    for transform in remapped_statics
+                )
+            )
+            time.sleep(period)
 
     def _on_camera_info(self, msg: Any) -> None:
         self.camera_info.publish(_ros_camera_info_to_dimos(msg))
