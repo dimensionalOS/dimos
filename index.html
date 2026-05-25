@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>robohack · DimOS Go2 Hackathon</title>
+<style>
+  :root{
+    --bg:#0a0d12; --panel:#11161d; --panel2:#161d26; --line:#222c38;
+    --ink:#e6edf3; --dim:#8b9bb0; --acc:#4ade80; --acc2:#38bdf8; --warn:#fbbf24; --red:#f87171;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55;
+    background-image:radial-gradient(circle at 20% 0%,rgba(56,189,248,.07),transparent 40%),
+      radial-gradient(circle at 90% 10%,rgba(74,222,128,.06),transparent 35%);}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 80px}
+  header{border-bottom:1px solid var(--line);padding-bottom:24px;margin-bottom:32px}
+  .tag{font-family:var(--mono);font-size:12px;color:var(--acc);letter-spacing:.15em;text-transform:uppercase}
+  h1{font-size:38px;line-height:1.1;margin:8px 0 6px;letter-spacing:-.02em}
+  h1 .robot{color:var(--acc2)}
+  .sub{color:var(--dim);font-size:15px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+  .chip{font-family:var(--mono);font-size:12px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:999px;padding:5px 12px;color:var(--dim)}
+  .chip b{color:var(--ink);font-weight:600}
+  h2{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);
+    font-family:var(--mono);margin:42px 0 16px;display:flex;align-items:center;gap:10px}
+  h2::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--acc)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:760px){.grid2{grid-template-columns:1fr}.wrap{padding-top:20px}h1{font-size:30px}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+  .card.A{border-top:3px solid var(--acc)} .card.B{border-top:3px solid var(--acc2)}
+  .card h3{font-size:19px;margin-bottom:4px}
+  .card .who{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:12px}
+  .card p{font-size:14px;color:#cdd7e3;margin-bottom:12px}
+  .lbl{font-family:var(--mono);font-size:11px;color:var(--acc);text-transform:uppercase;letter-spacing:.1em}
+  .lbl.b{color:var(--acc2)} .lbl.w{color:var(--warn)}
+  ul{list-style:none;margin:4px 0 14px} li{font-size:13.5px;color:#cdd7e3;padding-left:18px;position:relative;margin:5px 0}
+  li::before{content:"▸";position:absolute;left:0;color:var(--dim)}
+  .timeline{display:flex;flex-direction:column;gap:2px}
+  .tl{display:grid;grid-template-columns:140px 1fr;gap:14px;padding:10px 14px;border-radius:8px;font-size:14px}
+  .tl:nth-child(odd){background:var(--panel)}
+  .tl .t{font-family:var(--mono);font-size:12.5px;color:var(--acc2)}
+  .tl.hot .t{color:var(--red);font-weight:700}
+  code,pre{font-family:var(--mono)}
+  pre{background:#0c1117;border:1px solid var(--line);border-radius:10px;padding:16px;overflow-x:auto;
+    font-size:12.5px;color:#cdd7e3;margin:6px 0 14px}
+  pre .c{color:var(--dim)} pre .k{color:var(--acc2)} pre .s{color:var(--acc)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
+  td b{color:var(--ink)}
+  .check{columns:2;column-gap:24px} @media(max-width:760px){.check{columns:1}}
+  .check label{display:flex;gap:9px;align-items:flex-start;font-size:14px;color:#cdd7e3;
+    padding:7px 0;break-inside:avoid}
+  .check input{margin-top:4px;accent-color:var(--acc)}
+  .quote{background:var(--panel2);border-left:3px solid var(--acc);border-radius:0 10px 10px 0;
+    padding:16px 18px;font-size:14px;color:#dbe4ee}
+  .quote.b{border-color:var(--acc2)}
+  footer{margin-top:50px;padding-top:20px;border-top:1px solid var(--line);color:var(--dim);font-size:13px;font-family:var(--mono)}
+  a{color:var(--acc2);text-decoration:none} a:hover{text-decoration:underline}
+  .files a{display:inline-block;font-family:var(--mono);font-size:12px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:8px;padding:6px 12px;margin:4px 6px 0 0;color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="tag">Dimensional · DimOS · Shanghai</div>
+    <h1>robo<span class="robot">hack</span> // Unitree Go2 + DimOS</h1>
+    <div class="sub">48h hackathon · Alibaba T1 · May 26–28, 2026 · build agentic behavior on a robot dog</div>
+    <div class="meta">
+      <span class="chip">🐾 <b>Go2</b> LiDAR + RGB + IMU</span>
+      <span class="chip">🧠 <b>DimOS</b> agent-native OS</span>
+      <span class="chip">🏆 Grand prize: <b>a Go2</b></span>
+      <span class="chip">💼 <b>Hiring</b> fast-track</span>
+      <span class="chip">🎥 Deliverable: <b>90s video</b></span>
+    </div>
+    <div class="files">
+      <a href="./README.md">README.md</a><a href="./IDEAS.md">IDEAS.md</a>
+      <a href="./CHEATSHEET.md">CHEATSHEET.md</a><a href="./PITCH.md">PITCH.md</a>
+    </div>
+  </header>
+
+  <h2>Strategy</h2>
+  <div class="card">
+    <p>Judges are the Dimensional team. The deliverable is a <b>90-second video</b>. The event is a 3-day
+    interview. So: optimize for a <b>tight, robust, narratable behavior</b> — not maximal autonomy. The work
+    lives in <b>Skills</b> (RPC functions the LLM agent calls), not in rewriting the nav stack. The demo must
+    read in 90 seconds and degrade gracefully when hardware misbehaves.</p>
+  </div>
+
+  <h2>Two live directions</h2>
+  <div class="grid2">
+    <div class="card A">
+      <div class="who">Agents track · lower risk · best hiring signal</div>
+      <h3>A · Patrol + Reasoning</h3>
+      <p>A Go2 that patrols waypoints and <b>thinks out loud</b>. A VLM describes each scene vs. a learned
+      "normal" in spatial memory, flags anomalies, narrates aloud, logs incidents — and when stuck, the LLM
+      diagnoses + replans.</p>
+      <span class="lbl">Skills</span>
+      <ul><li>patrol · describe_scene · compare_to_baseline</li><li>log_incident · narrate (TTS) · recover</li></ul>
+      <span class="lbl w">Risk</span>
+      <ul><li>relocalization drift, VLM latency → short route, stop-only VLM, staged anomalies</li></ul>
+    </div>
+    <div class="card B">
+      <div class="who">Open track · higher risk · Grand-Prize swing</div>
+      <h3>B · Swarm Choreography</h3>
+      <p>A pack of Go2s as one performer. <b>One Blueprint</b> deploys the same file to every dog; a conductor
+      agent issues NL cues each robot interprets from its own pose. The most on-brand demo: proves DimOS's
+      one-file-many-robots <code>autoconnect</code> scales.</p>
+      <span class="lbl b">Skills</span>
+      <ul><li>take_position · sync_move · sync_trick</li><li>hold_offset (neighbor spacing)</li></ul>
+      <span class="lbl w">Risk</span>
+      <ul><li>need ≥2 dogs in the lottery; coordination → choreograph to a countdown, rehearse exact routine</li></ul>
+    </div>
+  </div>
+  <p style="font-size:13.5px;color:var(--dim);margin-top:12px">→ Decide A vs. B <b>right after the dog lottery</b> (Tue 16:00). Keep the loser as a fallback narrative.</p>
+
+  <h2>Timeline · GMT+8</h2>
+  <div class="timeline">
+    <div class="tl"><span class="t">Tue 16:00</span><span>Check-in · <b>dog lottery</b> · team setup → make the A/B call</span></div>
+    <div class="tl hot"><span class="t">Tue 17:30</span><span>⏱ Hacking begins</span></div>
+    <div class="tl"><span class="t">Wed 12:00</span><span>Mid-hack checkpoint</span></div>
+    <div class="tl"><span class="t">Wed 15:00</span><span>Mentor office hours — bring your hardest blocker</span></div>
+    <div class="tl hot"><span class="t">Thu 17:30</span><span>⏱ <b>Code freeze</b> — submit GitHub + 90s demo video</span></div>
+    <div class="tl"><span class="t">Thu 19:00</span><span>Internal dry-run to judges</span></div>
+    <div class="tl"><span class="t">Fri 10:00</span><span>Maker Faire public demos · 16:00 awards 🏆</span></div>
+  </div>
+
+  <h2>DimOS in one screen</h2>
+  <table>
+    <tr><th>Layer</th><th>What</th></tr>
+    <tr><td><b>Agent</b></td><td>LangGraph agents (Claude/GPT/Gemini) reason + pick tools</td></tr>
+    <tr><td><b>Skills</b> ←you</td><td><code>@rpc</code> functions surfaced to the LLM as tools (via MCP)</td></tr>
+    <tr><td><b>Planning</b></td><td>global A* + local VFH/pure-pursuit + costmaps</td></tr>
+    <tr><td><b>Perception</b></td><td>YOLO detect, depth, point clouds, VLM, tracking streams</td></tr>
+    <tr><td><b>Robot</b></td><td>UnitreeGo2 via WebRTC + ROS2</td></tr>
+  </table>
+  <pre><span class="c"># wire an agentic Go2: connection + skill server + LLM client</span>
+blueprint = <span class="k">autoconnect</span>(
+    go2_connection(),
+    McpServer.blueprint(),   <span class="c"># exposes Skills as tools</span>
+    McpClient.blueprint(),   <span class="c"># the LLM agent</span>
+)
+blueprint.build().<span class="k">loop</span>()</pre>
+  <pre><span class="c"># CLI</span>
+dimos run unitree-go2-agentic --daemon
+dimos agent-send <span class="s">"explore the room"</span>
+dimos mcp call relative_move --arg forward=0.5
+dimos status && dimos log -f       <span class="c"># MCP @ localhost:9990/mcp</span></pre>
+  <p style="font-size:13px;color:var(--dim)">Primitives: <code>move/reverse/spin*/pose</code> · tricks
+  <code>FrontFlip/Pounce/Jump</code> · skills <code>Navigate/NavigateToObject/FollowHuman/GetPose</code>.
+  Memory = ChromaDB spatial RAG. <b>Verify exact names against the repo on Day 1.</b></p>
+
+  <h2>Gotchas (hour-eaters)</h2>
+  <ul>
+    <li><b>Transforms/TF</b> are the #1 bug — wrong frame = wrong direction. Sanity-check in Rerun.</li>
+    <li><b>ROS2 + Docker setup</b> is non-trivial — do it before the event, not Day 1.</li>
+    <li><b>VLM/LLM latency</b> — describe at stops only, tiny prompts, cache. Never per-frame.</li>
+    <li><b>Local-network only</b> — robot link is WebRTC/ROS2 on the venue LAN.</li>
+    <li><b>LLM key + credits</b> — the agent is dead without an authenticated, funded key.</li>
+  </ul>
+
+  <h2>Pre-event checklist</h2>
+  <div class="check">
+    <label><input type="checkbox">Laptop: Mac/Linux · Python 3.10+ · Docker</label>
+    <label><input type="checkbox"><code>uv pip install 'dimos[base,unitree,sim]'</code></label>
+    <label><input type="checkbox">Clone <code>dimos</code> + <code>dimos-unitree</code></label>
+    <label><input type="checkbox">Run the <b>sim</b> once end-to-end</label>
+    <label><input type="checkbox">LLM key loaded <b>with credits</b> (Claude)</label>
+    <label><input type="checkbox">Rerun viewer installed</label>
+    <label><input type="checkbox">Skim CLI + the Skill API</label>
+    <label><input type="checkbox">Custom-Skill template ready to fill</label>
+    <label><input type="checkbox">100-word pitch + resume submitted</label>
+  </div>
+
+  <h2>Pitches (100 words)</h2>
+  <div class="grid2">
+    <div class="quote">Our agent turns the Go2 into an autonomous security patrol that thinks out loud. It walks
+    a set of waypoints; at each stop a VLM describes the scene and compares it to a learned "normal" in spatial
+    memory. When something's off — a door left open, an unfamiliar person — the agent reasons about it, narrates
+    it aloud, captures the frame, and logs an incident with location and timestamp. If it gets stuck, the LLM
+    diagnoses the failure and replans. Built entirely as DimOS Skills.</div>
+    <div class="quote b">We turn a pack of Go2s into a single choreographed performer. One DimOS Blueprint
+    deploys the same behavior file across every dog, and a conductor agent issues natural-language cues —
+    "form a line," "wave down the row," "scatter and regroup" — which each robot interprets relative to its own
+    pose and neighbors. Because the logic is one file fanned out by <code>autoconnect</code>, adding a sixth dog
+    is a config change, not a rewrite. A live demo that DimOS's multi-robot abstractions actually scale.</div>
+  </div>
+
+  <footer>
+    repos · <a href="https://github.com/dimensionalOS/dimos">dimensionalOS/dimos</a> ·
+    <a href="https://github.com/dimensionalOS/dimos-unitree">dimos-unitree</a> ·
+    <a href="https://deepwiki.com/dimensionalOS/dimos-unitree/1.1-architecture-overview">architecture wiki</a>
+    <br>prep dashboard · build to a 90-second story · it's a 3-day interview 🤖
+  </footer>
+</div>
+</body>
+</html>
