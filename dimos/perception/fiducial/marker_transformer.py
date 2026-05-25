@@ -14,7 +14,7 @@
 
 """ArUco / AprilTag detection as a memory2 transformer.
 
-Wraps the pure helpers in :mod:`dimos.perception.fiducial.marker_tf_module`
+Wraps the pure helpers in :mod:`dimos.perception.fiducial.marker_pose`
 and emits one :class:`Detection3DMarker` observation per detected marker, with
 ``.pose`` composed into world frame from the upstream observation's
 camera-in-world pose. The companion module :class:`MarkerTfModule` remains
@@ -41,10 +41,11 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
-from dimos.perception.fiducial.marker_tf_module import (
+from dimos.perception.fiducial.marker_pose import (
     camera_info_to_cv_matrices,
     create_aruco_detector,
     estimate_marker_pose,
+    marker_corners_to_bbox,
     rvec_tvec_to_transform,
 )
 from dimos.types.timestamped import TimestampedBufferCollection
@@ -187,9 +188,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                 t_world_marker = t_world_optical + t_optical_marker
 
                 corners_2d = corner_set.reshape(4, 2).astype(np.float32)
-                xy_min = corners_2d.min(axis=0)
-                xy_max = corners_2d.max(axis=0)
-                bbox = (float(xy_min[0]), float(xy_min[1]), float(xy_max[0]), float(xy_max[1]))
+                bbox = marker_corners_to_bbox(corners_2d)
 
                 # Decide track_id (only meaningful when smoothing is on).
                 # Without smoothing, track_id == marker_id (legacy behavior).

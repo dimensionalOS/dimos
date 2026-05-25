@@ -26,11 +26,15 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.perception.fiducial.marker_pose import (
+    _camera_optical_frame_id,
+    estimate_marker_pose,
+    marker_corners_to_bbox,
+    marker_reprojection_error,
+)
 from dimos.perception.fiducial.marker_tf_module import (
     MarkerTfModule,
-    _camera_optical_frame_id,
     deploy,
-    estimate_marker_pose,
 )
 
 
@@ -182,6 +186,12 @@ def test_estimate_marker_pose_roundtrip() -> None:
     rvec, tvec = result
     np.testing.assert_allclose(rvec.reshape(3), rvec0.reshape(3), atol=1e-3)
     np.testing.assert_allclose(tvec.reshape(3), tvec0.reshape(3), atol=1e-3)
+    assert marker_reprojection_error(corners, marker_length, k, dist, rvec, tvec) < 0.01
+
+
+def test_marker_corners_to_bbox_accepts_aruco_shapes() -> None:
+    corners = np.array([[[10.0, 20.0], [50.0, 18.0], [48.0, 60.0], [9.0, 58.0]]])
+    assert marker_corners_to_bbox(corners) == (9.0, 18.0, 50.0, 60.0)
 
 
 def _synthetic_marker_bgr(marker_id: int = 0) -> np.ndarray:

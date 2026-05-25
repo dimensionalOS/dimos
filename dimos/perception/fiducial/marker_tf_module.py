@@ -45,8 +45,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import cv2
-import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
@@ -60,132 +58,23 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos.perception.fiducial.marker_pose import (
+    _camera_optical_frame_id,
+    _is_fisheye_model,
+    camera_info_to_cv_matrices,
+    create_aruco_detector,
+    estimate_marker_pose,
+    rvec_tvec_to_transform,
+)
 from dimos.spec.perception import Camera
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 
-try:
-    import cv2.aruco
-except (ImportError, AttributeError) as e:
-    raise ImportError(
-        "dimos.perception.fiducial requires cv2.aruco. Install with: "
-        "uv sync --inexact --extra apriltag"
-    ) from e
-
 logger = setup_logger()
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
-
-
-_FISHEYE_MODELS = frozenset({"equidistant", "fisheye", "kannala_brandt"})
-
-
-def _is_fisheye_model(distortion_model: str | None) -> bool:
-    return (distortion_model or "").strip().lower() in _FISHEYE_MODELS
-
-
-def camera_info_to_cv_matrices(camera_info: CameraInfo) -> tuple[np.ndarray, np.ndarray]:
-    """Build OpenCV ``cameraMatrix`` and ``distCoeffs`` from ``CameraInfo``."""
-    k = np.array(camera_info.K, dtype=np.float64).reshape(3, 3)
-    d = np.array(camera_info.D if camera_info.D else [], dtype=np.float64).reshape(-1, 1)
-    return k, d
-
-
-def _camera_optical_frame_id(image: Image, camera_info: CameraInfo) -> str:
-    """Frame in which image pixels and intrinsics apply (optical convention in ROS).
-
-    Prefer ``Image.frame_id`` so TF lookups match the stream that produced the
-    pixels. Fall back to ``CameraInfo.frame_id``, then a conventional default.
-    """
-    for fid in (image.frame_id, camera_info.frame_id):
-        if fid and fid.strip():
-            return fid.strip()
-    return "camera_optical"
-
-
-def _aruco_marker_object_points(marker_length_m: float) -> np.ndarray:
-    """Corner order matches OpenCV ArUco / solvePnP convention (planar square, Z=0)."""
-    h = marker_length_m / 2.0
-    return np.array(
-        [
-            [-h, h, 0.0],
-            [h, h, 0.0],
-            [h, -h, 0.0],
-            [-h, -h, 0.0],
-        ],
-        dtype=np.float32,
-    )
-
-
-def estimate_marker_pose(
-    corners_px: np.ndarray,
-    marker_length_m: float,
-    camera_matrix: np.ndarray,
-    dist_coeffs: np.ndarray,
-    *,
-    distortion_model: str | None = None,
-) -> tuple[np.ndarray, np.ndarray] | None:
-    """Return ``(rvec, tvec)`` for camera optical <- marker from undistorted solvePnP.
-
-    For fisheye/equidistant intrinsics, corners are first undistorted into the
-    same pinhole ``K`` so the radtan-only ``solvePnP`` sees pinhole-equivalent
-    pixels. Otherwise the radtan ``dist_coeffs`` are passed straight through.
-    """
-    obj = _aruco_marker_object_points(marker_length_m)
-    img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
-    if _is_fisheye_model(distortion_model):
-        d_flat = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
-        if d_flat.size < 4:
-            raise ValueError(
-                f"Fisheye/equidistant distortion model requires at least 4 coefficients; "
-                f"got {d_flat.size}. Check CameraInfo.D."
-            )
-        d_fisheye = d_flat[:4].reshape(4, 1)
-        img = cv2.fisheye.undistortPoints(img, camera_matrix, d_fisheye, P=camera_matrix)
-        solve_dist: np.ndarray = np.zeros((0, 1), dtype=np.float64)
-    else:
-        solve_dist = dist_coeffs
-    ok, rvec, tvec = cv2.solvePnP(
-        obj,
-        img,
-        camera_matrix,
-        solve_dist,
-        flags=cv2.SOLVEPNP_IPPE_SQUARE,
-    )
-    if not ok:
-        return None
-    return rvec, tvec
-
-
-def rvec_tvec_to_transform(
-    rvec: np.ndarray,
-    tvec: np.ndarray,
-    *,
-    frame_id: str,
-    child_frame_id: str,
-    ts: float,
-) -> Transform:
-    """Build ``Transform`` for ``frame_id`` <- ``child_frame_id`` (camera <- marker)."""
-    rot_mat, _ = cv2.Rodrigues(rvec)
-    quat = Quaternion.from_rotation_matrix(rot_mat)
-    tx, ty, tz = tvec.reshape(3)
-    return Transform(
-        translation=Vector3(float(tx), float(ty), float(tz)),
-        rotation=quat,
-        frame_id=frame_id,
-        child_frame_id=child_frame_id,
-        ts=ts,
-    )
-
-
-def create_aruco_detector(dictionary_name: str) -> cv2.aruco.ArucoDetector:
-    if not hasattr(cv2.aruco, dictionary_name):
-        raise ValueError(f"Unknown ArUco dictionary {dictionary_name!r}")
-    dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, dictionary_name))
-    parameters = cv2.aruco.DetectorParameters()
-    return cv2.aruco.ArucoDetector(dictionary, parameters)
 
 
 class MarkerTfModuleConfig(ModuleConfig):
