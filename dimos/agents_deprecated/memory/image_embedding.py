@@ -45,12 +45,18 @@ class ImageEmbeddingProvider:
     that can be stored in a vector database and used for similarity search.
     """
 
+    # Remote multimodal embedding model used when model_name == "gemini".
+    GEMINI_EMBED_MODEL = "gemini-embedding-2"
+
     def __init__(self, model_name: str = "clip", dimensions: int = 512) -> None:
         """
         Initialize the image embedding provider.
 
         Args:
-            model_name: Name of the embedding model to use ("clip", "resnet").
+            model_name: Name of the embedding model to use ("clip", "resnet",
+                "gemini"). "gemini" uses the remote Gemini Embedding API
+                (multimodal: image + text in one space) and needs
+                GEMINI_API_KEY or GOOGLE_API_KEY.
             dimensions: Dimensions of the embedding vectors
         """
         self.model_name = model_name
@@ -65,6 +71,23 @@ class ImageEmbeddingProvider:
 
     def _initialize_model(self):  # type: ignore[no-untyped-def]
         """Initialize the specified embedding model."""
+        if self.model_name == "gemini":
+            from google import genai
+
+            api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "Gemini embeddings require GEMINI_API_KEY or GOOGLE_API_KEY to be set"
+                )
+            # Client doubles as the "model"; sentinel processor keeps the
+            # None-guards in get_embedding / get_text_embedding happy.
+            self.model = genai.Client(api_key=api_key)  # type: ignore[assignment]
+            self.processor = "gemini"  # type: ignore[assignment]
+            logger.info(
+                f"Using remote Gemini embeddings: {self.GEMINI_EMBED_MODEL} "
+                f"({self.dimensions}d)"
+            )
+            return
         try:
             import onnxruntime as ort  # type: ignore[import-untyped]
             import torch  # noqa: F401
@@ -123,6 +146,18 @@ class ImageEmbeddingProvider:
             return np.random.randn(self.dimensions).astype(np.float32)
 
         pil_image = self._prepare_image(image)
+
+        if self.model_name == "gemini":
+            try:
+                from google.genai import types
+
+                buf = io.BytesIO()
+                pil_image.convert("RGB").save(buf, format="PNG")
+                part = types.Part.from_bytes(data=buf.getvalue(), mime_type="image/png")
+                return self._gemini_embed_content([part])
+            except Exception as e:
+                logger.error(f"Error generating Gemini image embedding: {e}")
+                return np.random.randn(self.dimensions).astype(np.float32)
 
         embedding: np.ndarray
         try:
@@ -197,6 +232,13 @@ class ImageEmbeddingProvider:
             logger.error("Model not initialized. Using fallback random embedding.")
             return np.random.randn(self.dimensions).astype(np.float32)
 
+        if self.model_name == "gemini":
+            try:
+                return self._gemini_embed_content(text)
+            except Exception as e:
+                logger.error(f"Error generating Gemini text embedding: {e}")
+                return np.random.randn(self.dimensions).astype(np.float32)
+
         if self.model_name != "clip":
             logger.warning(
                 f"Text embeddings are only supported with CLIP model, not {self.model_name}. Using random embedding."
@@ -250,6 +292,24 @@ class ImageEmbeddingProvider:
         except Exception as e:
             logger.error(f"Error generating text embedding: {e}")
             return np.random.randn(self.dimensions).astype(np.float32)
+
+    def _gemini_embed_content(self, contents: object) -> np.ndarray:
+        """Call the Gemini multimodal embedding API and return a normalized vector.
+
+        `contents` may be a text string or a list of `types.Part` (e.g. an image).
+        Image and text land in the same space, so semantic text search over
+        stored frames keeps working.
+        """
+        from google.genai import types
+
+        cfg = types.EmbedContentConfig(output_dimensionality=self.dimensions)
+        result = self.model.models.embed_content(  # type: ignore[union-attr]
+            model=self.GEMINI_EMBED_MODEL, contents=contents, config=cfg
+        )
+        vec = np.array(result.embeddings[0].values, dtype=np.float32)
+        # Truncated (<3072d) Gemini embeddings are not pre-normalized.
+        norm = np.linalg.norm(vec)
+        return vec / norm if norm > 0 else vec
 
     def _prepare_image(self, image: np.ndarray | str | bytes) -> Image.Image:
         """
