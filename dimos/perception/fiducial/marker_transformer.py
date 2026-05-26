@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -96,6 +96,110 @@ def _average_marker_pose(
     )
 
 
+def detect_markers_in_image(
+    image: Image,
+    *,
+    camera_info: CameraInfo,
+    world_T_optical: Transform,
+    marker_length_m: float,
+    aruco_dictionary: str,
+    world_frame: str = "world",
+    detector: Any | None = None,
+    camera_matrix: np.ndarray | None = None,
+    dist_coeffs: np.ndarray | None = None,
+) -> list[Detection3DMarker]:
+    """Detect markers in one image and return rich world-frame 3D detections.
+    """
+    if marker_length_m <= 0:
+        raise ValueError(f"marker_length_m must be > 0, got {marker_length_m}")
+    if (
+        camera_info.width
+        and camera_info.height
+        and (image.width != camera_info.width or image.height != camera_info.height)
+    ):
+        return []
+
+    if detector is None:
+        detector = create_aruco_detector(aruco_dictionary)
+    if (camera_matrix is None) != (dist_coeffs is None):
+        raise ValueError("camera_matrix and dist_coeffs must be provided together")
+    if camera_matrix is None or dist_coeffs is None:
+        camera_matrix, dist_coeffs = camera_info_to_cv_matrices(camera_info)
+
+    gray = image.to_grayscale().as_numpy()
+    corners, ids, _ = detector.detectMarkers(gray)
+    if ids is None or len(ids) == 0:
+        return []
+
+    optical_frame = world_T_optical.child_frame_id or "optical"
+    t_world_optical = Transform(
+        translation=world_T_optical.translation,
+        rotation=world_T_optical.rotation,
+        frame_id=world_frame,
+        child_frame_id=optical_frame,
+        ts=image.ts,
+    )
+    marker_size = Vector3(marker_length_m, marker_length_m, 0.0)
+    detections: list[Detection3DMarker] = []
+
+    for corner_set, mid_arr in zip(corners, ids, strict=True):
+        mid = int(mid_arr[0])
+        pose = estimate_marker_pose(
+            corner_set,
+            marker_length_m,
+            camera_matrix,
+            dist_coeffs,
+            distortion_model=camera_info.distortion_model,
+        )
+        if pose is None:
+            continue
+
+        rvec, tvec = pose
+        t_optical_marker = rvec_tvec_to_transform(
+            rvec,
+            tvec,
+            frame_id=optical_frame,
+            child_frame_id=f"marker_{mid}",
+            ts=image.ts,
+        )
+        t_world_marker = t_world_optical + t_optical_marker
+
+        corners_2d = corner_set.reshape(4, 2).astype(np.float32)
+        bbox = marker_corners_to_bbox(corners_2d)
+        reprojection_error = marker_reprojection_error(
+            corners_2d,
+            marker_length_m,
+            camera_matrix,
+            dist_coeffs,
+            rvec,
+            tvec,
+            distortion_model=camera_info.distortion_model,
+        )
+
+        detections.append(
+            Detection3DMarker(
+                bbox=bbox,
+                track_id=mid,
+                class_id=mid,
+                confidence=1.0,
+                name=f"{aruco_dictionary}:{mid}",
+                ts=image.ts,
+                image=image,
+                center=t_world_marker.translation,
+                size=marker_size,
+                transform=t_world_optical,
+                frame_id=world_frame,
+                orientation=t_world_marker.rotation,
+                marker_id=mid,
+                corners_px=corners_2d,
+                dictionary=aruco_dictionary,
+                reprojection_error=reprojection_error,
+            )
+        )
+
+    return detections
+
+
 class DetectMarkers(Transformer[Image, Detection3DMarker]):
     """Detect fiducial markers and emit one world-pose observation per marker."""
 
@@ -131,7 +235,6 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         self, upstream: Iterator[Observation[Image]]
     ) -> Iterator[Observation[Detection3DMarker]]:
         info = self.camera_info
-        marker_size = Vector3(self.marker_length_m, self.marker_length_m, 0.0)
 
         for obs in upstream:
             pose = obs.pose
@@ -140,11 +243,12 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                 continue
 
             image = obs.data
-            if (
+            image_size_mismatch = (
                 info.width
                 and info.height
                 and (image.width != info.width or image.height != info.height)
-            ):
+            )
+            if image_size_mismatch:
                 logger.debug(
                     "DetectMarkers: image %sx%s != CameraInfo %sx%s; skip",
                     image.width,
@@ -152,11 +256,6 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                     info.width,
                     info.height,
                 )
-                continue
-
-            gray = image.to_grayscale().as_numpy()
-            corners, ids, _ = self._detector.detectMarkers(gray)
-            if ids is None or len(ids) == 0:
                 continue
 
             t_world_optical = Transform(
@@ -167,39 +266,19 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                 ts=obs.ts,
             )
 
-            for corner_set, mid_arr in zip(corners, ids, strict=True):
-                mid = int(mid_arr[0])
-                marker_pose = estimate_marker_pose(
-                    corner_set,
-                    self.marker_length_m,
-                    self._cam_mtx,
-                    self._dist,
-                    distortion_model=info.distortion_model,
-                )
-                if marker_pose is None:
-                    continue
-                rvec, tvec = marker_pose
-                t_optical_marker = rvec_tvec_to_transform(
-                    rvec,
-                    tvec,
-                    frame_id="optical",
-                    child_frame_id=f"marker_{mid}",
-                    ts=obs.ts,
-                )
-                t_world_marker = t_world_optical + t_optical_marker
-
-                corners_2d = corner_set.reshape(4, 2).astype(np.float32)
-                bbox = marker_corners_to_bbox(corners_2d)
-                reprojection_error = marker_reprojection_error(
-                    corners_2d,
-                    self.marker_length_m,
-                    self._cam_mtx,
-                    self._dist,
-                    rvec,
-                    tvec,
-                    distortion_model=info.distortion_model,
-                )
-
+            detections = detect_markers_in_image(
+                image,
+                camera_info=info,
+                world_T_optical=t_world_optical,
+                marker_length_m=self.marker_length_m,
+                aruco_dictionary=self.aruco_dictionary,
+                world_frame=self.world_frame,
+                detector=self._detector,
+                camera_matrix=self._cam_mtx,
+                dist_coeffs=self._dist,
+            )
+            for det in detections:
+                mid = det.marker_id
                 # Decide track_id (only meaningful when smoothing is on).
                 # Without smoothing, track_id == marker_id (legacy behavior).
                 if self.smoothing_window > 0:
@@ -212,27 +291,16 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                 else:
                     track_id = mid
 
-                det = Detection3DMarker(
-                    bbox=bbox,
-                    track_id=track_id,
-                    class_id=mid,
-                    confidence=1.0,
-                    name=f"marker_{mid}",
-                    ts=obs.ts,
-                    image=image,
-                    center=t_world_marker.translation,
-                    size=marker_size,
-                    transform=t_world_optical,
+                det = dataclasses.replace(det, track_id=track_id)
+                yielded_pose = Transform(
+                    translation=det.center,
+                    rotation=det.orientation,
                     frame_id=self.world_frame,
-                    orientation=t_world_marker.rotation,
-                    marker_id=mid,
-                    corners_px=corners_2d,
-                    dictionary=self.aruco_dictionary,
-                    reprojection_error=reprojection_error,
+                    child_frame_id=f"marker_{mid}",
+                    ts=obs.ts,
                 )
 
                 yielded_det = det
-                yielded_pose = t_world_marker
                 if self.smoothing_window > 0:
                     # Buffer raw detections per marker_id over a sliding
                     # window; emit the windowed-mean pose so each successive
