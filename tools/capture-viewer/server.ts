@@ -11,8 +11,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 
-const DB_PATH =
-  process.argv[2] ?? process.env.CAPTURE_DB ?? "assets/output/captures/go2_full.db";
+const DB_PATH = process.argv[2] ?? process.env.CAPTURE_DB ?? "recording_go2.db";
 const PORT = Number(process.env.PORT ?? 3000);
 
 // Open read-only per request: the DB may be created after the server starts,

@@ -86,3 +86,8 @@ htmlcov/
 
 # Memory2 autorecord
 recording*.db
+recording*.db-wal
+recording*.db-shm
+
+# MuJoCo runtime log
+MUJOCO_LOG.TXT
