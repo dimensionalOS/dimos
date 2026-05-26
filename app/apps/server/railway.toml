@@ -5,14 +5,9 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "apps/server/Dockerfile"
-watchPatterns = [
-  "apps/server/**",
-  "packages/db/**",
-  "packages/api/**",
-  "packages/shared/**",
-  "bun.lock",
-  "package.json",
-]
+# No watchPatterns: every push to master rebuilds this service. (Watch-path
+# matching under a monorepo Root Directory is ambiguous; for this sample we
+# favor "always deploy" over selective rebuilds.)
 
 [deploy]
 startCommand = "bun run src/server.ts"

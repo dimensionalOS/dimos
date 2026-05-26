@@ -4,13 +4,7 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "apps/web/Dockerfile"
-watchPatterns = [
-  "apps/web/**",
-  "packages/api/**",
-  "packages/shared/**",
-  "bun.lock",
-  "package.json",
-]
+# No watchPatterns: every push to master rebuilds this service.
 
 [deploy]
 startCommand = "bun apps/web/server.js"

@@ -6,9 +6,7 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "apps/gateway/Dockerfile"
-watchPatterns = [
-  "apps/gateway/**",
-]
+# No watchPatterns: every push to master rebuilds this service.
 
 [deploy]
 healthcheckPath = "/gateway-health"
