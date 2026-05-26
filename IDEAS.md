@@ -138,6 +138,36 @@ now **reason, move, AND transact.** Wildly on-brand at an Alibaba/Ant campus.
   this venue they may literally hand them to you. Have a fallback (mock the payment tool) so the demo survives
   if creds don't materialize.
 
+### Cross-cutting multiplier: agent-economy payments (x402 / MPP / ERC-8004) 🤖💸
+A different philosophy from Alipay: instead of "robot charges a human in fiat," the Go2 becomes an **economic
+agent** — it autonomously pays for services it consumes, or sells its own services, with an on-chain identity
++ reputation. This is *the* frontier-agent narrative and a strong hire signal for an agent-native company.
+
+| Rail | What it is | Why it matters here | 48h reality |
+|---|---|---|---|
+| **x402** | Coinbase's HTTP-402 + on-chain **stablecoin** (USDC); EVM + Solana; **Python SDK**; ~2s settle. Now an x402 Foundation (Linux Foundation) standard. | Robot pays/charges per call. **Permissionless on testnet** (Base Sepolia) → *no merchant creds needed*, unlike Alipay. | ✅ Lowest-friction crypto rail; testnet USDC is free. Best starting point. |
+| **MPP** | Stripe + Tempo "Machine Payments Protocol". HTTP-402 abstraction, **method-agnostic** (stablecoin / card / Lightning), **back-compatible with x402**. "Sessions" = pre-authorize a budget, stream micropayments. | One endpoint, many rails; Stripe **test mode**. Sessions fit a robot doing many tiny paid actions. | ✅ Doable via Stripe test mode; newer, smaller ecosystem. |
+| **ERC-8004** | Ethereum **Trustless Agents** standard. Three on-chain registries: **Identity** (ERC-721), **Reputation**, **Validation**. Live on mainnet Jan 2026. | Not payments — the **trust layer**. Robot gets an on-chain identity + a reputation it earns by completing tasks. Pairs with x402/MPP. | ⚠️ Stretch goal. Minting identity is easy; meaningful reputation loop is more scope. |
+
+**Demo concepts**
+- **Pay-per-task robot (crypto twin of the vending dog)** — robot's delivery/patrol service sits behind an
+  x402-paywalled endpoint; a user/agent pays testnet USDC → robot executes. Permissionless, no creds → *more
+  reliable to ship in 48h than the Alipay version.*
+- **Self-funding robot** — the agent pays per-call for a paid perception/VLM/API service via x402, or streams
+  micropayments through an MPP session as it works. Shows genuine economic autonomy.
+- **Trustless swarm economy** (ties to Direction B) — each Go2 has an ERC-8004 identity + reputation; robots
+  pay each other for subtasks and rate the result. Most ambitious; best "wow + frontier" combo.
+
+**Scope discipline:** ship **one** rail end-to-end on **testnet** first (x402 is the easiest). Treat ERC-8004
+identity/reputation as a stretch once payments work. Don't try to do Alipay *and* crypto in 48h — pick the
+narrative (local-fiat vs. frontier-agent-economy) and commit.
+
+### Pick-a-payment cheat (if you do payments at all)
+- **Want the venue/judge ecosystem pop + real consumer UX** → **Alipay MCP** (blocker: merchant creds — ask mentors).
+- **Want zero-credential, ship-tonight, frontier story** → **x402 on Base Sepolia testnet** (Python SDK).
+- **Want method-agnostic + budgeted streaming** → **MPP** (Stripe test mode).
+- **Want a trust/identity layer on top** → add **ERC-8004** as a stretch.
+
 ## Judging notes
 - Build to a **90-second story**; rehearse it.
 - It's a **3-day interview** — clean Skill code, graceful failure handling, and good Rerun usage are hiring signal.
