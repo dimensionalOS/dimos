@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Browser-based 3D simulator (Three.js + Rapier) + Deno bridge — runs as the simulation backend for dimos.",
+  "description": "Browser-based 3D simulator (Three.js + Rapier) + Deno bridge \u2014 runs as the simulation backend for dimos.",
   "scripts": {
     "dev": "vite --force",
     "build": "vite build",

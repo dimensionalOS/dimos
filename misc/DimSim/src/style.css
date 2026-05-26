@@ -523,7 +523,7 @@ button.primary:hover {
   inset: 20px;
   border-radius: 50%;
   background: transparent;
-  box-shadow: 
+  box-shadow:
     0 0 30px rgba(139, 92, 246, 0.5),
     0 0 60px rgba(139, 92, 246, 0.3),
     0 0 90px rgba(139, 92, 246, 0.1);
@@ -532,13 +532,13 @@ button.primary:hover {
 
 @keyframes portal-glow {
   0% {
-    box-shadow: 
+    box-shadow:
       0 0 30px rgba(139, 92, 246, 0.5),
       0 0 60px rgba(139, 92, 246, 0.3),
       0 0 90px rgba(139, 92, 246, 0.1);
   }
   100% {
-    box-shadow: 
+    box-shadow:
       0 0 40px rgba(167, 139, 250, 0.6),
       0 0 80px rgba(139, 92, 246, 0.4),
       0 0 120px rgba(139, 92, 246, 0.2);
@@ -1545,11 +1545,11 @@ body.dimos-mode .status-floating {
 }
 
 @keyframes modalSlideIn {
-  from { 
+  from {
     opacity: 0;
     transform: translateY(-20px) scale(0.98);
   }
-  to { 
+  to {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
