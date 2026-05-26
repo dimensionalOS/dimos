@@ -27,11 +27,30 @@ export const createMessageInput = z.object({
 export type CreateMessageInput = z.infer<typeof createMessageInput>;
 
 // A robot-captured frame as returned to the web client. `imageUrl` is a freshly
-// presigned GET URL; the raw S3 key never leaves the server.
+// presigned GET URL; the raw S3 key never leaves the server. `poseX`/`poseY`
+// are the robot's world position when captured (for placing a pin on the map),
+// `label` is what was detected/captured (e.g. "plant").
 export const frameSchema = z.object({
   id: z.string(),
   imageUrl: z.string(),
   note: z.string().nullable(),
+  label: z.string().nullable(),
+  poseX: z.number().nullable(),
+  poseY: z.number().nullable(),
   createdAt: z.string(),
 });
 export type Frame = z.infer<typeof frameSchema>;
+
+// The latest 2D occupancy map snapshot (the dimos global_costmap, rendered to a
+// PNG by the robot). `resolution` (m/cell) + `origin` let the web place world
+// coordinates onto the image: col = (x - originX) / resolution, row similarly.
+export const mapSnapshotSchema = z.object({
+  imageUrl: z.string(),
+  resolution: z.number(),
+  originX: z.number(),
+  originY: z.number(),
+  width: z.number(),
+  height: z.number(),
+  createdAt: z.string(),
+});
+export type MapSnapshot = z.infer<typeof mapSnapshotSchema>;

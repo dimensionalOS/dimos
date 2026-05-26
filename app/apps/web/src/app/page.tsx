@@ -25,9 +25,10 @@ export default async function Home() {
           Bun + Hono + oRPC + Postgres + object storage, behind a Caddy gateway
           on Railway.
         </p>
-        <Link className="text-sm underline" href="/frames">
-          → robot frames
-        </Link>
+        <div className="flex gap-3 text-sm underline">
+          <Link href="/frames">→ robot frames</Link>
+          <Link href="/map">→ robot map</Link>
+        </div>
       </header>
 
       <AddMessage />

@@ -1,9 +1,11 @@
 import type { RouterClient } from "@orpc/server";
-import { frames, messages, user } from "@robomoo/db";
+import { frames, maps, messages, user } from "@robomoo/db";
 import {
   createMessageInput,
   type Frame,
   frameSchema,
+  type MapSnapshot,
+  mapSnapshotSchema,
   type Message,
   messageSchema,
   newId,
@@ -81,14 +83,40 @@ const framesList = publicProcedure
         id: r.id,
         imageUrl: await context.presignGet(r.imageKey),
         note: r.note,
+        label: r.label,
+        poseX: r.poseX,
+        poseY: r.poseY,
         createdAt: r.createdAt.toISOString(),
       })),
     );
   });
 
+// Newest map snapshot (or null if none yet) with a presigned PNG URL + the grid
+// metadata the web needs to place world coordinates onto the image.
+const mapLatest = publicProcedure
+  .output(mapSnapshotSchema.nullable())
+  .handler(async ({ context }): Promise<MapSnapshot | null> => {
+    const [row] = await context.db
+      .select()
+      .from(maps)
+      .orderBy(desc(maps.createdAt))
+      .limit(1);
+    if (!row) return null;
+    return {
+      imageUrl: await context.presignGet(row.imageKey),
+      resolution: row.resolution,
+      originX: row.originX,
+      originY: row.originY,
+      width: row.width,
+      height: row.height,
+      createdAt: row.createdAt.toISOString(),
+    };
+  });
+
 export const appRouter = {
   messages: { list, add },
   frames: { list: framesList },
+  map: { latest: mapLatest },
 };
 
 export type AppRouter = typeof appRouter;

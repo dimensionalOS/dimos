@@ -1,24 +1,34 @@
-import { type Database, frames } from "@robomoo/db";
+import { type Database, frames, maps } from "@robomoo/db";
 import { newId } from "@robomoo/shared";
 import { env } from "../env";
 import { writeImage } from "../storage/bucket";
 
 const MAX_BYTES = 8 * 1024 * 1024; // 8 MB
 
-// Token-guarded frame ingest for the robot. Mirrors the session-guarded
-// /api/upload/image handler, but authenticates with a shared bearer secret
-// (ROBOT_INGEST_TOKEN) instead of a Better Auth session — the robot has no
-// cookie. Writes the JPEG to the bucket and records a row the gallery lists.
+function authed(req: Request): boolean {
+  const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  return Boolean(env.ROBOT_INGEST_TOKEN) && token === env.ROBOT_INGEST_TOKEN;
+}
+
+function num(v: string | File | null): number | null {
+  if (typeof v !== "string" || v.length === 0) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Token-guarded frame ingest. Mirrors /api/upload/image but authenticates with
+// a shared bearer secret (the robot has no session). Optional pose + label let
+// the web place a marker on the map.
 export async function handleRobotFrame(
   req: Request,
   db: Database,
 ): Promise<Response> {
-  const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (!env.ROBOT_INGEST_TOKEN || token !== env.ROBOT_INGEST_TOKEN) {
-    return new Response("unauthorized", { status: 401 });
-  }
+  if (!authed(req)) return new Response("unauthorized", { status: 401 });
 
-  const form = await req.formData();
+  const form = await req.formData().catch(() => null);
+  if (!form) {
+    return new Response("expected multipart form-data", { status: 400 });
+  }
   const file = form.get("file");
   if (!(file instanceof File)) {
     return new Response("expected a 'file' field", { status: 400 });
@@ -31,6 +41,7 @@ export async function handleRobotFrame(
   }
 
   const note = form.get("note");
+  const label = form.get("label");
   const id = newId("frame");
   const ext = file.type.split("/").pop() || "jpg";
   const key = `robot/${id}.${ext}`;
@@ -40,6 +51,67 @@ export async function handleRobotFrame(
     id,
     imageKey: key,
     note: typeof note === "string" && note.length > 0 ? note : null,
+    label: typeof label === "string" && label.length > 0 ? label : null,
+    poseX: num(form.get("poseX")),
+    poseY: num(form.get("poseY")),
+  });
+
+  return Response.json({ key });
+}
+
+// Token-guarded map snapshot ingest. The robot renders the dimos global_costmap
+// to a PNG and POSTs it with the grid metadata needed to map world → pixels.
+export async function handleRobotMap(
+  req: Request,
+  db: Database,
+): Promise<Response> {
+  if (!authed(req)) return new Response("unauthorized", { status: 401 });
+
+  const form = await req.formData().catch(() => null);
+  if (!form) {
+    return new Response("expected multipart form-data", { status: 400 });
+  }
+  const file = form.get("file");
+  if (!(file instanceof File)) {
+    return new Response("expected a 'file' field", { status: 400 });
+  }
+  if (!file.type.startsWith("image/")) {
+    return new Response("only images are allowed", { status: 415 });
+  }
+  if (file.size > MAX_BYTES) {
+    return new Response("file too large (max 8MB)", { status: 413 });
+  }
+
+  const resolution = num(form.get("resolution"));
+  const originX = num(form.get("originX"));
+  const originY = num(form.get("originY"));
+  const width = num(form.get("width"));
+  const height = num(form.get("height"));
+  if (
+    resolution === null ||
+    originX === null ||
+    originY === null ||
+    width === null ||
+    height === null
+  ) {
+    return new Response(
+      "missing map metadata (resolution, originX, originY, width, height)",
+      { status: 400 },
+    );
+  }
+
+  const id = newId("map");
+  const key = `robot/${id}.png`;
+  await writeImage(key, await file.arrayBuffer(), file.type);
+
+  await db.insert(maps).values({
+    id,
+    imageKey: key,
+    resolution,
+    originX,
+    originY,
+    width: Math.round(width),
+    height: Math.round(height),
   });
 
   return Response.json({ key });

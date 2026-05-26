@@ -15,6 +15,13 @@
       "when": 1779821230732,
       "tag": "0001_hot_hydra",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779824597476,
+      "tag": "0002_goofy_emma_frost",
+      "breakpoints": true
     }
   ]
 }
