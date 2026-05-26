@@ -1,0 +1,31 @@
+{
+  "name": "robomoo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:web": "turbo run dev --filter=web",
+    "dev:server": "turbo run dev --filter=server",
+    "dev:gateway": "bun --filter gateway dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "db:start": "bun --filter @robomoo/db db:start",
+    "db:stop": "bun --filter @robomoo/db db:stop",
+    "db:down": "bun --filter @robomoo/db db:down",
+    "db:generate": "bun --filter @robomoo/db db:generate",
+    "db:migrate": "bun --filter @robomoo/db db:migrate"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.12",
+    "@types/node": "^25.6.0",
+    "shadcn": "^4.4.0",
+    "turbo": "^2.9.6",
+    "typescript": "^6.0.3"
+  },
+  "packageManager": "bun@1.3.14"
+}

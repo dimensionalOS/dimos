@@ -1,0 +1,22 @@
+# Railway service config for apps/server.
+# Set the service's "Config-as-code Path" to apps/server/railway.toml.
+# Build context must be the repo root so workspace:* deps resolve.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/server/Dockerfile"
+watchPatterns = [
+  "apps/server/**",
+  "packages/db/**",
+  "packages/api/**",
+  "packages/shared/**",
+  "bun.lock",
+  "package.json",
+]
+
+[deploy]
+startCommand = "bun run src/server.ts"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

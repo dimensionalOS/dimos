@@ -1,0 +1,22 @@
+{
+	admin off
+	auto_https off
+}
+
+# Local dev variant — same routing, but targets localhost ports. Run via
+# `bun --filter gateway dev` (docker, host network).
+:{$PORT} {
+	@health path /gateway-health
+	handle @health {
+		respond "ok" 200
+	}
+
+	@server path /api/auth/* /rpc/* /api/upload/*
+	handle @server {
+		reverse_proxy {$SERVER_URL:http://localhost:4471}
+	}
+
+	handle {
+		reverse_proxy {$WEB_URL:http://localhost:4472}
+	}
+}

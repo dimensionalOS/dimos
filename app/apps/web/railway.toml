@@ -1,0 +1,20 @@
+# Railway service config for apps/web.
+# Set the service's "Config-as-code Path" to apps/web/railway.toml.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/web/Dockerfile"
+watchPatterns = [
+  "apps/web/**",
+  "packages/api/**",
+  "packages/shared/**",
+  "bun.lock",
+  "package.json",
+]
+
+[deploy]
+startCommand = "bun apps/web/server.js"
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

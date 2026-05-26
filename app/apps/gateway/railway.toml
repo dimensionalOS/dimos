@@ -1,0 +1,17 @@
+# Railway service config for apps/gateway (Caddy reverse proxy).
+# Set the service's "Config-as-code Path" to apps/gateway/railway.toml.
+# This is the ONLY public-facing service — attach the public domain here.
+# Set PORT / SERVER_URL / WEB_URL in Variables (see Caddyfile).
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/gateway/Dockerfile"
+watchPatterns = [
+  "apps/gateway/**",
+]
+
+[deploy]
+healthcheckPath = "/gateway-health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

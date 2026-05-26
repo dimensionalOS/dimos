@@ -1,0 +1,24 @@
+{
+	admin off
+	auto_https off
+}
+
+# Single public entry. `handle` blocks are mutually exclusive and matched in
+# order, so the health check is answered first, then the backend paths
+# (/rpc, /api/auth, /api/upload) go to the server, and everything else to web —
+# all over Railway's internal network. Override SERVER_URL / WEB_URL per env.
+:{$PORT} {
+	@health path /gateway-health
+	handle @health {
+		respond "ok" 200
+	}
+
+	@server path /api/auth/* /rpc/* /api/upload/*
+	handle @server {
+		reverse_proxy {$SERVER_URL:http://server.railway.internal:4471}
+	}
+
+	handle {
+		reverse_proxy {$WEB_URL:http://web.railway.internal:4472}
+	}
+}
