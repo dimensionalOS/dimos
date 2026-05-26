@@ -36,15 +36,19 @@ from typing import Any
 from reactivex.disposable import Disposable
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.utils.logging_config import setup_logger
 from dimos.core.stream import In
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.memory2.module import Recorder, RecorderConfig
 from dimos.memory2.stream import Stream
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.robot.unitree.go2.connection import GO2Connection
+
+logger = setup_logger()
 
 _voxel_size = 0.05
 
@@ -59,12 +63,13 @@ class Go2Mid360MemoryConfig(RecorderConfig):
 
 
 class Go2Mid360Memory(Recorder):
-    """Records Go2 camera, native Go2 lidar, Mid-360 lidar, and FastLio2 odometry."""
+    """Records Go2 camera, native Go2 lidar, Mid-360 lidar, FastLio2 odometry, and Go2 leg odometry."""
 
     color_image: In[Image]
     go2_lidar: In[PointCloud2]
     lidar: In[PointCloud2]
     odometry: In[Odometry]
+    odom: In[PoseStamped]
     config: Go2Mid360MemoryConfig
 
     def _port_to_stream(self, name: str, input_topic: In[Any], stream: Stream[Any]) -> None:
@@ -78,6 +83,7 @@ class Go2Mid360Memory(Recorder):
 
         def on_msg(msg: Any) -> None:
             ts = time.time()
+            msg_ts = getattr(msg, "ts", None) or ts
             frame_id = (
                 getattr(msg, "child_frame_id", None)
                 or getattr(msg, "frame_id", None)
@@ -85,8 +91,16 @@ class Go2Mid360Memory(Recorder):
             )
             if frame_id == "world":
                 frame_id = default_frame_id
-            transform = self.tf.get("world", frame_id, time_point=ts, time_tolerance=tf_tolerance)
+            transform = self.tf.get("world", frame_id, time_point=msg_ts, time_tolerance=tf_tolerance)
             pose = transform.to_pose() if transform is not None else None
+            if not pose:
+                logger.warning(
+                    "[%s] No tf available for frame '%s' at time %s (msg ts: %s), storing without pose",
+                    name,
+                    frame_id,
+                    msg_ts,
+                    getattr(msg, "ts", None),
+                )
             stream.append(msg, ts=ts, pose=pose)
 
         self.register_disposable(Disposable(input_topic.subscribe(on_msg)))
