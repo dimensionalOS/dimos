@@ -82,6 +82,30 @@ Module's internal prints "disappear"; use `dimos log` / the logger instead.
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, **`ALIBABA_API_KEY`** (Qwen — on-brand for the Ali venue),
 `HUGGINGFACE_ACCESS_TOKEN`/`HF_TOKEN`, `ROBOT_IP`, `CONN_TYPE=webrtc`.
 
+## 9b. ⚠️ LLM provider reality (Gemini + a langchain pin trap)
+- **`uv pip install 'dimos[base,unitree]'` resolved newer langchain (1.3.1) than the repo lock (1.2.3)**, which
+  **breaks the agent**: `from langchain.agents import create_agent` → `ImportError: ToolCallTransformer`.
+  **Fix (pin to the lock):**
+  ```bash
+  uv pip install "langchain==1.2.3" "langchain-core==1.3.3" \
+    "langgraph==1.0.8" "langgraph-prebuilt==1.0.7" "langgraph-checkpoint==4.0.0"
+  ```
+  Better: use `uv sync` (honors the lockfile) instead of `uv pip install` for the agentic stack.
+- **Gemini is NOT natively supported** in this version. The agent defaults to `gpt-4o`; installed providers are
+  `langchain-openai`, `-anthropic`, `-huggingface`, `-ollama`. There is **no `langchain-google-genai`**, and
+  **installing it bumps `langgraph` and breaks `create_agent`.** So for the DimOS agent, use **OpenAI or
+  Anthropic** (supported, won't break the stack), or run Gemini experiments in a **separate venv**.
+- The Gemini **key itself is valid and works**: verified via the REST `models` list, and end-to-end
+  tool-calling via `ChatGoogleGenerativeAI(model="gemini-2.5-flash").bind_tools([...])` — it correctly emitted
+  `go_to_waypoint({'name':'back door'})`. Set `GOOGLE_API_KEY` (or `GEMINI_API_KEY`). (Rotate the key post-event.)
+
+## 9c. TypeScript interop = LCM bus client, NOT a framework language
+`examples/language-interop/ts` (Deno + JSR `@dimos/lcm`, `@dimos/msgs`) lets TS **publish/subscribe to LCM
+topics** (e.g. subscribe `/odom`, publish `/cmd_vel`) and even drive a browser UI via a WebSocket↔UDP bridge.
+But you **cannot** write Modules, Blueprints, `@skill`s, the agent runtime, nav, perception, or memory in TS —
+all of that is Python. **TS is a frontend / bus-client / payments language here, not a way to avoid Python.**
+See the "TypeScript role" split in IDEAS/RUNBOOK.
+
 ## 9. Next steps (when you have an LLM key / the laptop / the dog)
 1. Put a key in `default.env`, then `dimos --simulation run unitree-go2-agentic --daemon` →
    `dimos mcp list-tools` to see skills exposed as MCP tools; `dimos agent-send "..."` to drive via LLM.
