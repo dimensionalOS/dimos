@@ -380,16 +380,16 @@ def place_nodes(
             surface_lookup=surface_lookup,
         )
 
-    # Detect walls and cliffs using a same-z-only adjacency. The 3D adj would miss
-    # cliff edges by counting cross-z neighbors, letting a landing corner that
-    # overlooks a stair below appear "interior".
-    adj_xy, _, _ = build_surface_adjacency(surface_lookup, voxel_size, 0)
-    xy_neighbor_count = np.diff(adj_xy.indptr)
-    wall_adjacent_indices = np.where(xy_neighbor_count < 8)[0]
+    neighbor_count = np.diff(adj.indptr)
+    wall_adjacent_indices = np.where(neighbor_count < 8)[0]
     if len(wall_adjacent_indices) == 0:
         wall_adjacent_indices = np.array([0], dtype=np.int64)
 
-    dist = dijkstra(adj_xy, indices=wall_adjacent_indices, min_only=True)
+    dist = dijkstra(adj, indices=wall_adjacent_indices, min_only=True)
+
+    # Same-z adjacency feeds the exposure penalty only.
+    adj_xy, _, _ = build_surface_adjacency(surface_lookup, voxel_size, 0)
+    xy_neighbor_count = np.diff(adj_xy.indptr)
 
     cells_arr = np.array(idx_to_cell, dtype=np.float64)
     cell_positions = surface_points_xyz(cells_arr, voxel_size)
