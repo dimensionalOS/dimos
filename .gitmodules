@@ -1,6 +1,0 @@
-[submodule "perception-watch"]
-	path = packages/perception-watch
-	url = https://github.com/tfius/perception-watch.git
-[submodule "packages/gs-pot"]
-	path = packages/gs-pot
-	url = https://github.com/ameer-clara/gs-pot.git
