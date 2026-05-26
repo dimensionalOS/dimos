@@ -208,6 +208,7 @@ all_modules = {
     "simple-planner": "dimos.navigation.nav_stack.modules.simple_planner.simple_planner.SimplePlanner",
     "spatial-memory": "dimos.perception.spatial_perception.SpatialMemory",
     "speak-skill": "dimos.agents.skills.speak_skill.SpeakSkill",
+    "take-picture-skill": "dimos.agents.skills.take_picture_skill.TakePictureSkill",
     "tare-planner": "dimos.navigation.nav_stack.modules.tare_planner.tare_planner.TarePlanner",
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory.TemporalMemory",
     "terrain-analysis": "dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis.TerrainAnalysis",
