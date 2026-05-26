@@ -4,7 +4,7 @@ The `dimos` CLI manages the full lifecycle of a DimOS robot stack — start, sto
 
 ## Global Options
 
-Every [`GlobalConfig`](/docs/usage/configuration.md) field is available as a CLI flag. Flags override environment variables, `.env`, and blueprint defaults.
+Every [`GlobalConfig`](/usage/configuration) field is available as a CLI flag. Flags override environment variables, `.env`, and blueprint defaults.
 
 ```bash
 dimos [GLOBAL OPTIONS] COMMAND [ARGS]
