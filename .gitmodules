@@ -1,3 +1,3 @@
 [submodule "perception-watch"]
-	path = perception-watch
+	path = packages/perception-watch
 	url = https://github.com/tfius/perception-watch.git
