@@ -162,9 +162,11 @@ class DroneController:
             drone_hover_thrust: float = 0.26487,
             attitude_p: float = 0.5,
             attitude_d: float = 2.0,
-            yaw_p: float = 0.01,
+            yaw_p: float = 1,
+            yaw_d: float = 0.05,
             max_tilt_angle: float = 0.1,
-            max_yaw_rate: float = 1.0,
+            max_yaw_rate: float = 2.0,
+            velocity_damping: float = 0.05,
             **kwargs: Any,
     ) -> None:
         self._input_controller = input_controller
@@ -172,8 +174,10 @@ class DroneController:
         self._attitude_p = attitude_p
         self._attitude_d = attitude_d
         self._yaw_p = yaw_p
+        self._yaw_d = yaw_d
         self._max_tilt_angle = max_tilt_angle
         self._max_yaw_rate = max_yaw_rate
+        self._velocity_damping = velocity_damping
 
     def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         return self._input_controller.get_command().astype(np.float32)
@@ -181,9 +185,9 @@ class DroneController:
     def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         command = self._input_controller.get_command()
 
-        pitch = float(command[0])
-        roll = float(command[1])
-        yaw = float(command[2])
+        pitch = float(command[0]) * self._max_tilt_angle
+        roll = -float(command[1]) * self._max_tilt_angle
+        yaw = float(command[2]) * self._max_yaw_rate
 
         qw, qx, qy, qz = data.qpos[3:7]
 
@@ -195,18 +199,24 @@ class DroneController:
         sinp = 2 * (qw * qy - qz * qx)
         current_pitch = np.arcsin(np.clip(sinp, -1.0, 1.0))
         
-        # siny_cosp = 2 * (qw * qz + qx * qy)
-        # cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
-        # current_yaw = np.arctan2(siny_cosp, cosy_cosp)
+        siny_cosp = 2 * (qw * qz + qx * qy)
+        cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
+        current_yaw = np.arctan2(siny_cosp, cosy_cosp)
 
         roll_rate = data.qvel[3]
         pitch_rate = data.qvel[4]
         yaw_rate = data.qvel[5]
 
-        desired_roll = roll * self._max_tilt_angle
-        desired_pitch = pitch * self._max_tilt_angle
+        vx_w, vy_w = data.qvel[0], data.qvel[1]
+        cos_y = np.cos(current_yaw)
+        sin_y = np.sin(current_yaw)
+        vx_body = vx_w * cos_y + vy_w * sin_y
+        vy_body = -vx_w * sin_y + vy_w * cos_y
+        
+        desired_pitch = pitch - self._velocity_damping * vx_body
+        desired_roll = roll + self._velocity_damping * vy_body
 
         data.ctrl[0] = self._drone_hover_thrust
         data.ctrl[1] = self._attitude_p * (current_roll - desired_roll) + self._attitude_d * roll_rate
         data.ctrl[2] = self._attitude_p * (current_pitch - desired_pitch) + self._attitude_d * pitch_rate
-        data.ctrl[3] = self._yaw_p * (yaw * self._max_yaw_rate - yaw_rate)
+        data.ctrl[3] = self._yaw_p * yaw + self._yaw_d * yaw_rate
