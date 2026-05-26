@@ -66,6 +66,7 @@ DB is provisioned automatically.
 | `S3_REGION` | `auto` |
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | from `railway bucket credentials --bucket robomoo-images --json` |
 | `S3_BUCKET` | `robomoo-images-u9vvr8xti3` (the real bucket name, not the alias) |
+| `ROBOT_INGEST_TOKEN` | secret bearer token the robot sends to `POST /api/robot/frame` (`openssl rand -hex 24`); endpoint 401s until set |
 | `PORT` | `4471` |
 
 **web**: `RPC_INTERNAL_URL=http://server.railway.internal:4471`, `PORT=4472`.
@@ -75,6 +76,27 @@ DB is provisioned automatically.
 
 > Bucket credentials are issued per bucket and are **not committed**. Re-fetch
 > them any time with `railway bucket credentials --bucket robomoo-images --json`.
+
+## Robot frame ingest (DimOS Go2)
+
+The robot posts JPEG frames to the public gateway; they land in S3 + the
+`frames` table and show on `/frames` (gallery polls every 3s).
+
+```
+POST https://gateway-production-94e2.up.railway.app/api/robot/frame
+  Authorization: Bearer <ROBOT_INGEST_TOKEN>
+  multipart/form-data:  file=<JPEG> (Content-Type image/*, ≤ 8 MB), note=<optional>
+```
+
+```bash
+curl -X POST https://gateway-production-94e2.up.railway.app/api/robot/frame \
+  -H "Authorization: Bearer $ROBOT_INGEST_TOKEN" \
+  -F "file=@frame.jpg;type=image/jpeg" -F "note=patrol cam"
+# → {"key":"robot/frame_*.jpeg"}
+```
+
+Returns 401 without the matching token. The token lives only in the server's
+Railway variables (not committed); rotate by setting a new `ROBOT_INGEST_TOKEN`.
 
 ## Deploying
 
