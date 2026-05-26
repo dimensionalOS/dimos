@@ -1903,7 +1903,7 @@ agents = [
     { name = "sounddevice" },
 ]
 all = [
-    { name = "a750-control" },
+    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "anthropic" },
     { name = "catkin-pkg" },
     { name = "cerebras-cloud-sdk" },
@@ -2075,7 +2075,7 @@ drone = [
     { name = "pymavlink" },
 ]
 manipulation = [
-    { name = "a750-control" },
+    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "kaleido" },
@@ -2364,7 +2364,7 @@ tests-self-hosted = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a750-control", marker = "extra == 'manipulation'" },
+    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'manipulation'" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "anthropic", marker = "extra == 'agents'", specifier = ">=0.19.0" },
     { name = "bleak", specifier = ">=3.0.2" },
