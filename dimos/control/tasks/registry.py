@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import importlib
+import os
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -44,15 +45,46 @@ class ControlTaskRegistry:
     """Registry for control-task factories with lazy imports."""
 
     def __init__(self) -> None:
-        self._factory_paths: dict[str, str] = {
-            "trajectory": "dimos.control.tasks.trajectory_task:create_task",
-            "servo": "dimos.control.tasks.servo_task:create_task",
-            "velocity": "dimos.control.tasks.velocity_task:create_task",
-            "cartesian_ik": "dimos.control.tasks.cartesian_ik_task:create_task",
-            "teleop_ik": "dimos.control.tasks.teleop_task:create_task",
-            "g1_groot_wbc": "dimos.control.tasks.g1_groot_wbc_task:create_task",
-        }
+        self._factory_paths: dict[str, str] = {}
         self._factories: dict[str, TaskFactory] = {}
+        self.discover()
+
+    def discover(self) -> None:
+        """Discover task registry manifests without importing task implementations."""
+        tasks_pkg = importlib.import_module("dimos.control.tasks")
+        for root in tasks_pkg.__path__:
+            for entry in sorted(os.listdir(root)):
+                if entry.startswith(("_", ".")):
+                    continue
+                entry_path = os.path.join(root, entry)
+                if not os.path.isdir(entry_path):
+                    continue
+
+                module_name = f"dimos.control.tasks.{entry}.__registry__"
+                try:
+                    module = importlib.import_module(module_name)
+                except ModuleNotFoundError as exc:
+                    if exc.name == module_name:
+                        continue
+                    raise
+
+                task_factories = getattr(module, "TASK_FACTORIES", None)
+                if not isinstance(task_factories, Mapping):
+                    raise TypeError(f"{module_name} must define TASK_FACTORIES")
+                for name, factory_path in task_factories.items():
+                    if not isinstance(name, str) or not isinstance(factory_path, str):
+                        raise TypeError(f"{module_name}.TASK_FACTORIES must map strings to strings")
+                    self.register_path(name, factory_path)
+
+    def register_path(self, name: str, factory_path: str) -> None:
+        """Register a lazy task factory import path."""
+        if ":" not in factory_path:
+            raise ValueError(f"Invalid task factory path: {factory_path!r}")
+        key = name.lower()
+        existing = self._factory_paths.get(key)
+        if existing is not None and existing != factory_path:
+            raise ValueError(f"Duplicate task type {key!r}: {existing!r} vs {factory_path!r}")
+        self._factory_paths[key] = factory_path
 
     def create(
         self,
@@ -83,11 +115,17 @@ class ControlTaskRegistry:
             return self._factories[key]
         if key not in self._factory_paths:
             raise ValueError(f"Unknown task type: {key!r}. Available: {self.available()}")
-        module_name, attr = self._factory_paths[key].split(":", maxsplit=1)
-        module = importlib.import_module(module_name)
+        factory_path = self._factory_paths[key]
+        module_name, attr = factory_path.split(":", maxsplit=1)
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError as exc:
+            raise ValueError(
+                f"Task {key!r} is registered to missing module {module_name!r}"
+            ) from exc
         factory = cast("TaskFactory", getattr(module, attr))
         if not callable(factory):
-            raise TypeError(f"Task factory {self._factory_paths[key]!r} is not callable")
+            raise TypeError(f"Task factory {factory_path!r} is not callable")
         self._factories[key] = factory
         return factory
 

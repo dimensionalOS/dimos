@@ -31,7 +31,7 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
-from dimos.control.tasks.trajectory_task import (
+from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
     TrajectoryState,

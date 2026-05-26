@@ -253,6 +253,7 @@ class JointTrajectoryTask(BaseControlTask):
 __all__ = [
     "JointTrajectoryTask",
     "JointTrajectoryTaskConfig",
+    "TrajectoryState",
 ]
 
 
