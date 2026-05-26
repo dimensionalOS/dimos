@@ -170,6 +170,20 @@ frontier-agent-economy) and commit.
 - **Want method-agnostic + budgeted streaming** → **MPP** (Stripe test mode).
 - **Want a trust/identity layer on top** → **ERC-8004** (already in our wheelhouse — use it as the spine, not a stretch).
 
+### TypeScript role (for a TS-first builder)
+The DimOS **core is Python and unavoidable**: `@skill`s, the LangGraph agent, MCP server, nav, perception,
+memory are all Python. **Don't rebuild DimOS in TS** (Tier-3 trap). But TS owns the high-value layers around it:
+- **Demo UI / dashboard** — a TS/React web app over the LCM↔WebSocket bridge (`@dimos/lcm`, `@dimos/msgs`) +
+  MCP, streaming the agent's reasoning + camera + map + incidents. This *is* the "reasoning on screen" WOW the
+  playbook calls for, and it's TS-native.
+- **Payments layer (γ)** — the Alipay/x402 gateway + public webhook (lives on the VPS) in Node/TS; ERC-8004 /
+  on-chain glue via viem. All TS turf.
+- **MCP control surface** — a TS app/bot driving the robot over MCP (`:9990`) = "control from your phone".
+
+**Split:** keep Python to a thin skills layer (use `learn/patrol_dog_skills.py` as the template); own UI +
+payments + MCP control in TS. Solo, you still write a handful of Python `@skill`s; with a teammate, one does
+Python skills, you do everything TS.
+
 ## Judging notes
 - Build to a **90-second story**; rehearse it.
 - It's a **3-day interview** — clean Skill code, graceful failure handling, and good Rerun usage are hiring signal.
