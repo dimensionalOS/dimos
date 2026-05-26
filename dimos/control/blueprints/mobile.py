@@ -44,7 +44,7 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.robot.catalog.ufactory import xarm7 as _catalog_xarm7
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+from dimos.teleop.keyboard.twist_keyboard_teleop import KeyboardTeleop
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 

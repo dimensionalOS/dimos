@@ -30,7 +30,7 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_webrtc_keyboard_teleop
     unitree_go2_webrtc_keyboard_teleop,
 )
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+from dimos.teleop.keyboard.twist_keyboard_teleop import KeyboardTeleop
 
 unitree_go2_webrtc_rage_keyboard_teleop = autoconnect(
     unitree_go2_webrtc_keyboard_teleop,

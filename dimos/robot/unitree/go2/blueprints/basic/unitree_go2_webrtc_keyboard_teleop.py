@@ -26,7 +26,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_coordinator import (
     unitree_go2_coordinator,
 )
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+from dimos.teleop.keyboard.twist_keyboard_teleop import KeyboardTeleop
 
 # publish_only_when_active: teleop stays silent while no movement key is
 # held (one zero Twist on release, then nothing) so it does not flood

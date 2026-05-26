@@ -29,7 +29,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+from dimos.teleop.keyboard.twist_keyboard_teleop import KeyboardTeleop
 
 _go2_joints = make_twist_base_joints("go2")
 
