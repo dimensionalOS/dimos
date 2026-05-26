@@ -12,9 +12,10 @@ export default function FramesPage() {
           Images the robot captured and POSTed to{" "}
           <code>/api/robot/frame</code>. Live — polls every few seconds.
         </p>
-        <Link className="text-sm underline" href="/">
-          ← back
-        </Link>
+        <div className="flex gap-3 text-sm underline">
+          <Link href="/">← back</Link>
+          <Link href="/splats">→ 3D splats</Link>
+        </div>
       </header>
 
       <FramesGallery />

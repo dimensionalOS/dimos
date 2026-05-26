@@ -10,7 +10,7 @@ export interface ApiSession {
 export interface ApiContext {
   db: Database;
   session: ApiSession | null;
-  presignGet: (key: string) => Promise<string>;
+  presignGet: (key: string, expiresIn?: number) => Promise<string>;
 }
 
 export function buildContext(ctx: ApiContext): ApiContext {

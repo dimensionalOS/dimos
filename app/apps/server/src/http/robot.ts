@@ -1,9 +1,11 @@
-import { type Database, frames, maps } from "@robomoo/db";
+import { type Database, frames, maps, splats } from "@robomoo/db";
 import { newId } from "@robomoo/shared";
 import { env } from "../env";
-import { writeImage } from "../storage/bucket";
+import { writeImage, writeObject } from "../storage/bucket";
 
 const MAX_BYTES = 8 * 1024 * 1024; // 8 MB
+const MAX_SPLAT_BYTES = 256 * 1024 * 1024; // 256 MB — splats are large
+const SPLAT_EXTS = new Set(["ply", "spz", "splat", "ksplat", "sog"]);
 
 function authed(req: Request): boolean {
   const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
@@ -57,6 +59,61 @@ export async function handleRobotFrame(
   });
 
   return Response.json({ key });
+}
+
+// Token-guarded splat ingest. The reconstruction box (after running COLMAP +
+// gaussian-splatting on a batch of frames) POSTs the finished splat file here.
+// Accepts .ply/.spz/.splat/.ksplat/.sog; `format` is derived from the field or
+// the uploaded filename. `name` is an optional human label.
+export async function handleRobotSplat(
+  req: Request,
+  db: Database,
+): Promise<Response> {
+  if (!authed(req)) return new Response("unauthorized", { status: 401 });
+
+  const form = await req.formData().catch(() => null);
+  if (!form) {
+    return new Response("expected multipart form-data", { status: 400 });
+  }
+  const file = form.get("file");
+  if (!(file instanceof File)) {
+    return new Response("expected a 'file' field", { status: 400 });
+  }
+  if (file.size > MAX_SPLAT_BYTES) {
+    return new Response("file too large (max 256MB)", { status: 413 });
+  }
+
+  const formatField = form.get("format");
+  const ext = (
+    typeof formatField === "string" && formatField.length > 0
+      ? formatField
+      : (file.name.split(".").pop() ?? "")
+  ).toLowerCase();
+  if (!SPLAT_EXTS.has(ext)) {
+    return new Response(
+      `unsupported splat format '${ext}' (want one of ${[...SPLAT_EXTS].join(", ")})`,
+      { status: 415 },
+    );
+  }
+
+  const nameField = form.get("name");
+  const id = newId("splat");
+  const key = `splats/${id}.${ext}`;
+  await writeObject(
+    key,
+    await file.arrayBuffer(),
+    file.type || "application/octet-stream",
+  );
+
+  await db.insert(splats).values({
+    id,
+    splatKey: key,
+    name:
+      typeof nameField === "string" && nameField.length > 0 ? nameField : null,
+    format: ext,
+  });
+
+  return Response.json({ key, id });
 }
 
 // Token-guarded map snapshot ingest. The robot renders the dimos global_costmap

@@ -28,6 +28,7 @@ export default async function Home() {
         <div className="flex gap-3 text-sm underline">
           <Link href="/frames">→ robot frames</Link>
           <Link href="/map">→ robot map</Link>
+          <Link href="/splats">→ 3D splats</Link>
         </div>
       </header>
 

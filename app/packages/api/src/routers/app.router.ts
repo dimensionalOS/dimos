@@ -1,5 +1,5 @@
 import type { RouterClient } from "@orpc/server";
-import { frames, maps, messages, user } from "@robomoo/db";
+import { frames, maps, messages, splats, user } from "@robomoo/db";
 import {
   createMessageInput,
   type Frame,
@@ -9,6 +9,8 @@ import {
   type Message,
   messageSchema,
   newId,
+  type Splat,
+  splatSchema,
 } from "@robomoo/shared";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -113,10 +115,33 @@ const mapLatest = publicProcedure
     };
   });
 
+// 3D Gaussian splats — public list, newest first. Presigned with a long TTL
+// (24h) since the files are large and slow to stream in the browser viewer.
+const splatsList = publicProcedure
+  .output(z.array(splatSchema))
+  .handler(async ({ context }): Promise<Splat[]> => {
+    const rows = await context.db
+      .select()
+      .from(splats)
+      .orderBy(desc(splats.createdAt))
+      .limit(100);
+
+    return Promise.all(
+      rows.map(async (r) => ({
+        id: r.id,
+        splatUrl: await context.presignGet(r.splatKey, 86400),
+        name: r.name,
+        format: r.format,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    );
+  });
+
 export const appRouter = {
   messages: { list, add },
   frames: { list: framesList },
   map: { latest: mapLatest },
+  splats: { list: splatsList },
 };
 
 export type AppRouter = typeof appRouter;

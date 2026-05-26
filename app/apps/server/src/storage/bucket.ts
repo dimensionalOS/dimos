@@ -19,11 +19,20 @@ export async function writeImage(
   await bucket.write(key, bytes, { type: contentType });
 }
 
+// Generic object write (no image-type assumption) — used for splat files
+// (.ply/.spz/.splat/.ksplat/.sog), which are binary blobs.
+export async function writeObject(
+  key: string,
+  bytes: ArrayBuffer,
+  contentType: string,
+): Promise<void> {
+  await bucket.write(key, bytes, { type: contentType });
+}
+
 // Time-limited GET URL the browser can hit directly. The raw key never leaves
 // the server. Bun.presign is synchronous; we wrap it in a promise to match the
-// ApiContext.presignGet contract.
-export function presignGet(key: string): Promise<string> {
-  return Promise.resolve(
-    bucket.presign(key, { method: "GET", expiresIn: 3600 }),
-  );
+// ApiContext.presignGet contract. `expiresIn` defaults to 1h (images); splats
+// pass a longer TTL since they're large and slow to stream.
+export function presignGet(key: string, expiresIn = 3600): Promise<string> {
+  return Promise.resolve(bucket.presign(key, { method: "GET", expiresIn }));
 }

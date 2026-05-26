@@ -41,6 +41,19 @@ export const frameSchema = z.object({
 });
 export type Frame = z.infer<typeof frameSchema>;
 
+// A 3D Gaussian splat as returned to the web client. `splatUrl` is a freshly
+// presigned GET URL (long TTL — the files are big and slow to stream); the raw
+// S3 key never leaves the server. `format` is the file extension so the viewer
+// knows what it's loading (spz, ply, splat, ksplat, sog).
+export const splatSchema = z.object({
+  id: z.string(),
+  splatUrl: z.string(),
+  name: z.string().nullable(),
+  format: z.string(),
+  createdAt: z.string(),
+});
+export type Splat = z.infer<typeof splatSchema>;
+
 // The latest 2D occupancy map snapshot (the dimos global_costmap, rendered to a
 // PNG by the robot). `resolution` (m/cell) + `origin` let the web place world
 // coordinates onto the image: col = (x - originX) / resolution, row similarly.

@@ -5,7 +5,11 @@ import { newId } from "@robomoo/shared";
 import { Hono } from "hono";
 import { auth } from "./auth/auth";
 import { env } from "./env";
-import { handleRobotFrame, handleRobotMap } from "./http/robot";
+import {
+  handleRobotFrame,
+  handleRobotMap,
+  handleRobotSplat,
+} from "./http/robot";
 import { handleUpload } from "./http/upload";
 import { presignGet } from "./storage/bucket";
 
@@ -65,6 +69,7 @@ app.post("/api/upload/image", async (c) => {
 // Token-guarded robot ingest → object storage + frames / maps tables.
 app.post("/api/robot/frame", (c) => handleRobotFrame(c.req.raw, db));
 app.post("/api/robot/map", (c) => handleRobotMap(c.req.raw, db));
+app.post("/api/robot/splat", (c) => handleRobotSplat(c.req.raw, db));
 
 // oRPC HTTP router. Build the context per request from the Better Auth
 // session, then delegate to the oRPC fetch handler.
