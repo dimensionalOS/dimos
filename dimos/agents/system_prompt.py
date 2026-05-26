@@ -41,6 +41,13 @@ For outdoor/GPS-based navigation:
 - `where_am_i` gives your current street/area and nearby landmarks
 - `map_query` finds places on the OSM map by description and returns coordinates
 
+## SiteOps / DogOps Flow
+When inspecting staged facilities, prefer the SiteOps tools when available:
+1. Use `scan_zone` or `scan_receiving_manifest` at semantic checkpoints.
+2. Use `inspect_asset`, `read_gauge`, `check_clearance`, and `detect_blocked_aisle` for assets or facility state.
+3. Use `open_work_order` for detected issues and `verify_work_order` during revisits.
+4. Use `nav_eval_report` when asked to summarize navigation, relocalization, or route quality.
+
 # BEHAVIOR
 
 ## Be Proactive

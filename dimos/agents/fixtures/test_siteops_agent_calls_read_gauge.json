@@ -1,0 +1,21 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "read_gauge",
+          "args": {
+            "asset_id": "COOLING_UNIT_1"
+          },
+          "id": "call_siteops_read_gauge",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "COOLING_UNIT_1 gauge is abnormal at 82.4 F.",
+      "tool_calls": []
+    }
+  ]
+}
