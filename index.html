@@ -198,13 +198,14 @@ uvx ant-intl-alipayplus-mcp
       <tr><th>Rail</th><th>What</th><th>48h reality</th></tr>
       <tr><td><b>x402</b></td><td>Coinbase HTTP-402 + USDC, EVM/Solana, Python SDK, ~2s</td><td>✅ <b>Permissionless on testnet</b> — no creds. Best start.</td></tr>
       <tr><td><b>MPP</b></td><td>Stripe+Tempo, method-agnostic (coin/card/Lightning), x402-compatible, budget "sessions"</td><td>✅ Stripe test mode; newer/smaller</td></tr>
-      <tr><td><b>ERC-8004</b></td><td>Trustless-agent <b>identity + reputation</b> registries (not payments)</td><td>⚠ Stretch — trust layer that pairs w/ x402</td></tr>
+      <tr><td><b>ERC-8004</b></td><td>Trustless-agent <b>identity + reputation</b> registries (not payments)</td><td>✅ <b>In our wheelhouse</b> — differentiator, use as the spine</td></tr>
     </table>
     <p><b>Key edge vs. Alipay:</b> x402 on Base Sepolia needs <b>no merchant credentials</b> → far more
     likely to actually ship in 48h. <b>Demos:</b> pay-per-task robot · self-funding robot (pays per API call) ·
     trustless swarm economy (dogs pay + rate each other, ties to Direction B).</p>
-    <p style="color:var(--warn)"><b>Scope discipline:</b> ship ONE rail end-to-end on testnet first; ERC-8004
-    is a stretch. Don't do Alipay <i>and</i> crypto — pick local-fiat vs. frontier-economy and commit.</p>
+    <p style="color:var(--warn)"><b>Scope discipline:</b> ship ONE payment rail end-to-end on testnet first
+    (x402). ERC-8004 is a head start for us, not a stretch — wire it in early as the demo's spine. Don't do
+    Alipay <i>and</i> crypto — pick local-fiat vs. frontier-economy and commit.</p>
   </div>
 
   <h2>Gotchas (hour-eaters)</h2>

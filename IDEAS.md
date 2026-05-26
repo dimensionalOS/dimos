@@ -147,7 +147,7 @@ agent** — it autonomously pays for services it consumes, or sells its own serv
 |---|---|---|---|
 | **x402** | Coinbase's HTTP-402 + on-chain **stablecoin** (USDC); EVM + Solana; **Python SDK**; ~2s settle. Now an x402 Foundation (Linux Foundation) standard. | Robot pays/charges per call. **Permissionless on testnet** (Base Sepolia) → *no merchant creds needed*, unlike Alipay. | ✅ Lowest-friction crypto rail; testnet USDC is free. Best starting point. |
 | **MPP** | Stripe + Tempo "Machine Payments Protocol". HTTP-402 abstraction, **method-agnostic** (stablecoin / card / Lightning), **back-compatible with x402**. "Sessions" = pre-authorize a budget, stream micropayments. | One endpoint, many rails; Stripe **test mode**. Sessions fit a robot doing many tiny paid actions. | ✅ Doable via Stripe test mode; newer, smaller ecosystem. |
-| **ERC-8004** | Ethereum **Trustless Agents** standard. Three on-chain registries: **Identity** (ERC-721), **Reputation**, **Validation**. Live on mainnet Jan 2026. | Not payments — the **trust layer**. Robot gets an on-chain identity + a reputation it earns by completing tasks. Pairs with x402/MPP. | ⚠️ Stretch goal. Minting identity is easy; meaningful reputation loop is more scope. |
+| **ERC-8004** | Ethereum **Trustless Agents** standard. Three on-chain registries: **Identity** (ERC-721), **Reputation**, **Validation**. Live on mainnet Jan 2026. | Not payments — the **trust layer**. Robot gets an on-chain identity + a reputation it earns by completing tasks. Pairs with x402/MPP. | ✅ **In our wheelhouse — prior 8004 experience.** Lean in: this is a differentiator, not a risk. |
 
 **Demo concepts**
 - **Pay-per-task robot (crypto twin of the vending dog)** — robot's delivery/patrol service sits behind an
@@ -156,17 +156,19 @@ agent** — it autonomously pays for services it consumes, or sells its own serv
 - **Self-funding robot** — the agent pays per-call for a paid perception/VLM/API service via x402, or streams
   micropayments through an MPP session as it works. Shows genuine economic autonomy.
 - **Trustless swarm economy** (ties to Direction B) — each Go2 has an ERC-8004 identity + reputation; robots
-  pay each other for subtasks and rate the result. Most ambitious; best "wow + frontier" combo.
+  pay each other for subtasks and rate the result. Most ambitious; best "wow + frontier" combo — **and ERC-8004
+  is already familiar to us, so this is the one to swing for.**
 
-**Scope discipline:** ship **one** rail end-to-end on **testnet** first (x402 is the easiest). Treat ERC-8004
-identity/reputation as a stretch once payments work. Don't try to do Alipay *and* crypto in 48h — pick the
-narrative (local-fiat vs. frontier-agent-economy) and commit.
+**Scope discipline:** ship **one payment rail** end-to-end on **testnet** first (x402 is the easiest). ERC-8004
+identity/reputation is *not* the long pole for us — prior experience makes it a head start, so wire it in early
+as the spine of the demo. Don't try to do Alipay *and* crypto in 48h — pick the narrative (local-fiat vs.
+frontier-agent-economy) and commit.
 
 ### Pick-a-payment cheat (if you do payments at all)
 - **Want the venue/judge ecosystem pop + real consumer UX** → **Alipay MCP** (blocker: merchant creds — ask mentors).
 - **Want zero-credential, ship-tonight, frontier story** → **x402 on Base Sepolia testnet** (Python SDK).
 - **Want method-agnostic + budgeted streaming** → **MPP** (Stripe test mode).
-- **Want a trust/identity layer on top** → add **ERC-8004** as a stretch.
+- **Want a trust/identity layer on top** → **ERC-8004** (already in our wheelhouse — use it as the spine, not a stretch).
 
 ## Judging notes
 - Build to a **90-second story**; rehearse it.
