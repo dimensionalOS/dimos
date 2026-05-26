@@ -37,7 +37,7 @@ class DimSimProcess:
 
     def start(self) -> None:
         deno_path = ensure_deno()
-        base_cmd = _deno_cmd(deno_path, _resolve_dimsim_dir())
+        base_cmd = _deno_cmd(deno_path, _DIMSIM_DIR)
 
         scene = self.global_config.dimsim_scene
         port = self.global_config.dimsim_port
@@ -128,30 +128,6 @@ def _kill_port_holder(port: int) -> None:
             time.sleep(0.5)
     except Exception as e:
         logger.warning(f"Failed to check/kill port {port}: {e}")
-
-
-def _resolve_dimsim_dir() -> Path:
-    """Pick the DimSim directory to run.  DIMSIM_LOCAL env overrides the
-    vendored misc/DimSim/ copy — handy when iterating on DimSim itself.
-
-        DIMSIM_LOCAL=1           → ../DimSim sibling of the dimos repo
-        DIMSIM_LOCAL=/some/path  → that path
-        (unset)                  → vendored misc/DimSim/
-    """
-    local = os.environ.get("DIMSIM_LOCAL", "").strip()
-    if not local:
-        return _DIMSIM_DIR
-    if local == "1":
-        dimos_root = Path(__file__).resolve().parents[3]
-        path = dimos_root.parent / "DimSim"
-    else:
-        path = Path(local).expanduser().resolve()
-    if not (path / "cli" / "cli.ts").exists():
-        raise RuntimeError(
-            f"DIMSIM_LOCAL={local} resolved to {path}, but {path}/cli/cli.ts does not exist"
-        )
-    logger.info(f"Using local DimSim from {path}")
-    return path
 
 
 def _deno_cmd(deno_path: str, repo_dir: Path) -> list[str]:
