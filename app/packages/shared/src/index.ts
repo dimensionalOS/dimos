@@ -25,3 +25,13 @@ export const createMessageInput = z.object({
   imageKey: z.string().nullable().default(null),
 });
 export type CreateMessageInput = z.infer<typeof createMessageInput>;
+
+// A robot-captured frame as returned to the web client. `imageUrl` is a freshly
+// presigned GET URL; the raw S3 key never leaves the server.
+export const frameSchema = z.object({
+  id: z.string(),
+  imageUrl: z.string(),
+  note: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type Frame = z.infer<typeof frameSchema>;

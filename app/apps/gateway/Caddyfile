@@ -13,7 +13,7 @@
 		respond "ok" 200
 	}
 
-	@server path /api/auth/* /rpc/* /api/upload/*
+	@server path /api/auth/* /rpc/* /api/upload/* /api/robot/*
 	handle @server {
 		reverse_proxy {$SERVER_URL:http://server.railway.internal:4471}
 	}

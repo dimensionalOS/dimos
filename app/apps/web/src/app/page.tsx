@@ -1,5 +1,6 @@
 import type { Message } from "@robomoo/shared";
 import Image from "next/image";
+import Link from "next/link";
 import { AddMessage } from "@/components/add-message";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { rpcClient } from "@/lib/orpc";
@@ -24,6 +25,9 @@ export default async function Home() {
           Bun + Hono + oRPC + Postgres + object storage, behind a Caddy gateway
           on Railway.
         </p>
+        <Link className="text-sm underline" href="/frames">
+          → robot frames
+        </Link>
       </header>
 
       <AddMessage />

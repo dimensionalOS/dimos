@@ -22,6 +22,11 @@ const envSchema = z.object({
   S3_ACCESS_KEY_ID: z.string().min(1),
   S3_SECRET_ACCESS_KEY: z.string().min(1),
   S3_BUCKET: z.string().min(1),
+
+  // Shared secret the robot presents (Authorization: Bearer) to POST frames to
+  // /api/robot/frame. Optional so the server still boots if unset — the ingest
+  // endpoint just rejects every request until it's configured.
+  ROBOT_INGEST_TOKEN: z.string().optional(),
 });
 
 export const env = envSchema.parse(Bun.env);

@@ -1,7 +1,9 @@
 import type { RouterClient } from "@orpc/server";
-import { messages, user } from "@robomoo/db";
+import { frames, messages, user } from "@robomoo/db";
 import {
   createMessageInput,
+  type Frame,
+  frameSchema,
   type Message,
   messageSchema,
   newId,
@@ -64,8 +66,29 @@ const add = protectedProcedure
     };
   });
 
+// Robot frame gallery — public list, newest first, with presigned image URLs.
+const framesList = publicProcedure
+  .output(z.array(frameSchema))
+  .handler(async ({ context }): Promise<Frame[]> => {
+    const rows = await context.db
+      .select()
+      .from(frames)
+      .orderBy(desc(frames.createdAt))
+      .limit(100);
+
+    return Promise.all(
+      rows.map(async (r) => ({
+        id: r.id,
+        imageUrl: await context.presignGet(r.imageKey),
+        note: r.note,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    );
+  });
+
 export const appRouter = {
   messages: { list, add },
+  frames: { list: framesList },
 };
 
 export type AppRouter = typeof appRouter;

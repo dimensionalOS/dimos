@@ -8,6 +8,13 @@
       "when": 1779816600428,
       "tag": "0000_fearless_squirrel_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779821230732,
+      "tag": "0001_hot_hydra",
+      "breakpoints": true
     }
   ]
 }
