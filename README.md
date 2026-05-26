@@ -9,6 +9,24 @@ This repo is my prep + plan. Two directions are live; final call after Day-1 har
 
 ---
 
+## 📚 Deep research (5 Opus agents → start with the synthesis)
+
+| Paper | Angle |
+|---|---|
+| **[00 · Synthesis](./research/00-synthesis.md)** ⭐ | Master strategy — read this first |
+| [01 · DimOS codebase map](./research/01-dimos-codebase-map.md) | Real API; the `@skill` seam; extension points |
+| [02 · Go2 OSS landscape](./research/02-go2-ecosystem-landscape.md) | Reusable repos + proven "wow" demos |
+| [03 · Hackathon winning playbook](./research/03-hackathon-winning-playbook.md) | What wins + 90s demo craft |
+| [04 · Agent-economy payments](./research/04-agent-economy-payments.md) | x402 / MPP / ERC-8004 technical reality |
+| [05 · Chinese judges & narrative](./research/05-chinese-judges-and-narrative.md) | 落地, Alipay vs crypto, virality |
+
+**Headline from the research:** build **"巡逻汪 / Patrol Dog"** — Direction A re-skinned as a commercial
+inspection/security/delivery agent (most credible *落地* story, pure `@skill` work, reliable on stage) + one
+**Alipay "pay-the-dog"** beat. ⚠️ **The crypto angle (x402/ERC-8004) is a legal + cultural liability for a live
+public demo in mainland China** — see the synthesis "central tension"; it's the one decision that forks the build.
+
+---
+
 ## Key dates (GMT+8)
 
 | When | What |
