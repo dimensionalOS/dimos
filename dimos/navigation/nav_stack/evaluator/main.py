@@ -122,7 +122,28 @@ def _render_nodes(msg: Any) -> Any:
 
 
 def _render_node_edges(msg: Any) -> Any:
-    return msg.to_rerun(z_offset=_GRAPH_Z_LIFT, radii=0.04)
+    """Color each segment by its safe-adj weight on a log-scale green->red gradient."""
+    import rerun as rr
+
+    if not msg._segments:
+        return rr.LineStrips3D([])
+    weights = np.asarray(msg._traversability, dtype=np.float64)
+    log_w = np.log10(np.maximum(weights, 1e-6))
+    lo, hi = float(log_w.min()), float(log_w.max())
+    norm = (log_w - lo) / (hi - lo) if hi > lo else np.zeros_like(log_w)
+    r = (255 * norm).astype(np.uint8)
+    g = (255 * (1.0 - norm)).astype(np.uint8)
+    b = np.full_like(r, 60)
+    a = np.full_like(r, 220)
+    colors = np.column_stack([r, g, b, a])
+    strips = [
+        [
+            [p1[0], p1[1], p1[2] + _GRAPH_Z_LIFT],
+            [p2[0], p2[1], p2[2] + _GRAPH_Z_LIFT],
+        ]
+        for p1, p2 in msg._segments
+    ]
+    return rr.LineStrips3D(strips, colors=colors, radii=[0.04] * len(strips))
 
 
 def create_evaluator_blueprint() -> Blueprint:

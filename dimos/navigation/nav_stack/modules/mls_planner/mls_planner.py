@@ -47,8 +47,8 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-SURFACE_DILATION_PASSES = 2
-SURFACE_EROSION_PASSES = 2
+SURFACE_DILATION_PASSES = 3
+SURFACE_EROSION_PASSES = 3
 
 NODE_SPACING_M = 1.0
 NODE_WALL_BUFFER_M = 0.3
@@ -319,14 +319,17 @@ def _wall_safe_adjacency(
       floor so cells exactly on an edge stay distinguishable from cells one
       voxel in.
     - Exposure penalty 1 + missing/2 from the count of missing same-z neighbors,
-      so the corner of a stair step (more sides exposed to cliffs) costs more
-      than the middle of the same step's edge.
+      gated by proximity to a wall. Far from walls, a missing neighbor is almost
+      always just a small hole in the surface map (mesh-sampling noise), not a
+      real wall edge -- so the exposure factor fades to 1 as dist exceeds buffer.
+      Near walls, the full corner-avoidance behavior kicks in.
 
     Per-edge cost averages the two endpoints' penalties.
     """
     safe_dist = np.maximum(dist_to_wall, voxel_size / 10.0)
     dist_penalty = np.maximum(1.0, (buffer_m / safe_dist) ** 4)
-    exposure_penalty = 1.0 + missing_neighbors / 2.0
+    near_wall = np.clip(1.0 - dist_to_wall / buffer_m, 0.0, 1.0)
+    exposure_penalty = 1.0 + (missing_neighbors / 2.0) * near_wall
     penalty = dist_penalty * exposure_penalty
     src = np.repeat(np.arange(adj.shape[0]), np.diff(adj.indptr))
     dst = adj.indices
@@ -540,22 +543,39 @@ def _nodes_to_cloud(graph: nx.Graph) -> np.ndarray:
 
 
 def _edges_to_segments(
-    graph: nx.Graph, voxel_size: float
-) -> list[tuple[tuple[float, float, float], tuple[float, float, float]]]:
-    """Emit one segment per consecutive cell pair along each edge's cached path."""
+    sg: SurfaceGraph, voxel_size: float
+) -> tuple[
+    list[tuple[tuple[float, float, float], tuple[float, float, float]]],
+    list[float],
+]:
+    """Emit one segment per consecutive cell pair on each edge, paired with its safe-adj weight."""
     segments: list[tuple[tuple[float, float, float], tuple[float, float, float]]] = []
-    for _, _, data in graph.edges(data=True):
-        path_cells: np.ndarray = data["path"]
+    weights: list[float] = []
+    indptr = sg.adj.indptr
+    indices = sg.adj.indices
+    data = sg.adj.data
+    for _, _, edge_data in sg.graph.edges(data=True):
+        path_cells: np.ndarray = edge_data["path"]
         for i in range(len(path_cells) - 1):
             a = path_cells[i]
             b = path_cells[i + 1]
+            a_cell = (int(a[0]), int(a[1]), int(a[2]))
+            b_cell = (int(b[0]), int(b[1]), int(b[2]))
             segments.append(
                 (
-                    surface_point_xyz(int(a[0]), int(a[1]), int(a[2]), voxel_size),
-                    surface_point_xyz(int(b[0]), int(b[1]), int(b[2]), voxel_size),
+                    surface_point_xyz(*a_cell, voxel_size),
+                    surface_point_xyz(*b_cell, voxel_size),
                 )
             )
-    return segments
+            u = sg.cell_to_idx[a_cell]
+            v = sg.cell_to_idx[b_cell]
+            w = 0.0
+            for k in range(int(indptr[u]), int(indptr[u + 1])):
+                if int(indices[k]) == v:
+                    w = float(data[k])
+                    break
+            weights.append(w)
+    return segments, weights
 
 
 class MLSPlanner(Module):
@@ -633,11 +653,13 @@ class MLSPlanner(Module):
         )
 
         self._surface_graph = sg
+        segments, segment_weights = _edges_to_segments(sg, self.config.voxel_size)
         self.node_edges.publish(
             _LineSegmentsAsPath(
                 ts=time.time(),
                 frame_id=self.config.world_frame,
-                segments=_edges_to_segments(sg.graph, self.config.voxel_size),
+                segments=segments,
+                traversability=segment_weights,
             )
         )
 
