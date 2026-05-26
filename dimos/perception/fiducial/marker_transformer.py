@@ -46,6 +46,7 @@ from dimos.perception.fiducial.marker_pose import (
     create_aruco_detector,
     estimate_marker_pose,
     marker_corners_to_bbox,
+    marker_reprojection_error,
     rvec_tvec_to_transform,
 )
 from dimos.types.timestamped import TimestampedBufferCollection
@@ -189,6 +190,15 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
 
                 corners_2d = corner_set.reshape(4, 2).astype(np.float32)
                 bbox = marker_corners_to_bbox(corners_2d)
+                reprojection_error = marker_reprojection_error(
+                    corners_2d,
+                    self.marker_length_m,
+                    self._cam_mtx,
+                    self._dist,
+                    rvec,
+                    tvec,
+                    distortion_model=info.distortion_model,
+                )
 
                 # Decide track_id (only meaningful when smoothing is on).
                 # Without smoothing, track_id == marker_id (legacy behavior).
@@ -218,6 +228,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                     marker_id=mid,
                     corners_px=corners_2d,
                     dictionary=self.aruco_dictionary,
+                    reprojection_error=reprojection_error,
                 )
 
                 yielded_det = det
