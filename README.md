@@ -48,7 +48,12 @@ public demo in mainland China** — see the synthesis "central tension"; it's th
 | DimOS pieces | Skills, LangGraph agent, VLM, spatial memory, waypoint nav, TTS | Blueprints + `autoconnect()`, shared Skills, WebRTC tricks |
 | Demo shape | Walk → narrate → flag anomaly → log → recover | Cue → synchronized formation → trick → regroup |
 
-→ Full detail in **[IDEAS.md](./IDEAS.md)**. Study reference in **[CHEATSHEET.md](./CHEATSHEET.md)**. Application blurbs in **[PITCH.md](./PITCH.md)**.
+→ Full detail in **[IDEAS.md](./IDEAS.md)**. Study reference in **[CHEATSHEET.md](./CHEATSHEET.md)**. Application blurbs in **[PITCH.md](./PITCH.md)**. **Setup + on-site steps in [RUNBOOK.md](./RUNBOOK.md).**
+
+> **Note (flyer v2):** the "swarm shares a pool of 6 dogs" line was removed — now reads **1 dog per team**, so
+> **Direction B (swarm) is contingent on confirming multi-dog access at the lottery**; default to Patrol Dog.
+> Stack also tightened from "Mac & Linux" → **Linux**. The hack runs on **your laptop on the venue LAN**, not
+> the VPS (which can't reach the robot — but can host the public payment webhook). See RUNBOOK.
 
 ## Strategy in one paragraph
 
