@@ -26,21 +26,32 @@ Browser ──HTTPS──> gateway (Caddy, public)
 - Public URL: **https://gateway-production-94e2.up.railway.app**
 - Dashboard: https://railway.com/project/eb47f62c-4513-45e9-92ed-c3fa43b9fc4a
 
-## Build model
+## Build model — GitHub auto-deploy
 
-Each service builds from **its own Dockerfile** with the **monorepo root as build
-context** (so `workspace:*` resolves). Railway picks the Dockerfile via each
-service's **config-as-code path** (set with `update_service railway_config_file`,
-or the MCP equivalent), pointing at `apps/<svc>/railway.toml`:
+All three services are connected to **`grmkris/robohack` @ `master`** and
+**auto-deploy on every push**. Each builds from **its own Dockerfile** with the
+**`app/` monorepo root as build context** (so `workspace:*` resolves). Two
+service settings make this work:
 
-| Service | Config file | Dockerfile | Start | Healthcheck |
+- **Root Directory = `app`** → Railway uses `app/` as the build context.
+- **Config-as-code path** → points at each `railway.toml`. ⚠️ **This path is
+  absolute from the repo root and does NOT follow Root Directory**, so it must be
+  `/app/apps/<svc>/railway.toml` (not `apps/<svc>/railway.toml`). Getting this
+  wrong fails the build instantly with no Docker output. Inside the `railway.toml`,
+  `dockerfilePath` *is* relative to Root Directory (`apps/<svc>/Dockerfile`).
+
+| Service | Config file (repo-root absolute) | Dockerfile (root-dir relative) | Start | Healthcheck |
 |---|---|---|---|---|
-| server | `apps/server/railway.toml` | `apps/server/Dockerfile` | `bun run src/server.ts` | `/health` |
-| web | `apps/web/railway.toml` | `apps/web/Dockerfile` | `bun apps/web/server.js` | `/` |
-| gateway | `apps/gateway/railway.toml` | `apps/gateway/Dockerfile` | (Caddy) | `/` |
+| server | `/app/apps/server/railway.toml` | `apps/server/Dockerfile` | `bun run src/server.ts` | `/health` |
+| web | `/app/apps/web/railway.toml` | `apps/web/Dockerfile` | `bun apps/web/server.js` | `/` |
+| gateway | `/app/apps/gateway/railway.toml` | `apps/gateway/Dockerfile` | (Caddy) | `/gateway-health` |
 
-Root directory stays `/` for all three. The server runs Drizzle migrations on
-boot (`packages/db/drizzle/`), so a fresh DB is provisioned automatically.
+The server runs Drizzle migrations on boot (`packages/db/drizzle/`), so a fresh
+DB is provisioned automatically.
+
+> **Note:** the `robohack` repo previously had two private submodules
+> (`perception-watch`, `gs-pot`) which blocked Railway from cloning. They were
+> removed so CI/CD works; the upstream repos are unaffected.
 
 ## Environment variables (per service)
 
@@ -65,37 +76,39 @@ boot (`packages/db/drizzle/`), so a fresh DB is provisioned automatically.
 > Bucket credentials are issued per bucket and are **not committed**. Re-fetch
 > them any time with `railway bucket credentials --bucket robomoo-images --json`.
 
-## Redeploy (from this directory)
+## Deploying
 
-The CLI is already linked to the project (`railway link --project eb47f62c-…`).
-Deploy a single service (build context = repo root, picks the service's
-config-as-code Dockerfile):
+**Normal path: just push to `master`.** Railway redeploys every connected
+service automatically.
+
+Manual redeploy of one service (pulls latest `master`, no code change needed):
 
 ```bash
-# via Railway CLI
-railway up --service server --detach
-railway up --service web --detach
-railway up --service gateway --detach
-
-# or via the Railway MCP `deploy` tool: path=<this dir>, service_id=<id above>
+railway redeploy --service server --from-source -y
 ```
 
 Check status / logs:
 
 ```bash
-railway deployment list --json
+railway deployment list --service server --json
 railway logs --service server --lines 100
 ```
+
+> The CLI is linked to the project (`railway link --project eb47f62c-…`).
+> `railway up --service <svc>` still works for an ad-hoc upload deploy that
+> bypasses GitHub.
 
 ## First-time provisioning (reproduce from scratch)
 
 1. `create_project robomoo` (workspace `22a4b765-…`).
 2. `railway link --project <id> --environment production && railway add --database postgres`.
 3. `create_bucket robomoo-images` (region `ams`); `railway bucket credentials …`.
-4. `create_service` × 3 (server, web, gateway); set each `railway_config_file`.
+4. `create_service` × 3 (server, web, gateway). Connect each to the GitHub repo
+   (`serviceConnect` → `grmkris/robohack`@`master`), set **Root Directory = `app`**
+   and **config file = `/app/apps/<svc>/railway.toml`** (absolute from repo root).
 5. Set variables (above); `DATABASE_URL` as a reference var.
 6. `generate_domain` on gateway (port 4470) → set that URL as the server's `APP_URL`.
-7. `deploy` each service (path = repo root). Watch logs until healthy.
+7. Push to `master` (or `railway redeploy --from-source`). Watch logs until healthy.
 
 ## Local dev
 
