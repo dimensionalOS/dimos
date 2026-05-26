@@ -27,7 +27,7 @@ print(app.skills)
 app.ReplanningAStarPlanner
 
 # Add another module dynamically.
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+from dimos.teleop.keyboard.twist_keyboard_teleop import KeyboardTeleop
 app.run(KeyboardTeleop)
 
 # Or start it by name. No need for importing.
