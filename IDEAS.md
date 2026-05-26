@@ -94,6 +94,10 @@ Mine these for variations on A/B or as fallbacks.
   it's exactly where DimOS is pushing → strong hire signal. **Treat this as a multiplier, not a standalone:**
   bolt it onto A or B for ~half a day and the demo gets dramatically more interactive.
 
+- **Pay-the-robot / vending dog** 💰 — the Go2 delivers a snack/drink, the agent calls the **Alipay MCP**
+  to charge for it, confirms payment landed, then hands it over. "Pay the robot dog in Alipay" is a killer
+  90s demo *at an Alibaba/Ant venue specifically*. See the Alipay-payments multiplier below.
+
 ### Tier 2 — technically interesting, more risk
 - **Spatial memory + semantic search** — patrol, build a semantic map, answer "where did you last see my
   laptop?" Plays to DimOS's semantic memory module. (Close cousin of the memory-companion fallback.)
@@ -115,6 +119,24 @@ Mine these for variations on A/B or as fallbacks.
 Whichever direction wins, exposing the robot's Skills over MCP and demoing live phone control is the single
 highest-leverage add-on for both **audience reaction** and **hire signal**. Budget ~half a day for it once
 the core behavior works.
+
+### Cross-cutting multiplier: Alipay payments via MCP 💰
+DimOS agents already speak MCP, and **Alipay ships an official MCP server** — so you wire *both* into the same
+agent: one MCP connection drives the Go2's Skills, the other lets the agent take real payments. The robot can
+now **reason, move, AND transact.** Wildly on-brand at an Alibaba/Ant campus.
+
+- **Repo:** [`alipay/global-alipayplus-mcp`](https://github.com/alipay/global-alipayplus-mcp) ·
+  run with `uvx ant-intl-alipayplus-mcp` (Python 3.11+). There's also a **mainland-China** Alipay payment MCP
+  (Ant's domestic "AI Pay") — likely the better fit for Shanghai; ask mentors which to use.
+- **Tools exposed:** `create_payment`, `query_payment`, `cancel_payment`, `create_refund`,
+  `customs_declare`, `query_customs_declare`.
+- **Config (env):** `CLIENT_ID`, `MERCHANT_PRIVATE_KEY` (RSA), `ALIPAY_PUBLIC_KEY`, `PAYMENT_NOTIFY_URL`.
+- **Demo loop:** agent calls `create_payment` → robot shows the QR / triggers AI Pay → `query_payment` polls
+  until paid → robot completes the physical action (hands over item / unlocks / proceeds).
+- ⚠️ **The one real blocker = credentials.** You need merchant `CLIENT_ID` + RSA keys, and there's no obvious
+  public sandbox. **Action: at check-in, ask the Dimensional/Ant mentors for sandbox merchant creds** — at
+  this venue they may literally hand them to you. Have a fallback (mock the payment tool) so the demo survives
+  if creds don't materialize.
 
 ## Judging notes
 - Build to a **90-second story**; rehearse it.

@@ -126,6 +126,7 @@
       <li><b>Robot concierge</b> — "find the guy in the red jacket, bring him to booth 4" (Detic open-vocab + nav + agent). Doubles as the Direction-A scenario.</li>
       <li><b>Swarm w/ roles</b> — 2–3 dogs, one orchestrator: scout / guard / fetch. Richer framing of Direction B.</li>
       <li><b>⭐ MCP-everything</b> — control the Go2 live from Claude Desktop / Slack / WhatsApp. Judge-magnet + on DimOS's roadmap = hire signal. <b>A multiplier, not standalone</b> — bolt onto A or B.</li>
+      <li><b>💰 Pay-the-robot</b> — vending dog: delivers an item, agent charges via the <b>Alipay MCP</b>, confirms payment, hands it over. On-brand at an Ant/Alibaba venue. Same trick: a 2nd MCP on the same agent.</li>
     </ul>
     <span class="lbl b">Tier 2 · interesting, more risk</span>
     <ul>
@@ -173,6 +174,21 @@ dimos status && dimos log -f       <span class="c"># MCP @ localhost:9990/mcp</s
   <p style="font-size:13px;color:var(--dim)">Primitives: <code>move/reverse/spin*/pose</code> · tricks
   <code>FrontFlip/Pounce/Jump</code> · skills <code>Navigate/NavigateToObject/FollowHuman/GetPose</code>.
   Memory = ChromaDB spatial RAG. <b>Verify exact names against the repo on Day 1.</b></p>
+
+  <h2>💰 Alipay payments via MCP</h2>
+  <div class="card" style="border-left:3px solid var(--warn)">
+    <p>DimOS agents speak MCP; <b>Alipay ships an official MCP server</b>. Wire both into one agent — one MCP
+    drives the Go2, the other takes real payments. The robot can reason, move, <b>and transact.</b></p>
+    <pre><span class="c"># official global repo (Python 3.11+)</span>
+uvx ant-intl-alipayplus-mcp
+<span class="c"># tools: create_payment · query_payment · cancel_payment · create_refund · customs_*</span>
+<span class="c"># env:   CLIENT_ID · MERCHANT_PRIVATE_KEY · ALIPAY_PUBLIC_KEY · PAYMENT_NOTIFY_URL</span></pre>
+    <p><b>Demo loop:</b> <code>create_payment</code> → robot shows QR / AI Pay → <code>query_payment</code>
+    polls until paid → robot completes the physical action.</p>
+    <p style="color:var(--warn)"><b>⚠ One real blocker: credentials.</b> Need merchant CLIENT_ID + RSA keys,
+    no obvious public sandbox. <b>Ask Ant/Dimensional mentors for sandbox creds at check-in.</b> Keep a mock
+    payment tool as fallback. Note: a mainland-China Alipay AI-Pay MCP also exists — likely better for Shanghai.</p>
+  </div>
 
   <h2>Gotchas (hour-eaters)</h2>
   <ul>
