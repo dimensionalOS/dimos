@@ -647,12 +647,14 @@ angular.z = 0</pre>
             pc.addTransceiver('video', { direction: 'recvonly' });
             pc.ontrack = (e) => {
                 if (e.track.kind !== 'video') return;
-                // The keyboard view has a visible <video id="robot-cam">; the VR
-                // view doesn't (the feed is drawn on a GL quad instead). Either
-                // way we need the element as the stream sink + quad texture
-                // source, so create a hidden one if the current view lacks it.
+                // The keyboard view has a <video id="robot-cam"> meant to be
+                // SHOWN; the VR view has none (the feed goes on a GL quad), so
+                // ensureRobotCam() makes a hidden one as a texture source. Both
+                // need the stream; only the keyboard one should be un-hidden.
+                const existed = !!document.getElementById('robot-cam');
                 const v = ensureRobotCam();
                 v.srcObject = e.streams[0] || new MediaStream([e.track]);
+                if (existed) v.style.display = 'block';  // keyboard view: reveal it
                 v.play?.().catch(() => {});  // immersive has no user-gesture; nudge autoplay
             };
 
@@ -839,6 +841,9 @@ angular.z = 0</pre>
                 const dLost = (inbound.packetsLost ?? 0) - (prev.packetsLost ?? 0);
                 const dRecv = (inbound.packetsReceived ?? 0) - (prev.packetsReceived ?? 0);
                 const lossDen = dLost + dRecv;
+                // Avg decode time per frame over the window (latency component).
+                const dDecode = (inbound.totalDecodeTime ?? 0) - (prev.totalDecodeTime ?? 0);
+                const decodeMs = dFrames > 0 ? +((dDecode / dFrames) * 1000).toFixed(1) : 0;
 
                 const payload = {
                     type: 'video_stats',
@@ -850,10 +855,14 @@ angular.z = 0</pre>
                     jitter_ms: +((inbound.jitter ?? 0) * 1000).toFixed(1),
                     frames_dropped: inbound.framesDropped ?? 0,
                     freezes: inbound.freezeCount ?? 0,
+                    // Receive-side latency components (network RTT is NOT here —
+                    // that's the operator↔CF leg, covered by clock-sync, not
+                    // video-specific). These are genuinely video-path:
                     jitter_buffer_ms:
                         inbound.jitterBufferEmittedCount
                             ? +((inbound.jitterBufferDelay / inbound.jitterBufferEmittedCount) * 1000).toFixed(1)
                             : 0,
+                    decode_ms: decodeMs,
                 };
                 try { channel.send(JSON.stringify(payload)); } catch (_) {}
             }, VIDEO_STATS_INTERVAL_MS);
@@ -880,6 +889,15 @@ angular.z = 0</pre>
                 ((pong.robot_ts - pong.client_ts) + (pong.robot_ts - recvTsSec)) / 2;
             clockOffsetMs = offsetSec * 1000;
             console.log(`[clock-sync] rtt=${rttMs.toFixed(1)}ms offset=${clockOffsetMs.toFixed(1)}ms`);
+            // Report the computed RTT/offset back to the robot (it can't derive
+            // these from one-way pings). Only fires when a better min-RTT lands.
+            if (stateChannel && stateChannel.readyState === 'open') {
+                stateChannel.send(JSON.stringify({
+                    type: 'clock_report',
+                    rtt_ms: +rttMs.toFixed(1),
+                    offset_ms: +clockOffsetMs.toFixed(1),
+                }));
+            }
         }
 
         function send(bytes) {
