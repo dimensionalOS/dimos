@@ -16,12 +16,15 @@
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.gemini_speak_skill import GeminiSpeakSkill
+from dimos.agents.skills.person_follow import PersonFollowSkillContainer
 from dimos.agents.skills.speak_skill import SpeakSkill
+from dimos.agents.skills.take_picture_skill import TakePictureSkill
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.experimental.security_demo.security_module import SecurityModule
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.robot.unitree.go2.blueprints.agentic._common_agentic import _common_agentic
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree_go2_spatial
+from dimos.robot.unitree.go2.connection import GO2Connection
 
 # Disabled for a no-OpenAI / non-CUDA setup:
 #  - SecurityModule needs a CUDA GPU (EdgeTAM) -> won't boot on Apple Silicon.
@@ -31,13 +34,21 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree
 # SpatialMemory is re-declared to use remote Gemini embeddings instead of the
 # local CLIP model (which fails on Apple CoreML); the later atom overrides the
 # one inside unitree_go2_spatial.
+# PersonFollowSkillContainer is likewise re-declared to use Gemini for detection
+# (instead of Qwen, which needs ALIBABA_API_KEY); tracking_mode="auto" then
+# resolves to periodic re-detection on non-CUDA machines and EdgeTAM on GPU.
 unitree_go2_agentic_gemini = autoconnect(
     unitree_go2_spatial,
     SpatialMemory.blueprint(embedding_model="gemini", embedding_dimensions=768),
     McpServer.blueprint(),
     McpClient.blueprint(model="google_genai:gemini-2.5-flash"),
     _common_agentic,
+    PersonFollowSkillContainer.blueprint(
+        camera_info=GO2Connection.camera_info_static,
+        vl_model_name="gemini",
+    ),
     GeminiSpeakSkill.blueprint(),
+    TakePictureSkill.blueprint(),
 ).disabled_modules(SecurityModule, SpeakSkill)
 
 __all__ = ["unitree_go2_agentic_gemini"]
