@@ -28,9 +28,10 @@ output contract.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import dataclasses
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -40,6 +41,8 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import (
     camera_info_to_cv_matrices,
@@ -58,6 +61,37 @@ if TYPE_CHECKING:
     from dimos.memory2.type.observation import Observation
 
 logger = setup_logger()
+
+
+CameraInfoSource = CameraInfo | Callable[[], CameraInfo | None]
+
+
+def _camera_info_key(info: CameraInfo) -> tuple[Any, ...]:
+    """Return an intrinsics-only key for cached OpenCV calibration state."""
+    return (
+        info.width,
+        info.height,
+        info.distortion_model,
+        tuple(info.K),
+        tuple(info.D),
+    )
+
+
+def _pose_tuple_to_transform(
+    pose: tuple[float, float, float, float, float, float, float],
+    *,
+    frame_id: str,
+    child_frame_id: str,
+    ts: float,
+) -> Transform:
+    x, y, z, qx, qy, qz, qw = pose
+    return Transform(
+        translation=Vector3(x, y, z),
+        rotation=Quaternion(qx, qy, qz, qw),
+        frame_id=frame_id,
+        child_frame_id=child_frame_id,
+        ts=ts,
+    )
 
 
 def _average_marker_pose(
@@ -205,11 +239,12 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
 
     def __init__(
         self,
-        camera_info: CameraInfo,
+        camera_info: CameraInfoSource,
         marker_length_m: float,
         aruco_dictionary: str = "DICT_APRILTAG_36h11",
         world_frame: str = "world",
         smoothing_window: float = 0.0,
+        emit_empty_frames: bool = False,
     ) -> None:
         if marker_length_m <= 0:
             raise ValueError(f"marker_length_m must be > 0, got {marker_length_m}")
@@ -220,8 +255,12 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         self.aruco_dictionary = aruco_dictionary
         self.world_frame = world_frame
         self.smoothing_window = smoothing_window
+        self.emit_empty_frames = emit_empty_frames
         self._detector = create_aruco_detector(aruco_dictionary)
-        self._cam_mtx, self._dist = camera_info_to_cv_matrices(camera_info)
+        self._camera_info_key: tuple[Any, ...] | None = None
+        self._resolved_camera_info: CameraInfo | None = None
+        self._cam_mtx: np.ndarray | None = None
+        self._dist: np.ndarray | None = None
         # Per marker_id sliding-window buffer of raw detections, used to emit
         # smoothed pose updates when ``smoothing_window > 0``.
         self._buffers: dict[int, TimestampedBufferCollection[Detection3DMarker]] = {}
@@ -231,16 +270,35 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         self._marker_to_track: dict[int, int] = {}
         self._next_track_id = 0
 
+    def _resolve_camera_info(self) -> CameraInfo | None:
+        source = self.camera_info
+        info = source() if callable(source) else source
+        if info is None:
+            return None
+
+        key = _camera_info_key(info)
+        if key != self._camera_info_key:
+            self._cam_mtx, self._dist = camera_info_to_cv_matrices(info)
+            self._detector = create_aruco_detector(self.aruco_dictionary)
+            self._resolved_camera_info = info
+            self._camera_info_key = key
+        return info
+
     def __call__(
         self, upstream: Iterator[Observation[Image]]
     ) -> Iterator[Observation[Detection3DMarker]]:
-        info = self.camera_info
-
         for obs in upstream:
             pose = obs.pose
             if pose is None:
                 logger.debug("DetectMarkers: obs %s has no .pose; skipping", obs.id)
                 continue
+
+            info = self._resolve_camera_info()
+            if info is None:
+                logger.debug("DetectMarkers: no CameraInfo for obs %s; skipping", obs.id)
+                continue
+            assert self._cam_mtx is not None
+            assert self._dist is not None
 
             image = obs.data
             image_size_mismatch = (
@@ -277,7 +335,20 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                 camera_matrix=self._cam_mtx,
                 dist_coeffs=self._dist,
             )
-            for det in detections:
+
+            if not detections:
+                if self.emit_empty_frames:
+                    yield cast(
+                        "Observation[Detection3DMarker]",
+                        obs.derive(data=None).tag(
+                            marker_frame_image=image,
+                            marker_frame_count=0,
+                        ),
+                    )
+                continue
+
+            marker_count = len(detections)
+            for marker_index, det in enumerate(detections):
                 mid = det.marker_id
                 # track_id is only for smoothing / mem2 tags; marker identity is marker_id.
                 # Without smoothing, use -1 (no temporal track), same as untracked 2D detections.
@@ -326,5 +397,117 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                     )
 
                 yield obs.derive(data=yielded_det, pose=yielded_pose).tag(
-                    marker_id=mid, track_id=track_id
+                    marker_id=mid,
+                    track_id=track_id,
+                    marker_frame_image=image,
+                    marker_frame_count=marker_count,
+                    marker_frame_index=marker_index,
                 )
+
+
+class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
+    """Collapse marker fan-out back into one Detection3DArray per image frame.
+
+    ``DetectMarkers`` normally emits one observation per decoded marker. For
+    live LCM semantics, downstream consumers need a single array for each
+    processed image, including empty arrays for frames where no marker decoded.
+    ``DetectMarkers(emit_empty_frames=True)`` supplies a ``None`` sentinel for
+    those empty frames and tags every marker observation with the source image
+    and frame marker count so this transformer can emit without waiting for a
+    later timestamp.
+    """
+
+    def __init__(self, frame_id: str = "world") -> None:
+        self.frame_id = frame_id
+
+    def __call__(
+        self, upstream: Iterator[Observation[Detection3DMarker | None]]
+    ) -> Iterator[Observation[Detection3DArray]]:
+        pending: list[Detection3DMarker] = []
+        pending_obs: Observation[Detection3DMarker | None] | None = None
+        pending_ts: float | None = None
+
+        def flush() -> Observation[Detection3DArray] | None:
+            nonlocal pending, pending_obs, pending_ts
+            if pending_obs is None:
+                return None
+            result = self._to_array_observation(pending_obs, pending)
+            pending = []
+            pending_obs = None
+            pending_ts = None
+            return result
+
+        for obs in upstream:
+            det = obs.data
+            if det is None:
+                flushed = flush()
+                if flushed is not None:
+                    yield flushed
+                yield self._to_array_observation(obs, [])
+                continue
+
+            if pending_ts is not None and obs.ts != pending_ts:
+                flushed = flush()
+                if flushed is not None:
+                    yield flushed
+
+            if pending_obs is None:
+                pending_obs = obs
+                pending_ts = obs.ts
+            pending.append(det)
+
+            expected_count = obs.tags.get("marker_frame_count")
+            if (
+                isinstance(expected_count, int)
+                and expected_count > 0
+                and len(pending) >= expected_count
+            ):
+                flushed = flush()
+                if flushed is not None:
+                    yield flushed
+
+        flushed = flush()
+        if flushed is not None:
+            yield flushed
+
+    def _to_array_observation(
+        self,
+        obs: Observation[Detection3DMarker | None],
+        detections: list[Detection3DMarker],
+    ) -> Observation[Detection3DArray]:
+        image = self._source_image(obs, detections)
+        msg = ImageDetections3D(image, detections).to_ros_detection3d_array(
+            frame_id=self.frame_id
+        )
+        pose = self._source_pose(obs, detections)
+        return obs.derive(data=msg, pose=pose).tag(detections_length=len(detections))
+
+    @staticmethod
+    def _source_image(
+        obs: Observation[Detection3DMarker | None],
+        detections: list[Detection3DMarker],
+    ) -> Image:
+        if detections:
+            return detections[0].image
+        image = obs.tags.get("marker_frame_image")
+        if isinstance(image, Image):
+            return image
+        raise ValueError("MarkersPerFrame requires marker_frame_image for empty frames")
+
+    @staticmethod
+    def _source_pose(
+        obs: Observation[Detection3DMarker | None],
+        detections: list[Detection3DMarker],
+    ) -> Any | None:
+        if detections and detections[0].transform is not None:
+            transform = detections[0].transform
+            return (
+                transform.translation.x,
+                transform.translation.y,
+                transform.translation.z,
+                transform.rotation.x,
+                transform.rotation.y,
+                transform.rotation.z,
+                transform.rotation.w,
+            )
+        return obs.pose
