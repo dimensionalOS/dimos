@@ -167,6 +167,7 @@ all_modules = {
     "local-speak-skill": "dimos.agents.skills.local_speak_skill.LocalSpeakSkill",
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
     "map": "dimos.robot.unitree.type.map.Map",
+    "map-uploader": "dimos.agents.skills.map_uploader.MapUploader",
     "marker-tf-module": "dimos.perception.fiducial.marker_tf_module.MarkerTfModule",
     "mcp-client": "dimos.agents.mcp.mcp_client.McpClient",
     "mcp-server": "dimos.agents.mcp.mcp_server.McpServer",

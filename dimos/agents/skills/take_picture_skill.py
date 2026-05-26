@@ -32,6 +32,7 @@ from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
@@ -46,15 +47,21 @@ class TakePictureSkillConfig(ModuleConfig):
 class TakePictureSkill(Module):
     config: TakePictureSkillConfig
     color_image: In[Image]
+    odom: In[PoseStamped]
 
     @rpc
     def start(self) -> None:
         super().start()
         self._latest: Image | None = None
+        self._pose: PoseStamped | None = None
         self.color_image.subscribe(self._on_image)
+        self.odom.subscribe(self._on_odom)
 
     def _on_image(self, image: Image) -> None:
         self._latest = image
+
+    def _on_odom(self, pose: PoseStamped) -> None:
+        self._pose = pose
 
     @skill
     def take_picture(self, note: str = "") -> SkillResult:
@@ -79,12 +86,21 @@ class TakePictureSkill(Module):
         if not ok:
             return SkillResult.fail("EXECUTION_FAILED", "JPEG encode failed")
 
+        # Attach the robot's world position so the web can pin it on the map.
+        data: dict[str, str] = {"note": note}
+        pose = getattr(self, "_pose", None)
+        if pose is not None:
+            data["poseX"] = str(pose.position.x)
+            data["poseY"] = str(pose.position.y)
+            if note:
+                data["label"] = note
+
         try:
             resp = httpx.post(
                 f"{url.rstrip('/')}/api/robot/frame",
                 headers={"Authorization": f"Bearer {token}"},
                 files={"file": ("frame.jpg", buf.tobytes(), "image/jpeg")},
-                data={"note": note},
+                data=data,
                 timeout=30.0,
             )
             resp.raise_for_status()
