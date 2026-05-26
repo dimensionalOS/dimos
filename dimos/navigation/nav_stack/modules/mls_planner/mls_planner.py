@@ -548,33 +548,26 @@ def _edges_to_segments(
     list[tuple[tuple[float, float, float], tuple[float, float, float]]],
     list[float],
 ]:
-    """Emit one segment per consecutive cell pair on each edge, paired with its safe-adj weight."""
+    """Emit one segment per consecutive cell pair on each edge.
+
+    All segments belonging to the same graph edge share the edge's total weight
+    so the renderer can color the whole edge uniformly.
+    """
     segments: list[tuple[tuple[float, float, float], tuple[float, float, float]]] = []
     weights: list[float] = []
-    indptr = sg.adj.indptr
-    indices = sg.adj.indices
-    data = sg.adj.data
     for _, _, edge_data in sg.graph.edges(data=True):
         path_cells: np.ndarray = edge_data["path"]
+        edge_weight = float(edge_data.get("weight", 0.0))
         for i in range(len(path_cells) - 1):
             a = path_cells[i]
             b = path_cells[i + 1]
-            a_cell = (int(a[0]), int(a[1]), int(a[2]))
-            b_cell = (int(b[0]), int(b[1]), int(b[2]))
             segments.append(
                 (
-                    surface_point_xyz(*a_cell, voxel_size),
-                    surface_point_xyz(*b_cell, voxel_size),
+                    surface_point_xyz(int(a[0]), int(a[1]), int(a[2]), voxel_size),
+                    surface_point_xyz(int(b[0]), int(b[1]), int(b[2]), voxel_size),
                 )
             )
-            u = sg.cell_to_idx[a_cell]
-            v = sg.cell_to_idx[b_cell]
-            w = 0.0
-            for k in range(int(indptr[u]), int(indptr[u + 1])):
-                if int(indices[k]) == v:
-                    w = float(data[k])
-                    break
-            weights.append(w)
+            weights.append(edge_weight)
     return segments, weights
 
 
