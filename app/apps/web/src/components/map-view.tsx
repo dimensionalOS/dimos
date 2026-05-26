@@ -49,7 +49,14 @@ export function MapView() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="relative w-full overflow-hidden rounded-md border bg-black">
+      {/* The occupancy PNG is rendered y-down (grid row 0 = min y, which lands at
+          the image top). Flip the whole container vertically so the map reads
+          y-up like Rerun/the command-center — image AND pins flip together, so
+          pins stay on their correct cells. */}
+      <div
+        className="relative w-full overflow-hidden rounded-md border bg-black"
+        style={{ transform: "scaleY(-1)" }}
+      >
         {/* biome-ignore lint/performance/noImgElement: presigned URL, plain img is simplest */}
         <img alt="robot map" className="block w-full" src={map.imageUrl} />
         <svg
