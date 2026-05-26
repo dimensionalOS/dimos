@@ -153,7 +153,6 @@ all_modules = {
     "gemini-speak-skill": "dimos.agents.skills.gemini_speak_skill.GeminiSpeakSkill",
     "go2-connection": "dimos.robot.unitree.go2.connection.GO2Connection",
     "go2-fleet-connection": "dimos.robot.unitree.go2.fleet_connection.Go2FleetConnection",
-    "go2-full-recorder": "dimos.memory2.go2_full_recorder.Go2FullRecorder",
     "go2-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2.Go2Memory",
     "google-maps-skill-container": "dimos.agents.skills.google_maps_skill_container.GoogleMapsSkillContainer",
     "gps-nav-skill-container": "dimos.agents.skills.gps_nav_skill.GpsNavSkillContainer",
