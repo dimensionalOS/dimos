@@ -179,10 +179,10 @@ def detect_markers_in_image(
         detections.append(
             Detection3DMarker(
                 bbox=bbox,
-                track_id=mid,
+                track_id=-1,
                 class_id=mid,
                 confidence=1.0,
-                name=f"{aruco_dictionary}:{mid}",
+                name="",  # set in Detection3DMarker.__post_init__ to marker_label
                 ts=image.ts,
                 image=image,
                 center=t_world_marker.translation,
@@ -279,8 +279,8 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
             )
             for det in detections:
                 mid = det.marker_id
-                # Decide track_id (only meaningful when smoothing is on).
-                # Without smoothing, track_id == marker_id (legacy behavior).
+                # track_id is only for smoothing / mem2 tags; marker identity is marker_id.
+                # Without smoothing, use -1 (no temporal track), same as untracked 2D detections.
                 if self.smoothing_window > 0:
                     prior_buf = self._buffers.get(mid)
                     prior_last = prior_buf.last() if prior_buf is not None else None
@@ -289,7 +289,7 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                         self._marker_to_track[mid] = self._next_track_id
                     track_id = self._marker_to_track[mid]
                 else:
-                    track_id = mid
+                    track_id = -1
 
                 det = dataclasses.replace(det, track_id=track_id)
                 yielded_pose = Transform(

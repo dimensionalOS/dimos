@@ -88,6 +88,7 @@ def test_detect_markers_in_image_builds_rich_marker_detection() -> None:
     assert len(detections) == 1
     det = detections[0]
     assert det.marker_id == marker_id
+    assert det.track_id == -1
     assert det.name == "DICT_APRILTAG_36h11:7"
     assert det.image is image
     assert det.frame_id == "world"
@@ -152,4 +153,5 @@ def test_detect_markers_transformer_preserves_observation_context_and_tags() -> 
     assert out.data.image is image
     assert out.pose is not None
     assert out.tags["marker_id"] == marker_id
-    assert out.tags["track_id"] == marker_id
+    assert out.tags["track_id"] == -1
+    assert out.data.track_id == -1
