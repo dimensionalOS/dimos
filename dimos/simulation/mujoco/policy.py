@@ -160,13 +160,13 @@ class DroneController:
             self,
             input_controller: InputController,
             drone_hover_thrust: float = 0.26487,
-            attitude_p: float = 0.5,
+            attitude_p: float = 0.1,
             attitude_d: float = 2.0,
             yaw_p: float = 1,
             yaw_d: float = 0.05,
             max_tilt_angle: float = 0.1,
             max_yaw_rate: float = 2.0,
-            velocity_damping: float = 0.05,
+            velocity_damping: float = 0.08,
             **kwargs: Any,
     ) -> None:
         self._input_controller = input_controller
@@ -213,8 +213,8 @@ class DroneController:
         vx_body = vx_w * cos_y + vy_w * sin_y
         vy_body = -vx_w * sin_y + vy_w * cos_y
         
-        desired_pitch = pitch - self._velocity_damping * vx_body
-        desired_roll = roll + self._velocity_damping * vy_body
+        desired_pitch = np.clip(pitch - self._velocity_damping * vx_body, -self._max_tilt_angle, self._max_tilt_angle)
+        desired_roll = np.clip(roll + self._velocity_damping * vy_body, -self._max_tilt_angle, self._max_tilt_angle)
 
         data.ctrl[0] = self._drone_hover_thrust
         data.ctrl[1] = self._attitude_p * (current_roll - desired_roll) + self._attitude_d * roll_rate
