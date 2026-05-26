@@ -30,11 +30,9 @@ This script:
   4. Reports what it receives; SUCCESS when all 4 channels are live
 
 Prerequisites:
-  1. Start DimSim bridge:
-       ~/.deno/bin/deno run --allow-all --unstable-net cli/cli.ts dev
-  2. Open http://localhost:8090 in Chrome (scene must load)
-  3. Run this script from the dimos venv:
-       /path/to/dimos/.venv/bin/python cli/test/dimos_integration.py
+  Start dimos with DimSim, then run this script from the dimos repo:
+       uv run dimos --simulation dimsim --dimsim-scene=apartment run unitree-go2-agentic
+       uv run python misc/DimSim/cli/test/dimos_integration.py
 
 Options:
   --timeout N    Timeout in seconds (default: 30)
