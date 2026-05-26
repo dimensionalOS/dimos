@@ -17,7 +17,7 @@ dimsim is launched by dimos directly when you pick `--simulation dimsim`:
 
 ```bash
 cd <dimos-repo>
-.venv/bin/dimos --simulation dimsim --dimsim-scene=apartment run unitree-go2-agentic
+uv run dimos --simulation dimsim --dimsim-scene=apartment run unitree-go2-agentic
 ```
 
 On first run, `cli/cli.ts` will build `dist/` via Vite (dimsim ships its frontend as source — Deno+Vite materializes it in ~20s).
