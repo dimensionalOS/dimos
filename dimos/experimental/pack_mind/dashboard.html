@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PACK MIND</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">PACK&nbsp;MIND</div>
+      <div class="tagline">Alpha sees. Bravo remembers. The pack acts.</div>
+      <div id="mission" class="mission">IDLE</div>
+      <div id="mode" class="mode"></div>
+    </header>
+
+    <main>
+      <section class="left">
+        <h2>Pack</h2>
+        <div id="roster" class="roster"></div>
+
+        <h2>Operator</h2>
+        <div class="controls">
+          <button data-act="start_act1">Start Act 1</button>
+          <button data-act="inject_found" class="accent">Inject: Alpha found red backpack @ Zone B</button>
+          <button data-act="ask_where">Ask Bravo where backpack is</button>
+          <button data-act="send_dog">Send Bravo to Zone B</button>
+          <button data-act="verify">Verify success</button>
+          <button data-act="estop" class="danger">Emergency stop</button>
+        </div>
+        <p class="hint">Hidden fallback buttons are not cheating. Broken live autonomy is.</p>
+      </section>
+
+      <section class="right">
+        <h2>Shared semantic memory</h2>
+        <div class="handoff-note">semantic handoff — no shared map, no coordinates</div>
+        <div id="events" class="events"></div>
+      </section>
+    </main>
+
+    <script>
+      // All dynamic content is built with createElement + textContent (never
+      // innerHTML) so operator-supplied strings cannot inject markup.
+      const OBJECT = "red backpack";
+
+      async function post(action, extra) {
+        const body = Object.assign({ action, object: OBJECT }, extra || {});
+        await fetch("/action", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        refresh();
+      }
+
+      const ACTIONS = {
+        start_act1: () => post("start_act1"),
+        inject_found: () => post("inject_found", { dog: "alpha", zone: "zone_b" }),
+        ask_where: () => post("ask_where", { dog: "bravo" }),
+        send_dog: () => post("send_dog", { dog: "bravo" }),
+        verify: () => post("verify", { dog: "bravo" }),
+        estop: () => post("estop"),
+      };
+
+      document.querySelectorAll("button[data-act]").forEach((btn) => {
+        btn.addEventListener("click", () => ACTIONS[btn.dataset.act]());
+      });
+
+      const EVENT_LABELS = {
+        object_found: "SAW",
+        answer: "REMEMBERS",
+        navigating: "ACTING ON PACK MEMORY",
+        arrived: "ARRIVED",
+        verified: "VERIFIED",
+        tool_timeout: "TOOL TIMEOUT",
+        estop: "EMERGENCY STOP",
+      };
+
+      function el(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      }
+
+      function card(ev) {
+        const root = el("div", `card type-${ev.type}`);
+        const top = el("div", "card-top");
+        top.append(el("span", "robot", ev.robot));
+        top.append(el("span", "label", EVENT_LABELS[ev.type] || ev.type.toUpperCase()));
+        if (ev.zone) top.append(el("span", "zone", `→ ${ev.zone}`));
+        root.append(top, el("div", "card-text", ev.text));
+        return root;
+      }
+
+      function dogCard(d) {
+        const root = el("div", `dog status-${d.status}`);
+        root.append(el("div", "dog-id", d.name));
+        root.append(el("div", "dog-role", d.role));
+        root.append(el("div", "dog-status", d.status + (d.zone ? " @ " + d.zone : "")));
+        return root;
+      }
+
+      async function refresh() {
+        try {
+          const s = await (await fetch("/state")).json();
+          document.getElementById("mission").textContent = s.mission;
+          document.getElementById("mode").textContent = s.mock ? "MOCK MODE" : "LIVE";
+          document.getElementById("roster").replaceChildren(...s.roster.map(dogCard));
+          const evs = s.events.filter((e) => e.type !== "mock_call");
+          const target = document.getElementById("events");
+          if (evs.length) target.replaceChildren(...evs.map(card));
+          else target.replaceChildren(el("div", "empty", "memory empty"));
+        } catch (e) {
+          /* conductor not reachable yet; keep last view */
+        }
+      }
+
+      refresh();
+      setInterval(refresh, 1000);
+    </script>
+  </body>
+</html>
