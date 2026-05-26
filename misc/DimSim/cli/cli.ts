@@ -8,7 +8,6 @@
  *   dimsim eval <workflow>                                  Run one workflow (auto --connect)
  *   dimsim eval  [--headless] [--parallel N] [--render gpu] Headless CI evals
  *   dimsim eval list                                        List eval workflows
- *   dimsim agent [--nav-only]                               dimos Python agent
  */
 
 import { resolve, dirname, fromFileUrl } from "@std/path";
@@ -20,8 +19,6 @@ const CLI_DIR = dirname(fromFileUrl(import.meta.url));
 const PROJECT_DIR = resolve(CLI_DIR, "..");
 const LOCAL_DIST_DIR = resolve(PROJECT_DIR, "dist");
 const SCENES_DIR = resolve(PROJECT_DIR, "scenes");
-const DIMOS_VENV = resolve(PROJECT_DIR, "../../.venv/bin/python");
-const AGENT_PY = resolve(CLI_DIR, "agent.py");
 
 /**
  * Build dist/ from the repo's own sources using Deno's npm compat.
@@ -114,7 +111,6 @@ Commands:
   dimsim eval list               List installed eval workflows
   dimsim eval <workflow>         Run one workflow against an already-running bridge
   dimsim eval  [options]         Run eval workflows (headless CI)
-  dimsim agent [options]         Launch dimos Python agent
 
 Dev:
   --scene <name>                 Scene to load (default: apartment)
@@ -140,10 +136,6 @@ Eval:
   --output json|junit            Output format (default: json)
   --port <n>                     Bridge port (default: 8090)
   --timeout <ms>                 Engine init timeout (default: auto)
-
-Agent:
-  --nav-only                     Nav stack only (no LLM agent)
-  --venv <path>                  Python venv path (default: ../../.venv/bin/python relative to misc/DimSim/)
 `);
 }
 
@@ -269,38 +261,6 @@ async function main() {
 
     // Keep alive
     await new Promise(() => {});
-  }
-
-  // ── Agent ───────────────────────────────────────────────────────────
-  if (subcommand === "agent") {
-    const pythonBin = (opts.venv as string) || DIMOS_VENV;
-    const navOnly = opts["nav-only"] === true;
-
-    // Verify python exists
-    try {
-      await Deno.stat(pythonBin);
-    } catch {
-      console.error(`[dimsim] dimos venv not found at: ${pythonBin}`);
-      console.error(`[dimsim] Install dimos first, or pass --venv /path/to/python`);
-      Deno.exit(1);
-    }
-
-    const cmd = [pythonBin, AGENT_PY];
-    if (navOnly) cmd.push("--nav-only");
-
-    console.log(`[dimsim] Starting dimos agent${navOnly ? " (nav-only)" : ""}...`);
-    console.log(`[dimsim] Python: ${pythonBin}`);
-
-    const proc = new Deno.Command(cmd[0], {
-      args: cmd.slice(1),
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-      env: { ...Deno.env.toObject() },
-    }).spawn();
-
-    const status = await proc.status;
-    Deno.exit(status.code);
   }
 
   // ── Eval list ───────────────────────────────────────────────────────
