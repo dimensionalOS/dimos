@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+import os
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
 import time
@@ -39,6 +40,12 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
+
+
+def _requires_openai_api_key(model: Any) -> bool:
+    if not isinstance(model, str):
+        return False
+    return model.startswith("gpt-") or model.startswith("openai:")
 
 
 class McpClientConfig(ModuleConfig):
@@ -217,6 +224,13 @@ class McpClient(Module):
             from dimos.agents.testing import MockModel
 
             model = MockModel(json_path=self.config.model_fixture)
+        elif _requires_openai_api_key(model) and not os.getenv("OPENAI_API_KEY"):
+            logger.warning(
+                "McpClient agent disabled because OPENAI_API_KEY is not set",
+                model=model,
+                n_tools=len(tools),
+            )
+            return
 
         with self._lock:
             self._state_graph = create_agent(

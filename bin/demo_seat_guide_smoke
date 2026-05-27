@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+run_dimos() {
+  if command -v dimos >/dev/null 2>&1; then
+    dimos "$@"
+  else
+    uv run dimos "$@"
+  fi
+}
+
+require_tool() {
+  local tools="$1"
+  local tool_name="$2"
+  if ! grep -q "\"${tool_name}\"" <<<"${tools}"; then
+    echo "SeatGuide smoke no-go: missing MCP tool '${tool_name}'." >&2
+    echo "Confirm the running blueprint is unitree-go2-seat-guide or unitree-go2-seat-guide-agentic and includes SeatGuide, WebInput, camera provider, and SpeakSkill modules." >&2
+    exit 3
+  fi
+}
+
+require_output_contains() {
+  local output="$1"
+  local expected="$2"
+  local label="$3"
+  if ! grep -Fq "${expected}" <<<"${output}"; then
+    echo "SeatGuide smoke no-go: ${label} did not contain '${expected}'." >&2
+    return 1
+  fi
+}
+
+extract_run_id() {
+  sed -n 's/^  Run ID:[[:space:]]*//p' <<<"$1" | tail -n 1
+}
+
+require_seat_guide_run_registry() {
+  local status_text="$1"
+  local run_id
+  run_id="$(extract_run_id "${status_text}")"
+  if [[ -z "${run_id}" ]]; then
+    echo "SeatGuide smoke no-go: could not parse DimOS run ID from status." >&2
+    exit 3
+  fi
+
+  local state_home="${XDG_STATE_HOME:-${HOME}/.local/state}"
+  local registry_path="${state_home}/dimos/runs/${run_id}.json"
+  if [[ ! -f "${registry_path}" ]]; then
+    echo "SeatGuide smoke no-go: DimOS run registry entry not found: ${registry_path}" >&2
+    exit 3
+  fi
+
+  if ! grep -Eq '"blueprint"[[:space:]]*:[[:space:]]*"unitree-go2-seat-guide(-agentic)?"' "${registry_path}"; then
+    echo "SeatGuide smoke no-go: running DimOS stack is not a SeatGuide Go2 blueprint." >&2
+    echo "Start unitree-go2-seat-guide-agentic for replay or real hardware acceptance." >&2
+    exit 3
+  fi
+}
+
+echo "Checking DimOS run status..."
+status_output="$(run_dimos status)"
+printf '%s\n' "${status_output}"
+if grep -q "No running DimOS instance" <<<"${status_output}"; then
+  cat >&2 <<'EOF'
+
+No running DimOS stack found.
+Start a SeatGuide stack first, for example:
+
+  dimos --replay run unitree-go2-seat-guide-agentic --daemon
+
+or, on real Go2 hardware:
+
+  dimos run unitree-go2-seat-guide-agentic --robot-ip 192.168.123.161 --daemon
+EOF
+  exit 2
+fi
+require_seat_guide_run_registry "${status_output}"
+
+echo
+echo "Checking SeatGuide MCP tools..."
+if ! tools="$(run_dimos mcp list-tools 2>&1)"; then
+  printf '%s\n' "${tools}" >&2
+  cat >&2 <<'EOF'
+SeatGuide smoke no-go: MCP tools are unavailable.
+Confirm the running blueprint is unitree-go2-seat-guide or unitree-go2-seat-guide-agentic and includes McpServer.
+EOF
+  exit 3
+fi
+require_tool "${tools}" "seat_guide_readiness_report"
+require_tool "${tools}" "preview_seat_request"
+require_tool "${tools}" "seat_guide_preflight"
+require_tool "${tools}" "seat_guide_navigation_status"
+require_tool "${tools}" "seat_guide_status"
+require_tool "${tools}" "preview_empty_seat_goal"
+require_tool "${tools}" "web_input_status"
+require_tool "${tools}" "camera_seat_provider_status"
+require_tool "${tools}" "speech_status"
+
+echo
+echo "Checking WebInput voice/text route status..."
+web_input_output="$(run_dimos mcp call web_input_status)"
+printf '%s\n' "${web_input_output}"
+require_output_contains "${web_input_output}" "web=started" "web_input_status"
+require_output_contains "${web_input_output}" "thread=running" "web_input_status"
+require_output_contains "${web_input_output}" "seat_route=seat_guide_direct" "web_input_status"
+require_output_contains "${web_input_output}" "responses=connected" "web_input_status"
+require_output_contains "${web_input_output}" "voice_upload=connected" "web_input_status"
+require_output_contains "${web_input_output}" "stt=connected" "web_input_status"
+require_output_contains "${web_input_output}" "human_transport=connected" "web_input_status"
+
+echo
+echo "Checking camera SeatGuide perception provider status..."
+run_dimos mcp call camera_seat_provider_status
+
+echo
+echo "Checking current SeatGuide scene..."
+run_dimos mcp call seat_guide_status
+
+echo
+echo "Checking speech output readiness..."
+run_dimos mcp call speech_status
+
+echo
+echo "Running no-motion readiness report..."
+run_dimos mcp call seat_guide_readiness_report
+
+echo
+echo "Running no-motion voice-intent preview..."
+run_dimos mcp call preview_seat_request --json-args '{"text": "预检帮我找一个空位"}'
+
+echo
+echo "Previewing selected goal without moving..."
+run_dimos mcp call preview_empty_seat_goal
+
+echo
+echo "Checking navigation completion status reader..."
+run_dimos mcp call seat_guide_navigation_status
+
+echo
+echo "SeatGuide no-motion smoke completed."

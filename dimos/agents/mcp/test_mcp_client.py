@@ -18,6 +18,7 @@ from langchain_core.messages import HumanMessage
 import pytest
 
 from dimos.agents.annotation import skill
+from dimos.agents.mcp.mcp_client import _requires_openai_api_key
 from dimos.core.module import Module
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
@@ -199,3 +200,9 @@ def test_image(agent_setup):
     assert "cafe" in response
     assert "stadium" not in response
     assert "battleship" not in response
+
+
+def test_requires_openai_api_key_for_gpt_models() -> None:
+    assert _requires_openai_api_key("gpt-4o")
+    assert _requires_openai_api_key("openai:gpt-4o")
+    assert not _requires_openai_api_key("ollama:llama3")

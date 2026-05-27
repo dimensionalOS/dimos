@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: bin/demo_seat_guide_hardware_bringup [--robot-ip <ip>] [--skip-start] [--skip-smoke]
+
+Start the real Go2 SeatGuide stack, run no-motion readiness checks, then run
+the browser-microphone hardware acceptance flow.
+
+Options:
+  --robot-ip <ip>   Go2 robot IP. Default: 192.168.123.161
+  --skip-start      Use the currently running DimOS stack instead of starting one.
+  --skip-smoke      Skip the no-motion smoke wrapper and go straight to hardware acceptance.
+  -h, --help        Show this help.
+
+Required environment:
+  ALIBABA_API_KEY   Qwen/VLM chair/person detection.
+  OPENAI_API_KEY    TTS speech feedback.
+EOF
+}
+
+run_dimos() {
+  if command -v dimos >/dev/null 2>&1; then
+    dimos "$@"
+  else
+    uv run dimos "$@"
+  fi
+}
+
+robot_ip="${SEAT_GUIDE_ROBOT_IP:-192.168.123.161}"
+skip_start=0
+skip_smoke=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --robot-ip)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --robot-ip." >&2
+        usage >&2
+        exit 2
+      fi
+      robot_ip="$2"
+      shift 2
+      ;;
+    --skip-start)
+      skip_start=1
+      shift
+      ;;
+    --skip-smoke)
+      skip_smoke=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+missing=0
+if [[ -z "${ALIBABA_API_KEY:-}" ]]; then
+  echo "SeatGuide bring-up no-go: ALIBABA_API_KEY is not set." >&2
+  missing=1
+fi
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  echo "SeatGuide bring-up no-go: OPENAI_API_KEY is not set." >&2
+  missing=1
+fi
+if [[ "${missing}" != "0" ]]; then
+  cat >&2 <<'EOF'
+Set the required keys in the same terminal that will start DimOS, for example:
+
+  export ALIBABA_API_KEY=...
+  export OPENAI_API_KEY=...
+EOF
+  exit 2
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ "${skip_start}" != "1" ]]; then
+  echo "Starting real Go2 SeatGuide stack at robot IP ${robot_ip}..."
+  run_dimos run unitree-go2-seat-guide-agentic --robot-ip "${robot_ip}" --daemon
+else
+  echo "Using the currently running DimOS stack."
+fi
+
+echo
+echo "Current DimOS status:"
+run_dimos status
+
+if [[ "${skip_smoke}" != "1" ]]; then
+  echo
+  echo "Running SeatGuide no-motion smoke checks..."
+  "${script_dir}/demo_seat_guide_smoke"
+else
+  echo
+  echo "Skipping no-motion smoke checks."
+fi
+
+cat <<'EOF'
+
+SeatGuide hardware acceptance will now verify the real browser microphone path.
+You will need to:
+  1. Open the WebInput URL printed by the script.
+  2. Allow microphone access.
+  3. Type HEARD after the TTS audio check is audible.
+  4. Type LIVE only when the Go2 is physically clear to move.
+  5. Say the prompted Chinese phrases into the browser microphone.
+EOF
+
+"${script_dir}/demo_seat_guide_hardware_acceptance"

@@ -1,0 +1,744 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+run_dimos() {
+  if command -v dimos >/dev/null 2>&1; then
+    dimos "$@"
+  else
+    uv run dimos "$@"
+  fi
+}
+
+log_dir="${SEAT_GUIDE_ACCEPTANCE_LOG_DIR:-logs/seat_guide_acceptance}"
+mkdir -p "${log_dir}"
+log_file="${log_dir}/$(date +%Y%m%d-%H%M%S).log"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+acceptance_log_verifier="${script_dir}/demo_seat_guide_verify_acceptance_log"
+web_input_url="http://localhost:5555"
+active_stream_pid=""
+active_stream_file=""
+
+cleanup_active_stream() {
+  if [[ -n "${active_stream_pid}" ]] && kill -0 "${active_stream_pid}" >/dev/null 2>&1; then
+    kill "${active_stream_pid}" >/dev/null 2>&1 || true
+    wait "${active_stream_pid}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${active_stream_file}" ]]; then
+    rm -f "${active_stream_file}"
+  fi
+  active_stream_pid=""
+  active_stream_file=""
+}
+
+trap cleanup_active_stream EXIT
+trap 'cleanup_active_stream; exit 130' INT
+trap 'cleanup_active_stream; exit 143' TERM
+
+log() {
+  printf '%s\n' "$*" | tee -a "${log_file}"
+}
+
+run_and_log() {
+  log "+ dimos $*"
+  run_dimos "$@" 2>&1 | tee -a "${log_file}"
+}
+
+run_output=""
+run_capture() {
+  log "+ dimos $*"
+  if ! run_output="$(run_dimos "$@" 2>&1)"; then
+    printf '%s\n' "${run_output}" | tee -a "${log_file}"
+    return 1
+  fi
+  printf '%s\n' "${run_output}" | tee -a "${log_file}"
+}
+
+capture_dimos_log() {
+  local label="$1"
+  log ""
+  log "${label}"
+  log "+ dimos log -n 200"
+  run_dimos log -n 200 2>&1 | tee -a "${log_file}" || true
+}
+
+verify_acceptance_log() {
+  log ""
+  log "Verifying hardware acceptance transcript..."
+  log "+ ${acceptance_log_verifier} ${log_file}"
+  local verifier_output
+  if ! verifier_output="$("${acceptance_log_verifier}" "${log_file}" 2>&1)"; then
+    printf '%s\n' "${verifier_output}" | tee -a "${log_file}"
+    log "Hardware acceptance no-go: transcript verifier failed."
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+  printf '%s\n' "${verifier_output}" | tee -a "${log_file}"
+}
+
+extract_goal_sequence() {
+  sed -n 's/.*goal_sequence=\([0-9][0-9]*\).*/\1/p' <<<"$1" | tail -n 1
+}
+
+extract_web_input_url() {
+  sed -n 's/.*url=\(http[^; ]*\).*/\1/p' <<<"$1" | sed 's/\.$//' | tail -n 1
+}
+
+extract_run_id() {
+  sed -n 's/^  Run ID:[[:space:]]*//p' <<<"$1" | tail -n 1
+}
+
+seat_guide_goal_completed_after_sequence() {
+  local previous_goal_sequence="$1"
+  local nav_output="$2"
+  local current_goal_sequence
+  current_goal_sequence="$(extract_goal_sequence "${nav_output}")"
+  [[ -n "${current_goal_sequence}" ]] \
+    && ((current_goal_sequence > previous_goal_sequence)) \
+    && grep -Fq "goal_reached=true" <<<"${nav_output}"
+}
+
+seat_guide_preflight_ready_for_hardware() {
+  local output="$1"
+  grep -Fq "SeatGuide preflight ready" <<<"${output}" \
+    && grep -Fq "navigation=IDLE" <<<"${output}" \
+    && grep -Fq "speaker=connected" <<<"${output}"
+}
+
+web_input_ready_for_seat_guide() {
+  local output="$1"
+  grep -Fq "web=started" <<<"${output}" \
+    && grep -Fq "thread=running" <<<"${output}" \
+    && grep -Fq "seat_route=seat_guide_direct" <<<"${output}" \
+    && grep -Fq "responses=connected" <<<"${output}" \
+    && grep -Fq "voice_upload=connected" <<<"${output}" \
+    && grep -Fq "stt=connected" <<<"${output}" \
+    && grep -Fq "human_transport=connected" <<<"${output}"
+}
+
+log_web_input_no_go_details() {
+  local output="$1"
+  if ! grep -Fq "web=started" <<<"${output}"; then
+    log "  - WebInput server is not started. Check WebInput module startup before using browser text or microphone input."
+  fi
+  if ! grep -Fq "thread=running" <<<"${output}"; then
+    log "  - WebInput server thread is not running. Inspect WebInput startup logs and port binding."
+  fi
+  if ! grep -Fq "seat_route=seat_guide_direct" <<<"${output}"; then
+    log "  - WebInput is not directly wired to SeatGuide. Check blueprint injection of SeatGuideSkillContainer into WebInput."
+  fi
+  if ! grep -Fq "responses=connected" <<<"${output}"; then
+    log "  - WebInput response stream is missing. Browser feedback cannot prove SeatGuide responses."
+  fi
+  if ! grep -Fq "voice_upload=connected" <<<"${output}"; then
+    log "  - WebInput browser audio upload endpoint is not connected. Browser microphone recordings cannot reach the speech-to-text pipeline."
+  fi
+  if ! grep -Fq "stt=connected" <<<"${output}"; then
+    log "  - WebInput speech-to-text pipeline is unavailable. Check Whisper dependencies, model loading, and audio pipeline initialization before browser microphone acceptance."
+  fi
+  if ! grep -Fq "human_transport=connected" <<<"${output}"; then
+    log "  - WebInput human-input fallback transport is missing. Normal agent text fallback will not work."
+  fi
+}
+
+camera_provider_ready_for_hardware() {
+  local output="$1"
+  grep -Fq "credential=present" <<<"${output}" \
+    && grep -Eq "image=[0-9]+x[0-9]+" <<<"${output}" \
+    && grep -Fq "image_fresh=true" <<<"${output}" \
+    && grep -Fq "odom=(" <<<"${output}" \
+    && grep -Fq "odom_fresh=true" <<<"${output}" \
+    && grep -Fq "override=inactive" <<<"${output}" \
+    && grep -Fq "configured_fallback_seats=0" <<<"${output}" \
+    && grep -Fq "configured_fallback_people=0" <<<"${output}"
+}
+
+log_camera_provider_no_go_details() {
+  local output="$1"
+  if grep -Fq "credential=missing" <<<"${output}"; then
+    log "  - VLM credential is missing. Export ALIBABA_API_KEY in the environment used to start the DimOS daemon, then restart the SeatGuide stack."
+  fi
+  if grep -Fq "image=missing" <<<"${output}" || ! grep -Eq "image=[0-9]+x[0-9]+" <<<"${output}"; then
+    log "  - Camera image is missing. Check the Go2 camera stream and confirm the robot is publishing color_image."
+  fi
+  if grep -Fq "image_fresh=false" <<<"${output}"; then
+    log "  - Camera image is stale. Restart/fix the camera stream before using visual detections for a live goal."
+  fi
+  if grep -Fq "odom=missing" <<<"${output}"; then
+    log "  - Odometry is missing. Check localization/odom before sending a map-frame navigation goal."
+  fi
+  if grep -Fq "odom_fresh=false" <<<"${output}"; then
+    log "  - Odometry is stale. Restart/fix localization before sending a map-frame navigation goal."
+  fi
+  if grep -Fq "override=active" <<<"${output}"; then
+    log "  - Runtime seat-scene override is active. Clear it before hardware acceptance so camera recognition is the source of truth."
+  fi
+  if ! grep -Fq "configured_fallback_seats=0" <<<"${output}" \
+    || ! grep -Fq "configured_fallback_people=0" <<<"${output}"; then
+    log "  - Configured fallback seats/people are non-zero. Use the SeatGuide hardware blueprint with camera-backed perception and no fallback layout for acceptance."
+  fi
+}
+
+log_speech_no_go_details() {
+  local output="$1"
+  if ! grep -Fq "tts=ready" <<<"${output}"; then
+    log "  - TTS is not ready. Export OPENAI_API_KEY in the environment used to start the DimOS daemon, then restart the SeatGuide stack."
+  fi
+  if ! grep -Fq "audio_output=connected" <<<"${output}"; then
+    log "  - Audio output is not connected. Check the robot/local speaker device before relying on spoken feedback."
+  fi
+}
+
+log_seat_guide_no_go_details() {
+  local output="$1"
+  if grep -Fq "navigation=FOLLOWING_PATH" <<<"${output}" \
+    || grep -Fq "navigation=RECOVERY" <<<"${output}"; then
+    log "  - Navigation is busy. Wait for the current goal to finish or cancel it, then rerun preflight before any live voice request."
+  fi
+  if grep -Fq "navigation=missing" <<<"${output}" \
+    || grep -Fq "navigation=error(" <<<"${output}"; then
+    log "  - Navigation is unavailable. Check the NavigationSkillContainer wiring and navigation logs before sending a SeatGuide goal."
+  fi
+  if grep -Fq "speaker=missing" <<<"${output}"; then
+    log "  - SeatGuide speaker wiring is missing. Confirm SpeakSkill is in the SeatGuide blueprint and connected before official hardware acceptance."
+  fi
+  if grep -Fq "source=no_camera_image" <<<"${output}" \
+    || grep -Fq "perception=no_camera_image" <<<"${output}"; then
+    log "  - SeatGuide has no camera image. Check the Go2 camera stream and turn the robot toward the conference table."
+  fi
+  if grep -Fq "source=camera_no_odom" <<<"${output}" \
+    || grep -Fq "perception=camera_no_odom" <<<"${output}"; then
+    log "  - SeatGuide has camera frames but no odometry. Fix localization/odom before sending a map-frame navigation goal."
+  fi
+  if grep -Fq "source=stale_camera_image" <<<"${output}" \
+    || grep -Fq "perception=stale_camera_image" <<<"${output}"; then
+    log "  - SeatGuide camera frames are stale. Restore the live camera stream before sending a SeatGuide goal."
+  fi
+  if grep -Fq "source=stale_camera_odom" <<<"${output}" \
+    || grep -Fq "perception=stale_camera_odom" <<<"${output}"; then
+    log "  - SeatGuide odometry is stale. Restore localization before sending a map-frame goal."
+  fi
+  if grep -Fq "source=camera_no_seats_detected" <<<"${output}" \
+    || grep -Fq "perception=camera_no_seats_detected" <<<"${output}" \
+    || grep -Fq "no seats" <<<"${output}"; then
+    log "  - SeatGuide cannot see chairs. Reposition the robot toward the long table or inspect VLM chair detections before live navigation."
+  fi
+  if grep -Fq "source=camera_detection_error" <<<"${output}" \
+    || grep -Fq "perception=camera_detection_error" <<<"${output}"; then
+    log "  - SeatGuide camera detection failed. Check ALIBABA_API_KEY, VLM model setup, and DimOS logs."
+  fi
+  if grep -Fq "is not live camera" <<<"${output}" \
+    || grep -Fq "source=configured_fallback" <<<"${output}" \
+    || grep -Fq "source=runtime_override" <<<"${output}"; then
+    log "  - SeatGuide is using fallback/calibrated coordinates. That is useful for debugging but rejected for official hardware acceptance."
+  fi
+  if grep -Fq "no empty seat" <<<"${output}" \
+    || grep -Fq "no empty seat available" <<<"${output}"; then
+    log "  - SeatGuide sees seats but none are empty. Move a person/object away from a chair or adjust the occupancy radius/layout before live navigation."
+  fi
+}
+
+require_hardware_run_registry() {
+  local status_text="$1"
+  local run_id
+  run_id="$(extract_run_id "${status_text}")"
+  if [[ -z "${run_id}" ]]; then
+    log "Hardware acceptance no-go: could not parse DimOS run ID from status."
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+
+  local state_home="${XDG_STATE_HOME:-${HOME}/.local/state}"
+  local registry_path="${state_home}/dimos/runs/${run_id}.json"
+  if [[ ! -f "${registry_path}" ]]; then
+    log "Hardware acceptance no-go: DimOS run registry entry not found: ${registry_path}"
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+
+  log "Hardware run registry: ${registry_path}"
+  if grep -Fq '"--replay' "${registry_path}" \
+    || grep -Eq '"replay"[[:space:]]*:[[:space:]]*true' "${registry_path}"; then
+    log "Hardware acceptance no-go: running DimOS stack is replay mode."
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+  if grep -Fq '"--simulation' "${registry_path}" \
+    || grep -Eq '"simulation"[[:space:]]*:[[:space:]]*true' "${registry_path}" \
+    || grep -Eq '"simulation"[[:space:]]*:[[:space:]]*"[^"]+"' "${registry_path}"; then
+    log "Hardware acceptance no-go: running DimOS stack is simulation mode."
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+  if ! grep -Eq '"blueprint"[[:space:]]*:[[:space:]]*"unitree-go2-seat-guide(-agentic)?"' "${registry_path}"; then
+    log "Hardware acceptance no-go: running DimOS stack is not a SeatGuide Go2 blueprint."
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+  local blueprint
+  blueprint="$(sed -n 's/.*"blueprint"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${registry_path}" | tail -n 1)"
+  log "Hardware blueprint: ${blueprint}"
+  log "Hardware run mode: hardware."
+}
+
+wait_for_navigation_goal_reached() {
+  local previous_goal_sequence="$1"
+  local attempts="${SEAT_GUIDE_GOAL_REACHED_ATTEMPTS:-60}"
+  local interval_s="${SEAT_GUIDE_GOAL_REACHED_INTERVAL_S:-2}"
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    log "Checking SeatGuide navigation completion (${attempt}/${attempts})..."
+    run_capture mcp call seat_guide_navigation_status
+    local nav_output="${run_output}"
+    if seat_guide_goal_completed_after_sequence "${previous_goal_sequence}" "${nav_output}"; then
+      log "SeatGuide navigation goal reached."
+      return 0
+    fi
+    sleep "${interval_s}"
+  done
+
+  log "Hardware acceptance no-go: SeatGuide navigation did not report goal_reached=true."
+  capture_dimos_log "Capturing DimOS log snapshot after navigation completion timeout..."
+  log "Transcript saved to: ${log_file}"
+  exit 3
+}
+
+wait_for_stream_text() {
+  local stream_file="$1"
+  local expected="$2"
+  local timeout_s="$3"
+  local start_offset="${4:-0}"
+  local elapsed=0
+
+  while true; do
+    if dd if="${stream_file}" bs=1 skip="${start_offset}" 2>/dev/null | grep -Fq "${expected}"; then
+      return 0
+    fi
+    if ((elapsed >= timeout_s)); then
+      return 1
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+}
+
+check_webinput_preview_route() {
+  if ! command -v curl >/dev/null 2>&1; then
+    log "Hardware acceptance no-go: curl is required to verify the WebInput HTTP route."
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+
+  local stream_file
+  stream_file="$(mktemp)"
+  active_stream_file="${stream_file}"
+  local stream_pid=""
+  stop_stream() {
+    if [[ -n "${stream_pid}" ]] && kill -0 "${stream_pid}" >/dev/null 2>&1; then
+      kill "${stream_pid}" >/dev/null 2>&1 || true
+      wait "${stream_pid}" >/dev/null 2>&1 || true
+    fi
+    active_stream_pid=""
+  }
+
+  local response_timeout="${SEAT_GUIDE_WEBINPUT_TEXT_WAIT_S:-20}"
+  log "+ curl --no-buffer --max-time $((response_timeout + 5)) ${web_input_url}/text_stream/agent_responses"
+  curl --no-buffer --max-time "$((response_timeout + 5))" -s "${web_input_url}/text_stream/agent_responses" \
+    >"${stream_file}" 2>&1 &
+  stream_pid="$!"
+  active_stream_pid="${stream_pid}"
+  sleep 0.5
+  local stream_start_bytes
+  stream_start_bytes="$(wc -c <"${stream_file}" | tr -d ' ')"
+
+  log "+ curl -X POST ${web_input_url}/submit_query --data-urlencode query=预检帮我找一个空位"
+  local post_output
+  if ! post_output="$(curl -sS -f -X POST \
+    --data-urlencode "query=预检帮我找一个空位" \
+    "${web_input_url}/submit_query" 2>&1)"; then
+    printf '%s\n' "${post_output}" | tee -a "${log_file}"
+    log "Hardware acceptance no-go: WebInput /submit_query request failed."
+    log "Transcript saved to: ${log_file}"
+    stop_stream
+    rm -f "${stream_file}"
+    active_stream_file=""
+    exit 3
+  fi
+  printf '%s\n' "${post_output}" | tee -a "${log_file}"
+
+  local stream_matched=0
+  if wait_for_stream_text "${stream_file}" "SeatGuide preflight ready" "${response_timeout}" "${stream_start_bytes}"; then
+    stream_matched=1
+  fi
+  stop_stream
+
+  log "Captured WebInput agent_responses stream:"
+  cat "${stream_file}" | tee -a "${log_file}" || true
+  if [[ "${stream_matched}" != "1" ]]; then
+    log "Hardware acceptance no-go: WebInput text route did not publish a ready SeatGuide preview response."
+    capture_dimos_log "Capturing DimOS log snapshot after WebInput text route failure..."
+    log "Transcript saved to: ${log_file}"
+    rm -f "${stream_file}"
+    active_stream_file=""
+    exit 3
+  fi
+  rm -f "${stream_file}"
+  active_stream_file=""
+}
+
+check_webinput_voice_preview_route() {
+  if ! command -v curl >/dev/null 2>&1; then
+    log "Hardware acceptance no-go: curl is required to verify the WebInput voice route."
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+
+  local stream_file
+  stream_file="$(mktemp)"
+  active_stream_file="${stream_file}"
+  local stream_pid=""
+  stop_stream() {
+    if [[ -n "${stream_pid}" ]] && kill -0 "${stream_pid}" >/dev/null 2>&1; then
+      kill "${stream_pid}" >/dev/null 2>&1 || true
+      wait "${stream_pid}" >/dev/null 2>&1 || true
+    fi
+    active_stream_pid=""
+  }
+
+  local response_timeout="${SEAT_GUIDE_WEBINPUT_VOICE_PREVIEW_WAIT_S:-120}"
+  log "+ curl --no-buffer --max-time $((response_timeout + 5)) ${web_input_url}/text_stream/agent_responses"
+  curl --no-buffer --max-time "$((response_timeout + 5))" -s "${web_input_url}/text_stream/agent_responses" \
+    >"${stream_file}" 2>&1 &
+  stream_pid="$!"
+  active_stream_pid="${stream_pid}"
+
+  cat <<EOF | tee -a "${log_file}"
+
+Manual no-motion voice gate:
+  1. Open ${web_input_url} in the browser.
+  2. Allow microphone access.
+  3. Press Enter here when ready.
+  4. Click the microphone button and say: 预检帮我找一个空位
+  5. Wait until the web response shows SeatGuide preflight ready.
+EOF
+
+  read -r _
+  local stream_start_bytes
+  stream_start_bytes="$(wc -c <"${stream_file}" | tr -d ' ')"
+  local stream_matched=0
+  if wait_for_stream_text "${stream_file}" "SeatGuide preflight ready" "${response_timeout}" "${stream_start_bytes}"; then
+    stream_matched=1
+  fi
+  stop_stream
+
+  log "Captured WebInput voice agent_responses stream:"
+  cat "${stream_file}" | tee -a "${log_file}" || true
+  if [[ "${stream_matched}" != "1" ]]; then
+    log "Hardware acceptance no-go: browser microphone/Whisper route did not publish a ready SeatGuide preview response."
+    capture_dimos_log "Capturing DimOS log snapshot after no-motion voice route failure..."
+    log "Transcript saved to: ${log_file}"
+    rm -f "${stream_file}"
+    active_stream_file=""
+    exit 3
+  fi
+  rm -f "${stream_file}"
+  active_stream_file=""
+}
+
+check_webinput_voice_live_route() {
+  if ! command -v curl >/dev/null 2>&1; then
+    log "Hardware acceptance no-go: curl is required to verify the live WebInput voice route."
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+
+  local stream_file
+  stream_file="$(mktemp)"
+  active_stream_file="${stream_file}"
+  local stream_pid=""
+  stop_stream() {
+    if [[ -n "${stream_pid}" ]] && kill -0 "${stream_pid}" >/dev/null 2>&1; then
+      kill "${stream_pid}" >/dev/null 2>&1 || true
+      wait "${stream_pid}" >/dev/null 2>&1 || true
+    fi
+    active_stream_pid=""
+  }
+
+  local response_timeout="${SEAT_GUIDE_WEBINPUT_VOICE_LIVE_WAIT_S:-150}"
+  log "+ curl --no-buffer --max-time $((response_timeout + 5)) ${web_input_url}/text_stream/agent_responses"
+  curl --no-buffer --max-time "$((response_timeout + 5))" -s "${web_input_url}/text_stream/agent_responses" \
+    >"${stream_file}" 2>&1 &
+  stream_pid="$!"
+  active_stream_pid="${stream_pid}"
+
+  cat <<EOF | tee -a "${log_file}"
+
+Live voice navigation gate:
+  1. Confirm the Go2 is physically clear to move.
+  2. Press Enter here when ready.
+  3. In the browser at ${web_input_url}, click the microphone button.
+  4. Say: 帮我找一个空位
+EOF
+
+  read -r _
+  local stream_start_bytes
+  stream_start_bytes="$(wc -c <"${stream_file}" | tr -d ' ')"
+  local stream_matched=0
+  if wait_for_stream_text "${stream_file}" "Navigating to" "${response_timeout}" "${stream_start_bytes}"; then
+    stream_matched=1
+  fi
+  stop_stream
+
+  log "Captured live WebInput voice agent_responses stream:"
+  cat "${stream_file}" | tee -a "${log_file}" || true
+  if [[ "${stream_matched}" != "1" ]]; then
+    log "Hardware acceptance no-go: live browser microphone/Whisper request did not start SeatGuide navigation."
+    capture_dimos_log "Capturing DimOS log snapshot after live voice route failure..."
+    log "Transcript saved to: ${log_file}"
+    rm -f "${stream_file}"
+    active_stream_file=""
+    exit 3
+  fi
+  rm -f "${stream_file}"
+  active_stream_file=""
+}
+
+require_tool() {
+  local tools="$1"
+  local tool_name="$2"
+  if ! grep -q "\"${tool_name}\"" <<<"${tools}"; then
+    log "Hardware acceptance no-go: missing MCP tool '${tool_name}'."
+    log "Confirm the running blueprint is unitree-go2-seat-guide or unitree-go2-seat-guide-agentic and includes the SeatGuide, WebInput, camera provider, and SpeakSkill modules."
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+}
+
+require_output_contains() {
+  local output="$1"
+  local expected="$2"
+  local label="$3"
+  if ! grep -Fq "${expected}" <<<"${output}"; then
+    log "Hardware acceptance no-go: ${label} did not contain '${expected}'."
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+}
+
+require_output_not_contains() {
+  local output="$1"
+  local forbidden="$2"
+  local label="$3"
+  if grep -Fq "${forbidden}" <<<"${output}"; then
+    log "Hardware acceptance no-go: ${label} contained '${forbidden}'."
+    log "Transcript saved to: ${log_file}"
+    exit 3
+  fi
+}
+
+log "SeatGuide hardware acceptance transcript: ${log_file}"
+log "Checking DimOS run status..."
+status_output="$(run_dimos status)"
+printf '%s\n' "${status_output}" | tee -a "${log_file}"
+if grep -q "No running DimOS instance" <<<"${status_output}"; then
+  cat <<'EOF' | tee -a "${log_file}" >&2
+
+No running DimOS stack found.
+Start the real Go2 SeatGuide stack first, for example:
+
+  dimos run unitree-go2-seat-guide-agentic --robot-ip 192.168.123.161 --daemon
+EOF
+  log "Transcript saved to: ${log_file}"
+  exit 2
+fi
+require_hardware_run_registry "${status_output}"
+
+log ""
+log "Checking SeatGuide hardware acceptance tools..."
+if ! tools="$(run_dimos mcp list-tools 2>&1)"; then
+  printf '%s\n' "${tools}" | tee -a "${log_file}"
+  log "Hardware acceptance no-go: MCP tools are unavailable."
+  log "Confirm the running blueprint is unitree-go2-seat-guide or unitree-go2-seat-guide-agentic and includes McpServer."
+  log "Transcript saved to: ${log_file}"
+  exit 3
+fi
+printf '%s\n' "${tools}" >>"${log_file}"
+require_tool "${tools}" "web_input_status"
+require_tool "${tools}" "camera_seat_provider_status"
+require_tool "${tools}" "seat_guide_status"
+require_tool "${tools}" "seat_guide_readiness_report"
+require_tool "${tools}" "seat_guide_preflight"
+require_tool "${tools}" "seat_guide_navigation_status"
+require_tool "${tools}" "preview_seat_request"
+require_tool "${tools}" "preview_empty_seat_goal"
+require_tool "${tools}" "handle_seat_request"
+require_tool "${tools}" "speech_status"
+require_tool "${tools}" "speak"
+
+log ""
+log "Checking SeatGuide module wiring..."
+run_capture mcp modules
+modules_output="${run_output}"
+require_output_contains "${modules_output}" "CameraSeatObservationProvider" "mcp modules"
+require_output_contains "${modules_output}" "SeatGuideSkillContainer" "mcp modules"
+require_output_contains "${modules_output}" "WebInput" "mcp modules"
+require_output_contains "${modules_output}" "SpeakSkill" "mcp modules"
+
+log ""
+log "Checking WebInput route..."
+run_capture mcp call web_input_status
+web_input_output="${run_output}"
+if ! web_input_ready_for_seat_guide "${web_input_output}"; then
+  log "Hardware acceptance no-go: web_input_status was not ready for SeatGuide."
+  log_web_input_no_go_details "${web_input_output}"
+  log "Transcript saved to: ${log_file}"
+  exit 3
+fi
+detected_web_input_url="$(extract_web_input_url "${web_input_output}")"
+if [[ -n "${detected_web_input_url}" ]]; then
+  web_input_url="${detected_web_input_url}"
+fi
+log "Using WebInput URL: ${web_input_url}"
+
+log ""
+log "Checking camera/VLM provider without running detection..."
+run_capture mcp call camera_seat_provider_status
+camera_output="${run_output}"
+if ! camera_provider_ready_for_hardware "${camera_output}"; then
+  log "Hardware acceptance no-go: camera_seat_provider_status was not hardware ready."
+  log_camera_provider_no_go_details "${camera_output}"
+  log "Transcript saved to: ${log_file}"
+  exit 3
+fi
+
+log ""
+log "Checking speech output readiness..."
+run_capture mcp call speech_status
+speech_output="${run_output}"
+if ! grep -Fq "tts=ready" <<<"${speech_output}" \
+  || ! grep -Fq "audio_output=connected" <<<"${speech_output}"; then
+  log "Hardware acceptance no-go: speech_status was not hardware ready."
+  log_speech_no_go_details "${speech_output}"
+  log "Transcript saved to: ${log_file}"
+  exit 3
+fi
+run_capture mcp call speak --json-args '{"text": "SeatGuide audio check. I can guide you to an empty seat.", "blocking": true}'
+audio_check_output="${run_output}"
+require_output_contains "${audio_check_output}" "Spoke: SeatGuide audio check" "speak audio check"
+cat <<'EOF' | tee -a "${log_file}"
+
+Audio output confirmation:
+  Type HEARD if you clearly heard: SeatGuide audio check. I can guide you to an empty seat.
+  Anything else is a no-go for official hardware acceptance.
+EOF
+read -r audio_confirmation
+log "Operator audio confirmation: ${audio_confirmation}"
+if [[ "${audio_confirmation}" != "HEARD" ]]; then
+  log "Hardware acceptance no-go: operator did not confirm audible SeatGuide speech output."
+  log "Transcript saved to: ${log_file}"
+  exit 3
+fi
+
+log ""
+log "Checking current SeatGuide scene..."
+run_capture mcp call seat_guide_status
+scene_output="${run_output}"
+if ! grep -Fq "SeatGuide scene source=camera:" <<<"${scene_output}"; then
+  log "Hardware acceptance no-go: seat_guide_status did not report live camera perception."
+  log_seat_guide_no_go_details "${scene_output}"
+  log "Transcript saved to: ${log_file}"
+  exit 3
+fi
+
+log ""
+log "Running no-motion readiness report..."
+run_capture mcp call seat_guide_readiness_report
+readiness_output="${run_output}"
+if ! seat_guide_preflight_ready_for_hardware "${readiness_output}"; then
+  log "Hardware acceptance no-go: seat_guide_readiness_report was not hardware ready."
+  log_seat_guide_no_go_details "${readiness_output}"
+  log "Transcript saved to: ${log_file}"
+  exit 3
+fi
+
+log ""
+log "Running no-motion preflight..."
+run_capture mcp call seat_guide_preflight
+preflight_output="${run_output}"
+if ! seat_guide_preflight_ready_for_hardware "${preflight_output}"; then
+  log "Hardware acceptance no-go: seat_guide_preflight was not hardware ready."
+  log_seat_guide_no_go_details "${preflight_output}"
+  log "Transcript saved to: ${log_file}"
+  exit 3
+fi
+
+log ""
+log "Previewing spoken Chinese request without moving..."
+run_capture mcp call preview_seat_request --json-args '{"text": "预检帮我找一个空位"}'
+preview_request_output="${run_output}"
+if ! seat_guide_preflight_ready_for_hardware "${preview_request_output}"; then
+  log "Hardware acceptance no-go: preview_seat_request was not hardware ready."
+  log_seat_guide_no_go_details "${preview_request_output}"
+  log "Transcript saved to: ${log_file}"
+  exit 3
+fi
+
+log ""
+log "Previewing selected goal without moving..."
+run_capture mcp call preview_empty_seat_goal
+preview_goal_output="${run_output}"
+require_output_contains "${preview_goal_output}" "SeatGuide preview source=camera:" "preview_empty_seat_goal"
+require_output_contains "${preview_goal_output}" "selected" "preview_empty_seat_goal"
+require_output_contains "${preview_goal_output}" "goal=(" "preview_empty_seat_goal"
+
+log ""
+log "Verifying WebInput HTTP text route without moving..."
+check_webinput_preview_route
+
+log ""
+log "Verifying browser microphone/Whisper route without moving..."
+check_webinput_voice_preview_route
+
+capture_dimos_log "Capturing DimOS log snapshot after no-motion checks..."
+
+log ""
+log "Capturing SeatGuide goal sequence before live voice request..."
+run_capture mcp call seat_guide_navigation_status
+before_live_goal_sequence="$(extract_goal_sequence "${run_output}")"
+if [[ -z "${before_live_goal_sequence}" ]]; then
+  log "Hardware acceptance no-go: could not parse SeatGuide goal_sequence before live request."
+  capture_dimos_log "Capturing DimOS log snapshot after goal_sequence parse failure..."
+  log "Transcript saved to: ${log_file}"
+  exit 3
+fi
+
+cat <<'EOF' | tee -a "${log_file}"
+
+No-motion checks completed.
+
+Before live navigation:
+  - Confirm the Go2 is physically clear to move.
+  - Automated gates passed for WebInput, browser voice, camera/VLM/odometry, speech, preflight, and goal preview.
+
+Type LIVE to start the real browser-microphone navigation request. Anything else aborts.
+EOF
+
+read -r confirmation
+log "Operator confirmation: ${confirmation}"
+if [[ "${confirmation}" != "LIVE" ]]; then
+  log "Aborted before live navigation."
+  log "Transcript saved to: ${log_file}"
+  exit 0
+fi
+
+log ""
+log "Sending live SeatGuide navigation request through browser microphone..."
+check_webinput_voice_live_route
+wait_for_navigation_goal_reached "${before_live_goal_sequence}"
+
+log ""
+capture_dimos_log "Capturing DimOS log snapshot after live request..."
+verify_acceptance_log
+
+log ""
+log "Live request sent. Continue monitoring with: dimos log -f"
+log "Transcript saved to: ${log_file}"

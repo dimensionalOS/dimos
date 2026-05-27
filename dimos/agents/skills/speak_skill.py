@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import threading
 import time
 
@@ -31,6 +32,7 @@ logger = setup_logger()
 class SpeakSkill(Module):
     _tts_node: OpenAITTSNode | None = None
     _audio_output: SounddeviceAudioOutput | None = None
+    _speech_unavailable_reason: str | None = None
     _audio_lock: threading.Lock = threading.Lock()
     _bg_threads: list[threading.Thread] = []
     _bg_threads_lock: threading.Lock = threading.Lock()
@@ -38,6 +40,10 @@ class SpeakSkill(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        if not os.getenv("OPENAI_API_KEY"):
+            self._speech_unavailable_reason = "OPENAI_API_KEY is not set"
+            logger.warning("SpeakSkill TTS disabled because OPENAI_API_KEY is not set")
+            return
         self._tts_node = OpenAITTSNode(speed=1.2, voice=Voice.ONYX)
         self._audio_output = SounddeviceAudioOutput(sample_rate=24000)
         self._audio_output.consume_audio(self._tts_node.emit_audio())
@@ -69,7 +75,8 @@ class SpeakSkill(Module):
             speak("Hello, I am your robot assistant.")
         """
         if self._tts_node is None:
-            return "Error: TTS not initialized"
+            reason = self._speech_unavailable_reason or "TTS not initialized"
+            return f"Speech unavailable: {reason}"
 
         if not blocking:
             thread = threading.Thread(
@@ -81,6 +88,29 @@ class SpeakSkill(Module):
             return f"Speaking (non-blocking): {text}"
 
         return self._speak_blocking(text)
+
+    @skill
+    def speech_status(self) -> str:
+        """Report text-to-speech readiness without speaking.
+
+        Use this during hardware bring-up to confirm OpenAI TTS and the local
+        audio output are initialized before relying on spoken feedback.
+        """
+        with self._bg_threads_lock:
+            active_background_threads = sum(1 for thread in self._bg_threads if thread.is_alive())
+        if self._tts_node is None:
+            reason = self._speech_unavailable_reason or "TTS not initialized"
+            return (
+                "SpeakSkill status: tts=unavailable; "
+                f"reason={reason}; audio_output=missing; "
+                f"background_speech_threads={active_background_threads}."
+            )
+        audio_output = "connected" if self._audio_output is not None else "missing"
+        return (
+            "SpeakSkill status: tts=ready; "
+            f"audio_output={audio_output}; "
+            f"background_speech_threads={active_background_threads}."
+        )
 
     def _speak_bg(self, text: str) -> None:
         try:

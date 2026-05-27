@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+log_file="${1:-}"
+if [[ -z "${log_file}" ]]; then
+  echo "Usage: $0 <seat-guide-acceptance-log>" >&2
+  exit 2
+fi
+
+if [[ ! -f "${log_file}" ]]; then
+  echo "Acceptance log not found: ${log_file}" >&2
+  exit 2
+fi
+
+require_log_contains() {
+  local expected="$1"
+  local label="$2"
+  if ! grep -Fq "${expected}" "${log_file}"; then
+    echo "Acceptance log missing ${label}: ${expected}" >&2
+    exit 3
+  fi
+}
+
+require_log_matches() {
+  local expected_regex="$1"
+  local label="$2"
+  if ! grep -Eq "${expected_regex}" "${log_file}"; then
+    echo "Acceptance log missing ${label}: ${expected_regex}" >&2
+    exit 3
+  fi
+}
+
+require_log_not_contains() {
+  local forbidden="$1"
+  local label="$2"
+  if grep -Fq "${forbidden}" "${log_file}"; then
+    echo "Acceptance log contains forbidden ${label}: ${forbidden}" >&2
+    exit 3
+  fi
+}
+
+require_log_count_at_least() {
+  local expected="$1"
+  local minimum_count="$2"
+  local label="$3"
+  local count
+  count="$(grep -Fc "${expected}" "${log_file}" || true)"
+  if ((count < minimum_count)); then
+    echo "Acceptance log has only ${count}/${minimum_count} ${label}: ${expected}" >&2
+    exit 3
+  fi
+}
+
+require_log_line_matches() {
+  local expected_regex="$1"
+  local label="$2"
+  if ! grep -Eq "${expected_regex}" "${log_file}"; then
+    echo "Acceptance log missing ${label}: ${expected_regex}" >&2
+    exit 3
+  fi
+}
+
+require_log_line_count_at_least() {
+  local expected_regex="$1"
+  local minimum_count="$2"
+  local label="$3"
+  local count
+  count="$(grep -Ec "${expected_regex}" "${log_file}" || true)"
+  if ((count < minimum_count)); then
+    echo "Acceptance log has only ${count}/${minimum_count} ${label}: ${expected_regex}" >&2
+    exit 3
+  fi
+}
+
+require_log_order() {
+  local before="$1"
+  local after="$2"
+  local label="$3"
+  local before_line
+  local after_line
+  before_line="$(grep -nF "${before}" "${log_file}" | head -n 1 | cut -d: -f1 || true)"
+  after_line="$(grep -nF "${after}" "${log_file}" | awk -F: -v before_line="${before_line}" '$1 > before_line { print $1; exit }' || true)"
+  if [[ -z "${before_line}" || -z "${after_line}" ]]; then
+    echo "Acceptance log has invalid ${label}: expected '${before}' before '${after}'" >&2
+    exit 3
+  fi
+}
+
+require_log_order_after() {
+  local anchor="$1"
+  local before="$2"
+  local after="$3"
+  local label="$4"
+  local anchor_line
+  local before_line
+  local after_line
+  anchor_line="$(grep -nF "${anchor}" "${log_file}" | head -n 1 | cut -d: -f1 || true)"
+  before_line="$(grep -nF "${before}" "${log_file}" | awk -F: -v anchor_line="${anchor_line}" '$1 > anchor_line { print $1; exit }' || true)"
+  after_line="$(grep -nF "${after}" "${log_file}" | awk -F: -v before_line="${before_line}" '$1 > before_line { print $1; exit }' || true)"
+  if [[ -z "${anchor_line}" || -z "${before_line}" || -z "${after_line}" ]]; then
+    echo "Acceptance log has invalid ${label}: expected '${before}' before '${after}' after '${anchor}'" >&2
+    exit 3
+  fi
+}
+
+require_log_contains "Hardware run registry:" "hardware run registry"
+require_log_contains "Hardware run mode: hardware." "hardware run mode"
+require_log_matches "Hardware blueprint: unitree-go2-seat-guide(-agentic)?" "SeatGuide hardware blueprint"
+require_log_contains "web=started" "WebInput web server readiness"
+require_log_contains "thread=running" "WebInput thread readiness"
+require_log_contains "seat_route=seat_guide_direct" "WebInput direct SeatGuide route"
+require_log_contains "responses=connected" "WebInput response stream"
+require_log_contains "voice_upload=connected" "WebInput browser audio upload route"
+require_log_contains "stt=connected" "WebInput speech-to-text pipeline"
+require_log_contains "human_transport=connected" "WebInput human transport"
+require_log_contains "Using WebInput URL: http" "resolved WebInput URL"
+require_log_contains "CameraSeatObservationProvider" "camera perception module"
+require_log_contains "SeatGuideSkillContainer" "SeatGuide planner/navigation module"
+require_log_contains "WebInput" "voice command intake module"
+require_log_contains "SpeakSkill" "speech feedback module"
+require_log_matches "image=[0-9]+x[0-9]+" "camera image readiness"
+require_log_contains "image_fresh=true" "fresh camera image readiness"
+require_log_contains "credential=present" "VLM credential readiness"
+require_log_contains "odom=(" "odometry readiness"
+require_log_contains "odom_fresh=true" "fresh odometry readiness"
+require_log_contains "override=inactive" "camera runtime override disabled"
+require_log_contains "configured_fallback_seats=0" "camera fallback seats disabled"
+require_log_contains "configured_fallback_people=0" "camera fallback people disabled"
+require_log_contains "tts=ready" "TTS readiness"
+require_log_contains "audio_output=connected" "audio output readiness"
+require_log_contains "SeatGuide audio check. I can guide you to an empty seat." "TTS audio check phrase"
+require_log_contains "Spoke: SeatGuide audio check" "TTS audio check completion"
+require_log_contains "Audio output confirmation:" "operator TTS audio confirmation prompt"
+require_log_contains "Operator audio confirmation: HEARD" "operator heard TTS confirmation"
+require_log_contains "SeatGuide scene source=camera:" "live camera perception"
+require_log_contains "SeatGuide preflight ready" "no-motion preflight"
+require_log_contains "speaker=connected" "SeatGuide speaker wiring"
+require_log_contains "SeatGuide preview source=camera:" "camera-backed goal preview"
+require_log_matches "empty=[0-9]+ occupied=[0-9]+" "SeatGuide occupancy counts"
+require_log_contains "Captured WebInput agent_responses stream" "typed WebInput stream"
+require_log_contains "Manual no-motion voice gate:" "browser microphone no-motion gate"
+require_log_count_at_least "Press Enter here when ready." 2 "browser microphone readiness prompts"
+require_log_contains "Click the microphone button and say: 预检帮我找一个空位" "browser microphone no-motion spoken phrase"
+require_log_contains "Captured WebInput voice agent_responses stream" "no-motion voice stream"
+require_log_count_at_least "WebInput received text" 3 "WebInput recognized text events"
+require_log_line_count_at_least "WebInput received text.*预检帮我找一个空位" 2 "recognized no-motion SeatGuide phrases"
+require_log_line_matches 'WebInput received text.*(text=帮我找一个空位|"text"[[:space:]]*:[[:space:]]*"帮我找一个空位")' "recognized live SeatGuide phrase"
+require_log_contains "WebInput routing text to SeatGuide preview" "no-motion WebInput SeatGuide route"
+require_log_line_matches "WebInput routing text to SeatGuide preview.*预检帮我找一个空位" "no-motion WebInput SeatGuide phrase route"
+require_log_contains "Capturing DimOS log snapshot after no-motion checks" "no-motion DimOS log snapshot"
+require_log_contains "No-motion checks completed." "no-motion completion marker"
+require_log_order "Captured WebInput agent_responses stream" "Manual no-motion voice gate:" "typed preview before no-motion voice gate order"
+require_log_order "Manual no-motion voice gate:" "Press Enter here when ready." "no-motion voice gate before readiness prompt order"
+require_log_order_after "Manual no-motion voice gate:" "Press Enter here when ready." "Click the microphone button and say: 预检帮我找一个空位" "no-motion readiness before speech order"
+require_log_order "Manual no-motion voice gate:" "Captured WebInput voice agent_responses stream" "no-motion voice gate before voice stream order"
+require_log_order "Spoke: SeatGuide audio check" "Operator audio confirmation: HEARD" "TTS completion before operator audio confirmation order"
+require_log_order "Operator audio confirmation: HEARD" "SeatGuide scene source=camera:" "operator audio confirmation before perception order"
+require_log_order "WebInput routing text to SeatGuide preview" "Capturing DimOS log snapshot after no-motion checks" "no-motion preview before log snapshot order"
+require_log_order "Capturing DimOS log snapshot after no-motion checks" "No-motion checks completed." "no-motion snapshot before completion order"
+require_log_contains "Operator confirmation: LIVE" "operator live confirmation"
+require_log_order "No-motion checks completed." "Operator confirmation: LIVE" "no-motion before live order"
+require_log_contains "Live voice navigation gate:" "browser microphone live gate"
+require_log_contains "Say: 帮我找一个空位" "browser microphone live spoken phrase"
+require_log_contains "Captured live WebInput voice agent_responses stream" "live voice stream"
+require_log_contains "WebInput routing text to SeatGuide live request" "live WebInput SeatGuide route"
+require_log_line_matches 'WebInput routing text to SeatGuide live request.*(text=帮我找一个空位|"text"[[:space:]]*:[[:space:]]*"帮我找一个空位")' "live WebInput SeatGuide phrase route"
+require_log_contains "Navigating to" "live SeatGuide navigation start"
+require_log_contains "goal_sequence=" "SeatGuide goal sequence"
+require_log_contains "Checking SeatGuide navigation completion" "navigation completion polling"
+require_log_contains "goal_reached=true" "navigation completion"
+require_log_contains "SeatGuide navigation goal reached" "acceptance completion marker"
+require_log_contains "Capturing DimOS log snapshot after live request" "live DimOS log snapshot"
+require_log_order "Operator confirmation: LIVE" "Live voice navigation gate:" "LIVE before browser microphone live gate order"
+require_log_order "Live voice navigation gate:" "Press Enter here when ready." "live voice gate before readiness prompt order"
+require_log_order_after "Live voice navigation gate:" "Press Enter here when ready." "Say: 帮我找一个空位" "live readiness before speech order"
+require_log_order "Live voice navigation gate:" "WebInput routing text to SeatGuide live request" "live voice gate before live route order"
+require_log_order "WebInput routing text to SeatGuide live request" "Navigating to" "live route before navigation order"
+require_log_order "Navigating to" "goal_reached=true" "navigation before completion order"
+require_log_order "Checking SeatGuide navigation completion" "goal_reached=true" "polling before completion order"
+require_log_order "goal_reached=true" "SeatGuide navigation goal reached" "goal reached before completion marker order"
+require_log_not_contains "+ dimos mcp call handle_seat_request" "direct MCP live SeatGuide call"
+require_log_not_contains "+ dimos mcp call set_seat_scene" "fallback seat scene calibration"
+require_log_not_contains "+ dimos mcp call clear_seat_scene_override" "fallback seat scene override clearing"
+require_log_not_contains "require_live_perception=false" "fallback live-perception bypass"
+require_log_not_contains '"require_live_perception": false' "fallback live-perception bypass"
+require_log_not_contains '"require_live_perception":false' "fallback live-perception bypass"
+
+echo "SeatGuide acceptance log contains all required evidence: ${log_file}"
