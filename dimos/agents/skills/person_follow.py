@@ -15,7 +15,7 @@
 import base64
 from threading import Event, RLock, Thread
 import time
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from reactivex.disposable import Disposable
@@ -30,6 +30,7 @@ from dimos.models.qwen.bbox import BBox
 from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
 from dimos.models.vl.base import VlModel
 from dimos.models.vl.create import create
+from dimos.models.vl.types import VlModelName
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -46,6 +47,12 @@ logger = setup_logger()
 class Config(ModuleConfig):
     camera_info: CameraInfo
     use_3d_navigation: bool = False
+    # VL model used for the initial (and, in "redetect" mode, continuous) detection.
+    vl_model_name: VlModelName = "qwen"
+    # "edgetam": GPU frame-to-frame tracking (default where CUDA exists).
+    # "redetect": periodic re-detection with the VL model (no GPU, runs on Mac).
+    # "auto": pick "edgetam" if CUDA is available, else "redetect".
+    tracking_mode: Literal["auto", "edgetam", "redetect"] = "auto"
 
 
 class PersonFollowSkillContainer(Module):
@@ -66,13 +73,14 @@ class PersonFollowSkillContainer(Module):
 
     _frequency: float = 20.0  # Hz - control loop frequency
     _max_lost_frames: int = 15  # number of frames to wait before declaring person lost
+    _lost_timeout: float = 5.0  # seconds without a re-detection before declaring person lost
     _patrolling_module_spec: PatrollingModuleSpec
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._latest_image: Image | None = None
         self._latest_pointcloud: PointCloud2 | None = None
-        self._vl_model: VlModel = create("qwen")
+        self._vl_model: VlModel = create(self.config.vl_model_name)
         self._tracker: EdgeTAMProcessor | None = None
         self._thread: Thread | None = None
         self._should_stop: Event = Event()
@@ -206,9 +214,24 @@ class PersonFollowSkillContainer(Module):
         with self._lock:
             self._latest_pointcloud = pointcloud
 
+    def _resolve_tracking_mode(self) -> Literal["edgetam", "redetect"]:
+        """Resolve the effective tracking mode, auto-selecting by hardware."""
+        mode = self.config.tracking_mode
+        if mode != "auto":
+            return mode
+        try:
+            import torch
+
+            return "edgetam" if torch.cuda.is_available() else "redetect"
+        except Exception:
+            return "redetect"
+
     def _follow_person(
         self, query: str, initial_bbox: BBox, detection_image: Image | None = None
     ) -> str:
+        if self._resolve_tracking_mode() == "redetect":
+            return self._follow_person_redetect(query)
+
         x1, y1, x2, y2 = initial_bbox
         box = np.array([x1, y1, x2, y2], dtype=np.float32)
 
@@ -307,6 +330,60 @@ class PersonFollowSkillContainer(Module):
             sleep_duration = next_time - now
             if sleep_duration > 0:
                 time.sleep(sleep_duration)
+
+        self._send_stop_reason(query, "it was requested to stop following")
+
+    def _follow_person_redetect(self, query: str) -> str:
+        """Start following using periodic VL re-detection (no GPU tracker).
+
+        Used when no CUDA GPU is available (e.g. on a Mac). The initial detection
+        has already succeeded by the time this is called; the loop keeps
+        re-detecting the person with the VL model and servoing toward the bbox.
+        """
+        self.start_tool("follow_person")
+        self._thread = Thread(target=self._follow_loop_redetect, args=(query,), daemon=True)
+        self._thread.start()
+
+        message = (
+            "Found the person. Starting to follow. You can stop following by calling "
+            "the 'stop_following' tool. You will receive streaming updates."
+        )
+
+        if self._patrolling_module_spec.is_patrolling():
+            message += (
+                " Note: since the robot was patrolling, this has been stopped automatically "
+                "(the equivalent of calling the `stop_patrol` tool call) so you don't have "
+                "to do it. "
+            )
+            self._patrolling_module_spec.stop_patrol()
+
+        return message
+
+    def _follow_loop_redetect(self, query: str) -> None:
+        # Detection latency (~1-2s/call) paces the loop; we hold the last command
+        # between detections and only give up after _lost_timeout without a hit.
+        last_detection_time = time.monotonic()
+
+        while not self._should_stop.is_set():
+            with self._lock:
+                latest_image = self._latest_image
+
+            if latest_image is None:
+                time.sleep(0.1)
+                continue
+
+            bbox = get_object_bbox_from_image(self._vl_model, latest_image, query)
+
+            if bbox is None:
+                if time.monotonic() - last_detection_time > self._lost_timeout:
+                    self.cmd_vel.publish(Twist.zero())
+                    self._send_stop_reason(query, "lost track of the person")
+                    return
+                continue
+
+            last_detection_time = time.monotonic()
+            twist = self._visual_servo.compute_twist(bbox, latest_image.width)
+            self.cmd_vel.publish(twist)
 
         self._send_stop_reason(query, "it was requested to stop following")
 

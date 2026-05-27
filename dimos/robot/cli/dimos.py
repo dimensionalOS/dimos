@@ -422,6 +422,75 @@ def log_cmd(
             typer.echo(format_line(line, json_output=json_output))
 
 
+@main.command("prefetch-models")
+def prefetch_models(
+    skip_lfs: bool = typer.Option(False, "--skip-lfs", help="Skip git-LFS model weight pulls"),
+    skip_whisper: bool = typer.Option(False, "--skip-whisper", help="Skip the Whisper STT model"),
+) -> None:
+    """Pre-download local ML models so they don't cold-download mid-mission.
+
+    Warms the HuggingFace cache (Moondream, CLIP), pulls git-LFS model weights
+    (YOLO, EdgeTAM, etc.) and the Whisper STT model. Safe to re-run — already
+    cached models are quick no-ops. Run this once after `uv sync` or before a
+    mission to avoid the 120s tool-call timeout caused by a 3.85GB Moondream
+    download happening lazily inside `look_out_for`.
+    """
+    results: list[tuple[str, bool]] = []
+
+    def _run(label: str, fn: Any) -> None:
+        typer.echo(f"→ {label} ...")
+        try:
+            fn()
+            results.append((label, True))
+            typer.echo(f"  ✓ {label}")
+        except Exception as e:  # noqa: BLE001 - report and continue per model
+            results.append((label, False))
+            typer.echo(f"  ✗ {label}: {e}", err=True)
+
+    # HuggingFace models: instantiate + start() forces from_pretrained() to download.
+    def _warm_vl(name: str) -> None:
+        from dimos.models.vl.create import create
+
+        create(name).start()
+
+    def _warm_clip() -> None:
+        from dimos.models.embedding.clip import CLIPModel
+
+        CLIPModel().start()
+
+    _run("VL: moondream (vikhyatk/moondream2)", lambda: _warm_vl("moondream"))
+    _run("Embedding: CLIP (openai/clip-vit-base-patch32)", _warm_clip)
+
+    # git-LFS model weights (pulled into the repo data dir on first access).
+    if not skip_lfs:
+        from dimos.utils.data import get_data
+
+        for category in (
+            "models_yolo",
+            "models_yoloe",
+            "models_edgetam",
+            "models_mobileclip",
+            "models_torchreid",
+            "models_clip",
+        ):
+            _run(f"LFS: {category}", lambda c=category: get_data(c))
+
+    # Whisper STT (matches node_whisper's preferred openai-whisper backend).
+    if not skip_whisper:
+
+        def _warm_whisper() -> None:
+            import whisper
+
+            whisper.load_model("base")
+
+        _run("STT: whisper base", _warm_whisper)
+
+    ok = sum(1 for _, success in results if success)
+    typer.echo(f"\nPrefetch complete: {ok}/{len(results)} succeeded.")
+    if ok != len(results):
+        raise typer.Exit(1)
+
+
 mcp_app = typer.Typer(help="Interact with the running MCP server")
 main.add_typer(mcp_app, name="mcp")
 

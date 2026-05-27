@@ -16,6 +16,7 @@
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.gemini_speak_skill import GeminiSpeakSkill
+from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.agents.skills.person_follow import PersonFollowSkillContainer
 from dimos.agents.skills.map_uploader import MapUploader
 from dimos.agents.skills.speak_skill import SpeakSkill
@@ -35,18 +36,23 @@ from dimos.robot.unitree.go2.connection import GO2Connection
 # SpatialMemory is re-declared to use remote Gemini embeddings instead of the
 # local CLIP model (which fails on Apple CoreML); the later atom overrides the
 # one inside unitree_go2_spatial.
-# PersonFollowSkillContainer is likewise re-declared to use Gemini for detection
-# (instead of Qwen, which needs ALIBABA_API_KEY); tracking_mode="auto" then
-# resolves to periodic re-detection on non-CUDA machines and EdgeTAM on GPU.
+# Detection VL is kept LOCAL (Moondream) where it makes sense:
+#  - look_out_for uses the global detection_model (default "moondream").
+#  - PersonFollowSkillContainer is re-declared with vl_model_name="moondream";
+#    tracking_mode="auto" resolves to periodic re-detection on non-CUDA machines
+#    (no EdgeTAM/CUDA) and EdgeTAM on GPU.
+# NavigationSkillContainer is re-declared to use Gemini for detection instead of
+# Qwen, which would otherwise require ALIBABA_API_KEY.
 unitree_go2_agentic_gemini = autoconnect(
     unitree_go2_spatial,
     SpatialMemory.blueprint(embedding_model="gemini", embedding_dimensions=768),
     McpServer.blueprint(),
     McpClient.blueprint(model="google_genai:gemini-2.5-flash"),
     _common_agentic,
+    NavigationSkillContainer.blueprint(vl_model_name="gemini"),
     PersonFollowSkillContainer.blueprint(
         camera_info=GO2Connection.camera_info_static,
-        vl_model_name="gemini",
+        vl_model_name="moondream",
     ),
     GeminiSpeakSkill.blueprint(),
     TakePictureSkill.blueprint(),

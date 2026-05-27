@@ -142,22 +142,22 @@ class ImageEmbeddingProvider:
             A numpy array containing the embedding vector
         """
         if self.model is None or self.processor is None:
-            logger.error("Model not initialized. Using fallback random embedding.")
-            return np.random.randn(self.dimensions).astype(np.float32)
+            raise RuntimeError(
+                f"Image embedding model '{self.model_name}' is not initialized; refusing to "
+                "return a random vector that would poison the vector store."
+            )
 
         pil_image = self._prepare_image(image)
 
         if self.model_name == "gemini":
-            try:
-                from google.genai import types
+            # No silent fallback: a failed embedding must abort loudly rather than
+            # writing a random vector into the spatial DB.
+            from google.genai import types
 
-                buf = io.BytesIO()
-                pil_image.convert("RGB").save(buf, format="PNG")
-                part = types.Part.from_bytes(data=buf.getvalue(), mime_type="image/png")
-                return self._gemini_embed_content([part])
-            except Exception as e:
-                logger.error(f"Error generating Gemini image embedding: {e}")
-                return np.random.randn(self.dimensions).astype(np.float32)
+            buf = io.BytesIO()
+            pil_image.convert("RGB").save(buf, format="PNG")
+            part = types.Part.from_bytes(data=buf.getvalue(), mime_type="image/png")
+            return self._gemini_embed_content([part])
 
         embedding: np.ndarray
         try:
@@ -229,15 +229,14 @@ class ImageEmbeddingProvider:
             A numpy array containing the embedding vector
         """
         if self.model is None or self.processor is None:
-            logger.error("Model not initialized. Using fallback random embedding.")
-            return np.random.randn(self.dimensions).astype(np.float32)
+            raise RuntimeError(
+                f"Text embedding model '{self.model_name}' is not initialized; refusing to "
+                "return a random vector that would poison the vector store."
+            )
 
         if self.model_name == "gemini":
-            try:
-                return self._gemini_embed_content(text)
-            except Exception as e:
-                logger.error(f"Error generating Gemini text embedding: {e}")
-                return np.random.randn(self.dimensions).astype(np.float32)
+            # No silent fallback: surface the failure instead of corrupting the store.
+            return self._gemini_embed_content(text)
 
         if self.model_name != "clip":
             logger.warning(

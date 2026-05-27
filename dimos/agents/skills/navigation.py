@@ -19,9 +19,11 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.models.qwen.bbox import BBox
+from dimos.models.vl.create import create
+from dimos.models.vl.types import VlModelName
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
@@ -37,7 +39,14 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+class Config(ModuleConfig):
+    # VL model used to detect objects in view for semantic navigation.
+    vl_model_name: VlModelName = "qwen"
+
+
 class NavigationSkillContainer(Module):
+    config: Config
+
     _latest_image: Image | None = None
     _latest_odom: PoseStamped | None = None
     _skill_started: bool = False
@@ -54,10 +63,7 @@ class NavigationSkillContainer(Module):
         super().__init__(**kwargs)
         self._skill_started = False
 
-        # Here to prevent unwanted imports in the file.
-        from dimos.models.vl.qwen import QwenVlModel
-
-        self._vl_model = QwenVlModel()
+        self._vl_model = create(self.config.vl_model_name)
 
     @rpc
     def start(self) -> None:
