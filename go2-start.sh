@@ -51,16 +51,6 @@ if [[ "$LMSTUDIO" == "1" && "$MLXVLM" == "1" ]]; then
   exit 1
 fi
 
-# Assemble the module list once so it's reused for echo + exec.
-MODULES=("$BLUEPRINT")
-if [[ "$BRIDGES" == "1" ]]; then
-  MODULES+=("camera-mjpeg-module" "audio-ws-module" "cmd-bridge-module")
-fi
-if [[ -n "$EXTRA" ]]; then
-  # shellcheck disable=SC2206
-  MODULES+=( $EXTRA )
-fi
-
 # Optional LLM endpoint override + model selection for the McpClient.
 LLM_ARGS=()
 LLM_NAME=""
@@ -75,13 +65,33 @@ elif [[ "$MLXVLM" == "1" ]]; then
   LLM_URL="http://127.0.0.1:8080/v1"
   LLM_MODEL="$MLXVLM_MODEL"
 fi
+
+# When an LLM preset is set but the chosen blueprint has no McpClient,
+# auto-inject mcp-server + mcp-client so the override actually binds.
+# (Mirrors what sim-with-llm.sh does, so real-robot LLM mode behaves the
+# same as sim.)
+if [[ -n "$LLM_URL" && "$BLUEPRINT" != *"agentic"* ]]; then
+  if [[ -z "$EXTRA" ]]; then
+    EXTRA="mcp-server mcp-client"
+  elif [[ "$EXTRA" != *"mcp-client"* ]]; then
+    EXTRA="$EXTRA mcp-server mcp-client"
+  fi
+fi
+
+# Assemble the module list once so it's reused for echo + exec.
+MODULES=("$BLUEPRINT")
+if [[ "$BRIDGES" == "1" ]]; then
+  MODULES+=("camera-mjpeg-module" "audio-ws-module" "cmd-bridge-module")
+fi
+if [[ -n "$EXTRA" ]]; then
+  # shellcheck disable=SC2206
+  MODULES+=( $EXTRA )
+fi
+
 if [[ -n "$LLM_URL" ]]; then
   export OPENAI_BASE_URL="$LLM_URL"
   export OPENAI_API_KEY="${OPENAI_API_KEY:-local-llm}"  # placeholder; servers ignore it
   LLM_ARGS=( -o "mcpclient.model=openai:$LLM_MODEL" )
-  if [[ "$BLUEPRINT" != *"agentic"* ]]; then
-    c_yellow "⚠ LLM preset is set but blueprint '$BLUEPRINT' has no McpClient — override is a no-op"
-  fi
 fi
 
 c_bold "▶ Go2 hackathon quickstart"
