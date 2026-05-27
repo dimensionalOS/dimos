@@ -113,6 +113,19 @@ class GeminiTTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
         Returns:
             Self for method chaining
         """
+        # Idempotent: start the worker + subscription only once. This used to be
+        # called per utterance, leaking a new thread + subscription each time
+        # (and re-logging "Starting GeminiTTSNode" on every speak). If called
+        # again with a new source, just re-point the subscription.
+        if self.processing_thread is not None and self.processing_thread.is_alive():
+            if self.subscription is not None:
+                self.subscription.dispose()
+            self.subscription = text_observable.subscribe(  # type: ignore[assignment]
+                on_next=self._queue_text,
+                on_error=lambda e: logger.error(f"Error in GeminiTTSNode: {e}"),
+            )
+            return self
+
         logger.info("Starting GeminiTTSNode")
 
         # Start the processing thread
