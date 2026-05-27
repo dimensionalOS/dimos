@@ -17,6 +17,7 @@
 
 all_blueprints = {
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
+    "bbox-distance-follow": "dimos.robot.custom.bbox_distance_follow:bbox_distance_follow",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_piper",
@@ -126,7 +127,9 @@ all_blueprints = {
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
+    "b-box-distance-behavior-module": "dimos.robot.custom.bbox_distance_follow.BBoxDistanceBehaviorModule",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
+    "b-box-selection-module": "dimos.robot.custom.bbox_distance_follow.BBoxSelectionModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
     "camera-module": "dimos.hardware.sensors.camera.module.CameraModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",
