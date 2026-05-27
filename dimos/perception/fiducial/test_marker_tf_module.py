@@ -30,7 +30,7 @@ from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_pose import (
-    _camera_optical_frame_id,
+    camera_optical_frame_id,
     estimate_marker_pose,
     marker_corners_to_bbox,
     marker_reprojection_error,
@@ -166,10 +166,10 @@ def test_camera_optical_frame_id_resolution() -> None:
     )
     img_empty = Image(data=np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR, ts=ts)
 
-    assert _camera_optical_frame_id(img_custom, info_named) == "custom_optical"
-    assert _camera_optical_frame_id(img_whitespace, info_named) == "custom_optical"
-    assert _camera_optical_frame_id(img_empty, info_named) == "cam_info_optical"
-    assert _camera_optical_frame_id(img_empty, info_empty) == "camera_optical"
+    assert camera_optical_frame_id(img_custom, info_named) == "custom_optical"
+    assert camera_optical_frame_id(img_whitespace, info_named) == "custom_optical"
+    assert camera_optical_frame_id(img_empty, info_named) == "cam_info_optical"
+    assert camera_optical_frame_id(img_empty, info_empty) == "camera_optical"
 
 
 def test_estimate_marker_pose_roundtrip() -> None:

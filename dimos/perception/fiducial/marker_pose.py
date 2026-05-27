@@ -37,7 +37,8 @@ except (ImportError, AttributeError) as e:
 _FISHEYE_MODELS = frozenset({"equidistant", "fisheye", "kannala_brandt"})
 
 
-def _is_fisheye_model(distortion_model: str | None) -> bool:
+def is_fisheye_model(distortion_model: str | None) -> bool:
+    """Return whether a CameraInfo distortion model should use fisheye handling."""
     return (distortion_model or "").strip().lower() in _FISHEYE_MODELS
 
 
@@ -48,7 +49,7 @@ def camera_info_to_cv_matrices(camera_info: CameraInfo) -> tuple[np.ndarray, np.
     return k, d
 
 
-def _camera_optical_frame_id(image: Image, camera_info: CameraInfo) -> str:
+def camera_optical_frame_id(image: Image, camera_info: CameraInfo) -> str:
     """Frame in which image pixels and intrinsics apply (optical convention in ROS).
 
     Prefer ``Image.frame_id`` so TF lookups match the stream that produced the
@@ -90,7 +91,7 @@ def estimate_marker_pose(
     """
     obj = _aruco_marker_object_points(marker_length_m)
     img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
-    if _is_fisheye_model(distortion_model):
+    if is_fisheye_model(distortion_model):
         d_flat = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
         if d_flat.size < 4:
             raise ValueError(
@@ -169,7 +170,7 @@ def marker_reprojection_error(
     observed: np.ndarray = np.asarray(corners_px, dtype=np.float32).reshape(4, 1, 2)
     project_dist = dist_coeffs
 
-    if _is_fisheye_model(distortion_model):
+    if is_fisheye_model(distortion_model):
         d_flat = np.asarray(dist_coeffs, dtype=np.float64).reshape(-1)
         if d_flat.size < 4:
             raise ValueError(
@@ -194,3 +195,7 @@ def marker_reprojection_error(
     )
     residual = projected.reshape(4, 2) - observed.reshape(4, 2)
     return float(np.sqrt(np.mean(np.sum(residual * residual, axis=1))))
+
+
+_is_fisheye_model = is_fisheye_model
+_camera_optical_frame_id = camera_optical_frame_id

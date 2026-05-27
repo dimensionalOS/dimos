@@ -35,8 +35,8 @@ from dimos.perception.fiducial.fixture_verification import (
     visible_board_layout_area_percent,
     visible_image_hull_area_percent,
 )
+from dimos.perception.fiducial.marker_detect import detect_markers_in_image
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
-from dimos.perception.fiducial.marker_transformer import detect_markers_in_image
 
 pytest.importorskip("cv2.aruco")
 

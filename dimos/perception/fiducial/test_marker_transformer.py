@@ -24,10 +24,8 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.perception.fiducial.marker_transformer import (
-    DetectMarkers,
-    detect_markers_in_image,
-)
+from dimos.perception.fiducial.marker_detect import detect_markers_in_image
+from dimos.perception.fiducial.marker_transformer import DetectMarkers
 
 
 def _camera_info(ts: float = 10.0) -> CameraInfo:

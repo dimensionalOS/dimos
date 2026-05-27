@@ -41,7 +41,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
-from dimos.perception.fiducial.marker_pose import _camera_optical_frame_id, _is_fisheye_model
+from dimos.perception.fiducial.marker_pose import camera_optical_frame_id, is_fisheye_model
 from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame
 from dimos.spec.perception import Camera
 from dimos.utils.logging_config import setup_logger
@@ -125,7 +125,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
 
     def _maybe_warn_distortion(self, camera_info: CameraInfo) -> None:
         model = (camera_info.distortion_model or "").strip().lower()
-        if model in ("", "plumb_bob") or _is_fisheye_model(model):
+        if model in ("", "plumb_bob") or is_fisheye_model(model):
             return
         if not self._warned_distortion_model:
             logger.warning(
@@ -142,7 +142,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             return
 
         ts = getattr(image, "ts", None) or time.time()
-        optical = _camera_optical_frame_id(image, info)
+        optical = camera_optical_frame_id(image, info)
         t_world_optical = self.tf.get(
             self.config.world_frame,
             optical,
