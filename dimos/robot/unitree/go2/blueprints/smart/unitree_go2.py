@@ -30,8 +30,10 @@ from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector impo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
+from dimos.robot.unitree.go2.connection import GO2Connection
 
 unitree_go2 = autoconnect(
     unitree_go2_basic,
@@ -57,7 +59,11 @@ class Go2Memory(Recorder):
 
 unitree_go2_markers = autoconnect(
     unitree_go2,
-    MarkerTfModule.blueprint(marker_length_m=0.1),
+    MarkerDetectionStreamModule.blueprint(
+        marker_length_m=0.1,
+        camera_info=GO2Connection.camera_info_static,
+    ),
+    MarkerTfModule.blueprint(),
 ).global_config(n_workers=11, robot_model="unitree_go2")
 
 unitree_go2_relocalization = autoconnect(
