@@ -452,9 +452,8 @@ fn build_pointclouds(
     stamp: Time,
 ) -> (PointCloud2, PointCloud2) {
     let half = voxel_size * 0.5;
-    let cap = (map.voxels.len() + live.len()) * 16;
-    let mut global_data = Vec::with_capacity(cap);
-    let mut local_data = Vec::with_capacity(cap);
+    let mut global_data = Vec::with_capacity((map.voxels.len() + live.len()) * 16);
+    let mut local_data = Vec::with_capacity(live.len() * 2 * 16);
     let mut global_n: i32 = 0;
     let mut local_n: i32 = 0;
 
