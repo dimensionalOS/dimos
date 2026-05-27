@@ -76,6 +76,11 @@ unitree_go2_basic.lidar
 
 unitree_go2_basic.camera_info
   -> BBoxDistanceBehaviorModule.camera_info
+
+dimos-viewer Camera click
+  -> RerunWebSocketServer.clicked_point
+  -> BBoxSelectionModule.clicked_point
+  -> BBoxSelectionModule.selected_bbox
 ```
 
 `Detection2DModule.detections` 明确发布到 LCM topic `/color_image/detections`，`selected_bbox` 明确发布到 LCM topic `/color_image/selected_bbox`。RerunBridge 会把它们映射到 `world/color_image/detections` 和 `world/color_image/selected_bbox`，本 blueprint 对这两个实体路径配置了专用 `visual_override`，把 YOLO 候选 bbox 显示为黄色框，把 selected bbox 显示为绿色框。Go2 viewer 的 Camera view origin 是 `world/color_image`，所以这些 bbox 会作为相机图像子实体显示在 Camera 视图上。
@@ -87,8 +92,10 @@ unitree_go2_basic.camera_info
 职责：
 
 - 消费 `Detection2DModule.detections` 的多 bbox。
+- 消费 dimos-viewer 发回的 `clicked_point`，把 Camera 视图里的像素点击映射到最新一帧 bbox。
 - 保存最新一帧 detections。
 - 通过 RPC 保存用户选择的 `index` 或 `id`。
+- 通过 viewer 点击保存用户选择的 `index`；如果点击在 Camera 视图但没有命中任何 bbox，会清空当前选择。
 - 每帧只转发当前选中的 detection。
 - 如果当前帧找不到选中 bbox，发布空 `Detection2DArray`，避免下游或 viewer 复用旧 bbox。
 
@@ -214,19 +221,20 @@ CLI 全局参数必须放在 `run` 前面，例如 `--robot-ip`、`--replay`、`
 .venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.bbox_distance_follow import BBoxDistanceBehaviorModule; c=RPCClient.remote(BBoxDistanceBehaviorModule); print(c.stop_bbox_distance_behavior()); c.stop_rpc_client()'
 ```
 
-### Viewer 观测
+### Viewer 点击选择
 
 启动 replay + viewer 后，Camera 视图里会显示 `world/color_image`。`Detection2DModule` 发布的全部 YOLO 候选框会显示为黄色 bbox。通过命令行 RPC 调用 `select_bbox(index=...)` 后，`BBoxSelectionModule` 会发布 `/color_image/selected_bbox`，本 blueprint 的专用 visual override 会让 RerunBridge 在 `world/color_image/selected_bbox` 上显示绿色 bbox。
+
+也可以直接在 dimos-viewer 的 Camera 视图里点击黄色 bbox。点击会沿用 viewer 已有的 WebSocket 回传链路变成 `clicked_point`，`BBoxSelectionModule` 会用点击像素坐标命中最新一帧候选 bbox，并立即发布对应的 `selected_bbox`。点击 Camera 视图里没有 bbox 的位置会清空当前选择，让行为模块收到空 selected bbox 后停止输出运动命令。
 
 当 selected bbox 在后续帧中移动，overlay 会跟随当前帧 detection 更新；当选择被清除或当前帧找不到选中 bbox，模块会发布空 `Detection2DArray`，viewer 中旧框会消失。
 
 ### 非目标
 
-- 不新增 bbox 点击选择 UI。
 - 不新增通用 `dimos rpc` CLI。
 - 不接 Agent、Prompt、MCP、McpServer 或 McpClient。
 - 不新增 `@skill`。
 - 不在 `BBoxSelectionModule` 内实现 YOLO、ReID、EdgeTAM 或目标丢失恢复。
 - 不在 `BBoxDistanceBehaviorModule` 内做人识别或 bbox 选择。
 
-后续如果需要点击选择，可扩展现有 Rerun/WebSocket 协议，把像素点、bbox id 或 bbox index 转成同一个 `select_bbox(...)` RPC。后续如果 lidar 和 camera 坐标系不一致，可在点云投影前补 TF 对齐。
+后续如果 lidar 和 camera 坐标系不一致，可在点云投影前补 TF 对齐。

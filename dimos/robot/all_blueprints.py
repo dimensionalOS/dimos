@@ -130,7 +130,7 @@ all_modules = {
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
     "b-box-distance-behavior-module": "dimos.robot.custom.bbox_distance_follow.BBoxDistanceBehaviorModule",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
-    "b-box-selection-module": "dimos.robot.custom.bbox_distance_follow.BBoxSelectionModule",
+    "b-box-selection-module": "dimos.robot.custom.bbox_selection.BBoxSelectionModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
     "camera-module": "dimos.hardware.sensors.camera.module.CameraModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",
