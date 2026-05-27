@@ -18,6 +18,7 @@ type SplatState =
 			queueDepth: number;
 			jobStatus: string; // queued | capturing | poses | training | pushing
 			progress: number; // 0..1
+			detail: string | null; // e.g. "downloading 5/20", "uploading 6.1 MB"
 	  }
 	| { status: "ready"; scanId: string; viewerUrl: string }
 	| { status: "error"; message: string };
@@ -56,6 +57,7 @@ function BuildSplatButton({ runId }: { runId: string }) {
 				const body = (await r.json()) as {
 					status: string;
 					progress: number;
+					detail: string | null;
 					error: string | null;
 				};
 				if (cancelled) return;
@@ -76,7 +78,12 @@ function BuildSplatButton({ runId }: { runId: string }) {
 				}
 				setState((prev) =>
 					prev.status === "queued"
-						? { ...prev, jobStatus: body.status, progress: body.progress ?? 0 }
+						? {
+								...prev,
+								jobStatus: body.status,
+								progress: body.progress ?? 0,
+								detail: body.detail ?? null,
+							}
 						: prev,
 				);
 				timer = setTimeout(tick, 3000);
@@ -117,6 +124,7 @@ function BuildSplatButton({ runId }: { runId: string }) {
 				queueDepth: body.queue_depth,
 				jobStatus: "queued",
 				progress: 0,
+				detail: null,
 			});
 		} catch (e) {
 			setState({ status: "error", message: e instanceof Error ? e.message : String(e) });
@@ -142,6 +150,9 @@ function BuildSplatButton({ runId }: { runId: string }) {
 		return (
 			<span className="text-muted-foreground text-xs">
 				{state.jobStatus}…{queueHint} {pct > 0 ? `${pct}%` : ""}
+				{state.detail ? (
+					<span className="ml-1 italic">· {state.detail}</span>
+				) : null}
 				<span className="ml-1 opacity-60">{state.scanId.slice(0, 16)}</span>
 			</span>
 		);
