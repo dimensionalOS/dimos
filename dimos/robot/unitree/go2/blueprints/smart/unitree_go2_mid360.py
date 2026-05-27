@@ -76,10 +76,6 @@ class Go2Mid360Memory(Recorder):
     config: Go2Mid360MemoryConfig
 
     def _port_to_stream(self, name: str, input_topic: In[Any], stream: Stream[Any]) -> None:
-        if name not in _FASTLIO_PORTS:
-            super()._port_to_stream(name, input_topic, stream)
-            return
-
         # Force time.time() so FastLIO hardware timestamps match image timestamps.
         default_frame_id = self.config.default_frame_id
         tf_tolerance = self.config.tf_tolerance
@@ -104,6 +100,7 @@ class Go2Mid360Memory(Recorder):
                     msg_ts,
                     getattr(msg, "ts", None),
                 )
+                logger.warn("\n" + self.tf.tree_str())
             stream.append(msg, ts=ts, pose=pose)
 
         self.register_disposable(Disposable(input_topic.subscribe(on_msg)))
