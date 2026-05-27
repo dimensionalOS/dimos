@@ -99,11 +99,15 @@ class Arena {
     this.walls = new THREE.InstancedMesh(new THREE.BoxGeometry(0.96,1.6,0.96), wmat, N);
     this.scene.add(this.walls);
     const cx=w/2, cz=h/2, span=Math.max(w,h);
+    // Fog must scale with arena span — fixed near/far (tuned for the 60-cell
+    // maze) fully obscured the larger building floor, blacking out the canvas.
+    this.scene.fog.near = span*0.55; this.scene.fog.far = span*2.6;
     this.camera.position.set(cx+span*0.05, span*1.05, cz+span*1.05);
     this.controls.target.set(cx,0,cz); this.controls.update();
   }
   update(state){
     if(!this.floor) this.initGrid(state.w, state.h);
+    this.res = state.res || this.res;  // grid is data-driven; don't assume 0.1m cells
     const {w,cells} = state; let wi=0;
     for(let i=0;i<cells.length;i++){
       const code=cells[i], x=i%w, y=(i/w)|0;
