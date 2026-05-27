@@ -16,6 +16,7 @@
 
 import base64
 import json
+import math
 import pickle
 import signal
 import sys
@@ -45,6 +46,46 @@ from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+_G1_SELF_FILTER_XY_M = ((-0.55, 0.65), (-0.45, 0.45))
+_G1_SELF_FILTER_Z_M = (0.04, 1.6)
+
+
+def _yaw_from_quat_wxyz(quat: NDArray[Any]) -> float:
+    w, x, y, z = quat
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def filter_g1_self_points(
+    points: NDArray[Any],
+    base_pos: NDArray[Any],
+    base_quat_wxyz: NDArray[Any],
+) -> NDArray[Any]:
+    """Remove MuJoCo depth points that are likely the G1's own body."""
+    if points.size == 0:
+        return points
+
+    rel = points - base_pos
+    yaw = _yaw_from_quat_wxyz(base_quat_wxyz)
+    cos_yaw = math.cos(-yaw)
+    sin_yaw = math.sin(-yaw)
+
+    local_x = cos_yaw * rel[:, 0] - sin_yaw * rel[:, 1]
+    local_y = sin_yaw * rel[:, 0] + cos_yaw * rel[:, 1]
+    world_z = points[:, 2]
+
+    (min_x, max_x), (min_y, max_y) = _G1_SELF_FILTER_XY_M
+    min_z, max_z = _G1_SELF_FILTER_Z_M
+    self_mask = (
+        (local_x >= min_x)
+        & (local_x <= max_x)
+        & (local_y >= min_y)
+        & (local_y <= max_y)
+        & (world_z >= min_z)
+        & (world_z <= max_z)
+    )
+    return points[~self_mask]
 
 
 class MockController:
@@ -212,6 +253,12 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
                 if all_points:
                     combined_points = np.vstack(all_points)
+                    if robot_name == "unitree_g1":
+                        combined_points = filter_g1_self_points(
+                            combined_points,
+                            data.qpos[0:3].copy(),
+                            data.qpos[3:7].copy(),
+                        )
                     pcd = o3d.geometry.PointCloud()
                     pcd.points = o3d.utility.Vector3dVector(combined_points)
                     pcd = pcd.voxel_down_sample(voxel_size=LIDAR_RESOLUTION)
