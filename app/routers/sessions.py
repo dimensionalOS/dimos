@@ -384,9 +384,9 @@ async def bridge_datachannel(
     # The robot's CF session persists for the whole blueprint run, so its LOCAL
     # publish of state_reliable_back survives a disconnect. On reconnect CF
     # refuses to re-push it (repeated_local_track_error → no `id` → 502). So we
-    # only push it once and reuse the stored id on subsequent bridges; the
-    # operator subscribe (fresh operator session each connect) still re-runs.
-    prior_state_back_id = _robot_channel_ids.get(session.id, {}).get(STATE_BACK_CHANNEL_NAME)
+    # push it once, persist the id on the SESSION ROW (not the operator-cleared
+    # _robot_channel_ids map — leave() wipes that), and reuse it on reconnect.
+    prior_state_back_id = session.state_back_channel_id
     try:
         # operator → robot: cmd + state. Operator publishes, robot subscribes.
         op_pub = await cf_client.add_datachannels(
@@ -464,6 +464,11 @@ async def bridge_datachannel(
         **robot_sub_ids,
         STATE_BACK_CHANNEL_NAME: robot_pub_ids[STATE_BACK_CHANNEL_NAME],
     }
+    # Persist the state_back push id on the session row so a reconnect (which
+    # clears _robot_channel_ids via leave) knows the local track is still pushed.
+    if session.state_back_channel_id is None:
+        session.state_back_channel_id = robot_pub_ids[STATE_BACK_CHANNEL_NAME]
+        await db.commit()
 
     # Pull the robot's video onto the operator session (best-effort: a failure
     # degrades to no-video, never 502s the now-working datachannel bridge).
