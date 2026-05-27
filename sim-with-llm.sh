@@ -25,8 +25,15 @@ set -euo pipefail
 BACKEND="${1:-mlxvlm}"
 shift || true
 
-# Mac-friendly default: no CUDA, no local Moondream, OpenAI-TTS disabled.
-BLUEPRINT="${BLUEPRINT:-unitree-go2-agentic-gemini}"
+# Pick a blueprint compose that imports cleanly on Apple Silicon without
+# google-genai. unitree-go2-agentic-gemini imports GeminiSpeakSkill at
+# module load (before --disable can take effect), so we don't use it here.
+# unitree-go2-basic + mcp-server + mcp-client gives the full agent loop;
+# unitree-skill-container adds wait / current_time / execute_sport_command
+# / tilt_body skills. relative_move needs the nav stack and is not in this
+# compose — publish to /cmd_vel directly if you need movement.
+BLUEPRINT="${BLUEPRINT:-unitree-go2-basic}"
+export EXTRA="${EXTRA:-mcp-server mcp-client unitree-skill-container}"
 
 case "$BACKEND" in
   mlxvlm)
@@ -38,19 +45,14 @@ case "$BACKEND" in
     if [[ -n "${1:-}" ]]; then export LMSTUDIO_MODEL="$1"; fi
     ;;
   ollama)
+    # The ollama agentic blueprint is already a clean Mac compose.
     BLUEPRINT="unitree-go2-agentic-ollama"
+    export EXTRA=""
     ;;
   *)
     echo "unknown backend: $BACKEND  (use mlxvlm | lmstudio | ollama)" >&2
     exit 2
     ;;
 esac
-
-# The gemini-shaped blueprint still needs GOOGLE_API_KEY for VL/embeddings/TTS
-# even when the chat LLM is local. Surface that early instead of crashing later.
-if [[ "$BLUEPRINT" == *"gemini"* && -z "${GOOGLE_API_KEY:-}" ]]; then
-  printf '\033[33m⚠ GOOGLE_API_KEY not set — Gemini VL/embeddings/TTS will fail at runtime.\033[0m\n'
-  printf '\033[33m  Get one at https://aistudio.google.com/app/apikey, then re-run.\033[0m\n'
-fi
 
 exec env SIMULATION=1 ./go2-start.sh "$BLUEPRINT"
