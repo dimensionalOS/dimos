@@ -12,16 +12,83 @@ const GS_POT_URL = (process.env.NEXT_PUBLIC_GS_POT_URL ?? "").replace(/\/$/, "")
 type SplatState =
 	| { status: "idle" }
 	| { status: "submitting" }
-	| { status: "queued"; scanId: string; queueDepth: number }
+	| {
+			status: "queued";
+			scanId: string;
+			queueDepth: number;
+			jobStatus: string; // queued | capturing | poses | training | pushing
+			progress: number; // 0..1
+	  }
+	| { status: "ready"; scanId: string; viewerUrl: string }
 	| { status: "error"; message: string };
 
-// "Build splat" button per run header. Fires the gs-pot webhook with an empty
-// body; gs-pot reads its robohack_base + ingest_token from env on the Mac so
-// no secrets land in browser-bundled code. State is local to the component
-// (refresh loses it — the resulting splat will still appear in the splats
-// gallery once gs-pot pushes it back).
+// "Build splat" button per run header.
+// 1. POSTs body-less to gs-pot's /api/runs/<run_id>/process. gs-pot reads
+//    robohack_base + ingest_token from its own env on the Mac, so neither
+//    secret lands in browser-bundled code.
+// 2. Polls gs-pot's /scans/<scan_id> every 3s for live progress.
+// 3. When status flips to "ready", swaps to a "View splat ↗" link pointing
+//    at gs-pot's local Spark viewer.
+//
+// Component state is in-memory only — a refresh loses it, but the trained
+// splat still lands in the splats gallery (gs-pot POSTs it to
+// /api/robot/splat at the end of training).
 function BuildSplatButton({ runId }: { runId: string }) {
 	const [state, setState] = useState<SplatState>({ status: "idle" });
+
+	const pollingScanId = state.status === "queued" ? state.scanId : null;
+
+	useEffect(() => {
+		if (!pollingScanId) return;
+		let cancelled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const tick = async () => {
+			try {
+				const r = await fetch(
+					`${GS_POT_URL}/scans/${encodeURIComponent(pollingScanId)}`,
+				);
+				if (cancelled) return;
+				if (!r.ok) {
+					timer = setTimeout(tick, 3000);
+					return;
+				}
+				const body = (await r.json()) as {
+					status: string;
+					progress: number;
+					error: string | null;
+				};
+				if (cancelled) return;
+				if (body.status === "ready") {
+					setState({
+						status: "ready",
+						scanId: pollingScanId,
+						viewerUrl: `${GS_POT_URL}/web/?scene=/scenes/${pollingScanId}.ply`,
+					});
+					return;
+				}
+				if (body.status === "error") {
+					setState({
+						status: "error",
+						message: body.error ?? "scan failed (see gs-pot logs)",
+					});
+					return;
+				}
+				setState((prev) =>
+					prev.status === "queued"
+						? { ...prev, jobStatus: body.status, progress: body.progress ?? 0 }
+						: prev,
+				);
+				timer = setTimeout(tick, 3000);
+			} catch {
+				if (!cancelled) timer = setTimeout(tick, 3000);
+			}
+		};
+		tick();
+		return () => {
+			cancelled = true;
+			if (timer) clearTimeout(timer);
+		};
+	}, [pollingScanId]);
 
 	if (!GS_POT_URL) return null;
 
@@ -38,18 +105,38 @@ function BuildSplatButton({ runId }: { runId: string }) {
 				throw new Error(`${r.status} ${r.statusText}${text ? `: ${text}` : ""}`);
 			}
 			const body = (await r.json()) as { scan_id: string; queue_depth: number };
-			setState({ status: "queued", scanId: body.scan_id, queueDepth: body.queue_depth });
+			setState({
+				status: "queued",
+				scanId: body.scan_id,
+				queueDepth: body.queue_depth,
+				jobStatus: "queued",
+				progress: 0,
+			});
 		} catch (e) {
 			setState({ status: "error", message: e instanceof Error ? e.message : String(e) });
 		}
 	};
 
+	if (state.status === "ready") {
+		return (
+			<a
+				className="shrink-0 rounded border bg-emerald-600 px-3 py-1 text-white text-xs hover:bg-emerald-700"
+				href={state.viewerUrl}
+				rel="noopener noreferrer"
+				target="_blank"
+			>
+				View splat ↗
+			</a>
+		);
+	}
 	if (state.status === "queued") {
+		const pct = Math.max(0, Math.min(100, Math.round(state.progress * 100)));
+		const queueHint =
+			state.queueDepth > 1 ? ` (#${state.queueDepth} in line)` : "";
 		return (
 			<span className="text-muted-foreground text-xs">
-				✓ queued as {state.scanId}
-				{state.queueDepth > 1 ? ` (#${state.queueDepth} in line)` : ""} — splat will appear
-				once training finishes
+				{state.jobStatus}…{queueHint} {pct > 0 ? `${pct}%` : ""}
+				<span className="ml-1 opacity-60">{state.scanId.slice(0, 16)}</span>
 			</span>
 		);
 	}
