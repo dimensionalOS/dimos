@@ -46,6 +46,7 @@ function BuildSplatButton({ runId }: { runId: string }) {
 			try {
 				const r = await fetch(
 					`${GS_POT_URL}/scans/${encodeURIComponent(pollingScanId)}`,
+					{ headers: { "ngrok-skip-browser-warning": "true" } },
 				);
 				if (cancelled) return;
 				if (!r.ok) {
@@ -97,7 +98,12 @@ function BuildSplatButton({ runId }: { runId: string }) {
 		try {
 			const r = await fetch(`${GS_POT_URL}/api/runs/${encodeURIComponent(runId)}/process`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				headers: {
+					"Content-Type": "application/json",
+					// Bypass ngrok-free's HTML interstitial on first hit so we get
+					// the actual JSON response (which has gs-pot's CORS headers).
+					"ngrok-skip-browser-warning": "true",
+				},
 				body: "{}",
 			});
 			if (!r.ok) {
