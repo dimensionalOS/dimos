@@ -27,7 +27,11 @@ from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.simulation.mujoco.input_controller import InputController
-from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
+from dimos.simulation.mujoco.policy import (
+    G1GrootOnnxController,
+    G1OnnxController,
+    Go1OnnxController,
+)
 from dimos.utils.data import get_data
 
 
@@ -56,8 +60,12 @@ def get_assets() -> dict[str, bytes]:
 
 
 def load_model(
-    input_device: InputController, robot: str, scene_xml: str
+    input_device: InputController,
+    robot: str,
+    scene_xml: str,
+    config: GlobalConfig | None = None,
 ) -> tuple[mujoco.MjModel, mujoco.MjData]:
+    config = config or GlobalConfig()
     mujoco.set_mjcb_control(None)
 
     xml_string = get_model_xml(robot, scene_xml)
@@ -85,11 +93,26 @@ def load_model(
         "ctrl_dt": ctrl_dt,
     }
 
+    policy_name = config.mujoco_g1_policy.lower()
+
     match robot:
         case "unitree_go1":
-            policy: OnnxController = Go1OnnxController(**params)
+            policy = Go1OnnxController(**params)
         case "unitree_g1":
-            policy = G1OnnxController(**params, drift_compensation=[-0.18, 0.0, -0.09])
+            if policy_name == "groot":
+                policy = G1GrootOnnxController(
+                    policy_dir=config.mujoco_groot_policy_dir,
+                    default_angles=params["default_angles"],
+                    n_substeps=n_substeps,
+                    input_controller=input_device,
+                )
+            elif policy_name == "default":
+                policy = G1OnnxController(**params, drift_compensation=[-0.18, 0.0, -0.09])
+            else:
+                raise ValueError(
+                    f"Unknown G1 MuJoCo policy: {config.mujoco_g1_policy!r}. "
+                    "Choose from: default, groot"
+                )
         case _:
             raise ValueError(f"Unknown robot policy: {robot}")
 

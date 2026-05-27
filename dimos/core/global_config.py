@@ -55,6 +55,8 @@ class GlobalConfig(BaseSettings):
     mujoco_global_map_from_pointcloud: str | None = None
     mujoco_start_pos: str = "-1.0, 1.0"
     mujoco_steps_per_frame: int = 7
+    mujoco_g1_policy: str = "default"
+    mujoco_groot_policy_dir: str = "data/groot"
     robot_model: str | None = None
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
