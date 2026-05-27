@@ -110,18 +110,18 @@ class VrWorldConfig(QuestTeleopConfig):
     lidar_world_frame: bool = False
 
     # ---- throttle rates (Hz) ----
-    map_resend_hz: float = 1.5      # full voxel-map push to headset
-    lidar_process_hz: float = 4.0   # how often we add a scan to the grid
-    pose_push_hz: float = 15.0      # robot pose push (cheap)
-    image_push_hz: float = 3.0      # camera frame push
+    map_resend_hz: float = 1.5  # full voxel-map push to headset
+    lidar_process_hz: float = 4.0  # how often we add a scan to the grid
+    pose_push_hz: float = 15.0  # robot pose push (cheap)
+    image_push_hz: float = 3.0  # camera frame push
 
     # ---- camera thumbnail ----
     image_max_size: int = 320
     image_jpeg_quality: int = 60
 
     # ---- driving (left thumbstick -> Twist) ----
-    linear_speed: float = 0.8       # m/s at full deflection
-    angular_speed: float = 1.2      # rad/s at full deflection
+    linear_speed: float = 0.8  # m/s at full deflection
+    angular_speed: float = 1.2  # rad/s at full deflection
 
     client_route: str = "/vr_world"
     ws_route: str = "/ws_vr_world"
@@ -269,9 +269,13 @@ class VrWorldModule(QuestTeleopModule):
             encode_text(
                 "robot_pose",
                 pose=[
-                    float(pose.x), float(pose.y), float(pose.z),
-                    float(pose.orientation.x), float(pose.orientation.y),
-                    float(pose.orientation.z), float(pose.orientation.w),
+                    float(pose.x),
+                    float(pose.y),
+                    float(pose.z),
+                    float(pose.orientation.x),
+                    float(pose.orientation.y),
+                    float(pose.orientation.z),
+                    float(pose.orientation.w),
                 ],
             )
         )
@@ -299,8 +303,10 @@ class VrWorldModule(QuestTeleopModule):
                 tf = Transform(
                     translation=Vector3(float(pose.x), float(pose.y), float(pose.z)),
                     rotation=Quaternion(
-                        float(pose.orientation.x), float(pose.orientation.y),
-                        float(pose.orientation.z), float(pose.orientation.w),
+                        float(pose.orientation.x),
+                        float(pose.orientation.y),
+                        float(pose.orientation.z),
+                        float(pose.orientation.w),
                     ),
                 )
                 world_cloud = cloud.transform(tf)
@@ -349,14 +355,17 @@ class VrWorldModule(QuestTeleopModule):
             "n": int(positions.shape[0]),
             "voxel_size": float(self.config.voxel_size),
             "bounds": {
-                "x_min": float(positions[:, 0].min()), "x_max": float(positions[:, 0].max()),
-                "y_min": float(positions[:, 1].min()), "y_max": float(positions[:, 1].max()),
-                "z_min": float(positions[:, 2].min()), "z_max": float(positions[:, 2].max()),
+                "x_min": float(positions[:, 0].min()),
+                "x_max": float(positions[:, 0].max()),
+                "y_min": float(positions[:, 1].min()),
+                "y_max": float(positions[:, 1].max()),
+                "z_min": float(positions[:, 2].min()),
+                "z_max": float(positions[:, 2].max()),
             },
         }
         return header, positions.tobytes() + rgb.tobytes()
 
-    def _height_colors(self, positions: "np.ndarray") -> "np.ndarray":
+    def _height_colors(self, positions: np.ndarray) -> np.ndarray:
         """Bright violet→red rainbow by Z, anchored to the fixed height slab."""
         zc = positions[:, 2]
         lo, hi = float(self.config.map_z_min), float(self.config.map_z_max)
@@ -404,15 +413,22 @@ class VrWorldModule(QuestTeleopModule):
                 msg.get("event", "?"),
                 {k: v for k, v in msg.items() if k not in ("type", "event")},
             )
-        elif kind in ("yaw", "scale_delta", "teleport_commit", "teleport_aim",
-                      "teleport_cancel", "reset_view", "toggle_render"):
+        elif kind in (
+            "yaw",
+            "scale_delta",
+            "teleport_commit",
+            "teleport_aim",
+            "teleport_cancel",
+            "reset_view",
+            "toggle_render",
+        ):
             logger.debug("[client] %s", kind)
         else:
             logger.warning("[client] unknown msg kind=%r", kind)
 
     def _publish_drive(self, msg: dict[str, Any]) -> None:
         try:
-            x = float(msg.get("x", 0.0))      # forward/back, [-1, 1]
+            x = float(msg.get("x", 0.0))  # forward/back, [-1, 1]
             yaw = float(msg.get("yaw", 0.0))  # turn rate, [-1, 1]
         except (TypeError, ValueError):
             return

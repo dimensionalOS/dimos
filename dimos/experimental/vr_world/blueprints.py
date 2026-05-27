@@ -26,10 +26,6 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.experimental.vr_world.module import VrWorldModule
 from dimos.robot.unitree.go2.connection import GO2Connection
 
-# Single Go2 + live VR world, launched directly via `dimos run vr-world-go2`.
-# Override module config at launch with the standard flag syntax, e.g.
-#   dimos run vr-world-go2 -o vrworldmodule.lidar_world_frame=true
-#   dimos run vr-world-go2 -o vrworldmodule.voxel_size=0.05
 vr_world_go2 = autoconnect(
     VrWorldModule.blueprint(),
     GO2Connection.blueprint(),
