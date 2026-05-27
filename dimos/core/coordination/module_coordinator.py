@@ -30,7 +30,14 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
-from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
+from dimos.core.transport import (
+    JpegShmTransport,
+    LCMTransport,
+    PubSubTransport,
+    SHMTransport,
+    pLCMTransport,
+    pSHMTransport,
+)
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -279,6 +286,9 @@ class ModuleCoordinator(Resource):
                     module=module.__name__,
                     transport=transport.__class__.__name__,
                 )
+        # SHM streams are concrete transport objects, not LCM topics. Forward
+        # them to Rerun after stream wiring has resolved the transport registry.
+        _configure_rerun_bridge_visual_transports(self)
 
     @classmethod
     def build(
@@ -582,6 +592,31 @@ def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> Pu
     transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
 
     return transport
+
+
+def _configure_rerun_bridge_visual_transports(coordinator: ModuleCoordinator) -> None:
+    """Send resolved SHM transports to an active Rerun bridge.
+
+    RerunBridgeModule subscribes to configured pubsubs directly. For SHM
+    streams, the coordinator forwards the concrete transport objects after
+    stream wiring has selected them.
+    """
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+    if RerunBridgeModule not in coordinator._deployed_modules:
+        return
+
+    # LCM transports are already visible through RerunBridgeModule.config.pubsubs.
+    transports = [
+        transport
+        for transport in coordinator._transport_registry.values()
+        if isinstance(transport, SHMTransport | pSHMTransport | JpegShmTransport)
+    ]
+    if not transports:
+        return
+
+    bridge = coordinator.get_instance(RerunBridgeModule)
+    bridge.set_visual_transports(transports)
 
 
 def _verify_no_name_conflicts(blueprint: Blueprint) -> None:

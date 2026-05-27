@@ -14,29 +14,47 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import platform
 from typing import Any
 
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
+from dimos.constants import (
+    DEFAULT_CAPACITY_COLOR_IMAGE,
+    DEFAULT_CAPACITY_OCCUPANCY_GRID,
+    DEFAULT_CAPACITY_POINTCLOUD,
+)
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.vis_module import vis_module
 
-# Mac has some issue with high bandwidth UDP, so we use pSHMTransport for color_image
-# actually we can use pSHMTransport for all platforms, and for all streams
-# TODO need a global transport toggle on blueprints/global config
-_mac_transports: dict[tuple[str, type], pSHMTransport[Image]] = {
+# Route large local replay and mapping streams through SHM on every platform.
+# Small control/status streams continue to use the default LCM transport.
+_local_high_bandwidth_transports: dict[tuple[str, type], pSHMTransport[Any]] = {
     ("color_image", Image): pSHMTransport(
-        "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        "/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+    ),
+    ("lidar", PointCloud2): pSHMTransport("/lidar", default_capacity=DEFAULT_CAPACITY_POINTCLOUD),
+    ("pointcloud", PointCloud2): pSHMTransport(
+        "/pointcloud", default_capacity=DEFAULT_CAPACITY_POINTCLOUD
+    ),
+    ("global_map", PointCloud2): pSHMTransport(
+        "/global_map", default_capacity=DEFAULT_CAPACITY_POINTCLOUD
+    ),
+    ("merged_map", PointCloud2): pSHMTransport(
+        "/merged_map", default_capacity=DEFAULT_CAPACITY_POINTCLOUD
+    ),
+    ("global_costmap", OccupancyGrid): pSHMTransport(
+        "/global_costmap", default_capacity=DEFAULT_CAPACITY_OCCUPANCY_GRID
+    ),
+    ("navigation_costmap", OccupancyGrid): pSHMTransport(
+        "/navigation_costmap", default_capacity=DEFAULT_CAPACITY_OCCUPANCY_GRID
     ),
 }
 
-_transports_base = (
-    autoconnect() if platform.system() == "Linux" else autoconnect().transports(_mac_transports)
-)
+_transports_base = autoconnect().transports(_local_high_bandwidth_transports)
 
 
 def _convert_camera_info(camera_info: Any) -> Any:
