@@ -29,7 +29,7 @@ from dimos.memory2.backend import Backend
 from dimos.memory2.blobstore.base import BlobStore
 from dimos.memory2.vectorstore.base import VectorStore
 
-_SKIP_SQLITE_VEC = platform.machine() == "aarch64"
+_SKIP_SQLITE_VEC = platform.machine() == "aarch64" or platform.system() == "Darwin"
 
 if TYPE_CHECKING:
     from dimos.memory2.store.base import Store
@@ -347,7 +347,7 @@ def memory_spy_session():
 @pytest.fixture
 def sqlite_spy_session(tmp_path):
     if _SKIP_SQLITE_VEC:
-        pytest.skip("sqlite-vec aarch64 wheel ships a 32-bit binary")
+        pytest.skip("sqlite-vec extension not loadable here")
     from dimos.memory2.store.sqlite import SqliteStore
 
     blob_spy = SpyBlobStore()
@@ -422,7 +422,7 @@ class TestStoreDelegation:
         assert results[0].data == "north"
 
 
-@pytest.mark.skipif_arm
+@pytest.mark.skipif_no_sqlite_vec
 class TestStandaloneComponents:
     """Verify each SQLite component works standalone with path= (no Store needed)."""
 

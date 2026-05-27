@@ -29,9 +29,9 @@ from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.models.embedding.clip import CLIPModel
 
-# The sqlite-vec aarch64 wheel ships a 32-bit binary, so loading the
-# extension fails with "wrong ELF class: ELFCLASS32" on Linux ARM.
-_SKIP_SQLITE_VEC = platform.machine() == "aarch64"
+# sqlite-vec fails to load on Linux ARM (32-bit binary in the aarch64 wheel)
+# and on macOS in CI.
+_SKIP_SQLITE_VEC = platform.machine() == "aarch64" or platform.system() == "Darwin"
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -61,7 +61,7 @@ def memory_session(memory_store: MemoryStore) -> Iterator[MemoryStore]:
 @pytest.fixture
 def sqlite_store() -> Iterator[SqliteStore]:
     if _SKIP_SQLITE_VEC:
-        pytest.skip("sqlite-vec aarch64 wheel ships a 32-bit binary")
+        pytest.skip("sqlite-vec extension not loadable here")
     with tempfile.NamedTemporaryFile(suffix=".db") as f:
         store = SqliteStore(path=f.name)
         with store:
