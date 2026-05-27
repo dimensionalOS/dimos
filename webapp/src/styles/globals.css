@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/*
+  Goldie design tokens — refined dark system.
+  One warm gold accent; green reserved for connection, red for Interrupt only.
+  See approved mockup: .superpowers/brainstorm/.../goldie-refined.html
+*/
+@theme {
+  --color-bg-1: #0a0b0e;
+  --color-bg-2: #06070a;
+  --color-surface: #14161b;
+  --color-surface-2: #1b1e25;
+
+  --color-line: rgba(255, 255, 255, 0.07);
+  --color-line-2: rgba(255, 255, 255, 0.11);
+
+  --color-fg: #f3f4f6;
+  --color-muted: #969ba5;
+  --color-faint: #595e68;
+
+  --color-gold: #e3b15e;
+  --color-gold-soft: rgba(227, 177, 94, 0.13);
+  --color-green: #3ecf8e;
+  --color-red: #e15b57;
+  --color-red-soft: rgba(225, 91, 87, 0.1);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: linear-gradient(180deg, var(--color-bg-1), var(--color-bg-2));
+  background-attachment: fixed;
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  /* respect iOS safe areas (notch / home indicator) */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* Touch ergonomics: kill tap-highlight + text selection on controls */
+button,
+[role="button"],
+.no-select {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
