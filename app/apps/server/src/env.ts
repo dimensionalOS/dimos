@@ -33,10 +33,11 @@ const envSchema = z.object({
   // NEXT_PUBLIC_MLXVLM_URL). E.g. https://my-mac.ngrok-free.dev
   MLXVLM_URL: z.string().url().optional(),
 
-  // Public origin of THIS server, so mlxvlm can reach the analysis-result
-  // callback from outside the venue LAN. When unset, mlxvlm should rely on its
-  // own configured robohack_base (set in its env, like gs-pot does).
-  PUBLIC_SERVER_URL: z.string().url().optional(),
+  // Public origin of THIS server. Required to receive analysis callbacks from
+  // mlxvlm — we send it as `callback_base` in every analyze-async request so
+  // mlxvlm doesn't have to be configured with our URL out of band. Without it
+  // mlxvlm jobs die immediately with "missing callback_base or callback_token".
+  ROBOMOO_URL: z.string().url().optional(),
 
   // Remote dimos agent command endpoint (behind a tunnel, e.g. ngrok). The
   // server forwards browser commands here with DIMOS_AGENT_TOKEN as a bearer.

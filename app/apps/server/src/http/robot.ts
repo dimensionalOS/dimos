@@ -77,11 +77,12 @@ export async function handleRobotFrame(
   });
 
   // Fire-and-forget: kick mlxvlm to analyze this frame (Gemma + Falcon). The
-  // result lands back via POST /api/robot/frame/:id/analysis. Skipped when
-  // MLXVLM_URL is unset so dev/test boots without an analyzer running. Errors
-  // are swallowed — analysis is best-effort and the manual "Analyze" buttons
-  // remain as a retry path.
-  if (env.MLXVLM_URL && env.ROBOT_INGEST_TOKEN) {
+  // result lands back via POST /api/robot/frame/:id/analysis. All three envs
+  // must be set for the gate to open — MLXVLM_URL (where mlxvlm lives),
+  // ROBOT_INGEST_TOKEN (the bearer we sign callbacks with), and ROBOMOO_URL
+  // (our public origin, sent as callback_base). Errors are swallowed —
+  // analysis is best-effort and the manual "Analyze" buttons remain as a retry.
+  if (env.MLXVLM_URL && env.ROBOT_INGEST_TOKEN && env.ROBOMOO_URL) {
     void triggerAnalysis(id, key).catch((e) => {
       console.warn(`[analysis] auto-trigger failed for ${id}:`, e);
     });
@@ -93,15 +94,17 @@ export async function handleRobotFrame(
 // POST to mlxvlm's /api/analyze-async with a presigned image URL + a callback
 // pointing at /api/robot/frame/:id/analysis. mlxvlm runs Gemma + Falcon out of
 // band and posts results back; this fn returns as soon as the queue accepts.
+// All four fields (frame_id, image_url, callback_base, callback_token) are
+// required by mlxvlm — without them the job dies immediately with
+// "missing callback_base or callback_token".
 async function triggerAnalysis(frameId: string, imageKey: string): Promise<void> {
-  if (!env.MLXVLM_URL || !env.ROBOT_INGEST_TOKEN) return;
+  if (!env.MLXVLM_URL || !env.ROBOT_INGEST_TOKEN || !env.ROBOMOO_URL) return;
   // Long TTL — analysis may queue behind other jobs on the Mac.
   const imageUrl = await presignGet(imageKey, 6 * 60 * 60);
-  const callbackBase = env.PUBLIC_SERVER_URL ?? null;
   const body = {
     frame_id: frameId,
     image_url: imageUrl,
-    callback_base: callbackBase,
+    callback_base: env.ROBOMOO_URL,
     callback_token: env.ROBOT_INGEST_TOKEN,
   };
   const r = await fetch(`${env.MLXVLM_URL.replace(/\/$/, "")}/api/analyze-async`, {
@@ -219,6 +222,12 @@ export async function handleRobotFrameAnalysis(
   if (objectRows.length > 0) {
     await db.insert(frameAnalysisObjects).values(objectRows);
   }
+
+  const cropCount = objectRows.filter((r) => r.cropKey !== null).length;
+  const maskCount = objectRows.filter((r) => r.maskKey !== null).length;
+  console.log(
+    `perception callback frame=${frameId} crops=${cropCount} masks=${maskCount}`,
+  );
 
   return Response.json({ id: analysisId, objectCount: objectRows.length });
 }
