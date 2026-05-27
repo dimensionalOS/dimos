@@ -76,6 +76,21 @@ export const scanRunSchema = z.object({
 });
 export type ScanRun = z.infer<typeof scanRunSchema>;
 
+// Cheap headers-only view of every run. Used by the gallery list so it can
+// render a collapsed accordion of all scans without presigning thousands of
+// image URLs every poll. `latestAnalysisAt` doubles as an ETag — when it (or
+// any of the counts) changes for an expanded run, the client knows to refetch
+// that run's full data.
+export const scanRunHeaderSchema = z.object({
+	run: z.string(),
+	capturedAt: z.string(),
+	positionCount: z.number(),
+	imageCount: z.number(),
+	analysisCount: z.number(),
+	latestAnalysisAt: z.string().nullable(),
+});
+export type ScanRunHeader = z.infer<typeof scanRunHeaderSchema>;
+
 // One Falcon-Perception detection inside an analysis. Coordinates are normalized
 // to the source image (xy = center, hw = size — multiply by image w/h to render).
 // `cropUrl` is a presigned PNG of the cropped object; `maskUrl` is a presigned

@@ -24,7 +24,9 @@ import {
 	messageSchema,
 	newId,
 	type ScanRun,
+	type ScanRunHeader,
 	type Splat,
+	scanRunHeaderSchema,
 	scanRunSchema,
 	splatSchema,
 	type Trajectory,
@@ -340,6 +342,64 @@ const framesAnalyses = publicProcedure
 		});
 	});
 
+// Cheap aggregate of every run: counts + timestamps, no per-image rows and no
+// presigned URLs. Fuels the collapsed accordion on /scans — the page polls
+// this every 5s so it must stay O(runs), not O(images). `latestAnalysisAt`
+// doubles as an ETag the client uses to know when to refetch a given run's
+// full details (via `frames.scans({ run })`).
+const framesScansHeaders = publicProcedure
+	.output(z.array(scanRunHeaderSchema))
+	.handler(async ({ context }): Promise<ScanRunHeader[]> => {
+		// One row per run: max(createdAt), distinct positions, total images.
+		// Treating a NULL position as its own bucket (-1) to match groupScans().
+		const headerRows = await context.db
+			.select({
+				run: frames.run,
+				capturedAt: sql<Date>`max(${frames.createdAt})`,
+				imageCount: sql<number>`count(*)::int`,
+				positionCount: sql<number>`count(distinct coalesce(${frames.position}, -1))::int`,
+			})
+			.from(frames)
+			.where(isNotNull(frames.run))
+			.groupBy(frames.run)
+			.orderBy(desc(sql`max(${frames.createdAt})`))
+			.limit(500);
+
+		// Per-run analysis count + most-recent analysis ts (the ETag).
+		const analysisRows = await context.db
+			.select({
+				run: frames.run,
+				analysisCount: sql<number>`count(*)::int`,
+				latestAnalysisAt: sql<Date>`max(${frameAnalyses.createdAt})`,
+			})
+			.from(frameAnalyses)
+			.innerJoin(frames, eq(frameAnalyses.frameId, frames.id))
+			.where(isNotNull(frames.run))
+			.groupBy(frames.run);
+
+		const analysisByRun = new Map(
+			analysisRows
+				.filter((r): r is typeof r & { run: string } => r.run !== null)
+				.map((r) => [r.run, r]),
+		);
+
+		return headerRows
+			.filter((r): r is typeof r & { run: string } => r.run !== null)
+			.map((r) => {
+				const a = analysisByRun.get(r.run);
+				return {
+					run: r.run,
+					capturedAt: r.capturedAt.toISOString(),
+					positionCount: Number(r.positionCount),
+					imageCount: Number(r.imageCount),
+					analysisCount: a ? Number(a.analysisCount) : 0,
+					latestAnalysisAt: a?.latestAnalysisAt
+						? a.latestAnalysisAt.toISOString()
+						: null,
+				};
+			});
+	});
+
 // Room scans grouped run → positions → angle-sorted images. Public; fuels the
 // /scans browse page. Optional `run` narrows to a single scan.
 const framesScans = publicProcedure
@@ -428,6 +488,7 @@ export const appRouter = {
 		list: framesList,
 		embedded: framesEmbedded,
 		scans: framesScans,
+		scansHeaders: framesScansHeaders,
 		analyses: framesAnalyses,
 	},
 	map: { latest: mapLatest },

@@ -1,6 +1,11 @@
 "use client";
 
-import type { FrameAnalysis, ScanImage, ScanRun } from "@robomoo/shared";
+import type {
+	FrameAnalysis,
+	ScanImage,
+	ScanRun,
+	ScanRunHeader,
+} from "@robomoo/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { rpcClient } from "@/lib/orpc";
 
@@ -647,12 +652,107 @@ function FrameAnalysisPanel({
 	);
 }
 
-// Browse robot room scans grouped run → position → angle-sorted images. Each run
-// is a scan; each position is one 360° panorama (~36 photos). Polls every 5s so
-// a scan in progress fills in live. Click a thumbnail for a lightbox.
-export function ScansBrowser() {
-	const [runs, setRuns] = useState<ScanRun[]>([]);
+// Per-run body: fetches the full run on demand and renders positions +
+// thumbnails. Refetches when `etag` changes (driven by the parent's cheap
+// headers poll), so we don't waste presigns on a run nothing's changed about.
+// Thumbnails use loading="lazy" so a 200-image run only requests visible rows.
+function RunDetails({
+	runId,
+	etag,
+	onSelectImage,
+}: {
+	runId: string;
+	etag: string;
+	onSelectImage: (img: ScanImage) => void;
+}) {
+	const [run, setRun] = useState<ScanRun | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	useEffect(() => {
+		let active = true;
+		(async () => {
+			try {
+				const next = await rpcClient.frames.scans({ run: runId });
+				if (active) {
+					setRun(next[0] ?? null);
+					setError(null);
+				}
+			} catch (e) {
+				if (active) setError(e instanceof Error ? e.message : "failed to load");
+			}
+		})();
+		return () => {
+			active = false;
+		};
+	}, [runId, etag]);
+
+	if (error) return <p className="text-destructive text-xs px-3 pb-3">{error}</p>;
+	if (!run) {
+		return <p className="text-muted-foreground text-xs px-3 pb-3">Loading…</p>;
+	}
+
+	return (
+		<div className="flex flex-col gap-3 px-3 pb-3">
+			<div className="flex flex-wrap items-center gap-2">
+				<AnalyzeRoomButton images={run.positions.flatMap((p) => p.images)} />
+				<BuildSplatButton runId={run.run} />
+			</div>
+
+			{run.positions.map((pos) => (
+				<div className="flex flex-col gap-1" key={`${run.run}-${pos.position}`}>
+					<span className="text-muted-foreground text-xs">
+						Position {pos.position ?? "—"}
+						{pos.poseX !== null && pos.poseY !== null
+							? ` · (${pos.poseX.toFixed(2)}, ${pos.poseY.toFixed(2)})`
+							: ""}{" "}
+						· {pos.images.length} images
+					</span>
+					<div className="flex gap-2 overflow-x-auto pb-2">
+						{pos.images.map((img) => (
+							<button
+								className="relative shrink-0 cursor-zoom-in"
+								key={img.id}
+								onClick={() => onSelectImage(img)}
+								type="button"
+							>
+								{/* biome-ignore lint/performance/noImgElement: presigned URLs rotate; plain img is simplest */}
+								<img
+									alt={`angle ${img.angle ?? "?"}`}
+									className="h-24 w-32 rounded border object-cover transition-opacity hover:opacity-90"
+									decoding="async"
+									loading="lazy"
+									src={img.url}
+								/>
+								<span className="absolute right-0 bottom-0 bg-black/60 px-1 text-[10px] text-white">
+									{img.angle ?? "?"}°
+								</span>
+								{img.analysisCount > 0 ? (
+									<span
+										className="absolute top-1 right-1 h-2 w-2 rounded-full bg-emerald-400 shadow ring-1 ring-emerald-900/40"
+										title={`${img.analysisCount} analysis(es)`}
+									/>
+								) : null}
+							</button>
+						))}
+					</div>
+				</div>
+			))}
+		</div>
+	);
+}
+
+// Browse robot room scans as a collapsed accordion. The list is driven by a
+// cheap headers-only poll (frames.scansHeaders) so the page stays fast even
+// with hundreds of scans and thousands of frames. Click a row to expand it —
+// only then does the full run (with presigned image URLs) get fetched. The
+// newest run auto-expands on first sight so a fresh scan is immediately
+// visible without an extra click.
+export function ScansBrowser() {
+	const [headers, setHeaders] = useState<ScanRunHeader[]>([]);
+	const [error, setError] = useState<string | null>(null);
+	const [expanded, setExpanded] = useState<Set<string>>(new Set());
+	const [autoExpandedNewest, setAutoExpandedNewest] = useState<string | null>(
+		null,
+	);
 	const [selected, setSelected] = useState<ScanImage | null>(null);
 	// Override of the lightbox image source — driven by the analysis panel's
 	// crop/mask toggle. Reset whenever the lightbox closes or a new image opens
@@ -663,10 +763,20 @@ export function ScansBrowser() {
 		let active = true;
 		const load = async () => {
 			try {
-				const next = await rpcClient.frames.scans();
-				if (active) {
-					setRuns(next);
-					setError(null);
+				const next = await rpcClient.frames.scansHeaders();
+				if (!active) return;
+				setHeaders(next);
+				setError(null);
+				// Auto-expand the newest run whenever it changes (first load OR a
+				// new run just landed). Users can manually collapse if they want.
+				const newest = next[0]?.run;
+				if (newest && newest !== autoExpandedNewest) {
+					setExpanded((prev) => {
+						const nextSet = new Set(prev);
+						nextSet.add(newest);
+						return nextSet;
+					});
+					setAutoExpandedNewest(newest);
 				}
 			} catch (e) {
 				if (active) setError(e instanceof Error ? e.message : "failed to load");
@@ -678,12 +788,26 @@ export function ScansBrowser() {
 			active = false;
 			clearInterval(t);
 		};
+	}, [autoExpandedNewest]);
+
+	const toggle = useCallback((run: string) => {
+		setExpanded((prev) => {
+			const next = new Set(prev);
+			if (next.has(run)) next.delete(run);
+			else next.add(run);
+			return next;
+		});
+	}, []);
+
+	const handleSelectImage = useCallback((img: ScanImage) => {
+		setLightboxOverride(null);
+		setSelected(img);
 	}, []);
 
 	if (error) {
 		return <p className="text-destructive text-sm">Error: {error}</p>;
 	}
-	if (runs.length === 0) {
+	if (headers.length === 0) {
 		return (
 			<p className="text-muted-foreground text-sm">
 				No scans yet. Ask the robot to <code>room_scan</code>, or fetch{" "}
@@ -694,70 +818,54 @@ export function ScansBrowser() {
 
 	return (
 		<>
-			<div className="flex flex-col gap-8">
-				{runs.map((run) => (
-					<section className="flex flex-col gap-3" key={run.run}>
-						<header className="flex items-start justify-between gap-3">
-							<div className="flex flex-col gap-0.5">
-								<h2 className="font-semibold text-lg">{run.run}</h2>
-								<p className="text-muted-foreground text-xs">
-									{run.positionCount} positions · {run.imageCount} images ·{" "}
-									{new Date(run.capturedAt).toLocaleString()}
-								</p>
-							</div>
-							<div className="flex items-center gap-2">
-								<AnalyzeRoomButton
-									images={run.positions.flatMap((p) => p.images)}
-								/>
-								<BuildSplatButton runId={run.run} />
-							</div>
-						</header>
-
-						{run.positions.map((pos) => (
-							<div
-								className="flex flex-col gap-1"
-								key={`${run.run}-${pos.position}`}
+			<div className="flex flex-col gap-2">
+				{headers.map((h) => {
+					const isOpen = expanded.has(h.run);
+					// Refetch trigger: any of these changing means the run's full data
+					// is stale (new images, new analyses, etc.).
+					const etag = `${h.imageCount}-${h.analysisCount}-${h.latestAnalysisAt ?? ""}`;
+					return (
+						<section
+							className="rounded border bg-card text-card-foreground"
+							key={h.run}
+						>
+							<button
+								className="flex w-full items-start justify-between gap-3 p-3 text-left hover:bg-muted/40"
+								onClick={() => toggle(h.run)}
+								type="button"
 							>
-								<span className="text-muted-foreground text-xs">
-									Position {pos.position ?? "—"}
-									{pos.poseX !== null && pos.poseY !== null
-										? ` · (${pos.poseX.toFixed(2)}, ${pos.poseY.toFixed(2)})`
-										: ""}{" "}
-									· {pos.images.length} images
-								</span>
-								<div className="flex gap-2 overflow-x-auto pb-2">
-									{pos.images.map((img) => (
-										<button
-											className="relative shrink-0 cursor-zoom-in"
-											key={img.id}
-											onClick={() => {
-												setLightboxOverride(null);
-												setSelected(img);
-											}}
-											type="button"
-										>
-											{/* biome-ignore lint/performance/noImgElement: presigned URLs rotate; plain img is simplest */}
-											<img
-												alt={`angle ${img.angle ?? "?"}`}
-												className="h-24 w-32 rounded border object-cover transition-opacity hover:opacity-90"
-												src={img.url}
-											/>
-											<span className="absolute right-0 bottom-0 bg-black/60 px-1 text-[10px] text-white">
-												{img.angle ?? "?"}°
-											</span>
-											{img.analysisCount > 0 ? (
-												<span
-													className="absolute top-1 right-1 h-2 w-2 rounded-full bg-emerald-400 shadow ring-1 ring-emerald-900/40"
-													title={`${img.analysisCount} analysis(es)`}
-												/>
-											) : null}
-										</button>
-									))}
+								<div className="flex flex-col gap-0.5">
+									<h2 className="font-semibold text-base">
+										<span className="mr-1 inline-block w-3 text-muted-foreground">
+											{isOpen ? "▾" : "▸"}
+										</span>
+										{h.run}
+									</h2>
+									<p className="text-muted-foreground text-xs">
+										{h.positionCount} positions · {h.imageCount} images
+										{h.analysisCount > 0 ? (
+											<>
+												{" · "}
+												<span className="text-emerald-600">
+													{h.analysisCount}/{h.imageCount} analyzed
+												</span>
+											</>
+										) : null}
+										{" · "}
+										{new Date(h.capturedAt).toLocaleString()}
+									</p>
 								</div>
-							</div>
-						))}
-					</section>
-				))}
+							</button>
+							{isOpen ? (
+								<RunDetails
+									etag={etag}
+									onSelectImage={handleSelectImage}
+									runId={h.run}
+								/>
+							) : null}
+						</section>
+					);
+				})}
 			</div>
 
 			{selected ? (
