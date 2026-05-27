@@ -31,7 +31,7 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.protocol.rpc.spec import RPCSpec
-from dimos.robot.custom.bbox_selection import BBoxSelectionModule
+from dimos.robot.custom.modules.bbox_selection_module import BBoxSelectionModule
 
 
 class _NoopRPC(RPCSpec):

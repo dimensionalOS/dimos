@@ -17,7 +17,7 @@
 
 all_blueprints = {
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
-    "bbox-distance-follow": "dimos.robot.custom.bbox_distance_follow:bbox_distance_follow",
+    "bbox-distance-follow": "dimos.robot.custom.blueprints.bbox_distance_follow:bbox_distance_follow",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_piper",
@@ -108,7 +108,7 @@ all_blueprints = {
     "unitree-go2-ros": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_ros:unitree_go2_ros",
     "unitree-go2-security": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_security:unitree_go2_security",
     "unitree-go2-spatial": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial:unitree_go2_spatial",
-    "unitree-go2-startup-self-check": "dimos.robot.custom.go2_startup_self_check:unitree_go2_startup_self_check",
+    "unitree-go2-startup-self-check": "dimos.robot.custom.blueprints.go2_startup_self_check:unitree_go2_startup_self_check",
     "unitree-go2-temporal-memory": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_temporal_memory:unitree_go2_temporal_memory",
     "unitree-go2-vlm-stream-test": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_vlm_stream_test:unitree_go2_vlm_stream_test",
     "unitree-go2-webrtc-keyboard-teleop": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_webrtc_keyboard_teleop:unitree_go2_webrtc_keyboard_teleop",
@@ -121,16 +121,17 @@ all_blueprints = {
     "xarm6-planner-only": "dimos.manipulation.blueprints:xarm6_planner_only",
     "xarm7-planner-coordinator": "dimos.manipulation.blueprints:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.manipulation.blueprints:xarm7_planner_coordinator_agent",
-    "yoloe-tracking-test": "dimos.robot.custom.yoloe_tracking:yoloe_tracking_test",
+    "yoloe-keyboard-teleop": "dimos.robot.custom.blueprints.yoloe_keyboard_teleop:yoloe_keyboard_teleop",
+    "yoloe-tracking-test": "dimos.robot.custom.blueprints.yoloe_tracking_test:yoloe_tracking_test",
 }
 
 
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
-    "b-box-distance-behavior-module": "dimos.robot.custom.bbox_distance_follow.BBoxDistanceBehaviorModule",
+    "b-box-distance-behavior-module": "dimos.robot.custom.modules.bbox_distance_behavior_module.BBoxDistanceBehaviorModule",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
-    "b-box-selection-module": "dimos.robot.custom.bbox_selection.BBoxSelectionModule",
+    "b-box-selection-module": "dimos.robot.custom.modules.bbox_selection_module.BBoxSelectionModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
     "camera-module": "dimos.hardware.sensors.camera.module.CameraModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",
@@ -157,7 +158,7 @@ all_modules = {
     "go2-connection": "dimos.robot.unitree.go2.connection.GO2Connection",
     "go2-fleet-connection": "dimos.robot.unitree.go2.fleet_connection.Go2FleetConnection",
     "go2-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2.Go2Memory",
-    "go2-startup-self-check": "dimos.robot.custom.go2_startup_self_check.Go2StartupSelfCheck",
+    "go2-startup-self-check": "dimos.robot.custom.modules.go2_startup_self_check_module.Go2StartupSelfCheck",
     "google-maps-skill-container": "dimos.agents.skills.google_maps_skill_container.GoogleMapsSkillContainer",
     "gps-nav-skill-container": "dimos.agents.skills.gps_nav_skill.GpsNavSkillContainer",
     "grasp-gen-module": "dimos.manipulation.grasping.graspgen_module.GraspGenModule",
@@ -225,6 +226,6 @@ all_modules = {
     "wavefront-frontier-explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector.WavefrontFrontierExplorer",
     "web-input": "dimos.agents.web_human_input.WebInput",
     "websocket-vis-module": "dimos.web.websocket_vis.websocket_vis_module.WebsocketVisModule",
-    "yoloe-tracking-module": "dimos.robot.custom.yoloe_tracking.YoloeTrackingModule",
+    "yoloe-tracking-module": "dimos.robot.custom.modules.yoloe_tracking_module.YoloeTrackingModule",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }

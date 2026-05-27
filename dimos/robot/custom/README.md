@@ -1,5 +1,78 @@
 # Custom Robot Blueprints
 
+## 目录结构
+
+```
+dimos/robot/custom/
+├── modules/                             # 纯业务逻辑，无 blueprint / vis 代码
+│   ├── bbox_selection_module.py         # BBoxSelectionModule, BBoxSelectionConfig
+│   ├── bbox_distance_behavior_module.py # BBoxDistanceBehaviorModule, BBoxDistanceBehaviorConfig
+│   ├── yoloe_tracking_module.py         # YoloeTrackingModule, YoloeTrackingConfig
+│   └── go2_startup_self_check_module.py # Go2StartupSelfCheck, Go2StartupSelfCheckConfig
+├── visualization/                       # Detection2DArray → Rerun 2D overlay 适配
+│   └── detection2d_overlay.py           # detection_array_to_rerun / detections_overlay /
+│                                        # selected_bbox_overlay / yoloe_overlay
+├── blueprints/                          # autoconnect 组装 + rerun config + requirements
+│   ├── bbox_distance_follow.py          # bbox_distance_follow blueprint
+│   ├── yoloe_tracking_test.py           # yoloe_tracking_test blueprint
+│   └── go2_startup_self_check.py        # unitree_go2_startup_self_check blueprint
+└── tests/                               # 纯 pytest 单元测试，无需机器人硬件
+    └── test_bbox_selection_module.py    # BBoxSelectionModule 单元测试
+```
+
+依赖方向：`blueprints/` → `modules/` + `visualization/`；`tests/` → `modules/` only。
+
+## yoloe-keyboard-teleop
+
+`yoloe-keyboard-teleop` 在 `yoloe-tracking-test` 的基础上加入了键盘遥控，让你在模拟器（或真机）上手动驾驶 Go2 的同时实时观察 YOLOE 检测效果。
+
+### 组成
+
+- `unitree_go2_basic`
+- `YoloeTrackingModule.blueprint()`
+- `KeyboardTeleop.blueprint(publish_only_when_active=True)`
+- 专用 Rerun viewer overlay（与 `yoloe-tracking-test` 相同布局）
+
+数据流：
+
+```text
+KeyboardTeleop.cmd_vel ──────────────────────────> GO2Connection.cmd_vel
+unitree_go2_basic.color_image -> YoloeTrackingModule -> /color_image/yoloe_detections -> Rerun overlay
+```
+
+### 模型准备
+
+与 `yoloe-tracking-test` 相同，需预先准备 YOLOE 模型：
+
+```bash
+git lfs pull --include data/.lfs/models_yoloe.tar.gz
+uv run python -c 'from dimos.utils.data import get_data; print(get_data("models_yoloe"))'
+```
+
+### 启动
+
+```bash
+# 模拟器（可实际控制移动）
+dimos --simulation run yoloe-keyboard-teleop
+
+# Replay（检测效果只读，机器人不移动）
+dimos --replay run yoloe-keyboard-teleop
+
+# 真机
+dimos --robot-ip 192.168.123.161 --rerun-open native run yoloe-keyboard-teleop
+```
+
+启动后会弹出一个 pygame 窗口，焦点在该窗口时键盘输入生效：
+
+| 按键 | 动作 |
+|------|------|
+| W / S | 前进 / 后退 |
+| A / D | 左转 / 右转 |
+| Shift | 速度加倍（2×） |
+| Ctrl | 慢速模式（0.5×） |
+| Space | 发布零 Twist（急停） |
+| Esc / Q | 退出键盘窗口 |
+
 ## yoloe-tracking-test
 
 `yoloe-tracking-test` 是一个只用于验证 YOLOE tracking 效果的 Go2 replay blueprint。它不接距离控制、不接 Agent/MCP/skill，只把 Go2 `color_image` 输入到 `YoloeTrackingModule`，并把 YOLOE 的 `Detection2DArray` 发布到 `/color_image/yoloe_detections`。
@@ -188,37 +261,37 @@ CLI 全局参数必须放在 `run` 前面，例如 `--robot-ip`、`--replay`、`
 列出候选：
 
 ```bash
-.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.bbox_distance_follow import BBoxSelectionModule; c=RPCClient.remote(BBoxSelectionModule); print(c.list_candidates()); c.stop_rpc_client()'
+.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.modules.bbox_selection_module import BBoxSelectionModule; c=RPCClient.remote(BBoxSelectionModule); print(c.list_candidates()); c.stop_rpc_client()'
 ```
 
 选择第 0 个 bbox：
 
 ```bash
-.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.bbox_distance_follow import BBoxSelectionModule; c=RPCClient.remote(BBoxSelectionModule); print(c.select_bbox(index=0)); c.stop_rpc_client()'
+.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.modules.bbox_selection_module import BBoxSelectionModule; c=RPCClient.remote(BBoxSelectionModule); print(c.select_bbox(index=0)); c.stop_rpc_client()'
 ```
 
 按 id 选择 bbox：
 
 ```bash
-.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.bbox_distance_follow import BBoxSelectionModule; c=RPCClient.remote(BBoxSelectionModule); print(c.select_bbox(id="0")); c.stop_rpc_client()'
+.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.modules.bbox_selection_module import BBoxSelectionModule; c=RPCClient.remote(BBoxSelectionModule); print(c.select_bbox(id="0")); c.stop_rpc_client()'
 ```
 
 清除选择：
 
 ```bash
-.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.bbox_distance_follow import BBoxSelectionModule; c=RPCClient.remote(BBoxSelectionModule); print(c.clear_selection()); c.stop_rpc_client()'
+.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.modules.bbox_selection_module import BBoxSelectionModule; c=RPCClient.remote(BBoxSelectionModule); print(c.clear_selection()); c.stop_rpc_client()'
 ```
 
 启动距离行为：
 
 ```bash
-.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.bbox_distance_follow import BBoxDistanceBehaviorModule; c=RPCClient.remote(BBoxDistanceBehaviorModule); print(c.start_bbox_distance_behavior()); c.stop_rpc_client()'
+.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.modules.bbox_distance_behavior_module import BBoxDistanceBehaviorModule; c=RPCClient.remote(BBoxDistanceBehaviorModule); print(c.start_bbox_distance_behavior()); c.stop_rpc_client()'
 ```
 
 停止距离行为：
 
 ```bash
-.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.bbox_distance_follow import BBoxDistanceBehaviorModule; c=RPCClient.remote(BBoxDistanceBehaviorModule); print(c.stop_bbox_distance_behavior()); c.stop_rpc_client()'
+.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.modules.bbox_distance_behavior_module import BBoxDistanceBehaviorModule; c=RPCClient.remote(BBoxDistanceBehaviorModule); print(c.stop_bbox_distance_behavior()); c.stop_rpc_client()'
 ```
 
 ### Viewer 点击选择
