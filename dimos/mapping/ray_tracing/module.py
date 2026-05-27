@@ -53,6 +53,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     lidar: In[PointCloud2]
     odometry: In[Odometry]
     global_map: Out[PointCloud2]
+    local_map: Out[PointCloud2]
 
 
 # Verify protocol port compliance (mypy will flag missing ports)
