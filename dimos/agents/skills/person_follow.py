@@ -74,6 +74,7 @@ class PersonFollowSkillContainer(Module):
     _frequency: float = 20.0  # Hz - control loop frequency
     _max_lost_frames: int = 15  # number of frames to wait before declaring person lost
     _lost_timeout: float = 5.0  # seconds without a re-detection before declaring person lost
+    _redetect_period: float = 0.8  # seconds between VL re-anchors in "redetect" mode
     _patrolling_module_spec: PatrollingModuleSpec
 
     def __init__(self, **kwargs: Any) -> None:
@@ -359,33 +360,118 @@ class PersonFollowSkillContainer(Module):
 
         return message
 
-    def _follow_loop_redetect(self, query: str) -> None:
-        # Detection latency (~1-2s/call) paces the loop; we hold the last command
-        # between detections and only give up after _lost_timeout without a hit.
-        last_detection_time = time.monotonic()
+    @staticmethod
+    def _create_tracker() -> Any:
+        """Best available OpenCV single-object tracker, or None.
 
-        while not self._should_stop.is_set():
-            with self._lock:
-                latest_image = self._latest_image
+        Prefers CSRT > KCF > MIL and checks both the main and legacy namespaces,
+        so it auto-upgrades to CSRT where opencv-contrib is installed and falls
+        back to MIL (present in base OpenCV) otherwise.
+        """
+        import cv2
 
-            if latest_image is None:
-                time.sleep(0.1)
+        for ns in (cv2, getattr(cv2, "legacy", None)):
+            if ns is None:
                 continue
+            for name in ("TrackerCSRT_create", "TrackerKCF_create", "TrackerMIL_create"):
+                ctor = getattr(ns, name, None)
+                if ctor is not None:
+                    return ctor()
+        return None
 
-            bbox = get_object_bbox_from_image(self._vl_model, latest_image, query)
+    def _follow_loop_redetect(self, query: str) -> None:
+        """Follow without a GPU tracker (e.g. on a Mac).
 
-            if bbox is None:
-                if time.monotonic() - last_detection_time > self._lost_timeout:
+        A single Gemini detection takes ~1-2s, so running it inline would cap the
+        control loop at ~0.5-1 Hz and the robot would act on stale commands. Instead
+        a background thread re-detects every ``_redetect_period`` seconds to *anchor*
+        a cheap local OpenCV tracker, while this control loop runs at ``_frequency``
+        Hz: each cycle it updates the tracker locally and publishes a fresh twist.
+        """
+        det_lock = RLock()
+        # Latest VL detection handed from the detect thread to the control loop.
+        det: dict[str, Any] = {"bbox": None, "image": None, "seq": 0}
+
+        def _detect_worker() -> None:
+            while not self._should_stop.is_set():
+                with self._lock:
+                    img = self._latest_image
+                if img is None:
+                    self._should_stop.wait(0.05)
+                    continue
+                bbox = get_object_bbox_from_image(self._vl_model, img, query)
+                if bbox is not None:
+                    with det_lock:
+                        det["bbox"] = bbox
+                        det["image"] = img
+                        det["seq"] += 1
+                # The call itself already takes ~1-2s; pace re-anchors on top.
+                self._should_stop.wait(self._redetect_period)
+
+        det_thread = Thread(target=_detect_worker, daemon=True, name="follow-redetect")
+        det_thread.start()
+
+        period = 1.0 / self._frequency
+        next_time = time.monotonic()
+        last_good_time = time.monotonic()
+        tracker: Any = None
+        last_seq = -1
+
+        try:
+            while not self._should_stop.is_set():
+                next_time += period
+
+                with self._lock:
+                    latest_image = self._latest_image
+                if latest_image is None:
+                    self._sleep_until(next_time)
+                    continue
+
+                with det_lock:
+                    seq, det_bbox, det_image = det["seq"], det["bbox"], det["image"]
+
+                bbox = None
+                if seq != last_seq and det_bbox is not None:
+                    # Fresh detection: (re)anchor the local tracker on it.
+                    last_seq = seq
+                    tracker = self._create_tracker()
+                    if tracker is not None:
+                        anchor = det_image.data if det_image is not None else latest_image.data
+                        x1, y1, x2, y2 = det_bbox
+                        try:
+                            tracker.init(anchor, (int(x1), int(y1), int(x2 - x1), int(y2 - y1)))
+                        except Exception as e:  # noqa: BLE001 — tracker init is best-effort
+                            logger.warning("tracker init failed, detection-only: %s", e)
+                            tracker = None
+                    bbox = det_bbox
+                    last_good_time = time.monotonic()
+                elif tracker is not None:
+                    # Between detections: cheap local update keeps the loop at rate.
+                    ok, box = tracker.update(latest_image.data)
+                    if ok:
+                        x, y, w, h = box
+                        bbox = (float(x), float(y), float(x + w), float(y + h))
+                        last_good_time = time.monotonic()
+
+                if bbox is not None:
+                    twist = self._visual_servo.compute_twist(bbox, latest_image.width)
+                    self.cmd_vel.publish(twist)
+                elif time.monotonic() - last_good_time > self._lost_timeout:
                     self.cmd_vel.publish(Twist.zero())
                     self._send_stop_reason(query, "lost track of the person")
                     return
-                continue
+                # else: no bbox yet but within timeout — hold the last command.
 
-            last_detection_time = time.monotonic()
-            twist = self._visual_servo.compute_twist(bbox, latest_image.width)
-            self.cmd_vel.publish(twist)
+                self._sleep_until(next_time)
+        finally:
+            det_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         self._send_stop_reason(query, "it was requested to stop following")
+
+    def _sleep_until(self, next_time: float) -> None:
+        sleep_duration = next_time - time.monotonic()
+        if sleep_duration > 0:
+            time.sleep(sleep_duration)
 
     def _stop_following(self) -> None:
         self._should_stop.set()
