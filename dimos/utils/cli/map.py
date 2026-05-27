@@ -115,9 +115,9 @@ def main(
 
     global_map = (
         lidar.tap(collect_path)
-        .transform(VoxelMapTransformer(voxel_size=voxel, device=device))
         .tap(progress(lidar.count(), "reconstructing global map"))
-        .last()
+        .transform(VoxelMapTransformer(voxel_size=voxel, device=device, emit_every=0))
+        .first()
         .data
     )
 
