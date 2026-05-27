@@ -73,6 +73,9 @@ class TakePictureSkill(Module):
         self._pose: PoseStamped | None = None
         self._capture_thread: threading.Thread | None = None
         self._capture_stop = threading.Event()
+        # Outstanding fire-and-forget upload threads from take_picture().
+        self._uploads: list[threading.Thread] = []
+        self._uploads_lock = threading.Lock()
         self.color_image.subscribe(self._on_image)
         self.odom.subscribe(self._on_odom)
 
@@ -82,6 +85,11 @@ class TakePictureSkill(Module):
         thread = getattr(self, "_capture_thread", None)
         if thread is not None and thread.is_alive():
             thread.join(timeout=5.0)
+        with self._uploads_lock:
+            uploads = list(self._uploads)
+        for t in uploads:
+            if t.is_alive():
+                t.join(timeout=5.0)
         super().stop()
 
     def _on_image(self, image: Image) -> None:
@@ -93,10 +101,15 @@ class TakePictureSkill(Module):
     def _configured(self) -> bool:
         return bool(self.config.robomoo_url and self.config.ingest_token)
 
-    # Encode the latest frame and POST it (with pose) to robomoo. Returns the
-    # stored key, or None if there's no frame / encode failed. Raises on HTTP error.
-    def _upload_current(self, note: str = "", label: str = "") -> str | None:
-        frame = getattr(self, "_latest", None)
+    # Encode a given frame and POST it (with pose) to robomoo. Returns the stored
+    # key, or None if there's no frame / encode failed. Raises on HTTP error.
+    def _upload_frame(
+        self,
+        frame: Image | None,
+        pose: PoseStamped | None,
+        note: str = "",
+        label: str = "",
+    ) -> str | None:
         if frame is None:
             return None
         ok, buf = cv2.imencode(".jpg", frame.data)
@@ -108,7 +121,6 @@ class TakePictureSkill(Module):
             data["note"] = note
         if label:
             data["label"] = label
-        pose = getattr(self, "_pose", None)
         if pose is not None:
             data["poseX"] = str(pose.position.x)
             data["poseY"] = str(pose.position.y)
@@ -123,29 +135,50 @@ class TakePictureSkill(Module):
         resp.raise_for_status()
         return resp.json().get("key", "")
 
+    # Thin wrapper used by the explore capture loop: upload the latest frame/pose.
+    def _upload_current(self, note: str = "", label: str = "") -> str | None:
+        return self._upload_frame(
+            getattr(self, "_latest", None),
+            getattr(self, "_pose", None),
+            note=note,
+            label=label,
+        )
+
     @skill
     def take_picture(self, note: str = "") -> SkillResult:
         """Capture a photo from the robot's camera and upload it.
 
         Use whenever the user asks the robot to take or capture a single picture
         or photo of what it currently sees. `note` is an optional short caption
-        to tag the image with (e.g. "kitchen", "plant").
+        to tag the image with (e.g. "kitchen", "plant"). Returns immediately; the
+        encode + upload happen in the background.
         """
-        if getattr(self, "_latest", None) is None:
+        frame = getattr(self, "_latest", None)
+        if frame is None:
             return SkillResult.fail("NO_FRAME", "No camera frame received yet")
         if not self._configured():
             return SkillResult.fail(
                 "NOT_CONFIGURED", "ROBOMOO_URL / ROBOT_INGEST_TOKEN not set"
             )
-        try:
-            key = self._upload_current(note=note, label=note)
-        except Exception as e:  # noqa: BLE001 — surface upload failure to the agent
-            logger.exception("take_picture upload failed")
-            return SkillResult.fail("EXECUTION_FAILED", f"upload failed: {e}")
-        if key is None:
-            return SkillResult.fail("EXECUTION_FAILED", "JPEG encode failed")
-        logger.info("take_picture uploaded frame key=%s", key)
-        return SkillResult.ok(f"Picture taken and uploaded ({key})", key=key)
+
+        # Snapshot the frame + pose now so the background upload sends exactly what
+        # the robot saw at call time, not a later frame.
+        pose = getattr(self, "_pose", None)
+
+        def _bg() -> None:
+            try:
+                key = self._upload_frame(frame, pose, note=note, label=note)
+                logger.info("take_picture uploaded frame key=%s", key)
+            except Exception:  # noqa: BLE001 — fire-and-forget: failures only logged
+                logger.exception("take_picture upload failed")
+
+        t = threading.Thread(target=_bg, daemon=True, name="take-picture-upload")
+        with self._uploads_lock:
+            # Drop finished threads so the list doesn't grow unbounded.
+            self._uploads = [u for u in self._uploads if u.is_alive()]
+            self._uploads.append(t)
+        t.start()
+        return SkillResult.ok("Picture captured; uploading in the background.")
 
     @skill
     def explore_and_capture(
