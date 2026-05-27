@@ -278,6 +278,7 @@ class G1GrootOnnxController:
         single_obs = np.zeros(self._single_obs_dim, dtype=np.float32)
         single_obs[0:3] = command[:3] * G1_GROOT_CMD_SCALE
         single_obs[3] = self._height_cmd
+        single_obs[4:7] = data.sensor("local_linvel_pelvis").data
         single_obs[7:10] = data.qvel[3:6] * self._ang_vel_scale
         single_obs[10:13] = self._quat_rotate_inverse(
             data.qpos[3:7].copy(), np.array([0.0, 0.0, -1.0], dtype=np.float32)
@@ -326,10 +327,19 @@ class G1GrootOnnxController:
                 self._last_action * self._action_scale + G1_GROOT_DEFAULT_ANGLES
             )
 
-        q = data.qpos[7 : 7 + model.nu]
-        dq = data.qvel[6 : 6 + model.nu]
-        kps = np.full(model.nu, 100.0, dtype=np.float32)
-        kds = np.full(model.nu, 0.5, dtype=np.float32)
-        kps[: self._num_actions] = G1_GROOT_KPS
-        kds[: self._num_actions] = G1_GROOT_KDS
-        data.ctrl[:] = (self._target_angles - q) * kps + (0.0 - dq) * kds
+        n_actuators = model.nu
+        if n_actuators > len(self._target_angles):
+            raise ValueError(
+                f"GR00T target angle count ({len(self._target_angles)}) is smaller than "
+                f"MuJoCo actuator count ({n_actuators})"
+            )
+
+        q = data.qpos[7 : 7 + n_actuators]
+        dq = data.qvel[6 : 6 + n_actuators]
+        target_angles = self._target_angles[:n_actuators]
+        kps = np.full(n_actuators, 100.0, dtype=np.float32)
+        kds = np.full(n_actuators, 0.5, dtype=np.float32)
+        action_joints = min(self._num_actions, n_actuators)
+        kps[:action_joints] = G1_GROOT_KPS[:action_joints]
+        kds[:action_joints] = G1_GROOT_KDS[:action_joints]
+        data.ctrl[:] = (target_angles - q) * kps + (0.0 - dq) * kds
