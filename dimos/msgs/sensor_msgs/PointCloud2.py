@@ -373,6 +373,10 @@ class PointCloud2(Timestamped):
         new_pcd = o3d.geometry.PointCloud()
         new_pcd.points = o3d.utility.Vector3dVector(transformed_xyz)
 
+        # Copy colors if available
+        if self.pointcloud.has_colors():
+            new_pcd.colors = self.pointcloud.colors
+
         return PointCloud2(
             pointcloud=new_pcd,
             frame_id=tf.frame_id,
@@ -725,10 +729,7 @@ class PointCloud2(Timestamped):
             point_colors = colors
         else:
             z = points[:, 2]
-
-            # Clip to robust percentiles so a few outliers don't squash the colormap range.
-            z_lo, z_hi = np.percentile(z, [1, 99])
-            class_ids = (np.clip((z - z_lo) / (z_hi - z_lo + 1e-8), 0, 1) * 255).astype(np.uint8)
+            class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
 
         if mode == "points":
             return rr.Points3D(
