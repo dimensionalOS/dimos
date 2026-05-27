@@ -15,9 +15,13 @@
 import asyncio
 from dataclasses import dataclass
 import functools
+import io
+import os
+import tempfile
 import threading
 import time
 from typing import Any, TypeAlias, TypeVar
+import wave
 
 import numpy as np
 from numpy.typing import NDArray
@@ -52,6 +56,15 @@ from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure, callback_to_observable
 
 VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
+
+
+@dataclass
+class AudioMessage:
+    """PCM audio chunk received from the robot mic."""
+
+    data: bytes  # int16 little-endian PCM
+    sample_rate: int
+    channels: int
 
 
 _T = TypeVar("_T", bound=Timestamped)
@@ -404,6 +417,102 @@ class UnitreeWebRTCConnection(Resource):
             self.loop.call_soon_threadsafe(switch_video_channel_off)
 
         return subject.pipe(ops.finally_action(stop))
+
+    @simple_mcache
+    def audio_stream(self) -> Observable[AudioMessage]:
+        """Subscribe to the robot's mic via WebRTC.
+
+        Emits int16 PCM chunks. The Go2's WebRTC audio transceiver is sendrecv;
+        first frame triggers channel activation.
+        """
+        subject: Subject[AudioMessage] = Subject()
+        stop_event = threading.Event()
+
+        async def accept_track(frame: Any) -> None:
+            if stop_event.is_set():
+                return
+            try:
+                arr = frame.to_ndarray()
+                rate = getattr(frame, "sample_rate", 48000)
+                # aiortc returns shape (channels, samples) for planar; assume mono if 1-D.
+                channels = arr.shape[0] if arr.ndim == 2 else 1
+                if np.issubdtype(arr.dtype, np.floating):
+                    arr = np.clip(arr * 32767.0, -32768, 32767).astype(np.int16)
+                elif arr.dtype != np.int16:
+                    arr = arr.astype(np.int16)
+                subject.on_next(
+                    AudioMessage(data=arr.tobytes(), sample_rate=rate, channels=channels)
+                )
+            except Exception:
+                pass
+
+        self.conn.audio.add_track_callback(accept_track)
+
+        def switch_on() -> None:
+            try:
+                self.conn.audio.switchAudioChannel(True)
+            except Exception:
+                pass
+
+        self.loop.call_soon_threadsafe(switch_on)
+
+        def stop() -> None:
+            stop_event.set()
+            try:
+                self.conn.audio.track_callbacks.remove(accept_track)
+            except ValueError:
+                pass
+
+            def switch_off() -> None:
+                try:
+                    self.conn.audio.switchAudioChannel(False)
+                except Exception:
+                    pass
+
+            self.loop.call_soon_threadsafe(switch_off)
+
+        return subject.pipe(ops.finally_action(stop))
+
+    def play_wav_bytes(self, wav: bytes) -> None:
+        """Play a WAV through the Go2 speaker via the megaphone path.
+
+        Fire-and-forget — returns immediately. The Go2 enters megaphone mode
+        for the duration of the clip then exits, so subsequent commands are
+        unaffected.
+        """
+        if not wav:
+            return
+
+        try:
+            with wave.open(io.BytesIO(wav), "rb") as wf:
+                duration = wf.getnframes() / float(wf.getframerate())
+        except (wave.Error, EOFError):
+            duration = 5.0  # unknown format; bail out conservatively
+
+        async def _upload_play_exit() -> None:
+            from unitree_webrtc_connect.webrtc_audiohub import WebRTCAudioHub
+
+            tmp_path: str | None = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fp:
+                    fp.write(wav)
+                    tmp_path = fp.name
+
+                hub = WebRTCAudioHub(self.conn)
+                await hub.upload_megaphone(tmp_path)
+                await hub.enter_megaphone()
+                # Hold megaphone for the clip's duration, plus a small flush margin,
+                # then release so other commands work normally.
+                await asyncio.sleep(duration + 0.5)
+                await hub.exit_megaphone()
+            finally:
+                if tmp_path is not None:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
+        asyncio.run_coroutine_threadsafe(_upload_play_exit(), self.loop)
 
     def get_video_stream(self, fps: int = 30) -> Observable[Image]:
         """Get the video stream from the robot's camera.

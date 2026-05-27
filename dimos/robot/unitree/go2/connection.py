@@ -48,7 +48,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.connection import AudioMessage, UnitreeWebRTCConnection
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
 
 if sys.version_info < (3, 13):
@@ -207,6 +207,8 @@ class GO2Connection(Module, Camera, Pointcloud):
     lidar: Out[PointCloud2]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
+    audio: Out[AudioMessage]
+    audio_in: In[bytes]
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
@@ -245,6 +247,19 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.video_stream().subscribe(onimage))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
+
+        if hasattr(self.connection, "audio_stream"):
+            try:
+                self.register_disposable(
+                    self.connection.audio_stream().subscribe(self.audio.publish)
+                )
+            except Exception as e:
+                logger.warning(f"audio_stream not started: {e}")
+
+        if hasattr(self.connection, "play_wav_bytes"):
+            self.register_disposable(
+                Disposable(self.audio_in.subscribe(self.connection.play_wav_bytes))
+            )
 
         self._camera_info_thread = Thread(
             target=self.publish_camera_info,
@@ -351,6 +366,35 @@ class GO2Connection(Module, Camera, Pointcloud):
             The result of the publish request
         """
         return self.connection.publish_request(topic, data)
+
+    @skill
+    def play_wav(self, wav_path: str) -> str:
+        """Play a WAV file through the robot's speaker (megaphone mode).
+
+        Args:
+            wav_path: Path on the dimos host filesystem. Use `play_wav_b64`
+                instead when the agent runs on a different machine.
+        """
+        if not hasattr(self.connection, "play_wav_bytes"):
+            return "play_wav unavailable on this connection (simulation?)"
+        with open(wav_path, "rb") as f:
+            self.connection.play_wav_bytes(f.read())
+        return f"queued {wav_path} for playback"
+
+    @skill
+    def play_wav_b64(self, wav_b64: str) -> str:
+        """Play a base64-encoded WAV through the robot's speaker.
+
+        Use this from remote MCP clients that don't share the dimos host's
+        filesystem. 44.1 kHz mono WAVs play most reliably.
+        """
+        import base64
+
+        if not hasattr(self.connection, "play_wav_bytes"):
+            return "play_wav unavailable on this connection (simulation?)"
+        wav = base64.b64decode(wav_b64)
+        self.connection.play_wav_bytes(wav)
+        return f"queued {len(wav)} bytes for playback"
 
     @skill
     def observe(self) -> Image | None:
