@@ -127,6 +127,14 @@ const server = Bun.serve({
 	// Dual-stack bind so Railway's private network (gateway →
 	// server.railway.internal) reaches us.
 	hostname: "::",
+	// Splat uploads (up to 256 MB) stream in over slow links and then get
+	// pushed to S3 — well past Bun's 10s default idle timeout, which would
+	// otherwise drop the connection mid-upload and surface as a 502 at the
+	// gateway. 255s is Bun's max.
+	idleTimeout: 255,
+	// Allow the full splat size the ingest handler accepts (Bun defaults to
+	// 128 MB); the handler enforces the real 256 MB limit and returns 413.
+	maxRequestBodySize: 300 * 1024 * 1024,
 	fetch: app.fetch,
 });
 
