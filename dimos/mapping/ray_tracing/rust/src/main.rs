@@ -1,8 +1,10 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::time::Duration;
+
 use ahash::{AHashMap, AHashSet};
-use dimos_module::{run, Input, LcmTransport, Module, Output};
+use dimos_module::{error_throttled, run, warn_throttled, Input, LcmTransport, Module, Output};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -111,7 +113,11 @@ impl RayTracingVoxelMap {
         let points = match extract_xyz(&msg) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("voxel_ray_tracing: bad cloud, dropped: {e}");
+                warn_throttled!(
+                    Duration::from_secs(1),
+                    error = %e,
+                    "Failed to get lidar points, dropped a cloud.",
+                );
                 return;
             }
         };
@@ -137,7 +143,11 @@ impl RayTracingVoxelMap {
             msg.header.stamp,
         );
         if let Err(e) = self.global_map.publish(&cloud).await {
-            eprintln!("voxel_ray_tracing: publish failed: {e}");
+            error_throttled!(
+                Duration::from_secs(1),
+                error = %e,
+                "Updated voxel map failed to publish",
+            );
         }
     }
 }
