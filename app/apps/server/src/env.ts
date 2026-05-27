@@ -27,6 +27,16 @@ const envSchema = z.object({
   // /api/robot/frame. Optional so the server still boots if unset — the ingest
   // endpoint just rejects every request until it's configured.
   ROBOT_INGEST_TOKEN: z.string().optional(),
+
+  // Where mlxvlm is reachable for auto-trigger on frame ingest. Optional —
+  // unset disables auto-analysis (manual buttons still work via the web's
+  // NEXT_PUBLIC_MLXVLM_URL). E.g. https://my-mac.ngrok-free.dev
+  MLXVLM_URL: z.string().url().optional(),
+
+  // Public origin of THIS server, so mlxvlm can reach the analysis-result
+  // callback from outside the venue LAN. When unset, mlxvlm should rely on its
+  // own configured robohack_base (set in its env, like gs-pot does).
+  PUBLIC_SERVER_URL: z.string().url().optional(),
 });
 
 export const env = envSchema.parse(Bun.env);

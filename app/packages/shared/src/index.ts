@@ -53,6 +53,9 @@ export const scanImageSchema = z.object({
 	id: z.string(),
 	url: z.string(),
 	angle: z.number().nullable(),
+	// Count of analyses on this frame (latest is fetched via frames.analyses).
+	// Lets the gallery render a "analyzed" dot without pulling full payloads.
+	analysisCount: z.number().default(0),
 });
 export type ScanImage = z.infer<typeof scanImageSchema>;
 
@@ -72,6 +75,43 @@ export const scanRunSchema = z.object({
 	positions: z.array(scanPositionSchema),
 });
 export type ScanRun = z.infer<typeof scanRunSchema>;
+
+// One Falcon-Perception detection inside an analysis. Coordinates are normalized
+// to the source image (xy = center, hw = size — multiply by image w/h to render).
+// `cropUrl` is a presigned PNG of the cropped object; `maskUrl` is a presigned
+// single-object alpha mask PNG. Either can be null when mlxvlm couldn't write a
+// usable image (e.g. degenerate bbox, no mask returned).
+export const frameAnalysisObjectSchema = z.object({
+	id: z.string(),
+	idx: z.number(),
+	query: z.string().nullable(),
+	label: z.string().nullable(),
+	xyNormX: z.number().nullable(),
+	xyNormY: z.number().nullable(),
+	hwNormW: z.number().nullable(),
+	hwNormH: z.number().nullable(),
+	maskArea: z.number().nullable(),
+	cropUrl: z.string().nullable(),
+	maskUrl: z.string().nullable(),
+});
+export type FrameAnalysisObject = z.infer<typeof frameAnalysisObjectSchema>;
+
+// A completed VLM analysis of one frame. `description` is Gemma's scene
+// paragraph; `summary` is Gemma's final summary combining scene + Falcon counts;
+// `texts` is an array of auxiliary strings worth keeping (initial raw JSON,
+// per-query Falcon `raw` lines, etc.). `objects` is the per-detection list with
+// presigned crop/mask URLs.
+export const frameAnalysisSchema = z.object({
+	id: z.string(),
+	frameId: z.string(),
+	model: z.string().nullable(),
+	description: z.string().nullable(),
+	summary: z.string().nullable(),
+	texts: z.array(z.string()),
+	objects: z.array(frameAnalysisObjectSchema),
+	createdAt: z.string(),
+});
+export type FrameAnalysis = z.infer<typeof frameAnalysisSchema>;
 
 // A 3D Gaussian splat as returned to the web client. `splatUrl` is a freshly
 // presigned GET URL (long TTL — the files are big and slow to stream); the raw

@@ -43,6 +43,13 @@
       "when": 1779873871309,
       "tag": "0005_known_magdalene",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779887915411,
+      "tag": "0006_amazing_magik",
+      "breakpoints": true
     }
   ]
 }

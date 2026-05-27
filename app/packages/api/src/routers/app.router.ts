@@ -1,6 +1,8 @@
 import type { RouterClient } from "@orpc/server";
 import {
 	type Database,
+	frameAnalyses,
+	frameAnalysisObjects,
 	frames,
 	maps,
 	messages,
@@ -11,6 +13,9 @@ import {
 import {
 	createMessageInput,
 	type Frame,
+	type FrameAnalysis,
+	type FrameAnalysisObject,
+	frameAnalysisSchema,
 	frameSchema,
 	type MapSnapshot,
 	type Message,
@@ -24,7 +29,7 @@ import {
 	type Trajectory,
 	trajectorySchema,
 } from "@robomoo/shared";
-import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure, publicProcedure } from "../api";
 
@@ -59,6 +64,22 @@ export async function groupScans(
 			urls.set(r.id, await presignGet(r.imageKey, expiresIn));
 		}),
 	);
+
+	// Per-frame analysis count (latest is fetched separately via frames.analyses).
+	// One grouped query — keeps the per-row work O(1).
+	const frameIds = rows.map((r) => r.id);
+	const analysisCounts = new Map<string, number>();
+	if (frameIds.length > 0) {
+		const countRows = await db
+			.select({
+				frameId: frameAnalyses.frameId,
+				count: sql<number>`count(*)::int`,
+			})
+			.from(frameAnalyses)
+			.where(inArray(frameAnalyses.frameId, frameIds))
+			.groupBy(frameAnalyses.frameId);
+		for (const c of countRows) analysisCounts.set(c.frameId, Number(c.count));
+	}
 
 	// run → (position → accumulator). Maps preserve insertion order, and rows are
 	// already sorted by run/position/angle, so the nested arrays come out ordered.
@@ -98,6 +119,7 @@ export async function groupScans(
 			id: r.id,
 			url: urls.get(r.id) ?? "",
 			angle: r.angle,
+			analysisCount: analysisCounts.get(r.id) ?? 0,
 		});
 	}
 
@@ -224,6 +246,99 @@ const framesEmbedded = publicProcedure
 		);
 	});
 
+// All VLM analyses for the given frame ids (latest-first), with presigned
+// crop/mask URLs per detection. Web calls this on demand (only when a lightbox
+// opens or a run is expanded with analyses panel), so the gallery list payload
+// stays small. Bounded to 50 frame ids per call to keep the join tractable.
+const framesAnalyses = publicProcedure
+	.input(z.object({ frameIds: z.array(z.string()).min(1).max(50) }))
+	.output(z.array(frameAnalysisSchema))
+	.handler(async ({ context, input }): Promise<FrameAnalysis[]> => {
+		const analyses = await context.db
+			.select()
+			.from(frameAnalyses)
+			.where(inArray(frameAnalyses.frameId, input.frameIds))
+			.orderBy(desc(frameAnalyses.createdAt))
+			.limit(500);
+
+		if (analyses.length === 0) return [];
+
+		const analysisIds = analyses.map((a) => a.id);
+		const objectRows = await context.db
+			.select()
+			.from(frameAnalysisObjects)
+			.where(inArray(frameAnalysisObjects.analysisId, analysisIds))
+			.orderBy(asc(frameAnalysisObjects.idx));
+
+		// Presign every crop/mask URL up front, in parallel.
+		const presignedCrops = new Map<string, string>();
+		const presignedMasks = new Map<string, string>();
+		await Promise.all(
+			objectRows.flatMap((o) => {
+				const tasks: Promise<void>[] = [];
+				if (o.cropKey) {
+					tasks.push(
+						context
+							.presignGet(o.cropKey)
+							.then((u) => void presignedCrops.set(o.id, u)),
+					);
+				}
+				if (o.maskKey) {
+					tasks.push(
+						context
+							.presignGet(o.maskKey)
+							.then((u) => void presignedMasks.set(o.id, u)),
+					);
+				}
+				return tasks;
+			}),
+		);
+
+		const objectsByAnalysis = new Map<string, FrameAnalysisObject[]>();
+		for (const o of objectRows) {
+			const list = objectsByAnalysis.get(o.analysisId) ?? [];
+			list.push({
+				id: o.id,
+				idx: o.idx,
+				query: o.query,
+				label: o.label,
+				xyNormX: o.xyNormX,
+				xyNormY: o.xyNormY,
+				hwNormW: o.hwNormW,
+				hwNormH: o.hwNormH,
+				maskArea: o.maskArea,
+				cropUrl: o.cropKey ? (presignedCrops.get(o.id) ?? null) : null,
+				maskUrl: o.maskKey ? (presignedMasks.get(o.id) ?? null) : null,
+			});
+			objectsByAnalysis.set(o.analysisId, list);
+		}
+
+		return analyses.map((a) => {
+			let texts: string[] = [];
+			if (a.texts) {
+				try {
+					const parsed = JSON.parse(a.texts);
+					if (Array.isArray(parsed)) {
+						texts = parsed.filter((t): t is string => typeof t === "string");
+					}
+				} catch {
+					// Stored value isn't valid JSON — treat as a single text line.
+					texts = [a.texts];
+				}
+			}
+			return {
+				id: a.id,
+				frameId: a.frameId,
+				model: a.model,
+				description: a.description,
+				summary: a.summary,
+				texts,
+				objects: objectsByAnalysis.get(a.id) ?? [],
+				createdAt: a.createdAt.toISOString(),
+			};
+		});
+	});
+
 // Room scans grouped run → positions → angle-sorted images. Public; fuels the
 // /scans browse page. Optional `run` narrows to a single scan.
 const framesScans = publicProcedure
@@ -297,7 +412,12 @@ const splatsList = publicProcedure
 
 export const appRouter = {
 	messages: { list, add },
-	frames: { list: framesList, embedded: framesEmbedded, scans: framesScans },
+	frames: {
+		list: framesList,
+		embedded: framesEmbedded,
+		scans: framesScans,
+		analyses: framesAnalyses,
+	},
 	map: { latest: mapLatest },
 	trajectory: { latest: trajectoryLatest },
 	splats: { list: splatsList },

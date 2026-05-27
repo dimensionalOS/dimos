@@ -1,11 +1,23 @@
-import { type Database, frames, maps, splats, trajectories } from "@robomoo/db";
+import {
+  type Database,
+  frameAnalyses,
+  frameAnalysisObjects,
+  frames,
+  maps,
+  splats,
+  trajectories,
+} from "@robomoo/db";
 import { newId } from "@robomoo/shared";
+import { eq } from "drizzle-orm";
 import { env } from "../env";
-import { writeImage, writeObject } from "../storage/bucket";
+import { presignGet, writeImage, writeObject } from "../storage/bucket";
 
 const MAX_BYTES = 8 * 1024 * 1024; // 8 MB
 const MAX_SPLAT_BYTES = 256 * 1024 * 1024; // 256 MB — splats are large
 const SPLAT_EXTS = new Set(["ply", "spz", "splat", "ksplat", "sog"]);
+// Per-detection crop/mask PNGs — small (one object each), but a frame can hold
+// many. The whole analysis multipart is bounded by Bun's maxRequestBodySize.
+const MAX_DETECTION_BYTES = 4 * 1024 * 1024; // 4 MB per crop/mask file
 
 function authed(req: Request): boolean {
   const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
@@ -64,7 +76,212 @@ export async function handleRobotFrame(
     angle: num(form.get("angle")),
   });
 
+  // Fire-and-forget: kick mlxvlm to analyze this frame (Gemma + Falcon). The
+  // result lands back via POST /api/robot/frame/:id/analysis. Skipped when
+  // MLXVLM_URL is unset so dev/test boots without an analyzer running. Errors
+  // are swallowed — analysis is best-effort and the manual "Analyze" buttons
+  // remain as a retry path.
+  if (env.MLXVLM_URL && env.ROBOT_INGEST_TOKEN) {
+    void triggerAnalysis(id, key).catch((e) => {
+      console.warn(`[analysis] auto-trigger failed for ${id}:`, e);
+    });
+  }
+
   return Response.json({ key });
+}
+
+// POST to mlxvlm's /api/analyze-async with a presigned image URL + a callback
+// pointing at /api/robot/frame/:id/analysis. mlxvlm runs Gemma + Falcon out of
+// band and posts results back; this fn returns as soon as the queue accepts.
+async function triggerAnalysis(frameId: string, imageKey: string): Promise<void> {
+  if (!env.MLXVLM_URL || !env.ROBOT_INGEST_TOKEN) return;
+  // Long TTL — analysis may queue behind other jobs on the Mac.
+  const imageUrl = await presignGet(imageKey, 6 * 60 * 60);
+  const callbackBase = env.PUBLIC_SERVER_URL ?? null;
+  const body = {
+    frame_id: frameId,
+    image_url: imageUrl,
+    callback_base: callbackBase,
+    callback_token: env.ROBOT_INGEST_TOKEN,
+  };
+  const r = await fetch(`${env.MLXVLM_URL.replace(/\/$/, "")}/api/analyze-async`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      // Bypass ngrok-free's HTML interstitial when mlxvlm is exposed through ngrok.
+      "ngrok-skip-browser-warning": "true",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    throw new Error(`mlxvlm /api/analyze-async ${r.status}: ${text}`);
+  }
+}
+
+// Token-guarded analysis-result callback. mlxvlm POSTs this after running
+// Gemma + Falcon on a previously-ingested frame. Multipart shape:
+//   result : JSON string — { model, description, summary, texts[], objects[] }
+//            where each object is { query, label, xy_norm:{x,y}, hw_norm:{w,h},
+//            mask_area } — coords already normalized to the frame.
+//   crop_<i> : optional PNG of the cropped object (i = index into objects[])
+//   mask_<i> : optional single-object alpha mask PNG (i = index into objects[])
+// Files are written to s3 and their keys persisted; objects without an
+// uploaded crop/mask just store null keys.
+export async function handleRobotFrameAnalysis(
+  req: Request,
+  db: Database,
+  frameId: string,
+): Promise<Response> {
+  if (!authed(req)) return new Response("unauthorized", { status: 401 });
+
+  // Verify the frame exists so a typo'd id doesn't orphan rows.
+  const [frame] = await db
+    .select({ id: frames.id })
+    .from(frames)
+    .where(eq(frames.id, frameId))
+    .limit(1);
+  if (!frame) return new Response("unknown frame", { status: 404 });
+
+  const form = await req.formData().catch(() => null);
+  if (!form) return new Response("expected multipart form-data", { status: 400 });
+  const resultField = form.get("result");
+  if (typeof resultField !== "string") {
+    return new Response("missing 'result' JSON field", { status: 400 });
+  }
+
+  let parsed: AnalysisPayload;
+  try {
+    parsed = parseAnalysisPayload(JSON.parse(resultField));
+  } catch (e) {
+    return new Response(
+      `invalid 'result' JSON: ${e instanceof Error ? e.message : "parse error"}`,
+      { status: 400 },
+    );
+  }
+
+  const analysisId = newId("an");
+  await db.insert(frameAnalyses).values({
+    id: analysisId,
+    frameId,
+    model: parsed.model,
+    description: parsed.description,
+    summary: parsed.summary,
+    texts: JSON.stringify(parsed.texts),
+  });
+
+  // Upload crop_<i> / mask_<i> files first (parallel), then insert object rows.
+  const objectRows = await Promise.all(
+    parsed.objects.map(async (obj, i) => {
+      const cropFile = form.get(`crop_${i}`);
+      const maskFile = form.get(`mask_${i}`);
+      let cropKey: string | null = null;
+      let maskKey: string | null = null;
+      if (cropFile instanceof File && cropFile.size > 0) {
+        if (cropFile.size > MAX_DETECTION_BYTES) {
+          throw new Error(`crop_${i} too large (max 4MB)`);
+        }
+        cropKey = `analyses/${analysisId}/crop_${i}.png`;
+        await writeImage(
+          cropKey,
+          await cropFile.arrayBuffer(),
+          cropFile.type || "image/png",
+        );
+      }
+      if (maskFile instanceof File && maskFile.size > 0) {
+        if (maskFile.size > MAX_DETECTION_BYTES) {
+          throw new Error(`mask_${i} too large (max 4MB)`);
+        }
+        maskKey = `analyses/${analysisId}/mask_${i}.png`;
+        await writeImage(
+          maskKey,
+          await maskFile.arrayBuffer(),
+          maskFile.type || "image/png",
+        );
+      }
+      return {
+        id: newId("ano"),
+        analysisId,
+        idx: i,
+        query: obj.query,
+        label: obj.label,
+        xyNormX: obj.xyNormX,
+        xyNormY: obj.xyNormY,
+        hwNormW: obj.hwNormW,
+        hwNormH: obj.hwNormH,
+        maskArea: obj.maskArea,
+        cropKey,
+        maskKey,
+      };
+    }),
+  );
+
+  if (objectRows.length > 0) {
+    await db.insert(frameAnalysisObjects).values(objectRows);
+  }
+
+  return Response.json({ id: analysisId, objectCount: objectRows.length });
+}
+
+interface AnalysisObjectInput {
+  query: string | null;
+  label: string | null;
+  xyNormX: number | null;
+  xyNormY: number | null;
+  hwNormW: number | null;
+  hwNormH: number | null;
+  maskArea: number | null;
+}
+
+interface AnalysisPayload {
+  model: string | null;
+  description: string | null;
+  summary: string | null;
+  texts: string[];
+  objects: AnalysisObjectInput[];
+}
+
+// Tolerant parser — mlxvlm's existing shape uses {xy:{x,y}, hw:{w,h}}; we also
+// accept {xy_norm, hw_norm} or flat {x,y,w,h} so the callback contract is easy
+// to satisfy without forcing a schema migration on the analyzer.
+function parseAnalysisPayload(raw: unknown): AnalysisPayload {
+  if (!raw || typeof raw !== "object") throw new Error("not an object");
+  const r = raw as Record<string, unknown>;
+  const texts = Array.isArray(r.texts)
+    ? r.texts.filter((t): t is string => typeof t === "string")
+    : [];
+  const objectsRaw = Array.isArray(r.objects) ? r.objects : [];
+  const objects: AnalysisObjectInput[] = objectsRaw.map((o, i) => {
+    if (!o || typeof o !== "object") throw new Error(`objects[${i}] not an object`);
+    const x = o as Record<string, unknown>;
+    const xy = (x.xy_norm ?? x.xy ?? {}) as Record<string, unknown>;
+    const hw = (x.hw_norm ?? x.hw ?? {}) as Record<string, unknown>;
+    return {
+      query: typeof x.query === "string" ? x.query : null,
+      label: typeof x.label === "string" ? x.label : null,
+      xyNormX: numOr(xy.x ?? x.x),
+      xyNormY: numOr(xy.y ?? x.y),
+      hwNormW: numOr(hw.w ?? x.w),
+      hwNormH: numOr(hw.h ?? x.h),
+      maskArea: numOr(x.mask_area),
+    };
+  });
+  return {
+    model: typeof r.model === "string" ? r.model : null,
+    description: typeof r.description === "string" ? r.description : null,
+    summary: typeof r.summary === "string" ? r.summary : null,
+    texts,
+    objects,
+  };
+}
+
+function numOr(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
 }
 
 // Optional CLIP vector sent as a JSON-encoded number[] form field. Anything
