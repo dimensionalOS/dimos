@@ -137,16 +137,21 @@ impl RayTracingVoxelMap {
         }
 
         let inv = 1.0_f32 / voxel_size;
+        let half = voxel_size * 0.5;
         let mut live: AHashSet<VoxelKey> = AHashSet::with_capacity(points.len());
         let mut z_min = f32::INFINITY;
         let mut z_max = f32::NEG_INFINITY;
         let mut r_xy_max_sq = 0.0_f32;
         for &(x, y, z) in &points {
-            live.insert(world_to_voxel(x, y, z, inv));
-            z_min = z_min.min(z);
-            z_max = z_max.max(z);
-            let dx = x - origin.0;
-            let dy = y - origin.1;
+            let key = world_to_voxel(x, y, z, inv);
+            live.insert(key);
+            let cx = key.0 as f32 * voxel_size + half;
+            let cy = key.1 as f32 * voxel_size + half;
+            let cz = key.2 as f32 * voxel_size + half;
+            z_min = z_min.min(cz);
+            z_max = z_max.max(cz);
+            let dx = cx - origin.0;
+            let dy = cy - origin.1;
             r_xy_max_sq = r_xy_max_sq.max(dx * dx + dy * dy);
         }
         let cylinder = LocalBounds {
