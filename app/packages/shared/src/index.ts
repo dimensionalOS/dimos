@@ -3,26 +3,26 @@ import { z } from "zod";
 // Short, prefixed, sortable-ish id. Avoids an extra dependency while keeping
 // human-readable ids (e.g. "msg_lqf3k2a9z1"). Good enough for the sample.
 export function newId(prefix: string): string {
-  const rand = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
-  return `${prefix}_${rand}`;
+	const rand = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+	return `${prefix}_${rand}`;
 }
 
 // A message as the API returns it to the web client. `imageUrl` is a freshly
 // presigned GET URL (or null) — the raw S3 key never leaves the server.
 export const messageSchema = z.object({
-  id: z.string(),
-  body: z.string(),
-  imageUrl: z.string().nullable(),
-  authorName: z.string(),
-  createdAt: z.string(),
+	id: z.string(),
+	body: z.string(),
+	imageUrl: z.string().nullable(),
+	authorName: z.string(),
+	createdAt: z.string(),
 });
 export type Message = z.infer<typeof messageSchema>;
 
 // Input for creating a message. `imageKey` is the key returned by the
 // /api/upload/image endpoint after the file lands in the bucket.
 export const createMessageInput = z.object({
-  body: z.string().min(1).max(500),
-  imageKey: z.string().nullable().default(null),
+	body: z.string().min(1).max(500),
+	imageKey: z.string().nullable().default(null),
 });
 export type CreateMessageInput = z.infer<typeof createMessageInput>;
 
@@ -31,29 +31,58 @@ export type CreateMessageInput = z.infer<typeof createMessageInput>;
 // are the robot's world position when captured (for placing a pin on the map),
 // `label` is what was detected/captured (e.g. "plant").
 export const frameSchema = z.object({
-  id: z.string(),
-  imageUrl: z.string(),
-  note: z.string().nullable(),
-  label: z.string().nullable(),
-  poseX: z.number().nullable(),
-  poseY: z.number().nullable(),
-  // CLIP image vector (512-d, normalized) — present only on embedded frames,
-  // used by in-browser semantic search. Omitted from the plain gallery list.
-  embedding: z.array(z.number()).nullable(),
-  createdAt: z.string(),
+	id: z.string(),
+	imageUrl: z.string(),
+	note: z.string().nullable(),
+	label: z.string().nullable(),
+	poseX: z.number().nullable(),
+	poseY: z.number().nullable(),
+	// CLIP image vector (512-d, normalized) — present only on embedded frames,
+	// used by in-browser semantic search. Omitted from the plain gallery list.
+	embedding: z.array(z.number()).nullable(),
+	createdAt: z.string(),
 });
 export type Frame = z.infer<typeof frameSchema>;
+
+// A room scan grouped for VR/3D reconstruction. The robot's room_scan sweep tags
+// each frame with a `run` (one scan), a `position` (one stop within the run) and
+// an `angle` (heading in degrees within that stop's 360° panorama). These schemas
+// fold the flat frames table into run → positions → images (angle-sorted), with
+// freshly presigned image URLs — the raw S3 key never leaves the server.
+export const scanImageSchema = z.object({
+	id: z.string(),
+	url: z.string(),
+	angle: z.number().nullable(),
+});
+export type ScanImage = z.infer<typeof scanImageSchema>;
+
+export const scanPositionSchema = z.object({
+	position: z.number().nullable(),
+	poseX: z.number().nullable(),
+	poseY: z.number().nullable(),
+	images: z.array(scanImageSchema),
+});
+export type ScanPosition = z.infer<typeof scanPositionSchema>;
+
+export const scanRunSchema = z.object({
+	run: z.string(),
+	capturedAt: z.string(),
+	positionCount: z.number(),
+	imageCount: z.number(),
+	positions: z.array(scanPositionSchema),
+});
+export type ScanRun = z.infer<typeof scanRunSchema>;
 
 // A 3D Gaussian splat as returned to the web client. `splatUrl` is a freshly
 // presigned GET URL (long TTL — the files are big and slow to stream); the raw
 // S3 key never leaves the server. `format` is the file extension so the viewer
 // knows what it's loading (spz, ply, splat, ksplat, sog).
 export const splatSchema = z.object({
-  id: z.string(),
-  splatUrl: z.string(),
-  name: z.string().nullable(),
-  format: z.string(),
-  createdAt: z.string(),
+	id: z.string(),
+	splatUrl: z.string(),
+	name: z.string().nullable(),
+	format: z.string(),
+	createdAt: z.string(),
 });
 export type Splat = z.infer<typeof splatSchema>;
 
@@ -64,13 +93,13 @@ export type Splat = z.infer<typeof splatSchema>;
 // colormap. `resolution` (m/cell) + `origin` place world coordinates onto the
 // grid: col = (x - originX) / resolution, row = (y - originY) / resolution.
 export const mapSnapshotSchema = z.object({
-  imageDataUri: z.string(),
-  resolution: z.number(),
-  originX: z.number(),
-  originY: z.number(),
-  width: z.number(),
-  height: z.number(),
-  createdAt: z.string(),
+	imageDataUri: z.string(),
+	resolution: z.number(),
+	originX: z.number(),
+	originY: z.number(),
+	width: z.number(),
+	height: z.number(),
+	createdAt: z.string(),
 });
 export type MapSnapshot = z.infer<typeof mapSnapshotSchema>;
 
@@ -79,15 +108,15 @@ export type MapSnapshot = z.infer<typeof mapSnapshotSchema>;
 // the web can draw a polyline + a heading marker at the latest point without a
 // second cross-origin fetch.
 export const trajectoryPointSchema = z.object({
-  ts: z.number(),
-  x: z.number(),
-  y: z.number(),
-  theta: z.number(),
+	ts: z.number(),
+	x: z.number(),
+	y: z.number(),
+	theta: z.number(),
 });
 export type TrajectoryPoint = z.infer<typeof trajectoryPointSchema>;
 
 export const trajectorySchema = z.object({
-  points: z.array(trajectoryPointSchema),
-  createdAt: z.string(),
+	points: z.array(trajectoryPointSchema),
+	createdAt: z.string(),
 });
 export type Trajectory = z.infer<typeof trajectorySchema>;

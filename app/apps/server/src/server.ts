@@ -1,4 +1,9 @@
-import { appRouter, buildContext, RPCHandler } from "@robomoo/api/server";
+import {
+	appRouter,
+	buildContext,
+	groupScans,
+	RPCHandler,
+} from "@robomoo/api/server";
 import { createDb, messages, user } from "@robomoo/db";
 import { runMigrations } from "@robomoo/db/migrator";
 import { newId } from "@robomoo/shared";
@@ -6,10 +11,10 @@ import { Hono } from "hono";
 import { auth } from "./auth/auth";
 import { env } from "./env";
 import {
-  handleRobotFrame,
-  handleRobotMap,
-  handleRobotSplat,
-  handleRobotTrajectory,
+	handleRobotFrame,
+	handleRobotMap,
+	handleRobotSplat,
+	handleRobotTrajectory,
 } from "./http/robot";
 import { handleUpload } from "./http/upload";
 import { presignGet, readObject } from "./storage/bucket";
@@ -26,25 +31,25 @@ const db = createDb(env.DATABASE_URL);
 // has content on a fresh database. Idempotent.
 const seeded = await db.select({ id: messages.id }).from(messages).limit(1);
 if (seeded.length === 0) {
-  const demoUserId = "user_demo";
-  await db
-    .insert(user)
-    .values({
-      id: demoUserId,
-      name: "robomoo",
-      email: "demo@robomoo.local",
-      emailVerified: true,
-    })
-    .onConflictDoNothing();
-  await db
-    .insert(messages)
-    .values({
-      id: newId("msg"),
-      body: "Welcome to robomoo — sign in and post a message, with an image!",
-      authorId: demoUserId,
-    })
-    .onConflictDoNothing();
-  console.log("seeded demo message");
+	const demoUserId = "user_demo";
+	await db
+		.insert(user)
+		.values({
+			id: demoUserId,
+			name: "robomoo",
+			email: "demo@robomoo.local",
+			emailVerified: true,
+		})
+		.onConflictDoNothing();
+	await db
+		.insert(messages)
+		.values({
+			id: newId("msg"),
+			body: "Welcome to robomoo — sign in and post a message, with an image!",
+			authorId: demoUserId,
+		})
+		.onConflictDoNothing();
+	console.log("seeded demo message");
 }
 
 const app = new Hono();
@@ -60,11 +65,11 @@ app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
 // Session-guarded image upload → object storage.
 app.post("/api/upload/image", async (c) => {
-  const session = await auth.api.getSession({ headers: c.req.raw.headers });
-  return handleUpload(
-    c.req.raw,
-    session ? { user: { id: session.user.id, name: session.user.name } } : null,
-  );
+	const session = await auth.api.getSession({ headers: c.req.raw.headers });
+	return handleUpload(
+		c.req.raw,
+		session ? { user: { id: session.user.id, name: session.user.name } } : null,
+	);
 });
 
 // Token-guarded robot ingest → object storage + frames / maps tables.
@@ -73,43 +78,65 @@ app.post("/api/robot/map", (c) => handleRobotMap(c.req.raw, db));
 app.post("/api/robot/splat", (c) => handleRobotSplat(c.req.raw, db));
 app.post("/api/robot/trajectory", (c) => handleRobotTrajectory(c.req.raw, db));
 
+// Public read API for room scans, grouped run → positions → angle-sorted images
+// (an "array of arrays" of presigned image URLs). Friendly for external callers
+// (plain GET + JSON). Presigned with a longer TTL (6h) than the live web UI
+// since an API consumer isn't holding a polling page open. `GET /api/scans`
+// returns every run; `GET /api/scans/:run` narrows to one.
+const SCANS_PRESIGN_TTL = 6 * 60 * 60;
+app.get("/api/scans", async (c) =>
+	c.json({
+		scans: await groupScans(db, presignGet, undefined, SCANS_PRESIGN_TTL),
+	}),
+);
+app.get("/api/scans/:run", async (c) =>
+	c.json({
+		scans: await groupScans(
+			db,
+			presignGet,
+			c.req.param("run"),
+			SCANS_PRESIGN_TTL,
+		),
+	}),
+);
+
 // oRPC HTTP router. Build the context per request from the Better Auth
 // session, then delegate to the oRPC fetch handler.
 app.all("/rpc/*", async (c) => {
-  const session = await auth.api.getSession({ headers: c.req.raw.headers });
-  const context = buildContext({
-    db,
-    session: session
-      ? { user: { id: session.user.id, name: session.user.name } }
-      : null,
-    presignGet,
-    readObject,
-  });
-  const { matched, response } = await rpcHandler.handle(c.req.raw, {
-    prefix: "/rpc",
-    context,
-  });
-  if (matched) {
-    return response;
-  }
-  return c.notFound();
+	const session = await auth.api.getSession({ headers: c.req.raw.headers });
+	const context = buildContext({
+		db,
+		session: session
+			? { user: { id: session.user.id, name: session.user.name } }
+			: null,
+		presignGet,
+		readObject,
+	});
+	const { matched, response } = await rpcHandler.handle(c.req.raw, {
+		prefix: "/rpc",
+		context,
+	});
+	if (matched) {
+		return response;
+	}
+	return c.notFound();
 });
 
 const server = Bun.serve({
-  port: env.PORT,
-  // Dual-stack bind so Railway's private network (gateway →
-  // server.railway.internal) reaches us.
-  hostname: "::",
-  fetch: app.fetch,
+	port: env.PORT,
+	// Dual-stack bind so Railway's private network (gateway →
+	// server.railway.internal) reaches us.
+	hostname: "::",
+	fetch: app.fetch,
 });
 
 console.log(`server listening on :${server.port}`);
 
 process.on("SIGTERM", () => {
-  server.stop();
-  process.exit(0);
+	server.stop();
+	process.exit(0);
 });
 process.on("SIGINT", () => {
-  server.stop();
-  process.exit(0);
+	server.stop();
+	process.exit(0);
 });
