@@ -255,7 +255,7 @@ fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
     )
 }
 
-/// Amanatides & Woo 3-D DDA. Records voxels on ray in between the end of the shadow region
+/// Amanatides & Woo 3d DDA. Records voxels on ray in between the end of the shadow region
 /// and origin if it is in the map. Voxels within grace region of the endpoint are spared from being marked as misses.
 #[allow(clippy::too_many_arguments)]
 fn find_misses_along_ray(
@@ -773,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn local_cloud_includes_voxel_inside_cylinder() {
+    fn local_map_includes_voxel_inside_cylinder() {
         let mut map = VoxelMap::default();
         map.voxels.insert((0, 0, 0), 1);
         let live: AHashSet<VoxelKey> = AHashSet::new();
@@ -791,7 +791,7 @@ mod tests {
     }
 
     #[test]
-    fn local_cloud_excludes_voxel_outside_radius() {
+    fn local_map_excludes_voxel_outside_radius() {
         let mut map = VoxelMap::default();
         map.voxels.insert((5, 0, 0), 1);
         let live: AHashSet<VoxelKey> = AHashSet::new();
@@ -810,7 +810,7 @@ mod tests {
     }
 
     #[test]
-    fn local_cloud_excludes_voxel_outside_z_range() {
+    fn local_map_excludes_voxel_outside_z_range() {
         let mut map = VoxelMap::default();
         map.voxels.insert((0, 0, 5), 1);
         let live: AHashSet<VoxelKey> = AHashSet::new();
@@ -829,7 +829,7 @@ mod tests {
     }
 
     #[test]
-    fn local_cloud_always_includes_live_voxels() {
+    fn local_map_always_includes_live_voxels() {
         let map = VoxelMap::default();
         let mut live: AHashSet<VoxelKey> = AHashSet::new();
         live.insert((10, 10, 10));
