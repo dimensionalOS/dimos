@@ -132,6 +132,7 @@ all_modules = {
     "camera-mjpeg-module": "dimos.web.mjpeg_module.CameraMjpegModule",
     "camera-module": "dimos.hardware.sensors.camera.module.CameraModule",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller.CartesianMotionController",
+    "cmd-bridge-module": "dimos.web.cmd_bridge_module.CmdBridgeModule",
     "control-coordinator": "dimos.control.coordinator.ControlCoordinator",
     "cost-mapper": "dimos.mapping.costmapper.CostMapper",
     "demo-calculator-skill": "dimos.agents.skills.demo_calculator_skill.DemoCalculatorSkill",
