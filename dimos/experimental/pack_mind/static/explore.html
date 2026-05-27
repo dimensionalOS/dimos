@@ -138,9 +138,22 @@ class Arena {
   render(){ this.controls.update(); this.renderer.render(this.scene,this.camera); }
 }
 
+function makeArena(id){
+  try { return new Arena(document.getElementById(id)); }
+  catch(err){
+    console.error('Arena init failed', err);
+    const el = document.getElementById(id);
+    const msg = document.createElement('div');
+    msg.style.cssText = 'padding:24px;color:#ff8585;font-size:13px;line-height:1.5';
+    msg.textContent = '3D unavailable on this device (needs hardware WebGL). '
+      + 'Metrics still update below. Reason: ' + (err && err.message || err);
+    el.appendChild(msg);
+    return null;
+  }
+}
 const arenas = {
-  independent: new Arena(document.getElementById('view-independent')),
-  shared: new Arena(document.getElementById('view-shared')),
+  independent: makeArena('view-independent'),
+  shared: makeArena('view-shared'),
 };
 const huds = {
   independent: document.getElementById('hud-independent'),
@@ -161,15 +174,19 @@ function animate(){
   requestAnimationFrame(animate);
   if(latest){
     for(const mode of ['independent','shared']){
-      if(latest[mode]){ arenas[mode].update(latest[mode]); hud(mode, latest[mode]); }
+      if(latest[mode]){ if(arenas[mode]) arenas[mode].update(latest[mode]); hud(mode, latest[mode]); }
     }
     latest = null;
   }
-  arenas.independent.render(); arenas.shared.render();
+  if(arenas.independent) arenas.independent.render();
+  if(arenas.shared) arenas.shared.render();
 }
 animate();
 
-addEventListener('resize', ()=>{ arenas.independent.resize(); arenas.shared.resize(); });
+addEventListener('resize', ()=>{
+  if(arenas.independent) arenas.independent.resize();
+  if(arenas.shared) arenas.shared.resize();
+});
 
 // ---- websocket ----
 let ws, killIdx = 0;
