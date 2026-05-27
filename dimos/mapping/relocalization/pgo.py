@@ -435,7 +435,7 @@ def pgo_then_voxels(
     if corrected_path_out is not None:
         corrected_path_out.extend(
             (float(kp.t_global[0]), float(kp.t_global[1]), float(kp.t_global[2]))
-            for kp in pgo._key_poses
+            for kp in pgo.key_poses
         )
 
     grid = VoxelGrid(voxel_size=voxel_size, block_count=block_count, device=device)
@@ -448,7 +448,7 @@ def pgo_then_voxels(
             return grid.get_global_pointcloud2()
 
         # Sort + dedupe by timestamp: Slerp requires strictly increasing ts.
-        kps = sorted(pgo._key_poses, key=lambda kp: kp.timestamp)
+        kps = sorted(pgo.key_poses, key=lambda kp: kp.timestamp)
         kps = [kp for i, kp in enumerate(kps) if i == 0 or kp.timestamp > kps[i - 1].timestamp]
         kf_ts = np.array([kp.timestamp for kp in kps])
         # Per-keyframe rigid drift correction: T_corr = T_global @ T_local.inv()
