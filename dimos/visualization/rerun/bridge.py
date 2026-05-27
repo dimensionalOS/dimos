@@ -107,6 +107,10 @@ RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
 RerunData: TypeAlias = "Archetype | RerunMulti"
 
 
+def _dimos_viewer_extra_args(server_uri: str, ws_url: str) -> list[str]:
+    return ["--connect", server_uri, f"--ws-url={ws_url}"]
+
+
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
     """Check if data is a list of (entity_path, archetype) tuples."""
     return (
@@ -342,12 +346,15 @@ class RerunBridgeModule(Module):
             try:
                 import rerun_bindings
 
+                ws_url = f"ws://{self.host}:{self.config.g.rerun_websocket_server_port}/ws"
+
                 # Use --connect so the viewer connects to the bridge's gRPC
                 # server rather than starting its own (which would conflict).
+                # Use --ws-url so keyboard teleop events flow back to Dimos.
                 rerun_bindings.spawn(
                     executable_name="dimos-viewer",
                     memory_limit=self.config.memory_limit,
-                    extra_args=["--connect", server_uri],
+                    extra_args=_dimos_viewer_extra_args(server_uri, ws_url),
                 )
                 spawned = True
             except ImportError:

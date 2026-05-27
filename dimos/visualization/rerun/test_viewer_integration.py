@@ -116,3 +116,24 @@ class TestBridgeSpawnLogic:
             "bridge.py start() has no fallback for missing dimos-viewer. "
             "Users without dimos-viewer will crash."
         )
+
+    def test_viewer_extra_args_include_grpc_and_websocket_urls(self):
+        """Native dimos-viewer launch must include the teleop WebSocket URL."""
+        from dimos.visualization.rerun.bridge import _dimos_viewer_extra_args
+
+        server_uri = "rerun+http://127.0.0.1:9877/proxy"
+        ws_url = "ws://127.0.0.1:3030/ws"
+
+        assert _dimos_viewer_extra_args(server_uri, ws_url) == [
+            "--connect",
+            server_uri,
+            f"--ws-url={ws_url}",
+        ]
+
+    def test_bridge_uses_viewer_extra_args_helper(self):
+        """Guard against regressing to gRPC-only native viewer launch."""
+        from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+        src = inspect.getsource(RerunBridgeModule.start)
+        assert "_dimos_viewer_extra_args" in src
+        assert "rerun_websocket_server_port" in src
