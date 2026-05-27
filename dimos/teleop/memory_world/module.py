@@ -381,12 +381,13 @@ class MemoryWorldModule(QuestTeleopModule):
             return None
 
     def _height_colors(self, positions: "np.ndarray") -> "np.ndarray":
-        """Map Z (robot up) to a full turbo rainbow (deep blue floor → red ceiling).
+        """Map Z (robot up) to a bright, fully-saturated rainbow.
 
-        Uses the height SLAB bounds (map_z_min..map_z_max) rather than the
-        cloud's own min/max so the colour of a given height is stable and the
-        whole ramp is used even if the cloud doesn't span the full slab.
-        Returns N×3 uint8, C-contiguous (RGB order).
+        Floor → ceiling sweeps hue violet → blue → cyan → green → yellow → red,
+        all at full saturation and value, so every height band is vivid and
+        clearly distinct (TURBO/jet have muddy dark ends that read poorly in
+        VR against the dark background). Uses the fixed height SLAB bounds so a
+        given height is always the same colour. Returns N×3 uint8 RGB.
         """
         zc = positions[:, 2]
         lo = float(self.config.map_z_min)
@@ -394,11 +395,14 @@ class MemoryWorldModule(QuestTeleopModule):
         if hi - lo < 1e-3:
             lo, hi = float(zc.min()), float(zc.max()) + 1e-3
         t = np.clip((zc - lo) / (hi - lo), 0.0, 1.0)
-        t8 = (t * 255).astype(np.uint8).reshape(-1, 1)
-        # cv2 returns BGR; flip to RGB.
-        bgr = cv2.applyColorMap(t8, cv2.COLORMAP_TURBO).reshape(-1, 3)
-        rgb = np.ascontiguousarray(bgr[:, ::-1])
-        return rgb
+        # OpenCV hue is 0-179: 0=red, 60=green, 120=blue, ~140=violet.
+        # Floor (t=0) → violet(140), ceiling (t=1) → red(0). Clean sweep, no
+        # hue wraparound.
+        h = ((1.0 - t) * 140.0).astype(np.uint8).reshape(-1, 1)
+        full = np.full_like(h, 255)
+        hsv = np.concatenate([h, full, full], axis=1).reshape(-1, 1, 3)
+        bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR).reshape(-1, 3)
+        return np.ascontiguousarray(bgr[:, ::-1])
 
     def _cloud_header(self, positions: "np.ndarray") -> dict[str, Any]:
         """Common header: count, colour flag, voxel size, render mode, bounds."""
