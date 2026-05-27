@@ -6,21 +6,25 @@
 dimos/robot/custom/
 ├── modules/                             # 纯业务逻辑，无 blueprint / vis 代码
 │   ├── bbox_selection_module.py         # BBoxSelectionModule, BBoxSelectionConfig
-│   ├── bbox_distance_behavior_module.py # BBoxDistanceBehaviorModule, BBoxDistanceBehaviorConfig
+│   ├── target_lock_module.py            # TargetLockModule, TargetLockConfig
 │   ├── yoloe_tracking_module.py         # YoloeTrackingModule, YoloeTrackingConfig
 │   └── go2_startup_self_check_module.py # Go2StartupSelfCheck, Go2StartupSelfCheckConfig
+├── tasks/                                # 任务实现：每个 task 自带自己的状态机
+│   └── bbox_distance_behavior_module.py  # BBoxDistanceBehaviorModule, BBoxDistanceBehaviorConfig
 ├── visualization/                       # Detection2DArray → Rerun 2D overlay 适配
 │   └── detection2d_overlay.py           # detection_array_to_rerun / detections_overlay /
 │                                        # selected_bbox_overlay / yoloe_overlay
 ├── blueprints/                          # autoconnect 组装 + rerun config + requirements
 │   ├── bbox_distance_follow.py          # bbox_distance_follow blueprint
+│   ├── yoloe_target_lock_distance_follow.py # 示例: YOLOE + selection + target lock + distance behavior
+│   ├── yoloe_keyboard_teleop.py         # yoloe-keyboard-teleop blueprint
 │   ├── yoloe_tracking_test.py           # yoloe_tracking_test blueprint
 │   └── go2_startup_self_check.py        # unitree_go2_startup_self_check blueprint
 └── tests/                               # 纯 pytest 单元测试，无需机器人硬件
     └── test_bbox_selection_module.py    # BBoxSelectionModule 单元测试
 ```
 
-依赖方向：`blueprints/` → `modules/` + `visualization/`；`tests/` → `modules/` only。
+依赖方向：`blueprints/` → `modules/` + `tasks/` + `visualization/`；`tests/` → `modules/` + `tasks/` only。
 
 ## yoloe-keyboard-teleop
 
@@ -30,13 +34,14 @@ dimos/robot/custom/
 
 - `unitree_go2_basic`
 - `YoloeTrackingModule.blueprint()`
+- `MovementManager.blueprint()`
 - `KeyboardTeleop.blueprint(publish_only_when_active=True)`
 - 专用 Rerun viewer overlay（与 `yoloe-tracking-test` 相同布局）
 
 数据流：
 
 ```text
-KeyboardTeleop.cmd_vel ──────────────────────────> GO2Connection.cmd_vel
+KeyboardTeleop.cmd_vel -> MovementManager.tele_cmd_vel -> MovementManager.cmd_vel -> GO2Connection.cmd_vel
 unitree_go2_basic.color_image -> YoloeTrackingModule -> /color_image/yoloe_detections -> Rerun overlay
 ```
 
@@ -64,14 +69,166 @@ dimos --robot-ip 192.168.123.161 --rerun-open native run yoloe-keyboard-teleop
 
 启动后会弹出一个 pygame 窗口，焦点在该窗口时键盘输入生效：
 
-| 按键 | 动作 |
-|------|------|
-| W / S | 前进 / 后退 |
-| A / D | 左转 / 右转 |
-| Shift | 速度加倍（2×） |
-| Ctrl | 慢速模式（0.5×） |
-| Space | 发布零 Twist（急停） |
-| Esc / Q | 退出键盘窗口 |
+| 按键    | 动作                 |
+| ------- | -------------------- |
+| W / S   | 前进 / 后退          |
+| A / D   | 左转 / 右转          |
+| Shift   | 速度加倍（2×）       |
+| Ctrl    | 慢速模式（0.5×）     |
+| Space   | 发布零 Twist（急停） |
+| Esc / Q | 退出键盘窗口         |
+
+## 双层状态机（Detector-agnostic）
+
+`BBoxSelectionModule` 只负责选择，不做目标丢失恢复。目标连续性由 `TargetLockModule` 负责，任务行为由任务模块（当前示例是 `BBoxDistanceBehaviorModule`）负责。
+
+### TargetLock 状态机
+
+```mermaid
+stateDiagram-v2
+    [*] --> unselected
+    unselected --> locked: selected_bbox 有效
+    locked --> searching: 当前帧 id 不匹配
+    searching --> locked: 重找成功
+    searching --> lost: 超时未找回
+    lost --> locked: 用户重新选择
+    locked --> unselected: clear_selection / selected_bbox 为空
+    searching --> unselected: clear_selection / selected_bbox 为空
+```
+
+### 模块间调用关系
+
+```mermaid
+flowchart LR
+    C[color_image] --> Y[YoloeTrackingModule]
+    Y --> D[detections]
+    D --> S[BBoxSelectionModule]
+    S --> USB[user_selected_bbox]
+    D --> T[TargetLockModule]
+    USB --> T
+    T --> LB[locked_bbox_to_selected_bbox]
+    LB --> B[BBoxDistanceBehaviorModule]
+    L[lidar] --> B
+    I[camera_info] --> B
+    B --> V[cmd_vel]
+```
+
+### Visualization 与 TargetLock 的集成链路
+
+这部分描述的是“在 dimos-view 中点击 -> 选框 -> 锁定 -> 叠加显示”的完整闭环。
+
+```mermaid
+flowchart LR
+    A[dimos-view Camera click] --> B[RerunWebSocketServer.clicked_point]
+    B --> C[BBoxSelectionModule._on_clicked_point]
+    C --> D[user_selected_bbox]
+    D --> E[TargetLockModule._on_selected_bbox]
+    F[detections] --> G[TargetLockModule._on_detections]
+    E --> H[locked_bbox]
+    G --> H
+    F --> I[/color_image/yoloe_detections]
+    D --> J[/color_image/selected_bbox]
+    H --> K[/color_image/locked_bbox]
+    I --> L[RerunBridge -> world/color_image/yoloe_detections]
+    J --> M[RerunBridge -> world/color_image/selected_bbox]
+    K --> N[RerunBridge -> world/color_image/locked_bbox]
+    L --> O[yoloe_overlay]
+    M --> P[selected_bbox_overlay]
+    N --> P
+```
+
+关键代码出处：
+
+- 点击选择处理：`BBoxSelectionModule._on_clicked_point()` 与 `_publish_selected()`
+  - `dimos/robot/custom/modules/bbox_selection_module.py`
+- 锁定状态机处理：`TargetLockModule._on_selected_bbox()` / `_on_detections()` / `_set_state()`
+  - `dimos/robot/custom/modules/target_lock_module.py`
+- 2D overlay 转换：`detection_array_to_rerun()`、`yoloe_overlay()`、`selected_bbox_overlay()`
+  - `dimos/robot/custom/visualization/detection2d_overlay.py`
+- overlay 与实体路径绑定（`visual_override`）以及 topic 映射（`transports`）
+  - `dimos/robot/custom/blueprints/yoloe_target_lock_distance_follow.py`
+
+显示层约定：
+
+- `yoloe_overlay`：青色，`draw_order=95`
+- `selected_bbox_overlay`：绿色，`draw_order=100`
+- `locked_bbox` 当前也使用 `selected_bbox_overlay`，所以在 Camera 视图里会以绿色高优先级覆盖显示。
+
+注意：`detection_array_to_rerun()` 在输入空数组时会返回空 `Boxes2D`，这会清除 viewer 中的旧框；因此 `TargetLockModule` 在 `searching/lost` 时发布空 `locked_bbox`，视觉上会立即反映为锁定框消失。
+
+## 示例蓝图：yoloe-target-lock-distance-follow
+
+新增示例蓝图 `blueprints/yoloe_target_lock_distance_follow.py`，用于演示双层拆分：
+
+- 检测层：`YoloeTrackingModule`
+- 选择层：`BBoxSelectionModule`
+- 目标锁定层：`TargetLockModule`
+- 任务层（示例任务）：`BBoxDistanceBehaviorModule`
+
+数据流：
+
+```text
+unitree_go2_basic.color_image
+  -> YoloeTrackingModule.detections
+  -> BBoxSelectionModule.detections + TargetLockModule.detections
+
+BBoxSelectionModule.selected_bbox
+  -> (remap) user_selected_bbox
+  -> (remap) TargetLockModule.selected_bbox
+  -> TargetLockModule.locked_bbox
+  -> (remap) BBoxDistanceBehaviorModule.selected_bbox
+  -> BBoxDistanceBehaviorModule.cmd_vel
+  -> GO2Connection.cmd_vel
+```
+
+该示例蓝图同时发布：
+
+- `/color_image/yoloe_detections`
+- `/color_image/selected_bbox`
+- `/color_image/locked_bbox`
+
+便于在 Rerun 中同时对比：检测结果、用户选择结果、锁定结果。
+
+### TargetLockModule（示例实现）
+
+职责：
+
+- 输入 `detections` 和 `selected_bbox`（在示例蓝图中经由 `user_selected_bbox` remap 到 `selected_bbox`）。
+- 输出 `locked_bbox`（单目标锁定结果）和 `lock_status`（JSON 字符串状态）。
+- 不做 detector 推理，不做任务行为决策。
+
+配置：
+
+- `search_timeout_sec=3.0`
+- `reacquire_by_class=True`
+
+状态：
+
+- `unselected`
+- `locked`
+- `searching`
+- `lost`
+
+RPC：
+
+- `clear_lock() -> str`
+- `get_lock_state() -> dict[str, Any]`
+
+重找策略（当前实现）：
+
+- 优先按 tracking id 直接匹配。
+- id 匹配失败且仍在超时时间内：
+  1. 若开启 `reacquire_by_class`，先按 `class_id` 过滤候选；
+  2. 再按 bbox 中心点与上次位置的欧氏距离最近原则重找。
+- 超时未找回进入 `lost`，并输出空 `locked_bbox`。
+
+### 运行示例蓝图
+
+该示例尚未注册到 `all_blueprints.py`，可直接以模块方式启动：
+
+```bash
+.venv/bin/python -m dimos.robot.custom.blueprints.yoloe_target_lock_distance_follow
+```
 
 ## yoloe-tracking-test
 
@@ -188,25 +345,29 @@ RPC：
 - `confidence`
 - `class_id`
 
-### BBoxDistanceBehaviorModule
+### BBoxDistanceBehaviorModule（task）
 
 职责：
 
 - 消费 `selected_bbox + lidar + camera_info`。
 - 输出 `cmd_vel` 和 `behavior_status`。
-- 不做人识别、不选择目标、不做目标丢失恢复。
+- 只负责“点中选框后自动靠近到 0.2m 并结束”。
+
+行为方式：
+
+- `BBoxSelectionModule` 一旦输出非空 `selected_bbox`，行为模块自动进入 `approaching`。
+- 当估计距离进入 `0.2m ± 0.05m` 容差时，行为模块进入 `done` 并持续输出零速度。
+- 如果 `selected_bbox` 被清空，行为模块回到 `idle` 并停止输出。
 
 RPC：
 
-- `start_bbox_distance_behavior(hold_seconds=None, hold_distance=None, approach_distance=None) -> str`
+- `start_bbox_distance_behavior(approach_distance=None) -> str`
 - `stop_bbox_distance_behavior() -> str`
 
 默认参数：
 
 - `command_hz = 20.0`
-- `hold_seconds = 3.0`
-- `hold_distance = 1.5`
-- `approach_distance = 0.8`
+- `approach_distance = 0.2`
 - `depth_percentile = 25.0`
 - `max_linear_speed = 0.45`
 - `max_angular_speed = 0.8`
@@ -214,10 +375,10 @@ RPC：
 状态机：
 
 ```text
-idle -> holding_distance -> approaching -> done
+idle -> approaching -> done
 ```
 
-`hold_seconds` 从第一次拿到有效 bbox + lidar distance 后开始计时，不从 RPC 调用瞬间开始。bbox 为空、camera_info 缺失、lidar 距离无效时发布 `Twist.zero()` 并等待，不重新识别。完成或停止时发布 `Twist.zero()`。
+`selected_bbox` 进入后模块就直接开始靠近。bbox 为空、camera_info 缺失、lidar 距离无效时发布 `Twist.zero()` 并等待。完成或停止时发布 `Twist.zero()`。
 
 lidar 距离 MVP 直接用 camera intrinsics 将点云投影到 bbox，取 `depth_percentile` 深度；如果实际 lidar 坐标系没有和相机对齐，后续再补 TF 修正。
 
@@ -282,16 +443,10 @@ CLI 全局参数必须放在 `run` 前面，例如 `--robot-ip`、`--replay`、`
 .venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.modules.bbox_selection_module import BBoxSelectionModule; c=RPCClient.remote(BBoxSelectionModule); print(c.clear_selection()); c.stop_rpc_client()'
 ```
 
-启动距离行为：
-
-```bash
-.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.modules.bbox_distance_behavior_module import BBoxDistanceBehaviorModule; c=RPCClient.remote(BBoxDistanceBehaviorModule); print(c.start_bbox_distance_behavior()); c.stop_rpc_client()'
-```
-
 停止距离行为：
 
 ```bash
-.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.modules.bbox_distance_behavior_module import BBoxDistanceBehaviorModule; c=RPCClient.remote(BBoxDistanceBehaviorModule); print(c.stop_bbox_distance_behavior()); c.stop_rpc_client()'
+.venv/bin/python -c 'from dimos.core.rpc_client import RPCClient; from dimos.robot.custom.tasks.bbox_distance_behavior_module import BBoxDistanceBehaviorModule; c=RPCClient.remote(BBoxDistanceBehaviorModule); print(c.stop_bbox_distance_behavior()); c.stop_rpc_client()'
 ```
 
 ### Viewer 点击选择

@@ -122,6 +122,7 @@ all_blueprints = {
     "xarm7-planner-coordinator": "dimos.manipulation.blueprints:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.manipulation.blueprints:xarm7_planner_coordinator_agent",
     "yoloe-keyboard-teleop": "dimos.robot.custom.blueprints.yoloe_keyboard_teleop:yoloe_keyboard_teleop",
+    "yoloe-target-lock-distance-follow": "dimos.robot.custom.blueprints.yoloe_target_lock_distance_follow:yoloe_target_lock_distance_follow",
     "yoloe-tracking-test": "dimos.robot.custom.blueprints.yoloe_tracking_test:yoloe_tracking_test",
 }
 
@@ -129,7 +130,7 @@ all_blueprints = {
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
-    "b-box-distance-behavior-module": "dimos.robot.custom.modules.bbox_distance_behavior_module.BBoxDistanceBehaviorModule",
+    "b-box-distance-behavior-module": "dimos.robot.custom.tasks.bbox_distance_behavior_module.BBoxDistanceBehaviorModule",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
     "b-box-selection-module": "dimos.robot.custom.modules.bbox_selection_module.BBoxSelectionModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
@@ -213,6 +214,7 @@ all_modules = {
     "spatial-memory": "dimos.perception.spatial_perception.SpatialMemory",
     "speak-skill": "dimos.agents.skills.speak_skill.SpeakSkill",
     "tare-planner": "dimos.navigation.nav_stack.modules.tare_planner.tare_planner.TarePlanner",
+    "target-lock-module": "dimos.robot.custom.modules.target_lock_module.TargetLockModule",
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory.TemporalMemory",
     "terrain-analysis": "dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis.TerrainAnalysis",
     "terrain-map-ext": "dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext.TerrainMapExt",
