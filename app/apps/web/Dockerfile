@@ -33,6 +33,8 @@ RUN mkdir -p apps/web/public
 # present here. Railway feeds the matching service variable into this ARG.
 ARG NEXT_PUBLIC_GS_POT_URL
 ENV NEXT_PUBLIC_GS_POT_URL=$NEXT_PUBLIC_GS_POT_URL
+ARG NEXT_PUBLIC_MLXVLM_URL
+ENV NEXT_PUBLIC_MLXVLM_URL=$NEXT_PUBLIC_MLXVLM_URL
 
 # next.config.ts sets output: "standalone" → self-contained server at
 # apps/web/.next/standalone.
