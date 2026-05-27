@@ -19,7 +19,7 @@ import difflib
 import math
 import time
 
-from unitree_webrtc_connect.constants import RTC_TOPIC
+from unitree_webrtc_connect.constants import RTC_TOPIC, SPORT_CMD
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -299,6 +299,37 @@ class UnitreeSkillContainer(Module):
         except Exception as e:
             logger.error(f"Failed to execute {command_name}: {e}")
             return "Failed to execute the command."
+
+    @skill
+    def tilt_body(
+        self, pitch_deg: float = 0.0, roll_deg: float = 0.0, yaw_deg: float = 0.0
+    ) -> str:
+        """Tilt the robot's body to aim its (fixed) camera up or down.
+
+        The Go2's camera is body-mounted, so "looking up/down" means pitching the
+        whole body. NEGATIVE pitch_deg looks UP, positive looks DOWN. Useful range
+        is about -40..40 degrees; roll/yaw are optional. The robot must be standing
+        first (run StandUp or BalanceStand). This is a held pose — call tilt_body()
+        with no args to return level.
+
+        Example: tilt_body(pitch_deg=-20)   # look up at e.g. a tabletop
+        """
+        # Clamp to the Go2's safe standing envelope (radians).
+        roll = max(-0.75, min(0.75, math.radians(float(roll_deg))))
+        pitch = max(-0.75, min(0.75, math.radians(float(pitch_deg))))
+        yaw = max(-0.6, min(0.6, math.radians(float(yaw_deg))))
+        try:
+            self._connection.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {
+                    "api_id": SPORT_CMD["Euler"],
+                    "parameter": {"data": {"x": roll, "y": pitch, "z": yaw}},
+                },
+            )
+            return f"Body tilted (pitch={pitch_deg}, roll={roll_deg}, yaw={yaw_deg} deg)."
+        except Exception as e:
+            logger.error(f"Failed to tilt body: {e}")
+            return "Failed to tilt the body."
 
 
 _commands = "\n".join(
