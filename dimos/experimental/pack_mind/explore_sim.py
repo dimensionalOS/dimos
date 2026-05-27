@@ -29,6 +29,7 @@ Pure numpy/scipy + DimOS min_cost_astar. No CUDA/ROS/sim deps.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from math import cos, hypot, sin
 
@@ -36,7 +37,11 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.ndimage import binary_dilation, label
 
-from dimos.experimental.pack_mind.world import make_maze_world
+from dimos.experimental.pack_mind.world import (
+    load_building_world,
+    make_maze_world,
+    spread_starts,
+)
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 
@@ -287,10 +292,26 @@ def build_explore(shared: bool, seed: int = 0, n_dogs: int = 3) -> ExploreSim:
     return ExploreSim(world, n_dogs, shared, starts, seed)
 
 
+def build_explore_building(
+    shared: bool, seed: int = 0, n_dogs: int = 3, downsample: int = 4
+) -> ExploreSim:
+    """ExploreSim on a real DimOS SLAM floor plan instead of the synthetic maze.
+
+    A 27x37m office footprint (big_office_simple_occupancy.png) with long wings
+    and corridors. Starts are spread deterministically from the seed, so the
+    shared and independent runs share identical deployment — only the memory
+    model differs. The bigger, concave floor is where the shared-vs-independent
+    gap blows open (shared clears 100%, independent stalls redundantly)."""
+    world = load_building_world(downsample=downsample)
+    starts = spread_starts(world, n_dogs, seed=seed, min_dist_m=5.0)
+    return ExploreSim(world, n_dogs, shared, starts, seed)
+
+
 if __name__ == "__main__":
     import time
 
+    builder = build_explore_building if os.environ.get("PACK_MIND_MAP") == "building" else build_explore
     for sh in (True, False):
         t0 = time.perf_counter()
-        r = build_explore(shared=sh).run()
+        r = builder(shared=sh).run()
         print(r, "wall=%.1fs" % (time.perf_counter() - t0))

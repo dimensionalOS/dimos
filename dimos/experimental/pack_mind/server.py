@@ -32,7 +32,10 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from dimos.experimental.pack_mind.explore_sim import build_explore
+from dimos.experimental.pack_mind.explore_sim import build_explore, build_explore_building
+
+# PACK_MIND_MAP=building swaps the synthetic maze for a real DimOS SLAM floor plan.
+_BUILD = build_explore_building if os.environ.get("PACK_MIND_MAP") == "building" else build_explore
 
 _STATIC = Path(__file__).parent / "static"
 _PORT = int(os.environ.get("PACK_MIND_PORT", "8000"))
@@ -51,8 +54,8 @@ def index() -> FileResponse:
 
 def _new_sims(seed: int, n_dogs: int) -> dict:
     return {
-        "independent": build_explore(False, seed, n_dogs),
-        "shared": build_explore(True, seed, n_dogs),
+        "independent": _BUILD(False, seed, n_dogs),
+        "shared": _BUILD(True, seed, n_dogs),
     }
 
 
