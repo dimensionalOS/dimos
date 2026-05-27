@@ -14,10 +14,11 @@
 
 """Periodically upload the 2D occupancy map (global_costmap) to the robomoo app.
 
-Subscribes to `global_costmap`, renders it to a PNG with the existing
-`turbo_image` colormap (same look as the command-center), throttles, and POSTs
-it plus grid metadata (resolution, origin, width, height) to robomoo's
-`/api/robot/map`. The web app overlays capture pins on it via
+Subscribes to `global_costmap`, encodes it as a *value-preserving* grayscale PNG
+(free=0, occupied=1..100, unknown=255 — NOT a pre-colored image), throttles, and
+POSTs it plus grid metadata (resolution, origin, width, height) to robomoo's
+`/api/robot/map`. The web app reads the raw cell values back and applies its own
+colormap + overlays, mapping world→pixel via
 `col = (x - originX) / resolution`, `row = (y - originY) / resolution`.
 
 Env: ROBOMOO_URL, ROBOT_INGEST_TOKEN.
@@ -27,12 +28,12 @@ import os
 import time
 
 import cv2
+import numpy as np
 import httpx
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.mapping.occupancy.visualizations import turbo_image
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.utils.logging_config import setup_logger
 
@@ -66,8 +67,11 @@ class MapUploader(Module):
         self._last = now
 
         try:
-            bgr = turbo_image(grid.grid)  # (H, W, 3) uint8
-            ok, buf = cv2.imencode(".png", bgr)
+            # Value-preserving encoding: free/occupied 0..100 stay as-is, unknown
+            # (-1) → 255. The web recolors from these raw values, so we never bake
+            # a colormap into the upload. (H, W) uint8 → grayscale PNG.
+            enc = np.where(grid.grid == -1, 255, np.clip(grid.grid, 0, 100)).astype(np.uint8)
+            ok, buf = cv2.imencode(".png", enc)
             if not ok:
                 return
             httpx.post(
