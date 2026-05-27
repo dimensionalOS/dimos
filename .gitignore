@@ -86,3 +86,11 @@ htmlcov/
 
 # Memory2 autorecord
 recording*.db
+
+# Hackathon Kora Social runtime state
+hackathon/kora_social/*.sqlite3
+hackathon/kora_social/*.sqlite3-shm
+hackathon/kora_social/*.sqlite3-wal
+hackathon/kora_social/captures/
+hackathon/kora_social/people_tags/
+hackathon/kora_social/notes

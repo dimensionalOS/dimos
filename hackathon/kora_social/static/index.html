@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KORA</title>
+    <link rel="icon" href="/static/brand/kora-avatar.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <div class="brand">
+        <img src="/static/brand/kora-avatar.png" alt="" class="avatar" />
+        <div class="brand-text">
+          <strong>Kora</strong>
+        </div>
+      </div>
+      <div class="meta">
+        <button id="modeBtn" class="mode-toggle">LIVE</button>
+        <button id="xModeBtn" class="mode-toggle">X DRY</button>
+        <span class="meta-sep">/</span>
+        <span id="statusCamera">camera idle</span>
+        <span class="meta-sep">/</span>
+        <span id="statusFrame">—</span>
+        <span class="meta-sep">/</span>
+        <span id="statusAction">Idle</span>
+      </div>
+    </header>
+
+    <main class="workbench">
+      <div class="robot-column">
+        <div class="ops">
+          <div class="grid">
+            <section class="box camera-box">
+              <div class="box-head">CAMERA</div>
+              <div class="frame">
+                <img id="liveFrame" alt="" />
+                <div id="emptyState" class="empty">NO FEED</div>
+                <div class="map-hud" id="mapHud">
+                  <div class="map-hud-head">
+                    <span id="mapHudTitle">MAP WAITING</span>
+                    <span id="mapHudAge">--</span>
+                  </div>
+                  <canvas id="mapHudCanvas" width="224" height="150"></canvas>
+                </div>
+                <div id="captureFlash" class="flash"></div>
+                <span class="rec" id="recCorner" data-state="off">●</span>
+              </div>
+              <p class="note" id="liveCaption">Waiting</p>
+              <div class="row">
+                <button id="startBtn">START</button>
+                <button id="stopBtn">STOP</button>
+                <button id="captureBtn" class="capture-icon" aria-label="Capture frame" title="Capture">📸</button>
+              </div>
+            </section>
+
+            <section class="box ctrl-box">
+              <div class="box-head">
+                <span>CTRL</span>
+              </div>
+              <div class="ctrl-layout">
+                <div class="ctrl-actions">
+                  <div class="row ctrl-row">
+                    <button id="standBtn">STAND</button>
+                    <button id="lieDownBtn">REST</button>
+                  </div>
+                  <div class="row ctrl-row skill-row">
+                    <button data-sport-command="Hello">HELLO</button>
+                    <button data-sport-command="Stretch">STRETCH</button>
+                    <button data-sport-command="Dance1">DANCE 1</button>
+                    <button data-sport-command="Dance2">DANCE 2</button>
+                  </div>
+                  <div class="row ctrl-row">
+                    <button id="patrolBtn">PATROL</button>
+                    <button id="cancelPatrolBtn">CANCEL</button>
+                  </div>
+                </div>
+                <div class="dpad">
+                  <button data-move="turn-left">↺</button>
+                  <button data-move="forward">↑</button>
+                  <button data-move="turn-right">↻</button>
+                  <button data-move="left">←</button>
+                  <button data-move="stop" class="stop">■</button>
+                  <button data-move="right">→</button>
+                  <span></span>
+                  <button data-move="back">↓</button>
+                  <span></span>
+                </div>
+              </div>
+              <p class="note" id="commandDebug">CMD —</p>
+              <div id="commandStream" class="command-stream"></div>
+              <button id="emergencyStopBtn" class="big-stop">STOP ALL</button>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <section class="box side-panel">
+        <div class="box-head side-head">
+          <div class="view-tabs">
+            <button class="tab active" data-view="tweets">TWEETS</button>
+            <button class="tab" data-view="mentions">MENTIONS</button>
+            <button class="tab" data-view="people">PEOPLE</button>
+          </div>
+          <div class="side-meta">
+            <span id="xStatus">X: DRY</span>
+            <span id="mentionCount">MENTIONS 0/0</span>
+            <span id="draftCount">TWEETS 0/0</span>
+            <span id="peopleTagCount">PEOPLE 0/0</span>
+          </div>
+        </div>
+
+        <div class="panel-view" data-panel="people">
+          <form id="peopleTagForm" class="people-form">
+            <input id="peopleHandle" name="handle" type="text" maxlength="32" placeholder="@handle" autocomplete="off" />
+            <input id="peopleNotes" name="notes" type="text" maxlength="180" placeholder="visual note" autocomplete="off" />
+            <input id="peopleImage" name="image" type="file" accept="image/*" />
+            <button type="submit">ADD</button>
+          </form>
+          <div id="peopleTags" class="people-grid"></div>
+        </div>
+
+        <div class="panel-view" data-panel="mentions">
+          <form id="mentionSettingsForm" class="mention-settings">
+            <label>
+              <span>POLL SEC</span>
+              <input id="mentionInterval" name="interval" type="number" min="0" max="3600" step="1" value="0" />
+            </label>
+            <button type="submit">SAVE</button>
+            <button id="mentionPollBtn" type="button">POLL</button>
+          </form>
+          <form id="mentionInjectForm" class="mention-inject">
+            <input id="mentionAuthor" name="author" type="text" maxlength="32" value="@demo" autocomplete="off" />
+            <input id="mentionText" name="text" type="text" maxlength="500" placeholder="@DimensionalKora what do you see?" autocomplete="off" />
+            <button type="submit">INJECT</button>
+          </form>
+          <p class="note" id="mentionStatus">mentions paused</p>
+          <div id="mentions" class="mention-list"></div>
+        </div>
+
+        <div class="panel-view active" data-panel="tweets">
+          <div class="dispatch-head">
+            <span>DISPATCHES</span>
+            <div class="dispatch-tabs">
+              <button class="tab active" data-filter="all">ALL</button>
+              <button class="tab" data-filter="draft">DFT</button>
+              <button class="tab" data-filter="posted">PST</button>
+              <button class="tab" data-filter="failed">ERR</button>
+            </div>
+          </div>
+          <div id="drafts" class="dispatch-grid"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="bar foot">
+      @DimensionalKora / Shanghai / Dimensional × Unitree × MadBuilders
+    </footer>
+
+    <span id="cameraDot" hidden></span>
+    <span id="statusRobot" hidden></span>
+    <span id="frameMeta" hidden></span>
+    <span id="robotAction" hidden></span>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

@@ -98,7 +98,12 @@ class UnitreeWebRTCConnection(Resource):
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
-        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
+        connection_method = (
+            WebRTCConnectionMethod.LocalAP
+            if self.ip == "192.168.12.1"
+            else WebRTCConnectionMethod.LocalSTA
+        )
+        self.conn = LegionConnection(connection_method, ip=self.ip)
         self.connect()
 
     def connect(self) -> None:
