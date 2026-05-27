@@ -37,6 +37,9 @@ export const frameSchema = z.object({
   label: z.string().nullable(),
   poseX: z.number().nullable(),
   poseY: z.number().nullable(),
+  // CLIP image vector (512-d, normalized) — present only on embedded frames,
+  // used by in-browser semantic search. Omitted from the plain gallery list.
+  embedding: z.array(z.number()).nullable(),
   createdAt: z.string(),
 });
 export type Frame = z.infer<typeof frameSchema>;
@@ -54,11 +57,14 @@ export const splatSchema = z.object({
 });
 export type Splat = z.infer<typeof splatSchema>;
 
-// The latest 2D occupancy map snapshot (the dimos global_costmap, rendered to a
-// PNG by the robot). `resolution` (m/cell) + `origin` let the web place world
-// coordinates onto the image: col = (x - originX) / resolution, row similarly.
+// The latest 2D occupancy map snapshot (the dimos global_costmap). The robot
+// uploads a value-preserving grayscale PNG (free=0, occupied=1..100,
+// unknown=255); the server inlines it as a same-origin `imageDataUri` so the
+// canvas can read raw cell values back (no cross-origin taint) and apply its own
+// colormap. `resolution` (m/cell) + `origin` place world coordinates onto the
+// grid: col = (x - originX) / resolution, row = (y - originY) / resolution.
 export const mapSnapshotSchema = z.object({
-  imageUrl: z.string(),
+  imageDataUri: z.string(),
   resolution: z.number(),
   originX: z.number(),
   originY: z.number(),
@@ -67,3 +73,21 @@ export const mapSnapshotSchema = z.object({
   createdAt: z.string(),
 });
 export type MapSnapshot = z.infer<typeof mapSnapshotSchema>;
+
+// Robot odometry trajectory: an ordered path of world poses. `theta` is the
+// heading (yaw, radians). The newest snapshot is inlined (the path is small) so
+// the web can draw a polyline + a heading marker at the latest point without a
+// second cross-origin fetch.
+export const trajectoryPointSchema = z.object({
+  ts: z.number(),
+  x: z.number(),
+  y: z.number(),
+  theta: z.number(),
+});
+export type TrajectoryPoint = z.infer<typeof trajectoryPointSchema>;
+
+export const trajectorySchema = z.object({
+  points: z.array(trajectoryPointSchema),
+  createdAt: z.string(),
+});
+export type Trajectory = z.infer<typeof trajectorySchema>;

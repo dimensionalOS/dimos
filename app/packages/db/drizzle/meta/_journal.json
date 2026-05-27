@@ -29,6 +29,13 @@
       "when": 1779825855957,
       "tag": "0003_lowly_gressill",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779866902916,
+      "tag": "0004_last_stature",
+      "breakpoints": true
     }
   ]
 }

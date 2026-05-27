@@ -5,12 +5,14 @@ export interface ApiSession {
 }
 
 // Built fresh per request on the server. `presignGet` turns an S3 object key
-// into a time-limited GET URL — injected so the api package never imports the
-// storage client directly.
+// into a time-limited GET URL; `readObject` reads an object's bytes back (for
+// small artifacts we inline as same-origin data URIs). Injected so the api
+// package never imports the storage client directly.
 export interface ApiContext {
   db: Database;
   session: ApiSession | null;
   presignGet: (key: string, expiresIn?: number) => Promise<string>;
+  readObject: (key: string) => Promise<ArrayBuffer>;
 }
 
 export function buildContext(ctx: ApiContext): ApiContext {

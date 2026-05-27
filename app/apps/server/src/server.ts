@@ -9,9 +9,10 @@ import {
   handleRobotFrame,
   handleRobotMap,
   handleRobotSplat,
+  handleRobotTrajectory,
 } from "./http/robot";
 import { handleUpload } from "./http/upload";
-import { presignGet } from "./storage/bucket";
+import { presignGet, readObject } from "./storage/bucket";
 
 // Apply pending migrations before binding the port. Railway re-runs this on
 // every deploy; already-applied migrations are no-ops.
@@ -70,6 +71,7 @@ app.post("/api/upload/image", async (c) => {
 app.post("/api/robot/frame", (c) => handleRobotFrame(c.req.raw, db));
 app.post("/api/robot/map", (c) => handleRobotMap(c.req.raw, db));
 app.post("/api/robot/splat", (c) => handleRobotSplat(c.req.raw, db));
+app.post("/api/robot/trajectory", (c) => handleRobotTrajectory(c.req.raw, db));
 
 // oRPC HTTP router. Build the context per request from the Better Auth
 // session, then delegate to the oRPC fetch handler.
@@ -81,6 +83,7 @@ app.all("/rpc/*", async (c) => {
       ? { user: { id: session.user.id, name: session.user.name } }
       : null,
     presignGet,
+    readObject,
   });
   const { matched, response } = await rpcHandler.handle(c.req.raw, {
     prefix: "/rpc",

@@ -1,4 +1,4 @@
-import { type Database, frames, maps, splats } from "@robomoo/db";
+import { type Database, frames, maps, splats, trajectories } from "@robomoo/db";
 import { newId } from "@robomoo/shared";
 import { env } from "../env";
 import { writeImage, writeObject } from "../storage/bucket";
@@ -56,9 +56,26 @@ export async function handleRobotFrame(
     label: typeof label === "string" && label.length > 0 ? label : null,
     poseX: num(form.get("poseX")),
     poseY: num(form.get("poseY")),
+    embedding: parseEmbedding(form.get("embedding")),
   });
 
   return Response.json({ key });
+}
+
+// Optional CLIP vector sent as a JSON-encoded number[] form field. Anything
+// malformed or non-numeric is dropped (the frame is still stored, just
+// unsearchable).
+function parseEmbedding(v: string | File | null): number[] | null {
+  if (typeof v !== "string" || v.length === 0) return null;
+  try {
+    const arr = JSON.parse(v);
+    if (Array.isArray(arr) && arr.every((n) => typeof n === "number")) {
+      return arr as number[];
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 // Token-guarded splat ingest. The reconstruction box (after running COLMAP +
@@ -170,6 +187,36 @@ export async function handleRobotMap(
     width: Math.round(width),
     height: Math.round(height),
   });
+
+  return Response.json({ key });
+}
+
+// Token-guarded trajectory ingest. The robot POSTs a JSON file — an array of
+// {ts, x, y, theta} odometry points — which we store verbatim in object storage
+// (same key-indirection as maps) and reference by the newest row.
+export async function handleRobotTrajectory(
+  req: Request,
+  db: Database,
+): Promise<Response> {
+  if (!authed(req)) return new Response("unauthorized", { status: 401 });
+
+  const form = await req.formData().catch(() => null);
+  if (!form) {
+    return new Response("expected multipart form-data", { status: 400 });
+  }
+  const file = form.get("file");
+  if (!(file instanceof File)) {
+    return new Response("expected a 'file' field", { status: 400 });
+  }
+  if (file.size > MAX_BYTES) {
+    return new Response("file too large (max 8MB)", { status: 413 });
+  }
+
+  const id = newId("traj");
+  const key = `robot/${id}.json`;
+  await writeObject(key, await file.arrayBuffer(), "application/json");
+
+  await db.insert(trajectories).values({ id, pointsKey: key });
 
   return Response.json({ key });
 }

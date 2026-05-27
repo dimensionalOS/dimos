@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@orpc/client": "^1.14.0",
     "@radix-ui/react-slot": "^1.2.4",
     "@robomoo/api": "workspace:*",

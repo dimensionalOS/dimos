@@ -1,5 +1,5 @@
 import type { RouterClient } from "@orpc/server";
-import { frames, maps, messages, splats, user } from "@robomoo/db";
+import { frames, maps, messages, splats, trajectories, user } from "@robomoo/db";
 import {
   createMessageInput,
   type Frame,
@@ -11,8 +11,10 @@ import {
   newId,
   type Splat,
   splatSchema,
+  type Trajectory,
+  trajectorySchema,
 } from "@robomoo/shared";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure, publicProcedure } from "../api";
 
@@ -88,6 +90,33 @@ const framesList = publicProcedure
         label: r.label,
         poseX: r.poseX,
         poseY: r.poseY,
+        embedding: null, // gallery doesn't need vectors — keep the payload light
+        createdAt: r.createdAt.toISOString(),
+      })),
+    );
+  });
+
+// Embedded frames only (have a CLIP vector) — fuels in-browser semantic search.
+// Ships the vectors so cosine ranking happens entirely client-side.
+const framesEmbedded = publicProcedure
+  .output(z.array(frameSchema))
+  .handler(async ({ context }): Promise<Frame[]> => {
+    const rows = await context.db
+      .select()
+      .from(frames)
+      .where(isNotNull(frames.embedding))
+      .orderBy(desc(frames.createdAt))
+      .limit(2000);
+
+    return Promise.all(
+      rows.map(async (r) => ({
+        id: r.id,
+        imageUrl: await context.presignGet(r.imageKey),
+        note: r.note,
+        label: r.label,
+        poseX: r.poseX,
+        poseY: r.poseY,
+        embedding: r.embedding,
         createdAt: r.createdAt.toISOString(),
       })),
     );
@@ -104,8 +133,10 @@ const mapLatest = publicProcedure
       .orderBy(desc(maps.createdAt))
       .limit(1);
     if (!row) return null;
+    const bytes = await context.readObject(row.imageKey);
+    const b64 = Buffer.from(bytes).toString("base64");
     return {
-      imageUrl: await context.presignGet(row.imageKey),
+      imageDataUri: `data:image/png;base64,${b64}`,
       resolution: row.resolution,
       originX: row.originX,
       originY: row.originY,
@@ -113,6 +144,22 @@ const mapLatest = publicProcedure
       height: row.height,
       createdAt: row.createdAt.toISOString(),
     };
+  });
+
+// Newest odometry trajectory (or null). The path JSON lives in object storage;
+// we read + inline it (it's small) so the web gets the points directly.
+const trajectoryLatest = publicProcedure
+  .output(trajectorySchema.nullable())
+  .handler(async ({ context }): Promise<Trajectory | null> => {
+    const [row] = await context.db
+      .select()
+      .from(trajectories)
+      .orderBy(desc(trajectories.createdAt))
+      .limit(1);
+    if (!row) return null;
+    const bytes = await context.readObject(row.pointsKey);
+    const points = JSON.parse(Buffer.from(bytes).toString("utf8"));
+    return { points, createdAt: row.createdAt.toISOString() };
   });
 
 // 3D Gaussian splats — public list, newest first. Presigned with a long TTL
@@ -139,8 +186,9 @@ const splatsList = publicProcedure
 
 export const appRouter = {
   messages: { list, add },
-  frames: { list: framesList },
+  frames: { list: framesList, embedded: framesEmbedded },
   map: { latest: mapLatest },
+  trajectory: { latest: trajectoryLatest },
   splats: { list: splatsList },
 };
 

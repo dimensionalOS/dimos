@@ -10,6 +10,18 @@ const nextConfig: NextConfig = {
     // host for the sample; tighten to the bucket host in a real app.
     remotePatterns: [{ protocol: "https", hostname: "**" }],
   },
+  // Dev-only: the Caddy gateway provides same-origin /rpc + /api in prod (and
+  // via `bun run dev`). When running the web standalone (e.g. on macOS where the
+  // gateway's host-networking container is unavailable), proxy those paths to
+  // the server so the browser stays same-origin. No-op in production.
+  async rewrites() {
+    if (process.env.NODE_ENV === "production") return [];
+    const server = process.env.RPC_INTERNAL_URL ?? "http://localhost:4471";
+    return [
+      { source: "/rpc/:path*", destination: `${server}/rpc/:path*` },
+      { source: "/api/:path*", destination: `${server}/api/:path*` },
+    ];
+  },
 };
 
 export default nextConfig;
