@@ -261,7 +261,7 @@ class KeyboardTeleop(Module):
             else:
                 self.cmd_vel.publish(twist)
 
-            self._update_display(twist)
+            self._update_display(twist, state)
 
             if self._clock is None:
                 raise RuntimeError("_clock not initialized")
@@ -269,7 +269,7 @@ class KeyboardTeleop(Module):
 
         pygame.quit()
 
-    def _update_display(self, twist: Twist) -> None:
+    def _update_display(self, twist: Twist, state: KeyboardState) -> None:
         if self._screen is None or self._font is None or self._keys_held is None:
             raise RuntimeError("Not initialized correctly")
 
@@ -278,9 +278,9 @@ class KeyboardTeleop(Module):
         y_pos = 20
 
         speed_mult_text = ""
-        if pygame.K_LSHIFT in self._keys_held or pygame.K_RSHIFT in self._keys_held:
+        if state.boost:
             speed_mult_text = f" [BOOST {self._velocity_cfg.boost_multiplier:g}x]"
-        elif pygame.K_LCTRL in self._keys_held or pygame.K_RCTRL in self._keys_held:
+        elif state.slow:
             speed_mult_text = f" [SLOW {self._velocity_cfg.slow_multiplier:g}x]"
 
         texts = [
