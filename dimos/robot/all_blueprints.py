@@ -121,6 +121,7 @@ all_blueprints = {
     "xarm6-planner-only": "dimos.manipulation.blueprints:xarm6_planner_only",
     "xarm7-planner-coordinator": "dimos.manipulation.blueprints:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.manipulation.blueprints:xarm7_planner_coordinator_agent",
+    "yoloe-tracking-test": "dimos.robot.custom.yoloe_tracking:yoloe_tracking_test",
 }
 
 
@@ -224,5 +225,6 @@ all_modules = {
     "wavefront-frontier-explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector.WavefrontFrontierExplorer",
     "web-input": "dimos.agents.web_human_input.WebInput",
     "websocket-vis-module": "dimos.web.websocket_vis.websocket_vis_module.WebsocketVisModule",
+    "yoloe-tracking-module": "dimos.robot.custom.yoloe_tracking.YoloeTrackingModule",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }

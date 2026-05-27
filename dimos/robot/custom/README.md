@@ -1,5 +1,45 @@
 # Custom Robot Blueprints
 
+## yoloe-tracking-test
+
+`yoloe-tracking-test` 是一个只用于验证 YOLOE tracking 效果的 Go2 replay blueprint。它不接距离控制、不接 Agent/MCP/skill，只把 Go2 `color_image` 输入到 `YoloeTrackingModule`，并把 YOLOE 的 `Detection2DArray` 发布到 `/color_image/yoloe_detections`。
+
+### 组成
+
+- `unitree_go2_basic`
+- `YoloeTrackingModule.blueprint()`
+- 专用 Rerun viewer overlay
+
+数据流：
+
+```text
+unitree_go2_basic.color_image
+  -> YoloeTrackingModule.color_image
+  -> YoloeTrackingModule.detections
+  -> /color_image/yoloe_detections
+  -> Rerun Camera overlay
+```
+
+### 离线模型准备
+
+运行 `yoloe-tracking-test` 时不会拉取或解压 YOLOE 模型。需要先在有网络的环境准备模型：
+
+```bash
+git lfs pull --include data/.lfs/models_yoloe.tar.gz
+uv run python -c 'from dimos.utils.data import get_data; print(get_data("models_yoloe"))'
+ls -lh data/models_yoloe/yoloe-11s-seg-pf.pt
+```
+
+如果 `data/models_yoloe/yoloe-11s-seg-pf.pt` 不存在，blueprint 会在部署前失败并打印同一组预处理命令。真机或离线 replay 环境只运行 blueprint，不做模型下载。
+
+### 启动
+
+```bash
+.venv/bin/dimos --replay run yoloe-tracking-test
+```
+
+Rerun Camera 视图会显示 `world/color_image/yoloe_detections`。bbox 标签使用 detection id；当 YOLOE 返回 tracking id 时，可以直接观察同一个目标跨帧 id 是否稳定。
+
 ## bbox-distance-follow
 
 `bbox-distance-follow` 是一个最小可启动的 Go2 blueprint，用于验证 “检测多个 bbox -> 用户选择一个 bbox -> 根据 selected bbox + lidar + camera_info 控制 Go2 距离” 这条链路。
