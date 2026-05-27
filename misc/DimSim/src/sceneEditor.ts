@@ -100,7 +100,6 @@ export class SceneEditor {
   _npcClock: any = null; // THREE.Clock
 
   async _execCode(code: string, id?: string): Promise<void> {
-    console.log(`[sceneEditor] exec${id ? ` (${id})` : ""}:`, code.slice(0, 100));
     try {
       const g = this.globals;
       const colliderMap = this._colliderMap;
@@ -378,9 +377,12 @@ export class SceneEditor {
   }
 
   async _loadScript(url: string, id?: string): Promise<void> {
-    console.log(`[sceneEditor] loadScript${id ? ` (${id})` : ""}:`, url);
     try {
-      const resp = await fetch(url);
+      const resolved = new URL(url, location.origin);
+      if (resolved.origin !== location.origin) {
+        throw new Error(`cross-origin URL refused: ${url}`);
+      }
+      const resp = await fetch(resolved);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
       const code = await resp.text();
       await this._execCode(code, id);
