@@ -54,7 +54,7 @@ fi
 # Assemble the module list once so it's reused for echo + exec.
 MODULES=("$BLUEPRINT")
 if [[ "$BRIDGES" == "1" ]]; then
-  MODULES+=("camera-mjpeg-module" "audio-ws-module")
+  MODULES+=("camera-mjpeg-module" "audio-ws-module" "cmd-bridge-module")
 fi
 if [[ -n "$EXTRA" ]]; then
   # shellcheck disable=SC2206
@@ -208,6 +208,10 @@ if [[ "$BRIDGES" == "1" ]]; then
     echo "  audio info     : http://127.0.0.1:7781/audio_info"
     echo "  audio play     : POST http://127.0.0.1:7781/play"
   fi
+  echo "  cmd_vel        : POST http://127.0.0.1:7782/cmd_vel"
+  echo "  path           : POST http://127.0.0.1:7782/path"
+  echo "  stop           : POST http://127.0.0.1:7782/stop"
+  echo "  pose           : http://127.0.0.1:7782/pose"
 fi
 echo
 c_bold "▶ launching: dimos $([[ "$SIMULATION" == "1" ]] && echo "--simulation ")run ${MODULES[*]} ${LLM_ARGS[*]:-}"
