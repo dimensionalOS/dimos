@@ -44,6 +44,8 @@ export async function handleRobotFrame(
 
   const note = form.get("note");
   const label = form.get("label");
+  const run = form.get("run");
+  const position = num(form.get("position"));
   const id = newId("frame");
   const ext = file.type.split("/").pop() || "jpg";
   const key = `robot/${id}.${ext}`;
@@ -57,6 +59,9 @@ export async function handleRobotFrame(
     poseX: num(form.get("poseX")),
     poseY: num(form.get("poseY")),
     embedding: parseEmbedding(form.get("embedding")),
+    run: typeof run === "string" && run.length > 0 ? run : null,
+    position: position === null ? null : Math.round(position),
+    angle: num(form.get("angle")),
   });
 
   return Response.json({ key });

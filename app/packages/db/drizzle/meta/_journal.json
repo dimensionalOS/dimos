@@ -36,6 +36,13 @@
       "when": 1779866902916,
       "tag": "0004_last_stature",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779873871309,
+      "tag": "0005_known_magdalene",
+      "breakpoints": true
     }
   ]
 }
