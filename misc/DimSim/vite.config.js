@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   optimizeDeps: {
-    exclude: ["@sparkjsdev/spark", "@dimforge/rapier3d-compat"],
+    exclude: ["@dimforge/rapier3d-compat"],
   },
   assetsInclude: ["**/*.wasm"],
   build: {
