@@ -45,6 +45,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.frontier_exploration.frontier_explorer_spec import (
     FrontierExplorerSpec,
 )
+from dimos.robot.unitree.tilt_spec import TiltSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -65,6 +66,9 @@ class TakePictureSkill(Module):
     # Auto-wired (structurally) to WavefrontFrontierExplorer — lets us gate the
     # capture loop on whether exploration is still running.
     _explorer: FrontierExplorerSpec
+    # Auto-wired (structurally) to UnitreeSkillContainer.tilt_body — lets
+    # tilt_and_capture aim the body-fixed camera without owning the connection.
+    _tilt: TiltSpec
 
     @rpc
     def start(self) -> None:
@@ -179,6 +183,59 @@ class TakePictureSkill(Module):
             self._uploads.append(t)
         t.start()
         return SkillResult.ok("Picture captured; uploading in the background.")
+
+    @skill
+    def tilt_and_capture(
+        self,
+        pitch_deg: float = -20.0,
+        note: str = "",
+        settle_s: float = 1.0,
+    ) -> SkillResult:
+        """Tilt the body to aim the camera, photograph that view, then re-level.
+
+        Use to photograph things above or below the robot's straight-ahead view
+        (the camera is body-fixed). NEGATIVE pitch_deg looks UP, positive looks
+        DOWN. Runs in the background: tilts, waits `settle_s` for the body to
+        settle, captures + uploads the tilted view, then returns the body to
+        level. Returns immediately. The robot should be standing first.
+        """
+        if getattr(self, "_latest", None) is None:
+            return SkillResult.fail("NO_FRAME", "No camera frame received yet")
+        if not self._configured():
+            return SkillResult.fail(
+                "NOT_CONFIGURED", "ROBOMOO_URL / ROBOT_INGEST_TOKEN not set"
+            )
+
+        def _bg() -> None:
+            try:
+                self._tilt.tilt_body(pitch_deg=pitch_deg)
+                # Wait for the body to physically reach the pose and a fresh
+                # camera frame to arrive before snapshotting.
+                time.sleep(settle_s)
+                key = self._upload_frame(
+                    getattr(self, "_latest", None),
+                    getattr(self, "_pose", None),
+                    note=note,
+                    label=note,
+                )
+                logger.info("tilt_and_capture uploaded frame key=%s", key)
+            except Exception:  # noqa: BLE001 — fire-and-forget: failures only logged
+                logger.exception("tilt_and_capture failed")
+            finally:
+                # Always return the body to level, even if capture failed.
+                try:
+                    self._tilt.tilt_body()
+                except Exception:  # noqa: BLE001 — best effort
+                    logger.exception("tilt_and_capture re-level failed")
+
+        t = threading.Thread(target=_bg, daemon=True, name="tilt-and-capture")
+        with self._uploads_lock:
+            self._uploads = [u for u in self._uploads if u.is_alive()]
+            self._uploads.append(t)
+        t.start()
+        return SkillResult.ok(
+            f"Tilting to pitch={pitch_deg} deg, capturing, then re-leveling (background)."
+        )
 
     @skill
     def explore_and_capture(
