@@ -100,6 +100,60 @@ dimos run unitree-go2-basic audio-ws-module
    autoconnect doesn't warn loudly enough.
 3. Untested: no real Go2 available during this session. Sim has no audio.
 
+## Mac + local-LLM agentic — what works, what doesn't
+
+Goal: drive an MCP agent on Apple Silicon with LM Studio (:1234) or the
+mlxvlm Gemma-4 server (:8080), no CUDA, no Google services.
+
+### Blueprints
+
+| Blueprint | Boots on Mac? | Notes |
+|---|---|---|
+| `unitree-go2-agentic` | ✗ | imports SecurityModule (EdgeTAM/CUDA) and Moondream VL (crashes Metal) |
+| `unitree-go2-agentic-gemini` | ✗ as-is | imports `GeminiSpeakSkill` → `from google import genai` at module load. Run `uv pip install google-genai` first, even if you don't call any Gemini APIs. |
+| `unitree-go2-agentic-ollama` | ✓ | clean compose; `./sim-with-llm.sh ollama` uses it |
+| `unitree-go2-basic + mcp-server + mcp-client` | ✓ | minimal but reliable; default for `./sim-with-llm.sh lmstudio` and `mlxvlm` |
+
+### Skill availability by compose
+
+| Compose | Skills the agent gets |
+|---|---|
+| `unitree-go2-basic + mcp-server + mcp-client` | `observe`, `play_wav`, `play_wav_b64` (last two no-op in sim) |
+| `… + unitree-skill-container + replanning-a-star-planner` | adds `relative_move`, `wait`, `current_time`, `tilt_body`, `execute_sport_command` — heavier startup (full nav stack) |
+
+`unitree-skill-container` alone fails build:
+`"No module met NavigationInterfaceSpec spec"`. The implementor is
+`replanning-a-star-planner`.
+
+### VL backends — Mac gotcha
+
+`dimos/models/vl/types.py:17` literal: `qwen | moondream | gemini`.
+
+- `qwen` — **not local**: hits Alibaba DashScope cloud (`dashscope-intl.aliyuncs.com`), needs `ALIBABA_API_KEY`.
+- `moondream` — local; crashes Metal on Apple Silicon (per the `-gemini` blueprint docstring).
+- `gemini` — Google cloud, needs `GOOGLE_API_KEY`.
+
+There is currently **no Mac-local VL backend**. The user has mlxvlm on :8080
+(Gemma-4-E4B + Falcon-Perception, OpenAI-compatible) — natural place to plug
+a new `mlxvlm` / `openai_compat` backend. Not implemented yet; needs a
+new file under `dimos/models/vl/`.
+
+### LLM chat backends
+
+- **LM Studio at :1234** and **mlxvlm at :8080** both speak `/v1/chat/completions`
+  with proper OpenAI tool-call passthrough — `langchain-openai` (already
+  installed) handles them via `OPENAI_BASE_URL`. No new dimos module
+  needed for chat.
+- McpClient model override via `-o mcpclient.model=openai:<id>` works.
+  Wired up in `go2-start.sh` LMSTUDIO/MLXVLM presets.
+
+### Next iteration
+Add `mlxvlm` to `VlModelName` so `NavigationSkillContainer` and
+`PersonFollowSkillContainer` can run with a local VL backend. With that
++ `google-genai` installed, `unitree-go2-agentic-gemini` becomes the
+richest Mac agentic compose if we also `--disable` the Gemini-runtime
+modules (`gemini-speak-skill`, `map-uploader`, `spatial-memory`).
+
 ## Composition cheatsheet
 | Run | Endpoints |
 |---|---|
