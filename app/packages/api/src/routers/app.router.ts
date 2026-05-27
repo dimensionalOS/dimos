@@ -350,32 +350,56 @@ const framesAnalyses = publicProcedure
 const framesScansHeaders = publicProcedure
 	.output(z.array(scanRunHeaderSchema))
 	.handler(async ({ context }): Promise<ScanRunHeader[]> => {
-		// One row per run: max(createdAt), distinct positions, total images.
-		// Treating a NULL position as its own bucket (-1) to match groupScans().
-		const headerRows = await context.db
-			.select({
-				run: frames.run,
-				capturedAt: sql<Date>`max(${frames.createdAt})`,
-				imageCount: sql<number>`count(*)::int`,
-				positionCount: sql<number>`count(distinct coalesce(${frames.position}, -1))::int`,
-			})
-			.from(frames)
-			.where(isNotNull(frames.run))
-			.groupBy(frames.run)
-			.orderBy(desc(sql`max(${frames.createdAt})`))
-			.limit(500);
+		// One row per run. Sort happens in JS — keeps the SQL simple and avoids
+		// any drizzle ordering-on-aggregate quirks.
+		let headerRows: {
+			run: string | null;
+			capturedAt: Date;
+			imageCount: number;
+			positionCount: number;
+		}[];
+		try {
+			headerRows = await context.db
+				.select({
+					run: frames.run,
+					capturedAt: sql<Date>`max(${frames.createdAt})`,
+					imageCount: sql<number>`count(*)::int`,
+					positionCount: sql<number>`count(distinct ${frames.position})::int`,
+				})
+				.from(frames)
+				.where(isNotNull(frames.run))
+				.groupBy(frames.run);
+		} catch (e) {
+			console.error("[scansHeaders] headers query failed", e);
+			throw e;
+		}
 
-		// Per-run analysis count + most-recent analysis ts (the ETag).
-		const analysisRows = await context.db
-			.select({
-				run: frames.run,
-				analysisCount: sql<number>`count(*)::int`,
-				latestAnalysisAt: sql<Date>`max(${frameAnalyses.createdAt})`,
-			})
-			.from(frameAnalyses)
-			.innerJoin(frames, eq(frameAnalyses.frameId, frames.id))
-			.where(isNotNull(frames.run))
-			.groupBy(frames.run);
+		// Per-run analysis count + most-recent analysis ts (the ETag). Wrapped in
+		// try/catch — if the frame_analyses migration hasn't applied yet (fresh
+		// deploy mid-rollout), we still want the headers list to render. The
+		// run rows just show 0 analyses until the table exists.
+		let analysisRows: {
+			run: string | null;
+			analysisCount: number;
+			latestAnalysisAt: Date | null;
+		}[] = [];
+		try {
+			analysisRows = await context.db
+				.select({
+					run: frames.run,
+					analysisCount: sql<number>`count(*)::int`,
+					latestAnalysisAt: sql<Date>`max(${frameAnalyses.createdAt})`,
+				})
+				.from(frameAnalyses)
+				.innerJoin(frames, eq(frameAnalyses.frameId, frames.id))
+				.where(isNotNull(frames.run))
+				.groupBy(frames.run);
+		} catch (e) {
+			console.warn(
+				"[scansHeaders] analyses query failed (table missing?) — continuing with zero counts",
+				e,
+			);
+		}
 
 		const analysisByRun = new Map(
 			analysisRows
@@ -397,7 +421,8 @@ const framesScansHeaders = publicProcedure
 						? a.latestAnalysisAt.toISOString()
 						: null,
 				};
-			});
+			})
+			.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
 	});
 
 // Room scans grouped run → positions → angle-sorted images. Public; fuels the
