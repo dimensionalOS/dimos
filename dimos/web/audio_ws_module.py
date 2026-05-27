@@ -16,6 +16,7 @@ Then:
 """
 
 import asyncio
+import queue
 import threading
 from typing import Any
 
@@ -50,11 +51,13 @@ class AudioWsModule(Module):
             allow_methods=["GET", "POST"],
             allow_headers=["*"],
         )
+        # Cross-thread handoff: subscriber thread enqueues, broadcast task drains.
+        self._frame_queue: queue.Queue[bytes] = queue.Queue(maxsize=200)
         self._clients: set[WebSocket] = set()
-        self._loop: asyncio.AbstractEventLoop | None = None
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._last_format: dict[str, int] | None = None
+        self._stop_event = threading.Event()
         self._setup_routes()
 
     def _setup_routes(self) -> None:
@@ -72,7 +75,7 @@ class AudioWsModule(Module):
             self._clients.add(ws)
             try:
                 while True:
-                    # Treat any incoming message as keep-alive; ignore content.
+                    # Server -> client only; sink any inbound messages.
                     await ws.receive()
             except WebSocketDisconnect:
                 pass
@@ -87,37 +90,20 @@ class AudioWsModule(Module):
             self.audio_in.publish(wav)
             return {"status": "queued", "bytes": str(len(wav))}
 
-    @rpc
-    def start(self) -> None:
-        super().start()
+        @self._app.on_event("startup")
+        async def _spawn_broadcaster() -> None:
+            asyncio.create_task(self._broadcast_loop())
 
-        self.audio.subscribe(self._on_audio)
-
-        def run() -> None:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            config = uvicorn.Config(
-                self._app, host="127.0.0.1", port=self.config.port, log_level="warning"
-            )
-            self._server = uvicorn.Server(config)
-            self._loop.run_until_complete(self._server.serve())
-
-        self._thread = threading.Thread(target=run, daemon=True)
-        self._thread.start()
-        logger.info(
-            f"audio-ws-module: ws://127.0.0.1:{self.config.port}/audio_out  "
-            f"| GET http://127.0.0.1:{self.config.port}/audio_info  "
-            f"| POST http://127.0.0.1:{self.config.port}/play"
-        )
-
-    def _on_audio(self, msg: AudioMessage) -> None:
-        self._last_format = {"sample_rate": msg.sample_rate, "channels": msg.channels}
-        if not self._clients or self._loop is None:
-            return
-
-        chunk = msg.data
-
-        async def broadcast() -> None:
+    async def _broadcast_loop(self) -> None:
+        """Drain the cross-thread queue and fan out to WebSocket clients."""
+        loop = asyncio.get_running_loop()
+        while not self._stop_event.is_set():
+            try:
+                chunk = await loop.run_in_executor(None, self._frame_queue.get, True, 0.5)
+            except queue.Empty:
+                continue
+            if not self._clients:
+                continue
             stale: list[WebSocket] = []
             for ws in list(self._clients):
                 try:
@@ -127,10 +113,57 @@ class AudioWsModule(Module):
             for ws in stale:
                 self._clients.discard(ws)
 
-        asyncio.run_coroutine_threadsafe(broadcast(), self._loop)
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+        self.audio.subscribe(self._on_audio)
+
+        def run() -> None:
+            config = uvicorn.Config(
+                self._app,
+                host="127.0.0.1",
+                port=self.config.port,
+                log_level="warning",
+                lifespan="on",
+            )
+            self._server = uvicorn.Server(config)
+            try:
+                # Server.run() owns its own asyncio loop and cleanup; this
+                # avoids the run_until_complete/run_coroutine_threadsafe race
+                # that produced "Event loop stopped before Future completed".
+                self._server.run()
+            except OSError as e:
+                logger.error(
+                    f"audio-ws failed to bind :{self.config.port} ({e}); "
+                    f"is another instance running? `lsof -ti :{self.config.port} | xargs kill -9`"
+                )
+            except Exception:
+                logger.exception("audio-ws server crashed")
+
+        self._thread = threading.Thread(target=run, daemon=True, name="audio-ws-uvicorn")
+        self._thread.start()
+        logger.info(
+            f"audio-ws-module: ws://127.0.0.1:{self.config.port}/audio_out  "
+            f"| GET http://127.0.0.1:{self.config.port}/audio_info  "
+            f"| POST http://127.0.0.1:{self.config.port}/play"
+        )
+
+    def _on_audio(self, msg: AudioMessage) -> None:
+        self._last_format = {"sample_rate": msg.sample_rate, "channels": msg.channels}
+        try:
+            self._frame_queue.put_nowait(msg.data)
+        except queue.Full:
+            # Drop oldest to bound latency.
+            try:
+                self._frame_queue.get_nowait()
+                self._frame_queue.put_nowait(msg.data)
+            except queue.Empty:
+                pass
 
     @rpc
     def stop(self) -> None:
+        self._stop_event.set()
         if self._server is not None:
             self._server.should_exit = True
         super().stop()
