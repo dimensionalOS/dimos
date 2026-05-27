@@ -36,27 +36,30 @@ from dimos.robot.unitree.go2.connection import GO2Connection
 # SpatialMemory is re-declared to use remote Gemini embeddings instead of the
 # local CLIP model (which fails on Apple CoreML); the later atom overrides the
 # one inside unitree_go2_spatial.
-# Detection VL is kept LOCAL (Moondream) where it makes sense:
-#  - look_out_for uses the global detection_model (default "moondream").
-#  - PersonFollowSkillContainer is re-declared with vl_model_name="moondream";
-#    tracking_mode="auto" resolves to periodic re-detection on non-CUDA machines
-#    (no EdgeTAM/CUDA) and EdgeTAM on GPU.
-# NavigationSkillContainer is re-declared to use Gemini for detection instead of
-# Qwen, which would otherwise require ALIBABA_API_KEY.
-unitree_go2_agentic_gemini = autoconnect(
-    unitree_go2_spatial,
-    SpatialMemory.blueprint(embedding_model="gemini", embedding_dimensions=768),
-    McpServer.blueprint(),
-    McpClient.blueprint(model="google_genai:gemini-2.5-flash"),
-    _common_agentic,
-    NavigationSkillContainer.blueprint(vl_model_name="gemini"),
-    PersonFollowSkillContainer.blueprint(
-        camera_info=GO2Connection.camera_info_static,
-        vl_model_name="moondream",
-    ),
-    GeminiSpeakSkill.blueprint(),
-    TakePictureSkill.blueprint(),
-    MapUploader.blueprint(),
-).disabled_modules(SecurityModule, SpeakSkill)
+# ALL compute runs on the Mac (the dog has no onboard brain), so VL detection is
+# ALSO Gemini — no local Moondream (~6 min/inference + crashes Metal on Apple
+# Silicon, which aborted the blueprint at startup):
+#  - .global_config(detection_model="gemini") drives look_out_for / PerceiveLoop.
+#  - NavigationSkillContainer + PersonFollowSkillContainer use vl_model_name="gemini"
+#    (these read the per-skill name, not the global knob).
+unitree_go2_agentic_gemini = (
+    autoconnect(
+        unitree_go2_spatial,
+        SpatialMemory.blueprint(embedding_model="gemini", embedding_dimensions=768),
+        McpServer.blueprint(),
+        McpClient.blueprint(model="google_genai:gemini-2.5-flash"),
+        _common_agentic,
+        NavigationSkillContainer.blueprint(vl_model_name="gemini"),
+        PersonFollowSkillContainer.blueprint(
+            camera_info=GO2Connection.camera_info_static,
+            vl_model_name="gemini",
+        ),
+        GeminiSpeakSkill.blueprint(),
+        TakePictureSkill.blueprint(),
+        MapUploader.blueprint(),
+    )
+    .global_config(detection_model="gemini")
+    .disabled_modules(SecurityModule, SpeakSkill)
+)
 
 __all__ = ["unitree_go2_agentic_gemini"]
