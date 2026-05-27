@@ -146,7 +146,7 @@ class MemoryWorldConfig(QuestTeleopConfig):
     # Top-down density map (GTA-style minimap + ground projection). Computed
     # from the same point cloud — Z-slab histogram into a square image.
     map_image_size: int = 512
-    map_z_min_floor: float = 0.05    # avoid floor speckle
+    map_z_min_floor: float = 0.05  # avoid floor speckle
     map_z_max_floor: float = 1.8
     client_route: str = "/memory_world"
     ws_route: str = "/ws_memory_world"
@@ -285,9 +285,7 @@ class MemoryWorldModule(QuestTeleopModule):
                 for i, jpeg in enumerate(self._cached_thumbnails):
                     if not jpeg:
                         continue
-                    conn.send_threadsafe(
-                        encode_binary(MSG_IMAGE_THUMBNAIL, {"index": i}, jpeg)
-                    )
+                    conn.send_threadsafe(encode_binary(MSG_IMAGE_THUMBNAIL, {"index": i}, jpeg))
 
             odom_header, odom_payload = self._cached_odom
             conn.send_threadsafe(encode_binary(MSG_ODOM_TRAIL, odom_header, odom_payload))
@@ -373,14 +371,17 @@ class MemoryWorldModule(QuestTeleopModule):
             rgb = self._height_colors(positions)
             header = self._cloud_header(positions)
             payload = positions.tobytes() + rgb.tobytes()
-            logger.info("built voxel cloud (%s scans): n=%d",
-                        "all" if use_all else str(n_scans), positions.shape[0])
+            logger.info(
+                "built voxel cloud (%s scans): n=%d",
+                "all" if use_all else str(n_scans),
+                positions.shape[0],
+            )
             return header, payload
         except Exception:
             logger.exception("voxel-from-lidar build failed")
             return None
 
-    def _height_colors(self, positions: "np.ndarray") -> "np.ndarray":
+    def _height_colors(self, positions: np.ndarray) -> np.ndarray:
         """Map Z (robot up) to a bright, fully-saturated rainbow.
 
         Floor → ceiling sweeps hue violet → blue → cyan → green → yellow → red,
@@ -404,7 +405,7 @@ class MemoryWorldModule(QuestTeleopModule):
         bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR).reshape(-1, 3)
         return np.ascontiguousarray(bgr[:, ::-1])
 
-    def _cloud_header(self, positions: "np.ndarray") -> dict[str, Any]:
+    def _cloud_header(self, positions: np.ndarray) -> dict[str, Any]:
         """Common header: count, colour flag, voxel size, render mode, bounds."""
         return {
             "n": int(positions.shape[0]),
@@ -412,9 +413,12 @@ class MemoryWorldModule(QuestTeleopModule):
             "voxel_size": float(self.config.voxel_size),
             "render": self.config.voxel_render,
             "bounds": {
-                "x_min": float(positions[:, 0].min()), "x_max": float(positions[:, 0].max()),
-                "y_min": float(positions[:, 1].min()), "y_max": float(positions[:, 1].max()),
-                "z_min": float(positions[:, 2].min()), "z_max": float(positions[:, 2].max()),
+                "x_min": float(positions[:, 0].min()),
+                "x_max": float(positions[:, 0].max()),
+                "y_min": float(positions[:, 1].min()),
+                "y_max": float(positions[:, 1].max()),
+                "z_min": float(positions[:, 2].min()),
+                "z_max": float(positions[:, 2].max()),
             },
         }
 
@@ -472,8 +476,12 @@ class MemoryWorldModule(QuestTeleopModule):
 
         header = self._cloud_header(positions)
         payload = positions.tobytes() + rgb.tobytes()
-        logger.info("built point cloud: n=%d color_mode=%s bytes=%d",
-                    positions.shape[0], self.config.color_mode, len(payload))
+        logger.info(
+            "built point cloud: n=%d color_mode=%s bytes=%d",
+            positions.shape[0],
+            self.config.color_mode,
+            len(payload),
+        )
         return header, payload
 
     def _build_image_poses(self) -> tuple[tuple[dict[str, Any], bytes], list[bytes]]:
@@ -520,9 +528,7 @@ class MemoryWorldModule(QuestTeleopModule):
                     if hasattr(img, "resize_to_fit"):
                         img, _ = img.resize_to_fit(max_size, max_size)
                     bgr = img.to_bgr().to_opencv() if hasattr(img, "to_bgr") else img
-                    ok, buf = cv2.imencode(
-                        ".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-                    )
+                    ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
                     thumbnails.append(buf.tobytes() if ok else b"")
                 except Exception:
                     logger.exception("thumbnail encode failed at ts=%s", obs.ts)
@@ -600,9 +606,12 @@ class MemoryWorldModule(QuestTeleopModule):
         if not ok:
             return None
         header = {
-            "x_min": x_min, "x_max": x_max,
-            "y_min": y_min, "y_max": y_max,
-            "width_px": size, "height_px": size,
+            "x_min": x_min,
+            "x_max": x_max,
+            "y_min": y_min,
+            "y_max": y_max,
+            "width_px": size,
+            "height_px": size,
         }
         logger.info("built top-down map: %dx%d bounds=%s", size, size, header)
         return header, buf.tobytes()
@@ -651,8 +660,15 @@ class MemoryWorldModule(QuestTeleopModule):
                 {k: v for k, v in msg.items() if k not in ("type", "event")},
             )
         elif kind in (
-            "locomote", "yaw", "teleport_aim", "teleport_commit", "teleport_cancel",
-            "scale_delta", "reset_view", "toggle_images", "toggle_render",
+            "locomote",
+            "yaw",
+            "teleport_aim",
+            "teleport_commit",
+            "teleport_cancel",
+            "scale_delta",
+            "reset_view",
+            "toggle_images",
+            "toggle_render",
         ):
             # Client-side view gestures, echoed only as telemetry. Debug-level
             # so they don't spam the console (scale_delta fires every frame).
