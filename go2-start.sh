@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 # go2-start.sh — hackathon quickstart for the dimairos05 Go2
+#
 # Usage:
-#   ./go2-start.sh                       # default blueprint: unitree-go2-basic
-#   ./go2-start.sh unitree-go2-agentic-gemini
-#   ROBOT_IP=10.0.0.42 ./go2-start.sh    # override IP (robot on shared wifi)
+#   ./go2-start.sh                                  # unitree-go2-basic + web bridges
+#   ./go2-start.sh unitree-go2-agentic-gemini       # any blueprint
+#   ROBOT_IP=10.0.0.42 ./go2-start.sh               # override IP
+#   BRIDGES=0 ./go2-start.sh                        # skip camera-mjpeg + audio-ws
+#   EXTRA="foo-module bar-module" ./go2-start.sh    # tack on more modules
+#   SIMULATION=1 ./go2-start.sh                     # run MuJoCo sim (camera only)
+#
+# Default extras (with BRIDGES=1):
+#   camera-mjpeg-module     http://127.0.0.1:7780/video_feed/color_image
+#                           http://127.0.0.1:7780/snapshot/color_image
+#   audio-ws-module         ws://127.0.0.1:7781/audio_out   (robot only)
+#                           POST http://127.0.0.1:7781/play (robot only)
 
 set -euo pipefail
 
@@ -12,6 +22,9 @@ ROBOT_IP="${ROBOT_IP:-192.168.12.1}"
 EXPECTED_SSID="${EXPECTED_SSID:-dimairos05}"
 BLUEPRINT="${1:-unitree-go2-basic}"
 VENV_DIR="${VENV_DIR:-.venv}"
+BRIDGES="${BRIDGES:-1}"
+EXTRA="${EXTRA:-}"
+SIMULATION="${SIMULATION:-0}"
 # ----------------------------------------------------------------------------
 
 c_red()   { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -19,51 +32,68 @@ c_green() { printf '\033[32m%s\033[0m\n' "$*"; }
 c_yellow(){ printf '\033[33m%s\033[0m\n' "$*"; }
 c_bold()  { printf '\033[1m%s\033[0m\n'  "$*"; }
 
+# Assemble the module list once so it's reused for echo + exec.
+MODULES=("$BLUEPRINT")
+if [[ "$BRIDGES" == "1" ]]; then
+  MODULES+=("camera-mjpeg-module" "audio-ws-module")
+fi
+if [[ -n "$EXTRA" ]]; then
+  # shellcheck disable=SC2206
+  MODULES+=( $EXTRA )
+fi
+
 c_bold "▶ Go2 hackathon quickstart"
-echo "  blueprint : $BLUEPRINT"
-echo "  robot ip  : $ROBOT_IP"
+echo "  modules   : ${MODULES[*]}"
+if [[ "$SIMULATION" == "1" ]]; then
+  echo "  mode      : simulation (no robot)"
+else
+  echo "  robot ip  : $ROBOT_IP"
+fi
 echo
 
-# 1. Wifi check (macOS) ------------------------------------------------------
-if [[ "$(uname)" == "Darwin" ]]; then
-  SSID="$(ipconfig getsummary en0 2>/dev/null | awk -F' SSID : ' '/ SSID : /{print $2; exit}')"
-  if [[ -z "$SSID" ]]; then
-    SSID="$(ipconfig getsummary en1 2>/dev/null | awk -F' SSID : ' '/ SSID : /{print $2; exit}')"
-  fi
-  if [[ "$SSID" == "$EXPECTED_SSID" ]]; then
-    c_green "✓ on wifi $SSID"
+if [[ "$SIMULATION" != "1" ]]; then
+  # 1. Wifi check (macOS) ----------------------------------------------------
+  if [[ "$(uname)" == "Darwin" ]]; then
+    SSID="$(ipconfig getsummary en0 2>/dev/null | awk -F' SSID : ' '/ SSID : /{print $2; exit}')"
+    if [[ -z "$SSID" ]]; then
+      SSID="$(ipconfig getsummary en1 2>/dev/null | awk -F' SSID : ' '/ SSID : /{print $2; exit}')"
+    fi
+    if [[ "$SSID" == "$EXPECTED_SSID" ]]; then
+      c_green "✓ on wifi $SSID"
+    else
+      c_yellow "⚠ current wifi is '${SSID:-unknown}', expected '$EXPECTED_SSID'"
+      c_yellow "  if the robot is on a different network, set ROBOT_IP and ignore this"
+    fi
   else
-    c_yellow "⚠ current wifi is '${SSID:-unknown}', expected '$EXPECTED_SSID'"
-    c_yellow "  if the robot is on a different network, set ROBOT_IP and ignore this"
+    c_yellow "⚠ non-macOS host, skipping wifi check"
   fi
-else
-  c_yellow "⚠ non-macOS host, skipping wifi check"
-fi
 
-# 2. Reachability ------------------------------------------------------------
-echo
-echo "→ pinging $ROBOT_IP …"
-if ping -c 3 -W 1000 "$ROBOT_IP" >/dev/null 2>&1; then
-  c_green "✓ robot reachable"
-else
-  c_red "✗ cannot reach $ROBOT_IP"
-  c_red "  check: joined dimairos05? robot powered on? sport mode on in the Unitree app?"
-  exit 1
-fi
+  # 2. Reachability ----------------------------------------------------------
+  echo
+  echo "→ pinging $ROBOT_IP …"
+  if ping -c 3 -W 1000 "$ROBOT_IP" >/dev/null 2>&1; then
+    c_green "✓ robot reachable"
+  else
+    c_red "✗ cannot reach $ROBOT_IP"
+    c_red "  check: joined dimairos05? robot powered on? sport mode on in the Unitree app?"
+    c_red "  (use SIMULATION=1 ./go2-start.sh to run MuJoCo instead)"
+    exit 1
+  fi
 
-# 3. Clock sync (Unitree video desyncs without this) -------------------------
-echo
-echo "→ syncing clock (sudo, may prompt for password) …"
-if command -v sntp >/dev/null 2>&1; then
-  sudo sntp -sS pool.ntp.org >/dev/null 2>&1 \
-    && c_green "✓ clock synced" \
-    || c_yellow "⚠ clock sync failed (non-fatal, but video may lag lidar)"
-elif command -v ntpdate >/dev/null 2>&1; then
-  sudo ntpdate pool.ntp.org >/dev/null 2>&1 \
-    && c_green "✓ clock synced" \
-    || c_yellow "⚠ clock sync failed (non-fatal)"
-else
-  c_yellow "⚠ no sntp/ntpdate found, skipping clock sync"
+  # 3. Clock sync (Unitree video desyncs without this) -----------------------
+  echo
+  echo "→ syncing clock (sudo, may prompt for password) …"
+  if command -v sntp >/dev/null 2>&1; then
+    sudo sntp -sS pool.ntp.org >/dev/null 2>&1 \
+      && c_green "✓ clock synced" \
+      || c_yellow "⚠ clock sync failed (non-fatal, but video may lag lidar)"
+  elif command -v ntpdate >/dev/null 2>&1; then
+    sudo ntpdate pool.ntp.org >/dev/null 2>&1 \
+      && c_green "✓ clock synced" \
+      || c_yellow "⚠ clock sync failed (non-fatal)"
+  else
+    c_yellow "⚠ no sntp/ntpdate found, skipping clock sync"
+  fi
 fi
 
 # 4. Venv --------------------------------------------------------------------
@@ -79,7 +109,11 @@ else
   uv venv --python 3.12 "$VENV_DIR"
   # shellcheck disable=SC1091
   source "$VENV_DIR/bin/activate"
-  uv pip install 'dimos[base,unitree]'
+  if [[ "$SIMULATION" == "1" ]]; then
+    uv pip install 'dimos[base,unitree,sim]'
+  else
+    uv pip install 'dimos[base,unitree]'
+  fi
 fi
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
@@ -98,8 +132,26 @@ fi
 
 # 6. Launch ------------------------------------------------------------------
 echo
-c_bold "▶ launching: dimos run $BLUEPRINT"
-echo "  command center → http://localhost:7779"
+c_bold "▶ endpoints"
+echo "  command center : http://localhost:7779"
+if [[ "$BRIDGES" == "1" ]]; then
+  echo "  camera MJPEG   : http://127.0.0.1:7780/video_feed/color_image"
+  echo "  camera snapshot: http://127.0.0.1:7780/snapshot/color_image"
+  if [[ "$SIMULATION" == "1" ]]; then
+    echo "  audio          : (robot only — sim has no audio)"
+  else
+    echo "  audio out (ws) : ws://127.0.0.1:7781/audio_out"
+    echo "  audio info     : http://127.0.0.1:7781/audio_info"
+    echo "  audio play     : POST http://127.0.0.1:7781/play"
+  fi
+fi
+echo
+c_bold "▶ launching: dimos $([[ "$SIMULATION" == "1" ]] && echo "--simulation ")run ${MODULES[*]}"
 echo "  ctrl-c to stop"
 echo
-exec dimos run "$BLUEPRINT"
+
+if [[ "$SIMULATION" == "1" ]]; then
+  exec dimos --simulation run "${MODULES[@]}"
+else
+  exec dimos run "${MODULES[@]}"
+fi
