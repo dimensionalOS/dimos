@@ -76,7 +76,7 @@ export ROBOT_IP=<discovered_ip>
 ping $ROBOT_IP
 ```
 
-2. Built-in obstacle avoidance is on. (DimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots)
+2. For basic teleop, built-in obstacle avoidance can stay on. For the full `unitree-go2` navigation stack, DimOS disables onboard obstacle avoidance so its own planner can handle traversable terrain like stair risers instead of having the robot stop early.
 
 ### Ready to run DimOS
 
@@ -93,7 +93,7 @@ That's it. DimOS connects via WebRTC (no jailbreak required), starts the full na
 |--------|-------------|
 | **GO2Connection** | WebRTC connection to the robot — streams LiDAR, video, odometry |
 | **VoxelGridMapper** | Builds a 3D voxel map using column-carving (CUDA accelerated) |
-| **CostMapper** | Converts 3D map → 2D costmap via terrain slope analysis |
+| **CostMapper** | Converts 3D map → 2D costmap and terrain classmap, including traversable stair cells |
 | **ReplanningAStarPlanner** | Continuous A* path planning with dynamic replanning |
 | **WavefrontFrontierExplorer** | Autonomous exploration of unmapped areas |
 | **RerunBridge** | 3D visualization in browser |

@@ -18,6 +18,7 @@ from pathlib import Path
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
 from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.memory2.module import Recorder, RecorderConfig
@@ -33,15 +34,21 @@ from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
+_go2_height_cost_config = HeightCostConfig(
+    # Standard stairs are often 0.17-0.20 m. A slightly higher climb tolerance
+    # prevents the 2D costmap from treating every stair riser as a hard obstacle.
+    can_climb=0.25,
+)
+
 unitree_go2 = autoconnect(
     unitree_go2_basic,
     VoxelGridMapper.blueprint(emit_every=5),
-    CostMapper.blueprint(),
+    CostMapper.blueprint(config=_go2_height_cost_config),
     ReplanningAStarPlanner.blueprint(),
     WavefrontFrontierExplorer.blueprint(),
     PatrollingModule.blueprint(),
     MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2")
+).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
 
 
 class Go2MemoryConfig(RecorderConfig):

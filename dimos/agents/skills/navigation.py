@@ -25,6 +25,8 @@ from dimos.models.qwen.bbox import BBox
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
@@ -40,6 +42,8 @@ logger = setup_logger()
 class NavigationSkillContainer(Module):
     _latest_image: Image | None = None
     _latest_odom: PoseStamped | None = None
+    _latest_path: Path | None = None
+    _latest_terrain_classmap: OccupancyGrid | None = None
     _skill_started: bool = False
     _similarity_threshold: float = 0.23
 
@@ -49,6 +53,8 @@ class NavigationSkillContainer(Module):
 
     color_image: In[Image]
     odom: In[PoseStamped]
+    path: In[Path]
+    terrain_classmap: In[OccupancyGrid]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -64,6 +70,12 @@ class NavigationSkillContainer(Module):
         super().start()
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
         self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        if self._can_subscribe(self.path):
+            self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
+        if self._can_subscribe(self.terrain_classmap):
+            self.register_disposable(
+                Disposable(self.terrain_classmap.subscribe(self._on_terrain_classmap))
+            )
         self._skill_started = True
 
     @rpc
@@ -75,6 +87,15 @@ class NavigationSkillContainer(Module):
 
     def _on_odom(self, odom: PoseStamped) -> None:
         self._latest_odom = odom
+
+    def _on_path(self, path: Path) -> None:
+        self._latest_path = path
+
+    def _on_terrain_classmap(self, terrain_classmap: OccupancyGrid) -> None:
+        self._latest_terrain_classmap = terrain_classmap
+
+    def _can_subscribe(self, stream: Any) -> bool:
+        return stream.connection is not None or getattr(stream, "_transport", None) is not None
 
     @skill
     def tag_location(self, location_name: str) -> str:
@@ -162,12 +183,39 @@ class NavigationSkillContainer(Module):
         logger.info(
             f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
         )
+        request_time = time.time()
         self._navigation.set_goal(pose)
+        stair_notice = self._planned_stair_route_notice(request_time)
 
         return (
             f"{message}. Started navigating to that position. "
             f"To cancel movement call the 'stop_navigation' tool."
+            f"{stair_notice}"
         )
+
+    def _planned_stair_route_notice(self, request_time: float, timeout: float = 1.0) -> str:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            path = self._latest_path
+            if path is not None and path.ts >= request_time and self._path_crosses_stairs(path):
+                return " The planned route includes stairs; treating them as traversable terrain."
+            time.sleep(0.05)
+        return ""
+
+    def _path_crosses_stairs(self, path: Path) -> bool:
+        terrain_classmap = self._latest_terrain_classmap
+        if terrain_classmap is None or not path.poses:
+            return False
+
+        for pose in path.poses:
+            grid_position = terrain_classmap.world_to_grid(pose.position)
+            x = round(grid_position.x)
+            y = round(grid_position.y)
+            if 0 <= x < terrain_classmap.width and 0 <= y < terrain_classmap.height:
+                if terrain_classmap.grid[y, x] == 50:
+                    return True
+
+        return False
 
     def _navigate_to_object(self, query: str) -> str | None:
         if self._object_tracking is None:

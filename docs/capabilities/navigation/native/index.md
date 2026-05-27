@@ -76,6 +76,7 @@ We don't have proper loop closure and stable odometry, we trust the data go2 odo
 ### 3. Global Costmap — [`CostMapper`](/dimos/mapping/costmapper.py)
 
 The [`CostMapper`](/dimos/mapping/costmapper.py) converts the 3D voxel map into a 2D occupancy grid. The default algorithm (`height_cost`) maps rate of change of Z, with some smoothing.
+It also publishes a terrain classmap so visualization and agentic navigation can distinguish flat ground, stairs, obstacles, and unknown space.
 
 algo settings are in [`occupancy.py`](/dimos/mapping/pointclouds/occupancy.py) and can be configured per robot
 
@@ -90,14 +91,25 @@ class HeightCostConfig(OccupancyConfig):
     can_climb: float = 0.15
     ignore_noise: float = 0.05
     smoothing: float = 1.0
+    enable_stair_classification: bool = True
+    stair_min_rise: float = 0.08
+    stair_max_rise: float = 0.25
+    stair_max_cost: int = 70
 ```
 
-| Cost | Meaning                                                  |
+| Cost | Meaning in `global_costmap`                              |
 |------|----------------------------------------------------------|
 | 0    | Flat, easy to traverse                                   |
 | 50   | Moderate slope (~7.5cm rise per cell in case of go2)     |
 | 100  | Steep or impassable (≥15cm rise per cell in case of go2) |
 | -1   | Unknown (no observations)                                |
+
+| Class | Meaning in `terrain_classmap` |
+|-------|-------------------------------|
+| 0     | Flat/free terrain             |
+| 50    | Stairs/traversable steps      |
+| 100   | Obstacle/lethal terrain       |
+| -1    | Unknown                       |
 
 ![Global costmap](assets/3-globalcostmap.png)
 

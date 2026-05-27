@@ -21,6 +21,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.types.robot_location import RobotLocation
@@ -159,3 +161,15 @@ def test_go_to_semantic_location(agent_setup) -> None:
     )
 
     assert "success" in history[-1].content.lower()
+
+
+def test_stair_route_notice_for_path_crossing_terrain_classmap() -> None:
+    skill = object.__new__(NavigationSkillContainer)
+    grid = OccupancyGrid(width=10, height=10, resolution=1.0)
+    grid.grid[5, 5] = 50
+    skill._latest_terrain_classmap = grid
+    skill._latest_path = Path(poses=[PoseStamped(position=[5.0, 5.0, 0.0])])
+
+    notice = skill._planned_stair_route_notice(skill._latest_path.ts - 0.1, timeout=0.01)
+
+    assert "stairs" in notice.lower()

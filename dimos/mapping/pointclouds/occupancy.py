@@ -138,6 +138,16 @@ class HeightCostConfig(OccupancyConfig):
     can_climb: float = 0.15
     ignore_noise: float = 0.05
     smoothing: float = 1.0
+    enable_stair_classification: bool = True
+    stair_min_rise: float = 0.08
+    stair_max_rise: float = 0.25
+    stair_max_cost: int = 70
+
+
+TERRAIN_CLASS_UNKNOWN = -1
+TERRAIN_CLASS_FLAT = 0
+TERRAIN_CLASS_STAIRS = 50
+TERRAIN_CLASS_OBSTACLE = 100
 
 
 def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
@@ -155,18 +165,40 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     Returns:
         OccupancyGrid with costs 0-100 based on terrain slope, -1 for unknown
     """
+    costmap, _ = height_cost_and_terrain_class_occupancy(cloud, **kwargs)
+    return costmap
+
+
+def height_cost_and_terrain_class_occupancy(
+    cloud: PointCloud2, **kwargs: Any
+) -> tuple[OccupancyGrid, OccupancyGrid]:
+    """Create navigation cost and terrain class maps from a point cloud.
+
+    Terrain class values:
+    - -1: unknown
+    - 0: flat/free
+    - 50: stairs/traversable repeated height change
+    - 100: obstacle/lethal terrain
+    """
     cfg = HeightCostConfig(**kwargs)
     points, _ = cloud.as_numpy()
     points = points.astype(np.float64)  # Upcast to avoid float32 rounding
     ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
 
     if len(points) == 0:
-        return OccupancyGrid(
+        costmap = OccupancyGrid(
             width=1,
             height=1,
             resolution=cfg.resolution,
             frame_id=cfg.frame_id or cloud.frame_id,
         )
+        terrain_classmap = OccupancyGrid(
+            width=1,
+            height=1,
+            resolution=cfg.resolution,
+            frame_id=cfg.frame_id or cloud.frame_id,
+        )
+        return costmap, terrain_classmap
 
     # Find bounds of the point cloud in X-Y plane (use all points)
     min_x = np.min(points[:, 0])
@@ -270,18 +302,77 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         structure = ndimage.generate_binary_structure(2, 1)  # 4-connectivity
         valid_gradient_mask = ndimage.binary_erosion(observed_mask, structure=structure)
 
+        terrain_class = _classify_height_cost_terrain(
+            height_map=height_map,
+            observed_mask=observed_mask,
+            valid_gradient_mask=valid_gradient_mask,
+            cost_float=cost_float,
+            cfg=cfg,
+        )
+        if cfg.enable_stair_classification:
+            stair_mask = terrain_class == TERRAIN_CLASS_STAIRS
+            cost_float = np.where(stair_mask, np.minimum(cost_float, cfg.stair_max_cost), cost_float)
+
         # Convert to int8, marking cells without valid gradients as -1
         cost = np.where(valid_gradient_mask, cost_float.astype(np.int8), -1)
     else:
         cost = np.full((height, width), -1, dtype=np.int8)
+        terrain_class = np.full((height, width), TERRAIN_CLASS_UNKNOWN, dtype=np.int8)
 
-    return OccupancyGrid(
+    costmap = OccupancyGrid(
         grid=cost,
         resolution=cfg.resolution,
         origin=origin,
         frame_id=cfg.frame_id or cloud.frame_id,
         ts=ts,
     )
+    terrain_classmap = OccupancyGrid(
+        grid=terrain_class,
+        resolution=cfg.resolution,
+        origin=origin,
+        frame_id=cfg.frame_id or cloud.frame_id,
+        ts=ts,
+    )
+    return costmap, terrain_classmap
+
+
+def _classify_height_cost_terrain(
+    *,
+    height_map: NDArray[np.floating[Any]],
+    observed_mask: NDArray[np.bool_],
+    valid_gradient_mask: NDArray[np.bool_],
+    cost_float: NDArray[np.floating[Any]],
+    cfg: HeightCostConfig,
+) -> NDArray[np.int8]:
+    terrain_class = np.full(height_map.shape, TERRAIN_CLASS_UNKNOWN, dtype=np.int8)
+    terrain_class[valid_gradient_mask] = TERRAIN_CLASS_FLAT
+    terrain_class[valid_gradient_mask & (cost_float >= 100.0)] = TERRAIN_CLASS_OBSTACLE
+
+    if not cfg.enable_stair_classification:
+        return terrain_class
+
+    stair_transition = np.zeros(height_map.shape, dtype=bool)
+
+    for dy, dx in ((0, 1), (1, 0)):
+        current = height_map[:-dy or None, :-dx or None]
+        neighbor = height_map[dy:, dx:]
+        current_observed = observed_mask[:-dy or None, :-dx or None]
+        neighbor_observed = observed_mask[dy:, dx:]
+
+        diff = np.abs(neighbor - current)
+        transition = (
+            current_observed
+            & neighbor_observed
+            & (diff >= cfg.stair_min_rise)
+            & (diff <= cfg.stair_max_rise)
+        )
+
+        stair_transition[:-dy or None, :-dx or None] |= transition
+        stair_transition[dy:, dx:] |= transition
+
+    stair_mask = stair_transition & valid_gradient_mask
+    terrain_class[stair_mask] = TERRAIN_CLASS_STAIRS
+    return terrain_class
 
 
 @dataclass(frozen=True)

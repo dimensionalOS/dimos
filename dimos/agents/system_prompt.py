@@ -29,6 +29,7 @@ Users hear you through speakers but cannot see text. Use `speak` to communicate 
 ## Navigation Flow
 - Use `navigate_with_text` for most navigation. It searches tagged locations first, then visible objects, then the semantic map.
 - Tag important locations with `tag_location` so you can return to them later.
+- If navigation reports that the planned route includes stairs, treat that as normal traversable terrain and continue unless the user asks you to stop.
 - During `start_exploration`, avoid calling other skills except `stop_movement`.
 - Always run `execute_sport_command("RecoveryStand")` after dynamic movements (flips, jumps, sit) before navigating.
 

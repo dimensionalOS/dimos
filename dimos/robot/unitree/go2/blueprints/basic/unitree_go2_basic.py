@@ -59,6 +59,15 @@ def _convert_navigation_costmap(grid: Any) -> Any:
     )
 
 
+def _convert_terrain_classmap(grid: Any) -> Any:
+    return grid.to_rerun(
+        colormap="Set1",
+        z_offset=0.03,
+        opacity=0.45,
+        background="#1f2330",
+    )
+
+
 def _static_base_link(rr: Any) -> list[Any]:
     return [
         rr.Boxes3D(
@@ -107,11 +116,13 @@ rerun_config = {
         "world/global_map": _convert_global_map,
         "world/merged_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,
+        "world/terrain_classmap": _convert_terrain_classmap,
     },
     "max_hz": {
         "world/global_map": 0,  # publishes at ~7.8 Hz
         "world/color_image": 0,  # publishes at ~14 Hz
         "world/global_costmap": 0,  # publishes at ~7.6 Hz
+        "world/terrain_classmap": 0,
     },
     # slapping a go2 shaped box on top of tf/base_link
     "static": {

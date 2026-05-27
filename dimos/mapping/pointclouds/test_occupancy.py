@@ -21,6 +21,10 @@ import pytest
 from dimos.core.transport import LCMTransport
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.mapping.pointclouds.occupancy import (
+    TERRAIN_CLASS_FLAT,
+    TERRAIN_CLASS_OBSTACLE,
+    TERRAIN_CLASS_STAIRS,
+    height_cost_and_terrain_class_occupancy,
     height_cost_occupancy,
     simple_occupancy,
 )
@@ -128,3 +132,65 @@ def test_height_cost_occupancy_from_lidar(height_cost_moment) -> None:
     known_mask = costmap.grid >= 0
     assert known_mask.sum() > 0, "Expected some known cells"
     assert (~known_mask).sum() > 0, "Expected some unknown cells"
+
+
+def _synthetic_terrain_cloud(kind: str) -> PointCloud2:
+    xs = np.arange(0.0, 1.0, 0.05)
+    ys = np.arange(0.0, 0.8, 0.05)
+    points: list[tuple[float, float, float]] = []
+
+    for x in xs:
+        for y in ys:
+            if kind == "flat":
+                z = 0.0
+            elif kind == "stairs":
+                z = np.floor(x / 0.2) * 0.1
+            elif kind == "wall":
+                z = 0.0 if x < 0.5 else 0.5
+            else:
+                raise ValueError(kind)
+            points.append((x, y, z))
+
+    return PointCloud2.from_numpy(np.asarray(points, dtype=np.float32), frame_id="map")
+
+
+def test_height_cost_classifies_flat_floor() -> None:
+    costmap, terrain_classmap = height_cost_and_terrain_class_occupancy(
+        _synthetic_terrain_cloud("flat"),
+        resolution=0.05,
+        smoothing=0,
+    )
+
+    known = terrain_classmap.grid >= 0
+    assert np.any(known)
+    assert np.all(terrain_classmap.grid[known] == TERRAIN_CLASS_FLAT)
+    assert costmap.grid[known].max() == 0
+
+
+def test_height_cost_classifies_stairs_as_traversable() -> None:
+    costmap, terrain_classmap = height_cost_and_terrain_class_occupancy(
+        _synthetic_terrain_cloud("stairs"),
+        resolution=0.05,
+        smoothing=0,
+        stair_min_rise=0.08,
+        stair_max_rise=0.25,
+        stair_max_cost=70,
+    )
+
+    stair_mask = terrain_classmap.grid == TERRAIN_CLASS_STAIRS
+    assert np.any(stair_mask)
+    assert costmap.grid[stair_mask].max() <= 70
+
+
+def test_height_cost_keeps_wall_as_obstacle() -> None:
+    costmap, terrain_classmap = height_cost_and_terrain_class_occupancy(
+        _synthetic_terrain_cloud("wall"),
+        resolution=0.05,
+        smoothing=0,
+        stair_min_rise=0.08,
+        stair_max_rise=0.25,
+    )
+
+    assert not np.any(terrain_classmap.grid == TERRAIN_CLASS_STAIRS)
+    assert np.any(terrain_classmap.grid == TERRAIN_CLASS_OBSTACLE)
+    assert costmap.grid.max() == 100

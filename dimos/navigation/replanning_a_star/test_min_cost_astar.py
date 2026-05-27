@@ -109,6 +109,40 @@ def test_astar_unknown_penalty_allows_with_low_penalty(costmap) -> None:
         assert len(path.poses) > 0
 
 
+def test_astar_crosses_stair_cost_when_only_viable_route() -> None:
+    grid = np.full((20, 20), 100, dtype=np.int8)
+    grid[10, 1:19] = 50
+    grid[10, 1] = 0
+    grid[10, 18] = 0
+    og = OccupancyGrid(grid, resolution=0.1)
+
+    start = og.grid_to_world((1, 10))
+    goal = og.grid_to_world((18, 10))
+
+    path = min_cost_astar(og, goal, start, use_cpp=False)
+    assert path is not None
+    crossed_stairs = False
+    for pose in path.poses:
+        gp = og.world_to_grid((pose.position.x, pose.position.y))
+        gx, gy = round(gp.x), round(gp.y)
+        assert grid[gy, gx] != 100
+        crossed_stairs = crossed_stairs or grid[gy, gx] == 50
+    assert crossed_stairs
+
+
+def test_astar_does_not_cross_lethal_obstacles() -> None:
+    grid = np.full((20, 20), 100, dtype=np.int8)
+    grid[10, 1] = 0
+    grid[10, 18] = 0
+    og = OccupancyGrid(grid, resolution=0.1)
+
+    start = og.grid_to_world((1, 10))
+    goal = og.grid_to_world((18, 10))
+
+    path = min_cost_astar(og, goal, start, use_cpp=False)
+    assert path is None
+
+
 def test_astar_python_and_cpp(costmap) -> None:
     start = Vector3(4.0, 2.0, 0)
     goal = Vector3(6.15, 10.0)

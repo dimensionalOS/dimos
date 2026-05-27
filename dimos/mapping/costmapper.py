@@ -25,6 +25,7 @@ from dimos.mapping.pointclouds.occupancy import (
     OCCUPANCY_ALGOS,
     HeightCostConfig,
     OccupancyConfig,
+    height_cost_and_terrain_class_occupancy,
 )
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -43,6 +44,7 @@ class CostMapper(Module):
     global_map: In[PointCloud2]
     merged_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
+    terrain_classmap: Out[OccupancyGrid]
 
     @rpc
     def start(self) -> None:
@@ -54,17 +56,24 @@ class CostMapper(Module):
             gmap, merged = pair
             return merged if merged is not None else gmap
 
-        def _publish_costmap(grid: OccupancyGrid, calc_time_ms: float, rx_monotonic: float) -> None:
-            self.global_costmap.publish(grid)
+        def _publish_costmap(
+            maps: tuple[OccupancyGrid, OccupancyGrid | None],
+            calc_time_ms: float,
+            rx_monotonic: float,
+        ) -> None:
+            costmap, terrain_classmap = maps
+            self.global_costmap.publish(costmap)
+            if terrain_classmap is not None:
+                self.terrain_classmap.publish(terrain_classmap)
 
         def _calculate_and_time(
             msg: PointCloud2,
-        ) -> tuple[OccupancyGrid, float, float]:
+        ) -> tuple[tuple[OccupancyGrid, OccupancyGrid | None], float, float]:
             rx_monotonic = time.monotonic()  # Capture receipt time
             start = time.perf_counter()
-            grid = self._calculate_costmap(msg)
+            maps = self._calculate_maps(msg)
             elapsed_ms = (time.perf_counter() - start) * 1000
-            return grid, elapsed_ms, rx_monotonic
+            return maps, elapsed_ms, rx_monotonic
 
         self.register_disposable(
             combine_latest(
@@ -82,5 +91,13 @@ class CostMapper(Module):
 
     # @timed()  # TODO: fix thread leak in timed decorator
     def _calculate_costmap(self, msg: PointCloud2) -> OccupancyGrid:
+        return self._calculate_maps(msg)[0]
+
+    def _calculate_maps(self, msg: PointCloud2) -> tuple[OccupancyGrid, OccupancyGrid | None]:
+        if self.config.algo == "height_cost":
+            return height_cost_and_terrain_class_occupancy(
+                msg, **asdict(self.config.config)
+            )
+
         fn = OCCUPANCY_ALGOS[self.config.algo]
-        return fn(msg, **asdict(self.config.config))
+        return fn(msg, **asdict(self.config.config)), None
