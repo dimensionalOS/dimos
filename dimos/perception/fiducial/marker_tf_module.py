@@ -36,6 +36,10 @@ Compose with a marker detector via matching ``detections`` streams::
         ),
         MarkerTfModule.blueprint(),
     )
+
+For imperative deployment, call ``deploy(dimos, camera, marker_length_m=...)``.
+It creates both the marker detector and the TF consumer, then connects the
+detector ``detections`` output to this module.
 """
 
 from __future__ import annotations
@@ -48,17 +52,22 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
+from dimos.spec.perception import Camera
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
+
+_AUTO_NAMESPACE = object()
 
 
 class MarkerDetectionSource(Protocol):
@@ -163,22 +172,60 @@ class MarkerTfModule(Module):
 
 def deploy(
     dimos: ModuleCoordinator,
-    source: MarkerDetectionSource,
-    prefix: str = "/marker_tf",
+    camera: Camera,
+    prefix: str = "/marker_detection",
+    tf_prefix: str = "/marker_tf",
+    marker_namespace_prefix: str | None | object = _AUTO_NAMESPACE,
+    markers_frame: str = "markers",
+    world_frame: str = "world",
     **kwargs: Any,
 ) -> ModuleProxy:
-    """Wire :class:`MarkerTfModule` inputs from a marker detection source.
+    """Deploy marker detection and mirror its output into TF.
 
     Registers the module via :meth:`~dimos.core.coordination.module_coordinator.ModuleCoordinator.deploy`
     so lifecycle and deployment routing match other perception modules.
 
-    ``prefix`` maps to :attr:`MarkerTfModuleConfig.marker_namespace_prefix` (leading ``/`` stripped)
-    unless ``marker_namespace_prefix`` is passed explicitly in ``kwargs``.
+    ``prefix`` is the detector LCM topic prefix. ``tf_prefix`` maps to
+    :attr:`MarkerTfModuleConfig.marker_namespace_prefix` with a leading ``/``
+    stripped unless ``marker_namespace_prefix`` is set explicitly.
     """
+    detector_kwargs = dict(kwargs)
+    detector_kwargs.setdefault("camera_info_source", camera.camera_info)
+
+    detector = dimos.deploy(
+        MarkerDetectionStreamModule,
+        world_frame=world_frame,
+        **detector_kwargs,
+    )
+    detector.color_image.connect(camera.color_image)
+    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection3DArray)
+
+    tf = deploy_tf_consumer(
+        dimos,
+        detector,
+        prefix=tf_prefix,
+        marker_namespace_prefix=marker_namespace_prefix,
+        markers_frame=markers_frame,
+        world_frame=world_frame,
+    )
+    detector.start()
+    return tf
+
+
+def deploy_tf_consumer(
+    dimos: ModuleCoordinator,
+    source: MarkerDetectionSource,
+    prefix: str = "/marker_tf",
+    marker_namespace_prefix: str | None | object = _AUTO_NAMESPACE,
+    **kwargs: Any,
+) -> ModuleProxy:
+    """Deploy :class:`MarkerTfModule` from an existing detection source."""
     deploy_kwargs = dict(kwargs)
-    if "marker_namespace_prefix" not in deploy_kwargs:
+    if marker_namespace_prefix is _AUTO_NAMESPACE:
         stripped = prefix.lstrip("/")
         deploy_kwargs["marker_namespace_prefix"] = stripped if stripped else None
+    else:
+        deploy_kwargs["marker_namespace_prefix"] = marker_namespace_prefix
 
     mod = dimos.deploy(MarkerTfModule, **deploy_kwargs)
     mod.detections.connect(source.detections)

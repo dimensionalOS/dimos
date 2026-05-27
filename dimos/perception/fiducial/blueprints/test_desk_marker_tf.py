@@ -46,6 +46,10 @@ def test_desk_marker_tf_blueprint_declares_static_tf_module() -> None:
         desk_marker_tf.blueprints[3].kwargs["marker_namespace_prefix"]
         == DESK_MARKER_NAMESPACE_PREFIX
     )
+    assert (
+        desk_marker_tf.transport_map[("detections", MarkerDetectionStreamModule)].topic.topic
+        == "/marker_detection/detections"
+    )
 
 
 def test_create_desk_webcam_loads_camera_info_yaml(tmp_path: Path) -> None:
