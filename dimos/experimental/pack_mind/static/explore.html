@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PACK MIND — Fog of War</title>
+<style>
+  :root { --bg:#070710; --fg:#e8ecf5; --accent:#ff6b35; --muted:#8a93a6; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font-family:'SF Mono',ui-monospace,Menlo,monospace; overflow:hidden; }
+  #topbar { display:flex; align-items:center; gap:18px; padding:10px 18px;
+    background:linear-gradient(90deg,#0d0d1a,#11111f); border-bottom:1px solid #1e2233; }
+  #topbar .title { font-size:17px; font-weight:700; letter-spacing:.5px; }
+  #topbar .title span { color:var(--accent); }
+  button { background:#18203a; color:var(--fg); border:1px solid #2a3354; padding:7px 14px;
+    border-radius:7px; cursor:pointer; font-family:inherit; font-size:13px; transition:.15s; }
+  button:hover { background:#232d4f; border-color:var(--accent); }
+  #kill { border-color:#7a2230; } #kill:hover { background:#3a1620; border-color:#ff5a5a; }
+  #status { margin-left:auto; color:var(--muted); font-size:12px; }
+  #panels { display:flex; height:calc(100% - 49px); }
+  .panel { position:relative; flex:1; border-right:1px solid #161a2a; }
+  .panel:last-child { border-right:none; }
+  .label { position:absolute; top:12px; left:14px; z-index:5; font-size:13px; font-weight:700;
+    padding:5px 10px; border-radius:6px; background:#0008; backdrop-filter:blur(4px); }
+  .label.indep { color:#ff8585; } .label.shared { color:#7cf0a0; }
+  .hud { position:absolute; top:46px; left:14px; z-index:5; font-size:12px; line-height:1.5;
+    color:var(--muted); background:#0006; padding:6px 10px; border-radius:6px; }
+  .hud b { color:var(--fg); }
+  .view { width:100%; height:100%; }
+  .bar { display:inline-block; width:120px; height:7px; background:#1a1f30; border-radius:4px;
+    overflow:hidden; vertical-align:middle; margin-left:6px; }
+  .bar > i { display:block; height:100%; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+  <div id="topbar">
+    <div class="title">PACK&nbsp;<span>MIND</span> · fog-of-war exploration</div>
+    <button id="kill">⚡ Kill a dog</button>
+    <button id="reset">↻ Reset</button>
+    <div id="status">connecting…</div>
+  </div>
+  <div id="panels">
+    <div class="panel">
+      <div class="label indep">INDEPENDENT · private memory</div>
+      <div class="hud" id="hud-independent"></div>
+      <div class="view" id="view-independent"></div>
+    </div>
+    <div class="panel">
+      <div class="label shared">PACK · shared memory</div>
+      <div class="hud" id="hud-shared"></div>
+      <div class="view" id="view-shared"></div>
+    </div>
+  </div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// fog code -> color. 0 unknown,1 remembered-free,2 visible-free,3 remembered-wall,4 visible-wall
+const FLOOR = {0:[0.02,0.02,0.05],1:[0.16,0.20,0.30],2:[0.30,0.62,0.46],3:[0.05,0.06,0.10],4:[0.10,0.13,0.22]};
+const WALL  = {3:[0.16,0.18,0.28],4:[0.50,0.70,1.00]};
+
+class Arena {
+  constructor(el){
+    this.el = el; this.res = 0.1; this.dogs = []; this.floor = null; this.walls = null;
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x070710);
+    this.scene.fog = new THREE.Fog(0x070710, 60, 140);
+    this.renderer = new THREE.WebGLRenderer({ antialias:true });
+    this.renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+    el.appendChild(this.renderer.domElement);
+    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.85); dir.position.set(30,60,40); this.scene.add(dir);
+    this._m = new THREE.Matrix4(); this._c = new THREE.Color();
+    this.resize();
+  }
+  resize(){
+    const r = this.el.getBoundingClientRect();
+    this.renderer.setSize(r.width, r.height);
+    this.camera.aspect = r.width / Math.max(1, r.height);
+    this.camera.updateProjectionMatrix();
+  }
+  initGrid(w,h){
+    this.w=w; this.h=h; const N=w*h;
+    const fmat = new THREE.MeshLambertMaterial();
+    this.floor = new THREE.InstancedMesh(new THREE.BoxGeometry(0.92,0.1,0.92), fmat, N);
+    this.scene.add(this.floor);
+    const wmat = new THREE.MeshLambertMaterial();
+    this.walls = new THREE.InstancedMesh(new THREE.BoxGeometry(0.96,1.6,0.96), wmat, N);
+    this.scene.add(this.walls);
+    const cx=w/2, cz=h/2, span=Math.max(w,h);
+    this.camera.position.set(cx+span*0.05, span*1.05, cz+span*1.05);
+    this.controls.target.set(cx,0,cz); this.controls.update();
+  }
+  update(state){
+    if(!this.floor) this.initGrid(state.w, state.h);
+    const {w,cells} = state; let wi=0;
+    for(let i=0;i<cells.length;i++){
+      const code=cells[i], x=i%w, y=(i/w)|0;
+      this._m.makeTranslation(x,0,y); this.floor.setMatrixAt(i,this._m);
+      const fc=FLOOR[code]||FLOOR[0]; this._c.setRGB(fc[0],fc[1],fc[2]); this.floor.setColorAt(i,this._c);
+      if(code===3||code===4){
+        this._m.makeTranslation(x,0.8,y); this.walls.setMatrixAt(wi,this._m);
+        const wc=WALL[code]; this._c.setRGB(wc[0],wc[1],wc[2]); this.walls.setColorAt(wi,this._c); wi++;
+      }
+    }
+    this.walls.count=wi;
+    this.floor.instanceMatrix.needsUpdate=true; this.floor.instanceColor.needsUpdate=true;
+    this.walls.instanceMatrix.needsUpdate=true; if(this.walls.instanceColor) this.walls.instanceColor.needsUpdate=true;
+    state.dogs.forEach((d,i)=>{
+      if(!this.dogs[i]){
+        const m=new THREE.Mesh(new THREE.SphereGeometry(0.7,18,18),
+          new THREE.MeshStandardMaterial({roughness:.4,metalness:.1}));
+        this.dogs[i]=m; this.scene.add(m);
+        const ring=new THREE.Mesh(new THREE.RingGeometry(1.0,1.3,24),
+          new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.35,side:THREE.DoubleSide}));
+        ring.rotation.x=-Math.PI/2; m.add(ring); m.userData.ring=ring;
+      }
+      const dog=this.dogs[i];
+      dog.position.set(d.x/this.res, 0.7, d.y/this.res);
+      dog.material.color.set(d.online? d.color : '#444');
+      dog.material.emissive.set(d.online? d.color : '#000');
+      dog.material.emissiveIntensity = d.online? 0.5 : 0;
+      dog.scale.setScalar(d.online? 1 : 0.55);
+      dog.userData.ring.material.color.set(d.online? d.color : '#444');
+    });
+  }
+  render(){ this.controls.update(); this.renderer.render(this.scene,this.camera); }
+}
+
+const arenas = {
+  independent: new Arena(document.getElementById('view-independent')),
+  shared: new Arena(document.getElementById('view-shared')),
+};
+const huds = {
+  independent: document.getElementById('hud-independent'),
+  shared: document.getElementById('hud-shared'),
+};
+const COLOR_LINE = { independent:'#ff8585', shared:'#7cf0a0' };
+let latest = null;
+
+function hud(mode, s){
+  const online = s.dogs.filter(d=>d.online).length;
+  const pct = Math.round(s.revealed*100);
+  huds[mode].innerHTML =
+    `revealed <b>${pct}%</b><span class="bar"><i style="width:${pct}%;background:${COLOR_LINE[mode]}"></i></span><br>`+
+    `tick <b>${s.tick}</b> · dogs online <b>${online}/${s.dogs.length}</b>`;
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  if(latest){
+    for(const mode of ['independent','shared']){
+      if(latest[mode]){ arenas[mode].update(latest[mode]); hud(mode, latest[mode]); }
+    }
+    latest = null;
+  }
+  arenas.independent.render(); arenas.shared.render();
+}
+animate();
+
+addEventListener('resize', ()=>{ arenas.independent.resize(); arenas.shared.resize(); });
+
+// ---- websocket ----
+let ws, killIdx = 0;
+const status = document.getElementById('status');
+function connect(){
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = ()=> status.textContent = 'live';
+  ws.onclose = ()=>{ status.textContent='disconnected — retrying'; setTimeout(connect,1000); };
+  ws.onmessage = e => { latest = JSON.parse(e.data); };
+}
+connect();
+
+document.getElementById('kill').onclick = ()=>{
+  if(ws && ws.readyState===1){ ws.send(JSON.stringify({cmd:'kill', dog:killIdx})); killIdx=(killIdx+1)%3; }
+};
+document.getElementById('reset').onclick = ()=>{
+  killIdx=0;
+  if(ws && ws.readyState===1){ ws.send(JSON.stringify({cmd:'reset', seed:(Math.random()*1e6)|0})); }
+};
+</script>
+</body>
+</html>
