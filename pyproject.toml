@@ -250,6 +250,7 @@ manipulation = [
     "piper-sdk",
     "pyrealsense2; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
+    "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -525,6 +526,8 @@ exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/c
 [[tool.mypy.overrides]]
 module = [
     "annotation_protocol",
+    "a750_control",
+    "a750_control.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
