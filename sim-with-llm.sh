@@ -25,15 +25,17 @@ set -euo pipefail
 BACKEND="${1:-mlxvlm}"
 shift || true
 
-# Pick a blueprint compose that imports cleanly on Apple Silicon without
-# google-genai. unitree-go2-agentic-gemini imports GeminiSpeakSkill at
-# module load (before --disable can take effect), so we don't use it here.
-# unitree-go2-basic + mcp-server + mcp-client gives the full agent loop;
-# unitree-skill-container adds wait / current_time / execute_sport_command
-# / tilt_body skills. relative_move needs the nav stack and is not in this
-# compose — publish to /cmd_vel directly if you need movement.
+# Minimal Mac+local-LLM compose that imports cleanly without google-genai:
+#   unitree-go2-basic   (camera + 3D viz)
+#   + mcp-server + mcp-client            (the MCP agent loop)
+# Skills exposed (from GO2Connection): observe, play_wav, play_wav_b64.
+#
+# To add movement / sport / tilt skills, also pass:
+#   EXTRA="mcp-server mcp-client unitree-skill-container replanning-a-star-planner"
+# (the planner satisfies UnitreeSkillContainer's NavigationInterfaceSpec dep,
+#  and pulls in the nav-stack chain — heavier but enables relative_move).
 BLUEPRINT="${BLUEPRINT:-unitree-go2-basic}"
-export EXTRA="${EXTRA:-mcp-server mcp-client unitree-skill-container}"
+export EXTRA="${EXTRA:-mcp-server mcp-client}"
 
 case "$BACKEND" in
   mlxvlm)
