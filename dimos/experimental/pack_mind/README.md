@@ -1,63 +1,76 @@
 # PACK MIND
 
-A shared semantic memory for a team of Unitree Go2s.
-**Alpha sees. Bravo remembers. The pack acts.**
+**One brain, many bodies, one memory that outlives any single dog.**
 
-Most multi-robot systems share a *map*. Pack Mind shares *meaning*: one dog finds
-something, another dog answers from that shared memory and acts on it — without any
-shared map, SLAM, or coordinate exchange. Cross-dog handoff is by **zone name** only.
+A team of robot dogs explores an unknown space. The question the demo answers:
+**does *sharing memory* across the pack actually help?** We A/B it head-to-head — same
+dogs, same start, same map; the *only* difference is whether they share one discovered
+map or each keep a private one.
 
-## What this is
+## Thesis (and honest limits)
 
-- **`conductor.py`** — the only shared layer. Roster + append-only event blackboard +
-  deterministic mission state machine + movement lock. Talks to each dog over MCP
-  JSON-RPC (HTTP). Serves the dashboard and a small action API.
-- **`dashboard.html` / `static/style.css`** — the projector surface that makes the
-  shared memory visible: causal event cards, roster, mission state, operator controls.
+- **Speed:** a pack sharing coverage/discovery memory avoids redundant re-searching, so
+  it searches the whole area faster.
+- **Resilience (the strongest point):** when a dog goes offline, its discoveries persist
+  in shared memory and the survivors keep using them. With private memory, that dog's
+  knowledge dies with it.
+- **Honest caveats:** this is a 2D-grid sim (rendered in 3D); point robots, scripted
+  sensing, no real SLAM/perception. The win is *complete-area search speed + knowledge
+  persistence* — **not** "finds victims faster" (redundant independent robots can stumble
+  on victims sooner). Keep the narration honest.
 
-Each dog runs its own standard `unitree-go2-agentic` stack. The conductor is net-new.
+## Two simulations
 
-## Run it (no hardware)
+### 1. Fog-of-war exploration (the current demo) — `explore_sim.py`
+Unknown maze, revealed by a raycast sensor (walls block line of sight, RTS-style). Dogs
+navigate to **frontiers** (known-free / unknown boundary). The discovered map is **shared**
+(one map all dogs read+write) or **independent** (one per dog; the team only sees the union
+of *online* dogs, so killing a dog erases its territory). Measured (seed 0, 3 dogs):
+shared reaches 95% revealed at **tick 246** vs **335** independent; killing a dog drops
+independent's team knowledge **0.80 → 0.32**, shared **drops 0**.
+
+### 2. Coverage race (earlier model) — `sim.py`
+Known map; dogs sweep with `CoveragePatrolRouter`; A/B = shared vs private
+`VisitationHistory`. Shared hits 75% coverage at tick 1745 vs 3275; final 96.5% vs 88.9%.
+
+Both reuse DimOS navigation primitives (`min_cost_astar`, patrol routers,
+`VisitationHistory`) on a fabricated `OccupancyGrid` — pure numpy/scipy, **no CUDA/ROS/sim**.
+
+## Run it
 
 ```bash
-uv run python dimos/experimental/pack_mind/conductor.py --mock
-# open http://localhost:8080
+# Web 3D demo (FastAPI + Three.js) — the centerpiece. Side-by-side fog-of-war race,
+# 3-level fog (visible / remembered / unknown), kill-a-dog + reset controls.
+uv run python -m dimos.experimental.pack_mind.server      # → http://localhost:8000
+
+# Native DimOS blueprint — coverage A/B as two live OccupancyGrid streams in Rerun.
+dimos --viewer rerun run pack-mind-sim
+
+# Standalone A/B video of the coverage race.
+uv run python -m dimos.experimental.pack_mind.render --out pack_mind_ab.mp4
+
+# Tests
+bin/pytest-fast dimos/experimental/pack_mind/test_explore_sim.py -v
+bin/pytest-fast dimos/experimental/pack_mind/test_pack_mind_sim.py -v
 ```
 
-Drive the whole Alpha → Bravo story from the dashboard buttons. `--mock` logs MCP
-calls instead of making them, so the full demo runs on a laptop.
+## File map
 
-## Run it (real dogs)
+| File | Role |
+|---|---|
+| `world.py` | Fabricate the maze `OccupancyGrid` + plant survivors |
+| `explore_sim.py` | **Fog-of-war exploration engine** (raycast reveal, frontier, shared/private discovered map, offline persistence) |
+| `server.py` | FastAPI WebSocket backend streaming both explore sims |
+| `static/explore.html` | Three.js 3D fog-of-war frontend (side-by-side, kill/reset) |
+| `sim.py` / `sim_robot.py` | Coverage-race sim (known map) |
+| `blueprint.py` | `pack-mind-sim` native DimOS blueprint (publishes coverage as `OccupancyGrid`) |
+| `render.py` | Standalone matplotlib → mp4 A/B render |
+| `view_rerun.py` | Log the coverage A/B into a Rerun `.rrd` / live viewer |
+| `demo_spike.py` | Feasibility spike (kept as a smoke test of the reused primitives) |
+| `test_explore_sim.py` / `test_pack_mind_sim.py` | Engine tests |
+| `sim_perception.py` | MuJoCo+VLM single-frame perception probe (optional, off the critical path) |
 
-Each dog, on its own compute box:
-
-```bash
-dimos run unitree-go2-agentic --robot-ip <dog-ip> --listen-host 0.0.0.0 \
-  --mcp-port 9990 --viewer none --daemon
-```
-
-Then the conductor, from the control machine:
-
-```bash
-uv run python dimos/experimental/pack_mind/conductor.py \
-  --dog alpha=<alpha-ip> --dog bravo=<bravo-ip>
-```
-
-`--listen-host 0.0.0.0` on each dog is required — the MCP server binds `127.0.0.1`
-by default and the conductor would get connection-refused otherwise.
-
-## Demo flow (the 6 controls)
-
-1. **Start Act 1** — Alpha begins scouting.
-2. **Inject: Alpha found red backpack @ Zone B** — operator fallback, identical
-   blackboard effect to a real VLM detection.
-3. **Ask Bravo where backpack is** — Bravo answers from shared memory, not its own.
-4. **Send Bravo to Zone B** — Bravo navigates to its *own* `zone_b` (movement lock held).
-5. **Verify success** — Bravo self-checks at the zone.
-6. **Emergency stop** — release locks, all dogs hold.
-
-Hidden fallback buttons are not cheating. Broken live autonomy is.
-
-> NOTE: MCP tool argument names (`navigate_with_text`, `speak`, `look_out_for`) are
-> passed through verbatim. Verify against the skill signatures in `dimos/agents/skills/`
-> on the first real-hardware test.
+### Legacy (the old "backpack handoff" demo — superseded, kept for reference)
+`conductor.py`, `dashboard.html`, `static/style.css`, `sim_harness.py`, `venue_go2.sh`,
+`RUNBOOK.md`, `test_conductor.py`. That demo was a single message relay dressed up as
+"shared memory"; the exploration A/B above replaces it. Safe to delete in a cleanup pass.
