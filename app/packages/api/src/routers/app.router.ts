@@ -11,6 +11,7 @@ import {
 	user,
 } from "@robomoo/db";
 import {
+	commandInput,
 	createMessageInput,
 	type Frame,
 	type FrameAnalysis,
@@ -410,6 +411,17 @@ const splatsList = publicProcedure
 		);
 	});
 
+// Forward a natural-language command to the robot's agent (login-gated). The
+// dimos endpoint URL + token live server-side (context.sendAgentCommand); the
+// browser only ever sees this RPC.
+const commandSend = protectedProcedure
+	.input(commandInput)
+	.output(z.object({ ok: z.boolean() }))
+	.handler(async ({ context, input }): Promise<{ ok: boolean }> => {
+		await context.sendAgentCommand(input.text);
+		return { ok: true };
+	});
+
 export const appRouter = {
 	messages: { list, add },
 	frames: {
@@ -421,6 +433,7 @@ export const appRouter = {
 	map: { latest: mapLatest },
 	trajectory: { latest: trajectoryLatest },
 	splats: { list: splatsList },
+	commands: { send: commandSend },
 };
 
 export type AppRouter = typeof appRouter;

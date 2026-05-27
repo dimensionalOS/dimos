@@ -13,6 +13,8 @@ export interface ApiContext {
   session: ApiSession | null;
   presignGet: (key: string, expiresIn?: number) => Promise<string>;
   readObject: (key: string) => Promise<ArrayBuffer>;
+  // Forward a command to the remote dimos agent (URL + token kept server-side).
+  sendAgentCommand: (text: string) => Promise<void>;
 }
 
 export function buildContext(ctx: ApiContext): ApiContext {

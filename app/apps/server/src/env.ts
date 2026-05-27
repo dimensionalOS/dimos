@@ -37,6 +37,13 @@ const envSchema = z.object({
   // callback from outside the venue LAN. When unset, mlxvlm should rely on its
   // own configured robohack_base (set in its env, like gs-pot does).
   PUBLIC_SERVER_URL: z.string().url().optional(),
+
+  // Remote dimos agent command endpoint (behind a tunnel, e.g. ngrok). The
+  // server forwards browser commands here with DIMOS_AGENT_TOKEN as a bearer.
+  // Both optional — the /control feature is disabled until they're set, and the
+  // URL + token never leave the server.
+  DIMOS_AGENT_URL: z.string().url().optional(),
+  DIMOS_AGENT_TOKEN: z.string().optional(),
 });
 
 export const env = envSchema.parse(Bun.env);

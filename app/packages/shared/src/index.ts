@@ -160,3 +160,10 @@ export const trajectorySchema = z.object({
 	createdAt: z.string(),
 });
 export type Trajectory = z.infer<typeof trajectorySchema>;
+
+// A natural-language command for the robot's agent (e.g. "scan the room for
+// VR"). The server forwards it to the dimos agent endpoint over the tunnel.
+export const commandInput = z.object({
+	text: z.string().min(1).max(500),
+});
+export type CommandInput = z.infer<typeof commandInput>;

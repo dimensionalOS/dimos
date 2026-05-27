@@ -17,6 +17,7 @@ import {
 	handleRobotSplat,
 	handleRobotTrajectory,
 } from "./http/robot";
+import { sendAgentCommand } from "./agent";
 import { handleUpload } from "./http/upload";
 import { presignGet, readObject } from "./storage/bucket";
 
@@ -115,6 +116,7 @@ app.all("/rpc/*", async (c) => {
 			: null,
 		presignGet,
 		readObject,
+			sendAgentCommand,
 	});
 	const { matched, response } = await rpcHandler.handle(c.req.raw, {
 		prefix: "/rpc",
