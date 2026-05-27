@@ -55,6 +55,14 @@ overrides = [
 ]
 
 [[package]]
+name = "a750-control"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/77/d46aa63e746dce7773b47c67533b4ef9c25aa8160d71d5e1a278a0ee8be6/a750_control-0.1.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1bba463c7258ab05cf652b26771f4f0715d795f6f67c9697448c0028301c0f4a", size = 22981212, upload-time = "2026-05-19T21:37:53.29Z" },
+]
+
+[[package]]
 name = "absl-py"
 version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1895,6 +1903,7 @@ agents = [
     { name = "sounddevice" },
 ]
 all = [
+    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "anthropic" },
     { name = "catkin-pkg" },
     { name = "cerebras-cloud-sdk" },
@@ -2066,6 +2075,7 @@ drone = [
     { name = "pymavlink" },
 ]
 manipulation = [
+    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "kaleido" },
@@ -2354,6 +2364,7 @@ tests-self-hosted = [
 
 [package.metadata]
 requires-dist = [
+    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'manipulation'" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "anthropic", marker = "extra == 'agents'", specifier = ">=0.19.0" },
     { name = "bleak", specifier = ">=3.0.2" },
