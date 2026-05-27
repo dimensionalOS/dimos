@@ -1,20 +1,32 @@
 #!/usr/bin/env bash
-# sim-with-llm.sh — sim + agentic + local LLM, one command.
+# sim-with-llm.sh — sim + Mac-friendly agentic + local LLM, one command.
+#
+# Defaults to `unitree-go2-agentic-gemini` because it's the only agentic
+# variant that boots on Apple Silicon: it disables SecurityModule (EdgeTAM
+# needs CUDA), swaps Moondream (crashes Metal) → Gemini for VL, and replaces
+# the OpenAI-hardcoded TTS with Gemini TTS. We only override its *chat* LLM
+# (the McpClient) to point at LM Studio or mlxvlm. The VL/embedding/TTS
+# pieces still need GOOGLE_API_KEY.
 #
 # Usage:
-#   ./sim-with-llm.sh                   # mlxvlm Gemma-4 (default)
+#   ./sim-with-llm.sh                   # mlxvlm Gemma-4 (default chat LLM)
 #   ./sim-with-llm.sh lmstudio          # LM Studio
 #   ./sim-with-llm.sh mlxvlm qwen3      # mlxvlm with a different loaded model
-#   BLUEPRINT=unitree-go2-agentic-ollama ./sim-with-llm.sh ollama
+#   ./sim-with-llm.sh ollama            # local ollama (uses native ollama blueprint)
 #
-# Forwards to go2-start.sh with SIMULATION=1 and the right preset.
+# Override the base blueprint if you need a different shape:
+#   BLUEPRINT=unitree-go2-basic ./sim-with-llm.sh lmstudio    # no agent, just streams
+#
+# Required env (for VL/embedding/TTS on Mac):
+#   GOOGLE_API_KEY=…    # https://aistudio.google.com/app/apikey
 
 set -euo pipefail
 
 BACKEND="${1:-mlxvlm}"
 shift || true
 
-BLUEPRINT="${BLUEPRINT:-unitree-go2-agentic}"
+# Mac-friendly default: no CUDA, no local Moondream, OpenAI-TTS disabled.
+BLUEPRINT="${BLUEPRINT:-unitree-go2-agentic-gemini}"
 
 case "$BACKEND" in
   mlxvlm)
@@ -33,5 +45,12 @@ case "$BACKEND" in
     exit 2
     ;;
 esac
+
+# The gemini-shaped blueprint still needs GOOGLE_API_KEY for VL/embeddings/TTS
+# even when the chat LLM is local. Surface that early instead of crashing later.
+if [[ "$BLUEPRINT" == *"gemini"* && -z "${GOOGLE_API_KEY:-}" ]]; then
+  printf '\033[33m⚠ GOOGLE_API_KEY not set — Gemini VL/embeddings/TTS will fail at runtime.\033[0m\n'
+  printf '\033[33m  Get one at https://aistudio.google.com/app/apikey, then re-run.\033[0m\n'
+fi
 
 exec env SIMULATION=1 ./go2-start.sh "$BLUEPRINT"
