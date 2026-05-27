@@ -71,6 +71,18 @@ class SkillInfo:
     args_schema: str
 
 
+class PeekNotFound:
+    """Sentinel returned by `Module.peek_stream` when the named stream is
+    not present on a module. A class instance survives pickle round-trips so
+    `Dimos.peek_stream` can `isinstance(result, PeekNotFound)`-test the reply.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<PeekNotFound>"
+
+
 def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
     try:
         running_loop = asyncio.get_running_loop()
@@ -771,6 +783,21 @@ class Module(ModuleBase):
 
         stream._transport = transport
         return True
+
+    @rpc
+    def peek_stream(self, stream_name: str, timeout: float) -> Any:
+        """Return the next emission on a named stream, a `PeekNotFound`
+        sentinel if no such stream exists, or `None` on timeout/error.
+
+        Used by `Dimos.peek_stream` to scan running modules.
+        """
+        stream = self.outputs.get(stream_name) or self.inputs.get(stream_name)
+        if stream is None:
+            return PeekNotFound()
+        try:
+            return stream.get_next(timeout)
+        except Exception:
+            return None
 
     # called from remote
     def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):  # type: ignore[no-untyped-def]
