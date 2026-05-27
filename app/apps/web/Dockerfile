@@ -29,6 +29,11 @@ COPY packages/shared ./packages/shared
 # Ensure the public dir exists (Next won't create it; the runtime COPY needs it).
 RUN mkdir -p apps/web/public
 
+# NEXT_PUBLIC_* vars are inlined into the bundle at build time, so they must be
+# present here. Railway feeds the matching service variable into this ARG.
+ARG NEXT_PUBLIC_GS_POT_URL
+ENV NEXT_PUBLIC_GS_POT_URL=$NEXT_PUBLIC_GS_POT_URL
+
 # next.config.ts sets output: "standalone" → self-contained server at
 # apps/web/.next/standalone.
 RUN cd apps/web && bun run build
