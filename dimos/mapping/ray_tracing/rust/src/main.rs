@@ -30,7 +30,7 @@ struct VoxelMap {
     voxels: AHashMap<VoxelKey, i32>,
 }
 
-struct CylinderBounds {
+struct LocalBounds {
     origin_x: f32,
     origin_y: f32,
     r_xy_max_sq: f32,
@@ -149,7 +149,7 @@ impl RayTracingVoxelMap {
             let dy = y - origin.1;
             r_xy_max_sq = r_xy_max_sq.max(dx * dx + dy * dy);
         }
-        let cylinder = CylinderBounds {
+        let cylinder = LocalBounds {
             origin_x: origin.0,
             origin_y: origin.1,
             r_xy_max_sq,
@@ -442,7 +442,7 @@ fn build_pointclouds(
     map: &VoxelMap,
     live: &AHashSet<VoxelKey>,
     voxel_size: f32,
-    cylinder: &CylinderBounds,
+    cylinder: &LocalBounds,
     frame_id: &str,
     stamp: Time,
 ) -> (PointCloud2, PointCloud2) {
@@ -777,7 +777,7 @@ mod tests {
         let mut map = VoxelMap::default();
         map.voxels.insert((0, 0, 0), 1);
         let live: AHashSet<VoxelKey> = AHashSet::new();
-        let cylinder = CylinderBounds {
+        let cylinder = LocalBounds {
             origin_x: 0.0,
             origin_y: 0.0,
             r_xy_max_sq: 4.0,
@@ -795,7 +795,7 @@ mod tests {
         let mut map = VoxelMap::default();
         map.voxels.insert((5, 0, 0), 1);
         let live: AHashSet<VoxelKey> = AHashSet::new();
-        let cylinder = CylinderBounds {
+        let cylinder = LocalBounds {
             origin_x: 0.0,
             origin_y: 0.0,
             r_xy_max_sq: 4.0,
@@ -814,7 +814,7 @@ mod tests {
         let mut map = VoxelMap::default();
         map.voxels.insert((0, 0, 5), 1);
         let live: AHashSet<VoxelKey> = AHashSet::new();
-        let cylinder = CylinderBounds {
+        let cylinder = LocalBounds {
             origin_x: 0.0,
             origin_y: 0.0,
             r_xy_max_sq: 100.0,
@@ -833,7 +833,7 @@ mod tests {
         let map = VoxelMap::default();
         let mut live: AHashSet<VoxelKey> = AHashSet::new();
         live.insert((10, 10, 10));
-        let cylinder = CylinderBounds {
+        let cylinder = LocalBounds {
             origin_x: 0.0,
             origin_y: 0.0,
             r_xy_max_sq: 0.0,
