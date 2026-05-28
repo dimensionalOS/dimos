@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Go2 Visual Event Signals</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #080a0d;
+      color: #f7f7f2;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #080a0d;
+      display: grid;
+      grid-template-rows: 1fr auto;
+    }
+
+    main {
+      min-height: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .signal {
+      width: min(78vh, 78vw);
+      max-width: 640px;
+      aspect-ratio: 1 / 1.82;
+      border-radius: 28px;
+      background: #111820;
+      border: 10px solid #2b3540;
+      display: grid;
+      grid-template-rows: repeat(3, 1fr);
+      gap: 24px;
+      padding: 28px;
+      box-shadow: 0 24px 80px rgb(0 0 0 / 0.45);
+    }
+
+    .lamp {
+      border-radius: 999px;
+      background: #242b32;
+      border: 8px solid #050607;
+      box-shadow: inset 0 0 32px rgb(0 0 0 / 0.7);
+      transition: background 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+      opacity: 0.34;
+    }
+
+    [data-state="red"] .red {
+      background: #ff1717;
+      box-shadow: 0 0 70px #ff1717, inset 0 0 24px rgb(255 255 255 / 0.22);
+      opacity: 1;
+    }
+
+    [data-state="yellow"] .yellow {
+      background: #ffd21c;
+      box-shadow: 0 0 70px #ffd21c, inset 0 0 24px rgb(255 255 255 / 0.22);
+      opacity: 1;
+    }
+
+    [data-state="green"] .green {
+      background: #1eff62;
+      box-shadow: 0 0 70px #1eff62, inset 0 0 24px rgb(255 255 255 / 0.22);
+      opacity: 1;
+    }
+
+    footer {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      align-items: center;
+      padding: 14px;
+      background: #111820;
+      border-top: 1px solid #25303a;
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid #405060;
+      background: #1b2530;
+      color: #f7f7f2;
+      font-size: 16px;
+      font-weight: 700;
+      min-width: 96px;
+      min-height: 44px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    button[aria-pressed="true"] {
+      background: #f7f7f2;
+      color: #101418;
+      border-color: #f7f7f2;
+    }
+
+    @media (max-width: 640px) {
+      main {
+        padding: 12px;
+      }
+
+      .signal {
+        width: min(86vh, 92vw);
+        border-width: 7px;
+        gap: 16px;
+        padding: 18px;
+      }
+
+      footer {
+        flex-wrap: wrap;
+      }
+    }
+  </style>
+</head>
+<body data-state="green">
+  <main>
+    <section class="signal" aria-label="traffic status signal">
+      <div class="lamp red" aria-hidden="true"></div>
+      <div class="lamp yellow" aria-hidden="true"></div>
+      <div class="lamp green" aria-hidden="true"></div>
+    </section>
+  </main>
+  <footer>
+    <button type="button" data-set="green" aria-pressed="true">Green</button>
+    <button type="button" data-set="yellow" aria-pressed="false">Yellow</button>
+    <button type="button" data-set="red" aria-pressed="false">Red</button>
+    <button type="button" data-auto aria-pressed="false">Auto</button>
+  </footer>
+  <script>
+    const states = ["green", "yellow", "red"];
+    const buttons = [...document.querySelectorAll("button[data-set]")];
+    const autoButton = document.querySelector("button[data-auto]");
+    let currentIndex = 0;
+    let timer = null;
+
+    function setState(state) {
+      document.body.dataset.state = state;
+      currentIndex = states.indexOf(state);
+      buttons.forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.set === state));
+      });
+    }
+
+    function setAuto(enabled) {
+      autoButton.setAttribute("aria-pressed", String(enabled));
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      if (enabled) {
+        timer = setInterval(() => {
+          currentIndex = (currentIndex + 1) % states.length;
+          setState(states[currentIndex]);
+        }, 7000);
+      }
+    }
+
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => {
+        setAuto(false);
+        setState(button.dataset.set);
+      });
+    });
+
+    autoButton.addEventListener("click", () => {
+      setAuto(autoButton.getAttribute("aria-pressed") !== "true");
+    });
+  </script>
+</body>
+</html>
+
