@@ -203,6 +203,25 @@ differs.
 
 ## Tool 2 — `benchmark`
 
+For Go2 HW the preferred entrypoint is the all-in-one blueprint
+(one terminal, autoconnects GO2Connection + ControlCoordinator + pygame
+keyboard teleop + Benchmarker + a per-session telemetry recorder):
+
+```
+dimos run unitree-go2-benchmark --module.benchmarker.config <artifact>
+```
+
+Operator UX matches the characterization blueprint: WASD/QE in the
+pygame window to reposition/aim the robot between runs; **Enter** to
+advance, **K** to skip, **Backspace** to quit. Comparison arms map 1:1
+to CLI flags via `--module.benchmarker.<field>` overrides; recordings
+land at `<repo>/data/benchmark/<robot_id>/<robot_id>_benchmark_<date>_<sha>.db`
+(tag="benchmark" so they don't collide with characterization recordings
+in the sibling `data/characterization/` dir).
+
+The two-terminal CLI flow still works and is required for `--mode sim`
+(end-to-end pre-check against `coordinator-sim-fopdt`):
+
 ```
 uv run python -m dimos.utils.benchmarking.benchmark \
     --robot go2 --config reports/go2_config_hw_concrete_<date>_<sha>.json \
@@ -228,10 +247,25 @@ clobber section 5:
 - `--ff` — apply the artifact's derived feedforward.
 - `--profile` — apply the artifact's derived curvature velocity profile.
 - `--ff --profile` — both (the fully-derived config).
+- `--rg --e-max <m>` — apply the **reference governor's** per-waypoint
+  speed profile (geometric + saturation + lateral + precision
+  constraints, then forward/backward accel passes). `--e-max` (default
+  0.05 m) is the corridor half-width fed into the precision constraint
+  `v ≤ e_max / max(τ_vx+L_vx, τ_wz+L_wz)`. The follower applies the
+  resulting list[float] cap via `start_path(velocity_profile=…)` —
+  the same 8-waypoint lookahead the static profile uses so braking
+  starts before each corner.
 
-`--mode hw` only **refuses a non-robot-valid config when `--ff`/`--profile`
-is set** (sim-derived gains are meaningless on the real robot). The bare
-physical-limit run accepts any config.
+The RG arm imports `solve_profile()` directly from the reference
+governor module — there is no RG Module instance in this blueprint. The
+math runs in-process inside the Benchmarker, and the resolved profile
+crosses to the follower as a plain list of floats. RG-as-Module (live
+`e_max` stream → reactive recompute) is a B3 concern.
+
+`--mode hw` **refuses a non-robot-valid config when any comparison arm
+(`--ff` / `--profile` / `--rg`) is set** (sim-derived gains/plant are
+meaningless on the real robot). The bare physical-limit run accepts
+any config.
 
 `--mode sim`: optional fast pre-check. Same baseline + coordinator +
 `transport_lcm` path as hw, but the LCM peer is the
