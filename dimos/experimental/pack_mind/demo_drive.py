@@ -77,9 +77,17 @@ def main() -> None:
     parser.add_argument(
         "--no-auto-look", action="store_true", help="don't auto look_for_red after each move"
     )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=8,
+        help="per-call seconds. Short on purpose: the dog physically moves in a few "
+        "seconds, but relative_move then waits on a flaky LCM RPC (is_goal_reached) "
+        "that can hang for 120s — we don't block on it, the dog already moved.",
+    )
     args = parser.parse_args()
 
-    adapter = McpAdapter(args.url)
+    adapter = McpAdapter(args.url, timeout=args.timeout)
     step, turn = args.step, args.turn
 
     print("PACK MIND driver — w/s move · a/d turn · space=look · f=speak · +/- step · x=quit")
