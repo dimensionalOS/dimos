@@ -56,7 +56,9 @@ def _reconstruct_pose(
 ) -> PoseTuple | None:
     if x is None:
         return None
-    return (x, y or 0.0, z or 0.0, qx or 0.0, qy or 0.0, qz or 0.0, qw or 1.0)
+    assert y is not None and z is not None
+    assert qx is not None and qy is not None and qz is not None and qw is not None
+    return (x, y, z, qx, qy, qz, qw)
 
 
 def _compile_filter(f: Filter, stream: str, prefix: str = "") -> tuple[str, list[Any]] | None:
