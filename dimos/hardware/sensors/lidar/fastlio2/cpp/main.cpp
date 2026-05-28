@@ -554,11 +554,18 @@ int main(int argc, char** argv) {
     }
 
     auto run_main_iter = [&](std::chrono::steady_clock::time_point now) {
+        // Lazy-seed all rate-limit bookmarks on the first iteration so they
+        // line up with the chosen clock (wall in live, pcap in replay) and
+        // don't fire immediately based on an arbitrary "since program start"
+        // delta.
         if (!last_emit.has_value()) last_emit = now;
         if (!last_pc_publish.has_value()) last_pc_publish = now;
         if (!last_odom_publish.has_value()) last_odom_publish = now;
         if (global_map && !last_map_publish.has_value()) last_map_publish = now;
 
+        // At frame rate: drain accumulated raw points into a CustomMsg
+        // and feed to FAST-LIO. Mutex against the SDK / pcap-feeder
+        // callbacks that are appending to g_accumulated_points.
         if (now - *last_emit >= frame_interval) {
             std::vector<custom_messages::CustomPoint> points;
             uint64_t frame_start = 0;
@@ -571,6 +578,7 @@ int main(int argc, char** argv) {
                 }
             }
             if (!points.empty()) {
+                // Build CustomMsg
                 auto lidar_msg = boost::make_shared<custom_messages::CustomMsg>();
                 lidar_msg->header.seq = 0;
                 lidar_msg->header.stamp = custom_messages::Time().fromSec(
@@ -586,18 +594,26 @@ int main(int argc, char** argv) {
             last_emit = now;
         }
 
+        // Run one FAST-LIO IESKF step. Cheap when the IMU/lidar queues
+        // are empty; the heavy work happens after a feed_lidar above.
         fast_lio.process();
 
+        // Check for new SLAM results and publish (rate-limited).
         auto pose = fast_lio.get_pose();
         if (!pose.empty() && (pose[0] != 0.0 || pose[1] != 0.0 || pose[2] != 0.0)) {
             double ts = get_publish_ts();
             auto world_cloud = fast_lio.get_world_cloud();
             if (world_cloud && !world_cloud->empty()) {
                 auto filtered = filter_cloud<PointType>(world_cloud, filter_cfg);
+
+                // Per-scan world-frame cloud at pointcloud_freq.
                 if (!g_lidar_topic.empty() && now - *last_pc_publish >= pc_interval) {
                     publish_lidar(filtered, ts);
                     last_pc_publish = now;
                 }
+
+                // Global voxel map: insert this scan, prune, then publish
+                // a snapshot at map_freq.
                 if (global_map) {
                     global_map->insert<PointType>(filtered);
                     if (now - *last_map_publish >= map_interval) {
@@ -611,6 +627,8 @@ int main(int argc, char** argv) {
                     }
                 }
             }
+
+            // Pose + covariance, rate-limited to odom_freq.
             if (!g_odometry_topic.empty() && now - *last_odom_publish >= odom_interval) {
                 publish_odometry(fast_lio.get_odometry(), ts);
                 last_odom_publish = now;
@@ -680,12 +698,16 @@ int main(int argc, char** argv) {
         auto loop_start = std::chrono::high_resolution_clock::now();
         auto now_opt = virtual_now();
         if (!now_opt.has_value()) {
+            // No clock yet (live: shouldn't happen; replay: handled above).
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
         run_main_iter(*now_opt);
+
+        // Drain LCM messages.
         lcm.handleTimeout(0);
 
+        // Rate control (~main_freq, 5kHz default).
         auto loop_end = std::chrono::high_resolution_clock::now();
         auto elapsed_ms = std::chrono::duration<double, std::milli>(loop_end - loop_start).count();
         if (elapsed_ms < process_period_ms) {
