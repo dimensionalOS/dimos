@@ -15,12 +15,16 @@ from dimos.msgs.geometry_msgs.PointStamped import (
 )
 from dimos.msgs.std_msgs.Header import Header  # 导入 DimOS Header 便捷构造，用于空检测头
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray  # 导入 2D 检测数组消息类型
+from dimos.utils.logging_config import setup_logger
 
 _DEFAULT_FRAME_ID = "camera_optical"  # 定义空 Detection2DArray 使用的默认坐标系
 
+logger = setup_logger()
+
 
 class BBoxSelectionConfig(ModuleConfig):  # 定义 bbox 选择模块配置，当前 MVP 暂无额外参数
-    pass  # 当前选择逻辑全部由 RPC 或 viewer 点击驱动，不需要额外配置项
+    click_hit_padding_px: float = 6.0
+    click_snap_distance_px: float = 14.0
 
 
 class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多 bbox 中转发单个 bbox
@@ -35,6 +39,7 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
         self._latest_detections: Detection2DArray | None = None  # 保存最新一帧多 bbox 检测结果
         self._selected_index: int | None = None  # 保存通过 index 选择的目标序号
         self._selected_id: str | None = None  # 保存通过 id 选择的目标 id
+        self._last_logged_selection_signature: tuple[str, str | None, int | None] | None = None
 
     @rpc  # 标记 start() 是框架生命周期 RPC
     def start(self) -> None:  # 定义模块启动逻辑
@@ -90,36 +95,87 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
         self._publish_selected(detections)  # 每帧根据当前选择转发单个 bbox 或空 bbox
 
     def _on_clicked_point(self, point: PointStamped) -> None:  # 处理 dimos-viewer 发回来的点击点
+        logger.debug(
+            "BBoxSelectionModule: received click "
+            f"frame_id={point.frame_id!r} x={point.x} y={point.y} z={point.z}"
+        )
         if not self._is_color_image_click(point):  # 只接受 Camera/color_image 视图里的点击，避免误吃 3D 点击
+            logger.info("BBoxSelectionModule: ignoring non-color-image click")
             return  # 非相机点击不改变当前 bbox 选择
 
         if not (math.isfinite(point.x) and math.isfinite(point.y)):  # 检查点击像素坐标是否可用
+            logger.info("BBoxSelectionModule: ignoring click with non-finite coordinates")
             return  # 无效点击直接忽略，不清除当前选择
 
         with self._lock:  # 加锁读取最新检测帧
             detections = self._latest_detections  # 复制最新 detections，后续命中测试不持锁
 
         if detections is None:  # 如果 detector 还没有发布过任何候选 bbox
+            logger.info("BBoxSelectionModule: no detections available yet for click selection")
             return  # 暂时无法选择，等待下一帧 detections
 
+        logger.debug(
+            "BBoxSelectionModule: matching click against detections "
+            f"count={len(detections.detections)} frame_id={getattr(detections.header, 'frame_id', '')!r}"
+        )
         selected_index = self._find_clicked_detection_index(  # 在最新 detections 中查找被点击命中的 bbox
             detections,  # 传入最新一帧候选 bbox
             float(point.x),  # 传入 viewer 点击的 x 像素坐标
             float(point.y),  # 传入 viewer 点击的 y 像素坐标
+            hit_padding_px=float(self.config.click_hit_padding_px),
+            snap_distance_px=float(self.config.click_snap_distance_px),
         )  # 结束命中测试
 
+        if selected_index is None:
+            logger.info("BBoxSelectionModule: click did not hit any bbox; clearing selection")
+        else:
+            selected = detections.detections[selected_index]
+            x1, y1, x2, y2 = self._bbox_corners(selected)
+            selected_id = self._stable_detection_id(selected, selected_index)
+            logger.info(
+                "BBoxSelectionModule: click matched bbox "
+                f"index={selected_index} id={self._detection_id(selected, selected_index)!r} "
+                f"bbox=({x1:.1f}, {y1:.1f}, {x2:.1f}, {y2:.1f})"
+            )
+
         with self._lock:  # 加锁更新选择状态
-            self._selected_index = selected_index  # 命中则保存 index，未命中则清空 index
-            self._selected_id = None  # viewer 点击按当前帧 index 选择，不沿用旧 id 选择
+            if selected_index is None:
+                self._selected_index = None
+                self._selected_id = None
+            else:
+                self._selected_index = selected_index
+                self._selected_id = selected_id
+
+        if selected_index is not None:
+            if selected_id is not None:
+                logger.debug(
+                    "BBoxSelectionModule: tracking clicked bbox by stable id "
+                    f"id={selected_id!r}"
+                )
+            else:
+                logger.debug(
+                    "BBoxSelectionModule: clicked bbox has no stable id; falling back to index "
+                    f"index={selected_index}"
+                )
 
         self._publish_selected(detections)  # 立即刷新 selected_bbox，让机器人和 viewer 同步看到选择结果
 
     def _publish_selected(self, detections: Detection2DArray) -> None:  # 根据当前选择发布 selected_bbox
         selected = self._find_selected_detection(detections)  # 在当前帧里查找被选中的检测
         if selected is None:  # 如果当前帧没有选中目标或选择还不存在
+            self._log_selection_state(None, None)
             self.selected_bbox.publish(self._empty_detection_array(detections))  # 发布空数组，避免下游复用旧 bbox
             return  # 结束本帧处理
 
+        selected_index = next(
+            (
+                index
+                for index, detection in enumerate(detections.detections)
+                if detection is selected
+            ),
+            -1,
+        )
+        self._log_selection_state(selected, selected_index)
         msg = Detection2DArray(  # 构造只包含一个 detection 的消息
             detections_length=1,  # 设置检测数量为 1
             header=detections.header,  # 复用当前帧 header，保持时间和坐标系一致
@@ -167,6 +223,13 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
         detection_id = getattr(detection, "id", "")  # 读取 detection.id，缺失时使用空字符串
         return str(detection_id) if detection_id else str(index)  # 返回真实 id 或 index 字符串
 
+    @staticmethod
+    def _stable_detection_id(detection: Any, index: int) -> str | None:
+        detection_id = str(getattr(detection, "id", "")).strip()
+        if not detection_id or detection_id == "-1":
+            return None
+        return detection_id
+
     @staticmethod  # 声明这是不依赖实例状态的工具函数
     def _is_color_image_click(point: PointStamped) -> bool:  # 判断点击是否来自相机图像或其 bbox overlay
         frame_parts = point.frame_id.strip("/").split("/")  # 把 entity_path 拆成路径片段，兼容有无前导斜杠
@@ -178,17 +241,48 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
         detections: Detection2DArray,  # 输入最新一帧候选 bbox
         x: float,  # 输入点击的 x 像素坐标
         y: float,  # 输入点击的 y 像素坐标
+        hit_padding_px: float = 0.0,
+        snap_distance_px: float = 0.0,
     ) -> int | None:  # 返回命中的 bbox index，未命中时返回 None
         hits: list[tuple[float, int]] = []  # 保存命中的 bbox 面积和 index，用于重叠时选更小框
+        nearest: tuple[float, int] | None = None
         for index, detection in enumerate(detections.detections):  # 遍历当前帧所有候选 bbox
             x1, y1, x2, y2 = cls._bbox_corners(detection)  # 读取当前 bbox 的 xyxy 像素范围
             left, right = sorted((x1, x2))  # 归一化左右边界，防止异常 bbox 坐标反向
             top, bottom = sorted((y1, y2))  # 归一化上下边界，防止异常 bbox 坐标反向
-            if left <= x <= right and top <= y <= bottom:  # 如果点击点落在当前 bbox 内
+            padded_left = left - hit_padding_px
+            padded_right = right + hit_padding_px
+            padded_top = top - hit_padding_px
+            padded_bottom = bottom + hit_padding_px
+
+            if padded_left <= x <= padded_right and padded_top <= y <= padded_bottom:  # 如果点击点落在当前 bbox 内
                 area = max((right - left) * (bottom - top), 0.0)  # 计算 bbox 面积，重叠时优先小框
                 hits.append((area, index))  # 记录命中的候选 bbox
 
+            # 如果没有直接命中，记录离 bbox 的最近距离，用于吸附到近邻小目标。
+            dx = 0.0
+            if x < left:
+                dx = left - x
+            elif x > right:
+                dx = x - right
+
+            dy = 0.0
+            if y < top:
+                dy = top - y
+            elif y > bottom:
+                dy = y - bottom
+
+            distance_sq = dx * dx + dy * dy
+            if nearest is None or distance_sq < nearest[0]:
+                nearest = (distance_sq, index)
+
         if not hits:  # 如果没有任何 bbox 包含点击点
+            if nearest is None:
+                return None
+            if snap_distance_px <= 0.0:
+                return None
+            if nearest[0] <= snap_distance_px * snap_distance_px:
+                return nearest[1]
             return None  # 返回 None，调用方会清空当前选择
 
         return min(hits)[1]  # 多个 bbox 重叠时选择面积最小的那个
@@ -215,6 +309,26 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
         confidence = float(getattr(hypothesis, "score", 0.0))  # 读取置信度，缺失时为 0.0
         class_id = getattr(hypothesis, "class_id", None)  # 读取类别 id，缺失时为 None
         return confidence, class_id  # 返回置信度和类别 id
+
+    def _log_selection_state(self, selected: Any | None, selected_index: int | None) -> None:
+        if selected is None:
+            signature = ("empty", None, None)
+            if signature == self._last_logged_selection_signature:
+                return
+            self._last_logged_selection_signature = signature
+            logger.info("BBoxSelectionModule: publishing empty selected_bbox")
+            return
+
+        detection_id = self._detection_id(selected, max(selected_index if selected_index is not None else 0, 0))
+        signature = ("selected", detection_id, selected_index)
+        if signature == self._last_logged_selection_signature:
+            return
+
+        self._last_logged_selection_signature = signature
+        logger.info(
+            "BBoxSelectionModule: publishing selected_bbox "
+            f"index={selected_index} id={detection_id!r}"
+        )
 
 
 __all__ = [  # 声明这个文件希望对外暴露的名字

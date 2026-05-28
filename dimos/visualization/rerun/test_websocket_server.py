@@ -142,6 +142,37 @@ def test_click_publishes_point_stamped(
     assert point.ts == pytest.approx(5.0)
 
 
+def test_click_with_null_z_defaults_to_zero(
+    server: RerunWebSocketServer, publisher: MockViewerPublisher
+) -> None:
+    """Null depth in a click payload should not break bbox selection."""
+    received: list[Any] = []
+    done = threading.Event()
+
+    unsub = server.clicked_point.subscribe(lambda point: (received.append(point), done.set()))
+
+    publisher._send(
+        {
+            "type": "click",
+            "x": 1.5,
+            "y": 2.5,
+            "z": None,
+            "entity_path": "/bbox/person",
+            "timestamp_ms": 5000,
+        }
+    )
+    publisher.flush()
+    done.wait(timeout=2.0)
+    unsub()
+
+    assert len(received) == 1
+    point = received[0]
+    assert point.x == pytest.approx(1.5)
+    assert point.y == pytest.approx(2.5)
+    assert point.z == pytest.approx(0.0)
+    assert point.frame_id == "/bbox/person"
+
+
 def test_twist_publishes_on_tele_cmd_vel(
     server: RerunWebSocketServer, publisher: MockViewerPublisher
 ) -> None:

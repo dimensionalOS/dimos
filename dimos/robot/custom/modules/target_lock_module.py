@@ -111,6 +111,9 @@ class TargetLockModule(Module):
 
         matched = self._find_by_id(detections, target_id)
         if matched is not None:
+            with self._lock:
+                if self._target_id != target_id:
+                    return
             self._update_lock_from_detection(matched, time.monotonic())
             self.locked_bbox.publish(self._single_detection_array(matched, detections.header))
             self._set_state("locked")
@@ -118,21 +121,33 @@ class TargetLockModule(Module):
 
         now = time.monotonic()
         if last_seen_at is None:
+            with self._lock:
+                if self._target_id != target_id:
+                    return
             self.locked_bbox.publish(self._empty_detection_array(detections.header))
             self._set_state("searching")
             return
 
         if now - last_seen_at > max(self.config.search_timeout_sec, 0.0):
+            with self._lock:
+                if self._target_id != target_id:
+                    return
             self.locked_bbox.publish(self._empty_detection_array(detections.header))
             self._set_state("lost")
             return
 
         reacquired = self._reacquire_candidate(detections, target_class_id, last_center)
         if reacquired is None:
+            with self._lock:
+                if self._target_id != target_id:
+                    return
             self.locked_bbox.publish(self._empty_detection_array(detections.header))
             self._set_state("searching")
             return
 
+        with self._lock:
+            if self._target_id != target_id:
+                return
         self._update_lock_from_detection(reacquired, now)
         self.locked_bbox.publish(self._single_detection_array(reacquired, detections.header))
         self._set_state("locked")

@@ -65,6 +65,16 @@ class HeartbeatMsg(TypedDict):
 ViewerMsg = Union[ClickMsg, TwistMsg, StopMsg, HeartbeatMsg]
 
 
+def _coerce_float(value: Any, default: float = 0.0, *, field_name: str | None = None) -> float:
+    if value is None:
+        if field_name is not None:
+            logger.debug(
+                f"RerunWebSocketServer: field '{field_name}' is null; falling back to {default}"
+            )
+        return default
+    return float(value)
+
+
 def _handshake_noise_filter(record: logging.LogRecord) -> bool:
     """Drop noisy "opening handshake failed" records from port scanners etc."""
     msg = record.getMessage()
@@ -152,28 +162,39 @@ class RerunWebSocketServer(Module):
         msg_type = msg.get("type")
 
         if msg_type == "click":
+            logger.info(
+                "RerunWebSocketServer: received click "
+                f"entity_path={msg.get('entity_path', '')!r} "
+                f"x={msg.get('x')!r} y={msg.get('y')!r} z={msg.get('z')!r} "
+                f"timestamp_ms={msg.get('timestamp_ms')!r}"
+            )
+            point = PointStamped(
+                x=_coerce_float(msg.get("x"), field_name="x"),
+                y=_coerce_float(msg.get("y"), field_name="y"),
+                z=_coerce_float(msg.get("z"), field_name="z"),
+                ts=_coerce_float(msg.get("timestamp_ms"), field_name="timestamp_ms") / 1000.0,
+                frame_id=str(msg.get("entity_path", "")),
+            )
+            logger.debug(
+                "RerunWebSocketServer: publishing clicked point "
+                f"frame_id={point.frame_id!r} x={point.x} y={point.y} z={point.z} ts={point.ts}"
+            )
             self.clicked_point.publish(
-                PointStamped(
-                    x=float(msg.get("x", 0)),
-                    y=float(msg.get("y", 0)),
-                    z=float(msg.get("z", 0)),
-                    ts=float(msg.get("timestamp_ms", 0)) / 1000.0,
-                    frame_id=str(msg.get("entity_path", "")),
-                )
+                point
             )
 
         elif msg_type == "twist":
             self.tele_cmd_vel.publish(
                 Twist(
                     linear=Vector3(
-                        float(msg.get("linear_x", 0)),
-                        float(msg.get("linear_y", 0)),
-                        float(msg.get("linear_z", 0)),
+                        _coerce_float(msg.get("linear_x")),
+                        _coerce_float(msg.get("linear_y")),
+                        _coerce_float(msg.get("linear_z")),
                     ),
                     angular=Vector3(
-                        float(msg.get("angular_x", 0)),
-                        float(msg.get("angular_y", 0)),
-                        float(msg.get("angular_z", 0)),
+                        _coerce_float(msg.get("angular_x")),
+                        _coerce_float(msg.get("angular_y")),
+                        _coerce_float(msg.get("angular_z")),
                     ),
                 )
             )

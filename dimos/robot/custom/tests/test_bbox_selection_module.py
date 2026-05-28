@@ -178,3 +178,65 @@ def test_overlapping_camera_click_prefers_smaller_bbox(module: BBoxSelectionModu
     assert len(received) == 1
     assert received[0].detections_length == 1
     assert received[0].detections[0].id == "small"
+
+
+def test_camera_click_tracks_by_detection_id_across_reordered_frames(
+    module: BBoxSelectionModule,
+) -> None:
+    received = _subscribe_selected(module)
+    first_frame = _make_array(
+        _make_detection("left", 0.0, 0.0, 100.0, 100.0),
+        _make_detection("target", 200.0, 100.0, 260.0, 180.0),
+        _make_detection("right", 320.0, 120.0, 380.0, 210.0),
+    )
+    second_frame = _make_array(
+        _make_detection("right", 325.0, 125.0, 385.0, 215.0),
+        _make_detection("left", 5.0, 5.0, 105.0, 105.0),
+        _make_detection("target", 205.0, 105.0, 265.0, 185.0),
+    )
+
+    module._on_detections(first_frame)
+    received.clear()
+    module._on_clicked_point(
+        PointStamped(x=220.0, y=120.0, z=0.0, frame_id="/world/color_image/yoloe_detections")
+    )
+    module._on_detections(second_frame)
+
+    assert len(received) == 2
+    assert received[0].detections_length == 1
+    assert received[0].detections[0].id == "target"
+    assert received[1].detections_length == 1
+    assert received[1].detections[0].id == "target"
+
+
+def test_camera_click_near_bbox_edge_uses_padding(module: BBoxSelectionModule) -> None:
+    received = _subscribe_selected(module)
+    detections = _make_array(_make_detection("target", 100.0, 100.0, 160.0, 180.0))
+
+    module._on_detections(detections)
+    received.clear()
+    module._on_clicked_point(
+        PointStamped(x=95.0, y=130.0, z=0.0, frame_id="/world/color_image/yoloe_detections")
+    )
+
+    assert len(received) == 1
+    assert received[0].detections_length == 1
+    assert received[0].detections[0].id == "target"
+
+
+def test_camera_click_near_bbox_snaps_to_nearest(module: BBoxSelectionModule) -> None:
+    received = _subscribe_selected(module)
+    detections = _make_array(
+        _make_detection("left", 20.0, 20.0, 70.0, 70.0),
+        _make_detection("target", 200.0, 100.0, 260.0, 180.0),
+    )
+
+    module._on_detections(detections)
+    received.clear()
+    module._on_clicked_point(
+        PointStamped(x=266.0, y=140.0, z=0.0, frame_id="/world/color_image/yoloe_detections")
+    )
+
+    assert len(received) == 1
+    assert received[0].detections_length == 1
+    assert received[0].detections[0].id == "target"

@@ -26,6 +26,7 @@ from dimos_lcm.vision_msgs import (
     Pose2D,
 )
 import pytest
+import numpy as np
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -157,3 +158,23 @@ def test_empty_selected_bbox_resets_to_idle(module: BBoxDistanceBehaviorModule) 
     module._on_selected_bbox(_make_array())
 
     assert module._state == "idle"
+
+
+def test_estimate_distance_uses_expanded_padding(module: BBoxDistanceBehaviorModule) -> None:
+    detection = _make_detection("target", 100.0, 100.0, 150.0, 150.0)
+    lidar = PointCloud2.from_numpy(np.array([[0.0, 0.0, 1.0]], dtype=np.float32))
+    camera_info = CameraInfo.from_intrinsics(100.0, 100.0, 50.0, 50.0, 640, 480)
+
+    module.config.depth_bbox_padding_px = 0.0
+    module.config.depth_bbox_max_padding_px = 24.0
+    module.config.depth_bbox_padding_step_px = 12.0
+
+    module._project_points = lambda _points, _camera_info: (
+        np.array([166.0], dtype=np.float32),
+        np.array([120.0], dtype=np.float32),
+        np.array([1.25], dtype=np.float32),
+    )
+
+    distance = module._estimate_bbox_distance(detection, lidar, camera_info)
+
+    assert distance == pytest.approx(1.25)
