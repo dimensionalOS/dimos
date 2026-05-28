@@ -70,7 +70,7 @@ class PGOConfig(ModuleConfig):
 
 
 @dataclass
-class _KeyPose:
+class KeyPose:
     r_local: np.ndarray  # 3x3 rotation in local/odom frame
     t_local: np.ndarray  # 3-vec translation in local/odom frame
     r_global: np.ndarray  # 3x3 corrected rotation
@@ -148,9 +148,10 @@ def _voxel_downsample(pts: np.ndarray, voxel_size: float) -> np.ndarray:
 
 
 class _SimplePGO:
-    key_poses: list[_KeyPose] = []
+    key_poses: list[KeyPose] = None
 
     def __init__(self, config: PGOConfig) -> None:
+        self.key_poses = []
         self._cfg = config
         self._history_pairs: list[tuple[int, int]] = []
         self._cache_pairs: list[dict[str, Any]] = []
@@ -207,7 +208,7 @@ class _SimplePGO:
                 )
             )
 
-        kp = _KeyPose(
+        kp = KeyPose(
             r_local=r_local.copy(),
             t_local=t_local.copy(),
             r_global=init_r.copy(),
@@ -485,5 +486,4 @@ def pgo_then_voxels(
         print(f"  Pass 2: {n_inserted} frames inserted with PGO-corrected poses")
         return grid.get_global_pointcloud2()
     finally:
-        grid.dispose()
         grid.dispose()
