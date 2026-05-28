@@ -7,21 +7,26 @@ dimos/robot/custom/
 ├── modules/                               # 纯业务逻辑，无 blueprint / vis 代码
 │   ├── bbox_selection_module.py           # BBoxSelectionModule, BBoxSelectionConfig
 │   ├── target_lock_module.py              # TargetLockModule, TargetLockConfig
+│   ├── spatial_target_lock_module.py      # SpatialTargetLockModule, SpatialTargetLockConfig
 │   ├── yoloe_tracking_module.py           # YoloeTrackingModule, YoloeTrackingConfig
 │   └── go2_startup_self_check_module.py   # Go2StartupSelfCheck, Go2StartupSelfCheckConfig
 ├── tasks/                                 # 任务实现：每个 task 自带状态机
-│   └── bbox_distance_behavior_module.py   # BBoxDistanceBehaviorModule, BBoxDistanceBehaviorConfig
+│   ├── bbox_distance_behavior_module.py   # BBoxDistanceBehaviorModule, BBoxDistanceBehaviorConfig
+│   └── target_standoff_behavior_module.py # TargetStandoffBehaviorModule, TargetStandoffBehaviorConfig
 ├── visualization/                         # Detection2DArray -> Rerun 2D overlay 适配
 │   └── detection2d_overlay.py             # detection_array_to_rerun / detections_overlay /
 │                                          # selected_bbox_overlay / yoloe_overlay
 ├── blueprints/                            # autoconnect 组装 + rerun config + requirements
 │   ├── bbox_distance_follow.py            # 最小距离任务蓝图
+│   ├── yoloe_spatial_standoff_follow.py   # YOLOE + 空间锁定 + 近身/后撤/返回
 │   ├── yoloe_target_lock_distance_follow.py # 推荐闭环示例：YOLOE + selection + target lock + task
 │   ├── yoloe_keyboard_teleop.py           # 键盘遥控 + YOLOE（非本文重点）
 │   ├── yoloe_tracking_test.py             # 仅检测/跟踪验证
 │   └── go2_startup_self_check.py          # 开机自检蓝图
 └── tests/
     ├── test_bbox_distance_behavior_module.py
+    ├── test_spatial_target_lock_module.py
+    ├── test_target_standoff_behavior_module.py
     └── test_target_lock_module.py
 ```
 
@@ -35,7 +40,7 @@ dimos/robot/custom/
 
 ```bash
 source .venv/bin/activate
-pytest dimos/robot/custom/tests/test_bbox_distance_behavior_module.py dimos/robot/custom/tests/test_target_lock_module.py -q
+pytest dimos/robot/custom/tests/test_bbox_distance_behavior_module.py dimos/robot/custom/tests/test_target_lock_module.py dimos/robot/custom/tests/test_spatial_target_lock_module.py dimos/robot/custom/tests/test_target_standoff_behavior_module.py -q
 ```
 
 ### 2. 再验证 blueprint 自动注册
@@ -49,6 +54,7 @@ pytest dimos/robot/test_all_blueprints_generation.py
 
 ```bash
 .venv/bin/dimos --replay run yoloe-target-lock-distance-follow
+.venv/bin/dimos --replay run yoloe-spatial-standoff-follow
 ```
 
 这个顺序可以把问题快速归类到：
@@ -58,7 +64,64 @@ pytest dimos/robot/test_all_blueprints_generation.py
 
 ## 当前 blueprint 状态机
 
-### 1) yoloe-target-lock-distance-follow（推荐闭环）
+### 1) yoloe-spatial-standoff-follow（空间锁定 + near/far waypoint 任务）
+
+组成：
+- `unitree_go2`
+- `YoloeTrackingModule.blueprint()`
+- `BBoxSelectionModule.blueprint()`
+- `SpatialTargetLockModule.blueprint()`
+- `TargetStandoffBehaviorModule.blueprint()`
+- `KeyboardTeleop.blueprint(publish_only_when_active=True)`
+- `MovementManager.blueprint()`
+
+核心行为：
+- 用户在 Camera 视图点击 YOLOE bbox。
+- `SpatialTargetLockModule` 把选中 bbox 投影到 lidar 世界点云，缓存 `target_pose`。
+- YOLOE 丢失时继续发布最后一次 `target_pose`，状态为 `using_memory`。
+- 当前任务策略里 YOLOE 只负责提供初始 bbox；空间点锁定后不再用 YOLOE 重匹配刷新目标点。
+- `TargetStandoffBehaviorModule` 固定保存三个点：`target`、离 target 约 `0.5m` 的 `near`、离 target 约 `1.5m` 的 `far`。
+- 行为模块只编排 waypoint，不直接发布速度；实际移动通过 `ReplanningAStarPlanner.set_goal()` 交给现有路径导航。
+- 默认流程：导航到 `near` -> 倒计时停留 `10s`（每 `2s` 打一次 countdown log）-> 导航到 `far` -> 倒计时停留 `10s` -> 导航回 `near` -> 完成并清空选择。
+
+状态机：
+
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> navigating_near: target_pose -> set_goal(near)
+    navigating_near --> dwelling_near: planner goal_reached
+    dwelling_near --> navigating_far: 10s -> set_goal(far)
+    navigating_far --> dwelling_far: planner goal_reached
+    dwelling_far --> returning_near: 10s -> set_goal(near)
+    returning_near --> done: planner goal_reached
+    done --> idle: clear_selection / new run
+```
+
+模块消息流：
+
+```mermaid
+flowchart LR
+    C[color_image] --> Y[YoloeTrackingModule]
+    Y --> D[detections]
+    D --> S[BBoxSelectionModule]
+    S --> USB[user_selected_bbox]
+    D --> STL[SpatialTargetLockModule]
+    USB --> STL
+    L[lidar] --> STL
+    I[camera_info] --> STL
+    STL --> LB[locked_bbox]
+    STL --> TP[target_pose]
+    TP --> B[TargetStandoffBehaviorModule]
+    B -->|set_goal near/far/near| P[ReplanningAStarPlanner]
+    P -->|nav_cmd_vel| MM[MovementManager]
+    KB[KeyboardTeleop] -->|tele_cmd_vel| MM
+    MM -->|cmd_vel| V[Go2Connection]
+    MM -->|stop_movement| STL
+    MM -->|stop_movement / teleop_active| B
+```
+
+### 2) yoloe-target-lock-distance-follow（2D lock + one-shot distance follow）
 
 组成：
 - `unitree_go2_basic`

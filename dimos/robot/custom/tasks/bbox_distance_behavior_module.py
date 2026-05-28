@@ -365,9 +365,13 @@ class BBoxDistanceBehaviorModule(
         )
         # 2. 从 TF 获取 world→camera_optical 变换
         ts = float(lidar.ts or 0.0)  # 用 lidar 时间戳对齐 TF
-        world_to_optical = self.tf.get(
-            "camera_optical", lidar.frame_id, ts, time_tolerance=self.config.tf_time_tolerance
-        )  # 查询 world→camera_optical 变换
+        try:
+            world_to_optical = self.tf.get(
+                "camera_optical", lidar.frame_id, ts, time_tolerance=self.config.tf_time_tolerance
+            )  # 查询 world→camera_optical 变换
+        except RuntimeError as exc:
+            logger.debug(f"BBoxDistanceBehaviorModule: TF unavailable: {exc}")
+            return None
         if world_to_optical is None:  # 如果 TF 暂时不可用
             return None  # 等待下一帧
         # 3. 包装 LCM CameraInfo
@@ -386,9 +390,13 @@ class BBoxDistanceBehaviorModule(
         if detection_3d is None:  # 如果 bbox 内没有有效点
             return None  # 等待下一帧
         # 5. 获取机器人当前位置（world 坐标系）
-        robot_tf = self.tf.get(
-            "world", "base_link", time_tolerance=self.config.tf_time_tolerance
-        )  # 查询机器人位置
+        try:
+            robot_tf = self.tf.get(
+                "world", "base_link", time_tolerance=self.config.tf_time_tolerance
+            )  # 查询机器人位置
+        except RuntimeError as exc:
+            logger.debug(f"BBoxDistanceBehaviorModule: robot TF unavailable: {exc}")
+            return None
         if robot_tf is None:  # 如果机器人 TF 暂时不可用
             return None  # 等待下一帧
         # 6. 计算机器人与检测目标中心的 2D 欧氏距离
