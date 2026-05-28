@@ -18,7 +18,13 @@ from langchain_core.messages import HumanMessage
 import pytest
 
 from dimos.agents.annotation import skill
-from dimos.agents.mcp.mcp_client import _requires_openai_api_key
+from dimos.agents.mcp.mcp_client import (
+    OPENROUTER_BASE_URL,
+    _build_openrouter_model,
+    _openrouter_model_name,
+    _requires_openai_api_key,
+    _uses_openrouter,
+)
 from dimos.core.module import Module
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
@@ -206,3 +212,43 @@ def test_requires_openai_api_key_for_gpt_models() -> None:
     assert _requires_openai_api_key("gpt-4o")
     assert _requires_openai_api_key("openai:gpt-4o")
     assert not _requires_openai_api_key("ollama:llama3")
+
+
+def test_openrouter_model_detection_and_name_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+
+    assert _uses_openrouter("openrouter:anthropic/claude-sonnet-4.5")
+    assert not _uses_openrouter("gpt-4o")
+    assert _openrouter_model_name("openrouter:anthropic/claude-sonnet-4.5") == (
+        "anthropic/claude-sonnet-4.5"
+    )
+    assert _openrouter_model_name("gpt-4o") == "openai/gpt-4o"
+    assert _openrouter_model_name("openai:gpt-4o-mini") == "openai/gpt-4o-mini"
+
+    monkeypatch.setenv("OPENROUTER_MODEL", "google/gemini-2.5-flash")
+    assert _openrouter_model_name("gpt-4o") == "google/gemini-2.5-flash"
+
+
+def test_build_openrouter_model_uses_openrouter_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+    monkeypatch.setenv("OPENROUTER_HTTP_REFERER", "https://example.com")
+    monkeypatch.setenv("OPENROUTER_APP_TITLE", "DimOS Test")
+
+    model = _build_openrouter_model("gpt-4o")
+
+    assert model is not None
+    assert model.model_name == "openai/gpt-4o-mini"
+    assert str(model.openai_api_base).rstrip("/") == OPENROUTER_BASE_URL
+    assert model.default_headers == {
+        "HTTP-Referer": "https://example.com",
+        "X-OpenRouter-Title": "DimOS Test",
+    }
+
+
+def test_build_openrouter_model_returns_none_without_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    assert _build_openrouter_model("gpt-4o") is None

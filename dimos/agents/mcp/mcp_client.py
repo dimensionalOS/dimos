@@ -25,6 +25,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
+from langchain_openai import ChatOpenAI
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 
@@ -41,11 +42,53 @@ from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
 
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
 
 def _requires_openai_api_key(model: Any) -> bool:
     if not isinstance(model, str):
         return False
     return model.startswith("gpt-") or model.startswith("openai:")
+
+
+def _uses_openrouter(model: Any) -> bool:
+    if not isinstance(model, str):
+        return False
+    return model.startswith("openrouter:")
+
+
+def _openrouter_model_name(model: str) -> str:
+    if model.startswith("openrouter:"):
+        return model.removeprefix("openrouter:")
+    configured_model = os.getenv("OPENROUTER_MODEL")
+    if configured_model:
+        return configured_model
+    if model.startswith("openai:"):
+        return f"openai/{model.removeprefix('openai:')}"
+    if model.startswith("gpt-"):
+        return f"openai/{model}"
+    return model
+
+
+def _openrouter_headers() -> dict[str, str] | None:
+    headers: dict[str, str] = {}
+    if referer := os.getenv("OPENROUTER_HTTP_REFERER"):
+        headers["HTTP-Referer"] = referer
+    if title := os.getenv("OPENROUTER_APP_TITLE"):
+        headers["X-OpenRouter-Title"] = title
+    return headers or None
+
+
+def _build_openrouter_model(model: str) -> ChatOpenAI | None:
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+    return ChatOpenAI(
+        model=_openrouter_model_name(model),
+        api_key=api_key,
+        base_url=os.getenv("OPENROUTER_BASE_URL", OPENROUTER_BASE_URL),
+        default_headers=_openrouter_headers(),
+    )
 
 
 class McpClientConfig(ModuleConfig):
@@ -224,9 +267,23 @@ class McpClient(Module):
             from dimos.agents.testing import MockModel
 
             model = MockModel(json_path=self.config.model_fixture)
+        elif isinstance(model, str) and (
+            _uses_openrouter(model)
+            or (_requires_openai_api_key(model) and os.getenv("OPENROUTER_API_KEY"))
+        ):
+            openrouter_model = _build_openrouter_model(model)
+            if openrouter_model is None:
+                logger.warning(
+                    "McpClient agent disabled because OPENROUTER_API_KEY is not set",
+                    model=model,
+                    n_tools=len(tools),
+                )
+                return
+            model = openrouter_model
         elif _requires_openai_api_key(model) and not os.getenv("OPENAI_API_KEY"):
             logger.warning(
-                "McpClient agent disabled because OPENAI_API_KEY is not set",
+                "McpClient agent disabled because OPENAI_API_KEY is not set. "
+                "Set OPENROUTER_API_KEY to use OpenRouter instead.",
                 model=model,
                 n_tools=len(tools),
             )
