@@ -19,6 +19,8 @@ from dataclasses import dataclass, field, fields
 from itertools import islice
 from typing import TYPE_CHECKING, Any
 
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
@@ -75,28 +77,15 @@ class AtFilter(Filter):
 
 @dataclass(frozen=True)
 class NearFilter(Filter):
-    pose: Any = field(hash=False)
+    position: Vector3 = field(hash=False)
     radius: float = 0.0
 
     def matches(self, obs: Observation[Any]) -> bool:
-        p2 = obs.pose_tuple
-        if p2 is None or self.pose is None:
+        p = obs.pose_tuple
+        if p is None:
             return False
-        p1 = self.pose
-        # NearFilter.pose accepts raw (x,y,z) tuples or PoseStamped-like objects.
-        if hasattr(p1, "position"):
-            p1 = p1.position
-        x1, y1, z1 = _xyz(p1)
-        x2, y2, z2 = p2[0], p2[1], p2[2]
-        dist_sq = (x1 - x2) ** 2 + (y1 - y2) ** 2 + (z1 - z2) ** 2
-        return dist_sq <= self.radius**2
-
-
-def _xyz(p: Any) -> tuple[float, float, float]:
-    """Extract (x, y, z) from various pose representations."""
-    if isinstance(p, (list, tuple)):
-        return (float(p[0]), float(p[1]), float(p[2]) if len(p) > 2 else 0.0)
-    return (float(p.x), float(p.y), float(getattr(p, "z", 0.0)))
+        delta = self.position - Vector3(p[0], p[1], p[2])
+        return delta.length_squared() <= self.radius * self.radius
 
 
 @dataclass(frozen=True)

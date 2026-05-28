@@ -31,7 +31,6 @@ from dimos.memory2.type.filter import (
     NearFilter,
     TagsFilter,
     TimeRangeFilter,
-    _xyz,
 )
 from dimos.memory2.type.observation import _UNLOADED, Observation, PoseTuple
 from dimos.memory2.utils.sqlite import open_disposable_sqlite_connection
@@ -84,12 +83,7 @@ def _compile_filter(f: Filter, stream: str, prefix: str = "") -> tuple[str, list
             params.append(v)
         return (" AND ".join(clauses), params)
     if isinstance(f, NearFilter):
-        pose = f.pose
-        if pose is None:
-            return None
-        if hasattr(pose, "position"):
-            pose = pose.position
-        cx, cy, cz = _xyz(pose)
+        cx, cy, cz = f.position.x, f.position.y, f.position.z
         r = f.radius
         # R*Tree bounding-box pre-filter + exact squared-distance check
         rtree_sql = (
