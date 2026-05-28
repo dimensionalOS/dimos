@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Go2 Demo Dashboard</title>
+<style>
+  body { font-family: monospace; background: #111; color: #ddd; margin: 0; }
+  header { padding: 8px 16px; background: #222; }
+  main {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 8px;
+    padding: 8px;
+    height: calc(100vh - 60px);
+  }
+  .pane { background: #1a1a1a; border-radius: 4px; padding: 8px; overflow: hidden; }
+  .wide { grid-row: span 2; }
+  h2 { margin: 0 0 8px; font-size: 14px; color: #8af; }
+  canvas.video, canvas.map { width: 100%; height: calc(100% - 30px); background: #000; display: block; }
+  #map { height: calc(100% - 100px); }
+  #log { height: calc(100% - 30px); overflow-y: auto; font-size: 12px; line-height: 1.4; }
+  .badge { display: inline-block; padding: 2px 6px; border-radius: 3px; margin-right: 6px; }
+  .b-state { background: #246; }
+  .b-anomaly { background: #c33; }
+  #state-chip { padding: 2px 8px; border-radius: 3px; background: #246; font-weight: bold; }
+  #telemetry { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; font-size:12px; }
+  .metric { background:#222; border:1px solid #333; border-radius:4px; padding:6px 8px; min-width:120px; }
+  .metric strong { display:block; color:#8af; margin-bottom:2px; }
+</style>
+</head>
+<body>
+<header>
+  <strong>Go2 Demo</strong> · State: <span id="state-chip">IDLE</span>
+</header>
+<main>
+  <div class="pane wide">
+    <h2>Robot FPV</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+      <button onclick="sendCommand('patrol')">Start Patrol</button>
+      <button onclick="sendCommand('stop')">Stop Patrol</button>
+      <button onclick="sendCommand('forward')">Forward</button>
+      <button onclick="sendCommand('back')">Back</button>
+      <button onclick="sendCommand('left')">Left</button>
+      <button onclick="sendCommand('right')">Right</button>
+      <button onclick="sendCommand('turn_left')">Turn Left</button>
+      <button onclick="sendCommand('turn_right')">Turn Right</button>
+      <button onclick="sendCommand('status')">Refresh Status</button>
+    </div>
+    <canvas id="stream" class="video"></canvas>
+  </div>
+  <div class="pane">
+    <h2>Map</h2>
+    <div id="telemetry">
+      <div class="metric"><strong>Corridor</strong><span id="corridor-chip">CLEAR</span></div>
+      <div class="metric"><strong>Distance</strong><span id="distance-chip">-</span></div>
+      <div class="metric"><strong>Direction</strong><span id="direction-chip">center</span></div>
+      <div class="metric"><strong>Point Count</strong><span id="points-chip">0</span></div>
+    </div>
+    <canvas id="map" class="map"></canvas>
+  </div>
+  <div class="pane">
+    <h2>Events</h2>
+    <div id="log"></div>
+  </div>
+</main>
+<script>
+const streamCanvas = document.getElementById('stream');
+const mapCanvas = document.getElementById('map');
+const log = document.getElementById('log');
+const stateChip = document.getElementById('state-chip');
+const corridorChip = document.getElementById('corridor-chip');
+const distanceChip = document.getElementById('distance-chip');
+const directionChip = document.getElementById('direction-chip');
+const pointsChip = document.getElementById('points-chip');
+const streamCtx = streamCanvas.getContext('2d');
+const mapCtx = mapCanvas.getContext('2d');
+let lastMap = null;
+
+function fitCanvas(c) { c.width = c.clientWidth; c.height = c.clientHeight; }
+function fitAll() {
+  fitCanvas(streamCanvas);
+  fitCanvas(mapCanvas);
+  drawMap(lastMap);
+}
+fitAll();
+window.addEventListener('resize', fitAll);
+
+function wireVideoSocket() {
+  const ws = new WebSocket(`ws://${location.host}/ws/stream`);
+  ws.onmessage = (ev) => {
+    const img = new Image();
+    img.onload = () => {
+      streamCtx.fillStyle = '#000';
+      streamCtx.fillRect(0, 0, streamCanvas.width, streamCanvas.height);
+      const cAR = streamCanvas.width / streamCanvas.height;
+      const iAR = img.width / img.height;
+      let dw, dh, dx, dy;
+      if (iAR > cAR) {
+        dw = streamCanvas.width;
+        dh = streamCanvas.width / iAR;
+        dx = 0;
+        dy = (streamCanvas.height - dh) / 2;
+      } else {
+        dh = streamCanvas.height;
+        dw = streamCanvas.height * iAR;
+        dx = (streamCanvas.width - dw) / 2;
+        dy = 0;
+      }
+      streamCtx.drawImage(img, dx, dy, dw, dh);
+    };
+    img.src = "data:image/jpeg;base64," + ev.data;
+  };
+  ws.onclose = () => setTimeout(wireVideoSocket, 1000);
+}
+wireVideoSocket();
+
+async function sendCommand(name) {
+  try {
+    const response = await fetch(`/api/command/${name}`, { method: 'POST' });
+    const data = await response.json();
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-state">CMD</span> ${name}`;
+    log.prepend(div);
+    if (name === 'status' && data.result) stateChip.textContent = data.result;
+  } catch (err) {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-anomaly">ERR</span> ${name} failed`;
+    log.prepend(div);
+  }
+}
+
+const evWS = new WebSocket(`ws://${location.host}/ws/events`);
+evWS.onmessage = (ev) => {
+  const e = JSON.parse(ev.data);
+  if (e.type === 'state') {
+    stateChip.textContent = e.payload.mode;
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-state">STATE</span> ${e.payload.mode}`;
+    log.prepend(div);
+  } else if (e.type === 'anomaly' || e.type === 'alert') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-anomaly">ALERT</span> ${e.payload.class_name}`;
+    log.prepend(div);
+  } else if (e.type === 'telegram') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-state">TG</span> ${e.payload.message}`;
+    log.prepend(div);
+  } else if (e.type === 'move') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-state">MOVE</span> manual move`;
+    log.prepend(div);
+  } else if (e.type === 'command') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-state">CMD</span> ${e.payload.name}`;
+    log.prepend(div);
+  } else if (e.type === 'command_error') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-anomaly">ERR</span> ${e.payload.name}: ${e.payload.error}`;
+    log.prepend(div);
+  } else if (e.type === 'capture_saved') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-state">CAP</span> ${e.payload.class_name}`;
+    log.prepend(div);
+  } else if (e.type === 'corridor_blocked') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-anomaly">AISLE</span> blocked ${e.payload.direction || 'center'} ${e.payload.distance_m ? e.payload.distance_m.toFixed(2) + 'm' : ''}`;
+    log.prepend(div);
+  } else if (e.type === 'corridor_cleared') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-state">AISLE</span> cleared`;
+    log.prepend(div);
+  } else if (e.type === 'approach_started') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-anomaly">APP</span> approach started`;
+    log.prepend(div);
+  } else if (e.type === 'approach_step') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-state">STEP</span> ${e.payload.kind} ${e.payload.step || ''}`;
+    log.prepend(div);
+  } else if (e.type === 'telegram_sent') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-state">TG</span> image sent`;
+    log.prepend(div);
+  } else if (e.type === 'telegram_failed') {
+    const div = document.createElement('div');
+    div.innerHTML = `<span class="badge b-anomaly">TG</span> send failed`;
+    log.prepend(div);
+  }
+};
+
+async function refreshMap() {
+  const response = await fetch('/api/map');
+  const map = await response.json();
+  lastMap = map;
+  drawMap(map);
+}
+
+function drawMap(m) {
+  if (!m) return;
+  corridorChip.textContent = m.corridor_clear ? 'CLEAR' : 'BLOCKED';
+  corridorChip.style.color = m.corridor_clear ? '#6f6' : '#f66';
+  distanceChip.textContent = m.obstruction_distance_m == null ? '-' : `${m.obstruction_distance_m.toFixed(2)} m`;
+  directionChip.textContent = m.obstruction_direction || 'center';
+  pointsChip.textContent = String(m.obstruction_point_count || 0);
+
+  const w = mapCanvas.width, h = mapCanvas.height;
+  mapCtx.fillStyle = '#000';
+  mapCtx.fillRect(0, 0, w, h);
+  const scale = Math.min(w, h) / 12;
+  const tx = (x) => w / 2 + x * scale;
+  const ty = (y) => h / 2 - y * scale;
+
+  mapCtx.strokeStyle = '#222';
+  for (let v = -5; v <= 5; v += 1) {
+    mapCtx.beginPath(); mapCtx.moveTo(tx(v), ty(-5)); mapCtx.lineTo(tx(v), ty(5)); mapCtx.stroke();
+    mapCtx.beginPath(); mapCtx.moveTo(tx(-5), ty(v)); mapCtx.lineTo(tx(5), ty(v)); mapCtx.stroke();
+  }
+
+  const planned = m.planned_path || [];
+  const trail = m.pose_history || [];
+
+  if (trail.length >= 2) {
+    mapCtx.strokeStyle = 'rgba(255, 170, 0, 0.45)';
+    mapCtx.lineWidth = 2;
+    mapCtx.beginPath();
+    mapCtx.moveTo(tx(trail[0][0]), ty(trail[0][1]));
+    for (let i = 1; i < trail.length; i++) {
+      mapCtx.lineTo(tx(trail[i][0]), ty(trail[i][1]));
+    }
+    mapCtx.stroke();
+  }
+
+  if (planned.length >= 2) {
+    mapCtx.strokeStyle = '#0cf';
+    mapCtx.lineWidth = 2;
+    mapCtx.beginPath();
+    mapCtx.moveTo(tx(planned[0][0]), ty(planned[0][1]));
+    for (let i = 1; i < planned.length; i++) {
+      mapCtx.lineTo(tx(planned[i][0]), ty(planned[i][1]));
+    }
+    mapCtx.stroke();
+  }
+
+  for (const wp of m.waypoints || []) {
+    const visited = (m.visited || []).includes(wp.id);
+    mapCtx.fillStyle = visited ? '#5c5' : '#0f0';
+    mapCtx.beginPath();
+    mapCtx.arc(tx(wp.pos[0]), ty(wp.pos[1]), 6, 0, 2 * Math.PI);
+    mapCtx.fill();
+    mapCtx.fillStyle = '#fff';
+    mapCtx.fillText(wp.id, tx(wp.pos[0]) + 8, ty(wp.pos[1]));
+  }
+
+  if (m.robot_pose) {
+    const rx = tx(m.robot_pose.x), ry = ty(m.robot_pose.y);
+    mapCtx.fillStyle = '#fa0';
+    mapCtx.beginPath();
+    mapCtx.arc(rx, ry, 8, 0, 2 * Math.PI);
+    mapCtx.fill();
+  }
+
+  drawCorridorInset(m);
+
+  mapCtx.fillStyle = '#f44';
+  for (const a of m.anomalies || []) {
+    mapCtx.fillRect(tx(a.robot_pose[0]) - 4, ty(a.robot_pose[1]) - 4, 8, 8);
+    if (a.class_name) {
+      mapCtx.fillStyle = '#f88';
+      mapCtx.fillText(a.class_name, tx(a.robot_pose[0]) + 6, ty(a.robot_pose[1]) - 6);
+      mapCtx.fillStyle = '#f44';
+    }
+  }
+}
+
+function drawCorridorInset(m) {
+  const insetW = 140;
+  const insetH = 190;
+  const insetX = mapCanvas.width - insetW - 12;
+  const insetY = 12;
+  mapCtx.fillStyle = 'rgba(15, 15, 15, 0.92)';
+  mapCtx.fillRect(insetX, insetY, insetW, insetH);
+  mapCtx.strokeStyle = '#444';
+  mapCtx.strokeRect(insetX, insetY, insetW, insetH);
+
+  mapCtx.fillStyle = '#ddd';
+  mapCtx.fillText('Aisle Corridor', insetX + 10, insetY + 16);
+  const corridorX = insetX + 32;
+  const corridorY = insetY + 28;
+  const corridorW = insetW - 64;
+  const corridorH = insetH - 58;
+  mapCtx.strokeStyle = m.corridor_clear ? '#2c6' : '#f55';
+  mapCtx.lineWidth = 2;
+  mapCtx.strokeRect(corridorX, corridorY, corridorW, corridorH);
+
+  mapCtx.fillStyle = '#fa0';
+  mapCtx.beginPath();
+  mapCtx.moveTo(insetX + insetW / 2, insetY + insetH - 16);
+  mapCtx.lineTo(insetX + insetW / 2 - 8, insetY + insetH - 32);
+  mapCtx.lineTo(insetX + insetW / 2 + 8, insetY + insetH - 32);
+  mapCtx.closePath();
+  mapCtx.fill();
+
+  if (!m.corridor_clear && m.obstruction_distance_m != null) {
+    const norm = Math.max(0, Math.min(1, (m.obstruction_distance_m - 0.4) / 1.6));
+    const y = corridorY + corridorH - norm * corridorH;
+    let x = insetX + insetW / 2;
+    if ((m.obstruction_direction || 'center') === 'left') x -= corridorW * 0.22;
+    if ((m.obstruction_direction || 'center') === 'right') x += corridorW * 0.22;
+    mapCtx.fillStyle = '#f55';
+    mapCtx.beginPath();
+    mapCtx.arc(x, y, 9, 0, 2 * Math.PI);
+    mapCtx.fill();
+  }
+}
+
+setInterval(refreshMap, 500);
+refreshMap();
+</script>
+</body>
+</html>

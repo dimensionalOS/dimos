@@ -1,0 +1,10 @@
+python-dotenv
+pyyaml
+pydantic
+fastapi
+uvicorn[standard]
+opencv-python
+reactivex
+ultralytics
+python-telegram-bot[all]
+playsound3

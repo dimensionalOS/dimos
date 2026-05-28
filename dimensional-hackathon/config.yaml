@@ -1,0 +1,56 @@
+robot:
+  ip: "192.168.12.1"
+  obstacle_avoidance: true
+  camera_resize: [640, 480]
+  connect_timeout_sec: 15
+
+waypoints:
+  - {id: W1, pos: [0.5, 0.0, 0.0], yaw: 0}
+  - {id: W2, pos: [0.5, 0.5, 0.0], yaw: 90}
+
+patrol:
+  loop_forever: true
+  scan_turns: 1
+  scan_pause_sec: 0.15
+  motion_settle_sec: 0.05
+  forward_steps_per_cycle: 5
+  forward_speed_mps: 0.60
+  forward_step_duration_sec: 1.25
+  sweep_yaw_radps: 0.24
+  sweep_turn_duration_sec: 0.28
+
+detection:
+  enabled: true
+  model_name: yolo11n.pt
+  interval_sec: 0.5
+  conf_threshold: 0.25
+  cooldown_sec: 0
+  detection_classes: [chair, office chair, box, container]
+
+aisle:
+  enabled: true
+  x_min_m: 0.4
+  x_max_m: 2.0
+  half_width_m: 0.42
+  min_points_in_zone: 6
+  min_z_m: -0.35
+  max_z_m: 1.20
+  cell_size_m: 0.12
+  min_occupied_cells: 2
+  alert_repeat_sec: 3.0
+  closeup_stop_distance_m: 0.8
+  approach_step_m: 0.25
+  max_approach_steps: 3
+  turn_step_deg: 12
+  reclear_consecutive_frames: 2
+
+alert:
+  audio_file: ../deploy_agentics_real/assets/alert.wav
+  clip_duration_sec: 5
+  buffer_seconds: 10
+  capture_fps: 15
+
+web:
+  host: 0.0.0.0
+  port: 8080
+  stream_fps: 10
