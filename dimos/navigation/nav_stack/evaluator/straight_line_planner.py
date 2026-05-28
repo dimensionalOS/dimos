@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Braindead path planner just for testing out the eval architecture.
+"""Sanity check modules for the eval framework.
 
-It just creates a straight line path from start to end.
+Just outputs a path from start to goal ignoring map.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ class StraightLinePlannerConfig(ModuleConfig):
 
 
 class StraightLinePlanner(Module):
-    """Emits a straight-line Path from start to goal; ignores the map."""
+    """Emits a straight-line Path from start to goal. Ignores the map."""
 
     config: StraightLinePlannerConfig
 
@@ -55,7 +55,6 @@ class StraightLinePlanner(Module):
         self._latest_start: Odometry | None = None
 
     async def handle_global_map(self, _msg: PointCloud2) -> None:
-        # Naive planner: map is intentionally ignored.
         return
 
     async def handle_start_pose(self, msg: Odometry) -> None:
