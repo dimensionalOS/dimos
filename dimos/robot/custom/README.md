@@ -66,6 +66,15 @@ pytest dimos/robot/test_all_blueprints_generation.py
 - `BBoxSelectionModule.blueprint()`
 - `TargetLockModule.blueprint()`
 - `BBoxDistanceBehaviorModule.blueprint(approach_distance=0.2)`
+- `KeyboardTeleop.blueprint(publish_only_when_active=True)`
+- `MovementManager.blueprint()`
+
+键盘控制（pygame 窗口需要焦点）：
+- W / S — 前进 / 后退
+- A / D — 左转 / 右转
+- Q / E — 横移
+- Shift — 加速 (2×)  |  Ctrl — 慢速 (0.5×)
+- Space — 紧急停止  |  Esc / Q — 退出
 
 TargetLock 状态机：
 
@@ -91,12 +100,20 @@ flowchart LR
     S --> USB[user_selected_bbox]
     D --> T[TargetLockModule]
     USB --> T
-    T --> LB[locked_bbox]
+    T --> LB[locked_bbox / selected_bbox]
     LB --> B[BBoxDistanceBehaviorModule]
     L[lidar] --> B
     I[camera_info] --> B
-    B --> V[cmd_vel]
+    B -->|nav_cmd_vel| MM[MovementManager]
+    KB[KeyboardTeleop] -->|tele_cmd_vel| MM
+    MM -->|cmd_vel| V[Go2Connection]
+    MM -->|stop_movement = teleop_active| B
 ```
+
+速度优先级（MovementManager）：
+- 键盘有输入时：`tele_cmd_vel` 优先，`nav_cmd_vel` 被压制（冷却 1 s）
+- 冷却结束后：`nav_cmd_vel`（任务）恢复控制
+- 键盘输入同时触发 `stop_movement → teleop_active` → 任务重置为 idle
 
 Visualization 点击闭环：
 

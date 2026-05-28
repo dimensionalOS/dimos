@@ -6,7 +6,9 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.custom.tasks.bbox_distance_behavior_module import BBoxDistanceBehaviorModule
 from dimos.robot.custom.modules.bbox_selection_module import BBoxSelectionModule
 from dimos.robot.custom.modules.target_lock_module import TargetLockModule
@@ -22,11 +24,14 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import (
     rerun_config as go2_rerun_config,
     unitree_go2_basic,
 )
+from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.vis_module import vis_module
 
 _YOLOE_DETECTIONS_TOPIC = "/color_image/yoloe_detections"
 _USER_SELECTED_BBOX_TOPIC = "/color_image/selected_bbox"
 _LOCKED_BBOX_TOPIC = "/color_image/locked_bbox"
+_NAV_CMD_VEL_TOPIC = "/nav_cmd_vel"
+_TELE_CMD_VEL_TOPIC = "/tele_cmd_vel"
 
 _YOLOE_DETECTIONS_ENTITY = "world/color_image/yoloe_detections"
 _USER_SELECTED_BBOX_ENTITY = "world/color_image/selected_bbox"
@@ -93,9 +98,16 @@ yoloe_target_lock_distance_follow = (
         BBoxSelectionModule.blueprint(),
         TargetLockModule.blueprint(),
         BBoxDistanceBehaviorModule.blueprint(),
+        # Keyboard teleop: publishes tele_cmd_vel when keys held; silent otherwise.
+        # MovementManager muxes tele_cmd_vel (priority) + nav_cmd_vel (task) → cmd_vel.
+        # When teleop fires, MovementManager publishes stop_movement → teleop_active →
+        # BBoxDistanceBehaviorModule resets to idle so YOLO keeps detecting while
+        # the user drives; clicking a new bbox restarts the approach task.
+        KeyboardTeleop.blueprint(publish_only_when_active=True),
+        MovementManager.blueprint(),
     )
     .global_config(
-        n_workers=10,
+        n_workers=12,
         robot_model="unitree_go2",
     )
     .remappings(
@@ -103,6 +115,12 @@ yoloe_target_lock_distance_follow = (
             (BBoxSelectionModule, "selected_bbox", "user_selected_bbox"),
             (TargetLockModule, "selected_bbox", "user_selected_bbox"),
             (TargetLockModule, "locked_bbox", "selected_bbox"),
+            # Task cmd_vel → MovementManager nav_cmd_vel (lower priority than keyboard)
+            (BBoxDistanceBehaviorModule, "cmd_vel", "nav_cmd_vel"),
+            # Keyboard cmd_vel → MovementManager tele_cmd_vel (higher priority)
+            (KeyboardTeleop, "cmd_vel", "tele_cmd_vel"),
+            # MovementManager stop_movement → task teleop_active (interrupt on teleop)
+            (MovementManager, "stop_movement", "teleop_active"),
         ]
     )
     .transports(
@@ -118,6 +136,14 @@ yoloe_target_lock_distance_follow = (
             ("locked_bbox", Detection2DArray): LCMTransport(
                 _LOCKED_BBOX_TOPIC,
                 Detection2DArray,
+            ),
+            ("nav_cmd_vel", Twist): LCMTransport(
+                _NAV_CMD_VEL_TOPIC,
+                Twist,
+            ),
+            ("tele_cmd_vel", Twist): LCMTransport(
+                _TELE_CMD_VEL_TOPIC,
+                Twist,
             ),
         }
     )

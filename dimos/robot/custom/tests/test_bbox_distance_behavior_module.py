@@ -138,7 +138,7 @@ def test_selected_bbox_reaches_point_two_and_finishes(
 
     monkeypatch.setattr(
         module,
-        "_estimate_bbox_distance",
+        "_estimate_3d_distance",
         lambda *args, **kwargs: distances.pop(0),
     )
 
@@ -160,21 +160,45 @@ def test_empty_selected_bbox_resets_to_idle(module: BBoxDistanceBehaviorModule) 
     assert module._state == "idle"
 
 
-def test_estimate_distance_uses_expanded_padding(module: BBoxDistanceBehaviorModule) -> None:
+def test_estimate_3d_distance_returns_none_without_tf(module: BBoxDistanceBehaviorModule) -> None:
+    """_estimate_3d_distance returns None when TF transform is not available."""
     detection = _make_detection("target", 100.0, 100.0, 150.0, 150.0)
-    lidar = PointCloud2.from_numpy(np.array([[0.0, 0.0, 1.0]], dtype=np.float32))
+    lidar = PointCloud2.from_numpy(np.array([[1.0, 2.0, 0.5]], dtype=np.float32), frame_id="world")
     camera_info = CameraInfo.from_intrinsics(100.0, 100.0, 50.0, 50.0, 640, 480)
 
-    module.config.depth_bbox_padding_px = 0.0
-    module.config.depth_bbox_max_padding_px = 24.0
-    module.config.depth_bbox_padding_step_px = 12.0
+    # tf.get returns None by default since no TF data is published in tests
+    distance = module._estimate_3d_distance(detection, lidar, camera_info)
 
-    module._project_points = lambda _points, _camera_info: (
-        np.array([166.0], dtype=np.float32),
-        np.array([120.0], dtype=np.float32),
-        np.array([1.25], dtype=np.float32),
-    )
+    assert distance is None
 
-    distance = module._estimate_bbox_distance(detection, lidar, camera_info)
 
-    assert distance == pytest.approx(1.25)
+def test_teleop_active_interrupts_approaching_task(module: BBoxDistanceBehaviorModule) -> None:
+    """_on_teleop_active resets an approaching task to idle."""
+    from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+
+    module._on_selected_bbox(_make_array(_make_detection("target", 40.0, 40.0, 60.0, 60.0)))
+    assert module._state == "approaching"
+
+    cmd_published: list = []
+    module.cmd_vel.subscribe(cmd_published.append)
+
+    module._on_teleop_active(Bool(data=True))
+
+    assert module._state == "idle"
+    assert module._active_target_id is None
+    # A zero Twist must be published to stop the robot
+    assert cmd_published and cmd_published[-1].linear.x == 0.0
+
+
+def test_teleop_active_noop_when_already_idle(module: BBoxDistanceBehaviorModule) -> None:
+    """_on_teleop_active does nothing when task is already idle."""
+    from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+
+    assert module._state == "idle"
+    cmd_published: list = []
+    module.cmd_vel.subscribe(cmd_published.append)
+
+    module._on_teleop_active(Bool(data=True))
+
+    assert module._state == "idle"
+    assert not cmd_published  # no spurious zero published
