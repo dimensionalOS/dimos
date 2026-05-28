@@ -44,7 +44,7 @@ type SplatState =
 // Component state is in-memory only — a refresh loses it, but the trained
 // splat still lands in the splats gallery (gs-pot POSTs it to
 // /api/robot/splat at the end of training).
-function BuildSplatButton({ runId }: { runId: string }) {
+export function BuildSplatButton({ runId }: { runId: string }) {
 	const [state, setState] = useState<SplatState>({ status: "idle" });
 
 	const pollingScanId = state.status === "queued" ? state.scanId : null;
@@ -285,7 +285,7 @@ function useJobPoll(
 // Per-run "Analyze room" — kicks an analyze job for every frame in the run.
 // Job state is in-memory; counts update via the polling rpc (analysisCount on
 // the scan image). Component is intentionally minimal: shows N/M analyzed.
-function AnalyzeRoomButton({ images }: { images: ScanImage[] }) {
+export function AnalyzeRoomButton({ images }: { images: ScanImage[] }) {
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [submitted, setSubmitted] = useState(0);

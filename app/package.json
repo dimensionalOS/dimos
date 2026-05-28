@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --filter=!gateway",
     "dev:web": "turbo run dev --filter=web",
     "dev:server": "turbo run dev --filter=server",
     "dev:gateway": "bun --filter gateway dev",

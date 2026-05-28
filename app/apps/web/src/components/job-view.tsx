@@ -9,11 +9,13 @@ import {
   Sparkles,
   Star,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ConsolePanel } from "@/components/console-panel";
 import { JobScans } from "@/components/job-scans";
 import { MapView } from "@/components/map-view";
+import { BuildSplatButton } from "@/components/scans-browser";
 import { SplatViewer } from "@/components/splat-viewer";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,6 +24,17 @@ import { rpcClient } from "@/lib/orpc";
 import { useLiveQuery } from "@/lib/use-live-query";
 import { cn } from "@/lib/utils";
 import { useWallet } from "@/lib/wallet";
+
+// WebGL splat canvas — browser-only (Spark needs window/WebGL/WASM), same
+// dynamic(ssr:false) pattern as splat-viewer.tsx.
+const SplatCanvas = dynamic(() => import("./splat-canvas"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full w-full items-center justify-center text-muted-foreground text-sm">
+      Initializing viewer…
+    </div>
+  ),
+});
 
 const STEPS: { label: string }[] = [
   { label: "Hired" },
@@ -133,9 +146,12 @@ export function JobView({ jobId }: { jobId: string }) {
 
       {job.run ? (
         <section className="flex flex-col gap-3">
-          <h2 className="font-display font-semibold text-lg">
-            Scanned rooms · segmented
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-display font-semibold text-lg">
+              Scanned rooms · segmented
+            </h2>
+            {job.splatId ? null : <BuildSplatButton runId={job.run} />}
+          </div>
           <JobScans run={job.run} />
         </section>
       ) : inFlight ? (
@@ -166,13 +182,15 @@ export function JobView({ jobId }: { jobId: string }) {
               Your 3D virtual tour is ready
             </h2>
           </div>
-          <SplatViewer />
+          <JobSplat splatId={job.splatId} />
         </section>
       ) : null}
 
       {done && agent ? (
         <RateAgent agent={agent} job={job} onRated={refetch} />
       ) : null}
+
+      {inFlight || done ? <RobotFeedback /> : null}
 
       <DemoControls job={job} onChange={refetch} />
     </main>
@@ -492,6 +510,120 @@ function RateAgent({
         {busy ? "Submitting…" : `Submit ${rating}★ rating`}
       </Button>
       {msg ? <span className="text-muted-foreground text-xs">{msg}</span> : null}
+      {error ? <span className="text-destructive text-xs">{error}</span> : null}
+    </section>
+  );
+}
+
+// Renders THIS job's splat (scoped to job.splatId), resolving the presigned URL
+// from splats.list. Falls back to the full SplatViewer (demo scenes + picker)
+// when the splat isn't bound yet or can't be found.
+function JobSplat({ splatId }: { splatId: string | null }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [resolved, setResolved] = useState(false);
+
+  useEffect(() => {
+    if (!splatId) {
+      setResolved(true);
+      return;
+    }
+    let active = true;
+    setResolved(false);
+    rpcClient.splats
+      .list()
+      .then((rows) => {
+        if (!active) return;
+        setUrl(rows.find((s) => s.id === splatId)?.splatUrl ?? null);
+        setResolved(true);
+      })
+      .catch(() => {
+        if (active) setResolved(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [splatId]);
+
+  if (splatId && !resolved) {
+    return (
+      <div className="grid aspect-video w-full place-items-center rounded-lg border bg-black text-muted-foreground text-sm">
+        Loading your tour…
+      </div>
+    );
+  }
+  if (splatId && url) {
+    return (
+      <div className="aspect-video w-full overflow-hidden rounded-lg border bg-black">
+        <SplatCanvas flip={false} key={url} url={url} />
+      </div>
+    );
+  }
+  return <SplatViewer />;
+}
+
+const FEEDBACK_PRESETS = [
+  "Re-scan the last area — it looked blurry.",
+  "Looks good — finish up and return to base.",
+];
+
+// Operator feedback to the LIVE robot (distinct from the on-chain RateAgent,
+// which rates the agent/job). Sends a freeform correction or a preset through
+// the existing commands.send → /agent-command pipe. Not persisted.
+function RobotFeedback() {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const send = async (msg: string) => {
+    const t = msg.trim();
+    if (!t) return;
+    setBusy(true);
+    setError(null);
+    setSent(false);
+    try {
+      await rpcClient.commands.send({ text: t });
+      setSent(true);
+      setText("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to send command");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-3 rounded-xl border bg-card p-5">
+      <h2 className="font-display font-semibold text-lg">Tell the robot</h2>
+      <p className="text-muted-foreground text-sm leading-relaxed">
+        Send a correction or follow-up to the live robot.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {FEEDBACK_PRESETS.map((p) => (
+          <button
+            className="rounded-md border px-2.5 py-1 text-xs transition-colors hover:border-foreground/30 disabled:opacity-50"
+            disabled={busy}
+            key={p}
+            onClick={() => send(p)}
+            type="button"
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <textarea
+          className="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Type a correction…"
+          rows={2}
+          value={text}
+        />
+        <Button disabled={busy || !text.trim()} onClick={() => send(text)}>
+          {busy ? <Loader2 className="animate-spin" size={16} /> : "Send"}
+        </Button>
+      </div>
+      {sent ? <span className="text-signal text-xs">Sent ✓</span> : null}
       {error ? <span className="text-destructive text-xs">{error}</span> : null}
     </section>
   );

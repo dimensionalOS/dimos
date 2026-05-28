@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { MapView } from "@/components/map-view";
+import { RoomsPanel } from "@/components/rooms-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,8 @@ export default function MapPage() {
           <Link href="/frames">all frames</Link>
         </div>
       </header>
+
+      <RoomsPanel />
 
       <MapView />
     </main>

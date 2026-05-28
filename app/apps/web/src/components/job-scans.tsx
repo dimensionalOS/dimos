@@ -8,6 +8,7 @@ import {
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { AnalyzeRoomButton } from "@/components/scans-browser";
 import { Skeleton } from "@/components/ui/skeleton";
 import { rpcClient } from "@/lib/orpc";
 import { useLiveQuery } from "@/lib/use-live-query";
@@ -46,9 +47,14 @@ export function JobScans({ run }: { run: string }) {
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="font-mono text-muted-foreground text-xs">
-        {scan.positionCount} positions · {scan.imageCount} images
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="font-mono text-muted-foreground text-xs">
+          {scan.positionCount} positions · {scan.imageCount} images
+        </p>
+        <AnalyzeRoomButton
+          images={scan.positions.flatMap((pos) => pos.images)}
+        />
+      </div>
       {scan.positions.map((pos) => (
         <div className="flex flex-col gap-1.5" key={`${run}-${pos.position}`}>
           <span className="font-mono text-muted-foreground text-xs uppercase tracking-wider">

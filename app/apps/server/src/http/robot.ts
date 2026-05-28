@@ -10,7 +10,7 @@ import {
 import { newId } from "@robomoo/shared";
 import { eq } from "drizzle-orm";
 import { env } from "../env";
-import { presignGet, writeImage, writeObject } from "../storage/bucket";
+import { writeImage, writeObject } from "../storage/bucket";
 
 const MAX_BYTES = 8 * 1024 * 1024; // 8 MB
 const MAX_SPLAT_BYTES = 256 * 1024 * 1024; // 256 MB — splats are large
@@ -76,56 +76,11 @@ export async function handleRobotFrame(
     angle: num(form.get("angle")),
   });
 
-  // Fire-and-forget: kick mlxvlm to analyze this frame (Gemma + Falcon). The
-  // result lands back via POST /api/robot/frame/:id/analysis. Three envs are
-  // required — MLXVLM_URL (where mlxvlm lives), ROBOT_INGEST_TOKEN (the bearer
-  // we sign callbacks with), and our public origin (ROBOMOO_URL or the legacy
-  // PUBLIC_SERVER_URL — either works). Errors are swallowed; analysis is
-  // best-effort and the manual "Analyze" buttons remain as a retry path.
-  const publicOrigin = env.ROBOMOO_URL ?? env.PUBLIC_SERVER_URL;
-  if (env.MLXVLM_URL && env.ROBOT_INGEST_TOKEN && publicOrigin) {
-    void triggerAnalysis(id, key, publicOrigin).catch((e) => {
-      console.warn(`[analysis] auto-trigger failed for ${id}:`, e);
-    });
-  }
+  // Analysis is NOT auto-triggered on ingest — segmentation runs only when the
+  // operator clicks "Analyze rooms" in the job view (web → mlxvlm directly).
+  // Keeps the demo presenter-driven instead of automagic.
 
   return Response.json({ key });
-}
-
-// POST to mlxvlm's /api/analyze-async with a presigned image URL + a callback
-// pointing at /api/robot/frame/:id/analysis. mlxvlm runs Gemma + Falcon out of
-// band and posts results back; this fn returns as soon as the queue accepts.
-// All four fields (frame_id, image_url, callback_base, callback_token) are
-// required by mlxvlm — without them the job dies immediately with
-// "missing callback_base or callback_token". The caller decides the public
-// origin and passes it in (handler picks ROBOMOO_URL ?? PUBLIC_SERVER_URL).
-async function triggerAnalysis(
-  frameId: string,
-  imageKey: string,
-  publicOrigin: string,
-): Promise<void> {
-  if (!env.MLXVLM_URL || !env.ROBOT_INGEST_TOKEN) return;
-  // Long TTL — analysis may queue behind other jobs on the Mac.
-  const imageUrl = await presignGet(imageKey, 6 * 60 * 60);
-  const body = {
-    frame_id: frameId,
-    image_url: imageUrl,
-    callback_base: publicOrigin,
-    callback_token: env.ROBOT_INGEST_TOKEN,
-  };
-  const r = await fetch(`${env.MLXVLM_URL.replace(/\/$/, "")}/api/analyze-async`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // Bypass ngrok-free's HTML interstitial when mlxvlm is exposed through ngrok.
-      "ngrok-skip-browser-warning": "true",
-    },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) {
-    const text = await r.text().catch(() => "");
-    throw new Error(`mlxvlm /api/analyze-async ${r.status}: ${text}`);
-  }
 }
 
 // Token-guarded analysis-result callback. mlxvlm POSTs this after running

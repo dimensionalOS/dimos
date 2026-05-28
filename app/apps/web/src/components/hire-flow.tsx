@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { rpcClient } from "@/lib/orpc";
 import { cn } from "@/lib/utils";
@@ -12,9 +13,28 @@ import { useWallet } from "@/lib/wallet";
 
 const X402_ENABLED = process.env.NEXT_PUBLIC_X402_ENABLED === "true";
 
-// Map a service to the natural-language command dispatched to the DimOS agent.
-function commandFor(agent: Agent, service: AgentService): string {
-  if (service.key === "room-scan") return "scan the room for VR";
+// Mocked registry of maps the robot has on file (mirrors rooms-panel's list).
+// "Use existing" picks one of these; "Create new" names a fresh map.
+const KNOWN_MAPS = ["kitchen", "office"];
+
+type MapChoice = { mode: "existing" | "new"; name: string };
+
+// Map a service (+ optional map choice) to the natural-language command
+// dispatched to the DimOS agent.
+function commandFor(
+  agent: Agent,
+  service: AgentService,
+  map: MapChoice | null,
+): string {
+  if (service.key === "room-scan") {
+    const name = map?.name.trim();
+    if (map && name) {
+      return map.mode === "existing"
+        ? `You're in the ${name}. Load that room's saved map, then scan the room for VR.`
+        : `Explore and map this room as "${name}", save the map, then scan the room for VR.`;
+    }
+    return "scan the room for VR";
+  }
   return `${service.name} (${agent.name})`;
 }
 
@@ -24,6 +44,9 @@ export function HireFlow({ agent }: { agent: Agent }) {
   const router = useRouter();
   const { address, connect, connecting, ensureSepolia } = useWallet();
   const [serviceKey, setServiceKey] = useState(agent.services[0]?.key ?? "");
+  const [mapMode, setMapMode] = useState<"existing" | "new">("existing");
+  const [existingMap, setExistingMap] = useState(KNOWN_MAPS[0] ?? "");
+  const [newMap, setNewMap] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +60,14 @@ export function HireFlow({ agent }: { agent: Agent }) {
       </p>
     );
   }
+
+  const isRoomScan = service.key === "room-scan";
+  const mapChoice: MapChoice | null = isRoomScan
+    ? { mode: mapMode, name: mapMode === "existing" ? existingMap : newMap }
+    : null;
+  const mapReady =
+    !isRoomScan ||
+    (mapMode === "existing" ? Boolean(existingMap) : Boolean(newMap.trim()));
 
   const hire = async () => {
     setError(null);
@@ -65,7 +96,7 @@ export function HireFlow({ agent }: { agent: Agent }) {
       setPhase("dispatching");
       await rpcClient.jobs.dispatch({
         id: job.id,
-        command: commandFor(agent, service),
+        command: commandFor(agent, service, mapChoice),
       });
       router.push(`/jobs/${job.id}`);
     } catch (e) {
@@ -127,6 +158,63 @@ export function HireFlow({ agent }: { agent: Agent }) {
         })}
       </RadioGroup>
 
+      {isRoomScan ? (
+        <div className="flex flex-col gap-3 border-t pt-4">
+          <span className="font-medium text-sm">Map</span>
+          <div className="flex gap-2">
+            <button
+              className={cn(
+                "flex-1 rounded-lg border p-2 text-sm transition-colors",
+                mapMode === "existing"
+                  ? "border-signal/50 bg-signal/5"
+                  : "hover:border-foreground/20",
+              )}
+              onClick={() => setMapMode("existing")}
+              type="button"
+            >
+              Use existing map
+            </button>
+            <button
+              className={cn(
+                "flex-1 rounded-lg border p-2 text-sm transition-colors",
+                mapMode === "new"
+                  ? "border-signal/50 bg-signal/5"
+                  : "hover:border-foreground/20",
+              )}
+              onClick={() => setMapMode("new")}
+              type="button"
+            >
+              Create new map
+            </button>
+          </div>
+          {mapMode === "existing" ? (
+            <div className="flex flex-wrap gap-2">
+              {KNOWN_MAPS.map((room) => (
+                <button
+                  className={cn(
+                    "rounded-md border px-3 py-1 text-sm capitalize transition-colors",
+                    existingMap === room
+                      ? "border-signal text-signal"
+                      : "hover:border-foreground/30",
+                  )}
+                  key={room}
+                  onClick={() => setExistingMap(room)}
+                  type="button"
+                >
+                  {room}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <Input
+              onChange={(e) => setNewMap(e.target.value)}
+              placeholder="new room name (e.g. living room)"
+              value={newMap}
+            />
+          )}
+        </div>
+      ) : null}
+
       <div className="flex flex-col gap-2 border-t pt-4 text-sm">
         <div className="flex items-center justify-between text-muted-foreground">
           <span>{service.name}</span>
@@ -141,7 +229,12 @@ export function HireFlow({ agent }: { agent: Agent }) {
         </span>
       </div>
 
-      <Button className="w-full" disabled={busy} onClick={hire} size="lg">
+      <Button
+        className="w-full"
+        disabled={busy || !mapReady}
+        onClick={hire}
+        size="lg"
+      >
         {busy ? <Loader2 className="animate-spin" size={16} /> : null}
         {phase === "paying"
           ? "Processing payment…"
