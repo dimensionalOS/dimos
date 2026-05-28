@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import importlib
+import pkgutil
 import re
 import time
 
@@ -120,13 +121,29 @@ def topic_send(topic: str, message_expr: str) -> None:
     for module_name in modules_to_import:
         try:
             module = importlib.import_module(module_name)
-            for name in getattr(module, "__all__", dir(module)):
-                if not name.startswith("_"):
-                    obj = getattr(module, name, None)
-                    if obj is not None:
-                        eval_context[name] = obj
         except ImportError:
             continue
+
+        names = [n for n in getattr(module, "__all__", None) or [] if not n.startswith("_")]
+        for name in names:
+            obj = getattr(module, name, None)
+            if obj is not None:
+                eval_context[name] = obj
+
+        # msgs packages declare __all__ = [] and keep each class in a same-named
+        # submodule (e.g. geometry_msgs.Twist.Twist). Walk submodules so the
+        # eval namespace gets the actual message classes.
+        if not names and hasattr(module, "__path__"):
+            for info in pkgutil.iter_modules(module.__path__):
+                if info.name.startswith("_"):
+                    continue
+                try:
+                    sub = importlib.import_module(f"{module_name}.{info.name}")
+                except ImportError:
+                    continue
+                cls = getattr(sub, info.name, None)
+                if cls is not None:
+                    eval_context[info.name] = cls
 
     try:
         message = eval(message_expr, eval_context)
