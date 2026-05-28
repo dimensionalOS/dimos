@@ -51,12 +51,6 @@ DEFAULT_PORT_RANGE = "56101-56501"
 DEFAULT_OUTPUT_DIR = Path("tests/data/mid360_pcap")
 
 
-def pick_sudo() -> str:
-    if shutil.which("florp"):
-        return "florp"
-    return "sudo"
-
-
 def build_filter(lidar_ip: str, port_range: str) -> str:
     return f"src host {lidar_ip} and udp and dst portrange {port_range}"
 
@@ -68,11 +62,10 @@ def start_tcpdump(
     output_path: Path,
     snaplen: int,
 ) -> subprocess.Popen[bytes]:
-    sudo = pick_sudo()
     bpf = build_filter(lidar_ip, port_range)
+    tcpdump = shutil.which("tcpdump") or "tcpdump"
     args = [
-        sudo,
-        "tcpdump",
+        tcpdump,
         "-i",
         iface,
         "-w",
@@ -95,17 +88,7 @@ def start_tcpdump(
 def stop_tcpdump(proc: subprocess.Popen[bytes], timeout: float = 3.0) -> None:
     if proc.poll() is not None:
         return
-    sudo = pick_sudo()
-    try:
-        subprocess.run(
-            [sudo, "kill", "-INT", str(proc.pid)],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=2.0,
-        )
-    except subprocess.TimeoutExpired:
-        pass
+    proc.send_signal(signal.SIGINT)
     try:
         proc.wait(timeout=timeout)
         return
@@ -216,12 +199,20 @@ def main() -> int:
         time.sleep(args.warmup)
         if proc.poll() is not None:
             stderr_bytes = proc.stderr.read() if proc.stderr else b""
+            stderr = stderr_bytes.decode(errors="replace")
             print(
                 f"[record_pcap] tcpdump exited during warmup (rc={proc.returncode})",
                 flush=True,
             )
-            if stderr_bytes:
-                sys.stderr.write(stderr_bytes.decode(errors="replace"))
+            if stderr:
+                sys.stderr.write(stderr)
+            tcpdump_path = shutil.which("tcpdump") or "tcpdump"
+            print(
+                "\n[record_pcap] tcpdump can't capture. Grant capability once with:\n"
+                f"  sudo setcap cap_net_raw,cap_net_admin=eip {tcpdump_path}\n"
+                "then re-run.",
+                flush=True,
+            )
             return 1
 
         size_at_start = pcap_size(output_path)

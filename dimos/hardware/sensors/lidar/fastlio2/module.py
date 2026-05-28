@@ -140,9 +140,10 @@ class FastLio2Config(NativeModuleConfig):
     # fastlio anomaly can be checked against ground-truth network bytes.
     # The capture is independent of the SDK and adds no load to it.
     record_pcap: bool = False
-    # Output path. `{ts}` is substituted with a YYYYMMDD_HHMMSS timestamp at
-    # start time. `~` is expanded. Parent dirs are created.
-    record_pcap_path: Path = Path("~/.local/state/dimos/fastlio2_pcap/mid360_{ts}.pcap")
+    # Output path. Relative paths resolve against the process CWD. `{ts}` is
+    # substituted with a YYYYMMDD_HHMMSS timestamp at start time. `~` is
+    # expanded. Parent dirs are created.
+    record_pcap_path: Path = Path("fastlio2_pcap/mid360_{ts}.pcap")
     record_pcap_iface: str = "enp2s0"
     # Per-packet capture length. Mid-360 point packets are ≤1500 B; 2048 is
     # comfortable. Drop to 200 for header-only captures.
@@ -246,10 +247,9 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
             cfg.host_log_data_port,
         )
         bpf = f"src host {cfg.lidar_ip} and udp and dst portrange {port_lo}-{port_hi}"
-        sudo = "florp" if shutil.which("florp") else "sudo"
+        tcpdump = shutil.which("tcpdump") or "tcpdump"
         cmd = [
-            sudo,
-            "tcpdump",
+            tcpdump,
             "-i",
             cfg.record_pcap_iface,
             "-w",
@@ -261,6 +261,34 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
             bpf,
         ]
 
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        # Capture starts immediately; if it fails (typically EPERM) tcpdump
+        # exits within a few ms. Give it a brief moment to fall over before
+        # declaring success.
+        time.sleep(0.3)
+        if proc.poll() is not None:
+            stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
+            self._pcap_proc = None
+            self._pcap_path = None
+            _logger.error(
+                "FastLio2 pcap recording failed to start — tcpdump exited",
+                rc=proc.returncode,
+                stderr=stderr.strip(),
+            )
+            print(
+                "[fastlio2] pcap recording is enabled but tcpdump cannot capture.\n"
+                "          Grant capture capability once with:\n"
+                f"            sudo setcap cap_net_raw,cap_net_admin=eip {tcpdump}\n"
+                "          then restart. (tcpdump stderr above.)",
+                flush=True,
+            )
+            return
+
         _logger.info(
             "FastLio2 pcap recording enabled",
             path=str(path),
@@ -268,12 +296,7 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
             bpf=bpf,
         )
         self._pcap_path = path
-        self._pcap_proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            start_new_session=True,
-        )
+        self._pcap_proc = proc
 
     def _stop_pcap(self) -> None:
         proc = self._pcap_proc
@@ -282,17 +305,9 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
         self._pcap_proc = None
         if proc.poll() is not None:
             return
-        sudo = "florp" if shutil.which("florp") else "sudo"
-        try:
-            subprocess.run(
-                [sudo, "kill", "-INT", str(proc.pid)],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=2.0,
-            )
-        except subprocess.TimeoutExpired:
-            pass
+        # SIGINT is tcpdump's documented "stop cleanly" signal — it prints
+        # packet counts and flushes the pcap header.
+        proc.send_signal(signal.SIGINT)
         try:
             proc.wait(timeout=3.0)
         except subprocess.TimeoutExpired:
