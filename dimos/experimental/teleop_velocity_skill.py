@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 
 from dimos.agents.annotation import skill
@@ -43,14 +44,57 @@ class TeleopVelocitySkill(Module):
 
     tele_cmd_vel: Out[Twist]
 
+    _burst_lock: threading.Lock = threading.Lock()
+    _burst_thread: threading.Thread | None = None
+    _burst_cancel: threading.Event | None = None
+
     @rpc
     def start(self) -> None:
         super().start()
+        self._burst_thread = None
+        self._burst_cancel = None
         logger.info("TeleopVelocitySkill: ready (Out[Twist] stream)")
 
     @rpc
     def stop(self) -> None:
+        self._cancel_active_burst()
         super().stop()
+
+    def _cancel_active_burst(self) -> None:
+        """Interrupt any in-flight teleop burst so the publish loop exits."""
+        with self._burst_lock:
+            if self._burst_cancel is not None:
+                self._burst_cancel.set()
+            thread = self._burst_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+
+    def _publish_burst(
+        self,
+        msg: Twist,
+        dur: float,
+        cancel: threading.Event,
+    ) -> None:
+        """Background publisher loop. Runs off the agent's tool-call thread
+        so an in-flight teleop_velocity does not block the agent from
+        handling subsequent messages (e.g. the visitor saying "wait")."""
+        period = 1.0 / PUB_HZ
+        deadline = time.time() + dur
+        pubs = 0
+        while time.time() < deadline and not cancel.is_set():
+            self.tele_cmd_vel.publish(msg)
+            pubs += 1
+            time.sleep(period)
+
+        # Stop — publish zero velocity a few times to be sure.
+        zero = Twist(Vector3(), Vector3())
+        for _ in range(3):
+            self.tele_cmd_vel.publish(zero)
+            time.sleep(period)
+        logger.debug(
+            f"teleop_burst done: {pubs} pubs at {PUB_HZ}Hz "
+            f"(cancelled={cancel.is_set()})"
+        )
 
     @skill
     def teleop_velocity(
@@ -85,24 +129,25 @@ class TeleopVelocitySkill(Module):
         dur = _clamp(float(duration_s), 0.0, 5.0)
 
         msg = Twist(Vector3(x=vx, y=vy, z=0.0), Vector3(x=0.0, y=0.0, z=wz))
-        period = 1.0 / PUB_HZ
 
-        deadline = time.time() + dur
-        pubs = 0
-        while time.time() < deadline:
-            self.tele_cmd_vel.publish(msg)
-            pubs += 1
-            time.sleep(period)
-
-        # Stop — publish zero velocity a few times to be sure.
-        zero = Twist(Vector3(), Vector3())
-        for _ in range(3):
-            self.tele_cmd_vel.publish(zero)
-            time.sleep(period)
+        # Cancel any existing burst so we don't have two writers fighting
+        # over /tele_cmd_vel. Then start a fresh background loop and return
+        # immediately so the agent's tool-call thread stays free to react
+        # to voice commands like "wait" during the motion.
+        self._cancel_active_burst()
+        with self._burst_lock:
+            self._burst_cancel = threading.Event()
+            self._burst_thread = threading.Thread(
+                target=self._publish_burst,
+                args=(msg, dur, self._burst_cancel),
+                daemon=True,
+                name="TeleopBurst",
+            )
+            self._burst_thread.start()
 
         return (
-            f"Teleop: vx={vx:+.2f} vy={vy:+.2f} wz={wz:+.2f} held {dur:.1f}s "
-            f"({pubs} pubs at {PUB_HZ}Hz), then zero."
+            f"Teleop scheduled: vx={vx:+.2f} vy={vy:+.2f} wz={wz:+.2f} for "
+            f"{dur:.1f}s at {PUB_HZ}Hz. Call teleop_stop to interrupt."
         )
 
     @skill
@@ -112,8 +157,11 @@ class TeleopVelocitySkill(Module):
         Use this anytime you want to interrupt motion without waiting for
         the current teleop_velocity duration to elapse.
         """
+        # Cancel any in-flight teleop burst first so it doesn't keep
+        # publishing non-zero velocity right after our zero pulses.
+        self._cancel_active_burst()
         zero = Twist(Vector3(), Vector3())
         for _ in range(5):
             self.tele_cmd_vel.publish(zero)
             time.sleep(0.05)
-        return "Teleop stop: zero velocity published."
+        return "Teleop stop: zero velocity published, any in-flight burst cancelled."

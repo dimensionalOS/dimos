@@ -312,6 +312,17 @@ drop_in_guide = autoconnect(
         system_prompt=DROP_IN_GUIDE_SYSTEM_PROMPT,
     ),
     _common_agentic,
+# obstacle_avoidance=False is a hackathon-scope tradeoff, not a recommendation
+# for production. Reason: the Go2's front-facing ultrasonic avoider silently
+# zeroes positive vx commands when it senses anything in its forward cone —
+# including the operator standing 60–100cm in front of the robot during
+# Phase 1 priming. This made teleop_velocity look broken at venue ("robot
+# trots in place"). For a production guide-robot deployment with visitors
+# in Phase 2, this should be re-enabled at runtime — either by exposing a
+# `set_obstacle_avoidance(enabled)` skill on GO2Connection.publish_request
+# and toggling per phase from the system prompt, or by splitting the
+# blueprint into two configs (priming vs guidance). Tracked as the top
+# follow-up after the hackathon submission.
 ).global_config(n_workers=14, obstacle_avoidance=False)
 
 __all__ = ["drop_in_guide"]

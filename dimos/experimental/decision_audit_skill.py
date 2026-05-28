@@ -57,7 +57,7 @@ def _fmt_panel(entries: list[dict[str, Any]], max_items: int = 5) -> str:
 class DecisionAuditSkill(Module):
     """Audit trail for nav decisions — the system's grounded-evidence record."""
 
-    _trace: list[dict[str, Any]] = []
+    _trace: list[dict[str, Any]]
 
     @rpc
     def start(self) -> None:

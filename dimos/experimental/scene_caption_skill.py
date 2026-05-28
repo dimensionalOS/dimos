@@ -15,6 +15,7 @@ from typing import Any
 import cv2
 import numpy as np
 from openai import OpenAI
+from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -55,7 +56,9 @@ class SceneCaptionSkill(Module):
         super().start()
         self._openai = OpenAI()
         os.makedirs(_FRAME_SAVE_DIR, exist_ok=True)
-        self.color_image.subscribe(self._on_image)
+        self.register_disposable(
+            Disposable(self.color_image.subscribe(self._on_image))
+        )
 
     @rpc
     def stop(self) -> None:

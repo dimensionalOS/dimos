@@ -33,8 +33,8 @@ def _human_age(seconds_ago: float) -> str:
 class ReactiveQASkills(Module):
     """Session log + Q&A helpers for the priming workflow."""
 
-    _tagged: list[dict[str, Any]] = []
-    _skipped: list[dict[str, Any]] = []
+    _tagged: list[dict[str, Any]]
+    _skipped: list[dict[str, Any]]
 
     @rpc
     def start(self) -> None:

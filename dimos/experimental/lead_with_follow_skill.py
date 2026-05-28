@@ -30,6 +30,10 @@ logger = setup_logger()
 _REACQUIRE_TIMEOUT_S = 30.0
 # How often we check the tracking state.
 _POLL_INTERVAL_S = 0.5
+# Grace period for the planner to leave IDLE after navigate_with_text was
+# called. Without it, the loop's first get_state() may still see IDLE and
+# exit immediately, dropping follower monitoring for the whole trip.
+_STARTUP_GRACE_S = 2.5
 # If the camera hasn't produced a frame in this many seconds, we conclude
 # the perception pipeline is offline — not the same as "visitor walked
 # away", but the only reliable proxy we have without invoking EdgeTAM
@@ -103,23 +107,29 @@ class LeadWithFollowSkill(Module):
         destination: str,
         cancel: threading.Event,
     ) -> None:
-        logger.info(f"lead_to: starting navigation to '{destination}'")
+        logger.info(f"lead_to: starting follower monitor for '{destination}'")
         last_log_ts = 0.0
         paused = False
+        startup_deadline = time.time() + _STARTUP_GRACE_S
 
         while not cancel.is_set():
             state = self._navigation.get_state()
-            if state == NavigationState.IDLE:
+            in_startup_grace = time.time() < startup_deadline
+            if state == NavigationState.IDLE and not in_startup_grace:
                 if self._navigation.is_goal_reached():
                     logger.info(f"lead_to: arrived at '{destination}'")
                     return
                 if not paused:
-                    # Nav exited idle without success — either failed or no
-                    # goal was ever set by the agent.
+                    # Nav exited idle without success after startup grace —
+                    # either it failed mid-trip or no goal was ever set by
+                    # the agent. Grace period (_STARTUP_GRACE_S) protects
+                    # against the race where lead_to is called immediately
+                    # after navigate_with_text and the planner hasn't
+                    # transitioned to NAVIGATING yet.
                     logger.info(
                         f"lead_to: nav exited IDLE before reaching goal "
-                        f"'{destination}'. The agent likely needs to call "
-                        f"navigate_with_text/set_goal first."
+                        f"'{destination}'. The agent should call "
+                        f"navigate_with_text/set_goal before lead_to."
                     )
                     return
 
@@ -154,21 +164,24 @@ class LeadWithFollowSkill(Module):
 
     @skill
     def lead_to(self, destination: str) -> str:
-        """Lead a visitor to a destination, **pausing if they fall behind**.
+        """Start a follower-presence monitor for a navigation that is already
+        in progress. **Call AFTER `navigate_with_text` has set the goal** —
+        this skill does NOT set a goal itself, it only watches the perception
+        pipeline and pauses if the visitor falls out of view.
 
-        Call this AFTER `log_nav_decision` and `speak`, in place of
-        `navigate_with_text`, when there is a visitor being guided (not just
-        a delivery). The robot will:
+        Typical order:
+          1. `log_nav_decision(...)` — record grounding.
+          2. `speak("Going to the X — follow me.")`.
+          3. `navigate_with_text(destination)` — set the nav goal.
+          4. `lead_to(destination)` — start the follower-presence loop.
 
-        1. Begin moving toward the destination using the same nav stack as
-           `navigate_with_text` (the agent should have already set the goal
-           via `navigate_with_text` before calling `lead_to`).
-        2. Continuously check that the perception pipeline is producing
-           camera frames (proxy for "visitor still in view").
-        3. If frames stop arriving: cancel the nav goal, call `speak("I'll
-           wait for you")`, and poll for reacquisition.
-        4. On reacquisition: return to the agent for a follow-up call.
-        5. On arrival: return to the agent for a `speak("Here's the X")`.
+        While the loop runs it will:
+        - Continuously check the perception pipeline is producing camera
+          frames (a proxy for "visitor still in view").
+        - If frames stop arriving: cancel the nav goal, `speak("I'll wait
+          for you")`, and poll for reacquisition.
+        - On reacquisition: return so the agent can re-issue the goal.
+        - On arrival: return so the agent can speak an arrival line.
 
         This is the defining gesture that distinguishes Drop-in Guide from a
         delivery bot. Use it whenever a person is following the robot.
