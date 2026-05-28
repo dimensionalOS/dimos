@@ -69,7 +69,13 @@ export default async function Home() {
       </section>
 
       <footer className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t pt-6 text-muted-foreground/60 text-xs">
-        <span className="font-mono uppercase tracking-wide">Dev tools</span>
+        <Link
+          className="font-medium text-signal transition-colors hover:text-signal/80"
+          href="/console"
+        >
+          → Robot console
+        </Link>
+        <span className="font-mono uppercase tracking-wide">Dev views</span>
         {(
           [
             ["/scans", "room scans"],

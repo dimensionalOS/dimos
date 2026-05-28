@@ -13,8 +13,14 @@ export interface ApiContext {
   session: ApiSession | null;
   presignGet: (key: string, expiresIn?: number) => Promise<string>;
   readObject: (key: string) => Promise<ArrayBuffer>;
-  // Forward a command to the remote dimos agent (URL + token kept server-side).
+  // Forward a command to the remote dimos agent (URL + token kept server-side;
+  // the URL respects the DB override set in the Console).
   sendAgentCommand: (text: string) => Promise<void>;
+  // Server env defaults for the dimos agent, surfaced so settings.get can show
+  // the effective endpoint + whether a token is configured (the DB override
+  // wins over agentEnvUrl). The token value itself is never exposed.
+  agentEnvUrl: string | null;
+  agentTokenConfigured: boolean;
 }
 
 export function buildContext(ctx: ApiContext): ApiContext {

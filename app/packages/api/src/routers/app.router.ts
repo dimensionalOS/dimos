@@ -1,4 +1,4 @@
-import type { RouterClient } from "@orpc/server";
+import { ORPCError, type RouterClient } from "@orpc/server";
 import {
 	agents,
 	type Database,
@@ -8,6 +8,7 @@ import {
 	jobs,
 	maps,
 	messages,
+	settings,
 	splats,
 	trajectories,
 	user,
@@ -35,9 +36,12 @@ import {
 	mapSnapshotSchema,
 	messageSchema,
 	newId,
+	type RobotSettings,
+	robotSettingsSchema,
 	type ScanRun,
 	type ScanRunHeader,
 	setAgentOnchainInput,
+	setRobotUrlInput,
 	type Splat,
 	scanRunHeaderSchema,
 	scanRunSchema,
@@ -517,15 +521,70 @@ const splatsList = publicProcedure
 		);
 	});
 
-// Forward a natural-language command to the robot's agent (login-gated). The
+// Forward a natural-language command to the robot's agent (open/demo mode). The
 // dimos endpoint URL + token live server-side (context.sendAgentCommand); the
 // browser only ever sees this RPC.
-const commandSend = protectedProcedure
+const commandSend = publicProcedure
 	.input(commandInput)
 	.output(z.object({ ok: z.boolean() }))
 	.handler(async ({ context, input }): Promise<{ ok: boolean }> => {
-		await context.sendAgentCommand(input.text);
+		try {
+			await context.sendAgentCommand(input.text);
+		} catch (e) {
+			// Surface the real reason (not configured / endpoint error) to the UI
+			// instead of a generic 500.
+			throw new ORPCError("BAD_REQUEST", {
+				message: e instanceof Error ? e.message : "failed to send command",
+			});
+		}
 		return { ok: true };
+	});
+
+// ─── Robot connection settings ──────────────────────────────────────────────
+// Single-row config for the dimos agent endpoint. The DB override (set here)
+// wins over the server's DIMOS_AGENT_URL env; the bearer token stays in the env.
+const SETTINGS_SINGLETON = "singleton";
+
+async function readRobotSettings(context: {
+	db: Database;
+	agentEnvUrl: string | null;
+	agentTokenConfigured: boolean;
+}): Promise<RobotSettings> {
+	const [row] = await context.db
+		.select()
+		.from(settings)
+		.where(eq(settings.id, SETTINGS_SINGLETON));
+	const url = row?.dimosAgentUrl ?? null;
+	const effectiveUrl = url ?? context.agentEnvUrl;
+	const source = url ? "db" : context.agentEnvUrl ? "env" : "unset";
+	return {
+		url,
+		effectiveUrl,
+		source,
+		tokenConfigured: context.agentTokenConfigured,
+	};
+}
+
+const settingsGet = publicProcedure
+	.output(robotSettingsSchema)
+	.handler(({ context }): Promise<RobotSettings> => readRobotSettings(context));
+
+const settingsSetRobotUrl = publicProcedure
+	.input(setRobotUrlInput)
+	.output(robotSettingsSchema)
+	.handler(async ({ context, input }): Promise<RobotSettings> => {
+		await context.db
+			.insert(settings)
+			.values({
+				id: SETTINGS_SINGLETON,
+				dimosAgentUrl: input.url,
+				updatedAt: new Date(),
+			})
+			.onConflictDoUpdate({
+				target: settings.id,
+				set: { dimosAgentUrl: input.url, updatedAt: new Date() },
+			});
+		return readRobotSettings(context);
 	});
 
 // ─── Agent marketplace (the ERC-8004 registry surface) ──────────────────────
@@ -874,6 +933,7 @@ export const appRouter = {
 	trajectory: { latest: trajectoryLatest },
 	splats: { list: splatsList },
 	commands: { send: commandSend },
+	settings: { get: settingsGet, setRobotUrl: settingsSetRobotUrl },
 	agents: {
 		list: agentsList,
 		get: agentsGet,

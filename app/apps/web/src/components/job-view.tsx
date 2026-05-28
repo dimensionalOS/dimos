@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { ConsolePanel } from "@/components/console-panel";
 import { JobScans } from "@/components/job-scans";
 import { MapView } from "@/components/map-view";
 import { SplatViewer } from "@/components/splat-viewer";
@@ -349,32 +350,6 @@ function Elapsed({ since }: { since: string | null }) {
     <span className="text-foreground tabular-nums">
       {mm}:{ss.toString().padStart(2, "0")}
     </span>
-  );
-}
-
-function ConsolePanel({
-  title,
-  live,
-  children,
-}: {
-  title: string;
-  live?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="overflow-hidden rounded-xl border bg-card">
-      <div className="flex items-center justify-between border-b bg-secondary/30 px-4 py-2">
-        <span className="font-mono text-muted-foreground text-xs uppercase tracking-wider">
-          {title}
-        </span>
-        {live ? (
-          <span className="inline-flex items-center gap-1.5 font-medium font-mono text-[10px] text-signal uppercase tracking-wide">
-            <span className="size-1.5 rounded-full bg-signal pulse-dot" /> Live
-          </span>
-        ) : null}
-      </div>
-      {children}
-    </div>
   );
 }
 

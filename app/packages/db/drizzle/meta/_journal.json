@@ -57,6 +57,13 @@
       "when": 1779901780527,
       "tag": "0007_parched_cardiac",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1779944749163,
+      "tag": "0008_blue_magneto",
+      "breakpoints": true
     }
   ]
 }

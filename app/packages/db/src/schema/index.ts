@@ -7,3 +7,4 @@ export * from "./trajectories.db";
 export * from "./frame_analyses.db";
 export * from "./agents.db";
 export * from "./jobs.db";
+export * from "./settings.db";

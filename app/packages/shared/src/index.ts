@@ -280,3 +280,21 @@ export const agentStatsSchema = z.object({
 	avgRating: z.number().nullable(),
 });
 export type AgentStats = z.infer<typeof agentStatsSchema>;
+
+// ─── Robot connection settings (single-row runtime config) ──────────────────
+// What the Console UI shows for the dimos agent endpoint. `url` is the editable
+// DB override (null → use the server env default); `effectiveUrl` is what's
+// actually used (override ?? env). Commands need both a URL and a token, so
+// `tokenConfigured` lets the UI warn when only the URL is set.
+export const robotSettingsSchema = z.object({
+	url: z.string().nullable(),
+	effectiveUrl: z.string().nullable(),
+	source: z.enum(["db", "env", "unset"]),
+	tokenConfigured: z.boolean(),
+});
+export type RobotSettings = z.infer<typeof robotSettingsSchema>;
+
+export const setRobotUrlInput = z.object({
+	url: z.string().url().nullable(),
+});
+export type SetRobotUrlInput = z.infer<typeof setRobotUrlInput>;

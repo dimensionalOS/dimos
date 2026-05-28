@@ -91,6 +91,7 @@ export function SiteNav() {
   const pathname = usePathname();
   const onMarket = pathname === "/" || pathname.startsWith("/agents");
   const onJobs = pathname.startsWith("/jobs");
+  const onConsole = pathname.startsWith("/console");
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/70 backdrop-blur-md">
@@ -108,6 +109,9 @@ export function SiteNav() {
             </NavLink>
             <NavLink active={onJobs} href="/jobs">
               My jobs
+            </NavLink>
+            <NavLink active={onConsole} href="/console">
+              Console
             </NavLink>
           </nav>
         </div>
