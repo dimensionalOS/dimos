@@ -1,7 +1,0 @@
-for venv in venv .venv env; do
-  if [[ -f "$venv/bin/activate" ]]; then
-    source "$venv/bin/activate"
-    break
-  fi
-done
-dotenv_if_exists
