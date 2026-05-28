@@ -33,7 +33,11 @@ case "${1:-}" in
         tmp=$(mktemp)
         cat > "$tmp"
         size=$(awk '/^size [0-9]+$/ {print $2; exit}' "$tmp")
-        if [[ -n "$size" && "$size" -gt "$LIMIT" ]]; then
+        if [[ -z "$size" ]]; then
+            rm -f "$tmp"
+            die "could not parse size from LFS pointer — refusing smudge"
+        fi
+        if [[ "$size" -gt "$LIMIT" ]]; then
             rm -f "$tmp"
             die "blocked smudge of ${size}-byte LFS object"
         fi
