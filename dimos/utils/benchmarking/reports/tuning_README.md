@@ -66,6 +66,100 @@ result; a different robot's headroom is TBD until characterized.)
 
 ## Tool 1 — `characterization`
 
+For Go2 HW the preferred entrypoint is the all-in-one blueprint
+(one terminal, autoconnects GO2Connection + ControlCoordinator + pygame
+keyboard teleop + the Characterizer module + a per-session telemetry
+recorder):
+
+```
+dimos run unitree-go2-characterization
+```
+
+All operator input goes through the pygame teleop window. Movement keys
+(WASD/QE) are unchanged; the SI loop adds three gate keys that the
+operator presses while the pygame window has focus:
+
+- **Enter** — advance to the next step
+- **K** — skip the current amplitude
+- **Backspace** — quit (no artifact written)
+
+Mechanism: `KeyboardTeleop.gate: Out[Int8]` publishes those events on
+`/characterizer/gate`, `Characterizer.gate: In[Int8]` consumes them.
+Other blueprints that bundle `KeyboardTeleop` are unaffected (the new
+port is just unwired). Configuration fields map 1:1 to CLI flags, so
+``dimos run unitree-go2-characterization --module.characterizer.surface
+grass`` is equivalent to ``--surface grass`` on the CLI.
+
+### Telemetry recording (blueprint only)
+
+The blueprint composes a `CharacterizationRecorder` that captures four
+streams into a per-session SQLite DB so post-process tools can re-fit
+or dissect spikes without re-running on hardware:
+
+- `cmd_vel` (commanded `/cmd_vel`)
+- `joint_state` (`/coordinator/joint_state` — x/y/yaw)
+- `odom` (raw `/go2/odom` from GO2Connection)
+- `gate` (operator advance/skip/quit events)
+
+The DB lands next to the JSON+PNG artifact:
+``<repo>/data/characterization/<robot_id>/<robot_id>_recording_<date>_<sha>.db``.
+Read back with:
+
+```python
+from dimos.memory2.store.sqlite import SqliteStore
+from dimos.msgs.sensor_msgs.JointState import JointState
+
+store = SqliteStore(path="<the .db file>")
+store.start()
+for obs in store.stream("joint_state", JointState).iterate_ts():
+    ts, msg = obs.ts, obs.data
+    # re-fit, plot, etc.
+```
+
+### Noise rejection + fit procedure (legged-base data)
+
+Raw Go2 odom (~15-19 Hz on default tick) carries a ~2 Hz body bob from
+the trot gait plus single-sample spikes from leg impacts. The per-step
+pipeline before `fit_fopdt`:
+
+1. **Buffer raw pose** during pre-roll + step (``_JointStatePoseStream``).
+   The pre-roll samples are zero-commanded → robot at rest → their
+   std becomes our `noise_std` estimate for the fit (see step 4).
+2. **Savitzky-Golay on position, then central difference**.
+   ``reconstruct_body_velocities`` applies ``scipy.signal.savgol_filter``
+   to (x, y, yaw) (default window=11 ≈ 2 trot cycles, order=2), then
+   ``np.gradient`` to recover (vx, vy, dyaw). Smooth-then-differentiate
+   keeps gait-frequency noise out of the velocity signal —
+   differentiate-then-smooth (the obvious wrong order) can't recover
+   what the differentiation step destroyed. Knobs: ``savgol_window``
+   / ``savgol_order``; set window=0 to disable.
+3. **Hampel filter** on reconstructed velocity. Catches residual
+   single-sample spikes that savgol smooths over but doesn't replace.
+   Window=11, n_sigma=3.0; set window=0 to disable.
+4. **`fit_fopdt` with three guards** to keep the deadtime estimate
+   honest at our sample rate:
+   - ``min_deadtime``: floor L at the data's median sample interval
+     (you can't physically resolve deadtime finer than odom rate).
+   - ``noise_std``: from step 1; used for weighted least squares and
+     for the data-driven L detection.
+   - ``two_stage=True``: detect L as the first time the response
+     crosses ``5σ`` above ``noise_std``, pin it, then fit only (K, τ).
+     Removes the joint-fit's L/τ correlation that lets the optimizer
+     trade off a tiny L for a slightly inflated τ. Auto-disabled if
+     ``noise_std`` can't be estimated. Toggle via
+     ``CharacterizerConfig.two_stage_fit``.
+
+The PNG plot dots the raw post-reconstruction velocity under the
+filtered+fit lines when Hampel replaced any points, and annotates how
+many. Note that in two-stage mode the reported L corresponds to "when
+the response crossed 5σ above the rest-noise floor" — not a free
+optimization parameter — so cross-channel L comparisons are
+interpretable.
+
+The two-terminal CLI flow still works and is required for
+``--mode self-test`` (no robot needed) and for the end-to-end sim
+variant via ``coordinator-sim-fopdt``:
+
 ```
 uv run python -m dimos.utils.benchmarking.characterization \
     --robot go2 --mode hw --surface concrete --gait-mode default
@@ -83,6 +177,9 @@ not strafe in the default gait) × a few amplitudes:
 Drift is bounded to one step (operator gate before each). Safety: clamp
 to the profile envelope, stale-odom abort, distance + time caps,
 zero-Twist on exit / Ctrl-C / `q`.
+
+Artifacts land at `<repo>/data/characterization/<robot_id>/<robot_id>_config_<…>.{json,png}`
+by default (overridable via `--out` / `CharacterizerConfig.out`).
 
 **Primary output is a graph** — `<robot_id>_config_<…>.png`, one column
 per channel overlaying every step's *measured* velocity (solid) with its
