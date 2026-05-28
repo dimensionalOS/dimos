@@ -65,7 +65,13 @@ def _get(url: str, path: str, params: dict[str, str]) -> dict[str, Any] | None:
 
 
 def run_dog(
-    dog: str, url: str, target: str, find_prob: float, rng: random.Random
+    dog: str,
+    url: str,
+    target: str,
+    find_prob: float,
+    rng: random.Random,
+    target_zone: str | None = None,
+    dwell: float | None = None,
 ) -> None:
     url = url.rstrip("/")
     while True:
@@ -81,9 +87,12 @@ def run_dog(
             return
         print(f"[{dog}] assigned zone: {zone}")
 
-        time.sleep(rng.uniform(_MIN_SLEEP, _MAX_SLEEP))
+        time.sleep(dwell if dwell is not None else rng.uniform(_MIN_SLEEP, _MAX_SLEEP))
 
-        if rng.random() < find_prob:
+        # Deterministic find when --target-zone is set (the object lives in one
+        # place, like reality); otherwise fall back to the random per-zone chance.
+        hit = zone == target_zone if target_zone else rng.random() < find_prob
+        if hit:
             result = _post(
                 url, "/report_finding", {"dog": dog, "object": target, "zone": zone}
             )
@@ -111,11 +120,30 @@ def main() -> None:
         default=0.0,
         help="Per-zone probability of reporting a finding (1.0 = always find).",
     )
+    parser.add_argument(
+        "--target-zone",
+        default=None,
+        help="Deterministic: only 'find' the object in this zone (overrides --find-prob).",
+    )
+    parser.add_argument(
+        "--dwell", type=float, default=None, help="Seconds per zone (slows the dashboard for demos)."
+    )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Call start_search first to reset the ledger and set the target.",
+    )
     parser.add_argument("--seed", type=int, default=None, help="RNG seed for repeatability.")
     args = parser.parse_args()
 
+    if args.reset:
+        _post(args.url.rstrip("/"), "/start_search", {"target": args.target})
+        print(f"[{args.dog}] reset ledger; searching for {args.target}.")
+
     rng = random.Random(args.seed)
-    run_dog(args.dog, args.url, args.target, args.find_prob, rng)
+    run_dog(
+        args.dog, args.url, args.target, args.find_prob, rng, args.target_zone, args.dwell
+    )
 
 
 if __name__ == "__main__":
