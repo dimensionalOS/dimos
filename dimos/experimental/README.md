@@ -9,6 +9,7 @@ Flagship demo: **hire a robot to scan your rooms and get back a 3D Gaussian-spla
 ## Repos
 - **robohack** — the web app (Next.js marketplace + server / gateway / api / db) and the **murobo** design assets + demo video: https://github.com/grmkris/robohack
 - **gs-pot** — Gaussian-splat 3D reconstruction logic: https://github.com/ameer-clara/gs-pot
+- **perception-watch** — local Apple-Silicon MLX perception backend (camera/image analysis, audio transcription, perimeter patrol, pet ID); serves the Go2 demo via `/api/analyze-async`: https://github.com/tfius/perception-watch
 
 ## DimOS side (this fork)
 The robot agent is composed from DimOS Skills + Blueprints added in this fork:
