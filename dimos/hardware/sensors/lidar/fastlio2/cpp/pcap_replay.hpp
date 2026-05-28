@@ -50,6 +50,13 @@ struct Replayer {
     IterCb on_iter;
     std::atomic<bool>* running = nullptr;
     bool realtime = true;
+    // Drop Livox packets whose sensor timestamp (pkt->timestamp) is
+    // strictly less than this. Used to mimic the SDK warmup window from a
+    // paired live run so the algorithm starts from the same first packet
+    // in both modes. Comparing on sensor ts (which is identical bit-for-bit
+    // between live SDK delivery and pcap replay) is exact; comparing on
+    // wall pcap_ts would be off by SDK delivery latency.
+    uint64_t skip_until_ns = 0;
 
     bool run() {
         std::ifstream f(path, std::ios::binary);
@@ -131,6 +138,15 @@ struct Replayer {
 
             auto* livox_pkt =
                 reinterpret_cast<LivoxLidarEthernetPacket*>(buf.data() + payload_off);
+
+            // Sensor-clock skip: drop packets the live SDK wouldn't have
+            // seen (those before its first delivered callback) so the
+            // algorithm processes the same input set in both modes.
+            if (skip_until_ns > 0) {
+                uint64_t pkt_ts;
+                std::memcpy(&pkt_ts, livox_pkt->timestamp, sizeof(uint64_t));
+                if (pkt_ts < skip_until_ns) continue;
+            }
 
             if (realtime) {
                 if (!seeded) {

@@ -121,6 +121,7 @@ def main() -> int:
             record_pcap=True,
             record_pcap_path=pcap_path,
             single_threaded=True,
+            deterministic_clock=True,
         ),
         FastLio2Recorder.blueprint(db_path=str(db_path)),
     ).global_config(n_workers=2, robot_model="mid360_fastlio2_record")

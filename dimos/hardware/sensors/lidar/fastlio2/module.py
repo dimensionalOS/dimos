@@ -141,6 +141,15 @@ class FastLio2Config(NativeModuleConfig):
     # packets from this pcap into the same callbacks the SDK would, with
     # publish timestamps driven by the pcap clock.
     replay_pcap: Path | None = None
+    # Replay-only: drop pcap records with pcap_ts < this. Used to mimic
+    # the SDK warmup window from the paired live run. demo_replay.py
+    # populates this from a `<pcap>.first.ns` sidecar written by live mode.
+    replay_skip_until_ns: int | None = None
+
+    # Live-only: file path where the C++ binary writes the wall_ns of the
+    # first SDK callback. Auto-set in start() when record_pcap=True so the
+    # sidecar lives next to the pcap.
+    first_packet_marker: Path | None = None
 
     # Raw UDP pcap recording (diagnostic). When enabled, the module spawns
     # tcpdump alongside the SDK to capture wire-level Mid-360 traffic, so a
@@ -160,6 +169,13 @@ class FastLio2Config(NativeModuleConfig):
     # OpenMP-reduction-order source of non-determinism for record + replay
     # workflows; live use leaves this False to keep multi-thread perf.
     single_threaded: bool = False
+
+    # Drive scan boundaries + publish ts off the sensor packet timestamp
+    # (pkt->timestamp) in both live and replay, so they produce bit-for-bit
+    # identical outputs. Side effect: published header.stamp is sensor-boot
+    # seconds instead of unix wall time. Off by default; the record/replay
+    # demos flip it on.
+    deterministic_clock: bool = False
 
     # init_pose is computed from mount; config is resolved to config_path
     init_pose: list[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
@@ -247,6 +263,10 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         path = Path(str(cfg.record_pcap_path).format(ts=ts)).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Auto-pair the first-packet marker with the pcap so replay can
+        # discover it. Skip if the caller already set it explicitly.
+        if cfg.first_packet_marker is None:
+            cfg.first_packet_marker = path.with_suffix(path.suffix + ".first.ns")
 
         host_ports = [
             cfg.host_cmd_data_port,

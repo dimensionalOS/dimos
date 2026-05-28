@@ -116,6 +116,15 @@ def main() -> int:
         print(f"[demo_replay] pcap not found: {pcap}")
         return 1
 
+    # If the paired live run wrote a first-packet sidecar, use it to skip
+    # the SDK-warmup prefix in the pcap so replay sees the same first
+    # packet the live algorithm saw.
+    marker = pcap.with_suffix(pcap.suffix + ".first.ns")
+    skip_until_ns: int | None = None
+    if marker.exists():
+        skip_until_ns = int(marker.read_text().strip())
+        print(f"[demo_replay] sidecar: {marker}  skip_until_ns={skip_until_ns}")
+
     db_path = args.out.resolve() if args.out else pcap.parent / "replay.db"
     if db_path.exists():
         db_path.unlink()
@@ -130,7 +139,9 @@ def main() -> int:
             map_voxel_size=_VOXEL_SIZE,
             map_freq=-1,
             replay_pcap=pcap,
+            replay_skip_until_ns=skip_until_ns,
             single_threaded=True,
+            deterministic_clock=True,
         ),
         FastLio2ReplayRecorder.blueprint(db_path=str(db_path)),
     ).global_config(n_workers=2, robot_model="mid360_fastlio2_replay")
