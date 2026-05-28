@@ -31,13 +31,14 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from math import cos, hypot, sin
+from math import cos, exp, hypot, sin
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy.ndimage import binary_dilation, label
 
 from dimos.experimental.pack_mind.world import (
+    free_cells_world,
     load_building_world,
     make_maze_world,
     spread_starts,
@@ -102,6 +103,7 @@ class Dog:
     idle: bool = False
     path: list[tuple[float, float]] | None = None
     idx: int = 0
+    goal: tuple[float, float] | None = None  # current frontier target (for pack de-confliction)
     trail: list[tuple[float, float]] = field(default_factory=list)
 
 
@@ -113,6 +115,9 @@ class ExploreSim:
         shared: bool,
         starts: list[tuple[float, float]],
         seed: int = 0,
+        target: tuple[float, float] | None = None,
+        target_label: str = "target",
+        converge_on_found: bool = False,
     ) -> None:
         np.random.seed(seed)
         self.world = world
@@ -121,6 +126,16 @@ class ExploreSim:
         self.res = world.info.resolution
         self.tick_n = 0
         self._total_free = int(np.count_nonzero(self.truth == FREE))
+
+        # Search target ("find me a red object"). Detected when its cell enters any
+        # online dog's line of sight; the find is written to shared memory (found/
+        # found_by/found_tick) so the whole pack knows at once.
+        self.target_xy = target
+        self.target_label = target_label
+        self.converge_on_found = converge_on_found
+        self.found = False
+        self.found_by: str | None = None
+        self.found_tick: int | None = None
 
         shape = self.truth.shape
         self._visible = np.zeros(shape, dtype=bool)
@@ -180,10 +195,26 @@ class ExploreSim:
                 {"x": round(d.x, 3), "y": round(d.y, 3), "color": d.color, "online": d.online}
                 for d in self.dogs
             ],
+            "target": (
+                {
+                    "x": round(self.target_xy[0], 3),
+                    "y": round(self.target_xy[1], 3),
+                    "label": self.target_label,
+                    "found": self.found,
+                    "found_by": self.found_by,
+                    "found_tick": self.found_tick,
+                }
+                if self.target_xy is not None
+                else None
+            ),
         }
 
     # ---- exploration ----
     def _pick_goal(self, dog: Dog) -> tuple[float, float] | None:
+        # Object found: the pack already knows (shared memory) — converge on it
+        # instead of continuing to clear frontiers. "One sees it, all know."
+        if self.found and self.converge_on_found and self.target_xy is not None:
+            return self.target_xy
         known = dog.known
         free = known == FREE
         unknown = known == UNKNOWN
@@ -194,6 +225,14 @@ class ExploreSim:
         if n == 0:
             return None
         gx, gy = self._grid(dog.x, dog.y)
+        # Frontiers other online dogs are already heading for. The shared map lets
+        # the pack de-conflict: a cluster near a teammate's target is down-weighted
+        # so the dogs fan out instead of all chasing the same boundary.
+        claimed = [
+            self._grid(*o.goal)
+            for o in self.dogs
+            if o is not dog and o.online and o.goal is not None
+        ]
         rows, cols = np.where(frontier)
         ids = lab[rows, cols]
         best_id, best_score = -1, -1.0
@@ -205,6 +244,9 @@ class ExploreSim:
             cr, cc = rows[m].mean(), cols[m].mean()
             dist = max(1.0, hypot(cc - gx, cr - gy))
             score = size / dist
+            if claimed:
+                d_other = min(hypot(cc - ox, cr - oy) for ox, oy in claimed)
+                score *= 1.0 - 0.85 * exp(-(d_other**2) / (2.0 * SENSOR_R_CELLS**2))
             if score > best_score:
                 best_score, best_id = score, cid
         if best_id < 0:
@@ -230,7 +272,9 @@ class ExploreSim:
             goal = self._pick_goal(dog)
             if goal is None or not self._plan(dog, goal):
                 dog.idle = True
+                dog.goal = None
                 return
+            dog.goal = goal
             dog.idle = False
         assert dog.path is not None
         tx, ty = dog.path[dog.idx]
@@ -253,10 +297,26 @@ class ExploreSim:
             if d.online:
                 gx, gy = self._grid(d.x, d.y)
                 _raycast_reveal(d.known, self.truth, gx, gy, self._visible)
+        self._check_target()
         for d in self.dogs:
             if d.online:
                 self._advance(d)
                 d.trail.append((d.x, d.y))
+
+    def _check_target(self) -> None:
+        """Mark the target found the tick its cell first enters any dog's sight."""
+        if self.target_xy is None or self.found:
+            return
+        tgx, tgy = self._grid(*self.target_xy)
+        h, w = self._visible.shape
+        if not (0 <= tgy < h and 0 <= tgx < w) or not self._visible[tgy, tgx]:
+            return
+        self.found = True
+        self.found_tick = self.tick_n
+        online = [d for d in self.dogs if d.online]
+        if online:
+            tx, ty = self.target_xy
+            self.found_by = min(online, key=lambda d: (d.x - tx) ** 2 + (d.y - ty) ** 2).name
 
     def all_done(self) -> bool:
         return all((not d.online) or d.idle for d in self.dogs)
@@ -282,18 +342,41 @@ class ExploreSim:
 _START_POOL = [(0.6, 0.5), (3.4, 0.5), (5.4, 0.5), (0.6, 5.4), (5.4, 5.4)]
 
 
-def build_explore(shared: bool, seed: int = 0, n_dogs: int = 3) -> ExploreSim:
+def _far_target(world: OccupancyGrid, starts: list[tuple[float, float]]) -> tuple[float, float]:
+    """Plant the object at the free cell farthest from every start, so it's only
+    found after real searching — not next to where a dog spawns."""
+    cells = free_cells_world(world)
+    return max(cells, key=lambda c: min((c[0] - s[0]) ** 2 + (c[1] - s[1]) ** 2 for s in starts))
+
+
+def build_explore(
+    shared: bool,
+    seed: int = 0,
+    n_dogs: int = 3,
+    target_label: str | None = None,
+    converge_on_found: bool = False,
+) -> ExploreSim:
     world = make_maze_world()
     # Spread deployment (different entry points, realistic multi-dog SAR). Both
     # modes use the SAME starts — only shared-vs-private memory differs. Spreading
     # gives each dog distinct territory, so in independent mode losing a dog loses
     # its discoveries (beat 4), while shared retains them.
     starts = [_START_POOL[i % len(_START_POOL)] for i in range(n_dogs)]
-    return ExploreSim(world, n_dogs, shared, starts, seed)
+    target = _far_target(world, starts) if target_label else None
+    return ExploreSim(
+        world, n_dogs, shared, starts, seed,
+        target=target, target_label=target_label or "target",
+        converge_on_found=converge_on_found,
+    )
 
 
 def build_explore_building(
-    shared: bool, seed: int = 0, n_dogs: int = 3, downsample: int = 4
+    shared: bool,
+    seed: int = 0,
+    n_dogs: int = 3,
+    downsample: int = 4,
+    target_label: str | None = None,
+    converge_on_found: bool = False,
 ) -> ExploreSim:
     """ExploreSim on a real DimOS SLAM floor plan instead of the synthetic maze.
 
@@ -304,7 +387,12 @@ def build_explore_building(
     gap blows open (shared clears 100%, independent stalls redundantly)."""
     world = load_building_world(downsample=downsample)
     starts = spread_starts(world, n_dogs, seed=seed, min_dist_m=5.0)
-    return ExploreSim(world, n_dogs, shared, starts, seed)
+    target = _far_target(world, starts) if target_label else None
+    return ExploreSim(
+        world, n_dogs, shared, starts, seed,
+        target=target, target_label=target_label or "target",
+        converge_on_found=converge_on_found,
+    )
 
 
 if __name__ == "__main__":

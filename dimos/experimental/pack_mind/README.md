@@ -43,6 +43,10 @@ Both reuse DimOS navigation primitives (`min_cost_astar`, patrol routers,
 # 3-level fog (visible / remembered / unknown), kill-a-dog + reset controls.
 uv run python -m dimos.experimental.pack_mind.server      # → http://localhost:8000
 
+# DimOS Viewer (Rerun) — one maze, the pack exploring on the shared map. Scrub the
+# "tick" timeline; add --kill DOG TICK for the resilience beat, --save run.rrd to skip the GUI.
+uv run python -m dimos.experimental.pack_mind.view_explore_rerun --dogs 3 --seed 0
+
 # Native DimOS blueprint — coverage A/B as two live OccupancyGrid streams in Rerun.
 dimos --viewer rerun run pack-mind-sim
 
@@ -62,6 +66,7 @@ bin/pytest-fast dimos/experimental/pack_mind/test_pack_mind_sim.py -v
 | `explore_sim.py` | **Fog-of-war exploration engine** (raycast reveal, frontier, shared/private discovered map, offline persistence) |
 | `server.py` | FastAPI WebSocket backend streaming both explore sims |
 | `static/explore.html` | Three.js 3D fog-of-war frontend (side-by-side, kill/reset) |
+| `view_explore_rerun.py` | **DimOS Viewer (Rerun)** view of one shared-memory maze search (fog + dogs + trails + coverage scalar) |
 | `sim.py` / `sim_robot.py` | Coverage-race sim (known map) |
 | `blueprint.py` | `pack-mind-sim` native DimOS blueprint (publishes coverage as `OccupancyGrid`) |
 | `render.py` | Standalone matplotlib → mp4 A/B render |

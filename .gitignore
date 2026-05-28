@@ -87,3 +87,4 @@ htmlcov/
 # Memory2 autorecord
 recording*.db
 .scratch/
+.gstack/
