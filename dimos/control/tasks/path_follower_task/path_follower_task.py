@@ -46,6 +46,7 @@ from dimos.control.tasks.velocity_tracking_pid import (
     VelocityTrackingConfig,
     VelocityTrackingPID,
 )
+from dimos.core.global_config import global_config as _gc
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -373,7 +374,6 @@ class PathFollowerTask(BaseControlTask):
         self,
         path: Path,
         current_odom: PoseStamped,
-        velocity_profile: list[float] | None = None,
     ) -> bool:
         if path is None or len(path.poses) < 2:
             logger.warning(f"PathFollowerTask '{self._name}': invalid path")
@@ -389,21 +389,11 @@ class PathFollowerTask(BaseControlTask):
             self._ff.reset()
         if self._profile_cap is not None:
             self._profile_cap.for_path(path)
-        # Install the optional precomputed per-waypoint speed profile.
-        # Length must match path.poses; falls back to clearing if mismatched.
-        if velocity_profile is not None and len(velocity_profile) == len(path.poses):
-            self._velocity_profile = np.asarray(velocity_profile, dtype=float)
-            self._velocity_profile_pts = np.array(
-                [[p.position.x, p.position.y] for p in path.poses], dtype=float
-            )
-        else:
-            if velocity_profile is not None:
-                logger.warning(
-                    f"PathFollowerTask '{self._name}': velocity_profile length "
-                    f"{len(velocity_profile)} != path.poses {len(path.poses)}; ignoring"
-                )
-            self._velocity_profile = None
-            self._velocity_profile_pts = None
+        # Reset the per-waypoint speed cap so the parent's compute() path
+        # is well-defined. Subclasses (e.g. PrecisionPathFollowerTask) may
+        # repopulate these slots in their own start_path() override.
+        self._velocity_profile = None
+        self._velocity_profile_pts = None
 
         first_yaw = path.poses[0].orientation.euler[2]
         robot_yaw = current_odom.orientation.euler[2]
@@ -466,8 +456,6 @@ class PathFollowerTaskParams(BaseConfig):
 
 
 def create_task(cfg: Any, hardware: Any) -> PathFollowerTask:
-    from dimos.core.global_config import global_config as _gc
-
     params = PathFollowerTaskParams.model_validate(cfg.params)
     return PathFollowerTask(
         cfg.name,

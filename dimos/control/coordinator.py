@@ -45,6 +45,7 @@ from dimos.control.hardware_interface import (
     ConnectedWholeBody,
 )
 from dimos.control.task import ControlTask
+from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -57,6 +58,7 @@ from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -157,6 +159,9 @@ class ControlCoordinator(Module):
     # Input: Teleop buttons for engage/disengage signaling
     buttons: In[Buttons]
 
+    # Input: Live RG corridor half-width (m) for tasks with set_e_max().
+    e_max: In[Float32]
+
     # Arming and dry-run are one-shot RPCs, not streams.
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -181,6 +186,7 @@ class ControlCoordinator(Module):
         self._cartesian_command_unsub: Callable[[], None] | None = None
         self._twist_command_unsub: Callable[[], None] | None = None
         self._buttons_unsub: Callable[[], None] | None = None
+        self._e_max_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -271,8 +277,6 @@ class ControlCoordinator(Module):
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
         """Create a control task from config via the task registry."""
-        from dimos.control.tasks.registry import control_task_registry
-
         return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
 
     @rpc
@@ -521,6 +525,15 @@ class ControlCoordinator(Module):
             for task in self._tasks.values():
                 task.on_buttons(msg)
 
+    def _on_e_max(self, msg: Float32) -> None:
+        """Forward e_max (RG corridor half-width) to any task with set_e_max()."""
+        value = float(msg.data)
+        with self._task_lock:
+            for task in self._tasks.values():
+                set_e_max = getattr(task, "set_e_max", None)
+                if set_e_max is not None:
+                    set_e_max(value)
+
     @rpc
     def set_activated(self, engaged: bool) -> None:
         """Arm/disarm every task exposing ``arm()`` / ``disarm()``."""
@@ -680,6 +693,21 @@ class ControlCoordinator(Module):
             self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
             logger.info("Subscribed to buttons for engage/disengage")
 
+        # Subscribe to e_max if any task implements set_e_max.
+        with self._task_lock:
+            has_e_max_task = any(
+                callable(getattr(task, "set_e_max", None)) for task in self._tasks.values()
+            )
+        if has_e_max_task:
+            try:
+                self._e_max_unsub = self.e_max.subscribe(self._on_e_max)
+                logger.info("Subscribed to e_max for precision-capable tasks")
+            except Exception:
+                logger.warning(
+                    "Precision-capable task configured but could not subscribe to e_max. "
+                    "Set transport via blueprint."
+                )
+
         # Arming + dry-run are RPC-only; no stream subscription here.
 
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
@@ -702,6 +730,9 @@ class ControlCoordinator(Module):
         if self._buttons_unsub:
             self._buttons_unsub()
             self._buttons_unsub = None
+        if self._e_max_unsub:
+            self._e_max_unsub()
+            self._e_max_unsub = None
 
         if self._tick_loop:
             self._tick_loop.stop()
