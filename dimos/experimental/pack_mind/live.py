@@ -40,8 +40,10 @@ from __future__ import annotations
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.skills.person_follow import PersonFollowSkillContainer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.experimental.pack_mind.pack_search_skills import PackSearchSkills
+from dimos.experimental.security_demo.security_module import SecurityModule
 from dimos.robot.unitree.go2.blueprints.agentic._common_agentic import _common_agentic
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree_go2_spatial
 
@@ -68,12 +70,20 @@ Keep moving. Be concise. Zones by name, never coordinates."""
 
 # One dog per laptop. PackSearchSkills reads PACK_DOG_NAME + PACK_COORDINATOR_URL
 # from the environment, so this single blueprint serves both laptops.
+#
+# EdgeTAM (segmentation) HARD-requires a CUDA GPU. It reaches the spatial stack two
+# ways, both fatal on a CPU/CoreML host (e.g. a Mac ground station):
+#   1. unitree_go2_spatial -> SecurityModule.__init__ -> EdgeTAMProcessor()  → deploy crash
+#   2. PersonFollowSkillContainer.follow_person -> EdgeTAMProcessor()         → mid-demo crash
+# The pack demo uses neither (we move via skills + look_out_for, not security
+# patrol or person-follow), so disable both. The blueprint then deploys clean on
+# CPU — no --disable flag and no call-time landmine.
 unitree_go2_pack = autoconnect(
     unitree_go2_spatial,
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=PACK_SYSTEM_PROMPT),
     _common_agentic,
     PackSearchSkills.blueprint(),
-)
+).disabled_modules(SecurityModule, PersonFollowSkillContainer)
 
 __all__ = ["unitree_go2_pack", "PACK_SYSTEM_PROMPT"]
