@@ -126,7 +126,6 @@ dependencies = [
     "psutil>=7.0.0",
     "sqlite-vec>=0.1.6",
     "lz4>=4.4.5",
-    "rpyc>=6.0.0",
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
 ]
@@ -251,6 +250,7 @@ manipulation = [
     "piper-sdk",
     "pyrealsense2; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
+    "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -526,6 +526,8 @@ exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/c
 [[tool.mypy.overrides]]
 module = [
     "annotation_protocol",
+    "a750_control",
+    "a750_control.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
@@ -543,8 +545,6 @@ module = [
     "plum.*",
     "portal",
     "psutil",
-    "rpyc",
-    "rpyc.*",
     "pycuda",
     "pycuda.*",
     "pydrake",

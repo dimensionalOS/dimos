@@ -1,4 +1,4 @@
-# macOS Install (12.6 or newer)
+## macOS Install (12.6 or newer)
 
 ```sh skip
 # install homebrew
@@ -10,7 +10,7 @@ brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit
 curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
 ```
 
-# Using DimOS as a library
+## Using DimOS as a library
 
 ```sh skip
 mkdir myproject && cd myproject
@@ -23,7 +23,7 @@ source .venv/bin/activate
 uv pip install 'dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu]'
 ```
 
-# Developing on DimOS
+## Developing on DimOS
 
 ```sh skip
 # this allows getting large files on-demand (and not pulling all immediately)

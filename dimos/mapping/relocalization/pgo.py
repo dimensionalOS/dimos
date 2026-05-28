@@ -13,11 +13,12 @@
 # limitations under the License.
 
 # NOTE: This lives under mapping/relocalization/ for now because the only
-# consumer is the premap export pipeline (`dimos export-premap`). It is
+# consumer is the premap export pipeline (`dimos map --export`). It is
 # temporary and can be moved/split out later when PGO grows other consumers.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -69,7 +70,7 @@ class PGOConfig(ModuleConfig):
 
 
 @dataclass
-class _KeyPose:
+class KeyPose:
     r_local: np.ndarray  # 3x3 rotation in local/odom frame
     t_local: np.ndarray  # 3-vec translation in local/odom frame
     r_global: np.ndarray  # 3x3 corrected rotation
@@ -147,9 +148,11 @@ def _voxel_downsample(pts: np.ndarray, voxel_size: float) -> np.ndarray:
 
 
 class _SimplePGO:
+    key_poses: list[KeyPose]
+
     def __init__(self, config: PGOConfig) -> None:
+        self.key_poses = []
         self._cfg = config
-        self._key_poses: list[_KeyPose] = []
         self._history_pairs: list[tuple[int, int]] = []
         self._cache_pairs: list[dict[str, Any]] = []
         self._r_offset = np.eye(3)
@@ -163,9 +166,9 @@ class _SimplePGO:
         self._values = gtsam.Values()
 
     def is_key_pose(self, r: np.ndarray, t: np.ndarray) -> bool:
-        if not self._key_poses:
+        if not self.key_poses:
             return True
-        last = self._key_poses[-1]
+        last = self.key_poses[-1]
         delta_trans = np.linalg.norm(t - last.t_local)
         # Angular distance via quaternion dot product
         q_cur = Rotation.from_matrix(r).as_quat()  # [x,y,z,w]
@@ -182,7 +185,7 @@ class _SimplePGO:
         if not self.is_key_pose(r_local, t_local):
             return False
 
-        idx = len(self._key_poses)
+        idx = len(self.key_poses)
         init_r = self._r_offset @ r_local
         init_t = self._r_offset @ t_local + self._t_offset
 
@@ -193,7 +196,7 @@ class _SimplePGO:
             noise = gtsam.noiseModel.Diagonal.Variances(np.full(6, 1e-12))
             self._graph.add(gtsam.PriorFactorPose3(idx, pose, noise))
         else:
-            last = self._key_poses[-1]
+            last = self.key_poses[-1]
             r_between = last.r_local.T @ r_local
             t_between = last.r_local.T @ (t_local - last.t_local)
             noise = gtsam.noiseModel.Diagonal.Variances(
@@ -205,7 +208,7 @@ class _SimplePGO:
                 )
             )
 
-        kp = _KeyPose(
+        kp = KeyPose(
             r_local=r_local.copy(),
             t_local=t_local.copy(),
             r_global=init_r.copy(),
@@ -213,15 +216,15 @@ class _SimplePGO:
             timestamp=timestamp,
             body_cloud=_voxel_downsample(body_cloud, self._cfg.submap_resolution),
         )
-        self._key_poses.append(kp)
+        self.key_poses.append(kp)
         return True
 
     def _get_submap(self, idx: int, half_range: int) -> np.ndarray:
         lo = max(0, idx - half_range)
-        hi = min(len(self._key_poses) - 1, idx + half_range)
+        hi = min(len(self.key_poses) - 1, idx + half_range)
         parts = []
         for i in range(lo, hi + 1):
-            kp = self._key_poses[i]
+            kp = self.key_poses[i]
             world = (kp.r_global @ kp.body_cloud.T).T + kp.t_global
             parts.append(world)
         if not parts:
@@ -230,21 +233,21 @@ class _SimplePGO:
         return _voxel_downsample(cloud, self._cfg.submap_resolution)
 
     def search_for_loops(self) -> None:
-        if len(self._key_poses) < self._cfg.min_keyframes_for_loop_search:
+        if len(self.key_poses) < self._cfg.min_keyframes_for_loop_search:
             return
 
         # Rate limit
         if self._history_pairs:
-            cur_time = self._key_poses[-1].timestamp
-            last_time = self._key_poses[self._history_pairs[-1][1]].timestamp
+            cur_time = self.key_poses[-1].timestamp
+            last_time = self.key_poses[self._history_pairs[-1][1]].timestamp
             if cur_time - last_time < self._cfg.min_loop_detect_duration:
                 return
 
-        cur_idx = len(self._key_poses) - 1
-        cur_kp = self._key_poses[-1]
+        cur_idx = len(self.key_poses) - 1
+        cur_kp = self.key_poses[-1]
 
         # Build KD-tree of previous keyframe positions
-        positions = np.array([kp.t_global for kp in self._key_poses[:-1]])
+        positions = np.array([kp.t_global for kp in self.key_poses[:-1]])
         tree = KDTree(positions)
 
         idxs = tree.query_ball_point(cur_kp.t_global, self._cfg.loop_search_radius)
@@ -254,9 +257,9 @@ class _SimplePGO:
         # Pick the spatially closest keyframe that's also old enough in time.
         # query_ball_point doesn't sort, so we sort by distance ourselves.
         candidates = [
-            (float(np.linalg.norm(self._key_poses[i].t_global - cur_kp.t_global)), i)
+            (float(np.linalg.norm(self.key_poses[i].t_global - cur_kp.t_global)), i)
             for i in idxs
-            if abs(cur_kp.timestamp - self._key_poses[i].timestamp) > self._cfg.loop_time_thresh
+            if abs(cur_kp.timestamp - self.key_poses[i].timestamp) > self._cfg.loop_time_thresh
         ]
         if not candidates:
             return
@@ -282,9 +285,9 @@ class _SimplePGO:
         t_icp = transform[:3, 3]
         r_refined = R_icp @ cur_kp.r_global
         t_refined = R_icp @ cur_kp.t_global + t_icp
-        r_offset = self._key_poses[loop_idx].r_global.T @ r_refined
-        t_offset = self._key_poses[loop_idx].r_global.T @ (
-            t_refined - self._key_poses[loop_idx].t_global
+        r_offset = self.key_poses[loop_idx].r_global.T @ r_refined
+        t_offset = self.key_poses[loop_idx].r_global.T @ (
+            t_refined - self.key_poses[loop_idx].t_global
         )
 
         self._cache_pairs.append(
@@ -340,12 +343,12 @@ class _SimplePGO:
         self._values = gtsam.Values()
 
         estimates = self._isam2.calculateBestEstimate()
-        for i in range(len(self._key_poses)):
+        for i in range(len(self.key_poses)):
             pose = estimates.atPose3(i)
-            self._key_poses[i].r_global = pose.rotation().matrix()
-            self._key_poses[i].t_global = pose.translation()
+            self.key_poses[i].r_global = pose.rotation().matrix()
+            self.key_poses[i].t_global = pose.translation()
 
-        last = self._key_poses[-1]
+        last = self.key_poses[-1]
         self._r_offset = last.r_global @ last.r_local.T
         self._t_offset = last.t_global - self._r_offset @ last.t_local
 
@@ -355,10 +358,10 @@ class _SimplePGO:
         return self._r_offset @ r_local, self._r_offset @ t_local + self._t_offset
 
     def build_global_map(self, voxel_size: float) -> np.ndarray:
-        if not self._key_poses:
+        if not self.key_poses:
             return np.empty((0, 3), dtype=np.float32)
         parts = []
-        for kp in self._key_poses:
+        for kp in self.key_poses:
             world = (kp.r_global @ kp.body_cloud.T).T + kp.t_global
             parts.append(world)
         cloud = np.vstack(parts).astype(np.float32)
@@ -366,7 +369,7 @@ class _SimplePGO:
 
     @property
     def num_key_poses(self) -> int:
-        return len(self._key_poses)
+        return len(self.key_poses)
 
 
 def pgo_then_voxels(
@@ -375,6 +378,9 @@ def pgo_then_voxels(
     voxel_size: float = 0.05,
     block_count: int = 2_000_000,
     device: str = "CUDA:0",
+    corrected_path_out: list[tuple[float, float, float]] | None = None,
+    pass1_on_frame: Callable[[Any], None] | None = None,
+    pass2_on_frame: Callable[[Any], None] | None = None,
     **pgo_cfg: Any,
 ) -> PointCloud2:
     """Two-pass PGO mapping (eliminates duplicate-wall artifacts).
@@ -401,9 +407,16 @@ def pgo_then_voxels(
 
     n_frames = 0
     for obs in stream:
+        if pass1_on_frame is not None:
+            pass1_on_frame(obs)
         if obs.pose is None:
             continue
         x, y, z, qx, qy, qz, qw = obs.pose
+        # Skip placeholder poses: zero translation, or invalid (zero-norm) quaternion.
+        if x == 0 and y == 0 and z == 0:
+            continue
+        if qx == 0 and qy == 0 and qz == 0 and qw == 0:
+            continue
         r = Rotation.from_quat([qx, qy, qz, qw]).as_matrix()
         t = np.array([x, y, z])
         points, _ = obs.data.as_numpy()
@@ -420,24 +433,35 @@ def pgo_then_voxels(
     n_kf = pgo.num_key_poses
     print(f"  Pass 1: {n_frames} frames, {n_kf} keyframes")
 
+    if corrected_path_out is not None:
+        corrected_path_out.extend(
+            (float(kp.t_global[0]), float(kp.t_global[1]), float(kp.t_global[2]))
+            for kp in pgo.key_poses
+        )
+
     grid = VoxelGrid(voxel_size=voxel_size, block_count=block_count, device=device)
     try:
         if n_kf < 2:
             for obs in stream:
+                if pass2_on_frame is not None:
+                    pass2_on_frame(obs)
                 grid.add_frame(obs.data)
             return grid.get_global_pointcloud2()
 
-        kf_ts = np.array([kp.timestamp for kp in pgo._key_poses])
+        # Sort + dedupe by timestamp: Slerp requires strictly increasing ts.
+        kps = sorted(pgo.key_poses, key=lambda kp: kp.timestamp)
+        kps = [kp for i, kp in enumerate(kps) if i == 0 or kp.timestamp > kps[i - 1].timestamp]
+        kf_ts = np.array([kp.timestamp for kp in kps])
         # Per-keyframe rigid drift correction: T_corr = T_global @ T_local.inv()
-        R_corr_list = [kp.r_global @ kp.r_local.T for kp in pgo._key_poses]
-        t_corr_list = [
-            kp.t_global - (kp.r_global @ kp.r_local.T) @ kp.t_local for kp in pgo._key_poses
-        ]
+        R_corr_list = [kp.r_global @ kp.r_local.T for kp in kps]
+        t_corr_list = [kp.t_global - (kp.r_global @ kp.r_local.T) @ kp.t_local for kp in kps]
         t_corrs = np.stack(t_corr_list)
         rot_slerp = Slerp(kf_ts, Rotation.from_matrix(np.stack(R_corr_list)))
 
         n_inserted = 0
         for obs in stream:
+            if pass2_on_frame is not None:
+                pass2_on_frame(obs)
             if obs.pose is None:
                 continue
             ts = float(np.clip(obs.ts, kf_ts[0], kf_ts[-1]))

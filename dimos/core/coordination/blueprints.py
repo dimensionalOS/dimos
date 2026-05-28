@@ -141,6 +141,10 @@ class BlueprintAtom:
         )
 
 
+# These fields cannot be pickled.
+_PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map")
+
+
 @dataclass(frozen=True)
 class Blueprint:
     blueprints: tuple[BlueprintAtom, ...]
@@ -154,6 +158,18 @@ class Blueprint:
     )
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = self.__dict__.copy()
+        state.pop("active_blueprints", None)  # recomputable cached_property
+        for name in _PROXY_FIELDS:
+            state[name] = dict(state[name])
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        for name in _PROXY_FIELDS:
+            state[name] = MappingProxyType(state[name])
+        self.__dict__.update(state)
 
     @classmethod
     def create(cls, module: type[ModuleBase], **kwargs: Any) -> "Blueprint":

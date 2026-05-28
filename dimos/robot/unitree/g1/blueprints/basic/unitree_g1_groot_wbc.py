@@ -47,7 +47,7 @@ from typing import Any
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.control.tasks.g1_groot_wbc_task import (
+from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     ARM_DEFAULT_POSE,
     G1_GROOT_KD,
     G1_GROOT_KP,

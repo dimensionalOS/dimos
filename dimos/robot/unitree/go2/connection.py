@@ -112,12 +112,12 @@ BASE_TO_OPTICAL: Transform = Transform(
 
 
 def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
-    connection_type = cfg.unitree_connection_type
+    connection_type = cfg.unitree_connection_type.lower()
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
         dataset = cfg.replay_db
         return ReplayConnection(dataset=dataset)
-    elif ip == "mujoco" or connection_type == "mujoco":
+    elif ip == "mujoco" or connection_type in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
         return MujocoConnection(cfg)
