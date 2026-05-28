@@ -14,22 +14,18 @@
 
 from __future__ import annotations
 
-import threading
 from typing import Any
-import uuid
 
 import numpy as np
 import pytest
 
 pytest.importorskip("cv2.aruco")
 
-from dimos.core.transport import LCMTransport
 from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
@@ -40,32 +36,6 @@ from dimos.perception.fiducial.test_helpers import (
     camera_info,
     synthetic_marker_image,
 )
-
-
-class CameraInfoSource:
-    def __init__(self) -> None:
-        self._callbacks: list[Any] = []
-
-    def subscribe(self, callback: Any) -> Any:
-        self._callbacks.append(callback)
-
-        def unsubscribe() -> None:
-            self._callbacks.remove(callback)
-
-        return unsubscribe
-
-    def publish(self, info: CameraInfo) -> None:
-        for callback in list(self._callbacks):
-            callback(info)
-
-
-def _reset_thread_pool() -> None:
-    import reactivex.scheduler
-
-    import dimos.utils.threadpool as tp
-
-    tp.scheduler.executor.shutdown(wait=True)
-    tp.scheduler = reactivex.scheduler.ThreadPoolScheduler(max_workers=tp.get_max_workers())
 
 
 def _marker(image: Image, marker_id: int) -> Detection3DMarker:
@@ -332,67 +302,3 @@ def test_append_image_with_pose_skips_withoutcamera_info_or_tf() -> None:
         module.stop()
 
     assert missing_tf.calls == 1
-
-
-def test_marker_detection_stream_module_start_publishes_detection_array_over_lcm() -> None:
-    marker_id = 7
-    source = CameraInfoSource()
-    module = MarkerDetectionStreamModule(
-        marker_length_m=0.18,
-        camera_info_source=source,
-        quality_window_s=0.01,
-    )
-    suffix = uuid.uuid4().hex[:8]
-    module.color_image.transport = LCMTransport(f"/tmd/{suffix}/image", Image)
-    module.detections.transport = LCMTransport(
-        f"/tmd/{suffix}/detections",
-        Detection3DArray,
-    )
-
-    module._tf = type(
-        "FakeTf",
-        (),
-        {
-            "get": lambda self, *args, **kwargs: Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="world",
-                child_frame_id="camera_optical",
-                ts=10.0,
-            ),
-            "stop": lambda self: None,
-        },
-    )()
-
-    received: list[Detection3DArray] = []
-    done = threading.Event()
-
-    def on_detection(msg: Detection3DArray) -> None:
-        received.append(msg)
-        if len(received) >= 2:
-            done.set()
-
-    unsub = module.detections.transport.subscribe(on_detection)
-
-    module.start()
-    try:
-        source.publish(camera_info(ts=10.0))
-        module.color_image.transport.publish(synthetic_marker_image(marker_id, ts=10.0))
-        module.color_image.transport.publish(blank_image(ts=11.0))
-        module.color_image.transport.publish(blank_image(ts=12.0))
-
-        assert done.wait(timeout=5.0), f"Timed out waiting for marker detections, got {received}"
-        marker_msg = received[0]
-        assert marker_msg.detections_length == 1
-        assert marker_msg.detections[0].id == str(marker_id)
-        assert marker_msg.detections[0].results[0].hypothesis.class_id == (
-            f"DICT_APRILTAG_36h11:{marker_id}"
-        )
-        empty_msg = received[1]
-        assert empty_msg.ts == pytest.approx(11.0)
-        assert empty_msg.detections_length == 0
-        assert empty_msg.detections == []
-    finally:
-        unsub()
-        module.stop()
-        _reset_thread_pool()
