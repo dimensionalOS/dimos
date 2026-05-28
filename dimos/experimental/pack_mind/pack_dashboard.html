@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<!--
+ Copyright 2026 Dimensional Inc. Licensed under the Apache License, Version 2.0.
+ PACK MIND dashboard — the projector view. Polls the coordinator's /state and
+ renders the shared memory: zones lighting up, the finding, offline dogs, and the
+ causal timeline. Served by pack_coordinator_server at GET /.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PACK MIND</title>
+<style>
+  :root {
+    --bg: #0a0c12; --panel: #131722; --edge: #1f2738; --ink: #e8eefc;
+    --dim: #6b7894; --unsearched: #2a3142; --claimed: #d99a2b; --cleared: #3ddc84;
+    --find: #ff3b5c; --accent: #4dabf7;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace; }
+  header { display: flex; align-items: baseline; gap: 1rem; padding: 1.2rem 1.6rem;
+    border-bottom: 1px solid var(--edge); }
+  header h1 { margin: 0; font-size: 1.5rem; letter-spacing: .35em; }
+  header .sub { color: var(--dim); letter-spacing: .15em; }
+  header .target { margin-left: auto; font-size: 1.1rem; }
+  header .target b { color: var(--accent); }
+  main { display: grid; grid-template-columns: 1.4fr 1fr; gap: 1.2rem; padding: 1.4rem 1.6rem; }
+  .card { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 1.2rem; }
+  .label { color: var(--dim); font-size: .72rem; letter-spacing: .25em; text-transform: uppercase; margin: 0 0 .8rem; }
+  .zones { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .9rem; }
+  .zone { border-radius: 12px; padding: 1.1rem; min-height: 92px; border: 2px solid transparent;
+    background: var(--unsearched); transition: all .4s ease; position: relative; }
+  .zone .name { font-size: 1.15rem; letter-spacing: .12em; }
+  .zone .who { color: var(--dim); font-size: .8rem; margin-top: .4rem; }
+  .zone.claimed { background: color-mix(in oklab, var(--claimed) 22%, var(--panel)); border-color: var(--claimed); }
+  .zone.cleared { background: color-mix(in oklab, var(--cleared) 16%, var(--panel)); border-color: var(--cleared); }
+  .zone.find { background: color-mix(in oklab, var(--find) 30%, var(--panel)); border-color: var(--find);
+    animation: pulse 1.1s infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--find) 60%, transparent); }
+    50% { box-shadow: 0 0 0 10px transparent; } }
+  .cov-track { height: 12px; background: var(--unsearched); border-radius: 8px; overflow: hidden; }
+  .cov-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--cleared));
+    transition: width .5s ease; }
+  .find-card { font-size: 1.05rem; line-height: 1.6; }
+  .find-card.empty { color: var(--dim); }
+  .find-card .hit { color: var(--cleared); font-size: 1.5rem; letter-spacing: .05em; }
+  .roster span { display: inline-block; padding: .35rem .8rem; border-radius: 999px; margin: 0 .5rem .5rem 0;
+    border: 1px solid var(--edge); }
+  .roster .off { color: var(--find); border-color: var(--find); text-decoration: line-through; }
+  .roster .on { color: var(--cleared); border-color: var(--cleared); }
+  .timeline { max-height: 280px; overflow-y: auto; font-size: .9rem; line-height: 1.9; }
+  .timeline div { color: var(--dim); border-left: 2px solid var(--edge); padding-left: .8rem; }
+  .timeline div:last-child { color: var(--ink); border-color: var(--accent); }
+  footer { text-align: center; color: var(--dim); letter-spacing: .3em; padding: 1rem; font-size: .8rem; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>PACK&nbsp;MIND</h1>
+    <span class="sub">shared operational memory</span>
+    <span class="target" id="target">memory: empty</span>
+  </header>
+  <main>
+    <section class="card">
+      <p class="label">Search zones — one shared memory, no overlap</p>
+      <div class="zones" id="zones"></div>
+      <p class="label" style="margin-top:1.4rem">Area searched</p>
+      <div class="cov-track"><div class="cov-fill" id="cov"></div></div>
+    </section>
+    <section>
+      <div class="card" style="margin-bottom:1.2rem">
+        <p class="label">Finding</p>
+        <div class="find-card empty" id="find">No sighting yet — the pack is searching.</div>
+      </div>
+      <div class="card" style="margin-bottom:1.2rem">
+        <p class="label">Pack roster</p>
+        <div class="roster" id="roster"></div>
+      </div>
+      <div class="card">
+        <p class="label">Causal chain</p>
+        <div class="timeline" id="log"></div>
+      </div>
+    </section>
+  </main>
+  <footer>ONE MEMORY · MANY BODIES · OUTLIVES ANY SINGLE ROBOT</footer>
+<script>
+const $ = (id) => document.getElementById(id);
+// Build a styled element with its text set via textContent (XSS-safe: target,
+// object, zone, by all originate from untrusted LLM/agent output).
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+function render(s) {
+  const find = s.finding;
+  const t = $("target");
+  t.textContent = "";
+  if (s.target) {
+    t.appendChild(document.createTextNode("target: "));
+    t.appendChild(el("b", null, s.target));
+  } else {
+    t.textContent = "memory: empty";
+  }
+
+  // zones
+  const zonesEl = $("zones");
+  zonesEl.textContent = "";
+  for (const z of s.zones) {
+    let cls = z.state;
+    if (find && find.zone === z.name) cls = "find";
+    const zEl = el("div", "zone " + cls);
+    zEl.appendChild(el("div", "name", z.name));
+    zEl.appendChild(el("div", "who", z.by ? z.by + " · " + z.state : z.state));
+    zonesEl.appendChild(zEl);
+  }
+
+  // coverage
+  $("cov").style.width = Math.round((s.coverage || 0) * 100) + "%";
+
+  // finding
+  const f = $("find");
+  f.textContent = "";
+  if (find) {
+    f.className = "find-card";
+    f.appendChild(el("span", "hit", "FOUND"));
+    f.appendChild(document.createElement("br"));
+    f.appendChild(document.createTextNode(find.object + " in "));
+    f.appendChild(el("b", null, find.zone));
+    f.appendChild(document.createElement("br"));
+    f.appendChild(el("span", null, "reported by " + find.by + " — the whole pack now knows"))
+      .style.color = "var(--dim)";
+  } else {
+    f.className = "find-card empty";
+    f.textContent = "No sighting yet — the pack is searching.";
+  }
+
+  // roster (dogs derived from zones + offline list)
+  const dogs = new Set((s.offline || []));
+  for (const z of s.zones) if (z.by) dogs.add(z.by);
+  const offline = new Set(s.offline || []);
+  const rosterEl = $("roster");
+  rosterEl.innerHTML = "";
+  if (dogs.size === 0) rosterEl.innerHTML = '<span class="on">waiting for the pack…</span>';
+  for (const d of [...dogs].sort()) {
+    const span = document.createElement("span");
+    span.className = offline.has(d) ? "off" : "on";
+    span.textContent = offline.has(d) ? d + " OFFLINE" : d;
+    rosterEl.appendChild(span);
+  }
+
+  // causal timeline
+  const logEl = $("log");
+  logEl.innerHTML = "";
+  for (const line of (s.log || []).slice(-12)) {
+    const d = document.createElement("div");
+    d.textContent = line;
+    logEl.appendChild(d);
+  }
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function tick() {
+  try {
+    const r = await fetch("/state", { cache: "no-store" });
+    render(await r.json());
+  } catch (e) { /* coordinator momentarily unreachable; keep last frame */ }
+}
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
