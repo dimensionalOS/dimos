@@ -33,14 +33,12 @@ from typing import Any
 
 import numpy as np
 import rerun as rr
-import rerun.blueprint as rrb
 
 from dimos.experimental.pack_mind.explore_sim import (
     ExploreSim,
     build_explore,
     build_explore_building,
 )
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.visualization.rerun.init import rerun_init
 
 # Per-cell fog palette, indexed by state() code:
@@ -156,68 +154,6 @@ def _log_run(root: str, metric: str, sim: ExploreSim, frames: list[dict[str, Any
         rr.log(f"{root}/stats", rr.TextLog(msg))
 
 
-def _log_run_3d(root: str, metric: str, sim: ExploreSim, frames: list[dict[str, Any]]) -> None:
-    """Log the run as 3D world entities over the occupancy floor (SLAM-map look).
-
-    Explored cells light up as Points3D on the z=0 floor (unknown stays dark, so
-    fog peels back in 3D); dogs and trails ride just above. Dog/trail/target
-    coordinates are already in world meters; floor cells map via origin + grid*res.
-    """
-    world = sim.world
-    res = float(world.resolution)
-    origin = world.origin
-    ox = float(origin.position.x)
-    oy = float(origin.position.y)
-    label = sim.target_label
-    wall_h = max(0.3, res * 4)  # extrude walls so the scene has 3D volume to frame
-
-    for fr in frames:
-        _set_tick(fr["tick"])
-        codes = fr["codes"]
-        # Floor: explored free space, rendered through the SAME textured-quad path
-        # the live SLAM map uses (OccupancyGrid.to_rerun) so it matches
-        # `dimos run unitree-go2`. Unexplored stays dark; the purple grows as the
-        # pack searches.
-        fog_cost = np.full(codes.shape, -1, dtype=np.int8)
-        fog_cost[(codes == 1) | (codes == 2)] = 0
-        revealed = OccupancyGrid(grid=fog_cost, resolution=res, origin=origin)
-        rr.log(f"{root}/map", revealed.to_rerun())
-
-        # Walls: explored occupied cells extruded into standing boxes. Gives the
-        # camera real 3D structure to auto-frame (a flat floor alone reads edge-on).
-        wr, wc = np.nonzero((codes == 3) | (codes == 4))
-        if wr.size:
-            centers = np.column_stack(
-                [ox + wc * res, oy + wr * res, np.full(wr.size, wall_h / 2, np.float32)]
-            ).astype(np.float32)
-            half = np.tile([res / 2, res / 2, wall_h / 2], (wr.size, 1)).astype(np.float32)
-            rr.log(f"{root}/walls", rr.Boxes3D(centers=centers, half_sizes=half, colors=[90, 100, 150]))
-
-        dpts = [[x, y, 0.25] for x, y, _, _ in fr["dogs"]]
-        dcols = [_hex_rgb(color) if online else _OFFLINE for _, _, color, online in fr["dogs"]]
-        rr.log(f"{root}/dogs", rr.Points3D(dpts, colors=dcols, radii=res * 2.5))
-
-        strips, scols = [], []
-        for (_, _, color, _), trail in zip(fr["dogs"], fr["trails"]):
-            if len(trail) > 1:
-                strips.append([[px, py, 0.1] for px, py in trail])
-                scols.append(_hex_rgb(color))
-        if strips:
-            rr.log(f"{root}/trails", rr.LineStrips3D(strips, colors=scols, radii=res * 0.6))
-
-        tgt = fr["target"]
-        if tgt is not None:
-            tcol = [[60, 220, 90]] if tgt["found"] else [[235, 40, 40]]
-            rr.log(f"{root}/target", rr.Points3D([[tgt["x"], tgt["y"], 0.3]], colors=tcol, radii=res * 3.0))
-
-        rr.log(metric, rr.Scalars(fr["revealed"]))
-        if tgt is not None and tgt["found"]:
-            msg = f"FOUND {label} — {tgt['found_by']} @ tick {tgt['found_tick']} · searched {fr['revealed']:.0%}"
-        else:
-            msg = f"searching for {label} … searched {fr['revealed']:.0%} · tick {fr['tick']}"
-        rr.log(f"{root}/stats", rr.TextLog(msg))
-
-
 def view(
     map_name: str = "maze",
     n_dogs: int = 3,
@@ -227,7 +163,6 @@ def view(
     kill: tuple[int, int] | None = None,
     save: str | None = None,
     shared: bool = True,
-    threed: bool = False,
 ) -> None:
     mode = "shared" if shared else "independent"
     rerun_init(app_id=f"pack_mind_explore_{mode}")
@@ -237,36 +172,8 @@ def view(
         rr.spawn()  # opens the DimOS Viewer (Rerun) window
 
     sim = _build(map_name, n_dogs, seed, target_label, shared)
-
-    if threed:
-        # Auto-framing lands the camera in-plane on a flat floor (you see only the
-        # grid). Explicitly aim an orbital eye down at the arena centre from above
-        # and to the side, sized to the arena span.
-        w_m = sim.world.grid.shape[1] * sim.world.resolution
-        h_m = sim.world.grid.shape[0] * sim.world.resolution
-        cx = sim.world.origin.position.x + w_m / 2.0
-        cy = sim.world.origin.position.y + h_m / 2.0
-        span = max(w_m, h_m)
-        rr.send_blueprint(
-            rrb.Blueprint(
-                rrb.Spatial3DView(
-                    origin="maze",
-                    background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
-                    line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.0)),
-                    eye_controls=rrb.EyeControls3D(
-                        kind=rrb.Eye3DKind.Orbital,
-                        position=[cx, cy - span * 1.1, span * 1.0],
-                        look_target=[cx, cy, 0.0],
-                        eye_up=[0.0, 0.0, 1.0],
-                    ),
-                ),
-                collapse_panels=True,
-            )
-        )
-
     frames = _capture(sim, max_ticks, kill)
-    logger = _log_run_3d if threed else _log_run
-    logger("maze", "maze/revealed", sim, frames)
+    _log_run("maze", "maze/revealed", sim, frames)
 
     tgt = sim.state()["target"]
     if tgt is not None and tgt["found"]:
@@ -306,12 +213,6 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="give each dog a private map (A/B baseline); default is PACK MIND shared memory",
     )
-    p.add_argument(
-        "--3d",
-        dest="threed",
-        action="store_true",
-        help="render in 3D over the occupancy floor (SLAM-map look) instead of the flat 2D fog",
-    )
     return p.parse_args()
 
 
@@ -327,5 +228,4 @@ if __name__ == "__main__":
         kill=kill,
         save=args.save,
         shared=not args.independent,
-        threed=args.threed,
     )
