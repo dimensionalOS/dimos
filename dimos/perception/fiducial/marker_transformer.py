@@ -373,9 +373,7 @@ class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
         detections: list[Detection3DMarker],
     ) -> Observation[Detection3DArray]:
         image = self._source_image(obs, detections)
-        msg = ImageDetections3D(image, detections).to_ros_detection3d_array(
-            frame_id=self.frame_id
-        )
+        msg = ImageDetections3D(image, detections).to_ros_detection3d_array(frame_id=self.frame_id)
         pose = self._source_pose(obs, detections)
         return obs.derive(data=msg, pose=pose).tag(detections_length=len(detections))
 

@@ -143,27 +143,25 @@ class DeskStaticTfModule(Module):
         )
 
 
-desk_marker_tf = (
-    autoconnect(
-        DeskStaticTfModule.blueprint(),
-        CameraModule.blueprint(
-            hardware=create_desk_webcam,
-            transform=None,
+desk_marker_tf = autoconnect(
+    DeskStaticTfModule.blueprint(),
+    CameraModule.blueprint(
+        hardware=create_desk_webcam,
+        transform=None,
+    ),
+    MarkerDetectionStreamModule.blueprint(
+        marker_length_m=DESK_MARKER_LENGTH_M,
+        aruco_dictionary=DESK_MARKER_ARUCO_DICTIONARY,
+        camera_info=create_desk_camera_info(),
+    ),
+    MarkerTfModule.blueprint(
+        marker_namespace_prefix=DESK_MARKER_NAMESPACE_PREFIX,
+    ),
+).transports(
+    {
+        ("detections", MarkerDetectionStreamModule): LCMTransport(
+            "/marker_detection/detections",
+            Detection3DArray,
         ),
-        MarkerDetectionStreamModule.blueprint(
-            marker_length_m=DESK_MARKER_LENGTH_M,
-            aruco_dictionary=DESK_MARKER_ARUCO_DICTIONARY,
-            camera_info=create_desk_camera_info(),
-        ),
-        MarkerTfModule.blueprint(
-            marker_namespace_prefix=DESK_MARKER_NAMESPACE_PREFIX,
-        ),
-    ).transports(
-        {
-            ("detections", MarkerDetectionStreamModule): LCMTransport(
-                "/marker_detection/detections",
-                Detection3DArray,
-            ),
-        }
-    )
+    }
 )

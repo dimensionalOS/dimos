@@ -110,7 +110,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
                     smoothing_window=self.config.smoothing_window,
                     emit_empty_frames=True,
                 )
-            )
+            ),
         )
         return markers.transform(MarkersPerFrame(frame_id=self.config.world_frame))
 

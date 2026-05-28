@@ -71,9 +71,7 @@ def test_detection3darray_to_rerun_preserves_wire_pose_size_and_identity() -> No
     assert msg.frame_id == "world"
     assert isinstance(boxes, rr.Boxes3D)
     assert boxes.centers.as_arrow_array().to_pylist() == [[1.0, 2.0, 3.0]]
-    assert boxes.half_sizes.as_arrow_array().to_pylist()[0] == pytest.approx(
-        [0.1, 0.2, 0.0]
-    )
+    assert boxes.half_sizes.as_arrow_array().to_pylist()[0] == pytest.approx([0.1, 0.2, 0.0])
     assert boxes.quaternions.as_arrow_array().to_pylist()[0] == pytest.approx(
         [0.0, 0.0, 0.70710678, 0.70710678]
     )
