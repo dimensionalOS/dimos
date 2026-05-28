@@ -39,7 +39,6 @@ def big_office() -> OccupancyGrid:
     return height_cost_occupancy(cloud)
 
 
-@pytest.mark.self_hosted
 @pytest.mark.parametrize(
     "router_name, saturation", [("random", 0.20), ("coverage", 0.30), ("frontier", 0.20)]
 )
