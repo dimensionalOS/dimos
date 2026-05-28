@@ -28,4 +28,4 @@ class Detection3D(LCMDetection3D):  # type: ignore[misc]
 
     @property
     def frame_id(self) -> str:
-        return self.header.frame_id
+        return str(self.header.frame_id)

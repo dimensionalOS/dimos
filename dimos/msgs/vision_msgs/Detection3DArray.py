@@ -30,7 +30,7 @@ class Detection3DArray(LCMDetection3DArray):  # type: ignore[misc]
 
     @property
     def frame_id(self) -> str:
-        return self.header.frame_id
+        return str(self.header.frame_id)
 
     def to_rerun(self) -> Any:
         """Convert detections to a Rerun Boxes3D archetype."""
