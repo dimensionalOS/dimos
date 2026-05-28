@@ -56,6 +56,14 @@ type PresignFn = (key: string, expiresIn?: number) => Promise<string>;
 // Fold the flat frames table into the room-scan structure: run → positions →
 // images (angle-sorted), newest run first. Shared by the oRPC `frames.scans`
 // procedure and the public REST `/api/scans` route so both stay in lockstep.
+// Raw `sql<Date>` aggregates (max/min) come back from node-postgres as strings,
+// not Dates — drizzle only maps real columns, so the `<Date>` cast is a
+// compile-time-only lie. Coerce to a real Date (the tz-naive value is UTC,
+// matching how drizzle reads timestamp columns) before .toISOString()/.getTime().
+function pgTs(v: Date | string): Date {
+	return v instanceof Date ? v : new Date(`${String(v).replace(" ", "T")}Z`);
+}
+
 export async function groupScans(
 	db: Database,
 	presignGet: PresignFn,
@@ -426,12 +434,12 @@ const framesScansHeaders = publicProcedure
 				const a = analysisByRun.get(r.run);
 				return {
 					run: r.run,
-					capturedAt: r.capturedAt.toISOString(),
+					capturedAt: pgTs(r.capturedAt).toISOString(),
 					positionCount: Number(r.positionCount),
 					imageCount: Number(r.imageCount),
 					analysisCount: a ? Number(a.analysisCount) : 0,
 					latestAnalysisAt: a?.latestAnalysisAt
-						? a.latestAnalysisAt.toISOString()
+						? pgTs(a.latestAnalysisAt).toISOString()
 						: null,
 				};
 			})
@@ -597,9 +605,9 @@ async function reconcileJob(
 		const claimed = runRows
 			.filter(
 				(r): r is { run: string; firstAt: Date } =>
-					r.run !== null && r.firstAt >= dispatchedAt,
+					r.run !== null && pgTs(r.firstAt) >= dispatchedAt,
 			)
-			.sort((a, b) => b.firstAt.getTime() - a.firstAt.getTime())[0];
+			.sort((a, b) => pgTs(b.firstAt).getTime() - pgTs(a.firstAt).getTime())[0];
 		if (claimed) {
 			const [updated] = await db
 				.update(jobs)
