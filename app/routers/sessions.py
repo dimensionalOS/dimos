@@ -432,6 +432,13 @@ async def bridge_datachannel(
             detail=f"Datachannel bridge failed ({type(e).__name__}): {e}",
         )
 
+    # TEMP DEBUG (reconnect): which call lacks `id` now that re-push is skipped?
+    log.warning(
+        "bridge resp (prior_state_back=%s): op_pub=%r robot_sub=%r op_sub=%r robot_pub=%r",
+        prior_state_back_id, op_pub, robot_sub, op_sub,
+        (robot_pub if prior_state_back_id is None else "skipped"),
+    )
+
     # Index by dataChannelName from the response, not by request position —
     # don't assume CF preserves order across the array.
     try:
