@@ -896,11 +896,12 @@ mod tests {
         let n_ground = (max_x / voxel_size).ceil() as i32;
 
         let ranges: Vec<f32> = (1..=20).map(|i| i as f32).collect();
-        eprintln!(
-            "voxel_size={voxel_size} lidar_height={lidar_height} grace={} shadow={}",
+        let mut table = format!(
+            "voxel_size={voxel_size} lidar_height={lidar_height} grace={} shadow={}\n\
+             range_m  ground_voxels_in_row  clipped  clipped_pct\n",
             cfg.grace_depth, cfg.shadow_depth
         );
-        eprintln!("range_m  ground_voxels_in_row  clipped  clipped_pct");
+        let mut total_clipped = 0usize;
         for &range in &ranges {
             let mut map = VoxelMap::default();
             for i in 0..n_ground {
@@ -923,8 +924,16 @@ mod tests {
                 .count();
             let clipped = n_before - n_after_ground;
             let pct = 100.0 * clipped as f32 / n_before as f32;
-            eprintln!("{range:>6.1}  {n_before:>20}  {clipped:>7}  {pct:>10.1}");
+            table.push_str(&format!(
+                "{range:>6.1}  {n_before:>20}  {clipped:>7}  {pct:>10.1}\n"
+            ));
+            total_clipped += clipped;
         }
+        eprint!("{table}");
+        assert!(
+            total_clipped == 0,
+            "planar grace regressed, ground voxels clipped:\n{table}"
+        );
     }
 
     #[test]
