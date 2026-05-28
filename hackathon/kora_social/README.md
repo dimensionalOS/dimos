@@ -4,7 +4,7 @@
   <img src="static/brand/kora-banner.png" alt="Kora Social" />
 </p>
 
-Kora Social is a hackathon dashboard for a Unitree Go2 robot that captures its own point of view, drafts X posts with OpenRouter vision models, and lets people ask the robot what it sees through X mentions.
+Kora Social is a dashboard for a Unitree Go2 robot that captures its own point of view, drafts X posts with OpenRouter vision models, and lets people ask the robot what it sees through X mentions.
 
 <p align="center">
   <a href="https://www.dimensionalos.com">
@@ -27,7 +27,7 @@ Kora Social is a hackathon dashboard for a Unitree Go2 robot that captures its o
 ## Links
 
 - Kora on X: [@DimensionalKora](https://x.com/DimensionalKora)
-- MadBuilders: [mad.builders](https://www.mad.builders), a Madrid hub for founders, hackathons, and community events
+- MadBuilders: [mad.builders](https://www.mad.builders), a Madrid home base for founders, builders, hackathons, meetups, and early-stage ideas
 
 ## What it does
 
