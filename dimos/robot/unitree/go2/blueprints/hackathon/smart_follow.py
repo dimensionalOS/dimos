@@ -103,6 +103,7 @@ class SmartFollowSkillContainer(Module):
         self._thread: Thread | None = None
         self._should_stop = Event()
         self._lock = RLock()
+        self._tool_name: str = "smart_follow_person"
 
     @rpc
     def start(self) -> None:
@@ -222,7 +223,9 @@ class SmartFollowSkillContainer(Module):
             next_time += period
             with self._lock:
                 image = self._latest_image
-            assert image is not None
+            if image is None:
+                time.sleep(period)
+                continue
 
             if self._class_mode:
                 candidates = self._get_detections(image, class_filter=self._class_name)
@@ -285,8 +288,9 @@ class SmartFollowSkillContainer(Module):
             buf_matches = [t for t in _buf.values()
                            if t.name.lower() == _cls and (_now - t.last_seen) <= 2.0]
             self._active_ids = {t.track_id for t in buf_matches}
+            self._tool_name = "smart_follow_object"
             set_active_mode("follow")
-            self.start_tool("smart_follow_person")
+            self.start_tool(self._tool_name)
             self._thread = Thread(target=self._follow_loop, daemon=True, name="SmartFollow")
             self._thread.start()
             if not buf_matches:
@@ -305,8 +309,9 @@ class SmartFollowSkillContainer(Module):
         matches = [_Det(m) for m in ranked if m["score"] >= _MATCH_THRESHOLD]
         self._active_ids = {d.track_id for d in matches}
 
+        self._tool_name = "smart_follow_person"
         set_active_mode("follow")
-        self.start_tool("smart_follow_person")
+        self.start_tool(self._tool_name)
         self._thread = Thread(target=self._follow_loop, daemon=True, name="SmartFollow")
         self._thread.start()
 
@@ -330,7 +335,9 @@ class SmartFollowSkillContainer(Module):
 
             with self._lock:
                 image = self._latest_image
-            assert image is not None
+            if image is None:
+                time.sleep(period)
+                continue
 
             # Get detections — shared YOLO pass when fresh
             if self._class_mode:
@@ -383,12 +390,12 @@ class SmartFollowSkillContainer(Module):
                 if lost_count > self._max_lost_frames:
                     if spin_start is None:
                         spin_start = time.monotonic()
-                        self.tool_update("smart_follow_person", f"Lost '{self._query}' — spinning to search.")
+                        self.tool_update(self._tool_name, f"Lost '{self._query}' — spinning to search.")
 
                     if time.monotonic() - spin_start > self._spin_timeout_s:
-                        self.tool_update("smart_follow_person",
+                        self.tool_update(self._tool_name,
                                          f"Full 360° search failed. Could not re-acquire '{self._query}'.")
-                        self.stop_tool("smart_follow_person")
+                        self.stop_tool(self._tool_name)
                         set_active_mode(None)
                         self.cmd_vel.publish(Twist.zero())
                         return
@@ -417,5 +424,5 @@ class SmartFollowSkillContainer(Module):
 
         self.cmd_vel.publish(Twist.zero())
         set_active_mode(None)
-        self.tool_update("smart_follow_person", "Following stopped.")
-        self.stop_tool("smart_follow_person")
+        self.tool_update(self._tool_name, "Following stopped.")
+        self.stop_tool(self._tool_name)
