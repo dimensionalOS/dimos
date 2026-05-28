@@ -306,12 +306,23 @@ class ReidMapModule(Module):
                 return FileResponse(_BGM_MP3, media_type="audio/mpeg")
             return Response(content="bgm.mp3 not found", status_code=503)
 
+        async def serve_house_icon(request):  # type: ignore[no-untyped-def]
+            """Hogwarts house badge for a character; only 4 known files."""
+            name = request.path_params.get("house", "")
+            if name not in ("gryffindor", "hufflepuff", "ravenclaw", "slytherin"):
+                return Response(content="unknown house", status_code=404)
+            path = _TEMPLATES_DIR / "icons" / f"{name}.png"
+            if path.exists():
+                return FileResponse(path, media_type="image/png")
+            return Response(content="icon not found", status_code=404)
+
         starlette_app = Starlette(
             routes=[
                 Route("/", serve_index),
                 Route("/vendor/socketio.js", serve_socketio_js),
                 Route("/vendor/hp_characters.js", serve_hp_js),
                 Route("/vendor/bgm.mp3", serve_bgm),
+                Route("/icons/{house}.png", serve_house_icon),
             ]
         )
         self.app = socketio.ASGIApp(self.sio, starlette_app)

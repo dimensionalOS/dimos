@@ -1,6 +1,7 @@
 window.HP_CHARACTERS = [
 {
 "name": "Harry Potter",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "I solemnly swear that I am up to no good.",
@@ -17,6 +18,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Hermione Granger",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "It's leviOsa, not levioSA!",
@@ -33,6 +35,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Ron Weasley",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Bloody hell.",
@@ -49,6 +52,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Albus Dumbledore",
+"house": null,
 "color": "#7a1f1f",
 "quotes": [
 "Happiness can be found even in the darkest of times.",
@@ -65,6 +69,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Severus Snape",
+"house": null,
 "color": "#1f5a2f",
 "quotes": [
 "Turn to page three hundred and ninety-four.",
@@ -81,6 +86,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Draco Malfoy",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "My father will hear about this.",
@@ -97,6 +103,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Luna Lovegood",
+"house": "R",
 "color": "#2f4a8a",
 "quotes": [
 "You're just as sane as I am.",
@@ -113,6 +120,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Rubeus Hagrid",
+"house": null,
 "color": "#7a1f1f",
 "quotes": [
 "Yer a wizard, Harry.",
@@ -129,6 +137,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Minerva McGonagall",
+"house": null,
 "color": "#7a1f1f",
 "quotes": [
 "Why is it always you three?",
@@ -145,6 +154,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Sirius Black",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "The ones that love us never really leave us.",
@@ -161,6 +171,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Lord Voldemort",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "There is no good and evil, only power.",
@@ -177,6 +188,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Dobby",
+"house": null,
 "color": "#5a3a1a",
 "quotes": [
 "Dobby is free.",
@@ -193,6 +205,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Neville Longbottom",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "I—I'm not sure we should.",
@@ -209,6 +222,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Bellatrix Lestrange",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "Hee hee hee!",
@@ -225,6 +239,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Ginny Weasley",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Try me and find out.",
@@ -241,6 +256,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Fred Weasley",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Care for a Skiving Snackbox?",
@@ -257,6 +273,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "George Weasley",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Care for a Skiving Snackbox?",
@@ -273,6 +290,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Remus Lupin",
+"house": null,
 "color": "#7a1f1f",
 "quotes": [
 "Be kind, it costs nothing.",
@@ -289,6 +307,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Nymphadora Tonks",
+"house": "H",
 "color": "#7a1f1f",
 "quotes": [
 "Oh—sorry, didn't mean to—",
@@ -305,6 +324,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Alastor Moody",
+"house": null,
 "color": "#3a5a3a",
 "quotes": [
 "Bah.",
@@ -321,6 +341,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Kingsley Shacklebolt",
+"house": null,
 "color": "#3a5a3a",
 "quotes": [
 "Hmph.",
@@ -337,6 +358,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Arthur Weasley",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Patience reveals what haste hides.",
@@ -353,6 +375,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Molly Weasley",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Come in, come in, you're freezing.",
@@ -369,6 +392,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Percy Weasley",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "I must insist on proper procedure.",
@@ -385,6 +409,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Bill Weasley",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Hmph.",
@@ -401,6 +426,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Charlie Weasley",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Bah.",
@@ -417,6 +443,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Cedric Diggory",
+"house": "H",
 "color": "#9a7a1f",
 "quotes": [
 "Do you know who I am?",
@@ -433,6 +460,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Cho Chang",
+"house": "R",
 "color": "#2f4a8a",
 "quotes": [
 "Be kind, it costs nothing.",
@@ -449,6 +477,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Cornelius Fudge",
+"house": null,
 "color": "#5a4a6a",
 "quotes": [
 "Have you seen my smile?",
@@ -465,6 +494,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Dolores Umbridge",
+"house": null,
 "color": "#5a4a6a",
 "quotes": [
 "I will have order!",
@@ -481,6 +511,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Gilderoy Lockhart",
+"house": null,
 "color": "#2f4a8a",
 "quotes": [
 "Have you seen my smile?",
@@ -497,6 +528,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Sybill Trelawney",
+"house": null,
 "color": "#2f4a8a",
 "quotes": [
 "I sense a disturbance...",
@@ -513,6 +545,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Filius Flitwick",
+"house": null,
 "color": "#2f4a8a",
 "quotes": [
 "Well, this is going splendidly.",
@@ -529,6 +562,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Pomona Sprout",
+"house": null,
 "color": "#9a7a1f",
 "quotes": [
 "Be kind, it costs nothing.",
@@ -545,6 +579,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Horace Slughorn",
+"house": null,
 "color": "#1f5a2f",
 "quotes": [
 "Well, this is going splendidly.",
@@ -561,6 +596,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Argus Filch",
+"house": null,
 "color": "#4a4a4a",
 "quotes": [
 "How original.",
@@ -577,6 +613,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Madam Pomfrey",
+"house": null,
 "color": "#4a4a4a",
 "quotes": [
 "Drink this, all of it.",
@@ -593,6 +630,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Lucius Malfoy",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "How frightfully common.",
@@ -609,6 +647,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Narcissa Malfoy",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "Do you know who I am?",
@@ -625,6 +664,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Peter Pettigrew",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "I—I'm not sure we should.",
@@ -641,6 +681,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "James Potter",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "I'll not back down, not today.",
@@ -657,6 +698,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Lily Potter",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Be kind, it costs nothing.",
@@ -673,6 +715,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Fleur Delacour",
+"house": null,
 "color": "#4a4a4a",
 "quotes": [
 "Do you know who I am?",
@@ -689,6 +732,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Viktor Krum",
+"house": null,
 "color": "#2a2a3a",
 "quotes": [
 "Hmph.",
@@ -705,6 +749,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Dean Thomas",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Be kind, it costs nothing.",
@@ -721,6 +766,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Seamus Finnigan",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Well, this is going splendidly.",
@@ -737,6 +783,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Lavender Brown",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "I sense a disturbance...",
@@ -753,6 +800,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Parvati Patil",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Well, this is going splendidly.",
@@ -769,6 +817,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Padma Patil",
+"house": "R",
 "color": "#2f4a8a",
 "quotes": [
 "I read about this. Twice.",
@@ -785,6 +834,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Oliver Wood",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "I take this very seriously.",
@@ -801,6 +851,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Angelina Johnson",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "I take this very seriously.",
@@ -817,6 +868,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Katie Bell",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Try me and find out.",
@@ -833,6 +885,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Lee Jordan",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Well, this is going splendidly.",
@@ -849,6 +902,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Colin Creevey",
+"house": "G",
 "color": "#7a1f1f",
 "quotes": [
 "Oh—sorry, didn't mean to—",
@@ -865,6 +919,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Ernie Macmillan",
+"house": "H",
 "color": "#9a7a1f",
 "quotes": [
 "I must insist on proper procedure.",
@@ -881,6 +936,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Hannah Abbott",
+"house": "H",
 "color": "#9a7a1f",
 "quotes": [
 "There, there, no harm done.",
@@ -897,6 +953,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Justin Finch-Fletchley",
+"house": "H",
 "color": "#9a7a1f",
 "quotes": [
 "I take this very seriously.",
@@ -913,6 +970,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Susan Bones",
+"house": "H",
 "color": "#9a7a1f",
 "quotes": [
 "Oh—sorry, didn't mean to—",
@@ -929,6 +987,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Zacharias Smith",
+"house": "H",
 "color": "#9a7a1f",
 "quotes": [
 "How original.",
@@ -945,6 +1004,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Terry Boot",
+"house": "R",
 "color": "#2f4a8a",
 "quotes": [
 "I read about this. Twice.",
@@ -961,6 +1021,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Michael Corner",
+"house": "R",
 "color": "#2f4a8a",
 "quotes": [
 "How original.",
@@ -977,6 +1038,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Marcus Flint",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "Bah.",
@@ -993,6 +1055,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Vincent Crabbe",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "Bah.",
@@ -1009,6 +1072,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Gregory Goyle",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "Bah.",
@@ -1025,6 +1089,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Pansy Parkinson",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "How original.",
@@ -1041,6 +1106,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Blaise Zabini",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "Hmph.",
@@ -1057,6 +1123,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Theodore Nott",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "Oh—sorry, didn't mean to—",
@@ -1073,6 +1140,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Fenrir Greyback",
+"house": null,
 "color": "#2a2a3a",
 "quotes": [
 "You will regret crossing me.",
@@ -1089,6 +1157,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Antonin Dolohov",
+"house": "S",
 "color": "#2a2a3a",
 "quotes": [
 "You will regret crossing me.",
@@ -1105,6 +1174,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Rodolphus Lestrange",
+"house": "S",
 "color": "#2a2a3a",
 "quotes": [
 "I'm with you, to the end.",
@@ -1121,6 +1191,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Rabastan Lestrange",
+"house": "S",
 "color": "#2a2a3a",
 "quotes": [
 "You will regret crossing me.",
@@ -1137,6 +1208,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Walden Macnair",
+"house": null,
 "color": "#2a2a3a",
 "quotes": [
 "The Dark Lord rewards the faithful.",
@@ -1153,6 +1225,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Barty Crouch Jr",
+"house": "S",
 "color": "#2a2a3a",
 "quotes": [
 "Hee hee hee!",
@@ -1169,6 +1242,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Barty Crouch Sr",
+"house": null,
 "color": "#5a4a6a",
 "quotes": [
 "I must insist on proper procedure.",
@@ -1185,6 +1259,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Igor Karkaroff",
+"house": null,
 "color": "#2a2a3a",
 "quotes": [
 "I—I'm not sure we should.",
@@ -1201,6 +1276,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Madame Maxime",
+"house": null,
 "color": "#4a4a4a",
 "quotes": [
 "Do you know who I am?",
@@ -1217,6 +1293,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Grawp",
+"house": null,
 "color": "#5a3a1a",
 "quotes": [
 "Oh—sorry, didn't mean to—",
@@ -1233,6 +1310,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Firenze",
+"house": null,
 "color": "#5a3a1a",
 "quotes": [
 "Patience reveals what haste hides.",
@@ -1249,6 +1327,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Bane",
+"house": null,
 "color": "#5a3a1a",
 "quotes": [
 "Do you know who I am?",
@@ -1265,6 +1344,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Aragog",
+"house": null,
 "color": "#5a3a1a",
 "quotes": [
 "Patience reveals what haste hides.",
@@ -1281,6 +1361,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Buckbeak",
+"house": null,
 "color": "#5a3a1a",
 "quotes": [
 "Do you know who I am?",
@@ -1297,6 +1378,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Fawkes",
+"house": null,
 "color": "#5a3a1a",
 "quotes": [
 "I'm with you, to the end.",
@@ -1313,6 +1395,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Kreacher",
+"house": null,
 "color": "#5a3a1a",
 "quotes": [
 "How original.",
@@ -1329,6 +1412,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Winky",
+"house": null,
 "color": "#5a3a1a",
 "quotes": [
 "I'm with you, to the end.",
@@ -1345,6 +1429,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Griphook",
+"house": null,
 "color": "#5a3a1a",
 "quotes": [
 "Gold remembers its owner.",
@@ -1361,6 +1446,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Ollivander",
+"house": "R",
 "color": "#4a4a4a",
 "quotes": [
 "The wand chooses the wizard.",
@@ -1377,6 +1463,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Mr Borgin",
+"house": null,
 "color": "#2a2a3a",
 "quotes": [
 "How original.",
@@ -1393,6 +1480,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Tom the Innkeeper",
+"house": null,
 "color": "#4a4a4a",
 "quotes": [
 "Be kind, it costs nothing.",
@@ -1409,6 +1497,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Stan Shunpike",
+"house": null,
 "color": "#4a4a4a",
 "quotes": [
 "Well, this is going splendidly.",
@@ -1425,6 +1514,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Ernie Prang",
+"house": null,
 "color": "#4a4a4a",
 "quotes": [
 "I'm getting too old for this.",
@@ -1441,6 +1531,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Rita Skeeter",
+"house": "S",
 "color": "#4a4a4a",
 "quotes": [
 "Care to comment, dear?",
@@ -1457,6 +1548,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Xenophilius Lovegood",
+"house": "R",
 "color": "#2f4a8a",
 "quotes": [
 "Things are often stranger than they seem.",
@@ -1473,6 +1565,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Mad Auntie Muriel",
+"house": null,
 "color": "#7a1f1f",
 "quotes": [
 "Bah.",
@@ -1489,6 +1582,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Andromeda Tonks",
+"house": "S",
 "color": "#7a1f1f",
 "quotes": [
 "Come in, come in, you're freezing.",
@@ -1505,6 +1599,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Regulus Black",
+"house": "S",
 "color": "#1f5a2f",
 "quotes": [
 "I'll not back down, not today.",
@@ -1521,6 +1616,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Aberforth Dumbledore",
+"house": "G",
 "color": "#3a5a3a",
 "quotes": [
 "Bah.",
@@ -1537,6 +1633,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Gellert Grindelwald",
+"house": null,
 "color": "#2a2a3a",
 "quotes": [
 "For the greater good.",
@@ -1553,6 +1650,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Newt Scamander",
+"house": "H",
 "color": "#9a7a1f",
 "quotes": [
 "Oh—sorry, didn't mean to—",
@@ -1569,6 +1667,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Nicolas Flamel",
+"house": null,
 "color": "#4a4a4a",
 "quotes": [
 "Patience reveals what haste hides.",
@@ -1585,6 +1684,7 @@ window.HP_CHARACTERS = [
 },
 {
 "name": "Quirinus Quirrell",
+"house": null,
 "color": "#2a2a3a",
 "quotes": [
 "Oh—sorry, didn't mean to—",

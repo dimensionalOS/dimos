@@ -75,6 +75,10 @@
     .roster li img { width: 34px; height: 34px; object-fit: cover;
       border: 1.5px solid var(--ink); border-radius: 3px; background: #b9a373; }
     .roster li .who { font-family: "IM Fell English SC", serif; font-size: 15px; }
+    /* Hogwarts house badge in the roster row. */
+    .roster li .house { width: 18px; height: 18px; object-fit: contain;
+      image-rendering: -webkit-optimize-contrast; flex-shrink: 0;
+      filter: drop-shadow(0 1px 2px rgba(0,0,0,.25)); }
     .roster li .age { margin-left: auto; font-style: italic; font-size: 11px;
       color: var(--ink-soft); }
     .roster .none { font-style: italic; font-size: 13px; color: var(--ink-soft);
@@ -137,6 +141,13 @@
     .gallery .card .pic { width: 100%; aspect-ratio: 1 / 1; background: #b9a373;
       border: 1.5px solid var(--ink); border-radius: 4px; object-fit: cover;
       display: block; }
+    .gallery .card .house-badge { position: absolute; top: 4px; right: 4px;
+      width: 26px; height: 26px; object-fit: contain;
+      image-rendering: -webkit-optimize-contrast;
+      filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); pointer-events: none; }
+    .tip .house-row { display: flex; align-items: center; gap: 6px;
+      margin-top: 4px; font-size: 12px; }
+    .tip .house-row img { width: 18px; height: 18px; object-fit: contain; }
     .gallery .card .nm { font-family: "IM Fell English SC", serif; font-size: 14px;
       margin-top: 6px; line-height: 1.15; }
     .gallery .card .age { font-style: italic; font-size: 11px; color: var(--ink-soft);
@@ -587,6 +598,10 @@
   <!-- Floating per-person tooltip (hover roster / gallery / map markers). -->
   <div class="tip" id="tip">
     <div class="nm" id="tip-nm"></div>
+    <div class="house-row" id="tip-house" style="display:none">
+      <img id="tip-house-icon" alt="" />
+      <span id="tip-house-name"></span>
+    </div>
     <div class="meta" id="tip-meta"></div>
     <div class="quote" id="tip-quote"></div>
   </div>
@@ -773,6 +788,19 @@
     }
     function colorFor(p) {
       return isDog(p) ? DOG_INK : characterFor(p.id).color;
+    }
+    // Hogwarts house metadata — keyed by the one-letter code baked into
+    // hp_characters.js. `null`/missing = no badge (teacher, creature, etc.)
+    const HOUSE_META = {
+      G: { name: 'Gryffindor', icon: '/icons/gryffindor.png', color: '#7a1f1f' },
+      H: { name: 'Hufflepuff', icon: '/icons/hufflepuff.png', color: '#7a5f1f' },
+      R: { name: 'Ravenclaw',  icon: '/icons/ravenclaw.png',  color: '#1f3a7a' },
+      S: { name: 'Slytherin',  icon: '/icons/slytherin.png',  color: '#1f5a3a' },
+    };
+    function houseOf(p) {
+      if (isDog(p)) return null;
+      const ch = characterFor(p.id);
+      return ch && ch.house ? HOUSE_META[ch.house] || null : null;
     }
 
     let portraitRects = [];          // clickable portrait hit-boxes on the map
@@ -1364,22 +1392,28 @@
         const age = (p.age != null) ? `${p.age}s ago` : '';
         const tag = dog ? '<span class="tag">Go2</span>' : '';
         const col = colorFor(p);
-        li.innerHTML = `${thumb}<span class="who" style="color:${col}">${labelFor(p)}</span>${tag}<span class="age">${age}</span>`;
+        const h = houseOf(p);
+        const houseBadge = h
+          ? `<img class="house" src="${h.icon}" alt="${h.name}" title="${h.name}">`
+          : '';
+        li.innerHTML = `${thumb}<span class="who" style="color:${col}">${labelFor(p)}</span>${houseBadge}${tag}<span class="age">${age}</span>`;
 
         if (dog) {
           // Dog row: legacy behavior — clicking opens portrait if any.
           li.style.cursor = p.photo ? 'zoom-in' : 'default';
           li.onclick = () => { if (p.photo) requestPhoto(p.id, labelFor(p)); };
         } else {
-          // Person row: whole row picks this person for lock-and-follow.
+          // Person row: same UX as clicking a footprint on the map -- the
+          // confirm parchment pops first, so the user gets one parchment to
+          // back out of. Tracking the same person again still releases.
           li.classList.add('selectable');
           if (selectedId === p.id) li.classList.add('selected');
-          li.title = 'click to track · click again to release';
+          li.title = 'click to track (asks first) · click the tracked row to release';
           li.onclick = () => {
             if (selectedId === p.id) {
               setSelection(null, null);
             } else {
-              setSelection(p.id, labelFor(p));
+              askConfirm(p);
             }
           };
           // Small zoom icon preserves access to the lightbox without
@@ -1545,9 +1579,22 @@
       if (!ch || !ch.quotes || !ch.quotes.length) return '';
       return '"' + ch.quotes[Math.floor(Math.random() * ch.quotes.length)] + '"';
     }
+    const tipHouseRow = document.getElementById('tip-house');
+    const tipHouseIcon = document.getElementById('tip-house-icon');
+    const tipHouseName = document.getElementById('tip-house-name');
     function showTip(p, ev) {
       tipNm.textContent = labelFor(p);
       tipNm.style.color = colorFor(p);
+      const h = houseOf(p);
+      if (h) {
+        tipHouseIcon.src = h.icon;
+        tipHouseIcon.alt = h.name;
+        tipHouseName.textContent = h.name;
+        tipHouseName.style.color = h.color;
+        tipHouseRow.style.display = 'flex';
+      } else {
+        tipHouseRow.style.display = 'none';
+      }
       tipMeta.textContent = (isDog(p) ? 'Unitree Go2 · ' : 'Person · ') + fmtMeta(p);
       tipQuote.textContent = sampleQuote(p);
       tipEl.classList.add('on');
@@ -1604,8 +1651,13 @@
           : `<div class="pic"></div>`;
         const tag = isDog(p) ? '<span class="tag">Go2</span>' : '';
         const age = (p.age != null) ? `${p.age}s ago` : '';
+        const h = houseOf(p);
+        const houseImg = h
+          ? `<img class="house-badge" src="${h.icon}" alt="${h.name}" title="${h.name}">`
+          : '';
         card.innerHTML = `
           ${imgHtml}
+          ${houseImg}
           ${tag}
           <div class="nm" style="color:${col}">${labelFor(p)}</div>
           <div class="age">${age}</div>
