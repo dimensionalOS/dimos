@@ -5,7 +5,6 @@ import {
   type EIP1193Provider,
   http,
   parseEventLogs,
-  stringToHex,
 } from "viem";
 import { sepolia } from "viem/chains";
 
@@ -30,8 +29,8 @@ export const REPUTATION_REGISTRY = (process.env
 
 export const reputationConfigured = REPUTATION_REGISTRY.length > 0;
 
-const ZERO_TAG = `0x${"00".repeat(32)}` as `0x${string}`;
-const TASK_RATING_TAG = stringToHex("taskRating", { size: 32 });
+const ZERO_HASH = `0x${"00".repeat(32)}` as `0x${string}`;
+const TASK_RATING_TAG = "taskRating";
 
 export const IDENTITY_ABI = [
   {
@@ -73,9 +72,11 @@ export const REPUTATION_ABI = [
       { name: "agentId", type: "uint256" },
       { name: "value", type: "int128" },
       { name: "valueDecimals", type: "uint8" },
-      { name: "tag1", type: "bytes32" },
-      { name: "tag2", type: "bytes32" },
+      { name: "tag1", type: "string" },
+      { name: "tag2", type: "string" },
       { name: "endpoint", type: "string" },
+      { name: "feedbackURI", type: "string" },
+      { name: "feedbackHash", type: "bytes32" },
     ],
     outputs: [],
   },
@@ -86,8 +87,8 @@ export const REPUTATION_ABI = [
     inputs: [
       { name: "agentId", type: "uint256" },
       { name: "clients", type: "address[]" },
-      { name: "tag1", type: "bytes32" },
-      { name: "tag2", type: "bytes32" },
+      { name: "tag1", type: "string" },
+      { name: "tag2", type: "string" },
     ],
     outputs: [
       { name: "count", type: "uint64" },
@@ -153,7 +154,7 @@ export async function getReputationSummary(
       address: REPUTATION_REGISTRY as `0x${string}`,
       abi: REPUTATION_ABI,
       functionName: "getSummary",
-      args: [BigInt(agentId), [], ZERO_TAG, ZERO_TAG],
+      args: [BigInt(agentId), [], "", ""],
     })) as readonly [bigint, bigint, number];
     const count = Number(res[0]);
     if (count === 0) return { count: 0, avg: 0 };
@@ -181,7 +182,7 @@ export async function giveFeedbackOnchain(
     address: REPUTATION_REGISTRY as `0x${string}`,
     abi: REPUTATION_ABI,
     functionName: "giveFeedback",
-    args: [BigInt(agentId), BigInt(rating), 0, TASK_RATING_TAG, ZERO_TAG, ""],
+    args: [BigInt(agentId), BigInt(rating), 0, TASK_RATING_TAG, "", "", "", ZERO_HASH],
   });
 }
 

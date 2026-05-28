@@ -17,20 +17,42 @@ export async function handleAgentCard(
     .limit(1);
   if (!row) return new Response("unknown agent", { status: 404 });
 
+  const base = baseUrl.replace(/\/$/, "");
   const card = {
     name: row.name,
     description: row.description,
     tagline: row.tagline,
-    image: row.emoji ?? null,
+    // Stable identifier the on-chain `image` resolves through — backed by the
+    // agent's uploaded avatar (object storage) once set, 404 until then. The
+    // card is served live, so the photo can be added without re-registering.
+    image: `${base}/api/agents/${row.slug}/avatar`,
+    emoji: row.emoji ?? null,
     type: "robot-agent",
     provider: "robomoo",
     chain: row.chain,
     capabilities: row.capabilities,
     services: row.services,
-    url: `${baseUrl.replace(/\/$/, "")}/agents/${row.slug}`,
-    cardUrl: `${baseUrl.replace(/\/$/, "")}/api/agents/${row.slug}/card.json`,
+    url: `${base}/agents/${row.slug}`,
+    cardUrl: `${base}/api/agents/${row.slug}/card.json`,
     ...(row.agentId ? { agentId: row.agentId } : {}),
     ...(row.agentWallet ? { agentWallet: row.agentWallet } : {}),
   };
   return Response.json(card);
+}
+
+// Stable avatar endpoint referenced by the agent card's `image`. Redirects to a
+// presigned URL of the agent's uploaded avatar; returns 404 until one is set.
+export async function handleAgentAvatar(
+  db: Database,
+  slug: string,
+  presignGet: (key: string, expiresIn?: number) => Promise<string>,
+): Promise<Response> {
+  const [row] = await db
+    .select({ avatarKey: agents.avatarKey })
+    .from(agents)
+    .where(eq(agents.slug, slug))
+    .limit(1);
+  if (!row?.avatarKey) return new Response("no avatar", { status: 404 });
+  const url = await presignGet(row.avatarKey, 6 * 60 * 60);
+  return Response.redirect(url, 302);
 }

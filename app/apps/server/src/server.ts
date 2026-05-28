@@ -10,7 +10,7 @@ import { newId } from "@robomoo/shared";
 import { Hono } from "hono";
 import { auth } from "./auth/auth";
 import { env } from "./env";
-import { handleAgentCard } from "./http/agents";
+import { handleAgentAvatar, handleAgentCard } from "./http/agents";
 import {
 	handleRobotFrame,
 	handleRobotFrameAnalysis,
@@ -91,6 +91,11 @@ app.post("/api/robot/trajectory", (c) => handleRobotTrajectory(c.req.raw, db));
 // ERC-8004 agentURI document — the metadata `register(agentURI)` points at.
 app.get("/api/agents/:slug/card.json", (c) =>
 	handleAgentCard(db, c.req.param("slug"), env.APP_URL),
+);
+
+// Stable avatar URL referenced by the card's `image` (presigned redirect).
+app.get("/api/agents/:slug/avatar", (c) =>
+	handleAgentAvatar(db, c.req.param("slug"), presignGet),
 );
 
 // Public read API for room scans, grouped run → positions → angle-sorted images
