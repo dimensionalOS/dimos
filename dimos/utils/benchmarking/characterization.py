@@ -44,25 +44,35 @@ proves the measure->fit->derive code runs; the artifact is stamped
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from datetime import date
 import math
 from pathlib import Path
+import queue
 import threading
 import time
+from typing import Any, Literal
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from reactivex.disposable import Disposable
 
 from dimos.control.components import make_twist_base_joints
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Int8 import Int8
+from dimos.robot.unitree.keyboard_teleop import GATE_ADVANCE, GATE_QUIT, GATE_SKIP
+from dimos.utils.path_utils import get_project_root
 
 # Well-known LCM topics — every ControlCoordinator blueprint honors this
 # contract (twist_command In = /cmd_vel, joint_state Out =
@@ -87,6 +97,79 @@ _CHANNELS = ("vx", "vy", "wz")
 _SIM_DT = 0.02  # in-process self-test integration step (not robot-specific)
 
 REPORTS_DIR = Path(__file__).parent / "reports"
+# New default landing dir for tuning artifacts: <repo>/data/characterization/<robot_id>/.
+# REPORTS_DIR is retained as the package-local location for the README / docs,
+# not as the artifact output default.
+DEFAULT_OUT_DIR = get_project_root() / "data" / "characterization"
+
+
+def reconstruct_body_velocities(
+    ts: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    yaw: np.ndarray,
+    window: int = 5,
+    order: int = 2,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Recover body-frame (vx, vy, dyaw) from a buffered pose trace.
+
+    The pipeline is intentionally smooth-position-then-differentiate
+    (not differentiate-then-smooth): odom measures position directly,
+    and numerical differentiation amplifies high-frequency noise that no
+    amount of post-hoc smoothing fully recovers from. On a legged base
+    the dominant "noise" is body bob at gait frequency — buffering raw
+    pose, applying Savitzky-Golay to the position trace, then
+    central-differencing the smoothed series gives a much cleaner
+    velocity signal for the FOPDT fit. Matches the historical
+    ``analyze.py`` pipeline.
+
+    ``window`` must be odd and > ``order``; falls back to no smoothing
+    if the buffer is too short."""
+    from scipy.signal import savgol_filter
+
+    yaw_u = np.unwrap(yaw)
+    if len(ts) >= window and window % 2 == 1 and order < window:
+        xf = savgol_filter(x, window, order)
+        yf = savgol_filter(y, window, order)
+        yawf = savgol_filter(yaw_u, window, order)
+    else:
+        xf, yf, yawf = x, y, yaw_u
+    dx = np.gradient(xf, ts)
+    dy = np.gradient(yf, ts)
+    dyaw = np.gradient(yawf, ts)
+    c, s = np.cos(yawf), np.sin(yawf)
+    vx = c * dx + s * dy
+    vy = -s * dx + c * dy
+    return vx, vy, dyaw
+
+
+def _hampel(ys: np.ndarray, window: int = 11, n_sigma: float = 3.0) -> tuple[np.ndarray, int]:
+    """Hampel outlier filter — replace points >n_sigma·MAD from the local
+    median with the local median. Window-centered; preserves trace length.
+
+    Returns (filtered_array, n_replaced). MAD is scaled by 1.4826 so
+    n_sigma is in Gaussian-sigma units. Spikes from leg impacts / odom
+    estimator glitches get surgically removed; the rest of the trace is
+    untouched (the goal is to keep FOPDT step shape readable, not
+    smooth-out the dynamics)."""
+    if window <= 0 or len(ys) < window:
+        return ys.copy(), 0
+    half = window // 2
+    n = len(ys)
+    out = ys.copy()
+    replaced = 0
+    for i in range(n):
+        lo = max(0, i - half)
+        hi = min(n, i + half + 1)
+        w = ys[lo:hi]
+        med = float(np.median(w))
+        mad = float(np.median(np.abs(w - med)))
+        if mad == 0.0:
+            continue
+        if abs(ys[i] - med) > n_sigma * 1.4826 * mad:
+            out[i] = med
+            replaced += 1
+    return out, replaced
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -185,12 +268,20 @@ def _plot_fits(
         for tr in [t for t in traces if t["channel"] == ch]:
             t_arr = tr["t"]
             (line,) = ax.plot(t_arr, tr["y"], lw=1.4, alpha=0.85, label=f"meas @{tr['amp']:g}")
+            y_raw = tr.get("y_raw")
+            if y_raw is not None and tr.get("n_replaced", 0) > 0:
+                ax.plot(t_arr, y_raw, ":", lw=0.9, color=line.get_color(), alpha=0.5)
             yhat = fopdt_step_response(t_arr, tr["K"], tr["tau"], tr["L"], tr["amp"])
             ax.plot(t_arr, yhat, "--", lw=1.4, color=line.get_color(), alpha=0.9)
             row = list(t2["amp"] for t2 in traces if t2["channel"] == ch).index(tr["amp"])
-            ax.annotate(
+            ann = (
                 f"@{tr['amp']:g}: K={tr['K']:.3f} τ={tr['tau']:.3f} "
-                f"L={tr['L']:.3f} r²={tr['r2']:.2f}",
+                f"L={tr['L']:.3f} r²={tr['r2']:.2f}"
+            )
+            if tr.get("n_replaced", 0) > 0:
+                ann += f" (hampel: {tr['n_replaced']})"
+            ax.annotate(
+                ann,
                 xy=(0.02, 0.97 - 0.06 * row),
                 xycoords="axes fraction",
                 ha="left",
@@ -199,7 +290,7 @@ def _plot_fits(
                 color=line.get_color(),
             )
         unit = "rad/s" if ch == "wz" else "m/s"
-        ax.set_title(f"{ch}  (solid = measured, dashed = FOPDT fit)")
+        ax.set_title(f"{ch}  (solid = filtered, dotted = raw, dashed = FOPDT fit)")
         ax.set_xlabel("time since step edge (s)")
         ax.set_ylabel(f"{ch} ({unit})")
         ax.grid(True, alpha=0.3)
@@ -218,22 +309,22 @@ def _plot_fits(
 
 
 class _JointStatePoseStream:
-    """Pose + body-velocity stream sourced from a coordinator's
-    ``joint_state`` Out. Reuses the benchmark observer's math: positions
-    are [x, y, yaw] (twist-base adapter convention); body-frame velocity
-    is recovered by EMA-smoothed pose differentiation. Drop-in
-    replacement for the old standalone /odom LCM subscriber +
-    in-house ``_PoseVelocityEstimator``."""
+    """Pose stream sourced from a coordinator's ``joint_state`` Out.
+    Positions are [x, y, yaw] (twist-base adapter convention). Buffers
+    raw pose samples between :meth:`start_buffering` and
+    :meth:`stop_and_pop` so callers can reconstruct body-frame
+    velocity at step end (via :func:`reconstruct_body_velocities`)
+    rather than per-sample. Smooth-then-differentiate is much cleaner
+    than differentiate-then-smooth on legged-robot data — see that
+    function's docstring."""
 
-    def __init__(self, joint_names: list[str], alpha: float = 0.5) -> None:
+    def __init__(self, joint_names: list[str]) -> None:
         self._jx, self._jy, self._jyaw = joint_names
-        self._alpha = alpha
         self._lock = threading.Lock()
         self._pose: PoseStamped | None = None
         self._pose_t: float = 0.0
-        self._prev_pose: PoseStamped | None = None
-        self._prev_t: float | None = None
-        self._vx = self._vy = self._wz = 0.0
+        self._buffer: list[tuple[float, float, float, float]] = []
+        self._buffering: bool = False
 
     def on_joint_state(self, msg: JointState) -> None:
         if not msg.name:
@@ -256,34 +347,33 @@ class _JointStatePoseStream:
             orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
         )
         with self._lock:
-            if self._prev_pose is not None and self._prev_t is not None:
-                dt = now - self._prev_t
-                if dt > 0:
-                    dx = pose.position.x - self._prev_pose.position.x
-                    dy = pose.position.y - self._prev_pose.position.y
-                    y0 = self._prev_pose.orientation.euler[2]
-                    y1 = pose.orientation.euler[2]
-                    dyaw = (y1 - y0 + math.pi) % (2 * math.pi) - math.pi
-                    c, s = math.cos(y1), math.sin(y1)
-                    bx = (dx / dt) * c + (dy / dt) * s
-                    by = -(dx / dt) * s + (dy / dt) * c
-                    a = self._alpha
-                    self._vx = a * bx + (1 - a) * self._vx
-                    self._vy = a * by + (1 - a) * self._vy
-                    self._wz = a * (dyaw / dt) + (1 - a) * self._wz
-            self._prev_pose, self._prev_t = pose, now
             self._pose, self._pose_t = pose, now
+            if self._buffering:
+                self._buffer.append((now, x, y, yaw))
 
-    def latest(self) -> tuple[PoseStamped | None, float, tuple[float, float, float]]:
+    def latest(self) -> tuple[PoseStamped | None, float]:
         with self._lock:
-            return self._pose, self._pose_t, (self._vx, self._vy, self._wz)
+            return self._pose, self._pose_t
 
-    def reset_velocity(self) -> None:
-        """Drop EMA state — called at pre-roll so each step starts clean."""
+    def start_buffering(self) -> None:
+        """Begin recording raw pose samples — called at step start."""
         with self._lock:
-            self._vx = self._vy = self._wz = 0.0
-            self._prev_pose = None
-            self._prev_t = None
+            self._buffer = []
+            self._buffering = True
+
+    def stop_and_pop(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Stop buffering and return (ts, x, y, yaw) arrays for the step."""
+        with self._lock:
+            self._buffering = False
+            buf = self._buffer
+            self._buffer = []
+        if not buf:
+            empty = np.array([], dtype=float)
+            return empty, empty, empty, empty
+        arr = np.asarray(buf, dtype=float)
+        return arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3]
 
 
 def _prereq_banner(profile: RobotPlantProfile) -> None:
@@ -309,6 +399,12 @@ def _fit_hw(
     pre_roll_s: float,
     warmup_s: float,
     max_dist: float,
+    gate_input: Callable[[str], str] = input,
+    gate_keys_label: str = "ENTER=run  s=skip  q=quit",
+    savgol_window: int = 11,
+    savgol_order: int = 2,
+    hampel_window: int = 11,
+    hampel_n_sigma: float = 3.0,
 ) -> tuple[TwistBasePlantParams, dict, list[dict]]:
     _prereq_banner(profile)
     hw_dt = 1.0 / profile.tick_rate_hz
@@ -350,7 +446,7 @@ def _fit_hw(
     print(f"[hw] waiting up to {warmup_s:.0f}s for {_JOINT_STATE_TOPIC} ...")
     deadline = time.perf_counter() + warmup_s
     while time.perf_counter() < deadline:
-        p, _, _ = stream.latest()
+        p, _ = stream.latest()
         if p is not None:
             break
         time.sleep(0.05)
@@ -369,9 +465,9 @@ def _fit_hw(
             for amp in profile.si_amplitudes[channel]:
                 safe_stop()
                 resp = (
-                    input(
+                    gate_input(
                         f"\n[{channel}@{amp}] reposition robot into clear space, "
-                        f"ENTER=run  s=skip  q=quit: "
+                        f"{gate_keys_label}: "
                     )
                     .strip()
                     .lower()
@@ -382,8 +478,10 @@ def _fit_hw(
                     print("  skipped")
                     continue
 
-                # pre-roll zeros (settle + prime estimator)
-                stream.reset_velocity()
+                # pre-roll zeros (settle). Buffer during pre-roll too so
+                # the pre-step samples give us a noise_std estimate
+                # (robot at rest, zero commanded — pure odom noise).
+                stream.start_buffering()
                 t_end = time.perf_counter() + pre_roll_s
                 while time.perf_counter() < t_end:
                     publish(0.0, 0.0, 0.0)
@@ -394,11 +492,12 @@ def _fit_hw(
                 # time cap would run the robot out of the test area), or
                 # t_rel > step_s (time safety cap; also the terminator for
                 # wz, which spins in place and never accumulates distance).
+                # Body-frame velocity is reconstructed from buffered pose
+                # AFTER the step — smooth-then-differentiate gives a much
+                # cleaner trace on a legged base than per-tick differentiation.
                 cmd = {"vx": 0.0, "vy": 0.0, "wz": 0.0}
                 cmd[channel] = amp
-                ts: list[float] = []
-                ys: list[float] = []
-                sp, _, _ = stream.latest()
+                sp, _ = stream.latest()
                 if sp is None:
                     print("  [abort] lost odom before step")
                     continue
@@ -411,7 +510,7 @@ def _fit_hw(
                     if t_rel > step_s:
                         break
                     publish(cmd["vx"], cmd["vy"], cmd["wz"])
-                    p, pt, v = stream.latest()
+                    p, pt = stream.latest()
                     if p is None or now - pt > profile.odom_stale_s:
                         print(f"  [abort] stale odom ({now - pt:.2f}s)")
                         end_reason = "stale"
@@ -420,21 +519,50 @@ def _fit_hw(
                     if dist >= max_dist:
                         end_reason = "dist"
                         break
-                    ts.append(t_rel)
-                    ys.append(v[_CHANNELS.index(channel)])
                     time.sleep(hw_dt)
+                ts_abs, x_buf, y_buf, yaw_buf = stream.stop_and_pop()
                 safe_stop()
 
-                if len(ys) < 5:
+                if len(ts_abs) < max(5, savgol_window):
                     print(f"  [warn] {channel}@{amp}: too few samples, skip")
                     continue
-                fp = fit_fopdt(np.asarray(ts), np.asarray(ys), u_step=amp)
+                ts_rel = ts_abs - t0
+                vx_all, vy_all, dyaw_all = reconstruct_body_velocities(
+                    ts_rel, x_buf, y_buf, yaw_buf, window=savgol_window, order=savgol_order
+                )
+                ys_all = {"vx": vx_all, "vy": vy_all, "wz": dyaw_all}[channel]
+                # Split pre/post step. Pre is zero-commanded baseline -
+                # std of that velocity = our noise estimate.
+                pre_mask = ts_rel < 0.0
+                post_mask = ~pre_mask
+                if post_mask.sum() < max(5, savgol_window):
+                    print(f"  [warn] {channel}@{amp}: too few post-step samples, skip")
+                    continue
+                noise_std: float | None = None
+                if pre_mask.sum() >= 3:
+                    noise_std = float(np.std(ys_all[pre_mask]))
+                ts_fit = ts_rel[post_mask]
+                ys_raw = ys_all[post_mask]
+                ys_filt, n_replaced = _hampel(ys_raw, hampel_window, hampel_n_sigma)
+                if n_replaced:
+                    print(f"  hampel: replaced {n_replaced}/{len(ys_raw)} outliers")
+                # Floor L at the actual data sample period — fit cannot
+                # physically resolve deadtime finer than odom rate.
+                dt_med = float(np.median(np.diff(ts_fit))) if len(ts_fit) > 1 else 0.0
+                fp = fit_fopdt(
+                    ts_fit,
+                    ys_filt,
+                    u_step=amp,
+                    min_deadtime=dt_med,
+                    noise_std=noise_std,
+                    two_stage=noise_std is not None,
+                )
                 if not fp.converged or not np.isfinite([fp.K, fp.tau, fp.L]).all():
                     print(f"  [warn] {channel}@{amp}: fit failed ({fp.reason})")
                     continue
                 print(
                     f"  {channel}@{amp}: K={fp.K:.3f} tau={fp.tau:.3f} "
-                    f"L={fp.L:.3f}  ({len(ys)} samples, ended on {end_reason})"
+                    f"L={fp.L:.3f}  ({len(ys_raw)} samples, ended on {end_reason})"
                 )
                 fits.append(fp)
                 per_amplitude[channel].append(
@@ -444,8 +572,10 @@ def _fit_hw(
                     {
                         "channel": channel,
                         "amp": amp,
-                        "t": np.asarray(ts, dtype=float),
-                        "y": np.asarray(ys, dtype=float),
+                        "t": np.asarray(ts_fit, dtype=float),
+                        "y_raw": ys_raw,
+                        "n_replaced": n_replaced,
+                        "y": ys_filt,
                         "K": fp.K,
                         "tau": fp.tau,
                         "L": fp.L,
@@ -482,11 +612,185 @@ def _fit_hw(
     )
 
 
+class CharacterizerConfig(ModuleConfig):
+    """Config for :class:`Characterizer`. Each field mirrors a CLI flag on
+    the existing ``characterization`` entrypoint; ``None`` means "fall
+    back to the selected ``RobotPlantProfile``".
+
+    ``gate_source`` selects how each SI step is gated. ``"stdin"``
+    (default, CLI mode) reads ENTER/s/q from the terminal; ``"stream"``
+    (blueprint mode) consumes events from the ``gate`` In port wired to
+    a co-running :class:`~dimos.robot.unitree.keyboard_teleop.KeyboardTeleop`
+    that publishes ENTER/K/Backspace as ``"advance"``/``"skip"``/``"quit"``.
+    """
+
+    robot: str = "go2"
+    mode: Literal["hw", "self-test"] = "hw"
+    out: str | None = None
+    robot_id: str | None = None
+    surface: str = "concrete"
+    gait_mode: str = "default"
+    step_s: float | None = None
+    pre_roll_s: float | None = None
+    odom_warmup: float | None = None
+    max_dist: float | None = None
+    gate_source: Literal["stdin", "stream"] = "stdin"
+    # Savitzky-Golay smoothing applied to the POSITION trace before
+    # central-differencing to body-frame velocity. This is the main
+    # noise-rejection knob for legged-robot data: gait-frequency body
+    # bob lives in the raw pose; smooth-then-differentiate keeps it out
+    # of the velocity signal. Window must be odd and > order. Set
+    # window=0 or window <= order to disable.
+    # Default 11 = ~2 gait cycles at 10 Hz tick rate / 2 Hz Go2 trot;
+    # synthetic-noise sanity check (3cm gait bob + 5mm odom noise) shows
+    # window=5 leaves vx-std ~= 0.18 m/s, window=11 drops it to ~= 0.05.
+    savgol_window: int = 11
+    savgol_order: int = 2
+    # Hampel outlier filter on the post-reconstruction velocity trace
+    # before FOPDT fitting. Catches residual single-sample spikes that
+    # survive savgol smoothing (e.g. odom estimator hiccups). Set
+    # window=0 to disable.
+    hampel_window: int = 11
+    hampel_n_sigma: float = 3.0
+    # Two-stage FOPDT fit: estimate L directly from data (first time the
+    # response crosses ~5*noise_std above the pre-step noise floor),
+    # then fit K and tau with L pinned. Decouples L from tau - joint
+    # LM-fit can trade off a tiny L for a slightly inflated tau when the
+    # data is noisy. Auto-disabled if noise_std can't be estimated
+    # (need >=3 pre-step samples in the pose buffer).
+    two_stage_fit: bool = True
+
+
+class Characterizer(Module):
+    """Module wrapper around the FOPDT characterization sequence.
+
+    Driven via the CLI shim in :func:`main` (``gate_source="stdin"``) or
+    composed into the all-in-one blueprint
+    ``unitree-go2-characterization`` (``gate_source="stream"``, gating
+    events arrive on the ``gate`` In port from a co-running
+    :class:`~dimos.robot.unitree.keyboard_teleop.KeyboardTeleop`).
+    Stdin-driven gating cannot work inside the blueprint runner because
+    deployed modules run in forkserver-spawned worker subprocesses that
+    don't share the parent CLI's TTY — hence the stream-based path.
+
+    ``start()`` blocks for the full operator-gated SI loop, then returns.
+    """
+
+    config: CharacterizerConfig
+
+    gate: In[Int8]
+
+    _gate_queue: queue.Queue[str]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._gate_queue = queue.Queue()
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        if self.config.gate_source == "stream":
+            self.register_disposable(Disposable(self.gate.subscribe(self._on_gate_event)))
+        self._run()
+
+    def _on_gate_event(self, msg: Int8) -> None:
+        # Translate the pygame-side gate codes to the legacy CLI vocab so
+        # _fit_hw's response check (``""``=run, ``"s"``=skip, ``"q"``=quit)
+        # is unchanged.
+        code = int(msg.data)
+        translated = {GATE_ADVANCE: "", GATE_SKIP: "s", GATE_QUIT: "q"}.get(code, "")
+        self._gate_queue.put(translated)
+
+    def _wait_gate_stream(self, prompt: str) -> str:
+        print(prompt, end="", flush=True)
+        return self._gate_queue.get()
+
+    def _run(self) -> None:
+        cfg = self.config
+        profile = _resolve_profile(cfg.robot)
+        step_s = cfg.step_s if cfg.step_s is not None else profile.step_s
+        pre_roll_s = cfg.pre_roll_s if cfg.pre_roll_s is not None else profile.pre_roll_s
+        warmup_s = cfg.odom_warmup if cfg.odom_warmup is not None else profile.odom_warmup_s
+        max_dist = cfg.max_dist if cfg.max_dist is not None else profile.max_dist_m
+        robot_id = cfg.robot_id if cfg.robot_id is not None else profile.robot_id
+        out_root = Path(cfg.out).expanduser() if cfg.out else DEFAULT_OUT_DIR
+
+        if cfg.mode == "hw":
+            if cfg.gate_source == "stream":
+                gate_input: Callable[[str], str] = self._wait_gate_stream
+                gate_keys_label = "focus pygame window: ENTER=run  K=skip  Backspace=quit"
+            else:
+                gate_input = input
+                gate_keys_label = "ENTER=run  s=skip  q=quit"
+            fitted, per_amplitude, traces = _fit_hw(
+                profile,
+                step_s,
+                pre_roll_s,
+                warmup_s,
+                max_dist,
+                gate_input=gate_input,
+                gate_keys_label=gate_keys_label,
+                savgol_window=cfg.savgol_window,
+                savgol_order=cfg.savgol_order,
+                hampel_window=cfg.hampel_window,
+                hampel_n_sigma=cfg.hampel_n_sigma,
+            )
+        else:
+            fitted, per_amplitude, traces = _fit_selftest(profile)
+
+        provenance = Provenance(
+            robot_id=robot_id,
+            surface=cfg.surface,
+            mode=cfg.gait_mode,
+            date=date.today().isoformat(),
+            git_sha=git_sha(),
+            sim_or_hw="hw" if cfg.mode == "hw" else "self-test",
+            characterization_session_dir=(
+                f"(real {profile.name}, LCM SI)" if cfg.mode == "hw" else "(in-process self-test)"
+            ),
+        )
+        artifact = derive_config(
+            fitted,
+            provenance,
+            per_amplitude=per_amplitude,
+            vx_max=profile.vx_max,
+            wz_max=profile.wz_max,
+        )
+        if cfg.mode == "hw" and "vy" not in profile.excited_channels:
+            artifact.caveats.append(
+                f"vy was NOT characterized on hardware ({profile.name} does not "
+                "strafe in this gait); plant.vy / feedforward.K_vy are a "
+                "placeholder copy of vx. The benchmark paths are vx+wz only, so "
+                "this does not affect tuning; re-characterize vy if a "
+                "lateral-capable gait is used."
+            )
+
+        out_dir = out_root / robot_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = (
+            out_dir
+            / f"{robot_id}_config_{cfg.mode}_{cfg.surface}_{provenance.date}_{provenance.git_sha}.json"
+        )
+        artifact.to_json(out_path)
+        plot_path = out_path.with_suffix(".png")
+        _plot_fits(traces, provenance, profile, plot_path)
+
+        tag = "ROBOT-VALID" if artifact.valid_for_tuning else "NOT robot-valid (plumbing check)"
+        print("\nFOPDT fit graph (the deliverable — model vs real data):")
+        print(f"  {plot_path.resolve()}")
+        print(f"Config artifact [{tag}] (machine handoff for the benchmark):")
+        print(f"  {out_path.resolve()}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Twist-base characterization -> tuning artifact")
     ap.add_argument("--robot", default="go2", help=f"one of {sorted(ROBOT_PLANT_PROFILES)}")
     ap.add_argument("--mode", choices=["hw", "self-test"], default="hw")
-    ap.add_argument("--out", default=str(REPORTS_DIR))
+    ap.add_argument(
+        "--out",
+        default=None,
+        help=f"output dir (default: {DEFAULT_OUT_DIR}/<robot_id>/)",
+    )
     ap.add_argument("--robot-id", default=None, help="provenance id (default: profile.robot_id)")
     ap.add_argument("--surface", default="concrete")
     ap.add_argument("--gait-mode", default="default")
@@ -510,58 +814,19 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    profile = _resolve_profile(args.robot)
-    step_s = args.step_s if args.step_s is not None else profile.step_s
-    pre_roll_s = args.pre_roll_s if args.pre_roll_s is not None else profile.pre_roll_s
-    warmup_s = args.odom_warmup if args.odom_warmup is not None else profile.odom_warmup_s
-    max_dist = args.max_dist if args.max_dist is not None else profile.max_dist_m
-    robot_id = args.robot_id if args.robot_id is not None else profile.robot_id
-
-    if args.mode == "hw":
-        fitted, per_amplitude, traces = _fit_hw(profile, step_s, pre_roll_s, warmup_s, max_dist)
-    else:
-        fitted, per_amplitude, traces = _fit_selftest(profile)
-
-    provenance = Provenance(
-        robot_id=robot_id,
+    instance = Characterizer(
+        robot=args.robot,
+        mode=args.mode,
+        out=args.out,
+        robot_id=args.robot_id,
         surface=args.surface,
-        mode=args.gait_mode,
-        date=date.today().isoformat(),
-        git_sha=git_sha(),
-        sim_or_hw="hw" if args.mode == "hw" else "self-test",
-        characterization_session_dir=(
-            f"(real {profile.name}, LCM SI)" if args.mode == "hw" else "(in-process self-test)"
-        ),
+        gait_mode=args.gait_mode,
+        step_s=args.step_s,
+        pre_roll_s=args.pre_roll_s,
+        odom_warmup=args.odom_warmup,
+        max_dist=args.max_dist,
     )
-    cfg = derive_config(
-        fitted,
-        provenance,
-        per_amplitude=per_amplitude,
-        vx_max=profile.vx_max,
-        wz_max=profile.wz_max,
-    )
-    if args.mode == "hw" and "vy" not in profile.excited_channels:
-        cfg.caveats.append(
-            f"vy was NOT characterized on hardware ({profile.name} does not "
-            "strafe in this gait); plant.vy / feedforward.K_vy are a "
-            "placeholder copy of vx. The benchmark paths are vx+wz only, so "
-            "this does not affect tuning; re-characterize vy if a "
-            "lateral-capable gait is used."
-        )
-
-    out_path = (
-        Path(args.out).expanduser()
-        / f"{robot_id}_config_{args.mode}_{args.surface}_{provenance.date}_{provenance.git_sha}.json"
-    )
-    cfg.to_json(out_path)
-    plot_path = out_path.with_suffix(".png")
-    _plot_fits(traces, provenance, profile, plot_path)
-
-    tag = "ROBOT-VALID" if cfg.valid_for_tuning else "NOT robot-valid (plumbing check)"
-    print("\nFOPDT fit graph (the deliverable — model vs real data):")
-    print(f"  {plot_path.resolve()}")
-    print(f"Config artifact [{tag}] (machine handoff for the benchmark):")
-    print(f"  {out_path.resolve()}")
+    instance.start()
 
 
 if __name__ == "__main__":

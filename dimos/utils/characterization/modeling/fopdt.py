@@ -158,6 +158,9 @@ def fit_fopdt(
     *,
     noise_std: float | None = None,
     fit_window_s: tuple[float, float] | None = None,
+    min_deadtime: float | None = None,
+    two_stage: bool = False,
+    l_detect_sigma: float = 5.0,
 ) -> FopdtParams:
     """Fit FOPDT to a step-response trace.
 
@@ -167,6 +170,18 @@ def fit_fopdt(
 
     ``noise_std`` (optional) is per-sample sigma for weighted least
     squares. ``fit_window_s`` is recorded into the result for traceability.
+
+    ``min_deadtime`` (optional) floors the L lower bound. Use to prevent
+    the optimizer from claiming sub-sample-period precision on L: pass
+    the data's median sample interval, since you can't physically
+    resolve deadtime finer than your odom sample rate.
+
+    ``two_stage`` (default ``False``): when ``True``, estimate L
+    directly from the data (first time ``|y| > l_detect_sigma *
+    noise_std``) and pin it, then fit only ``K`` and ``tau``. Removes
+    the joint-fit correlation between ``L`` and ``tau`` that lets the
+    optimizer trade off a tiny ``L`` for a slightly inflated ``tau``.
+    Requires ``noise_std`` to be set; falls back to joint fit if not.
     """
     from scipy.optimize import curve_fit
 
@@ -214,12 +229,94 @@ def fit_fopdt(
         )
 
     K0, tau0, L0 = _initial_guess(t, y, u_step, noise_std)
-    p0 = (K0, tau0, L0)
     lo, hi = _bounds_for(u_step)
+    if min_deadtime is not None and min_deadtime > _L_MIN:
+        # Re-floor the L bound (and the initial guess) so the optimizer
+        # can't claim a deadtime smaller than the data's sample period.
+        l_floor = min(float(min_deadtime), hi[2])
+        lo = (lo[0], lo[1], l_floor)
+        L0 = max(L0, l_floor)
+    p0 = (K0, tau0, L0)
 
     sigma = None
     if noise_std is not None and noise_std > 0:
         sigma = np.full_like(y, float(noise_std))
+
+    # --- Two-stage path: detect L from the data, then fit (K, tau) ---
+    # with L pinned. Decouples L vs tau in the joint optimizer.
+    if two_stage and noise_std is not None and noise_std > 0:
+        band = float(l_detect_sigma) * float(noise_std)
+        above = np.flatnonzero(np.abs(y) > band)
+        L_detected = float(t[above[0]]) if above.size else L0
+        L_detected = float(np.clip(L_detected, lo[2], hi[2]))
+
+        def _model_pinned(t_, K, tau):
+            return fopdt_step_response(t_, K, tau, L_detected, u_step)
+
+        try:
+            popt2, pcov2 = curve_fit(
+                _model_pinned,
+                t,
+                y,
+                p0=(K0, tau0),
+                bounds=((lo[0], lo[1]), (hi[0], hi[1])),
+                sigma=sigma,
+                absolute_sigma=False,
+                maxfev=5000,
+            )
+        except Exception as e:
+            return FopdtParams(
+                K=float("nan"),
+                tau=float("nan"),
+                L=float("nan"),
+                K_ci=(float("nan"), float("nan")),
+                tau_ci=(float("nan"), float("nan")),
+                L_ci=(float("nan"), float("nan")),
+                rmse=float("nan"),
+                r_squared=float("nan"),
+                n_samples=int(t.size),
+                fit_window_s=fit_window,
+                degenerate=True,
+                converged=False,
+                reason=f"two-stage curve_fit failed: {type(e).__name__}: {e}",
+                initial_guess={"K": K0, "tau": tau0, "L": L_detected},
+            )
+        K = float(popt2[0])
+        tau = float(popt2[1])
+        L = L_detected
+        y_hat = _model_pinned(t, K, tau)
+        resid = y - y_hat
+        rmse = float(np.sqrt(np.mean(resid**2))) if resid.size else float("nan")
+        ss_res = float(np.sum(resid**2))
+        y_mean = float(np.mean(y))
+        ss_tot = float(np.sum((y - y_mean) ** 2))
+        r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+        diag2 = np.diag(pcov2)
+        degenerate = bool(np.any(~np.isfinite(diag2)) or np.any(diag2 <= 0))
+        if degenerate:
+            K_ci = (float("nan"), float("nan"))
+            tau_ci = (float("nan"), float("nan"))
+        else:
+            s2 = np.sqrt(diag2)
+            K_ci = (K - 1.96 * float(s2[0]), K + 1.96 * float(s2[0]))
+            tau_ci = (tau - 1.96 * float(s2[1]), tau + 1.96 * float(s2[1]))
+        # L CI is degenerate by construction (pinned, not estimated).
+        return FopdtParams(
+            K=K,
+            tau=tau,
+            L=L,
+            K_ci=K_ci,
+            tau_ci=tau_ci,
+            L_ci=(L, L),
+            rmse=rmse,
+            r_squared=r2,
+            n_samples=int(t.size),
+            fit_window_s=fit_window,
+            degenerate=degenerate,
+            converged=True,
+            reason=None,
+            initial_guess={"K": K0, "tau": tau0, "L": L_detected},
+        )
 
     def _model(t_, K, tau, L):
         return fopdt_step_response(t_, K, tau, L, u_step)

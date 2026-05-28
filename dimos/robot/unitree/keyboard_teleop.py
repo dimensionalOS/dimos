@@ -25,7 +25,14 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.std_msgs.Int8 import Int8
 from dimos.utils.logging_config import setup_logger
+
+# Gate event codes published on KeyboardTeleop.gate for tools that need
+# operator-confirmation per step (e.g. unitree-go2-characterization).
+GATE_ADVANCE = 0
+GATE_SKIP = 1
+GATE_QUIT = 2
 
 logger = setup_logger()
 
@@ -47,9 +54,19 @@ _INDICATOR_RADIUS = 15
 
 
 class KeyboardTeleop(Module):
-    """Pygame-based keyboard control. Outputs Twist on cmd_vel."""
+    """Pygame-based keyboard control. Outputs Twist on cmd_vel.
+
+    Also emits operator "gate" events on ``gate: Out[str]`` for tools
+    that need to pause for operator confirmation between steps (e.g. the
+    one-terminal Go2 characterization blueprint). Three keys:
+    ``ENTER`` -> ``"advance"``, ``K`` -> ``"skip"``, ``Backspace`` ->
+    ``"quit"``. Existing blueprints that don't wire the ``gate`` port
+    are unaffected — the events publish into a stream nobody listens
+    to.
+    """
 
     cmd_vel: Out[Twist]
+    gate: Out[Int8]
 
     _stop_event: threading.Event
     _keys_held: set[int] | None = None
@@ -133,6 +150,12 @@ class KeyboardTeleop(Module):
                     elif event.key == pygame.K_ESCAPE:
                         # ESC quits
                         self._stop_event.set()
+                    elif event.key == pygame.K_RETURN:
+                        self.gate.publish(Int8(GATE_ADVANCE))
+                    elif event.key == pygame.K_k:
+                        self.gate.publish(Int8(GATE_SKIP))
+                    elif event.key == pygame.K_BACKSPACE:
+                        self.gate.publish(Int8(GATE_QUIT))
 
                 elif event.type == pygame.KEYUP:
                     self._keys_held.discard(event.key)
@@ -233,6 +256,7 @@ class KeyboardTeleop(Module):
             "WS: Move | AD: Turn | QE: Strafe",
             "Shift: Boost | Ctrl: Slow",
             "Space: E-Stop | ESC: Quit",
+            "Enter: Advance | K: Skip | Backspace: Quit (tools)",
         ]
         for text in help_texts:
             surf = self._font.render(text, True, _HELP_TEXT_COLOR)
