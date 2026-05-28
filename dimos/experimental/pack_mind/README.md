@@ -135,8 +135,3 @@ PACK_DOG_NAME=bravo PACK_COORDINATOR_URL=http://<laptopA-ip>:8090 \
 | `demo_spike.py` | Feasibility spike (kept as a smoke test of the reused primitives) |
 | `test_explore_sim.py` / `test_pack_mind_sim.py` | Engine tests |
 | `sim_perception.py` | MuJoCo+VLM single-frame perception probe (optional, off the critical path) |
-
-### Legacy (the old "backpack handoff" demo — superseded, kept for reference)
-`conductor.py`, `dashboard.html`, `static/style.css`, `sim_harness.py`, `venue_go2.sh`,
-`RUNBOOK.md`, `test_conductor.py`. That demo was a single message relay dressed up as
-"shared memory"; the exploration A/B above replaces it. Safe to delete in a cleanup pass.
