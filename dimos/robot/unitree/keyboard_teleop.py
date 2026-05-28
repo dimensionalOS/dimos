@@ -25,6 +25,7 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
 from dimos.utils.logging_config import setup_logger
 
@@ -67,6 +68,9 @@ class KeyboardTeleop(Module):
 
     cmd_vel: Out[Twist]
     gate: Out[Int8]
+    # Reference-governor corridor half-width (m). Number keys 0-9 map
+    # to 0.0–0.9 m so an operator can dial precision live during a run.
+    e_max: Out[Float32]
 
     _stop_event: threading.Event
     _keys_held: set[int] | None = None
@@ -156,6 +160,9 @@ class KeyboardTeleop(Module):
                         self.gate.publish(Int8(GATE_SKIP))
                     elif event.key == pygame.K_BACKSPACE:
                         self.gate.publish(Int8(GATE_QUIT))
+                    elif pygame.K_0 <= event.key <= pygame.K_9:
+                        # 0 → 0.0 m, 1 → 0.1 m, …, 9 → 0.9 m corridor half-width.
+                        self.e_max.publish(Float32(data=(event.key - pygame.K_0) * 0.1))
 
                 elif event.type == pygame.KEYUP:
                     self._keys_held.discard(event.key)
@@ -257,6 +264,7 @@ class KeyboardTeleop(Module):
             "Shift: Boost | Ctrl: Slow",
             "Space: E-Stop | ESC: Quit",
             "Enter: Advance | K: Skip | Backspace: Quit (tools)",
+            "0-9: e_max corridor (0.0-0.9 m, for RG)",
         ]
         for text in help_texts:
             surf = self._font.render(text, True, _HELP_TEXT_COLOR)

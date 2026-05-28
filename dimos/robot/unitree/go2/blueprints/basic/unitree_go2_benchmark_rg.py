@@ -16,13 +16,17 @@
 """Unitree Go2 benchmark — RG arm variant.
 
 Same composition as ``unitree-go2-benchmark`` but with ``rg=True`` baked
-into the Benchmarker config so the RG-derived per-waypoint speed
-profile is applied without any ``--module.benchmarker.rg`` override at
-launch. ``e_max`` is left at the BenchmarkerConfig default
-(0.05) — pass ``--module.benchmarker.e_max <m>`` to sweep corridor
-widths.
+into the Benchmarker config. Runs are routed through the operator coord's
+``precision_follower`` task (a ``PathFollowerTask`` subclass that owns its
+own ``solve_profile()`` recompute reacting to ``KeyboardTeleop``'s
+``e_max`` stream — number keys 0-9 set the corridor half-width live).
 
-    dimos run unitree-go2-benchmark-rg --module.benchmarker.config <artifact>
+The precision_follower needs its own copy of the artifact path so it can
+load the plant + velocity-profile constants:
+
+    dimos run unitree-go2-benchmark-rg \\
+        --module.benchmarker.config <artifact> \\
+        -o coordinator.tasks[1].params.artifact_path=<artifact>
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_coordinator import (
     unitree_go2_coordinator,
@@ -53,6 +58,9 @@ unitree_go2_benchmark_rg = autoconnect(
 ).transports(
     {
         ("gate", Int8): LCMTransport("/benchmark/gate", Int8),
+        # KeyboardTeleop's number-key (0-9) corridor stream -> coord's
+        # e_max input -> precision_follower.set_e_max(). Live RG corridor.
+        ("e_max", Float32): LCMTransport("/e_max", Float32),
         ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         ("odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),

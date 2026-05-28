@@ -30,6 +30,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.utils.path_utils import get_project_root
 
 _go2_joints = make_twist_base_joints("go2")
 
@@ -60,6 +61,22 @@ unitree_go2_coordinator = (
                     type="path_follower",
                     joint_names=_go2_joints,
                     priority=10,
+                ),
+                # RG-arm path follower — same control law as path_follower
+                # but owns its own solve_profile() recompute reacting to
+                # KeyboardTeleop's e_max stream. artifact_path is the
+                # tuning JSON the task loads on start_path() for the plant
+                # model + velocity-profile constants;
+                TaskConfig(
+                    name="precision_follower",
+                    type="precision_path_follower",
+                    joint_names=_go2_joints,
+                    priority=10,
+                    params={
+                        "artifact_path": str(
+                            get_project_root() / "data" / "characterization" / "go2" / ""
+                        ),
+                    },
                 ),
             ],
         ),

@@ -33,17 +33,13 @@ Comparison arms are config flags (all default OFF — bare baseline):
 
     --module.benchmarker.ff=true       # apply derived feedforward
     --module.benchmarker.profile=true  # apply derived static velocity profile
-    --module.benchmarker.rg=true \\
-    --module.benchmarker.e_max=0.05    # apply RG-derived per-waypoint profile
+    --module.benchmarker.rg=true       # route runs through precision_follower
 
-The RG arm uses ``solve_profile()`` imported directly from
-``reference_governor.py`` — there is no RG ``Module`` in this blueprint
-because the per-cell math is one-shot (no live ``e_max`` stream to react
-to), and a Module wrapper would force a cross-process per-tick RPC on
-the controller's hot path. The Benchmarker computes the per-waypoint
-speeds once per path and ships them to the follower as a plain
-``list[float]`` via the new ``PathFollowerTask.start_path(
-velocity_profile=...)`` kwarg.
+The RG arm runs against the operator coord's ``precision_follower`` task
+(a ``PathFollowerTask`` subclass that owns its own ``solve_profile()``
+recompute and reacts to ``KeyboardTeleop``'s ``e_max`` stream — number
+keys 0-9 set the corridor half-width live). No RG math inside Benchmarker;
+it just picks the task name based on the ``rg`` flag.
 
 Recordings land at
 ``<repo>/data/benchmark/<robot_id>/<robot_id>_benchmark_<date>_<sha>.db``
@@ -60,6 +56,7 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.Int8 import Int8
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_coordinator import (
     unitree_go2_coordinator,
@@ -85,6 +82,10 @@ unitree_go2_benchmark = autoconnect(
         # blueprints don't cross-talk if both happen to run on the same
         # LCM bus.
         ("gate", Int8): LCMTransport("/benchmark/gate", Int8),
+        # KeyboardTeleop's number-key (0-9) corridor stream -> any task in
+        # the coord with set_e_max(). No-ops for the bare arm (path_follower
+        # ignores it), live for the RG arm (precision_follower recomputes).
+        ("e_max", Float32): LCMTransport("/e_max", Float32),
         # Recorder taps the same LCM topics the rest of the stack
         # already uses; no new wires, just additional subscribers.
         ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
