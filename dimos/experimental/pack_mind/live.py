@@ -43,6 +43,7 @@ from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.person_follow import PersonFollowSkillContainer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.experimental.pack_mind.pack_search_skills import PackSearchSkills
+from dimos.experimental.pack_mind.red_detector import RedObjectDetector
 from dimos.experimental.security_demo.security_module import SecurityModule
 from dimos.robot.unitree.go2.blueprints.agentic._common_agentic import _common_agentic
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree_go2_spatial
@@ -58,10 +59,9 @@ MISSION LOOP (follow exactly):
    a. Call next_zone to get YOUR assigned zone. If it returns empty, the search is
       over — STOP and report status.
    b. navigate_with_text("<that zone name>") to travel there.
-   c. look_out_for(["<target>"], then={"name": "report_finding",
-        "args": {"object": "<target>", "zone": "<that zone name>"}}) so a sighting
-      auto-tells the whole pack.
-   d. Scan briefly. If you did not see it, call report_cleared("<that zone name>").
+   c. Call look_for_red to check the camera for the red object. If it reports one,
+      it has already told the whole pack — STOP.
+   d. If no red object, call report_cleared("<that zone name>") and continue.
    e. Check should_stop — if true, a packmate found it; STOP.
 3. If asked where the target is, call where_is(target) and act on the answer even
    if you never saw it yourself — that is acting on the pack's shared memory.
@@ -84,6 +84,7 @@ unitree_go2_pack = autoconnect(
     McpClient.blueprint(system_prompt=PACK_SYSTEM_PROMPT),
     _common_agentic,
     PackSearchSkills.blueprint(),
+    RedObjectDetector.blueprint(),  # fast GPU-free "red object" find (vs slow moondream)
 ).disabled_modules(SecurityModule, PersonFollowSkillContainer)
 
 __all__ = ["unitree_go2_pack", "PACK_SYSTEM_PROMPT"]
