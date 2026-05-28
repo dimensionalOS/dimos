@@ -100,9 +100,13 @@ PACK_DOG_NAME=bravo PACK_COORDINATOR_URL=http://<laptopA-ip>:8090 \
 - `dimos run` has **no `--robot-ip` flag** in this build — set the `ROBOT_IP` env and
   verify with `dimos show-config`.
 - `HF_HUB_OFFLINE=1` is required on a no-internet AP; run prefetch first.
-- moondream2's **first** `look_out_for` is slow (~10–60s, CPU compile) — a lag, not a crash.
+- **Detection: use `look_for_red`** (RedObjectDetector) — a fast, GPU-free colour check
+  that reports the finding to the coordinator instantly. moondream/`look_out_for` also
+  works but is slow on a CPU host (~10–60s first call); keep it off the critical path.
+- Movement: `relative_move` (skill) or keyboard teleop. `navigate_with_text` works but is
+  slow on CPU (Qwen).
 - Bring-up order: ping dog → `dimos show-config` → run to "running" → `mcp list-tools` +
-  `speak` → `look_out_for` → `start_search`/`next_zone` against the coordinator.
+  `speak` → `relative_move` → `look_for_red` → `start_search`/`next_zone` (dashboard at :8090).
 
 **Hardware-free rehearsal (no dogs):**
 `uv run python -m dimos.experimental.pack_mind.demo_pack_live --pace 2`, open http://localhost:8090.
@@ -120,6 +124,7 @@ PACK_DOG_NAME=bravo PACK_COORDINATOR_URL=http://<laptopA-ip>:8090 \
 | `pack_coordinator.py` / `pack_coordinator_server.py` | Shared zone ledger (no-overlap, find, **inheritance**) + JSON/HTTP API + dashboard route |
 | `pack_dashboard.html` | Projector dashboard — zones, finding, offline/inheritance, causal chain |
 | `pack_search_skills.py` | Dog agent tools: `start_search` / `next_zone` / `report_*` / `where_is` |
+| `red_detector.py` | **Fast GPU-free red-object detector** (`look_for_red`) — HSV-free colour test → auto-reports the find |
 | `pack_search_runner.py` | `RobotDriver`-protocol search loop + `MockDriver` |
 | `mock_dog.py` / `demo_pack_live.py` / `demo_pack_scene.py` | Hardware-free test + projector rehearsal of both magic beats |
 | `prefetch_live_models.py` | Pre-cache moondream2 + whisper so the live stack runs offline |
