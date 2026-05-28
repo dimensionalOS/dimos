@@ -12,17 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hand-crafted synthetic scenarios for black-box planner evaluation.
-
-Each scenario is a self-contained (map, start, goal, expectation) bundle.
-Maps are PointCloud2 obstacle clouds, start/goal are Odometry poses, and
-``expect_path`` records whether a planner should be able to find a path
-(used by the evaluator to score pass/fail).
-"""
+"""Sample point clouds for path planning."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from pathlib import Path
 
 import numpy as np
 
@@ -30,11 +26,14 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.evaluator.mesh_loader import load_voxelized_mesh
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 WORLD_FRAME = "map"
 _WALL_HEIGHT_M = 2.0
 
-MESH_PATH = "/home/andrew/Downloads/19_fairdale_ave_papakura.glb"
+MESH_PATH = os.environ.get("MESH_PATH")
 
 
 @dataclass
@@ -141,6 +140,12 @@ def two_rooms_one_door() -> PlannerScenario:
 
 def _mesh_scenarios() -> list[PlannerScenario]:
     """Two scenarios on a real building mesh: ground-level traverse and a stair climb."""
+    if MESH_PATH is None:
+        logger.info("MESH_PATH not set, skipping mesh scenarios")
+        return []
+    if not Path(MESH_PATH).is_file():
+        logger.warning("Mesh file not found, skipping mesh scenarios", path=MESH_PATH)
+        return []
     cloud = _cloud(load_voxelized_mesh(MESH_PATH))
     return [
         PlannerScenario(
