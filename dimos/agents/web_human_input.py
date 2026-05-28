@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from threading import Thread
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,7 @@ class WebInput(Module):
     _web_interface: RobotWebInterface | None = None
     _thread: Thread | None = None
     _human_transport: pLCMTransport[str] | None = None
+    _agent_transport: pLCMTransport | None = None
 
     @rpc
     def start(self) -> None:
@@ -43,35 +45,54 @@ class WebInput(Module):
 
         self._human_transport = pLCMTransport("/human_input")
 
-        audio_subject: rx.subject.Subject[AudioEvent] | None = None
+        audio_subject: rx.subject.Subject[AudioEvent] = rx.subject.Subject()
 
-        try:
-            # Here to prevent unwanted imports in the file.
-            from dimos.stream.audio.stt.node_whisper import WhisperNode
-
-            audio_subject = rx.subject.Subject()
-            normalizer = AudioNormalizer()
-            stt_node = WhisperNode()
-        except ImportError as exc:
-            normalizer = None
-            stt_node = None
-            logger.warning("Voice input disabled", error=str(exc))
-
+        agent_responses: rx.subject.Subject[str] = rx.subject.Subject()
         self._web_interface = RobotWebInterface(
             port=5555,
-            text_streams={"agent_responses": rx.subject.Subject()},
+            text_streams={"agent_responses": agent_responses},
             audio_subject=audio_subject,
         )
 
-        if audio_subject is not None and normalizer is not None and stt_node is not None:
-            # Connect audio pipeline: browser audio -> normalizer -> whisper
-            normalizer.consume_audio(audio_subject.pipe(ops.share()))
-            stt_node.consume_audio(normalizer.emit_audio())
-            unsub = stt_node.emit_text().subscribe(self._human_transport.publish)
-            self.register_disposable(unsub)
+        # Forward the LLM agent's replies (published on LCM "/agent") to the
+        # agent_responses SSE stream so the web UI can display them.
+        self._agent_transport = pLCMTransport("/agent")
 
-        # Subscribe to direct text from web interface.
+        def _on_agent_message(msg: object) -> None:
+            kind = getattr(msg, "type", None)  # "human" | "ai" | "tool" | "system"
+            if kind == "human":
+                return  # skip the echoed user input
+            content = getattr(msg, "content", None)
+            if isinstance(content, list):
+                content = " ".join(
+                    str(part.get("text", "")) if isinstance(part, dict) else str(part)
+                    for part in content
+                )
+            if content:
+                # Emit a typed envelope so the UI can read out only the agent's
+                # spoken replies (kind == "ai") and treat tool output as status.
+                agent_responses.on_next(json.dumps({"kind": kind, "text": str(content)}))
+
+        self._agent_transport.subscribe(_on_agent_message)
+
+        normalizer = AudioNormalizer()
+
+        # Here to prevent unwanted imports in the file.
+        from dimos.stream.audio.stt.node_whisper import WhisperNode
+
+        stt_node = WhisperNode()
+
+        # Connect audio pipeline: browser audio → normalizer → whisper
+        normalizer.consume_audio(audio_subject.pipe(ops.share()))
+        stt_node.consume_audio(normalizer.emit_audio())
+
+        # Subscribe to both text input sources
+        # 1. Direct text from web interface
         unsub = self._web_interface.query_stream.subscribe(self._human_transport.publish)
+        self.register_disposable(unsub)
+
+        # 2. Transcribed text from STT
+        unsub = stt_node.emit_text().subscribe(self._human_transport.publish)
         self.register_disposable(unsub)
 
         self._thread = Thread(target=self._web_interface.run, daemon=True)
@@ -87,4 +108,6 @@ class WebInput(Module):
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._human_transport:
             self._human_transport.lcm.stop()
+        if self._agent_transport:
+            self._agent_transport.lcm.stop()
         super().stop()
