@@ -93,12 +93,28 @@ class SerializableVideoFrame:
 class UnitreeWebRTCConnection(Resource):
     _SPORT_API_ID_RAGEMODE: int = 2059
 
-    def __init__(self, ip: str, mode: str = "ai") -> None:
+    # How far to raise the head (body pitch, radians) when the robot stops.
+    # The Go2 Euler command accepts roughly [-0.75, 0.75] rad per axis.
+    _LOOK_UP_PITCH_RAD: float = 0.6
+
+    def __init__(
+        self,
+        ip: str,
+        mode: str = "ai",
+        connection_method: WebRTCConnectionMethod = WebRTCConnectionMethod.LocalSTA,
+    ) -> None:
         self.ip = ip
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
-        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
+        # When True, raise the head once whenever the robot transitions from
+        # moving to stopped, and level it again when it starts moving.
+        self.look_up_on_stop = True
+        self.look_up_pitch = self._LOOK_UP_PITCH_RAD
+        self._was_moving = False
+        # LocalSTA: robot joined your router (sends id="STA_localNetwork").
+        # LocalAP: you're on the robot's own hotspot at 192.168.12.1 (sends id="").
+        self.conn = LegionConnection(connection_method, ip=self.ip)
         self.connect()
 
     def connect(self) -> None:
@@ -175,6 +191,7 @@ class UnitreeWebRTCConnection(Resource):
             bool: True if command was sent successfully
         """
         x, y, yaw = twist.linear.x, twist.linear.y, twist.angular.z
+        moving = bool(x or y or yaw)
 
         # WebRTC coordinate mapping:
         # x - Positive right, negative left
@@ -209,12 +226,17 @@ class UnitreeWebRTCConnection(Resource):
                 # Send continuous move commands for the duration
                 future = asyncio.run_coroutine_threadsafe(async_move_duration(), self.loop)
                 future.result()
+                # The robot stops at the end of a timed move; mark it moving so
+                # stop_movement() raises the head on the resulting stop.
+                if moving:
+                    self._was_moving = True
                 # Stop after duration
                 self.stop_movement()
             else:
                 # Single command for continuous movement
                 future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
                 future.result()
+                self._update_head_posture(moving)
             return True
         except Exception as e:
             print(f"Failed to send movement command: {e}")
@@ -321,8 +343,33 @@ class UnitreeWebRTCConnection(Resource):
         )
 
     def free_walk(self) -> bool:
-        """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
-        return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
+        """Activate FreeWalk locomotion AND enable joystick velocity input.
+
+        Two-step protocol (mirrors enable_rage_mode, which is the only path
+        in this codebase that demonstrably gets the dog walking from
+        joystick input):
+
+        1. ``FreeWalk`` (1045) — switches the locomotion gait.
+        2. ``SwitchJoystick`` (1027, data=True) — explicitly enables joystick
+           velocity interpretation. WITHOUT this, lx/ly are interpreted as
+           body-pose lean (BalanceStand semantics) and the dog only sways
+           in place even though the gait is technically FreeWalk.
+
+        Returns True if both publishes succeed.
+        """
+        gait_ok = bool(
+            self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]})
+        )
+        # Small settle so the gait switch lands before we flip the joystick
+        # channel — matches the 2 s delay rage_mode uses for the same reason.
+        time.sleep(0.3)
+        joystick_ok = bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {"api_id": SPORT_CMD["SwitchJoystick"], "parameter": {"data": True}},
+            )
+        )
+        return gait_ok and joystick_ok
 
     def enable_rage_mode(self) -> bool:
         """Enable Rage Mode on the Go2 via WebRTC.
@@ -346,6 +393,50 @@ class UnitreeWebRTCConnection(Resource):
             )
         )
         return rage_ok and joystick_ok
+
+    def set_body_euler(self, roll: float = 0.0, pitch: float = 0.0, yaw: float = 0.0) -> bool:
+        """Set the body orientation (radians) via the Euler sport command.
+
+        Requires the robot to be standing (BalanceStand). Each axis is clamped
+        to the Go2's safe range of roughly [-0.75, 0.75] rad.
+        """
+
+        def _clamp(v: float) -> float:
+            return max(-0.75, min(0.75, v))
+
+        return bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {
+                    "api_id": SPORT_CMD["Euler"],
+                    "parameter": {"x": _clamp(roll), "y": _clamp(pitch), "z": _clamp(yaw)},
+                },
+            )
+        )
+
+    def look_up(self, pitch: float | None = None) -> bool:
+        """Raise the robot's head by pitching the body nose-up.
+
+        `pitch` is the look-up angle in radians (positive = look up); defaults
+        to ``look_up_pitch``. On the Go2 a positive body pitch raises the front;
+        flip the sign here if your unit tilts the other way.
+        """
+        angle = self.look_up_pitch if pitch is None else pitch
+        return self.set_body_euler(pitch=angle)
+
+    def reset_posture(self) -> bool:
+        """Level the body again (head neutral)."""
+        return self.set_body_euler()
+
+    def _update_head_posture(self, moving: bool) -> None:
+        """Raise the head on the moving->stopped edge, level it on stopped->moving."""
+        if not self.look_up_on_stop:
+            return
+        if moving and not self._was_moving:
+            self.reset_posture()
+        elif not moving and self._was_moving:
+            self.look_up()
+        self._was_moving = moving
 
     def liedown(self) -> bool:
         return bool(
@@ -424,6 +515,11 @@ class UnitreeWebRTCConnection(Resource):
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
+        # Reaching the timeout means commands stopped arriving while moving:
+        # treat that as a stop and raise the head once.
+        if self.look_up_on_stop and self._was_moving:
+            self._was_moving = False
+            self.look_up()
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""

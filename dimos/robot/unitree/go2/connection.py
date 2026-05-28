@@ -211,6 +211,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
     _camera_info_thread: Thread | None = None
+    _freewalk_heartbeat_thread: Thread | None = None
     _latest_video_frame: Image | None = None
 
     @classmethod
@@ -255,6 +256,39 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.standup()
         time.sleep(3)
         self.connection.balance_stand()
+        time.sleep(2)
+
+        # FreeWalk / SwitchJoystick are WebRTC-specific (real Go2 hardware).
+        # MuJoCo / DimSim / Replay connections don't have a gait state machine
+        # to switch — joystick input goes straight to the physics ctrl, so
+        # skipping this entire block in simulation is correct.
+        if hasattr(self.connection, "free_walk"):
+            # Switch to FreeWalk locomotion gait so joystick velocity actually
+            # walks the dog. Without this, BalanceStand interprets cmd_vel as
+            # body-pose lean (the dog sways in place instead of moving) —
+            # every teleop/nav blueprint on real hardware needs this.
+            #
+            # FreeWalk transitions are flaky: a single publish_request gets
+            # dropped if the dog is still mid balance_stand animation or if
+            # MOTION_SWITCHER is still settling. We send it twice with a wait,
+            # then a low-rate heartbeat in the background — this is the only
+            # reliable way we've found to recover from the "dog sways in
+            # place" symptom.
+            self.connection.free_walk()
+            time.sleep(1.5)
+            self.connection.free_walk()
+            time.sleep(0.5)
+
+            # Background heartbeat: re-assert FreeWalk every 15 s. Cheap (one
+            # MOTION_SWITCHER publish; no-op when already in FreeWalk) and
+            # saves the user from restarting the blueprint when the gait
+            # silently reverts to BalanceStand (happens occasionally on hot
+            # reconnect).
+            self._freewalk_heartbeat_thread = Thread(
+                target=self._freewalk_heartbeat,
+                daemon=True,
+            )
+            self._freewalk_heartbeat_thread.start()
 
         if self.config.mode == Go2Mode.RAGE:
             self.connection.enable_rage_mode()
@@ -309,6 +343,23 @@ class GO2Connection(Module, Camera, Pointcloud):
         while True:
             self.camera_info.publish(self.camera_info_static)
             time.sleep(1.0)
+
+    def _freewalk_heartbeat(self) -> None:
+        """Re-assert FreeWalk locomotion every 15 s as a soft watchdog.
+
+        On real hardware we sometimes see the dog silently fall back to
+        BalanceStand (joystick lx/ly -> body lean, no walking). Re-issuing
+        FreeWalk is idempotent when already in that mode, so this is a
+        cheap insurance policy that fixes the most common "dog only sways"
+        report without forcing the user to restart the blueprint.
+        """
+        while True:
+            time.sleep(15.0)
+            try:
+                self.connection.free_walk()
+            except Exception:
+                # Connection may be torn down during shutdown; ignore.
+                pass
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:

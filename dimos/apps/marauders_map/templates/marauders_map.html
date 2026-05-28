@@ -1,0 +1,1774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Marauder's Map · DimOS</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IM+Fell+English+SC&family=IM+Fell+English:ital@0;1&display=swap');
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --ink: #3a2a16;
+      --ink-soft: #6b4f2c;
+      --parch1: #d9c39a;
+      --parch2: #c9ad79;
+      /* Inline-SVG quill cursors so the page stays fully offline. The hotspot
+         (2 30) is at the nib so clicks land where ink would actually meet
+         parchment. Two variants: idle (just the feather) and "ready to write"
+         (with an ink droplet) for hovering clickable things. */
+      --cursor-quill: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><path d='M2,30 Q5,28 8,25 Q15,19 21,11 Q26,5 30,2 Q29,7 25,13 Q19,20 13,24 Q8,28 5,29 Z' fill='%233a2a16' stroke='%231a0e02' stroke-width='0.6'/><path d='M13,23 L19,17 M15,25 L21,19 M17,23 L23,17 M19,21 L25,15 M21,19 L26,13 M23,17 L27,10' stroke='%23d9c39a' stroke-width='0.7' fill='none' stroke-linecap='round'/><circle cx='2' cy='30' r='1.6' fill='%231a0e02'/></svg>") 2 30, auto;
+      --cursor-quill-ready: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><path d='M2,30 Q5,28 8,25 Q15,19 21,11 Q26,5 30,2 Q29,7 25,13 Q19,20 13,24 Q8,28 5,29 Z' fill='%233a2a16' stroke='%231a0e02' stroke-width='0.6'/><path d='M13,23 L19,17 M15,25 L21,19 M17,23 L23,17 M19,21 L25,15 M21,19 L26,13 M23,17 L27,10' stroke='%23d9c39a' stroke-width='0.7' fill='none' stroke-linecap='round'/><circle cx='2' cy='30' r='1.8' fill='%231a0e02'/><ellipse cx='2' cy='28' rx='1' ry='1.6' fill='%237a1f1f'/></svg>") 2 30, pointer;
+    }
+    html, body, .frame { cursor: var(--cursor-quill); }
+    button, .toolbar button, .teleop button, .selchip .x, .teleop .toggle,
+    .roster li, .lightbox, [role="button"], a, label { cursor: var(--cursor-quill-ready); }
+    /* Cursor on the live map canvas: same quill, but the canvas is interactive
+       (click to select / open portrait), so use the "ready" variant. */
+    #overlay, #map { cursor: var(--cursor-quill-ready); }
+    html, body { width: 100%; height: 100%; overflow: hidden;
+      font-family: "IM Fell English", Georgia, serif; color: var(--ink); }
+    body {
+      background:
+        radial-gradient(ellipse at 30% 20%, rgba(255,250,235,.55), transparent 60%),
+        radial-gradient(ellipse at 80% 90%, rgba(120,90,50,.35), transparent 55%),
+        repeating-linear-gradient(92deg, rgba(120,90,50,.05) 0 2px, transparent 2px 6px),
+        linear-gradient(160deg, var(--parch1), var(--parch2));
+    }
+    .frame { position: absolute; inset: 14px; border: 3px double var(--ink);
+      border-radius: 10px; box-shadow: inset 0 0 60px rgba(80,55,25,.45);
+      display: flex; flex-direction: column; }
+    header { text-align: center; padding: 8px 0 4px; position: relative; }
+    header h1 { font-family: "IM Fell English SC", serif; font-size: 30px;
+      letter-spacing: 2px; font-weight: 400; }
+    header .sub { font-style: italic; font-size: 14px; color: var(--ink-soft); }
+    header .conn { position: absolute; right: 14px; top: 12px; font-style: italic;
+      font-size: 13px; color: var(--ink-soft); }
+    .toolbar { display: flex; gap: 10px; justify-content: center; align-items: center;
+      padding: 4px 0 8px; }
+    .toolbar button { font-family: "IM Fell English SC", serif; font-size: 14px;
+      background: transparent; color: var(--ink); border: 1.5px solid var(--ink);
+      border-radius: 6px; padding: 4px 14px; cursor: pointer; letter-spacing: 1px; }
+    .toolbar button.active { background: var(--ink); color: var(--parch1); }
+    .toolbar .count { font-style: italic; color: var(--ink-soft); margin-left: 6px; }
+    .stage { flex: 1 1 auto; position: relative; min-height: 0; margin: 0 10px 10px; }
+    #map { position: absolute; inset: 0; width: 100%; height: 100%;
+      image-rendering: pixelated; }
+    #overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .empty { position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; font-style: italic; font-size: 18px; color: var(--ink-soft);
+      text-align: center; }
+    .footer { text-align: center; font-style: italic; font-size: 12px;
+      color: var(--ink-soft); padding-bottom: 6px; }
+    /* Roster panel — "Those present" */
+    .roster { position: absolute; top: 6px; right: 6px; width: 210px;
+      background: rgba(225,210,175,.82); border: 2px double var(--ink);
+      border-radius: 8px; padding: 8px 10px; max-height: calc(100% - 12px);
+      display: flex; flex-direction: column; box-shadow: 0 0 18px rgba(80,55,25,.3); }
+    .roster h2 { font-family: "IM Fell English SC", serif; font-size: 17px;
+      font-weight: 400; text-align: center; border-bottom: 1px solid var(--ink-soft);
+      padding-bottom: 3px; margin-bottom: 4px; }
+    .roster .tally { text-align: center; font-style: italic; font-size: 13px;
+      color: var(--ink-soft); margin-bottom: 6px; }
+    .roster ul { list-style: none; overflow-y: auto; }
+    .roster li { display: flex; align-items: center; gap: 8px; padding: 4px 2px;
+      border-bottom: 1px dotted rgba(90,70,45,.4); }
+    .roster li img { width: 34px; height: 34px; object-fit: cover;
+      border: 1.5px solid var(--ink); border-radius: 3px; background: #b9a373; }
+    .roster li .who { font-family: "IM Fell English SC", serif; font-size: 15px; }
+    .roster li .age { margin-left: auto; font-style: italic; font-size: 11px;
+      color: var(--ink-soft); }
+    .roster .none { font-style: italic; font-size: 13px; color: var(--ink-soft);
+      text-align: center; padding: 8px 0; }
+    .roster li.dog .who { color: #7a1f1f; }
+    .roster li img.dog { border-color: #7a1f1f; }
+    /* Roster row click → select & follow (easier than picking overlapping
+       name labels on the map). Small 🔍 keeps the lightbox accessible. */
+    .roster li.selectable { cursor: pointer; border-radius: 4px;
+      padding-left: 2px; padding-right: 4px; transition: background .1s; }
+    .roster li.selectable:hover { background: rgba(80,55,25,.08); }
+    .roster li.selected { background: rgba(122,31,31,.14);
+      outline: 1.5px solid #7a1f1f; }
+    .roster li .zoom { font-size: 14px; opacity: .55; padding: 2px 4px;
+      line-height: 1; cursor: zoom-in; user-select: none; }
+    .roster li .zoom:hover { opacity: 1; }
+    .roster li .tag { font-size: 10px; font-style: italic; color: #7a1f1f;
+      border: 1px solid #7a1f1f; border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+    #overlay { pointer-events: auto; }
+    /* "View all" button in the roster header — opens the full gallery modal. */
+    .roster h2 { display: flex; align-items: center; justify-content: center;
+      gap: 8px; }
+    .roster .all-btn { font-style: italic; font-size: 11px; color: var(--ink-soft);
+      border: 1px solid var(--ink-soft); border-radius: 4px; padding: 1px 6px;
+      background: rgba(245,236,212,.6); }
+    .roster .all-btn:hover { background: var(--ink); color: var(--parch1); }
+    /* Full gallery modal — every soul on one parchment, tile grid. */
+    .gallery { position: fixed; inset: 0; background: rgba(20,14,6,.82);
+      display: none; align-items: center; justify-content: center; z-index: 55;
+      backdrop-filter: blur(2px); }
+    .gallery.open { display: flex; }
+    .gallery .scroll { background: var(--parch1); border: 3px double var(--ink);
+      border-radius: 12px; padding: 18px 22px; width: min(86vw, 880px);
+      max-height: 86vh; display: flex; flex-direction: column;
+      box-shadow: 0 0 40px rgba(0,0,0,.5); position: relative; }
+    .gallery .scroll::before, .gallery .scroll::after {
+      content: ""; position: absolute; left: 10px; right: 10px; height: 6px;
+      background: repeating-linear-gradient(90deg,
+        rgba(80,55,25,.55) 0 4px, transparent 4px 8px); }
+    .gallery .scroll::before { top: -3px; }
+    .gallery .scroll::after  { bottom: -3px; }
+    .gallery h2 { font-family: "IM Fell English SC", serif; font-size: 24px;
+      font-weight: 400; text-align: center; letter-spacing: 2px;
+      border-bottom: 1px solid var(--ink-soft); padding-bottom: 6px;
+      margin-bottom: 10px; }
+    .gallery .head-right { position: absolute; top: 14px; right: 18px;
+      font-style: italic; font-size: 13px; color: var(--ink-soft); }
+    .gallery .close { position: absolute; top: 12px; left: 14px;
+      border: 1px solid var(--ink); border-radius: 4px; padding: 1px 8px;
+      background: rgba(245,236,212,.7); font: italic 12px "IM Fell English", serif;
+      color: var(--ink); }
+    .gallery .grid { overflow-y: auto; display: grid; gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      padding: 4px 2px 8px; }
+    .gallery .card { background: rgba(245,236,212,.7); border: 1.5px solid var(--ink-soft);
+      border-radius: 8px; padding: 8px; text-align: center; position: relative;
+      transition: transform 0.08s ease, border-color 0.08s ease; }
+    .gallery .card:hover { transform: translateY(-1px); border-color: var(--ink); }
+    .gallery .card.selected { border-color: #7a1f1f; box-shadow: 0 0 0 2px rgba(122,31,31,.25); }
+    .gallery .card .pic { width: 100%; aspect-ratio: 1 / 1; background: #b9a373;
+      border: 1.5px solid var(--ink); border-radius: 4px; object-fit: cover;
+      display: block; }
+    .gallery .card .nm { font-family: "IM Fell English SC", serif; font-size: 14px;
+      margin-top: 6px; line-height: 1.15; }
+    .gallery .card .age { font-style: italic; font-size: 11px; color: var(--ink-soft);
+      margin-top: 1px; }
+    .gallery .card .tag { position: absolute; top: 4px; left: 4px;
+      font-size: 9px; font-style: italic; color: #7a1f1f;
+      border: 1px solid #7a1f1f; border-radius: 4px; padding: 0 3px;
+      background: rgba(245,236,212,.85); }
+    .gallery .empty { text-align: center; padding: 28px 12px; font-style: italic;
+      color: var(--ink-soft); }
+    /* Floating detail tip — shown when hovering any portrait (roster or gallery). */
+    .tip { position: fixed; z-index: 70; pointer-events: none;
+      background: rgba(232,219,188,.97); border: 2px double var(--ink);
+      border-radius: 8px; padding: 8px 10px; max-width: 260px;
+      box-shadow: 0 6px 22px rgba(20,14,6,.45); display: none;
+      font-family: "IM Fell English", serif; color: var(--ink); }
+    .tip.on { display: block; }
+    .tip .nm { font-family: "IM Fell English SC", serif; font-size: 16px;
+      margin-bottom: 2px; }
+    .tip .meta { font-size: 12px; font-style: italic; color: var(--ink-soft);
+      margin-bottom: 5px; }
+    .tip .quote { font-style: italic; font-size: 13px; line-height: 1.3;
+      border-top: 1px dotted rgba(80,55,25,.5); padding-top: 5px; }
+    /* Lightbox for viewing a portrait large */
+    .lightbox { position: fixed; inset: 0; background: rgba(20,14,6,.82);
+      display: none; align-items: center; justify-content: center; z-index: 50;
+      backdrop-filter: blur(2px); }
+    .lightbox.open { display: flex; }
+    .lightbox .card { background: var(--parch1); border: 3px double var(--ink);
+      border-radius: 10px; padding: 14px; max-width: 80vw; max-height: 80vh;
+      box-shadow: 0 0 40px rgba(0,0,0,.5); text-align: center; }
+    .lightbox .card img { max-width: 70vw; max-height: 64vh; image-rendering: auto;
+      border: 2px solid var(--ink); background: #b9a373; }
+    .lightbox .card .cap { font-family: "IM Fell English SC", serif; font-size: 20px;
+      margin-top: 8px; }
+    .lightbox .hintclose { font-style: italic; font-size: 12px; color: var(--ink-soft);
+      margin-top: 4px; }
+    /* Confirmation parchment for committing to a chase. */
+    .confirm { position: fixed; inset: 0; background: rgba(20,14,6,.78);
+      display: none; align-items: center; justify-content: center; z-index: 60;
+      backdrop-filter: blur(2px); }
+    .confirm.open { display: flex; }
+    .confirm .scroll { background: var(--parch1); border: 3px double var(--ink);
+      border-radius: 12px; padding: 22px 28px; max-width: 440px;
+      box-shadow: 0 0 40px rgba(0,0,0,.5); text-align: center;
+      position: relative; }
+    .confirm .scroll::before, .confirm .scroll::after {
+      content: ""; position: absolute; left: 8px; right: 8px; height: 6px;
+      background: repeating-linear-gradient(90deg,
+        rgba(80,55,25,.55) 0 4px, transparent 4px 8px); }
+    .confirm .scroll::before { top: -3px; }
+    .confirm .scroll::after  { bottom: -3px; }
+    .confirm h2 { font-family: "IM Fell English SC", serif; font-size: 26px;
+      letter-spacing: 2px; font-weight: 400; margin-bottom: 6px; }
+    .confirm .who { font-family: "IM Fell English SC", serif; font-size: 20px;
+      margin: 10px 0 4px; }
+    .confirm .body { font-style: italic; font-size: 15px; color: var(--ink-soft);
+      margin-bottom: 16px; line-height: 1.4; }
+    .confirm .row { display: flex; gap: 12px; justify-content: center; }
+    .confirm button { font-family: "IM Fell English SC", serif; font-size: 14px;
+      letter-spacing: 1.5px; padding: 8px 18px; border-radius: 6px;
+      border: 1.5px solid var(--ink); background: transparent; color: var(--ink);
+      cursor: var(--cursor-quill-ready); }
+    .confirm button.go { background: var(--ink); color: var(--parch1); }
+    .confirm button.go:hover { background: #4d3920; }
+    .confirm button.no:hover { background: rgba(80,55,25,.12); }
+    .confirm .esc { font-style: italic; font-size: 11px; color: var(--ink-soft);
+      margin-top: 10px; }
+    /* Teleop pad — bottom-center, collapsible (out of the roster's way). */
+    .teleop { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%);
+      z-index: 30;
+      background: rgba(225,210,175,.86); border: 2px double var(--ink);
+      border-radius: 10px; padding: 8px 10px 9px;
+      box-shadow: 0 0 18px rgba(80,55,25,.35);
+      font-family: "IM Fell English SC", serif; user-select: none;
+      transition: padding 0.15s ease; }
+    .teleop .head { display: flex; align-items: center; justify-content: space-between;
+      font: italic 12px "IM Fell English", serif; color: var(--ink-soft);
+      gap: 10px; margin-bottom: 4px; }
+    .teleop .head .title { letter-spacing: 1px; }
+    .teleop .head .toggle { cursor: pointer; border: 1px solid var(--ink);
+      border-radius: 4px; padding: 0 8px; font-size: 14px; color: var(--ink);
+      background: rgba(245,236,212,.7); font-style: normal; line-height: 18px; }
+    .teleop .body { display: block; }
+    .teleop .row { display: flex; gap: 6px; justify-content: center; margin: 3px 0; }
+    .teleop button { width: 40px; height: 40px; border: 1.5px solid var(--ink);
+      background: rgba(245,236,212,.95); color: var(--ink); border-radius: 6px;
+      font: 600 16px "IM Fell English SC", serif; cursor: pointer; letter-spacing: 1px;
+      touch-action: none; }
+    .teleop button:active, .teleop button.held {
+      background: var(--ink); color: var(--parch1); transform: translateY(1px); }
+    .teleop .stop { width: 134px; margin-top: 4px; font-size: 14px;
+      letter-spacing: 2px; }
+    .teleop .hint { font-style: italic; font-size: 11px; color: var(--ink-soft);
+      text-align: center; margin-top: 4px; }
+    .teleop.collapsed { padding: 4px 10px; }
+    .teleop.collapsed .body { display: none; }
+    .teleop.collapsed .head { margin-bottom: 0; }
+    /* Hover affordance on the collapsed title — invites the user to enter. */
+    .teleop.collapsed .head .title { cursor: var(--cursor-quill-ready);
+      color: var(--ink); font-style: normal; letter-spacing: 1.5px; }
+    .teleop.collapsed .head .title::after { content: " ▸"; font-size: 11px;
+      color: var(--ink-soft); }
+    /* Toggle button is now just a state indicator; hover drives expansion. */
+    .teleop .head .toggle { pointer-events: none; }
+    /* Selection chip atop the chosen character. */
+    .selchip { position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+      background: rgba(245,236,212,.94); border: 2px double var(--ink);
+      border-radius: 8px; padding: 4px 12px; z-index: 25;
+      font: italic 14px "IM Fell English", serif; display: none;
+      box-shadow: 0 0 12px rgba(80,55,25,.3); }
+    .selchip.on { display: block; }
+    .selchip .x { display: inline-block; margin-left: 10px; padding: 0 6px;
+      border: 1px solid var(--ink); border-radius: 4px; cursor: pointer;
+      font-style: normal; }
+
+    /* =========== INTRO: parchment unfurl + story dialogue =========== */
+    .intro { position: fixed; inset: 0; z-index: 10000;
+      background: radial-gradient(ellipse at center, #2a1e0a 0%, #0c0700 80%);
+      display: flex; align-items: center; justify-content: center;
+      transition: opacity .8s ease; }
+    .intro.gone { opacity: 0; pointer-events: none; }
+    .intro::before {
+      /* faint candle glow behind the scroll */
+      content: ""; position: absolute; inset: 0;
+      background: radial-gradient(ellipse at center, rgba(255,200,120,.10), transparent 60%);
+      pointer-events: none;
+    }
+    .intro .scroll {
+      position: relative; width: min(720px, 88vw);
+      padding: 28px 44px 56px;
+      /* Layered parchment: fractal-noise fibre texture on top, scattered
+         age-spots, then the warm base gradient. The SVG is inline so we stay
+         fully offline. baseFrequency=0.9 + 2 octaves gives the "coarse rag"
+         feel; the colour-matrix darkens it just enough to read as fibre, not
+         as dirt. Six radial-gradient stains break up the perfect rectangle so
+         no two viewings look identical. */
+      background:
+        url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='260' height='260'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch' seed='7'/><feColorMatrix values='0 0 0 0 0.22  0 0 0 0 0.14  0 0 0 0 0.04  0 0 0 0.22 0'/></filter><rect width='260' height='260' filter='url(%23n)'/></svg>"),
+        radial-gradient(circle at 12% 18%, rgba(80,40,10,.22), transparent 16%),
+        radial-gradient(circle at 78% 24%, rgba(110,65,15,.18), transparent 14%),
+        radial-gradient(circle at 32% 72%, rgba(140,90,40,.16), transparent 12%),
+        radial-gradient(circle at 88% 88%, rgba(60,35,10,.20), transparent 14%),
+        radial-gradient(circle at 50% 50%, rgba(255,235,195,.35), transparent 55%),
+        linear-gradient(180deg, #e1c898 0%, #c9ac76 55%, #ad8e57 100%);
+      background-blend-mode: multiply, normal, normal, normal, normal, screen, normal;
+      /* Rougher edge: layered inset shadows simulate the fold-darkening and
+         worn fibers along the cut. The double border-image is replaced with
+         a torn-ish look via heavy inset + no outer border on the sides
+         (the wooden rods cover top/bottom). */
+      border-left: 3px solid rgba(40,25,8,.55);
+      border-right: 3px solid rgba(40,25,8,.55);
+      box-shadow:
+        0 8px 40px rgba(0,0,0,.7),
+        inset 0 0 0 1px rgba(80,55,20,.25),
+        inset 18px 0 40px rgba(60,35,10,.25),
+        inset -18px 0 40px rgba(60,35,10,.25),
+        inset 0 24px 60px rgba(80,50,15,.30),
+        inset 0 -24px 60px rgba(80,50,15,.30);
+      max-height: 0; overflow: hidden;
+      animation: unfurl 1.6s cubic-bezier(.2,.7,.3,1) .4s forwards;
+      transform-origin: center top;
+    }
+    /* Decorative rolled-up rod at top and bottom of the scroll —
+       wood-grained instead of flat so the rolled-up illusion holds. */
+    .intro .scroll::before, .intro .scroll::after {
+      content: ""; position: absolute; left: -16px; right: -16px;
+      height: 22px;
+      background:
+        linear-gradient(180deg,
+          #4a3520 0%, #6b4f2c 20%, #3a2a16 55%, #1a0e02 100%),
+        repeating-linear-gradient(90deg,
+          rgba(0,0,0,.0) 0px, rgba(0,0,0,.18) 2px,
+          rgba(0,0,0,.0) 6px, rgba(0,0,0,.0) 18px);
+      border-radius: 8px;
+      box-shadow:
+        0 3px 10px rgba(0,0,0,.6),
+        inset 0 1px 0 rgba(255,210,140,.35),
+        inset 0 -2px 6px rgba(0,0,0,.5);
+    }
+    .intro .scroll::before { top: -12px; }
+    .intro .scroll::after  { bottom: -12px; }
+    @keyframes unfurl {
+      0%   { max-height: 0;     opacity: .6; }
+      30%  { max-height: 60px;  opacity: 1; }
+      100% { max-height: 720px; opacity: 1; }
+    }
+
+    /* ---- Magical char-by-char reveal --------------------------------- */
+    /* Each character ignites with a candle-gold glow, drifts in slightly
+       blurred and elevated, then settles into the ink. The 1.2s arc is
+       deliberately long so two consecutive characters overlap — that overlap
+       reads as "letters being conjured" rather than "letters being typed". */
+    .intro .ch {
+      display: inline-block;
+      opacity: 0;
+      animation: magick-in 1.4s cubic-bezier(.2,.6,.3,1) forwards;
+      will-change: opacity, transform, filter, text-shadow;
+    }
+    .intro .ch.space { width: .28em; }
+    @keyframes magick-in {
+      0%   { opacity: 0;
+             transform: translateY(-10px) scale(1.35);
+             filter: blur(8px);
+             color: #ffe7a8;
+             text-shadow:
+               0 0 14px rgba(255,210,120,1),
+               0 0 30px rgba(255,170,60,.85),
+               0 0 60px rgba(255,140,40,.55); }
+      35%  { opacity: 1;
+             transform: translateY(-2px) scale(1.08);
+             filter: blur(1.2px);
+             color: #ffd58a;
+             text-shadow:
+               0 0 8px rgba(255,210,120,.85),
+               0 0 22px rgba(255,170,60,.55); }
+      70%  { opacity: 1;
+             transform: translateY(0) scale(1);
+             filter: blur(0);
+             color: #6b4f2c;
+             text-shadow: 0 0 4px rgba(255,200,100,.35); }
+      100% { opacity: 1;
+             transform: translateY(0) scale(1);
+             filter: blur(0);
+             color: inherit;
+             text-shadow: none; }
+    }
+
+    /* Holders for the magick-in text — start invisible, become visible
+       only after the JS splits them into spans (it sets opacity:1 on
+       the holder when scheduling). */
+    .intro .title, .intro .subtitle, .intro .beat {
+      opacity: 0;
+    }
+    .intro .title.lit, .intro .subtitle.lit, .intro .beat.lit {
+      opacity: 1;
+    }
+    .intro .title {
+      font-family: "IM Fell English SC", serif;
+      font-size: 38px; text-align: center; color: #2a1e0a;
+      letter-spacing: 3px;
+    }
+    .intro .subtitle {
+      font-style: italic; text-align: center; color: #6b4f2c;
+      font-size: 15px; margin-top: 4px; letter-spacing: 1px;
+    }
+    .intro .divider {
+      width: 60%; margin: 14px auto 16px;
+      border-top: 1px solid #6b4f2c;
+      opacity: 0; animation: fadeIn .6s ease forwards;
+    }
+    .intro .divider.lit { opacity: 1; animation-delay: 0s; }
+    .intro .beat {
+      font-family: "IM Fell English", Georgia, serif;
+      font-size: 17px; color: #2a1e0a; line-height: 1.65;
+      margin: 10px 22px; text-align: center;
+    }
+    .intro .quest-box {
+      margin: 18px 32px 0; padding: 12px 16px;
+      border: 1.5px dashed #6b4f2c; background: rgba(255,248,225,.4);
+      opacity: 0; transition: opacity .6s ease;
+    }
+    .intro .quest-box.on { opacity: 1; }
+    .intro .quest-box h3 {
+      font-family: "IM Fell English SC", serif;
+      font-size: 16px; color: #7a1f1f; margin-bottom: 6px; letter-spacing: 1px;
+    }
+    .intro .quest-box ul { list-style: none; padding-left: 0; }
+    .intro .quest-box li {
+      font-style: italic; font-size: 13px; color: #2a1e0a;
+      padding: 2px 0 2px 18px; position: relative;
+    }
+    .intro .quest-box li::before {
+      content: "✦"; position: absolute; left: 0; color: #7a1f1f;
+    }
+    .intro .actions {
+      display: flex; justify-content: center; gap: 16px; margin-top: 22px;
+      opacity: 0; transition: opacity .6s ease;
+    }
+    .intro .actions.on { opacity: 1; }
+    .intro .actions button {
+      font-family: "IM Fell English SC", serif; font-size: 14px;
+      padding: 8px 22px; border: 1.5px solid #2a1e0a; background: transparent;
+      color: #2a1e0a; letter-spacing: 1px; cursor: pointer; border-radius: 4px;
+    }
+    .intro .actions button.go { background: #2a1e0a; color: #e6d2a6; }
+    .intro .actions button.go:hover { background: #4d3920; }
+    .intro .actions button.skip:hover { background: rgba(80,55,25,.15); }
+    .intro .skip-corner {
+      position: absolute; top: 18px; right: 22px;
+      font-family: "IM Fell English", serif; font-style: italic;
+      font-size: 13px; color: rgba(230,210,166,.7); cursor: pointer;
+      background: none; border: none; letter-spacing: 1px;
+    }
+    .intro .skip-corner:hover { color: #fff; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    /* =========== QUEST CHIP on main UI =========== */
+    .quest-chip {
+      position: absolute; top: 6px; left: 6px; z-index: 30;
+      background: rgba(245,236,212,.92); border: 1.5px solid var(--ink);
+      border-radius: 6px; padding: 6px 10px; max-width: 260px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.15);
+      font-family: "IM Fell English", serif; font-size: 12px; color: var(--ink);
+      cursor: pointer; user-select: none;
+      transition: max-width .25s ease;
+    }
+    .quest-chip .head {
+      font-family: "IM Fell English SC", serif; font-size: 13px;
+      color: #7a1f1f; letter-spacing: 1px; display: flex; align-items: center; gap: 6px;
+    }
+    .quest-chip .head::before { content: "📜"; font-size: 14px; }
+    .quest-chip .body { font-style: italic; font-size: 12px; margin-top: 4px; }
+    .quest-chip .conds { margin-top: 6px; padding-left: 14px; display: none; }
+    .quest-chip .conds li {
+      position: relative; padding: 1px 0 1px 4px; list-style: none;
+      font-size: 11px; line-height: 1.4;
+    }
+    .quest-chip .conds li::before {
+      content: "✦"; position: absolute; left: -10px; color: #7a1f1f;
+    }
+    .quest-chip.expanded .conds { display: block; }
+    .quest-chip.expanded { max-width: 320px; }
+  </style>
+</head>
+<body>
+  <!-- Opening parchment-unfurl + story dialogue. The scroll unfurls in ~1.6s,
+       then 4 story beats fade in one after another (1.2s apart), then the
+       quest box + actions appear. Total runtime ~8s if let to play; the
+       corner "Skip" jumps straight to the map at any moment. -->
+  <div class="intro" id="intro">
+    <button class="skip-corner" id="intro-skip" title="skip the prologue (Esc)">skip →</button>
+    <div class="scroll" id="intro-scroll">
+      <div class="title">The Wrath of Filch</div>
+      <div class="subtitle">A DimOS &times; Hogwarts Mischief</div>
+      <div class="divider"></div>
+      <div class="beat" data-beat="0">
+        Night has fallen at Hogwarts. The torches gutter low. Curfew has come.
+      </div>
+      <div class="beat" data-beat="1">
+        And yet — across the castle, students still scroll their phones beneath
+        the covers, blue light flickering in the dorms.
+      </div>
+      <div class="beat" data-beat="2">
+        Argus Filch, hateful caretaker, prowls the corridors. Any phone he
+        finds is gone forever — locked away in his confiscation drawer beside
+        the Skiving Snackboxes and Extendable Ears.
+      </div>
+      <div class="beat" data-beat="3">
+        Tonight, a Unitree Go2 is your familiar. Send the hound to each soul
+        before Filch arrives. Snatch their phones. Hide them. Save the night.
+      </div>
+      <div class="quest-box" id="intro-quest">
+        <h3>Win Conditions</h3>
+        <ul>
+          <li>Spot every student who appears on the parchment.</li>
+          <li>Click their face — send the hound to hide their phone.</li>
+          <li>Beat Filch to all of them before the bell tolls dawn.</li>
+        </ul>
+      </div>
+      <div class="actions" id="intro-actions">
+        <button class="go" id="intro-go">I solemnly swear I am up to no good</button>
+        <button class="skip" id="intro-skip2">just show the map</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="frame">
+    <header>
+      <h1>The Marauder&rsquo;s Map</h1>
+      <div class="sub">Messrs DimOS solemnly swear they are up to good</div>
+      <div class="conn" id="conn">summoning…</div>
+    </header>
+    <div class="toolbar">
+      <button id="mode-id" class="active">Code only</button>
+      <button id="mode-photo">Code + portrait</button>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="stage">
+      <canvas id="map"></canvas>
+      <canvas id="overlay"></canvas>
+      <div class="empty" id="empty">— the map is blank until footprints are spied —</div>
+      <!-- Always-visible quest chip: collapsed shows the headline, click
+           to expand the win conditions. Sits below the toolbar at top-left.
+           Title kept consistent with the intro overlay. -->
+      <div class="quest-chip" id="quest-chip" title="click to expand · click again to collapse">
+        <div class="head">The Wrath of Filch</div>
+        <div class="body" id="quest-body">Beat Filch — hide every student's phone.</div>
+        <ul class="conds">
+          <li>Spot every student on the parchment.</li>
+          <li>Click their face — send the hound.</li>
+          <li>Get to all of them before dawn.</li>
+        </ul>
+      </div>
+      <aside class="roster">
+        <h2>Those Present
+          <button class="all-btn" id="open-gallery" title="open the full roster">View all</button>
+        </h2>
+        <div class="tally" id="tally">none abroad</div>
+        <ul id="roster-list"><li class="none">— no souls identified —</li></ul>
+      </aside>
+      <div class="selchip" id="selchip">
+        <span id="selchip-text">tracking —</span>
+        <span class="x" id="selchip-x">release</span>
+      </div>
+      <div class="teleop collapsed" id="teleop">
+        <div class="head">
+          <span class="title">Drive the hound</span>
+          <span class="toggle" id="tele-toggle" title="hover to expand">+</span>
+        </div>
+        <div class="body">
+          <div class="row">
+            <button data-cmd="ql">Q</button>
+            <button data-cmd="fwd">W</button>
+            <button data-cmd="qr">E</button>
+          </div>
+          <div class="row">
+            <button data-cmd="left">A</button>
+            <button data-cmd="back">S</button>
+            <button data-cmd="right">D</button>
+          </div>
+          <div class="row"><button class="stop" id="tele-stop">STOP</button></div>
+          <div class="hint">hold to drive · release to halt · keys: QWE/ASD · space = STOP</div>
+        </div>
+      </div>
+    </div>
+    <div class="footer">Mischief managed.</div>
+  </div>
+
+  <div class="lightbox" id="lightbox">
+    <div class="card">
+      <img id="lb-img" alt="portrait" />
+      <div class="cap" id="lb-cap"></div>
+      <div class="hintclose">click anywhere to close · Esc</div>
+    </div>
+  </div>
+
+  <!-- Full roster gallery — every soul on one parchment, click to track. -->
+  <div class="gallery" id="gallery">
+    <div class="scroll">
+      <button class="close" id="gallery-close" title="close (Esc)">close</button>
+      <span class="head-right" id="gallery-count">0 abroad</span>
+      <h2>The Full Register</h2>
+      <div class="grid" id="gallery-grid"></div>
+    </div>
+  </div>
+
+  <!-- Floating per-person tooltip (hover roster / gallery / map markers). -->
+  <div class="tip" id="tip">
+    <div class="nm" id="tip-nm"></div>
+    <div class="meta" id="tip-meta"></div>
+    <div class="quote" id="tip-quote"></div>
+  </div>
+
+  <div class="confirm" id="confirm">
+    <div class="scroll">
+      <h2 id="cf-title">Blimey!</h2>
+      <div class="body" id="cf-body">A spot of mischief afoot — set the hound upon…</div>
+      <div class="who" id="cf-who">—</div>
+      <div class="body" id="cf-tagline">Speak now, lest the parchment lose its patience.</div>
+      <div class="row">
+        <button class="go" id="cf-yes">I solemnly swear</button>
+        <button class="no" id="cf-no">Codswallop</button>
+      </div>
+      <div class="esc">Enter to swear · Esc to recant</div>
+    </div>
+  </div>
+
+  <!-- Ambient looped BGM ("Potion Latch"). We declare `muted autoplay` —
+       MUTED autoplay is universally allowed by every browser without a user
+       gesture, so the audio element is *playing* the instant the page loads.
+       The first user gesture (intro dismiss button click, Esc, any click on
+       the map) then flips muted off and sound arrives with zero startup
+       latency. This is the closest thing to "autoplay on open" the web
+       platform actually permits. -->
+  <audio id="bgm" src="/vendor/bgm.mp3" loop autoplay muted preload="auto"></audio>
+  <button id="bgm-toggle"
+          aria-label="Toggle background music"
+          title="Toggle background music"
+          style="position:fixed; top:10px; right:10px; z-index:9999;
+                 width:36px; height:36px; border-radius:50%;
+                 border:1.5px solid var(--ink, #3a2a18);
+                 background:rgba(255,248,225,0.85);
+                 font-size:18px; cursor:pointer; user-select:none;
+                 box-shadow:0 2px 4px rgba(0,0,0,0.2);">🔇</button>
+
+  <script src="/vendor/socketio.js"></script>
+  <!-- 100 Harry Potter characters x 10 lines each (sets window.HP_CHARACTERS) -->
+  <script src="/vendor/hp_characters.js"></script>
+  <script>
+    // ---- Background music: muted autoplay + unmute on first gesture -------
+    // Honest summary of the web platform: NO browser allows unmuted autoplay
+    // without (a) a prior user gesture or (b) a site permission grant. Period.
+    // So we do the most aggressive thing the platform allows:
+    //   1. <audio muted autoplay> — muted autoplay is universally allowed.
+    //      The track is already PLAYING (silently) by the time you read this.
+    //   2. We also call bgm.play() defensively in case the autoplay attribute
+    //      was ignored (some embedded webviews disable it).
+    //   3. We optimistically try `muted=false` once — succeeds for users who
+    //      have granted autoplay permission OR meet Chrome's MEI threshold;
+    //      otherwise the browser auto-mutes us again and we wait.
+    //   4. ANY user input — click, keydown, touch, AND the intro dismiss
+    //      buttons — unmutes us. By the time the user has dismissed the
+    //      intro, sound is on. (We expose `window._bgmStart()` so anyone in
+    //      the page can trigger it; the intro dismiss handler calls it.)
+    //   5. The 🔊/🔇 button is the manual override.
+    //
+    // If you want TRULY unmuted autoplay (no click needed), grant the host
+    // explicit permission: Chrome → site settings → Sound → Allow.
+    window._bgmCtl = (function () {
+      const bgm = document.getElementById('bgm');
+      const toggle = document.getElementById('bgm-toggle');
+      if (!bgm || !toggle) return { unmute: () => {} };
+      bgm.volume = 0.4;     // ambient, not in-your-face
+      let userWantsSound = true;
+
+      function syncIcon() {
+        toggle.textContent = (bgm.muted || bgm.paused) ? '🔇' : '🔊';
+      }
+
+      // Make sure we're actually playing (the autoplay attribute is the
+      // primary mechanism, this is the belt + suspenders).
+      function ensurePlaying() {
+        if (bgm.paused) {
+          const p = bgm.play();
+          if (p && typeof p.catch === 'function') p.catch(() => {});
+        }
+      }
+      ensurePlaying();
+
+      // One optimistic unmute attempt — works for permission-granted users.
+      // Browser will silently re-mute us if not allowed.
+      (function tryUnmuteNow() {
+        bgm.muted = false;
+        const p = bgm.play();
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => {
+            // Blocked. Stay muted, wait for gesture.
+            bgm.muted = true;
+            ensurePlaying();
+          });
+        }
+        // Re-check after a tick in case the browser auto-muted us.
+        setTimeout(syncIcon, 50);
+      })();
+
+      // Public unmute entry point — call from intro dismiss handlers.
+      function unmute() {
+        if (!userWantsSound) return;
+        bgm.muted = false;
+        ensurePlaying();
+        syncIcon();
+      }
+
+      // First user gesture anywhere in the page → unmute.
+      function onFirstGesture() {
+        unmute();
+        document.removeEventListener('click', onFirstGesture, true);
+        document.removeEventListener('keydown', onFirstGesture, true);
+        document.removeEventListener('touchstart', onFirstGesture, true);
+      }
+      document.addEventListener('click', onFirstGesture, true);
+      document.addEventListener('keydown', onFirstGesture, true);
+      document.addEventListener('touchstart', onFirstGesture, true);
+
+      // Toggle button = user override; remember their preference for this
+      // session. We stop propagation so this click doesn't accidentally
+      // fire onFirstGesture's logic.
+      toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (bgm.paused || bgm.muted) {
+          bgm.muted = false;
+          userWantsSound = true;
+          const p = bgm.play();
+          if (p && typeof p.catch === 'function') p.catch(() => {});
+        } else {
+          bgm.pause();
+          userWantsSound = false;
+        }
+        syncIcon();
+      });
+
+      bgm.addEventListener('play',  syncIcon);
+      bgm.addEventListener('pause', syncIcon);
+      syncIcon();
+
+      // Expose for the intro dismiss handler — clicking "I solemnly swear"
+      // is a guaranteed user gesture so calling unmute() there is the most
+      // reliable way to bring sound in.
+      return { unmute };
+    })();
+  </script>
+  <script>
+  (function () {
+    const mapCanvas = document.getElementById('map');
+    const ovl = document.getElementById('overlay');
+    const mctx = mapCanvas.getContext('2d');
+    const octx = ovl.getContext('2d');
+    const connEl = document.getElementById('conn');
+    const countEl = document.getElementById('count');
+    const emptyEl = document.getElementById('empty');
+    const btnId = document.getElementById('mode-id');
+    const btnPhoto = document.getElementById('mode-photo');
+    const tallyEl = document.getElementById('tally');
+    const rosterEl = document.getElementById('roster-list');
+    const lightbox = document.getElementById('lightbox');
+    const lbImg = document.getElementById('lb-img');
+    const lbCap = document.getElementById('lb-cap');
+
+    const DOG_ID_BASE = 1000000;
+    const DOG_INK = '#7a1f1f';
+    function isDog(p) { return p.kind === 'dog'; }
+
+    // Each detected person is mapped to a Harry Potter character. The 100
+    // characters x 10 lines are loaded from /vendor/hp_characters.js (offline).
+    const HP_CHARACTERS = (window.HP_CHARACTERS && window.HP_CHARACTERS.length)
+      ? window.HP_CHARACTERS
+      : [{ name: 'Wizard', color: '#5a3a1a', quotes: ['Curious. Most curious.'] }];
+
+    // Assign a character to each unique id ONCE, then cache it: the same id
+    // always shows the same character (no re-randomising on later frames).
+    const charCache = {};
+    function characterFor(id) {
+      if (!(id in charCache)) {
+        const n = HP_CHARACTERS.length;
+        charCache[id] = HP_CHARACTERS[((id % n) + n) % n];
+      }
+      return charCache[id];
+    }
+    // Raw numeric id shown on the map so identity stability is visible.
+    function idTag(p) { return isDog(p) ? `G2-${p.id - DOG_ID_BASE}` : `#${p.id}`; }
+    function labelFor(p) {
+      return isDog(p) ? `G2-${p.id - DOG_ID_BASE}` : `${characterFor(p.id).name} ${idTag(p)}`;
+    }
+    function colorFor(p) {
+      return isDog(p) ? DOG_INK : characterFor(p.id).color;
+    }
+
+    let portraitRects = [];          // clickable portrait hit-boxes on the map
+    let personHits = [];             // clickable person markers -> floating quote
+    let floatingQuotes = [];         // {x,y world, text, name, color, born}
+    const QUOTE_TTL_MS = 5500;
+    let mode = 'id';                 // 'id' | 'photo'
+
+    // Walking footstep trails: appear only once a person is confirmed (seen a
+    // 2nd time) AND has moved more than this many metres from their last anchor.
+    const FOOT_TRAIL_MIN_MOVE_M = 3.0;
+    const TRAIL_TTL_MS = 6000;
+    let trails = [];                 // {ax,ay,cx,cy (world m), born, color}
+    const track = {};                // id -> {ax, ay, seen}
+    let mapMeta = null;              // {width,height,resolution,origin:[ox,oy],label}
+    let mapImg = null, mapReady = false;
+    let people = [];                 // [{id,x,y,name,photo,age,kind,seen_by}]
+    let robot = null;                // {x,y,label}
+    let dogLabel = '';               // this viewpoint's WiFi/dog label
+    const photoCache = {};           // id -> HTMLImageElement
+
+    btnId.onclick = () => { mode = 'id'; btnId.classList.add('active'); btnPhoto.classList.remove('active'); };
+    btnPhoto.onclick = () => { mode = 'photo'; btnPhoto.classList.add('active'); btnId.classList.remove('active'); };
+
+    function fit() {
+      const r = mapCanvas.parentElement.getBoundingClientRect();
+      for (const c of [mapCanvas, ovl]) { c.width = r.width; c.height = r.height; }
+      drawMap();
+    }
+    window.addEventListener('resize', fit);
+
+    // World (x,y) -> grid pixel (col,row) -> canvas pixel.
+    function worldToCanvas(wx, wy) {
+      if (!mapMeta) return null;
+      const col = (wx - mapMeta.origin[0]) / mapMeta.resolution;
+      const row = (wy - mapMeta.origin[1]) / mapMeta.resolution;
+      const sx = mapCanvas.width / mapMeta.width;
+      const sy = mapCanvas.height / mapMeta.height;
+      // Flip vertically so +y world points "up" on the parchment.
+      return [col * sx, mapCanvas.height - row * sy];
+    }
+    // Inverse of worldToCanvas: click pixel -> world (x,y) in metres.
+    function canvasToWorld(cx, cy) {
+      if (!mapMeta) return null;
+      const sx = mapCanvas.width / mapMeta.width;
+      const sy = mapCanvas.height / mapMeta.height;
+      const col = cx / sx;
+      const row = (mapCanvas.height - cy) / sy;  // flip back
+      return [
+        col * mapMeta.resolution + mapMeta.origin[0],
+        row * mapMeta.resolution + mapMeta.origin[1],
+      ];
+    }
+    // Current "destination" the planner is driving toward (server-confirmed).
+    let navGoal = null;  // {x, y} in world metres
+
+    function drawMap() {
+      mctx.clearRect(0, 0, mapCanvas.width, mapCanvas.height);
+      if (mapReady) {
+        mctx.save();
+        // Flip vertically to match worldToCanvas orientation.
+        mctx.translate(0, mapCanvas.height);
+        mctx.scale(1, -1);
+        mctx.imageSmoothingEnabled = false;
+        mctx.globalAlpha = 0.85;
+        mctx.drawImage(mapImg, 0, 0, mapCanvas.width, mapCanvas.height);
+        mctx.restore();
+      }
+    }
+
+    // A little ink footprint glyph centered at (x,y).
+    function drawFootprints(x, y, color) {
+      octx.save();
+      octx.translate(x, y);
+      // Two passes: a cream halo first so the prints pop against the busy
+      // parchment/walls, then the coloured prints on top. Bigger than before.
+      const feet = [[-7, 0], [7, 0]];
+      // glow ring under the marker
+      octx.beginPath();
+      octx.arc(0, -2, 16, 0, Math.PI * 2);
+      octx.fillStyle = 'rgba(245,236,212,.55)';
+      octx.fill();
+      for (let pass = 0; pass < 2; pass++) {
+        octx.fillStyle = pass === 0 ? 'rgba(245,236,212,.95)' : color;
+        const g = pass === 0 ? 2.2 : 0;  // halo is fatter
+        for (const [dx] of feet) {
+          octx.beginPath();
+          octx.ellipse(dx, 0, 4.6 + g, 8 + g, 0, 0, Math.PI * 2);   // sole
+          octx.fill();
+          octx.beginPath();
+          octx.ellipse(dx, -9.5, 2.4 + g, 3.2 + g, 0, 0, Math.PI * 2);  // toes
+          octx.fill();
+        }
+      }
+      octx.restore();
+    }
+
+    // Special glyph for another Unitree Go2 quadruped: a little ink robot-dog.
+    function drawDogIcon(x, y, color) {
+      octx.save();
+      octx.translate(x, y);
+      octx.strokeStyle = color; octx.fillStyle = color; octx.lineWidth = 1.6;
+      // body
+      octx.strokeRect(-8, -5, 16, 8);
+      // four legs
+      for (const lx of [-6, -2, 2, 6]) {
+        octx.beginPath(); octx.moveTo(lx, 3); octx.lineTo(lx, 8); octx.stroke();
+      }
+      // head + lidar antenna
+      octx.strokeRect(7, -8, 6, 5);
+      octx.beginPath(); octx.moveTo(10, -8); octx.lineTo(10, -12); octx.stroke();
+      octx.beginPath(); octx.arc(10, -12.5, 1.4, 0, Math.PI * 2); octx.fill();
+      octx.restore();
+    }
+
+    // One oriented footprint, offset to the left/right of the travel line.
+    function drawSingleFoot(x, y, ang, side, color, alpha) {
+      octx.save();
+      octx.globalAlpha = alpha;
+      octx.translate(x, y);
+      octx.rotate(ang + Math.PI / 2);  // foot long-axis points along travel
+      octx.translate(side * 3, 0);
+      octx.fillStyle = color;
+      octx.beginPath(); octx.ellipse(0, 0, 2.5, 4.4, 0, 0, Math.PI * 2); octx.fill();
+      octx.beginPath(); octx.ellipse(0, -5, 1.3, 1.8, 0, 0, Math.PI * 2); octx.fill();
+      octx.restore();
+    }
+
+    // Spawn a fading trail when a confirmed person has walked far enough.
+    function updateTrails() {
+      const now = performance.now();
+      for (const p of people) {
+        if (p.x == null || p.y == null) continue;
+        let t = track[p.id];
+        if (!t) { track[p.id] = { ax: p.x, ay: p.y, seen: 1 }; continue; }
+        t.seen++;
+        const d = Math.hypot(p.x - t.ax, p.y - t.ay);
+        if (t.seen >= 2 && d > FOOT_TRAIL_MIN_MOVE_M) {
+          trails.push({
+            ax: t.ax, ay: t.ay, cx: p.x, cy: p.y, born: now,
+            color: colorFor(p),
+          });
+          t.ax = p.x; t.ay = p.y;  // re-anchor at the new spot
+        }
+      }
+    }
+
+    function drawTrails() {
+      const now = performance.now();
+      trails = trails.filter((tr) => now - tr.born < TRAIL_TTL_MS);
+      for (const tr of trails) {
+        const a = worldToCanvas(tr.ax, tr.ay), c = worldToCanvas(tr.cx, tr.cy);
+        if (!a || !c) continue;
+        const life = 1 - (now - tr.born) / TRAIL_TTL_MS;     // 1 -> 0
+        const ang = Math.atan2(c[1] - a[1], c[0] - a[0]);
+        const steps = Math.max(2, Math.round(Math.hypot(c[0] - a[0], c[1] - a[1]) / 18));
+        for (let i = 0; i <= steps; i++) {
+          const fx = a[0] + (c[0] - a[0]) * i / steps;
+          const fy = a[1] + (c[1] - a[1]) * i / steps;
+          // Older steps (closer to the start) are fainter -> a fading trail.
+          const stepAlpha = life * Math.max(0.18, i / steps) * 0.85;
+          drawSingleFoot(fx, fy, ang, i % 2 === 0 ? 1 : -1, tr.color, stepAlpha);
+        }
+      }
+    }
+
+    function inkColor(id) {
+      const hues = ['#5a3a1a', '#6b2f2f', '#3a4a2a', '#2f3a5a', '#5a2f4a', '#4a3a1a'];
+      return hues[((id % hues.length) + hues.length) % hues.length];
+    }
+
+    function drawOverlay() {
+      octx.clearRect(0, 0, ovl.width, ovl.height);
+
+      // Footstep trails first, so live markers sit on top.
+      drawTrails();
+
+      // Robot marker — a small compass star.
+      if (robot) {
+        const p = worldToCanvas(robot.x, robot.y);
+        if (p) {
+          octx.save();
+          octx.strokeStyle = '#2a1c0e'; octx.fillStyle = '#2a1c0e'; octx.lineWidth = 1.5;
+          octx.beginPath(); octx.arc(p[0], p[1], 6, 0, Math.PI * 2); octx.stroke();
+          octx.beginPath(); octx.arc(p[0], p[1], 2.2, 0, Math.PI * 2); octx.fill();
+          octx.font = 'italic 12px "IM Fell English", serif';
+          octx.fillText('the hound' + (dogLabel ? ` · ${dogLabel}` : ''), p[0] + 9, p[1] + 4);
+          octx.restore();
+        }
+      }
+
+      let plotted = 0;
+      portraitRects = [];
+      personHits = [];
+      for (const person of people) {
+        if (person.x == null || person.y == null) continue;
+        const p = worldToCanvas(person.x, person.y);
+        if (!p) continue;
+        plotted++;
+        const dog = isDog(person);
+        const color = colorFor(person);
+        const label = labelFor(person);
+        // Whole marker is clickable -> floating in-character line.
+        personHits.push({ person, x: p[0], y: p[1] });
+        // Keep markers clearly visible; only mild dimming with age.
+        const fade = Math.max(0.7, 1 - (person.age || 0) / 30);
+
+        octx.globalAlpha = fade;
+        if (dog) drawDogIcon(p[0], p[1], color);
+        else drawFootprints(p[0], p[1], color);
+
+        // Halo + crosshair around the actively-followed character.
+        if (selectedId != null && person.id === selectedId) {
+          octx.save();
+          octx.strokeStyle = color; octx.lineWidth = 2;
+          octx.setLineDash([6, 4]);
+          const t = (performance.now() / 240) % (Math.PI * 2);
+          octx.beginPath();
+          octx.arc(p[0], p[1], 22 + Math.sin(t) * 1.5, 0, Math.PI * 2);
+          octx.stroke();
+          octx.setLineDash([]);
+          octx.beginPath(); octx.moveTo(p[0] - 24, p[1]); octx.lineTo(p[0] - 18, p[1]); octx.stroke();
+          octx.beginPath(); octx.moveTo(p[0] + 18, p[1]); octx.lineTo(p[0] + 24, p[1]); octx.stroke();
+          octx.beginPath(); octx.moveTo(p[0], p[1] - 24); octx.lineTo(p[0], p[1] - 18); octx.stroke();
+          octx.beginPath(); octx.moveTo(p[0], p[1] + 18); octx.lineTo(p[0], p[1] + 24); octx.stroke();
+          octx.restore();
+        }
+
+        if (mode === 'photo' && person.photo) {
+          let img = photoCache[person.id];
+          if (!img || img._src !== person.photo) {
+            img = new Image(); img._src = person.photo;
+            img.src = 'data:image/jpeg;base64,' + person.photo;
+            photoCache[person.id] = img;
+          }
+          const s = 46, px = p[0] - s / 2, py = p[1] - s - 14;
+          octx.save();
+          octx.strokeStyle = color; octx.lineWidth = 2;
+          octx.fillStyle = 'rgba(225,210,175,.92)';
+          octx.fillRect(px - 2, py - 2, s + 4, s + 4);
+          if (img.complete && img.naturalWidth) octx.drawImage(img, px, py, s, s);
+          octx.strokeRect(px - 2, py - 2, s + 4, s + 4);
+          octx.restore();
+          // Register a clickable hit-box so the portrait opens large.
+          portraitRects.push({ id: person.id, x: px - 2, y: py - 2, w: s + 4, h: s + 4 });
+          octx.fillStyle = color;
+          octx.font = '600 13px "IM Fell English SC", serif';
+          octx.textAlign = 'center';
+          octx.fillText(label, p[0], py - 6);
+          octx.textAlign = 'left';
+        } else {
+          // Code-only: a banner label above the marker.
+          octx.font = '600 15px "IM Fell English SC", serif';
+          octx.textAlign = 'center';
+          const tw = octx.measureText(label).width;
+          octx.fillStyle = 'rgba(225,210,175,.9)';
+          octx.fillRect(p[0] - tw / 2 - 6, p[1] - 30, tw + 12, 19);
+          octx.strokeStyle = color; octx.lineWidth = 1.2;
+          octx.strokeRect(p[0] - tw / 2 - 6, p[1] - 30, tw + 12, 19);
+          octx.fillStyle = color;
+          octx.fillText(label, p[0], p[1] - 16);
+          octx.textAlign = 'left';
+        }
+        octx.globalAlpha = 1;
+      }
+      countEl.textContent = plotted ? `· ${plotted} afoot` : '';
+      emptyEl.style.display = (mapReady || plotted) ? 'none' : 'flex';
+
+      // Destination pin (click-to-navigate): red X + pulsing ring.
+      if (navGoal) {
+        const p = worldToCanvas(navGoal.x, navGoal.y);
+        if (p) {
+          octx.save();
+          octx.strokeStyle = '#7a1f1f';
+          octx.lineWidth = 2.5;
+          const r = 10;
+          octx.beginPath();
+          octx.moveTo(p[0] - r, p[1] - r); octx.lineTo(p[0] + r, p[1] + r);
+          octx.moveTo(p[0] + r, p[1] - r); octx.lineTo(p[0] - r, p[1] + r);
+          octx.stroke();
+          // soft halo
+          const pulse = 14 + 4 * Math.sin(performance.now() / 250);
+          octx.globalAlpha = 0.4;
+          octx.beginPath(); octx.arc(p[0], p[1], pulse, 0, Math.PI * 2); octx.stroke();
+          octx.globalAlpha = 1;
+          // label
+          octx.font = 'italic 12px "IM Fell English", serif';
+          octx.fillStyle = '#7a1f1f';
+          octx.fillText('× destination · tap to cancel', p[0] + 14, p[1] + 4);
+          octx.restore();
+        }
+      }
+
+      drawQuotes();  // floating in-character lines, on top of everything
+      requestAnimationFrame(drawOverlay);
+    }
+    requestAnimationFrame(drawOverlay);
+
+    // ---- Floating in-character quotes ----
+    function spawnQuote(person) {
+      if (isDog(person)) return;  // the quadrupeds keep their counsel
+      const ch = characterFor(person.id);
+      const text = ch.quotes[Math.floor(Math.random() * ch.quotes.length)];
+      floatingQuotes.push({
+        x: person.x, y: person.y, text, name: ch.name, color: ch.color,
+        born: performance.now(),
+      });
+    }
+
+    function wrapText(text, maxWidth) {
+      const words = text.split(' ');
+      const lines = [];
+      let line = '';
+      for (const w of words) {
+        const test = line ? line + ' ' + w : w;
+        if (octx.measureText(test).width > maxWidth && line) { lines.push(line); line = w; }
+        else line = test;
+      }
+      if (line) lines.push(line);
+      return lines;
+    }
+
+    function drawQuotes() {
+      const now = performance.now();
+      floatingQuotes = floatingQuotes.filter((q) => now - q.born < QUOTE_TTL_MS);
+      for (const q of floatingQuotes) {
+        const p = worldToCanvas(q.x, q.y);
+        if (!p) continue;
+        const t = (now - q.born) / QUOTE_TTL_MS;        // 0 -> 1
+        const rise = 18 + t * 46;                        // float upward
+        const alpha = t < 0.12 ? t / 0.12 : (1 - t) / 0.88;  // fade in then out
+        octx.save();
+        octx.globalAlpha = Math.max(0, Math.min(1, alpha));
+        octx.font = 'italic 14px "IM Fell English", serif';
+        const maxW = 220;
+        const lines = wrapText('"' + q.text + '"', maxW);
+        const lh = 18, padX = 10, padY = 8;
+        let tw = 0;
+        for (const ln of lines) tw = Math.max(tw, octx.measureText(ln).width);
+        const bw = tw + padX * 2;
+        const bh = lines.length * lh + padY * 2 + 14;
+        const bx = p[0] - bw / 2;
+        const by = p[1] - rise - bh;
+        // parchment bubble
+        octx.fillStyle = 'rgba(232,219,188,.96)';
+        octx.strokeStyle = q.color; octx.lineWidth = 2;
+        roundRect(bx, by, bw, bh, 8); octx.fill(); octx.stroke();
+        // little tail
+        octx.beginPath();
+        octx.moveTo(p[0] - 6, by + bh); octx.lineTo(p[0] + 6, by + bh);
+        octx.lineTo(p[0], by + bh + 9); octx.closePath();
+        octx.fillStyle = 'rgba(232,219,188,.96)'; octx.fill();
+        octx.strokeStyle = q.color; octx.stroke();
+        // name + quote
+        octx.textAlign = 'center';
+        octx.fillStyle = q.color;
+        octx.font = '600 12px "IM Fell English SC", serif';
+        octx.fillText(q.name, p[0], by + padY + 4);
+        octx.fillStyle = '#2a1c0e';
+        octx.font = 'italic 14px "IM Fell English", serif';
+        lines.forEach((ln, i) => octx.fillText(ln, p[0], by + padY + 18 + i * lh));
+        octx.textAlign = 'left';
+        octx.restore();
+      }
+    }
+
+    function roundRect(x, y, w, h, r) {
+      octx.beginPath();
+      octx.moveTo(x + r, y);
+      octx.arcTo(x + w, y, x + w, y + h, r);
+      octx.arcTo(x + w, y + h, x, y + h, r);
+      octx.arcTo(x, y + h, x, y, r);
+      octx.arcTo(x, y, x + w, y, r);
+      octx.closePath();
+    }
+
+    const socket = io();
+    socket.on('connect', () => { connEl.textContent = 'I solemnly swear…'; });
+    socket.on('disconnect', () => { connEl.textContent = 'mischief paused'; });
+
+    // ---- Teleop pad (hold-to-move, release = zero Twist) ----
+    // Tuned so each press of a single key feels like a sim step; combos
+    // (W+A, etc.) compose naturally because we sum all held buttons.
+    const TELE_LIN = 0.5;   // m/s per W/S/Q/E
+    const TELE_ANG = 0.8;   // rad/s per A/D
+    const TELE_VEC = {
+      fwd:   [ TELE_LIN,  0,         0       ],
+      back:  [-TELE_LIN,  0,         0       ],
+      ql:    [ 0,         TELE_LIN,  0       ],  // strafe left (Q)
+      qr:    [ 0,        -TELE_LIN,  0       ],  // strafe right (E)
+      left:  [ 0,         0,         TELE_ANG],  // turn left (A)
+      right: [ 0,         0,        -TELE_ANG],  // turn right (D)
+    };
+    const heldButtons = new Set();  // 'fwd' | 'back' | 'ql' | 'qr' | 'left' | 'right'
+    let lastTeleZero = true;        // suppress repeat zero-publishes
+
+    function sendTeleop() {
+      let vx = 0, vy = 0, wz = 0;
+      for (const k of heldButtons) {
+        const v = TELE_VEC[k]; if (!v) continue;
+        vx += v[0]; vy += v[1]; wz += v[2];
+      }
+      const allZero = vx === 0 && vy === 0 && wz === 0;
+      if (allZero && lastTeleZero) return;  // don't spam zeros
+      lastTeleZero = allZero;
+      socket.emit('teleop', { linear_x: vx, linear_y: vy, angular_z: wz });
+    }
+    // 20 Hz heartbeat while a button is held -> robust against missed key-ups
+    // and matches the simulator's "hold to drive" feel.
+    setInterval(() => { if (heldButtons.size) sendTeleop(); }, 50);
+
+    function pressBtn(btn, cmd) {
+      if (heldButtons.has(cmd)) return;
+      heldButtons.add(cmd); btn.classList.add('held'); sendTeleop();
+    }
+    function releaseBtn(btn, cmd) {
+      if (!heldButtons.has(cmd)) return;
+      heldButtons.delete(cmd); btn.classList.remove('held'); sendTeleop();
+    }
+
+    document.querySelectorAll('.teleop button[data-cmd]').forEach((btn) => {
+      const cmd = btn.dataset.cmd;
+      btn.addEventListener('mousedown', (e) => { e.preventDefault(); pressBtn(btn, cmd); });
+      btn.addEventListener('mouseup',   () => releaseBtn(btn, cmd));
+      btn.addEventListener('mouseleave',() => releaseBtn(btn, cmd));
+      // Touch parity for tablets in the field.
+      btn.addEventListener('touchstart', (e) => { e.preventDefault(); pressBtn(btn, cmd); }, { passive: false });
+      btn.addEventListener('touchend',   (e) => { e.preventDefault(); releaseBtn(btn, cmd); }, { passive: false });
+      btn.addEventListener('touchcancel',() => releaseBtn(btn, cmd));
+    });
+    // Any release outside a button still stops the dog.
+    window.addEventListener('mouseup', () => {
+      if (!heldButtons.size) return;
+      heldButtons.clear();
+      document.querySelectorAll('.teleop button.held').forEach((b) => b.classList.remove('held'));
+      sendTeleop();
+    });
+    window.addEventListener('blur', () => {
+      if (!heldButtons.size) return;
+      heldButtons.clear();
+      document.querySelectorAll('.teleop button.held').forEach((b) => b.classList.remove('held'));
+      sendTeleop();
+    });
+    document.getElementById('tele-stop').addEventListener('click', () => {
+      heldButtons.clear();
+      document.querySelectorAll('.teleop button.held').forEach((b) => b.classList.remove('held'));
+      socket.emit('teleop', { linear_x: 0, linear_y: 0, angular_z: 0 });
+    });
+
+    // ---- Keyboard teleop (Q/W/E/A/S/D + Space=STOP) ----
+    // Drives the SAME pressBtn/releaseBtn the on-screen pad uses, so visual
+    // state (.held outline) and velocity logic stay in sync. Auto-repeat is
+    // suppressed because pressBtn is idempotent. Typing in a text field is
+    // ignored so the keys don't double-fire while the user is editing.
+    const KEY_TO_CMD = {
+      'q': 'ql',  'Q': 'ql',
+      'w': 'fwd', 'W': 'fwd',
+      'e': 'qr',  'E': 'qr',
+      'a': 'left','A': 'left',
+      's': 'back','S': 'back',
+      'd': 'right','D': 'right',
+    };
+    function btnForCmd(cmd) {
+      return document.querySelector(`.teleop button[data-cmd="${cmd}"]`);
+    }
+    function isTypingTarget(el) {
+      if (!el) return false;
+      const tag = (el.tagName || '').toLowerCase();
+      return tag === 'input' || tag === 'textarea' || el.isContentEditable;
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.repeat) return;
+      if (isTypingTarget(e.target)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Space = panic stop. We use ' ' to match e.key.
+      if (e.key === ' ' || e.code === 'Space') {
+        e.preventDefault();
+        document.getElementById('tele-stop').click();
+        return;
+      }
+      const cmd = KEY_TO_CMD[e.key];
+      if (!cmd) return;
+      const btn = btnForCmd(cmd);
+      if (!btn) return;
+      e.preventDefault();
+      pressBtn(btn, cmd);
+    });
+    document.addEventListener('keyup', (e) => {
+      if (isTypingTarget(e.target)) return;
+      const cmd = KEY_TO_CMD[e.key];
+      if (!cmd) return;
+      const btn = btnForCmd(cmd);
+      if (!btn) return;
+      e.preventDefault();
+      releaseBtn(btn, cmd);
+    });
+
+    // Hover-driven teleop pad: pointer over "Drive the hound" expands the
+    // pad; pointer leaves -> collapses. If a button is held when the pointer
+    // leaves, defer the collapse until release so we don't strand the dog
+    // moving and lose the pointerup on a disappearing element.
+    const teleopBox = document.getElementById('teleop');
+    const teleToggle = document.getElementById('tele-toggle');
+    let pendingCollapse = false;
+    function setCollapsed(collapsed) {
+      teleopBox.classList.toggle('collapsed', collapsed);
+      teleToggle.textContent = collapsed ? '+' : '−';
+    }
+    teleopBox.addEventListener('mouseenter', () => {
+      pendingCollapse = false;
+      setCollapsed(false);
+    });
+    teleopBox.addEventListener('mouseleave', () => {
+      if (heldButtons.size) {
+        pendingCollapse = true;  // wait for release
+      } else {
+        setCollapsed(true);
+      }
+    });
+    // When the last held button is released, honour any deferred collapse.
+    document.addEventListener('pointerup', () => {
+      if (pendingCollapse && heldButtons.size === 0
+          && !teleopBox.matches(':hover')) {
+        pendingCollapse = false;
+        setCollapsed(true);
+      }
+    });
+
+    // ---- Selection (click a character to lock-and-follow) ----
+    let selectedId = null;
+    const selChip = document.getElementById('selchip');
+    const selChipText = document.getElementById('selchip-text');
+    function setSelection(id, label) {
+      selectedId = id;
+      if (id == null) {
+        selChip.classList.remove('on');
+        socket.emit('deselect', {});
+      } else {
+        selChipText.textContent = 'tracking ' + (label || `#${id}`);
+        selChip.classList.add('on');
+        socket.emit('select', { id });
+        // Selecting a person cancels any nav goal (exclusivity): server-side
+        // handler also publishes stop_movement; clear the pin locally so the
+        // UI doesn't lie until the next 'goal' echo arrives.
+        navGoal = null;
+      }
+      // Reflect the new selection in the roster immediately (don't wait for
+      // the next people event from the server).
+      try { renderRoster(); } catch (_) {}
+    }
+    document.getElementById('selchip-x').addEventListener('click', (e) => {
+      e.stopPropagation(); setSelection(null, null);
+    });
+
+    function setLabel(l) {
+      if (l && l !== dogLabel) {
+        dogLabel = l;
+        document.querySelector('header .sub').textContent =
+          `Patrolled by ${dogLabel} · Messrs DimOS up to good`;
+      }
+    }
+
+    socket.on('map', (data) => {
+      mapMeta = data;
+      setLabel(data.label);
+      const img = new Image();
+      img.onload = () => { mapImg = img; mapReady = true; drawMap(); };
+      img.src = 'data:image/png;base64,' + data.img;
+    });
+    function renderRoster() {
+      const n = people.length;
+      tallyEl.textContent = n === 0 ? 'none abroad'
+        : (n === 1 ? '1 soul identified' : `${n} souls identified`);
+      if (n === 0) {
+        rosterEl.innerHTML = '<li class="none">— no souls identified —</li>';
+        return;
+      }
+      const sorted = [...people].sort((a, b) => a.id - b.id);
+      rosterEl.innerHTML = '';
+      for (const p of sorted) {
+        const dog = isDog(p);
+        const li = document.createElement('li');
+        li.dataset.id = String(p.id);
+        if (dog) li.classList.add('dog');
+        const imgcls = dog ? 'dog' : '';
+        const thumb = p.photo
+          ? `<img class="${imgcls}" src="data:image/jpeg;base64,${p.photo}" alt="${labelFor(p)}">`
+          : `<img class="${imgcls}" alt="${labelFor(p)}">`;
+        const age = (p.age != null) ? `${p.age}s ago` : '';
+        const tag = dog ? '<span class="tag">Go2</span>' : '';
+        const col = colorFor(p);
+        li.innerHTML = `${thumb}<span class="who" style="color:${col}">${labelFor(p)}</span>${tag}<span class="age">${age}</span>`;
+
+        if (dog) {
+          // Dog row: legacy behavior — clicking opens portrait if any.
+          li.style.cursor = p.photo ? 'zoom-in' : 'default';
+          li.onclick = () => { if (p.photo) requestPhoto(p.id, labelFor(p)); };
+        } else {
+          // Person row: whole row picks this person for lock-and-follow.
+          li.classList.add('selectable');
+          if (selectedId === p.id) li.classList.add('selected');
+          li.title = 'click to track · click again to release';
+          li.onclick = () => {
+            if (selectedId === p.id) {
+              setSelection(null, null);
+            } else {
+              setSelection(p.id, labelFor(p));
+            }
+          };
+          // Small zoom icon preserves access to the lightbox without
+          // hijacking the row click that the user wants for selection.
+          if (p.photo) {
+            const zoom = document.createElement('span');
+            zoom.className = 'zoom';
+            zoom.textContent = '🔍';
+            zoom.title = 'view portrait';
+            zoom.addEventListener('click', (e) => {
+              e.stopPropagation();
+              requestPhoto(p.id, labelFor(p));
+            });
+            li.appendChild(zoom);
+          }
+        }
+        rosterEl.appendChild(li);
+      }
+    }
+
+    // ---- Lightbox (view a portrait large) ----
+    let pendingLabel = '';
+    function requestPhoto(id, label) {
+      pendingLabel = label || '';
+      socket.emit('get_photo', { id });
+    }
+    function closeLightbox() { lightbox.classList.remove('open'); lbImg.src = ''; }
+    lightbox.addEventListener('click', closeLightbox);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLightbox(); });
+
+    // Map clicks (priority): portrait box → lightbox; person marker → select;
+    // existing goal pin → cancel; otherwise → publish a navigation goal.
+    ovl.addEventListener('click', (ev) => {
+      const rect = ovl.getBoundingClientRect();
+      const cx = (ev.clientX - rect.left) * (ovl.width / rect.width);
+      const cy = (ev.clientY - rect.top) * (ovl.height / rect.height);
+      // 1) portrait thumbnail -> lightbox
+      for (const r of portraitRects) {
+        if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) {
+          const person = people.find((q) => q.id === r.id);
+          requestPhoto(r.id, person ? labelFor(person) : `#${r.id}`);
+          return;
+        }
+      }
+      // 2) nearest person marker within range -> select + in-character line
+      let best = null, bestD = 30;  // px
+      for (const h of personHits) {
+        const d = Math.hypot(cx - h.x, cy - h.y);
+        if (d < bestD) { bestD = d; best = h.person; }
+      }
+      if (best) {
+        if (isDog(best)) {
+          spawnQuote(best);  // can't chase oneself — just bark a line
+        } else {
+          askConfirm(best);
+        }
+        return;
+      }
+      // 3) Existing goal pin tap -> cancel the navigation goal.
+      if (navGoal) {
+        const gp = worldToCanvas(navGoal.x, navGoal.y);
+        if (gp && Math.hypot(cx - gp[0], cy - gp[1]) < 24) {
+          navGoal = null;
+          socket.emit('cancel_nav', {});
+          return;
+        }
+      }
+      // 4) Free space click -> publish a navigation goal (point-to-go).
+      const w = canvasToWorld(cx, cy);
+      if (w && mapMeta) {
+        navGoal = { x: w[0], y: w[1] };  // optimistic; server will echo 'goal'
+        socket.emit('navigate', { wx: w[0], wy: w[1] });
+        // Selecting a follow target clears the goal too — keep UI in sync.
+        if (selectedId != null) setSelection(null, null);
+      }
+    });
+
+    // ---- Confirmation parchment ----
+    // Clicking a footprint asks first: HP-flavoured "are you sure?" before the
+    // hound is unleashed. Bypasses the prompt when re-affirming the same id
+    // (so a stray double-tap doesn't get nagged twice).
+    const confirmEl = document.getElementById('confirm');
+    const cfTitle = document.getElementById('cf-title');
+    const cfBody = document.getElementById('cf-body');
+    const cfWho = document.getElementById('cf-who');
+    const cfTag = document.getElementById('cf-tagline');
+    const cfYes = document.getElementById('cf-yes');
+    const cfNo = document.getElementById('cf-no');
+    const TITLES = ['Blimey!', 'Merlin’s beard!', 'By Merlin’s pants!', 'Bloody hell, Harry!'];
+    const TAGLINES = [
+      'Speak now, lest the parchment lose its patience.',
+      'Up to no good, are we?',
+      'The hound waits, quill at the ready.',
+      'A pinch of mischief, Mr. Padfoot would say.',
+    ];
+    const SWITCH_PREFIX = 'Forsake thy quarry — set the hound upon…';
+    const FRESH_PREFIX  = 'A spot of mischief afoot — set the hound upon…';
+    let pendingPerson = null;
+    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+    function askConfirm(person) {
+      if (selectedId === person.id) return;  // already chasing — no nag
+      pendingPerson = person;
+      cfTitle.textContent = pick(TITLES);
+      cfBody.textContent = selectedId == null ? FRESH_PREFIX : SWITCH_PREFIX;
+      cfWho.textContent = labelFor(person);
+      cfWho.style.color = colorFor(person);
+      cfTag.textContent = pick(TAGLINES);
+      confirmEl.classList.add('open');
+      cfYes.focus();
+    }
+    function closeConfirm() {
+      confirmEl.classList.remove('open');
+      pendingPerson = null;
+    }
+    cfYes.addEventListener('click', () => {
+      if (pendingPerson) {
+        setSelection(pendingPerson.id, labelFor(pendingPerson));
+        spawnQuote(pendingPerson);
+      }
+      closeConfirm();
+    });
+    cfNo.addEventListener('click', closeConfirm);
+    confirmEl.addEventListener('click', (e) => {
+      if (e.target === confirmEl) closeConfirm();  // click backdrop = recant
+    });
+    document.addEventListener('keydown', (e) => {
+      if (!confirmEl.classList.contains('open')) return;
+      if (e.key === 'Escape') { closeConfirm(); e.preventDefault(); }
+      else if (e.key === 'Enter') { cfYes.click(); e.preventDefault(); }
+    });
+
+    socket.on('people', (data) => {
+      people = data.people || [];
+      updateTrails();
+      renderRoster();
+      if (galleryEl.classList.contains('open')) renderGallery();
+      if (selectedId != null && !people.some((q) => q.id === selectedId)) {
+        // The chosen character has fallen off the map — drop the lock so
+        // MovementManager can hand back to nav and the chip stops lying.
+        setSelection(null, null);
+      }
+    });
+
+    // ---- Full gallery modal + hover detail tip ----
+    const galleryEl = document.getElementById('gallery');
+    const galleryGrid = document.getElementById('gallery-grid');
+    const galleryCount = document.getElementById('gallery-count');
+    const tipEl = document.getElementById('tip');
+    const tipNm = document.getElementById('tip-nm');
+    const tipMeta = document.getElementById('tip-meta');
+    const tipQuote = document.getElementById('tip-quote');
+
+    function fmtMeta(p) {
+      const xy = (p.x != null && p.y != null)
+        ? `at (${p.x.toFixed(2)}, ${p.y.toFixed(2)}) m` : 'world position unknown';
+      const seen = (p.age != null) ? `last seen ${p.age}s ago` : '';
+      const by = p.seen_by ? `via ${p.seen_by}` : '';
+      return [xy, seen, by].filter(Boolean).join(' · ');
+    }
+    function sampleQuote(p) {
+      if (isDog(p)) return 'A quadruped of few words.';
+      const ch = characterFor(p.id);
+      if (!ch || !ch.quotes || !ch.quotes.length) return '';
+      return '"' + ch.quotes[Math.floor(Math.random() * ch.quotes.length)] + '"';
+    }
+    function showTip(p, ev) {
+      tipNm.textContent = labelFor(p);
+      tipNm.style.color = colorFor(p);
+      tipMeta.textContent = (isDog(p) ? 'Unitree Go2 · ' : 'Person · ') + fmtMeta(p);
+      tipQuote.textContent = sampleQuote(p);
+      tipEl.classList.add('on');
+      moveTip(ev);
+    }
+    function moveTip(ev) {
+      const pad = 14;
+      // Position to the right of the cursor by default; flip if it'd overflow.
+      let x = ev.clientX + pad, y = ev.clientY + pad;
+      const w = tipEl.offsetWidth || 260;
+      const h = tipEl.offsetHeight || 80;
+      if (x + w > window.innerWidth - 8)  x = ev.clientX - pad - w;
+      if (y + h > window.innerHeight - 8) y = ev.clientY - pad - h;
+      tipEl.style.left = Math.max(8, x) + 'px';
+      tipEl.style.top  = Math.max(8, y) + 'px';
+    }
+    function hideTip() { tipEl.classList.remove('on'); }
+
+    // Wire hover on the *existing* compact roster too (auto-rebound each render).
+    function attachHover(el, person) {
+      el.addEventListener('mouseenter', (e) => showTip(person, e));
+      el.addEventListener('mousemove',  moveTip);
+      el.addEventListener('mouseleave', hideTip);
+    }
+    // Patch renderRoster: after it builds the list, attach hover to each li.
+    const _origRenderRoster = renderRoster;
+    renderRoster = function () {
+      _origRenderRoster();
+      for (const li of rosterEl.querySelectorAll('li[data-id]')) {
+        const id = Number(li.dataset.id);
+        const p = people.find((q) => q.id === id);
+        if (p) attachHover(li, p);
+      }
+    };
+
+    function renderGallery() {
+      const n = people.length;
+      galleryCount.textContent = n === 0
+        ? 'none abroad'
+        : (n === 1 ? '1 soul on the parchment' : `${n} souls on the parchment`);
+      if (n === 0) {
+        galleryGrid.innerHTML = '<div class="empty">— no souls have been identified yet —</div>';
+        return;
+      }
+      const sorted = [...people].sort((a, b) => a.id - b.id);
+      galleryGrid.innerHTML = '';
+      for (const p of sorted) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        if (selectedId === p.id) card.classList.add('selected');
+        const col = colorFor(p);
+        const imgHtml = p.photo
+          ? `<img class="pic" src="data:image/jpeg;base64,${p.photo}" alt="${labelFor(p)}">`
+          : `<div class="pic"></div>`;
+        const tag = isDog(p) ? '<span class="tag">Go2</span>' : '';
+        const age = (p.age != null) ? `${p.age}s ago` : '';
+        card.innerHTML = `
+          ${imgHtml}
+          ${tag}
+          <div class="nm" style="color:${col}">${labelFor(p)}</div>
+          <div class="age">${age}</div>
+        `;
+        card.addEventListener('click', () => {
+          if (isDog(p)) {
+            // Dog cards just open the portrait — never tracking your own dog.
+            if (p.photo) requestPhoto(p.id, labelFor(p));
+            return;
+          }
+          // The gallery IS the deliberate-picker UI — once a user opened it
+          // and clicked a face, that's an intentional decision. No confirm
+          // dialog. The server-side `select` handler already publishes
+          // stop_movement first, so this also cleanly interrupts whatever
+          // was being tracked / nav-driven before.
+          if (selectedId === p.id) {
+            // Re-clicking the currently-tracked face = quick way to drop it.
+            setSelection(null, null);
+          } else {
+            setSelection(p.id, labelFor(p));
+            spawnQuote(p);  // visual feedback so the user sees the swap landed
+          }
+          closeGallery();
+        });
+        attachHover(card, p);
+        galleryGrid.appendChild(card);
+      }
+    }
+    function openGallery() {
+      renderGallery();
+      galleryEl.classList.add('open');
+    }
+    function closeGallery() {
+      galleryEl.classList.remove('open');
+      hideTip();
+    }
+    document.getElementById('open-gallery').addEventListener('click', openGallery);
+    document.getElementById('gallery-close').addEventListener('click', closeGallery);
+    galleryEl.addEventListener('click', (e) => {
+      // Backdrop click closes; clicks on the scroll/card stay open.
+      if (e.target === galleryEl) closeGallery();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && galleryEl.classList.contains('open')) {
+        closeGallery(); e.preventDefault();
+      }
+    });
+    socket.on('photo_full', (data) => {
+      if (!data || !data.img) return;
+      lbImg.src = 'data:image/jpeg;base64,' + data.img;
+      lbCap.textContent = pendingLabel + (data.name ? ` · ${data.name}` : '');
+      lightbox.classList.add('open');
+    });
+    socket.on('robot', (data) => { robot = data; if (data && data.label) setLabel(data.label); });
+    // Server echoes the active nav destination ({x,y}) or null when cleared.
+    socket.on('goal', (data) => { navGoal = data ? { x: data.x, y: data.y } : null; });
+
+    fit();
+  })();
+  </script>
+
+  <!-- Intro sequencer + quest-chip expand toggle.
+       Kept in a separate IIFE from the main map script so the prologue can be
+       safely deleted without touching the map code. -->
+  <script>
+    (function () {
+      // ---- Intro sequence: parchment unfurl + magical char-by-char reveal --
+      // CSS handles the unfurl (1.6s). Here we conjure each text block
+      // character-by-character via the .magick-in keyframe: each letter
+      // ignites with candle-gold glow, drifts in, and settles into ink. The
+      // stagger (default 38ms/char) controls how "fast" the writing feels.
+      // Skipping is one-key (Esc) or the corner/inline links.
+      const intro = document.getElementById('intro');
+      if (intro) {
+        const titleEl = intro.querySelector('.title');
+        const subtitleEl = intro.querySelector('.subtitle');
+        const dividerEl = intro.querySelector('.divider');
+        const beats = Array.from(intro.querySelectorAll('.beat'));
+        const questBox = document.getElementById('intro-quest');
+        const actions = document.getElementById('intro-actions');
+        const goBtn = document.getElementById('intro-go');
+        const skipCorner = document.getElementById('intro-skip');
+        const skipInline = document.getElementById('intro-skip2');
+
+        // splitMagick wraps each character of `el` in a span whose CSS
+        // animation-delay is staggered by `perCharMs`. The element is
+        // marked .lit so its container opacity flips to 1 — without that
+        // the parent would clip its own children's glow on some browsers.
+        function splitMagick(el, perCharMs = 38) {
+          if (!el || el.dataset.split === '1') return;
+          const text = el.textContent;
+          el.textContent = '';
+          for (let i = 0; i < text.length; i++) {
+            const c = text[i];
+            const span = document.createElement('span');
+            if (c === ' ') {
+              span.className = 'ch space';
+              span.innerHTML = '&nbsp;';
+            } else {
+              span.className = 'ch';
+              span.textContent = c;
+            }
+            span.style.animationDelay = (i * perCharMs) + 'ms';
+            el.appendChild(span);
+          }
+          el.dataset.split = '1';
+          el.classList.add('lit');
+        }
+
+        // Schedule (~10s if let to play; well within the 6–12s you asked for):
+        //   t=0     parchment starts unfurling (CSS .scroll animation)
+        //   t=2.0s  Title  "The Wrath of Filch"              conjured (~0.9s draw)
+        //   t=3.4s  Subtitle "The Wrath of Filch..."        conjured (~1.6s)
+        //   t=5.2s  divider line fades in
+        //   t=5.5s  Beat 1 conjured  (perCharMs faster so it doesn't drag)
+        //   t=6.9s  Beat 2
+        //   t=8.3s  Beat 3
+        //   t=9.7s  Beat 4
+        //   t=11.1s quest-box + buttons appear (still skippable)
+        const SCHEDULE = [
+          { at: 2000,  fn: () => splitMagick(titleEl,    65) },
+          { at: 3400,  fn: () => splitMagick(subtitleEl, 32) },
+          { at: 5200,  fn: () => dividerEl.classList.add('lit') },
+          { at: 5500,  fn: () => splitMagick(beats[0],   22) },
+          { at: 6900,  fn: () => splitMagick(beats[1],   18) },
+          { at: 8300,  fn: () => splitMagick(beats[2],   16) },
+          { at: 9700,  fn: () => splitMagick(beats[3],   18) },
+          { at: 11100, fn: () => { questBox.classList.add('on'); actions.classList.add('on'); } },
+        ];
+        const timers = SCHEDULE.map(s => setTimeout(s.fn, s.at));
+
+        function dismissIntro() {
+          intro.classList.add('gone');
+          timers.forEach(clearTimeout);
+          // The dismiss click is a guaranteed user gesture — perfect moment
+          // to unmute the BGM, in case neither autoplay-with-sound nor an
+          // earlier in-overlay click already did it.
+          if (window._bgmCtl && window._bgmCtl.unmute) {
+            try { window._bgmCtl.unmute(); } catch (_) {}
+          }
+          // Fully remove from DOM after the .8s fadeout so it doesn't keep
+          // intercepting hover events anywhere on the page.
+          setTimeout(() => intro.remove(), 900);
+        }
+        goBtn.addEventListener('click', dismissIntro);
+        skipCorner.addEventListener('click', dismissIntro);
+        skipInline.addEventListener('click', dismissIntro);
+        document.addEventListener('keydown', function escHandler(e) {
+          if (e.key === 'Escape' && document.body.contains(intro)) {
+            dismissIntro();
+            document.removeEventListener('keydown', escHandler);
+          }
+        });
+      }
+
+      // ---- Quest chip toggle (always-visible mini brief on the map) ----
+      // Click to expand the conditions, click again to collapse. Doesn't
+      // auto-expand so it stays out of the way of map interaction.
+      const chip = document.getElementById('quest-chip');
+      if (chip) {
+        chip.addEventListener('click', () => chip.classList.toggle('expanded'));
+      }
+    })();
+  </script>
+</body>
+</html>
