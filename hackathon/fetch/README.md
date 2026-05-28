@@ -26,6 +26,14 @@ camera frame (+depth)
   ^------------------ ~1s scan loop ------------------v
 ```
 
+## The opportunity
+
+Fetch is an autonomous **brand ambassador** and **mobile vendor** — here for Coca-Cola
+— that hands out product, creates a memorable branded moment, and walks away with the
+guest's photo. The longer-term vision: fleets of autonomous robot-dog vendors that roam
+the beach and **self-resupply** at beachside bars and vendors, or at dedicated
+autonomous resupply stations.
+
 ## What Matters
 
 - **DimOS is the runtime.** Fetch reuses the DimOS teleop web pattern (HTTPS phone
@@ -111,10 +119,6 @@ modes) is in the project README.
   could detect a Coke lifted from the back via the change in total load — closing the
   loop without the camera's framing check.
 - **Real sand.** Fit sand-walking foot adaptations for an outdoor beach deployment.
-
-**The bigger picture:** Fetch is an autonomous **brand ambassador** and **mobile
-vendor** (Coca-Cola here), pointing toward fleets of autonomous robot-dog vendors that
-self-resupply at beachside bars/vendors or autonomous resupply stations.
 
 ## Scope Boundary
 
