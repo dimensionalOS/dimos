@@ -864,12 +864,16 @@ def render_site_map(
         '<button type="button" data-map-edit-action="route_select">Select Route</button>'
         '<button type="button" data-map-edit-action="dry_run_route">Dry Run Route</button>'
         '<button type="button" data-map-edit-action="run_route">Run Live Route</button>'
+        '<label class="map-route-planner-toggle"><input type="checkbox" data-route-use-planner /> Use planner</label>'
         '<button type="button" data-map-edit-action="stop_route">Stop Route</button>'
         '<button type="button" data-map-edit-action="heatmap_run">Heatmap Run</button>'
         '<button type="button" data-map-edit-action="route_up">Route Up</button>'
         '<button type="button" data-map-edit-action="route_down">Route Down</button>'
         '<span class="map-route-summary" data-map-route-summary>Selected route: none. Next: Route1</span>'
         "</div>"
+        "</div>"
+    )
+    route_action_controls = (
         '<div class="map-edit-row map-route-action-row" data-route-action-row hidden>'
         '<span class="map-route-summary" data-route-action-summary>Select a waypoint to add actions</span>'
         '<button type="button" data-route-action-kind="capture_image">Capture Image</button>'
@@ -880,7 +884,6 @@ def render_site_map(
         '<button type="button" data-route-action-kind="inspect_asset">Inspect Asset</button>'
         '<button type="button" data-route-action-kind="verify_work_order">Verify Work Order</button>'
         '<button type="button" data-route-action-kind="operator_prompt">Operator Prompt</button>'
-        "</div>"
         "</div>"
     )
     return f"""
@@ -926,6 +929,7 @@ def render_site_map(
             {robot}
           </g>
         </svg>
+        {route_action_controls}
         {layer_controls}
         {legend}
         <div class="map-workflow">
@@ -1437,6 +1441,20 @@ def render_dashboard_html(
       color: #d8fff6;
       font-weight: 700;
     }}
+    .map-route-planner-toggle {{
+      align-items: center;
+      border: 1px solid #334155;
+      border-radius: 999px;
+      color: #cbd5e1;
+      display: inline-flex;
+      gap: 6px;
+      min-height: 30px;
+      padding: 5px 10px;
+    }}
+    .map-route-planner-toggle input {{
+      accent-color: #52e0c4;
+      margin: 0;
+    }}
     .map-route-action-row[hidden] {{ display: none; }}
     .map-route-action-row {{
       background: rgba(8, 13, 22, 0.72);
@@ -1942,6 +1960,7 @@ def render_dashboard_html(
       const mapAuthoringStatus = document.querySelector("[data-map-authoring-status]");
       const routeExecutionStatus = document.querySelector("[data-route-execution-status]");
       const routeSummary = document.querySelector("[data-map-route-summary]");
+      const routeUsePlanner = document.querySelector("[data-route-use-planner]");
       const routeRunHistory = document.querySelector("[data-route-run-history]");
       const routeRunTimeline = document.querySelector("[data-route-run-timeline]");
       const geminiEvidence = document.querySelector("[data-gemini-evidence]");
@@ -2540,7 +2559,9 @@ def render_dashboard_html(
           return;
         }}
         const modeText = dryRun ? "dry run" : "live run";
-        setRouteExecutionStatus(`Execution: starting ${{modeText}} ${{route.id}}...`, "");
+        const usePlanner = !!(routeUsePlanner && routeUsePlanner.checked && !dryRun);
+        const routeMode = dryRun ? "dry run" : (usePlanner ? "planner live run" : "direct live run");
+        setRouteExecutionStatus(`Execution: starting ${{routeMode}} ${{route.id}}...`, "");
         try {{
           const response = await fetch("/api/map/routes/follow", {{
             method: "POST",
@@ -2548,7 +2569,7 @@ def render_dashboard_html(
               "Content-Type": "application/json",
               "X-DogOps-Control-Token": robotControlToken,
             }},
-            body: JSON.stringify({{route_id: route.id, dry_run: !!dryRun}}),
+            body: JSON.stringify({{route_id: route.id, dry_run: !!dryRun, use_planner: usePlanner}}),
           }});
           const result = await response.json();
           const state = (result.mcp_result && result.mcp_result.route_execution) || result.route_execution || {{}};
@@ -2557,7 +2578,7 @@ def render_dashboard_html(
           }}
           setRouteExecutionStatus(routeExecutionText(state), "ok");
         }} catch (error) {{
-          setRouteExecutionStatus(`Execution failed (${{modeText}}): ${{error.message}}`, "error");
+          setRouteExecutionStatus(`Execution failed (${{routeMode}}): ${{error.message}}`, "error");
         }} finally {{
           await refreshRouteExecution();
         }}

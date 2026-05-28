@@ -64,7 +64,11 @@ from dimos.experimental.dogops.qr_cargo import (
     load_qr_events,
     qr_events_path,
 )
-from dimos.experimental.dogops.route_executor import load_route_execution, request_route_stop
+from dimos.experimental.dogops.route_executor import (
+    DogOpsRouteExecutor,
+    load_route_execution,
+    request_route_stop,
+)
 from dimos.experimental.dogops.route_run_store import RouteRunStore
 from dimos.experimental.dogops.store import DogOpsStore
 
@@ -82,6 +86,12 @@ DEFAULT_JOG_DURATION_S = 0.35
 MAX_JOG_DURATION_S = 2.00
 MAX_LINEAR_SPEED = 0.65
 MAX_ANGULAR_SPEED = 1.10
+DIRECT_ROUTE_PULSE_S = 0.35
+DIRECT_ROUTE_MAX_SPEED = 0.35
+DIRECT_ROUTE_MAX_ANGULAR_SPEED = 0.65
+DIRECT_ROUTE_GAIN = 0.8
+DIRECT_ROUTE_REACH_RADIUS_M = 0.35
+DIRECT_ROUTE_WAYPOINT_TIMEOUT_S = 20.0
 ROBOT_CALL_TIMEOUT_S = 8.0
 DIMOS_MCP_CALL_TIMEOUT_S = 12.0
 DIMOS_ROUTE_CALL_TIMEOUT_S = 180.0
@@ -592,9 +602,16 @@ class DogOpsDashboardHandler(BaseHTTPRequestHandler):
         route_id = payload.get("route_id")
         route_id_arg = str(route_id).strip() if route_id is not None else None
         dry_run = bool(payload.get("dry_run", False))
+        use_planner = bool(payload.get("use_planner", False))
         try:
             result = _run_robot_call(
-                lambda: _run_robot_follow_route(route_id_arg, dry_run),
+                lambda: _run_robot_follow_route(
+                    route_id_arg,
+                    dry_run,
+                    use_planner=use_planner,
+                    robot_ip=self.robot_ip,
+                    run_dir=self.run_dir,
+                ),
                 timeout_s=DIMOS_ROUTE_CALL_TIMEOUT_S,
             )
         except ModuleNotFoundError as exc:
@@ -647,6 +664,11 @@ class DogOpsDashboardHandler(BaseHTTPRequestHandler):
             {
                 "ok": True,
                 "command": "follow_route",
+                "route_mode": (
+                    "planner"
+                    if use_planner and not dry_run
+                    else ("dry_run" if dry_run else "direct")
+                ),
                 **(result or {}),
                 **self._route_execution_payload(route_execution=route_execution),
             }
@@ -1622,6 +1644,22 @@ def _finite_or_none(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def _live_robot_pose(snapshot: dict[str, Any]) -> dict[str, float] | None:
+    pose = snapshot.get("robot_pose") or snapshot.get("pose")
+    if not isinstance(pose, dict):
+        return None
+    x = _finite_or_none(pose.get("x"))
+    y = _finite_or_none(pose.get("y"))
+    if x is None or y is None:
+        return None
+    theta = _finite_or_none(pose.get("theta_deg"))
+    return {"x": x, "y": y, "theta_deg": theta or 0.0}
+
+
 def _resolve_motion_request(
     command: str,
     payload: dict[str, Any],
@@ -1781,11 +1819,160 @@ def _run_route_hard_stop(robot_ip: str) -> dict[str, Any]:
     return _publish_robot_hard_stop(robot_ip)
 
 
-def _run_robot_follow_route(route_id: str | None, dry_run: bool) -> dict[str, Any]:
+class _DirectRouteGoalPublisher:
+    transport_name = "direct_webrtc"
+
+    def __init__(
+        self,
+        robot_ip: str,
+        live_snapshot_reader: Any,
+        *,
+        reach_radius_m: float = DIRECT_ROUTE_REACH_RADIUS_M,
+        waypoint_timeout_s: float = DIRECT_ROUTE_WAYPOINT_TIMEOUT_S,
+    ) -> None:
+        self.robot_ip = robot_ip
+        self.live_snapshot_reader = live_snapshot_reader
+        self.reach_radius_m = reach_radius_m
+        self.waypoint_timeout_s = waypoint_timeout_s
+        self._lock = threading.RLock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def publish_goal(self, *, x: float, y: float, z: float, frame_id: str) -> dict[str, Any]:
+        del z, frame_id
+        with self._lock:
+            self._stop_event.set()
+            previous = self._thread
+            if previous is not None and previous.is_alive():
+                previous.join(timeout=0.5)
+            self._stop_event = threading.Event()
+            self._thread = threading.Thread(
+                target=self._drive_to_waypoint,
+                args=(x, y, self._stop_event),
+                daemon=True,
+            )
+            self._thread.start()
+        return {"transport": self.transport_name, "x": x, "y": y}
+
+    def stop(self) -> None:
+        with self._lock:
+            self._stop_event.set()
+            thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
+        with _ROBOT_SESSIONS_LOCK:
+            session = _ROBOT_SESSIONS.get(self.robot_ip)
+        if session is not None and not session.closed:
+            try:
+                session.hard_stop()
+            except Exception:
+                pass
+
+    def _drive_to_waypoint(self, x: float, y: float, stop_event: threading.Event) -> None:
+        session = _get_robot_session(self.robot_ip)
+        deadline = time.time() + self.waypoint_timeout_s
+        try:
+            while not stop_event.is_set() and time.time() < deadline:
+                pose = _live_robot_pose(self.live_snapshot_reader())
+                if pose is None:
+                    time.sleep(0.05)
+                    continue
+                dx = x - pose["x"]
+                dy = y - pose["y"]
+                distance = math.hypot(dx, dy)
+                if distance <= self.reach_radius_m:
+                    session.hard_stop()
+                    return
+                yaw = math.radians(float(pose.get("theta_deg") or 0.0))
+                forward = math.cos(yaw) * dx + math.sin(yaw) * dy
+                lateral = -math.sin(yaw) * dx + math.cos(yaw) * dy
+                linear_x = _clamp(
+                    forward * DIRECT_ROUTE_GAIN,
+                    -DIRECT_ROUTE_MAX_SPEED,
+                    DIRECT_ROUTE_MAX_SPEED,
+                )
+                linear_y = _clamp(
+                    lateral * DIRECT_ROUTE_GAIN,
+                    -DIRECT_ROUTE_MAX_SPEED,
+                    DIRECT_ROUTE_MAX_SPEED,
+                )
+                target_heading = math.atan2(dy, dx)
+                heading_error = _wrap_angle(target_heading - yaw)
+                angular_z = _clamp(
+                    heading_error * 0.6,
+                    -DIRECT_ROUTE_MAX_ANGULAR_SPEED,
+                    DIRECT_ROUTE_MAX_ANGULAR_SPEED,
+                )
+                session.jog(linear_x, linear_y, angular_z, DIRECT_ROUTE_PULSE_S)
+        finally:
+            try:
+                session.hard_stop()
+            except Exception:
+                pass
+
+
+def _run_robot_follow_route(
+    route_id: str | None,
+    dry_run: bool,
+    *,
+    use_planner: bool = False,
+    robot_ip: str = DEFAULT_ROBOT_IP,
+    run_dir: Path | None = None,
+) -> dict[str, Any]:
+    if dry_run or use_planner:
+        return _run_robot_follow_route_with_planner(route_id, dry_run)
+    return _run_robot_follow_route_direct(route_id, robot_ip=robot_ip, run_dir=run_dir)
+
+
+def _run_robot_follow_route_with_planner(route_id: str | None, dry_run: bool) -> dict[str, Any]:
     args: dict[str, Any] = {"dry_run": dry_run}
     if route_id:
         args["route_id"] = route_id
     return _call_dimos_mcp_skill("follow_route", args, timeout_s=DIMOS_ROUTE_CALL_TIMEOUT_S)
+
+
+def _run_robot_follow_route_direct(
+    route_id: str | None,
+    *,
+    robot_ip: str,
+    run_dir: Path | None,
+) -> dict[str, Any]:
+    route_run_dir = run_dir or Path(".dogops/runs/latest")
+    live_adapter = _LIVE_MAP_ADAPTER
+    publisher = _DirectRouteGoalPublisher(robot_ip, live_adapter.snapshot)
+    executor = DogOpsRouteExecutor(
+        route_run_dir,
+        goal_publisher=publisher,
+        live_snapshot_reader=live_adapter.snapshot,
+        stop_handler=lambda: _run_route_hard_stop(robot_ip),
+        frame="world",
+        reach_radius_m=DIRECT_ROUTE_REACH_RADIUS_M,
+        waypoint_timeout_s=DIRECT_ROUTE_WAYPOINT_TIMEOUT_S,
+        max_retries=0,
+        require_goal_confirmation=False,
+    )
+    try:
+        state = executor.follow_route(route_id, dry_run=False)
+    finally:
+        publisher.stop()
+    return {
+        "ok": state.state == "completed",
+        "transport": "direct_webrtc",
+        "skill": "follow_route",
+        "mcp_result": {
+            "ok": state.state == "completed",
+            "skill": "follow_route",
+            "route_id": state.route_id,
+            "state": state.state,
+            "active_waypoint_id": state.active_waypoint_id,
+            "waypoints_total": state.waypoints_total,
+            "waypoints_reached": state.waypoints_reached,
+            "transport": state.transport,
+            "dry_run": False,
+            "last_error": state.last_error,
+            "route_execution": state.model_dump(mode="json"),
+        },
+    }
 
 
 def _run_robot_stop_route() -> dict[str, Any]:

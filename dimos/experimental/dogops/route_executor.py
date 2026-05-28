@@ -155,6 +155,7 @@ class DogOpsRouteExecutor:
         waypoint_timeout_s: float = 20.0,
         max_retries: int = 1,
         no_progress_timeout_s: float | None = None,
+        require_goal_confirmation: bool = True,
         poll_interval_s: float = 0.2,
         time_fn: Callable[[], float] = time.time,
         sleep_fn: Callable[[float], None] = time.sleep,
@@ -169,6 +170,7 @@ class DogOpsRouteExecutor:
         self.reach_radius_m = reach_radius_m
         self.waypoint_timeout_s = waypoint_timeout_s
         self.max_retries = max_retries
+        self.require_goal_confirmation = require_goal_confirmation
         self.no_progress_timeout_s = (
             no_progress_timeout_s
             if no_progress_timeout_s is not None
@@ -508,7 +510,11 @@ class DogOpsRouteExecutor:
         while self.time_fn() - waypoint_started <= self.waypoint_timeout_s:
             snapshot = self.live_snapshot_reader()
             odom, odom_age_s = route_feedback_from_snapshot(snapshot)
-            goal_confirmed = goal_confirmed or route_goal_confirmed(snapshot, waypoint)
+            goal_confirmed = (
+                True
+                if not self.require_goal_confirmation
+                else goal_confirmed or route_goal_confirmed(snapshot, waypoint)
+            )
             if odom is None:
                 note = "no odom received"
             elif odom_age_s is not None and odom_age_s > LIVE_TOPIC_MAX_AGE_S:
