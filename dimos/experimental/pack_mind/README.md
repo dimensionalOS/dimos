@@ -58,6 +58,55 @@ bin/pytest-fast dimos/experimental/pack_mind/test_explore_sim.py -v
 bin/pytest-fast dimos/experimental/pack_mind/test_pack_mind_sim.py -v
 ```
 
+## Live demo — 2 dogs / 2 laptops
+
+The intelligence (shared memory) runs on the laptops; the dogs are bodies. Movement
+is teleop-assisted; the agent + coordinator own the memory layer.
+
+**1. One-time per laptop (with internet):** cache the runtime models so the demo runs
+offline (a dog's WiFi AP has no internet, and venue WiFi is flaky):
+```bash
+uv run python -m dimos.experimental.pack_mind.prefetch_live_models   # moondream2 + whisper
+```
+CLIP/YOLO ship in `data/` (git-lfs). The agent brain (GPT-4o) is a hosted API — keep
+the coordinator laptop on a router with WAN.
+
+**2. Network:** one travel router; put each Go2 in STA mode (Unitree app) onto it; both
+laptops + both dogs on that subnet. DimOS picks the WebRTC method purely from
+`ROBOT_IP` — `192.168.12.1` → the dog's own AP (single-laptop only), any other IP →
+LocalSTA (shared router, required for 2 laptops).
+
+**3. Laptop A (Alpha + coordinator + dashboard):**
+```bash
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export ROBOT_IP=<dog-A-ip> LISTEN_HOST=0.0.0.0 OPENAI_API_KEY=<key>
+uv run python -m dimos.experimental.pack_mind.pack_coordinator_server \
+  --zones north,east,south,west --prefs "alpha:north,east;bravo:south,west" &   # dashboard: http://<laptopA-ip>:8090
+PACK_DOG_NAME=alpha PACK_COORDINATOR_URL=http://127.0.0.1:8090 \
+  uv run dimos run unitree-go2-pack --daemon
+```
+
+**4. Laptop B (Bravo):**
+```bash
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export ROBOT_IP=<dog-B-ip> LISTEN_HOST=0.0.0.0 OPENAI_API_KEY=<key>
+PACK_DOG_NAME=bravo PACK_COORDINATOR_URL=http://<laptopA-ip>:8090 \
+  uv run dimos run unitree-go2-pack --daemon
+```
+
+**Gotchas (hard-won on site):**
+- `unitree-go2-pack` already disables EdgeTAM modules (SecurityModule, PersonFollow) —
+  they hard-require CUDA. No `--disable` flag needed.
+- `dimos run` has **no `--robot-ip` flag** in this build — set the `ROBOT_IP` env and
+  verify with `dimos show-config`.
+- `HF_HUB_OFFLINE=1` is required on a no-internet AP; run prefetch first.
+- moondream2's **first** `look_out_for` is slow (~10–60s, CPU compile) — a lag, not a crash.
+- Bring-up order: ping dog → `dimos show-config` → run to "running" → `mcp list-tools` +
+  `speak` → `look_out_for` → `start_search`/`next_zone` against the coordinator.
+
+**Hardware-free rehearsal (no dogs):**
+`uv run python -m dimos.experimental.pack_mind.demo_pack_live --pace 2`, open http://localhost:8090.
+
 ## File map
 
 | File | Role |
@@ -67,6 +116,13 @@ bin/pytest-fast dimos/experimental/pack_mind/test_pack_mind_sim.py -v
 | `server.py` | FastAPI WebSocket backend streaming both explore sims |
 | `static/explore.html` | Three.js 3D fog-of-war frontend (side-by-side, kill/reset) |
 | `view_explore_rerun.py` | **DimOS Viewer (Rerun)** view of one shared-memory maze search (fog + dogs + trails + coverage scalar) |
+| `live.py` | **Live blueprint** `unitree-go2-pack` (one dog per laptop, EdgeTAM disabled) + PACK system prompt |
+| `pack_coordinator.py` / `pack_coordinator_server.py` | Shared zone ledger (no-overlap, find, **inheritance**) + JSON/HTTP API + dashboard route |
+| `pack_dashboard.html` | Projector dashboard — zones, finding, offline/inheritance, causal chain |
+| `pack_search_skills.py` | Dog agent tools: `start_search` / `next_zone` / `report_*` / `where_is` |
+| `pack_search_runner.py` | `RobotDriver`-protocol search loop + `MockDriver` |
+| `mock_dog.py` / `demo_pack_live.py` / `demo_pack_scene.py` | Hardware-free test + projector rehearsal of both magic beats |
+| `prefetch_live_models.py` | Pre-cache moondream2 + whisper so the live stack runs offline |
 | `sim.py` / `sim_robot.py` | Coverage-race sim (known map) |
 | `blueprint.py` | `pack-mind-sim` native DimOS blueprint (publishes coverage as `OccupancyGrid`) |
 | `render.py` | Standalone matplotlib → mp4 A/B render |
