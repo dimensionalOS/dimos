@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from dimos_lcm.std_msgs import Bool
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D,
@@ -96,9 +97,7 @@ def _make_detection(
             size_y=y2 - y1,
         ),
         results=[
-            ObjectHypothesisWithPose(
-                hypothesis=ObjectHypothesis(class_id="person", score=0.9)
-            )
+            ObjectHypothesisWithPose(hypothesis=ObjectHypothesis(class_id="person", score=0.9))
         ],
     )
 
@@ -162,6 +161,21 @@ def test_non_camera_click_does_not_change_selection(module: BBoxSelectionModule)
     assert len(received) == 1
     assert received[0].detections_length == 1
     assert received[0].detections[0].id == "target"
+
+
+def test_stop_movement_clears_selection(module: BBoxSelectionModule) -> None:
+    received = _subscribe_selected(module)
+    detections = _make_array(_make_detection("target", 20.0, 20.0, 120.0, 120.0))
+
+    module._on_detections(detections)
+    module.select_bbox(index=0)
+    received.clear()
+
+    module._on_stop_movement(Bool(data=True))
+    module._on_detections(detections)
+
+    assert len(received) == 2
+    assert all(msg.detections_length == 0 for msg in received)
 
 
 def test_overlapping_camera_click_prefers_smaller_bbox(module: BBoxSelectionModule) -> None:

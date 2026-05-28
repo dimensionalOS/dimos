@@ -5,6 +5,9 @@ import threading  # 导入线程锁，保护最新 detections 和选择状态
 import time  # 导入时间工具，用于空检测消息时间戳
 from typing import Any  # 导入通用类型，兼容 LCM 生成消息字段
 
+from dimos_lcm.std_msgs import (
+    Bool,  # type: ignore[import-untyped]  # 导入 Bool，用于响应任务中断/完成后的清除请求
+)
 from reactivex.disposable import Disposable  # 导入 Disposable，用于注册输入流订阅
 
 from dimos.core.core import rpc  # 导入 rpc 装饰器，让方法可通过 DimOS RPC 调用
@@ -31,6 +34,8 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
     config: BBoxSelectionConfig  # 声明本模块使用的配置类型
     detections: In[Detection2DArray]  # 输入现有检测模块发布的多 bbox Detection2DArray
     clicked_point: In[PointStamped]  # 输入 dimos-viewer 点击事件，用于把相机像素点击映射到 bbox
+    stop_movement: In[Bool]  # 输入用户接管/地图规划中断信号，用于清空当前 bbox 选择
+    clear_selection_request: In[Bool]  # 输入 task 完成或被主动停止后的清除请求
     selected_bbox: Out[Detection2DArray]  # 输出只包含当前选中 bbox 的 Detection2DArray
 
     def __init__(self, **kwargs: Any) -> None:  # 定义构造函数，接收框架传入的配置参数
@@ -44,8 +49,18 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
     @rpc  # 标记 start() 是框架生命周期 RPC
     def start(self) -> None:  # 定义模块启动逻辑
         super().start()  # 启动父类逻辑，包括 RPC 和自动绑定
-        self.register_disposable(Disposable(self.detections.subscribe(self._on_detections)))  # 订阅检测流
-        self.register_disposable(Disposable(self.clicked_point.subscribe(self._on_clicked_point)))  # 订阅 viewer 点击流
+        self.register_disposable(
+            Disposable(self.detections.subscribe(self._on_detections))
+        )  # 订阅检测流
+        self.register_disposable(
+            Disposable(self.clicked_point.subscribe(self._on_clicked_point))
+        )  # 订阅 viewer 点击流
+        self.register_disposable(
+            Disposable(self.stop_movement.subscribe(self._on_stop_movement))
+        )  # 订阅用户接管/规划中断信号
+        self.register_disposable(
+            Disposable(self.clear_selection_request.subscribe(self._on_clear_selection_request))
+        )  # 订阅 task 完成清除信号
 
     @rpc  # 标记 list_candidates() 可通过 DimOS RPC 调用
     def list_candidates(self) -> list[dict[str, Any]]:  # 返回最新一帧候选 bbox 列表
@@ -55,10 +70,15 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
         if detections is None:  # 如果还没有收到任何检测帧
             return []  # 返回空候选列表
 
-        return [self._candidate_to_dict(index, detection) for index, detection in enumerate(detections.detections)]  # 转换每个检测为 RPC 友好的字典
+        return [
+            self._candidate_to_dict(index, detection)
+            for index, detection in enumerate(detections.detections)
+        ]  # 转换每个检测为 RPC 友好的字典
 
     @rpc  # 标记 select_bbox() 可通过 DimOS RPC 调用
-    def select_bbox(self, index: int | None = None, id: str | None = None) -> str:  # 保存用户选择的 bbox 条件
+    def select_bbox(
+        self, index: int | None = None, id: str | None = None
+    ) -> str:  # 保存用户选择的 bbox 条件
         if index is None and id is None:  # 如果调用方没有提供 index 或 id
             return "select_bbox requires index or id"  # 返回可读错误，不改变当前选择
 
@@ -80,15 +100,35 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
 
     @rpc  # 标记 clear_selection() 可通过 DimOS RPC 调用
     def clear_selection(self) -> str:  # 清除当前 bbox 选择
-        with self._lock:  # 加锁更新选择状态
-            self._selected_index = None  # 清空 index 选择
-            self._selected_id = None  # 清空 id 选择
-            latest = self._latest_detections  # 取出最新 detections，用于保持 header
-
-        self.selected_bbox.publish(self._empty_detection_array(latest))  # 发布空数组，清除 viewer 中的旧选框
+        self._clear_selection(reason="rpc")  # 复用统一清除逻辑，保证 RPC 和流事件行为一致
         return "cleared bbox selection"  # 返回确认信息
 
-    def _on_detections(self, detections: Detection2DArray) -> None:  # 处理检测模块发布的新一帧多 bbox
+    def _on_stop_movement(self, msg: Bool) -> None:
+        if not bool(getattr(msg, "data", False)):
+            return
+        self._clear_selection(reason="stop_movement")
+
+    def _on_clear_selection_request(self, msg: Bool) -> None:
+        if not bool(getattr(msg, "data", False)):
+            return
+        self._clear_selection(reason="clear_selection_request")
+
+    def _clear_selection(self, reason: str) -> None:
+        with self._lock:
+            had_selection = self._selected_index is not None or self._selected_id is not None
+            self._selected_index = None
+            self._selected_id = None
+            latest = self._latest_detections
+
+        self.selected_bbox.publish(
+            self._empty_detection_array(latest)
+        )  # 发布空数组，清除 viewer 中的旧选框
+        if had_selection:
+            logger.info(f"BBoxSelectionModule: cleared selection reason={reason}")
+
+    def _on_detections(
+        self, detections: Detection2DArray
+    ) -> None:  # 处理检测模块发布的新一帧多 bbox
         with self._lock:  # 加锁更新最新检测结果
             self._latest_detections = detections  # 保存最新一帧 detections
 
@@ -99,7 +139,9 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
             "BBoxSelectionModule: received click "
             f"frame_id={point.frame_id!r} x={point.x} y={point.y} z={point.z}"
         )
-        if not self._is_color_image_click(point):  # 只接受 Camera/color_image 视图里的点击，避免误吃 3D 点击
+        if not self._is_color_image_click(
+            point
+        ):  # 只接受 Camera/color_image 视图里的点击，避免误吃 3D 点击
             logger.info("BBoxSelectionModule: ignoring non-color-image click")
             return  # 非相机点击不改变当前 bbox 选择
 
@@ -118,12 +160,14 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
             "BBoxSelectionModule: matching click against detections "
             f"count={len(detections.detections)} frame_id={getattr(detections.header, 'frame_id', '')!r}"
         )
-        selected_index = self._find_clicked_detection_index(  # 在最新 detections 中查找被点击命中的 bbox
-            detections,  # 传入最新一帧候选 bbox
-            float(point.x),  # 传入 viewer 点击的 x 像素坐标
-            float(point.y),  # 传入 viewer 点击的 y 像素坐标
-            hit_padding_px=float(self.config.click_hit_padding_px),
-            snap_distance_px=float(self.config.click_snap_distance_px),
+        selected_index = (
+            self._find_clicked_detection_index(  # 在最新 detections 中查找被点击命中的 bbox
+                detections,  # 传入最新一帧候选 bbox
+                float(point.x),  # 传入 viewer 点击的 x 像素坐标
+                float(point.y),  # 传入 viewer 点击的 y 像素坐标
+                hit_padding_px=float(self.config.click_hit_padding_px),
+                snap_distance_px=float(self.config.click_snap_distance_px),
+            )
         )  # 结束命中测试
 
         if selected_index is None:
@@ -149,8 +193,7 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
         if selected_index is not None:
             if selected_id is not None:
                 logger.debug(
-                    "BBoxSelectionModule: tracking clicked bbox by stable id "
-                    f"id={selected_id!r}"
+                    f"BBoxSelectionModule: tracking clicked bbox by stable id id={selected_id!r}"
                 )
             else:
                 logger.debug(
@@ -158,13 +201,19 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
                     f"index={selected_index}"
                 )
 
-        self._publish_selected(detections)  # 立即刷新 selected_bbox，让机器人和 viewer 同步看到选择结果
+        self._publish_selected(
+            detections
+        )  # 立即刷新 selected_bbox，让机器人和 viewer 同步看到选择结果
 
-    def _publish_selected(self, detections: Detection2DArray) -> None:  # 根据当前选择发布 selected_bbox
+    def _publish_selected(
+        self, detections: Detection2DArray
+    ) -> None:  # 根据当前选择发布 selected_bbox
         selected = self._find_selected_detection(detections)  # 在当前帧里查找被选中的检测
         if selected is None:  # 如果当前帧没有选中目标或选择还不存在
             self._log_selection_state(None, None)
-            self.selected_bbox.publish(self._empty_detection_array(detections))  # 发布空数组，避免下游复用旧 bbox
+            self.selected_bbox.publish(
+                self._empty_detection_array(detections)
+            )  # 发布空数组，避免下游复用旧 bbox
             return  # 结束本帧处理
 
         selected_index = next(
@@ -183,14 +232,18 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
         )  # 结束 Detection2DArray 构造
         self.selected_bbox.publish(msg)  # 发布 selected_bbox 给行为模块和 viewer
 
-    def _find_selected_detection(self, detections: Detection2DArray) -> Any | None:  # 在当前帧中查找选中的 detection
+    def _find_selected_detection(
+        self, detections: Detection2DArray
+    ) -> Any | None:  # 在当前帧中查找选中的 detection
         with self._lock:  # 加锁读取选择条件
             selected_index = self._selected_index  # 复制 index 选择
             selected_id = self._selected_id  # 复制 id 选择
 
         if selected_id is not None:  # 如果当前使用 id 选择
             for index, detection in enumerate(detections.detections):  # 遍历当前帧所有 detection
-                if self._detection_id(detection, index) == selected_id:  # 比较真实 id 或 index fallback
+                if (
+                    self._detection_id(detection, index) == selected_id
+                ):  # 比较真实 id 或 index fallback
                     return detection  # 找到匹配 id 的 detection
             return None  # 当前帧没有匹配 id 时返回空
 
@@ -202,24 +255,34 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
         return None  # 没有选择时返回空
 
     @staticmethod  # 声明这是不依赖实例状态的工具函数
-    def _empty_detection_array(source: Detection2DArray | None) -> Detection2DArray:  # 构造空 Detection2DArray
-        header = source.header if source is not None else Header(time.time(), _DEFAULT_FRAME_ID)  # 优先复用来源 header
+    def _empty_detection_array(
+        source: Detection2DArray | None,
+    ) -> Detection2DArray:  # 构造空 Detection2DArray
+        header = (
+            source.header if source is not None else Header(time.time(), _DEFAULT_FRAME_ID)
+        )  # 优先复用来源 header
         return Detection2DArray(detections_length=0, header=header, detections=[])  # 返回空检测数组
 
     @classmethod  # 声明候选转换需要复用类级工具函数
-    def _candidate_to_dict(cls, index: int, detection: Any) -> dict[str, Any]:  # 把 detection 转成 RPC 字典
+    def _candidate_to_dict(
+        cls, index: int, detection: Any
+    ) -> dict[str, Any]:  # 把 detection 转成 RPC 字典
         x1, y1, x2, y2 = cls._bbox_corners(detection)  # 计算 bbox 的左上和右下坐标
         confidence, class_id = cls._best_result(detection)  # 读取第一条 hypothesis 的置信度和类别
         return {  # 返回用户可读且 JSON 友好的候选结构
             "index": index,  # 返回当前帧中的候选序号
-            "id": cls._detection_id(detection, index),  # 返回 detection.id，没有时回退为 index 字符串
+            "id": cls._detection_id(
+                detection, index
+            ),  # 返回 detection.id，没有时回退为 index 字符串
             "bbox": [x1, y1, x2, y2],  # 返回 xyxy 格式 bbox
             "confidence": confidence,  # 返回置信度，缺失时为 0.0
             "class_id": class_id,  # 返回类别 id，缺失时为 None
         }  # 结束候选字典
 
     @staticmethod  # 声明这是不依赖实例状态的工具函数
-    def _detection_id(detection: Any, index: int) -> str:  # 读取 detection id，并在缺失时回退到 index
+    def _detection_id(
+        detection: Any, index: int
+    ) -> str:  # 读取 detection id，并在缺失时回退到 index
         detection_id = getattr(detection, "id", "")  # 读取 detection.id，缺失时使用空字符串
         return str(detection_id) if detection_id else str(index)  # 返回真实 id 或 index 字符串
 
@@ -231,8 +294,12 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
         return detection_id
 
     @staticmethod  # 声明这是不依赖实例状态的工具函数
-    def _is_color_image_click(point: PointStamped) -> bool:  # 判断点击是否来自相机图像或其 bbox overlay
-        frame_parts = point.frame_id.strip("/").split("/")  # 把 entity_path 拆成路径片段，兼容有无前导斜杠
+    def _is_color_image_click(
+        point: PointStamped,
+    ) -> bool:  # 判断点击是否来自相机图像或其 bbox overlay
+        frame_parts = point.frame_id.strip("/").split(
+            "/"
+        )  # 把 entity_path 拆成路径片段，兼容有无前导斜杠
         return "color_image" in frame_parts  # 只让 color_image 视图点击驱动 bbox 选择
 
     @classmethod  # 声明命中测试需要复用 bbox 坐标转换工具
@@ -255,7 +322,9 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
             padded_top = top - hit_padding_px
             padded_bottom = bottom + hit_padding_px
 
-            if padded_left <= x <= padded_right and padded_top <= y <= padded_bottom:  # 如果点击点落在当前 bbox 内
+            if (
+                padded_left <= x <= padded_right and padded_top <= y <= padded_bottom
+            ):  # 如果点击点落在当前 bbox 内
                 area = max((right - left) * (bottom - top), 0.0)  # 计算 bbox 面积，重叠时优先小框
                 hits.append((area, index))  # 记录命中的候选 bbox
 
@@ -288,7 +357,9 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
         return min(hits)[1]  # 多个 bbox 重叠时选择面积最小的那个
 
     @staticmethod  # 声明这是不依赖实例状态的工具函数
-    def _bbox_corners(detection: Any) -> tuple[float, float, float, float]:  # 把中心点 bbox 转成 xyxy
+    def _bbox_corners(
+        detection: Any,
+    ) -> tuple[float, float, float, float]:  # 把中心点 bbox 转成 xyxy
         bbox = detection.bbox  # 读取 Detection2D 的 bbox 字段
         center = bbox.center.position  # 读取 bbox 中心点位置
         half_width = float(bbox.size_x) / 2.0  # 计算 bbox 半宽
@@ -319,7 +390,9 @@ class BBoxSelectionModule(Module):  # 定义 bbox 选择模块，只负责从多
             logger.info("BBoxSelectionModule: publishing empty selected_bbox")
             return
 
-        detection_id = self._detection_id(selected, max(selected_index if selected_index is not None else 0, 0))
+        detection_id = self._detection_id(
+            selected, max(selected_index if selected_index is not None else 0, 0)
+        )
         signature = ("selected", detection_id, selected_index)
         if signature == self._last_logged_selection_signature:
             return

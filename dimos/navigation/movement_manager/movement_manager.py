@@ -82,6 +82,9 @@ class MovementManager(Module):
         super().stop()
 
     def _on_click(self, msg: PointStamped) -> None:
+        if not self._is_navigation_click(msg):
+            logger.debug("Ignored non-navigation click", frame_id=msg.frame_id)
+            return
         if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
             logger.warning("Ignored invalid click", x=msg.x, y=msg.y, z=msg.z)
             return
@@ -144,3 +147,8 @@ class MovementManager(Module):
             ),
         )
         self.cmd_vel.publish(scaled)
+
+    @staticmethod
+    def _is_navigation_click(msg: PointStamped) -> bool:
+        frame_parts = msg.frame_id.strip("/").split("/")
+        return "color_image" not in frame_parts

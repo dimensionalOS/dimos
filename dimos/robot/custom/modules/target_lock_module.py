@@ -5,7 +5,7 @@ import threading
 import time
 from typing import Any, Literal
 
-from dimos_lcm.std_msgs import String
+from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -31,6 +31,8 @@ class TargetLockModule(Module):
 
     detections: In[Detection2DArray]
     selected_bbox: In[Detection2DArray]
+    stop_movement: In[Bool]
+    clear_selection_request: In[Bool]
 
     locked_bbox: Out[Detection2DArray]
     lock_status: Out[String]
@@ -50,15 +52,15 @@ class TargetLockModule(Module):
         super().start()
         self.register_disposable(Disposable(self.selected_bbox.subscribe(self._on_selected_bbox)))
         self.register_disposable(Disposable(self.detections.subscribe(self._on_detections)))
+        self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop_movement)))
+        self.register_disposable(
+            Disposable(self.clear_selection_request.subscribe(self._on_clear_selection_request))
+        )
         self._publish_status(force=True)
 
     @rpc
     def clear_lock(self) -> str:
-        with self._lock:
-            self._reset_lock_state()
-            header = self._last_header
-        self.locked_bbox.publish(self._empty_detection_array(header))
-        self._set_state("unselected")
+        self._clear_lock()
         return "target lock cleared"
 
     @rpc
@@ -95,6 +97,14 @@ class TargetLockModule(Module):
 
         self.locked_bbox.publish(self._single_detection_array(detection, selected_bbox.header))
         self._set_state("locked")
+
+    def _on_stop_movement(self, msg: Bool) -> None:
+        if bool(getattr(msg, "data", False)):
+            self._clear_lock()
+
+    def _on_clear_selection_request(self, msg: Bool) -> None:
+        if bool(getattr(msg, "data", False)):
+            self._clear_lock()
 
     def _on_detections(self, detections: Detection2DArray) -> None:
         with self._lock:
@@ -182,6 +192,13 @@ class TargetLockModule(Module):
         self._last_center = None
         self._last_seen_at = None
 
+    def _clear_lock(self) -> None:
+        with self._lock:
+            self._reset_lock_state()
+            header = self._last_header
+        self.locked_bbox.publish(self._empty_detection_array(header))
+        self._set_state("unselected")
+
     def _reacquire_candidate(
         self,
         detections: Detection2DArray,
@@ -193,7 +210,9 @@ class TargetLockModule(Module):
             return None
 
         if self.config.reacquire_by_class and target_class_id is not None:
-            class_filtered = [d for d in candidates if self._detection_class_id(d) == target_class_id]
+            class_filtered = [
+                d for d in candidates if self._detection_class_id(d) == target_class_id
+            ]
             if class_filtered:
                 candidates = class_filtered
 
@@ -205,7 +224,9 @@ class TargetLockModule(Module):
 
         return min(
             candidates,
-            key=lambda detection: self._center_distance_sq(last_center, self._bbox_center(detection)),
+            key=lambda detection: self._center_distance_sq(
+                last_center, self._bbox_center(detection)
+            ),
         )
 
     def _find_by_id(self, detections: Detection2DArray, target_id: str) -> Any | None:

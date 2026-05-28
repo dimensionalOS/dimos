@@ -68,8 +68,8 @@ def _twist(lx=0.0):
     return Twist(linear=Vector3(lx, 0, 0), angular=Vector3(0, 0, 0))
 
 
-def _click(x=1.0, y=2.0, z=0.0):
-    return PointStamped(ts=time.time(), frame_id="map", x=x, y=y, z=z)
+def _click(x=1.0, y=2.0, z=0.0, frame_id="map"):
+    return PointStamped(ts=time.time(), frame_id=frame_id, x=x, y=y, z=z)
 
 
 def test_teleop_suppresses_nav_and_cancels_goal(manager_and_captured):
@@ -110,6 +110,18 @@ def test_valid_click_publishes_goal(manager_and_captured):
     manager._on_click(click)
     assert captured.goal == [click]
     assert captured.way_point == [click]
+
+
+def test_camera_click_does_not_publish_goal_or_stop(manager_and_captured):
+    """A 2D camera click belongs to bbox selection, not map navigation."""
+    manager, captured = manager_and_captured
+    click = _click(x=220.0, y=120.0, z=0.0, frame_id="/world/color_image/yoloe_detections")
+
+    manager._on_click(click)
+
+    assert captured.goal == []
+    assert captured.way_point == []
+    assert captured.stop_movement == []
 
 
 def test_invalid_clicks_rejected(manager_and_captured):

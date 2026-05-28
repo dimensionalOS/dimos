@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D,
@@ -25,8 +26,8 @@ from dimos_lcm.vision_msgs import (
     Point2D,
     Pose2D,
 )
-import pytest
 import numpy as np
+import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -94,9 +95,7 @@ def _make_detection(detection_id: str, x1: float, y1: float, x2: float, y2: floa
             size_y=y2 - y1,
         ),
         results=[
-            ObjectHypothesisWithPose(
-                hypothesis=ObjectHypothesis(class_id="person", score=0.9)
-            )
+            ObjectHypothesisWithPose(hypothesis=ObjectHypothesis(class_id="person", score=0.9))
         ],
     )
 
@@ -115,6 +114,12 @@ def _subscribe_status(module: BBoxDistanceBehaviorModule) -> list[Any]:
     return received
 
 
+def _subscribe_clear_requests(module: BBoxDistanceBehaviorModule) -> list[Any]:
+    received: list[Any] = []
+    module.clear_selection_request.subscribe(received.append)
+    return received
+
+
 def test_selected_bbox_auto_starts_approach(module: BBoxDistanceBehaviorModule) -> None:
     status = _subscribe_status(module)
     module._on_lidar(PointCloud2())
@@ -130,6 +135,7 @@ def test_selected_bbox_reaches_point_two_and_finishes(
     module: BBoxDistanceBehaviorModule,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    clear_requests = _subscribe_clear_requests(module)
     module._on_lidar(PointCloud2())
     module._on_camera_info(CameraInfo.from_intrinsics(100.0, 100.0, 50.0, 50.0, 100, 100))
     module._on_selected_bbox(_make_array(_make_detection("target", 40.0, 40.0, 60.0, 60.0)))
@@ -151,13 +157,30 @@ def test_selected_bbox_reaches_point_two_and_finishes(
     assert done_twist.linear.x == 0.0
     assert done_twist.angular.z == 0.0
     assert module._state == "done"
+    assert clear_requests and clear_requests[-1].data
 
 
 def test_empty_selected_bbox_resets_to_idle(module: BBoxDistanceBehaviorModule) -> None:
+    cmd_published: list = []
+    module.cmd_vel.subscribe(cmd_published.append)
+
     module._on_selected_bbox(_make_array(_make_detection("target", 40.0, 40.0, 60.0, 60.0)))
     module._on_selected_bbox(_make_array())
 
     assert module._state == "idle"
+    assert cmd_published and cmd_published[-1].linear.x == 0.0
+
+
+def test_empty_selected_bbox_while_idle_stays_silent(
+    module: BBoxDistanceBehaviorModule,
+) -> None:
+    cmd_published: list = []
+    module.cmd_vel.subscribe(cmd_published.append)
+
+    module._on_selected_bbox(_make_array())
+
+    assert module._state == "idle"
+    assert cmd_published == []
 
 
 def test_estimate_3d_distance_returns_none_without_tf(module: BBoxDistanceBehaviorModule) -> None:
@@ -174,12 +197,11 @@ def test_estimate_3d_distance_returns_none_without_tf(module: BBoxDistanceBehavi
 
 def test_teleop_active_interrupts_approaching_task(module: BBoxDistanceBehaviorModule) -> None:
     """_on_teleop_active resets an approaching task to idle."""
-    from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
-
     module._on_selected_bbox(_make_array(_make_detection("target", 40.0, 40.0, 60.0, 60.0)))
     assert module._state == "approaching"
 
     cmd_published: list = []
+    clear_requests = _subscribe_clear_requests(module)
     module.cmd_vel.subscribe(cmd_published.append)
 
     module._on_teleop_active(Bool(data=True))
@@ -188,12 +210,11 @@ def test_teleop_active_interrupts_approaching_task(module: BBoxDistanceBehaviorM
     assert module._active_target_id is None
     # A zero Twist must be published to stop the robot
     assert cmd_published and cmd_published[-1].linear.x == 0.0
+    assert clear_requests and clear_requests[-1].data
 
 
 def test_teleop_active_noop_when_already_idle(module: BBoxDistanceBehaviorModule) -> None:
     """_on_teleop_active does nothing when task is already idle."""
-    from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
-
     assert module._state == "idle"
     cmd_published: list = []
     module.cmd_vel.subscribe(cmd_published.append)

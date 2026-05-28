@@ -98,12 +98,11 @@ yoloe_target_lock_distance_follow = (
         # Keyboard teleop: publishes tele_cmd_vel when keys held; silent otherwise.
         # MovementManager (from unitree_go2) muxes tele_cmd_vel (priority) + nav_cmd_vel
         # (task) → cmd_vel.
-        # When teleop fires, MovementManager publishes stop_movement → teleop_active →
-        # BBoxDistanceBehaviorModule resets to idle so YOLO keeps detecting while
-        # the user drives; clicking a new bbox restarts the approach task.
-        # When a 3D point is clicked, MovementManager also fires stop_movement → cancels
-        # bbox tracking; BBoxDistanceBehaviorModule cancels A* via _planner spec when a
-        # new bbox task starts.
+        # MovementManager emits stop_movement for keyboard/map control. The bbox
+        # selection + target lock modules consume that signal and clear the active
+        # target so the old bbox cannot restart the one-shot task on the next frame.
+        # BBoxDistanceBehaviorModule also emits clear_selection_request when the
+        # one-shot task completes or is stopped by RPC.
         KeyboardTeleop.blueprint(publish_only_when_active=True),
     )
     .global_config(

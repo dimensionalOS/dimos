@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from dimos_lcm.std_msgs import Bool
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D,
@@ -96,9 +97,7 @@ def _make_detection(
             size_y=y2 - y1,
         ),
         results=[
-            ObjectHypothesisWithPose(
-                hypothesis=ObjectHypothesis(class_id=class_id, score=0.9)
-            )
+            ObjectHypothesisWithPose(hypothesis=ObjectHypothesis(class_id=class_id, score=0.9))
         ],
     )
 
@@ -117,6 +116,18 @@ def test_transition_unselected_to_locked(module: TargetLockModule) -> None:
     module._on_selected_bbox(selected)
 
     assert module.get_lock_state()["state"] == "locked"
+
+
+def test_stop_movement_clears_locked_bbox(module: TargetLockModule) -> None:
+    selected = _make_array(_make_detection("target", "person", 10.0, 10.0, 40.0, 40.0))
+    locked_messages: list[Any] = []
+    module.locked_bbox.subscribe(locked_messages.append)
+
+    module._on_selected_bbox(selected)
+    module._on_stop_movement(Bool(data=True))
+
+    assert module.get_lock_state()["state"] == "unselected"
+    assert locked_messages[-1].detections_length == 0
 
 
 def test_transition_locked_to_searching(module: TargetLockModule) -> None:
