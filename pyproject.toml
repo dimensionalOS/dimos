@@ -119,14 +119,13 @@ dependencies = [
     "llvmlite>=0.42.0", # Required by numba 0.60+
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
-    "rerun-sdk>=0.20.0",
-    "dimos-viewer==0.30.0a6.dev99",
+    "rerun-sdk==0.32.0a1",
+    "dimos-viewer==0.32.0a1",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
     "sqlite-vec>=0.1.6",
     "lz4>=4.4.5",
-    "rpyc>=6.0.0",
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
 ]
@@ -190,8 +189,8 @@ misc = [
 ]
 
 visualization = [
-    "rerun-sdk>=0.20.0",
-    "dimos-viewer>=0.30.0a4",
+    "rerun-sdk==0.32.0a1",
+    "dimos-viewer==0.32.0a1",
 ]
 
 agents = [
@@ -232,8 +231,8 @@ perception = [
 ]
 
 unitree = [
-    "dimos[base]",
-    "unitree-webrtc-connect-leshy>=2.0.7"
+    "dimos[base,mapping]",
+    "unitree-webrtc-connect-leshy>=2.0.7",
 ]
 
 unitree-dds = [
@@ -251,6 +250,7 @@ manipulation = [
     "piper-sdk",
     "pyrealsense2; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
+    "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -292,7 +292,9 @@ sim = [
     "pygame>=2.6.1",
 ]
 
-navigation = [
+mapping = [
+    # PGO for reloc premap + nav_stack experiments
+    # Jeff's https://github.com/jeff-hykin/gtsam-extended
     "gtsam-extended>=4.3a1.post1",
 ]
 
@@ -384,6 +386,7 @@ tests = [
     "pytest-timeout==2.4.0",
     "pytest-xdist>=3.5.0",
     "pytest-cov>=5.0",
+    "pytest-error-for-skips>=2.0.2",
     "coverage>=7.0",
     "requests-mock==1.12.1",
 
@@ -450,11 +453,19 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
+exclude-newer-package = { dimos-viewer = false }
 override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
     "pillow>=12.2.0",
     "pytest==8.3.5", # because gtsam screwed up their dev dependencies
+    # langgraph-prebuilt>=1.0.9 imports ExecutionInfo from langgraph.runtime,
+    # which only exists in langgraph>=1.1; langchain==1.2.3 caps langgraph<1.1.
+    "langgraph-prebuilt<=1.0.8",
+    # opentelemetry-api>=1.39 requires importlib-metadata<8.8; without this cap
+    # uv picks importlib-metadata>=9 and cascades the otel stack down to 1.11.1,
+    # whose stale _pb2.py files crash with protobuf>=6.
+    "importlib-metadata<8.8.0",
 ]
 
 [tool.ruff]
@@ -515,6 +526,8 @@ exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/c
 [[tool.mypy.overrides]]
 module = [
     "annotation_protocol",
+    "a750_control",
+    "a750_control.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
@@ -532,8 +545,6 @@ module = [
     "plum.*",
     "portal",
     "psutil",
-    "rpyc",
-    "rpyc.*",
     "pycuda",
     "pycuda.*",
     "pydrake",

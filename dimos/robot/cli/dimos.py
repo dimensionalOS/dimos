@@ -234,7 +234,6 @@ def run(
     )
     from dimos.core.run_registry import (
         RunEntry,
-        check_port_conflicts,
         cleanup_stale,
         generate_run_id,
     )
@@ -253,16 +252,6 @@ def run(
     stale = cleanup_stale()
     if stale:
         logger.info(f"Cleaned {stale} stale run entries")
-
-    # Port conflict check
-    conflict = check_port_conflicts()
-    if conflict:
-        typer.echo(
-            f"Error: Ports in use by {conflict.run_id} (PID {conflict.pid}). "
-            f"Run 'dimos stop' first.",
-            err=True,
-        )
-        raise typer.Exit(1)
 
     blueprint_name = "-".join(robot_types)
     run_id = generate_run_id(blueprint_name)
@@ -316,7 +305,7 @@ def run(
 
         daemonize(log_dir)
 
-        rpyc_port = coordinator.start_rpyc_service()  # After daemonize().
+        coordinator.start_rpc_service()  # After daemonize().
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -325,7 +314,6 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
@@ -333,7 +321,7 @@ def run(
         install_signal_handlers(entry, coordinator)
         coordinator.loop()
     else:
-        rpyc_port = coordinator.start_rpyc_service()
+        coordinator.start_rpc_service()
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -342,7 +330,6 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
@@ -683,6 +670,40 @@ def send(
     from dimos.robot.cli.topic import topic_send
 
     topic_send(topic, message_expr)
+
+
+@main.command(name="map")
+def map_cmd(
+    dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
+    voxel: float = typer.Option(0.05, "--voxel", help="Voxel size for the rebuild"),
+    device: str = typer.Option(
+        "CUDA:0", "--device", help="Open3D compute device (e.g. CUDA:0, CPU:0)"
+    ),
+    pgo: bool = typer.Option(
+        False, "--pgo", help="Run pose graph optimization before rebuilding (twopass)"
+    ),
+    block_count: int = typer.Option(
+        2_000_000, "--block-count", help="VoxelBlockGrid capacity (--pgo only)"
+    ),
+    export: bool = typer.Option(
+        False,
+        "--export",
+        help="Export PGO twopass map to ./<dataset>.pc2.lcm in cwd (implies --pgo)",
+    ),
+    no_gui: bool = typer.Option(False, "--no-gui", help="Skip rerun visualization"),
+) -> None:
+    """Rebuild a voxel map from a recorded SQLite dataset and view it in rerun."""
+    from dimos.utils.cli.map import main as map_main
+
+    map_main(
+        dataset=dataset,
+        voxel=voxel,
+        device=device,
+        pgo=pgo,
+        block_count=block_count,
+        export=export,
+        no_gui=no_gui,
+    )
 
 
 @main.command()

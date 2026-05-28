@@ -111,6 +111,18 @@ def get_data_dir(extra_path: str | None = None) -> Path:
     return get_project_root() / "data"
 
 
+def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
+    s = str(name)
+    p = Path(s)
+    if p.is_absolute() or p.exists():
+        return p
+    if suffix and not s.endswith(suffix):
+        p = Path(s + suffix)
+        if p.is_absolute() or p.exists():
+            return p
+    return get_data(p.name)
+
+
 @cache
 def _get_lfs_dir() -> Path:
     return get_data_dir() / ".lfs"

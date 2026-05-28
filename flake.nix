@@ -223,6 +223,11 @@
           export GI_TYPELIB_PATH="${giTypelibPackagesString}:$GI_TYPELIB_PATH"
           export PKG_CONFIG_PATH=${lib.escapeShellArg packageConfPackagesString}
           export PYTHONPATH="$PYTHONPATH:"${lib.escapeShellArg manualPythonPackages}
+          # Strip 3.13 site-packages leaked by setup hooks of py-built tools
+          # (pre-commit etc). They shadow the uv-managed 3.12's _sysconfigdata,
+          # making sysconfig report SOABI=cpython-313, which trips setuptools
+          # wheel-tag validation.
+          export PYTHONPATH="$(printf '%s' "$PYTHONPATH" | tr ':' '\n' | grep -v '/python3\.13/' | paste -sd:)"
           export CYCLONEDDS_HOME="${pkgs.cyclonedds}"
           export CMAKE_PREFIX_PATH="${pkgs.cyclonedds}:$CMAKE_PREFIX_PATH"
           # CC, CFLAGS, and LDFLAGS are bascially all for `pip install pyaudio`

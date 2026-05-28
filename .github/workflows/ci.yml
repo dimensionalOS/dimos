@@ -36,6 +36,63 @@ jobs:
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
 
+  rust:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Find Cargo workspace roots
+        id: find-crates
+        run: |
+          crates=$(find . -name Cargo.lock \
+            -not -path './target/*' \
+            -not -path './.venv/*' \
+            -not -path './node_modules/*' \
+            -not -path './.git/*' \
+            -printf '%h\n' \
+            | sed 's|^\./||' \
+            | sort)
+          echo "Found Rust workspace roots:"
+          echo "$crates"
+          {
+            echo "crates<<EOF"
+            echo "$crates"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ steps.find-crates.outputs.crates }}
+      - name: cargo fmt
+        env:
+          CRATES: ${{ steps.find-crates.outputs.crates }}
+        run: |
+          for crate in $CRATES; do
+            (cd "$crate" && cargo fmt --all -- --check)
+          done
+      - name: cargo clippy
+        env:
+          CRATES: ${{ steps.find-crates.outputs.crates }}
+        run: |
+          for crate in $CRATES; do
+            (cd "$crate" && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings)
+          done
+      - name: cargo test
+        env:
+          CRATES: ${{ steps.find-crates.outputs.crates }}
+        run: |
+          for crate in $CRATES; do
+            (cd "$crate" && cargo test --workspace --all-features --locked)
+          done
+
   md-babel:
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -280,6 +337,7 @@ jobs:
 
     needs:
     - lint
+    - rust
     - md-babel
     - docs-validate
     - tests

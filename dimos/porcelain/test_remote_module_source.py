@@ -14,10 +14,13 @@
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
 from dimos.core.tests.stress_test_module import StressTestModule
 from dimos.porcelain.dimos import Dimos
+from dimos.porcelain.remote_module_source import _RemoteProxy
 
 
 def test_connect_no_running_system(tmp_path, monkeypatch):
@@ -25,10 +28,10 @@ def test_connect_no_running_system(tmp_path, monkeypatch):
 
     monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "runs")
     with pytest.raises(RuntimeError, match="No running DimOS instance"):
-        Dimos.connect()
+        Dimos.connect(timeout=0.5)
 
 
-def test_connect_via_host_port_skill_call(running_app, client):
+def test_connect_skill_call(running_app, client):
     assert client.skills.ping() == "pong"
     assert client.skills.echo(message="hello") == "hello"
     client.stop()
@@ -36,16 +39,16 @@ def test_connect_via_host_port_skill_call(running_app, client):
     assert running_app.skills.ping() == "pong"
 
 
-def test_connect_attribute_access(client):
+def test_connect_rpc_method_call(client):
     module = client.StressTestModule
-    assert module._module_closed is False
+    assert module.ping() == "pong"
 
 
 def test_connect_restart_invalidates_cache(client):
     source = client._source
-    m_before = source.get_rpyc_module("StressTestModule")
+    m_before = source.get_module("StressTestModule")
     client.restart(StressTestModule, reload_source=False)
-    m_after = source.get_rpyc_module("StressTestModule")
+    m_after = source.get_module("StressTestModule")
     assert m_before is not m_after
     assert client.skills.ping() == "pong"
 
@@ -74,8 +77,24 @@ def test_connect_list_module_names(client):
     assert "StressTestModule" in names
 
 
-def test_connect_get_rpyc_module_caches(client):
+def test_connect_get_module_caches(client):
     source = client._source
-    m1 = source.get_rpyc_module("StressTestModule")
-    m2 = source.get_rpyc_module("StressTestModule")
+    m1 = source.get_module("StressTestModule")
+    m2 = source.get_module("StressTestModule")
     assert m1 is m2
+
+
+def test_remote_proxy_fallback_when_class_unimportable(client, monkeypatch):
+    """If `importlib.import_module` raises, get_module returns a names-only proxy."""
+    real_import = importlib.import_module
+
+    def fake_import(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if "stress_test_module" in name:
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("dimos.porcelain.remote_module_source.importlib.import_module", fake_import)
+    client._source.invalidate("StressTestModule")
+    proxy = client._source.get_module("StressTestModule")
+    assert isinstance(proxy, _RemoteProxy)
+    assert proxy.ping() == "pong"
