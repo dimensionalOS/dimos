@@ -1,3 +1,2 @@
-# Legacy Markdown pages are not MDX-clean yet. Keep them out of the first
-# Mintlify validation/publish pass until md-babel-py can emit MDX comments.
-**/*.md
+# Ignore dependency trees under the docs workspace (would otherwise be scanned as pages).
+node_modules/
