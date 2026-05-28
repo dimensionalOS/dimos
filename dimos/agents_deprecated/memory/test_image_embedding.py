@@ -28,6 +28,55 @@ from dimos.agents_deprecated.memory.image_embedding import ImageEmbeddingProvide
 from dimos.stream.video_provider import VideoProvider
 
 
+def test_clip_provider_prefers_cpu_on_macos(monkeypatch) -> None:
+    provider = object.__new__(ImageEmbeddingProvider)
+
+    monkeypatch.setattr(
+        "dimos.agents_deprecated.memory.image_embedding.ort.get_available_providers",
+        lambda: ["CoreMLExecutionProvider", "CPUExecutionProvider"],
+    )
+    monkeypatch.setattr("dimos.agents_deprecated.memory.image_embedding.sys.platform", "darwin")
+    monkeypatch.delenv("DIMOS_ENABLE_COREML_CLIP", raising=False)
+
+    assert provider._preferred_onnx_providers() == ["CPUExecutionProvider"]
+
+
+def test_clip_provider_allows_coreml_opt_in_on_macos(monkeypatch) -> None:
+    provider = object.__new__(ImageEmbeddingProvider)
+
+    monkeypatch.setattr(
+        "dimos.agents_deprecated.memory.image_embedding.ort.get_available_providers",
+        lambda: ["CoreMLExecutionProvider", "CPUExecutionProvider"],
+    )
+    monkeypatch.setattr("dimos.agents_deprecated.memory.image_embedding.sys.platform", "darwin")
+    monkeypatch.setenv("DIMOS_ENABLE_COREML_CLIP", "1")
+
+    assert provider._preferred_onnx_providers() == [
+        "CoreMLExecutionProvider",
+        "CPUExecutionProvider",
+    ]
+
+
+def test_clip_provider_retries_failed_onnx_inference_on_cpu() -> None:
+    class FailingSession:
+        def run(self, _outputs, _inputs):
+            raise RuntimeError("provider failed")
+
+    class CpuSession:
+        def run(self, _outputs, _inputs):
+            return [np.array([[1.0, 2.0]], dtype=np.float32)]
+
+    provider = object.__new__(ImageEmbeddingProvider)
+    provider.model = FailingSession()
+    provider.model_path = "/tmp/model.onnx"
+    provider._onnx_providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+    provider._load_onnx_session = lambda _model_path, _providers: CpuSession()
+
+    outputs = provider._run_onnx_with_cpu_retry({})
+
+    assert outputs[0].tolist() == [[1.0, 2.0]]
+
+
 @pytest.mark.self_hosted
 class TestImageEmbedding:
     """Test class for CLIP image embedding functionality."""

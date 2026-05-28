@@ -22,7 +22,9 @@ using pre-trained models like CLIP, ResNet, etc.
 import base64
 import io
 import os
+from pathlib import Path
 import sys
+from typing import cast
 
 import cv2
 import numpy as np
@@ -58,15 +60,77 @@ class ImageEmbeddingProvider:
         self.model: ort.InferenceSession | PreTrainedModel | None = None
         self.processor: ProcessorMixin | None = None
         self.model_path: str | None = None
+        self._onnx_providers: list[str] = []
 
         self._initialize_model()  # type: ignore[no-untyped-call]
 
         logger.info(f"ImageEmbeddingProvider initialized with model {model_name}")
 
+    def _preferred_onnx_providers(self) -> list[str]:
+        available_providers = set(ort.get_available_providers())
+        providers: list[str] = []
+
+        coreml_enabled = os.getenv("DIMOS_ENABLE_COREML_CLIP", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if coreml_enabled and "CoreMLExecutionProvider" in available_providers:
+            providers.append("CoreMLExecutionProvider")
+
+        if sys.platform != "darwin" and "CUDAExecutionProvider" in available_providers:
+            providers.append("CUDAExecutionProvider")
+
+        if "CPUExecutionProvider" in available_providers:
+            providers.append("CPUExecutionProvider")
+
+        if not providers:
+            providers = list(available_providers)
+
+        return providers
+
+    def _load_onnx_session(
+        self, model_path: str | Path, providers: list[str]
+    ) -> ort.InferenceSession:
+        session = ort.InferenceSession(str(model_path), providers=providers)
+        self._onnx_providers = list(session.get_providers())
+        return session
+
+    def _reload_clip_session_on_cpu(self) -> bool:
+        if self.model_path is None:
+            return False
+        if self._onnx_providers == ["CPUExecutionProvider"]:
+            return False
+        if "CPUExecutionProvider" not in ort.get_available_providers():
+            return False
+
+        logger.warning(
+            f"Reloading CLIP ONNX model on CPU after provider failure. Previous providers: {self._onnx_providers}"
+        )
+        self.model = self._load_onnx_session(self.model_path, ["CPUExecutionProvider"])
+        return True
+
+    def _run_onnx_with_cpu_retry(self, ort_inputs: dict[str, np.ndarray]) -> list[np.ndarray]:
+        session = cast("ort.InferenceSession", self.model)
+        try:
+            return session.run(None, ort_inputs)
+        except Exception:
+            if not self._reload_clip_session_on_cpu():
+                raise
+            session = cast("ort.InferenceSession", self.model)
+            return session.run(None, ort_inputs)
+
+    def _fallback_embedding(self) -> np.ndarray:
+        embedding = np.random.randn(self.dimensions).astype(np.float32)
+        norm = np.linalg.norm(embedding)
+        if norm == 0:
+            embedding[0] = 1.0
+            return embedding
+        return embedding / norm
+
     def _initialize_model(self):  # type: ignore[no-untyped-def]
         """Initialize the specified embedding model."""
         try:
-            import onnxruntime as ort  # type: ignore[import-untyped]
             import torch  # noqa: F401
             from transformers import (
                 AutoFeatureExtractor,
@@ -79,19 +143,11 @@ class ImageEmbeddingProvider:
                 self.model_path = str(model_id)  # type: ignore[assignment]  # Store for pickling
                 processor_id = "openai/clip-vit-base-patch32"
 
-                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-                if sys.platform == "darwin":
-                    # 2025-11-17 12:36:47.877215 [W:onnxruntime:, helper.cc:82 IsInputSupported] CoreML does not support input dim > 16384. Input:text_model.embeddings.token_embedding.weight, shape: {49408,512}
-                    # 2025-11-17 12:36:47.878496 [W:onnxruntime:, coreml_execution_provider.cc:107 GetCapability] CoreMLExecutionProvider::GetCapability, number of partitions supported by CoreML: 88 number of nodes in the graph: 1504 number of nodes supported by CoreML: 933
-                    providers = ["CoreMLExecutionProvider"] + [
-                        each for each in providers if each != "CUDAExecutionProvider"
-                    ]
+                providers = self._preferred_onnx_providers()
+                self.model = self._load_onnx_session(model_id, providers)
 
-                self.model = ort.InferenceSession(str(model_id), providers=providers)
-
-                actual_providers = self.model.get_providers()  # type: ignore[attr-defined]
                 self.processor = CLIPProcessor.from_pretrained(processor_id)
-                logger.info(f"Loaded CLIP model: {model_id} with providers: {actual_providers}")
+                logger.info(f"Loaded CLIP model: {model_id} with providers: {self._onnx_providers}")
             elif self.model_name == "resnet":
                 model_id = "microsoft/resnet-50"  # type: ignore[assignment]
                 self.model = AutoModel.from_pretrained(model_id)
@@ -120,7 +176,7 @@ class ImageEmbeddingProvider:
         """
         if self.model is None or self.processor is None:
             logger.error("Model not initialized. Using fallback random embedding.")
-            return np.random.randn(self.dimensions).astype(np.float32)
+            return self._fallback_embedding()
 
         pil_image = self._prepare_image(image)
 
@@ -148,7 +204,7 @@ class ImageEmbeddingProvider:
                         ort_inputs["attention_mask"] = np.ones((batch_size, 1), dtype=np.int64)
 
                     # Run inference
-                    ort_outputs = self.model.run(None, ort_inputs)
+                    ort_outputs = self._run_onnx_with_cpu_retry(ort_inputs)
 
                     # Look up correct output name
                     output_names = [o.name for o in self.model.get_outputs()]
@@ -171,7 +227,7 @@ class ImageEmbeddingProvider:
                 embedding = outputs.last_hidden_state[:, 0, :].numpy()[0]
             else:
                 logger.warning(f"Unsupported model: {self.model_name}. Using random embedding.")
-                embedding = np.random.randn(self.dimensions).astype(np.float32)
+                embedding = self._fallback_embedding()
 
             # Normalize and ensure correct dimensions
             embedding = embedding / np.linalg.norm(embedding)
@@ -181,7 +237,7 @@ class ImageEmbeddingProvider:
 
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
-            return np.random.randn(self.dimensions).astype(np.float32)
+            return self._fallback_embedding()
 
     def get_text_embedding(self, text: str) -> np.ndarray:
         """
@@ -195,13 +251,13 @@ class ImageEmbeddingProvider:
         """
         if self.model is None or self.processor is None:
             logger.error("Model not initialized. Using fallback random embedding.")
-            return np.random.randn(self.dimensions).astype(np.float32)
+            return self._fallback_embedding()
 
         if self.model_name != "clip":
             logger.warning(
                 f"Text embeddings are only supported with CLIP model, not {self.model_name}. Using random embedding."
             )
-            return np.random.randn(self.dimensions).astype(np.float32)
+            return self._fallback_embedding()
 
         try:
             import torch
@@ -227,7 +283,7 @@ class ImageEmbeddingProvider:
                     )
 
                 # Run inference
-                ort_outputs = self.model.run(None, ort_inputs)
+                ort_outputs = self._run_onnx_with_cpu_retry(ort_inputs)
 
                 # Determine correct output (usually 'last_hidden_state' or 'text_embeds')
                 output_names = [o.name for o in self.model.get_outputs()]
@@ -249,7 +305,7 @@ class ImageEmbeddingProvider:
 
         except Exception as e:
             logger.error(f"Error generating text embedding: {e}")
-            return np.random.randn(self.dimensions).astype(np.float32)
+            return self._fallback_embedding()
 
     def _prepare_image(self, image: np.ndarray | str | bytes) -> Image.Image:
         """

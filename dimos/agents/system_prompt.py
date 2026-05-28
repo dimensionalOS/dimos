@@ -28,6 +28,9 @@ Users hear you through speakers but cannot see text. Use `speak` to communicate 
 
 ## Navigation Flow
 - Use `navigate_with_text` for most navigation. It searches tagged locations first, then visible objects, then the semantic map.
+- Use `relative_move` for map-based local moves. If it reports that no path was found, do not assume there is an obstacle; the costmap may be stale or too conservative.
+- Use `move` for short direct velocity movement only when the user indicates the path is clear or after `observe` confirms the path is clear. Convert distance requests into conservative velocity and duration.
+- If `move` reports that the robot appears blocked, do not keep moving forward. Use `observe`, choose a short clear sidestep/turn/retry route if visible, or tell the user you are blocked if no safe bypass is visible.
 - Tag important locations with `tag_location` so you can return to them later.
 - If navigation reports that the planned route includes stairs, treat that as normal traversable terrain and continue unless the user asks you to stop.
 - During `start_exploration`, avoid calling other skills except `stop_movement`.

@@ -18,6 +18,7 @@ import datetime
 import difflib
 import math
 import time
+from typing import cast
 
 from unitree_webrtc_connect.constants import RTC_TOPIC
 
@@ -26,6 +27,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
@@ -33,6 +35,10 @@ from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+def _clamp(value: float, min_value: float, max_value: float) -> float:
+    return min(max(value, min_value), max_value)
 
 
 UNITREE_WEBRTC_CONTROLS: list[tuple[str, int, str]] = [
@@ -208,8 +214,124 @@ class UnitreeSkillContainer(Module):
         super().stop()
 
     @skill
+    def move(self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0) -> str:
+        """Move the robot using direct velocity commands.
+
+        Use this for short local movement when the user has indicated the path is clear,
+        or when map-based `relative_move` reports that it cannot find a path but you
+        have visually confirmed there is no obstacle. The command stops early if odometry
+        shows the robot is not making progress, then performs a small reverse recovery.
+        For distance requests, choose a conservative speed and duration.
+
+        Args:
+            x: Forward velocity in m/s. Positive = forward, negative = backward.
+            y: Left/right velocity in m/s. Positive = left, negative = right.
+            yaw: Rotational velocity in rad/s. Positive = turn left, negative = turn right.
+            duration: How long to move in seconds. Maximum is 10 seconds.
+        """
+        x = _clamp(float(x), -0.5, 0.5)
+        y = _clamp(float(y), -0.4, 0.4)
+        yaw = _clamp(float(yaw), -1.0, 1.0)
+        duration = _clamp(float(duration), 0.0, 10.0)
+
+        twist = Twist(linear=Vector3(x, y, 0.0), angular=Vector3(0.0, 0.0, yaw))
+
+        command_duration = duration if duration > 0.0 else 0.5
+        linear_speed = math.hypot(x, y)
+        chunk_duration = 0.5 if command_duration <= 1.0 else 1.0
+        start_pose = self._get_base_pose()
+        previous_pose = start_pose
+        stalled_chunks = 0
+        elapsed = 0.0
+
+        while elapsed < command_duration:
+            this_chunk = min(chunk_duration, command_duration - elapsed)
+            if not self._connection.move(twist, duration=this_chunk):
+                self._stop_direct_movement()
+                return "Direct movement command failed before completion."
+
+            elapsed += this_chunk
+
+            # Pure rotations can legitimately have near-zero translation.
+            if linear_speed < 0.05:
+                continue
+
+            current_pose = self._get_base_pose()
+            if previous_pose is None or current_pose is None:
+                previous_pose = current_pose
+                continue
+
+            if current_pose.ts <= previous_pose.ts:
+                logger.debug("TF pose timestamp did not advance; skipping direct-move stall check")
+                continue
+
+            moved = previous_pose.position.distance(current_pose.position)
+            min_expected_progress = min(0.12, max(0.04, linear_speed * this_chunk * 0.2))
+            if moved < min_expected_progress:
+                stalled_chunks += 1
+            else:
+                stalled_chunks = 0
+
+            previous_pose = current_pose
+
+            if stalled_chunks >= 2:
+                self._stop_direct_movement()
+                recovered = self._recover_from_blocked_direct_move(x, y)
+                total_moved = self._distance_between(start_pose, current_pose)
+                recovery_text = " Performed a small reverse recovery." if recovered else ""
+                return (
+                    "Direct movement stopped early because the robot appears blocked: "
+                    f"after {elapsed:.1f}s it only moved {total_moved:.2f}m."
+                    f"{recovery_text} Use `observe` before trying a different route."
+                )
+
+        self._stop_direct_movement()
+        end_pose = self._get_base_pose()
+        total_moved = self._distance_between(start_pose, end_pose)
+        return (
+            f"Completed direct movement with velocity=({x:.2f}, {y:.2f}, {yaw:.2f}) "
+            f"for {command_duration:.1f} seconds; estimated displacement={total_moved:.2f}m"
+        )
+
+    def _get_base_pose(self) -> PoseStamped | None:
+        tf_provider = getattr(self, "_tf", None)
+        if tf_provider is None:
+            return None
+        tf = tf_provider.get("world", "base_link")
+        if tf is None:
+            return None
+        pose = cast("PoseStamped", tf.to_pose())
+        pose.ts = tf.ts
+        return pose
+
+    def _distance_between(self, start: PoseStamped | None, end: PoseStamped | None) -> float:
+        if start is None or end is None:
+            return 0.0
+        return float(start.position.distance(end.position))
+
+    def _stop_direct_movement(self) -> None:
+        self._connection.move(Twist.zero(), duration=0.0)
+
+    def _recover_from_blocked_direct_move(self, x: float, y: float) -> bool:
+        reverse_x = -0.2 if x > 0.05 else 0.2 if x < -0.05 else 0.0
+        reverse_y = -0.2 if y > 0.05 else 0.2 if y < -0.05 else 0.0
+        if reverse_x == 0.0 and reverse_y == 0.0:
+            return False
+
+        recovery_twist = Twist(
+            linear=Vector3(reverse_x, reverse_y, 0.0), angular=Vector3(0.0, 0.0, 0.0)
+        )
+        ok = self._connection.move(recovery_twist, duration=0.8)
+        self._stop_direct_movement()
+        return bool(ok)
+
+    @skill
     def relative_move(self, forward: float = 0.0, left: float = 0.0, degrees: float = 0.0) -> str:
         """Move the robot relative to its current position.
+
+        This uses map-based planning. If it fails with no path found, that means the
+        planner could not find a route through the current costmap; it does not prove
+        there is a physical obstacle directly in front of the robot.
 
         The `degrees` arguments refers to the rotation the robot should be at the end, relative to its current rotation.
 
@@ -250,7 +372,11 @@ class UnitreeSkillContainer(Module):
         time.sleep(1.0)
 
         if not self._navigation.is_goal_reached():
-            return "Navigation was cancelled or failed"
+            return (
+                "Map-based navigation was cancelled or failed. This does not prove there is "
+                "a physical obstacle; the costmap may be stale or too conservative. Use "
+                "`observe` to inspect the path, then use direct `move` only if the path is clear."
+            )
         else:
             return "Navigation goal reached"
 

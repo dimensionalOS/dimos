@@ -25,6 +25,7 @@ from reactivex.observable import Observable
 import rerun.blueprint as rrb
 
 from dimos.agents.annotation import skill
+from dimos.agents.artifacts import EncodedImageArtifact
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
@@ -353,7 +354,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         return self.connection.publish_request(topic, data)
 
     @skill
-    def observe(self) -> Image | str:
+    def observe(self) -> EncodedImageArtifact | str:
         """Returns the latest video frame from the robot camera. Use this skill for any visual world queries.
 
         This skill provides the current camera view for perception tasks.
@@ -362,7 +363,13 @@ class GO2Connection(Module, Camera, Pointcloud):
         frame = self._latest_video_frame
         if frame is None:
             return "no camera frame available yet — try again in a moment"
-        return frame
+        scale = min(1.0, 320 / frame.width, 320 / frame.height)
+        return EncodedImageArtifact(
+            data=frame.to_base64(quality=70, max_width=320, max_height=320),
+            width=max(1, round(frame.width * scale)),
+            height=max(1, round(frame.height * scale)),
+            frame_id=frame.frame_id,
+        )
 
 
 def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy":

@@ -18,6 +18,7 @@ import asyncio
 import json
 from unittest.mock import MagicMock
 
+from dimos.agents.artifacts import EncodedImageArtifact
 from dimos.agents.mcp.mcp_server import handle_request
 from dimos.core.module import SkillInfo
 
@@ -153,6 +154,25 @@ def test_mcp_module_handles_errors() -> None:
         )
     )
     assert "not found" in response["result"]["content"][0]["text"].lower()
+
+
+def test_mcp_module_returns_agent_encoded_artifacts() -> None:
+    schema = json.dumps({"type": "object", "properties": {}})
+    skills = [SkillInfo(class_name="TestSkills", func_name="observe", args_schema=schema)]
+    artifact = EncodedImageArtifact(data="abc123", width=320, height=240, frame_id="camera")
+    rpc_calls = _make_rpc_calls(skills, {"observe": artifact})
+
+    response = asyncio.run(
+        handle_request(
+            {"method": "tools/call", "id": 9, "params": {"name": "observe", "arguments": {}}},
+            skills,
+            rpc_calls,
+        )
+    )
+
+    assert response is not None
+    assert response["result"]["content"] == artifact.agent_encode()
+    assert "abc123" not in str(artifact)
 
 
 def test_mcp_module_initialize_and_unknown() -> None:
