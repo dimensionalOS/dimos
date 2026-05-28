@@ -31,9 +31,14 @@ Usage::
 
 from __future__ import annotations
 
+from datetime import datetime
 import ipaddress
+import os
 from pathlib import Path
+import shutil
+import signal
 import socket
+import subprocess
 import time
 from typing import TYPE_CHECKING, Annotated
 
@@ -130,9 +135,31 @@ class FastLio2Config(NativeModuleConfig):
     # Resolved in __post_init__, passed as --config_path to the binary
     config_path: str | None = None
 
+    # Raw UDP pcap recording (diagnostic). When enabled, the module spawns
+    # tcpdump alongside the SDK to capture wire-level Mid-360 traffic, so a
+    # fastlio anomaly can be checked against ground-truth network bytes.
+    # The capture is independent of the SDK and adds no load to it.
+    record_pcap: bool = False
+    # Output path. `{ts}` is substituted with a YYYYMMDD_HHMMSS timestamp at
+    # start time. `~` is expanded. Parent dirs are created.
+    record_pcap_path: Path = Path("~/.local/state/dimos/fastlio2_pcap/mid360_{ts}.pcap")
+    record_pcap_iface: str = "enp2s0"
+    # Per-packet capture length. Mid-360 point packets are ≤1500 B; 2048 is
+    # comfortable. Drop to 200 for header-only captures.
+    record_pcap_snaplen: int = 2048
+
     # init_pose is computed from mount; config is resolved to config_path
     init_pose: list[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
-    cli_exclude: frozenset[str] = frozenset({"config", "mount"})
+    cli_exclude: frozenset[str] = frozenset(
+        {
+            "config",
+            "mount",
+            "record_pcap",
+            "record_pcap_path",
+            "record_pcap_iface",
+            "record_pcap_snaplen",
+        }
+    )
 
     def model_post_init(self, __context: object) -> None:
         """Resolve config_path and compute init_pose from mount."""
@@ -160,9 +187,14 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     odometry: Out[Odometry]
     global_map: Out[PointCloud2]
 
+    _pcap_proc: subprocess.Popen[bytes] | None = None
+    _pcap_path: Path | None = None
+
     @rpc
     def start(self) -> None:
         self._validate_network()
+        if self.config.record_pcap:
+            self._start_pcap()
         super().start()
         self.register_disposable(
             Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
@@ -191,6 +223,92 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     @rpc
     def stop(self) -> None:
         super().stop()
+        self._stop_pcap()
+
+    def _start_pcap(self) -> None:
+        cfg = self.config
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = Path(str(cfg.record_pcap_path).format(ts=ts)).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        port_lo = min(
+            cfg.host_cmd_data_port,
+            cfg.host_push_msg_port,
+            cfg.host_point_data_port,
+            cfg.host_imu_data_port,
+            cfg.host_log_data_port,
+        )
+        port_hi = max(
+            cfg.host_cmd_data_port,
+            cfg.host_push_msg_port,
+            cfg.host_point_data_port,
+            cfg.host_imu_data_port,
+            cfg.host_log_data_port,
+        )
+        bpf = f"src host {cfg.lidar_ip} and udp and dst portrange {port_lo}-{port_hi}"
+        sudo = "florp" if shutil.which("florp") else "sudo"
+        cmd = [
+            sudo,
+            "tcpdump",
+            "-i",
+            cfg.record_pcap_iface,
+            "-w",
+            str(path),
+            "-s",
+            str(cfg.record_pcap_snaplen),
+            "-U",
+            "-n",
+            bpf,
+        ]
+
+        _logger.info(
+            "FastLio2 pcap recording enabled",
+            path=str(path),
+            iface=cfg.record_pcap_iface,
+            bpf=bpf,
+        )
+        self._pcap_path = path
+        self._pcap_proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+
+    def _stop_pcap(self) -> None:
+        proc = self._pcap_proc
+        if proc is None:
+            return
+        self._pcap_proc = None
+        if proc.poll() is not None:
+            return
+        sudo = "florp" if shutil.which("florp") else "sudo"
+        try:
+            subprocess.run(
+                [sudo, "kill", "-INT", str(proc.pid)],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2.0,
+            )
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            proc.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        _logger.info(
+            "FastLio2 pcap recording stopped",
+            path=str(self._pcap_path) if self._pcap_path else None,
+        )
 
     def _validate_network(self) -> None:
         host_ip = self.config.host_ip
