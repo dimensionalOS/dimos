@@ -1,0 +1,14 @@
+manifest_id: inbound_manifest_demo
+items:
+  - package_id: PKG-101
+    expected_zone_id: INBOUND_DOCK
+    expected_condition: ok
+  - package_id: PKG-102
+    expected_zone_id: INBOUND_DOCK
+    expected_condition: ok
+  - package_id: PKG-103
+    expected_zone_id: INBOUND_DOCK
+    expected_condition: ok
+  - package_id: PKG-104
+    expected_zone_id: QA_HOLD
+    expected_condition: ok

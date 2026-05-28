@@ -1,0 +1,29 @@
+{
+  "timestamp": 1779875037.519,
+  "source": "image_file",
+  "status": "decoded",
+  "qr_payload_raw": "{\"v\":1,\"type\":\"cargo\",\"warehouse_id\":\"WH-03\",\"location_node_id\":\"WH03-A12-SHELF05\",\"zone\":\"A12\",\"shelf_id\":\"SHELF-05\",\"cargo_id\":\"BOX-20260527-018\",\"task\":\"scan_and_report\"}",
+  "qr_payload": {
+    "v": 1,
+    "type": "cargo",
+    "warehouse_id": "WH-03",
+    "location_node_id": "WH03-A12-SHELF05",
+    "zone": "A12",
+    "shelf_id": "SHELF-05",
+    "cargo_id": "BOX-20260527-018",
+    "task": "scan_and_report"
+  },
+  "robot_pose_at_detection": {
+    "frame": "map",
+    "x": null,
+    "y": null,
+    "yaw": null
+  },
+  "bbox_px": [
+    [40.0, 40.0],
+    [289.0, 40.0],
+    [289.0, 289.0],
+    [40.0, 289.0]
+  ],
+  "action_policy": "report_only"
+}

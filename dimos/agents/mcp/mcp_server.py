@@ -19,7 +19,7 @@ import concurrent.futures
 import json
 import os
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,12 +31,9 @@ import uvicorn
 from dimos.agents.annotation import skill
 from dimos.agents.mcp import tool_stream
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, SkillInfo
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.module import SkillInfo
 
 logger = setup_logger()
 
@@ -280,7 +277,7 @@ class McpServer(Module):
         # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
         app.state.skills = [
-            skill_info for module in modules for skill_info in (module.get_skills() or [])
+            skill_info for module in modules for skill_info in _module_class_skills(module)
         ]
         app.state.rpc_calls = {
             skill_info.func_name: RpcCall(
@@ -342,3 +339,40 @@ class McpServer(Module):
         loop = self._loop
         assert loop is not None
         self._serve_future = asyncio.run_coroutine_threadsafe(server.serve(), loop)
+
+
+def _module_class_skills(module: RPCClient) -> list[SkillInfo]:
+    """Return skill metadata without round-tripping to every remote module.
+
+    Startup discovery runs inside the MCP server RPC call. Calling each
+    module's remote get_skills RPC from there can block module startup long
+    enough that MCP comes up with no tools. The proxy already carries the
+    module class, and skill schemas are static, so deriving metadata locally is
+    enough for discovery while tool execution still uses RPC.
+    """
+    from langchain_core.tools import tool
+
+    actor_class = getattr(module, "actor_class", None)
+    if actor_class is None:
+        return []
+
+    skills: list[SkillInfo] = []
+    for name in dir(actor_class):
+        attr = getattr(actor_class, name, None)
+        if not callable(attr) or not hasattr(attr, "__skill__"):
+            continue
+        schema = tool(attr).args_schema.model_json_schema()
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            properties.pop("self", None)
+        required = schema.get("required")
+        if isinstance(required, list) and "self" in required:
+            schema["required"] = [item for item in required if item != "self"]
+        skills.append(
+            SkillInfo(
+                class_name=actor_class.__name__,
+                func_name=name,
+                args_schema=json.dumps(schema),
+            )
+        )
+    return skills

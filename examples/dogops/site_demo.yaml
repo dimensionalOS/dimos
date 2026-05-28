@@ -1,0 +1,132 @@
+site_id: dogops_demo_site
+site_name: DogOps Demo Facility
+marker_length_m: 0.14
+tag_family: tag36h11
+hardware_profile:
+  robot: unitree_go2_air
+  host: mac_offboard_dimos
+  real_robot_available: true
+  route_style: short_guided_safe
+  max_demo_speed: low
+  operator_stop_command: uv run dimos stop --force
+  notes:
+    - Use the real Go2 for final validation when network/base unitree-go2 smoke is healthy.
+    - Keep UTM/Ubuntu optional; hardware runs happen from the Mac/full DimOS checkout.
+    - Human moves PKG-104; the robot observes and verifies only.
+
+zones:
+  - id: HOME
+    kind: zone
+    zone_kind: home
+    tag_id: 10
+    display_name: Home / NOC
+    radius_m: 0.8
+    pose_hint: {x: 0.0, y: 0.0, theta_deg: 0.0, frame: world, source: demo_layout_short_route}
+  - id: INBOUND_DOCK
+    kind: zone
+    zone_kind: inbound_dock
+    tag_id: 20
+    display_name: Inbound Dock
+    radius_m: 1.0
+    pose_hint: {x: 1.5, y: 0.0, theta_deg: 0.0, frame: world, source: demo_layout_short_route}
+  - id: QA_HOLD
+    kind: zone
+    zone_kind: qa_hold
+    tag_id: 30
+    display_name: QA Hold
+    radius_m: 1.0
+    pose_hint: {x: 1.5, y: -1.5, theta_deg: 0.0, frame: world, source: demo_layout_short_route}
+  - id: RACK_ROW_A
+    kind: zone
+    zone_kind: rack_row
+    tag_id: 40
+    display_name: Rack Row A
+    radius_m: 1.2
+    pose_hint: {x: 3.0, y: 0.0, theta_deg: 0.0, frame: world, source: demo_layout_short_route}
+  - id: NO_GO_1
+    kind: zone
+    zone_kind: no_go
+    tag_id: 50
+    display_name: Maintenance No-Go Zone
+    radius_m: 1.0
+    no_go: true
+    pose_hint: {x: 3.0, y: -1.5, theta_deg: 0.0, frame: world, source: demo_layout_short_route}
+
+assets:
+  - id: COOLING_1
+    kind: asset
+    asset_kind: cooling_clearance
+    tag_id: 41
+    display_name: Cooling Clearance 1
+    zone_id: RACK_ROW_A
+    severity_if_failed: P1
+    expected_clear: true
+    expected_status: clear
+    expected_state:
+      clearance_clear: true
+      blocking_package_ids: []
+    notes: Critical airflow path must remain clear.
+  - id: AISLE_1
+    kind: asset
+    asset_kind: aisle_clearance
+    tag_id: 42
+    display_name: Main Aisle 1
+    zone_id: RACK_ROW_A
+    severity_if_failed: P2
+    expected_clear: true
+    expected_status: clear
+    expected_state:
+      clearance_clear: true
+    notes: Aisle must remain passable.
+  - id: TEMP_1
+    kind: asset
+    asset_kind: temperature_station
+    tag_id: 43
+    display_name: Temperature Station 1
+    zone_id: RACK_ROW_A
+    severity_if_failed: P2
+    expected_clear: null
+    expected_status: below_threshold
+    expected_state:
+      max_celsius: 30.0
+    notes: Optional manual thermometer input.
+
+packages:
+  - id: PKG-101
+    kind: package
+    tag_id: 101
+    display_name: Package 101
+    expected_zone_id: INBOUND_DOCK
+    expected_condition: ok
+  - id: PKG-102
+    kind: package
+    tag_id: 102
+    display_name: Package 102
+    expected_zone_id: INBOUND_DOCK
+    expected_condition: ok
+  - id: PKG-103
+    kind: package
+    tag_id: 103
+    display_name: Package 103
+    expected_zone_id: INBOUND_DOCK
+    expected_condition: ok
+  - id: PKG-104
+    kind: package
+    tag_id: 104
+    display_name: Package 104
+    expected_zone_id: QA_HOLD
+    expected_condition: ok
+
+special_entities:
+  dock:
+    id: DOCK_1
+    kind: dock
+    tag_id: 60
+    display_name: Dock Alignment Target
+    zone_id: HOME
+  portal:
+    id: PORTAL_1
+    kind: portal
+    tag_id: 70
+    display_name: Elevator / Portal Simulation
+    zone_id: RACK_ROW_A

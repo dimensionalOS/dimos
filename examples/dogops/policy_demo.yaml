@@ -1,0 +1,30 @@
+policy_id: dogops_demo_policy
+safety:
+  robot_may_push_objects: false
+  human_remediation_required: true
+  emergency_stop_command: uv run dimos stop --force
+  guided_mode_allowed_if_recorded: true
+rules:
+  - id: cooling_clearance_no_packages
+    severity: P1
+    incident_type: blocked_cooling
+    description: Packages must not block COOLING_1.
+    condition:
+      asset_id: COOLING_1
+      forbidden_package_ids: [PKG-104]
+    recommended_action: Move blocking package to QA_HOLD and verify COOLING_1 is clear.
+  - id: manifest_missing_package
+    severity: P2
+    incident_type: missing_package
+    description: Packages listed in the manifest must be found or marked missing.
+    recommended_action: Search inbound dock and QA_HOLD; escalate if not found.
+  - id: wrong_zone_package
+    severity: P2
+    incident_type: wrong_zone
+    description: Packages must be in expected zone unless assigned to correction zone.
+    recommended_action: Move package to expected zone.
+  - id: no_go_zone
+    severity: P1
+    incident_type: no_go_breach
+    description: Robot must not enter a no-go maintenance zone.
+    recommended_action: Stop and reroute around NO_GO_1.

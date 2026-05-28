@@ -1,0 +1,117 @@
+mission_id: receiving_sre_demo
+display_name: Receiving + Physical SRE Demo
+verify_after_human: true
+hardware_required_for_final: true
+fallback_levels:
+  L0: full autonomous Go2 + dashboard + MCP
+  L1: Go2 scans tags + guided navigation + dashboard
+  L2: Go2 movement/tag video + offline dashboard/report
+  L3: offline product demo + recorded robot clip only
+operator_prompts:
+  before_start: Confirm stop command, clear route, mounted tags, and GO2_IP.
+  human_fix: Move PKG-104 from COOLING_1/RACK_ROW_A to QA_HOLD, then mark ready to verify.
+  after_run: Save report.md, report.json, terminal logs, dashboard capture, robot clip, and fallback level.
+steps:
+  - id: localize_home
+    action: localize
+    target_id: HOME
+    timeout_s: 20
+    required: true
+  - id: scan_inbound
+    action: scan_zone
+    target_id: INBOUND_DOCK
+    timeout_s: 30
+    required: true
+  - id: reconcile_manifest
+    action: reconcile_manifest
+    target_id: INBOUND_DOCK
+    timeout_s: 10
+    required: true
+  - id: inspect_cooling
+    action: inspect_asset
+    target_id: COOLING_1
+    timeout_s: 30
+    required: true
+  - id: open_work_orders
+    action: open_work_orders
+    target_id: RACK_ROW_A
+    timeout_s: 10
+    required: true
+  - id: wait_for_human_fix
+    action: wait_for_human_fix
+    target_id: COOLING_1
+    timeout_s: 60
+    required: true
+  - id: verify_cooling
+    action: verify_work_order
+    target_id: COOLING_1
+    timeout_s: 30
+    required: true
+  - id: scan_qa_hold
+    action: scan_zone
+    target_id: QA_HOLD
+    timeout_s: 30
+    required: false
+  - id: report
+    action: report
+    target_id: HOME
+    timeout_s: 10
+    required: true
+
+simulation_observations:
+  scan_inbound:
+    zone_id: INBOUND_DOCK
+    visible_tag_ids: [20, 101, 102]
+    facts:
+      PKG-101.zone_id: INBOUND_DOCK
+      PKG-102.zone_id: INBOUND_DOCK
+  inspect_cooling:
+    zone_id: RACK_ROW_A
+    visible_tag_ids: [40, 41, 104]
+    facts:
+      COOLING_1.clearance_clear: false
+      PKG-104.zone_id: RACK_ROW_A
+      PKG-104.blocks_asset_id: COOLING_1
+  verify_cooling_before_fix:
+    zone_id: RACK_ROW_A
+    visible_tag_ids: [40, 41, 104]
+    facts:
+      COOLING_1.clearance_clear: false
+  verify_cooling_after_fix:
+    zone_id: RACK_ROW_A
+    visible_tag_ids: [40, 41]
+    facts:
+      COOLING_1.clearance_clear: true
+      PKG-104.zone_id: QA_HOLD
+  scan_qa_hold:
+    zone_id: QA_HOLD
+    visible_tag_ids: [30, 104]
+    facts:
+      PKG-104.zone_id: QA_HOLD
+
+nav_simulation:
+  guided: false
+  hardware_target: unitree-go2-dogops
+  expected_hardware_mode: L0_or_L1
+  events:
+    - target_id: HOME
+      action: goto
+      success: true
+      elapsed_s: 4.0
+      retries: 0
+    - target_id: INBOUND_DOCK
+      action: goto
+      success: true
+      elapsed_s: 8.0
+      retries: 0
+    - target_id: COOLING_1
+      action: goto
+      success: true
+      elapsed_s: 10.0
+      retries: 1
+      note: tag search recovery used
+    - target_id: QA_HOLD
+      action: goto
+      success: true
+      elapsed_s: 7.0
+      retries: 0
