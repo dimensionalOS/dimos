@@ -1,5 +1,7 @@
 <div align="center">
 
+### Team Perception
+
 # 🦮 Goldie
 
 ### A phone-first guide-dog interface for the Unitree Go2
@@ -8,7 +10,7 @@
 
 It's an iPhone-tuned PWA wired to an LLM-driven agent stack built on top of [DimOS](https://github.com/dimensionalOS/dimos), with real-time teleop fallback and a voice loop tuned end-to-end for accessibility.
 
-### [Demo & Presentation →](https://canva.link/perception-goldie)
+### [Demo Video →](https://canva.link/kmcp30jdfr8ict0) · [Presentation →](https://canva.link/perception-goldie)
 
 </div>
 
@@ -92,11 +94,11 @@ The result: the agent navigates normally on flat ground, then when it hits stair
 
 ## Challenges
 
-**Networking split-brain.** The Go2 communicates over its own WiFi. To send commands you have to be on the dog's network — but the agent needs internet to call the OpenAI API. Setting up routing so both could work simultaneously burned more time than expected.
+**1. Networking split-brain.** The Go2 communicates over its own WiFi. To send commands you have to be on the dog's network — but the agent needs internet to call the OpenAI API. Setting up routing so both could work simultaneously burned more time than expected.
 
-**Crashes and memory pressure.** SLAM, WebRTC, LCM, a live LLM agent, and Whisper STT all running in the same process on development hardware. We regularly hit memory limits causing silent freezes mid-session with no clean error — debugging was often just figuring out whether the dog, the network, or the process had died.
+**2. Crashes and memory pressure.** SLAM, WebRTC, LCM, a live LLM agent, and Whisper STT all running in the same process on development hardware. We regularly hit memory limits causing silent freezes mid-session with no clean error — debugging was often just figuring out whether the dog, the network, or the process had died.
 
-**Connection timeouts.** The WebRTC link to the dog would occasionally stall without dropping cleanly — commands appeared to send but never arrived, and the dog would stop responding mid-navigation with no indication on the backend.
+**3. Connection timeouts.** The WebRTC link to the dog would occasionally stall without dropping cleanly — commands appeared to send but never arrived, and the dog would stop responding mid-navigation with no indication on the backend.
 
 ---
 
@@ -147,7 +149,10 @@ Then set `NEXT_PUBLIC_DIMOS_API=http://localhost:5555` in `webapp/.env.local` an
 
 ## Credits
 
-Built at the MuShanghai DimOS Hackathon 2026 by Team Perception. Built on top of [DimOS](https://github.com/dimensionalOS/dimos).
+Built at the MuShanghai DimOS Hackathon 2026 by **Team Perception**:
+Joy Munn · Yichu Lau · Cecilia Zhang · Brecht Davos · Figo Saleh
+
+Built on top of [DimOS](https://github.com/dimensionalOS/dimos).
 
 > [!NOTE]
 > The upstream DimOS README has been replaced by this submission doc. For the original project docs see [dimensionalOS/dimos](https://github.com/dimensionalOS/dimos).
