@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0cd86"/>
+      <stop offset="0.6" stop-color="#e3b15e"/>
+      <stop offset="1" stop-color="#c79236"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#0a0b0e"/>
+  <text x="256" y="356" font-family="-apple-system, BlinkMacSystemFont, system-ui, sans-serif"
+        font-size="320" font-weight="700" text-anchor="middle" fill="url(#g)">G</text>
+</svg>
