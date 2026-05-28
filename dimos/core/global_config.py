@@ -64,6 +64,7 @@ class GlobalConfig(BaseSettings):
     build_native: bool = DEFAULT_BUILD_NATIVE
     dtop: bool = False
     obstacle_avoidance: bool = True
+    unitree_webrtc_connection_method: str = "auto"
     detection_model: VlModelName = "moondream"
     listen_host: str = "127.0.0.1"
     dimsim_scene: str = "apt"

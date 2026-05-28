@@ -93,13 +93,32 @@ class SerializableVideoFrame:
 class UnitreeWebRTCConnection(Resource):
     _SPORT_API_ID_RAGEMODE: int = 2059
 
-    def __init__(self, ip: str, mode: str = "ai") -> None:
+    def __init__(
+        self, ip: str, mode: str = "ai", connection_method: str = "auto"
+    ) -> None:
         self.ip = ip
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
-        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
+        self.conn = LegionConnection(self._connection_method(connection_method), ip=self.ip)
         self.connect()
+
+    def _connection_method(self, method: str) -> WebRTCConnectionMethod:
+        method = method.lower().replace("-", "_")
+        if method == "auto":
+            return (
+                WebRTCConnectionMethod.LocalAP
+                if self.ip == "192.168.12.1"
+                else WebRTCConnectionMethod.LocalSTA
+            )
+        if method == "local_ap":
+            return WebRTCConnectionMethod.LocalAP
+        if method == "local_sta":
+            return WebRTCConnectionMethod.LocalSTA
+        raise ValueError(
+            "Unknown Unitree WebRTC connection method "
+            f"{method!r}; expected auto, local_ap, or local_sta"
+        )
 
     def connect(self) -> None:
         self.loop = asyncio.new_event_loop()

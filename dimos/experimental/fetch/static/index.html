@@ -1,0 +1,4506 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Fetch</title>
+    <link rel="preconnect" href="https://unpkg.com" />
+    <link rel="stylesheet" href="https://unpkg.com/@blueprintjs/icons@5/lib/css/blueprint-icons.css" />
+    <link rel="stylesheet" href="https://unpkg.com/@blueprintjs/core@5/lib/css/blueprint.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Mr+Dafoe&family=Rajdhani:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #14212b;
+        --muted: #62707b;
+        --line: #d8e0e5;
+        --bg: #f7f9f8;
+        --panel: #ffffff;
+        --aqua: #087d8c;
+        --coral: #c95d3f;
+        --lime: #778b22;
+        --sand: #e7d29c;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: max(12px, env(safe-area-inset-top)) 16px 12px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.92);
+        position: sticky;
+        top: 0;
+        z-index: 4;
+        backdrop-filter: blur(12px);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.1;
+        letter-spacing: 0;
+      }
+
+      .status {
+        min-width: 96px;
+        padding: 6px 9px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+        background: #fff;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.9fr);
+        gap: 16px;
+        padding: 16px;
+      }
+
+      .stage {
+        display: grid;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .video-shell {
+        position: relative;
+        overflow: hidden;
+        border-radius: 8px;
+        background: #0f171a;
+        aspect-ratio: 4 / 3;
+        border: 1px solid #0f171a;
+      }
+
+      video,
+      .dog-preview,
+      .dog-lidar-preview,
+      .record3d-preview,
+      .depth-preview,
+      .photo img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .rgbd-grid,
+      .dog-grid,
+      .dog-preview,
+      .dog-lidar-preview,
+      .record3d-preview,
+      .depth-preview {
+        display: none;
+      }
+
+      body.record3d-mode video {
+        display: none;
+      }
+
+      body.dog-mode video,
+      body.dog-mode .rgbd-grid,
+      body.dog-mode .idle-feed {
+        display: none;
+      }
+
+      body.dog-mode .dog-grid {
+        display: grid;
+      }
+
+      body.dog-mode .dog-preview,
+      body.dog-mode .dog-lidar-preview {
+        display: block;
+      }
+
+      body.record3d-mode .rgbd-grid {
+        display: grid;
+      }
+
+      body.record3d-mode .record3d-preview,
+      body.record3d-mode .depth-preview {
+        display: block;
+      }
+
+      .video-overlay {
+        position: absolute;
+        left: 12px;
+        bottom: 12px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .chip {
+        border-radius: 8px;
+        padding: 6px 8px;
+        background: rgba(255, 255, 255, 0.9);
+        color: var(--ink);
+        font-size: 12px;
+        border: 1px solid rgba(20, 33, 43, 0.12);
+      }
+
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      button {
+        min-height: 42px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--ink);
+        font: inherit;
+        font-size: 14px;
+        font-weight: 650;
+        touch-action: manipulation;
+      }
+
+      button.primary {
+        background: var(--aqua);
+        border-color: var(--aqua);
+        color: #fff;
+      }
+
+      button.warn {
+        border-color: rgba(201, 93, 63, 0.45);
+        color: var(--coral);
+      }
+
+      button:disabled {
+        opacity: 0.55;
+      }
+
+      aside {
+        display: grid;
+        align-content: start;
+        gap: 12px;
+      }
+
+      section {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 12px;
+      }
+
+      h2 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+
+      dl {
+        display: grid;
+        grid-template-columns: 94px minmax(0, 1fr);
+        gap: 8px 10px;
+        margin: 0;
+        font-size: 14px;
+      }
+
+      dt {
+        color: var(--muted);
+      }
+
+      dd {
+        margin: 0;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .line {
+        margin: 0;
+        min-height: 52px;
+        font-size: 24px;
+        line-height: 1.35;
+      }
+
+      .toggles {
+        display: grid;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      input[type="checkbox"] {
+        width: 22px;
+        height: 22px;
+        accent-color: var(--aqua);
+      }
+
+      .photo {
+        display: grid;
+        gap: 8px;
+      }
+
+      .photo-frame {
+        aspect-ratio: 1 / 1;
+        background:
+          linear-gradient(#fff 0 0) padding-box,
+          linear-gradient(135deg, var(--sand), var(--aqua), var(--coral)) border-box;
+        border: 8px solid transparent;
+        border-bottom-width: 30px;
+        border-radius: 3px;
+        overflow: hidden;
+      }
+
+      .photo a {
+        color: var(--aqua);
+        font-size: 14px;
+        font-weight: 650;
+        text-decoration: none;
+      }
+
+      .log {
+        max-height: 148px;
+        overflow: auto;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+
+      @media (max-width: 820px) {
+        main {
+          grid-template-columns: 1fr;
+          padding: 12px;
+        }
+
+        .controls {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      :root {
+        color-scheme: dark;
+        --ink: oklch(91% 0.018 105);
+        --muted: oklch(69% 0.023 175);
+        --faint: oklch(49% 0.019 175);
+        --line: oklch(32% 0.018 175);
+        --line-strong: oklch(45% 0.025 175);
+        --bg: oklch(13% 0.012 175);
+        --panel: oklch(19.5% 0.017 175);
+        --panel-strong: oklch(22% 0.018 175);
+        --accent: oklch(72% 0.11 170);
+        --accent-ink: oklch(13% 0.018 175);
+        --amber: oklch(79% 0.13 78);
+        --danger: oklch(67% 0.17 28);
+        --ok: oklch(72% 0.14 150);
+        --shadow: 0 22px 60px oklch(7% 0.018 175 / 0.48);
+        --space-xs: 8px;
+        --space-sm: 12px;
+        --space-md: 16px;
+        --space-lg: 24px;
+        --radius: 8px;
+        --font-body: "Source Sans 3", "Segoe UI", sans-serif;
+        --font-display: "Rajdhani", "Aptos Display", sans-serif;
+        --font-logo: "Mr Dafoe", "Brush Script MT", cursive;
+      }
+
+      html {
+        min-height: 100%;
+        background: var(--bg);
+      }
+
+      body {
+        background:
+          radial-gradient(circle at 55% -18%, oklch(35% 0.045 165 / 0.28), transparent 34rem),
+          linear-gradient(oklch(18% 0.014 175 / 0.9), oklch(11% 0.012 175 / 0.96)),
+          repeating-linear-gradient(
+            90deg,
+            oklch(100% 0 0 / 0.026) 0,
+            oklch(100% 0 0 / 0.026) 1px,
+            transparent 1px,
+            transparent 46px
+          ),
+          repeating-linear-gradient(
+            0deg,
+            oklch(100% 0 0 / 0.018) 0,
+            oklch(100% 0 0 / 0.018) 1px,
+            transparent 1px,
+            transparent 46px
+          ),
+          var(--bg);
+        color: var(--ink);
+        font-family: var(--font-body);
+        font-size: 15px;
+        height: 100dvh;
+        overflow: hidden;
+      }
+
+      header {
+        gap: var(--space-lg);
+        padding: max(var(--space-sm), env(safe-area-inset-top)) var(--space-lg) var(--space-sm);
+        border-bottom: 1px solid var(--line);
+        background: oklch(14% 0.014 175 / 0.88);
+        z-index: 8;
+        backdrop-filter: blur(18px);
+      }
+
+      h1 {
+        font-family: var(--font-display);
+        font-size: 26px;
+        font-weight: 700;
+        line-height: 0.95;
+      }
+
+      h2 {
+        margin: 0;
+      }
+
+      .brand {
+        display: grid;
+        gap: 6px;
+        min-width: 0;
+        padding-left: 8px;
+      }
+
+      .brand-logo {
+        display: block;
+        width: clamp(64px, 5.5vw, 96px);
+        height: auto;
+      }
+
+      .eyebrow,
+      .panel-title,
+      .feed-label,
+      dt {
+        color: var(--faint);
+        font-family: var(--font-display);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .header-metrics {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: var(--space-xs);
+        min-width: 0;
+      }
+
+      .record-toggle {
+        min-width: 112px;
+        min-height: 42px;
+        padding: 8px 12px;
+        border: 1px solid color-mix(in oklch, var(--danger) 78%, transparent);
+        border-radius: var(--radius);
+        background: oklch(16% 0.016 20 / 0.82);
+        color: oklch(91% 0.035 30);
+      }
+
+      .record-toggle::before {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        margin-right: 8px;
+        border-radius: 50%;
+        background: var(--danger);
+        box-shadow: 0 0 0 3px color-mix(in oklch, var(--danger) 24%, transparent);
+        content: "";
+      }
+
+      .record-toggle[data-running="true"] {
+        animation: record-pulse 1.1s ease-in-out infinite;
+        background: linear-gradient(180deg, oklch(42% 0.16 28), oklch(27% 0.11 28));
+        color: white;
+      }
+
+      @keyframes record-pulse {
+        0%,
+        100% {
+          box-shadow: 0 0 0 0 color-mix(in oklch, var(--danger) 38%, transparent);
+        }
+        50% {
+          box-shadow: 0 0 0 6px color-mix(in oklch, var(--danger) 0%, transparent);
+        }
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-width: 112px;
+        min-height: 42px;
+        padding: 8px 12px;
+        border: 1px solid var(--line-strong);
+        background: oklch(18% 0.018 175);
+        color: var(--muted);
+        font-family: var(--font-display);
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .status::before {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--faint);
+        box-shadow: 0 0 0 4px color-mix(in oklch, var(--faint) 18%, transparent);
+        content: "";
+      }
+
+      .status[data-state~="connected"]::before,
+      .status[data-state~="camera"]::before,
+      .status[data-state~="running"]::before {
+        background: var(--ok);
+        box-shadow: 0 0 0 4px color-mix(in oklch, var(--ok) 18%, transparent);
+      }
+
+      .status[data-state~="connecting"]::before,
+      .status[data-state~="error"]::before,
+      .status[data-state~="dog-offline"]::before {
+        background: var(--amber);
+        box-shadow: 0 0 0 4px color-mix(in oklch, var(--amber) 18%, transparent);
+      }
+
+      main {
+        grid-template-columns: minmax(0, 1.45fr) minmax(328px, 0.8fr);
+        gap: var(--space-lg);
+        padding: var(--space-lg);
+        height: calc(100dvh - 98px);
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .stage {
+        align-content: start;
+        grid-template-rows: minmax(0, 1fr) auto;
+        gap: var(--space-sm);
+        min-height: 0;
+      }
+
+      .stage-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-md);
+        min-height: 44px;
+        padding: 0 var(--space-xs);
+      }
+
+      .feed-meta {
+        display: flex;
+        align-items: center;
+        gap: var(--space-xs);
+        min-width: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .feed-meta .bp5-icon {
+        color: var(--accent);
+      }
+
+      .source-overlay {
+        position: absolute;
+        top: var(--space-md);
+        right: var(--space-md);
+        z-index: 6;
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-xs);
+        border: 1px solid color-mix(in oklch, var(--accent) 38%, var(--line));
+        border-radius: 8px;
+        padding: 7px 10px;
+        background: oklch(100% 0.012 190 / 0.82);
+        box-shadow: 0 8px 26px oklch(14% 0.03 220 / 0.16);
+        color: var(--muted);
+        font-size: 14px;
+        font-weight: 650;
+        backdrop-filter: blur(12px);
+      }
+
+      .source-overlay .bp5-icon {
+        color: var(--accent);
+      }
+
+      .source-overlay[data-state="connected"] .bp5-icon,
+      .source-overlay[data-state="camera"] .bp5-icon,
+      .source-overlay[data-state="running"] .bp5-icon {
+        color: var(--ok);
+      }
+
+      .source-overlay[data-state="connecting"] .bp5-icon,
+      .source-overlay[data-state="offline"] .bp5-icon,
+      .source-overlay[data-state="dog-offline"] .bp5-icon {
+        color: var(--amber);
+      }
+
+      .source-overlay[data-state="error"] .bp5-icon,
+      .source-overlay[data-state="socket-error"] .bp5-icon {
+        color: var(--danger);
+      }
+
+      .video-shell {
+        min-height: 0;
+        height: 100%;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background:
+          linear-gradient(135deg, oklch(8% 0.015 175), oklch(14% 0.02 175)),
+          var(--bg);
+        aspect-ratio: auto;
+        box-shadow: var(--shadow);
+      }
+
+      .video-shell::before {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        background:
+          linear-gradient(90deg, oklch(100% 0 0 / 0.05) 1px, transparent 1px),
+          linear-gradient(0deg, oklch(100% 0 0 / 0.045) 1px, transparent 1px);
+        background-size: 80px 80px;
+        mix-blend-mode: screen;
+        opacity: 0.34;
+        content: "";
+      }
+
+      .video-shell::after {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        pointer-events: none;
+        border: 1px solid oklch(100% 0 0 / 0.1);
+        border-radius: inherit;
+        box-shadow: inset 0 0 80px oklch(0% 0 0 / 0.46);
+        content: "";
+      }
+
+      .rgbd-grid,
+      .dog-grid {
+        position: absolute;
+        inset: 0;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 1px;
+        background: var(--line);
+      }
+
+      .rgbd-pane,
+      .dog-pane {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: oklch(8% 0.015 175);
+      }
+
+      .rgbd-pane .stream-label,
+      .dog-pane .stream-label {
+        position: absolute;
+        top: var(--space-sm);
+        left: var(--space-sm);
+        z-index: 3;
+        border: 1px solid oklch(100% 0 0 / 0.14);
+        border-radius: 6px;
+        padding: 5px 8px;
+        background: oklch(10% 0.014 175 / 0.72);
+        color: oklch(98% 0.012 195);
+        font-family: var(--font-display);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      body.dog-mode .dog-grid {
+        background: transparent;
+      }
+
+      body.dog-mode .dog-camera-pane {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+      }
+
+      body.dog-mode .dog-lidar-pane {
+        position: absolute;
+        top: var(--space-md);
+        left: var(--space-md);
+        z-index: 4;
+        width: clamp(190px, 28%, 320px);
+        aspect-ratio: 4 / 3;
+        border: 1px solid oklch(100% 0 0 / 0.18);
+        border-radius: 8px;
+        box-shadow:
+          0 18px 52px oklch(0% 0 0 / 0.46),
+          inset 0 0 0 1px oklch(100% 0 0 / 0.08);
+        background: oklch(8% 0.015 175 / 0.84);
+      }
+
+      body.dog-mode .dog-lidar-pane .stream-label {
+        top: 8px;
+        right: 8px;
+        left: auto;
+      }
+
+      body.dog-mode .dog-camera-pane .stream-label,
+      body.dog-mode .feed-corners {
+        display: none;
+      }
+
+      .dog-lidar-empty {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 38px 14px 14px;
+        color: oklch(90% 0.03 195 / 0.72);
+        font-family: var(--font-display);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .dog-lidar-pane.has-lidar .dog-lidar-empty {
+        display: none;
+      }
+
+      .reticle {
+        position: absolute;
+        inset: 50% auto auto 50%;
+        z-index: 3;
+        width: 132px;
+        height: 132px;
+        border: 1px solid oklch(72% 0.11 170 / 0.54);
+        border-radius: 50%;
+        pointer-events: none;
+        translate: -50% -50%;
+      }
+
+      .reticle::before,
+      .reticle::after {
+        position: absolute;
+        background: oklch(72% 0.11 170 / 0.58);
+        content: "";
+      }
+
+      .reticle::before {
+        top: 50%;
+        left: -26px;
+        right: -26px;
+        height: 1px;
+      }
+
+      .reticle::after {
+        top: -26px;
+        bottom: -26px;
+        left: 50%;
+        width: 1px;
+      }
+
+      .scan-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 4;
+        pointer-events: none;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 140ms ease;
+      }
+
+      body.scan-pending .scan-overlay {
+        opacity: 1;
+        visibility: visible;
+      }
+
+      .scan-overlay::before {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 3px;
+        background: linear-gradient(
+          180deg,
+          transparent,
+          color-mix(in oklch, var(--accent) 85%, white),
+          transparent
+        );
+        box-shadow:
+          0 0 22px color-mix(in oklch, var(--accent) 72%, transparent),
+          0 0 68px color-mix(in oklch, var(--accent) 44%, transparent);
+        content: "";
+        animation: scan-sweep 1.15s linear infinite;
+      }
+
+      .scan-overlay::after {
+        position: absolute;
+        top: calc(var(--space-md) + 42px);
+        right: var(--space-md);
+        border: 1px solid color-mix(in oklch, var(--accent) 54%, transparent);
+        border-radius: 6px;
+        padding: 6px 9px;
+        background: oklch(10% 0.014 175 / 0.78);
+        color: var(--accent);
+        content: "SCANNING";
+        font-family: var(--font-display);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+
+      @keyframes scan-sweep {
+        from {
+          left: 0;
+          translate: -8px 0;
+        }
+        to {
+          left: 100%;
+          translate: 0 0;
+        }
+      }
+
+      body.dancing .reticle {
+        animation: dance-bounce 280ms ease-in-out alternate infinite;
+      }
+
+      body.dancing .video-shell {
+        animation: dance-glow 480ms ease-in-out alternate infinite;
+      }
+
+      @keyframes dance-bounce {
+        from {
+          scale: 1;
+          rotate: -2deg;
+        }
+        to {
+          scale: 1.08;
+          rotate: 2deg;
+        }
+      }
+
+      @keyframes dance-glow {
+        from {
+          box-shadow: var(--shadow);
+        }
+        to {
+          box-shadow:
+            var(--shadow),
+            0 0 42px color-mix(in oklch, var(--pink) 34%, transparent);
+        }
+      }
+
+      .feed-corners {
+        position: absolute;
+        inset: 14px;
+        z-index: 3;
+        pointer-events: none;
+      }
+
+      .feed-corners::before,
+      .feed-corners::after {
+        position: absolute;
+        width: 44px;
+        height: 44px;
+        border-color: oklch(72% 0.11 170 / 0.76);
+        content: "";
+      }
+
+      .feed-corners::before {
+        top: 0;
+        left: 0;
+        border-top: 1px solid;
+        border-left: 1px solid;
+      }
+
+      .feed-corners::after {
+        right: 0;
+        bottom: 0;
+        border-right: 1px solid;
+        border-bottom: 1px solid;
+      }
+
+      .video-overlay {
+        right: var(--space-sm);
+        bottom: var(--space-sm);
+        left: var(--space-sm);
+        z-index: 4;
+        justify-content: space-between;
+        gap: var(--space-xs);
+      }
+
+      .chip {
+        min-height: 30px;
+        border: 1px solid oklch(100% 0 0 / 0.12);
+        padding: 6px 9px;
+        background: oklch(14% 0.014 175 / 0.78);
+        color: var(--ink);
+        font-family: var(--font-display);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        backdrop-filter: blur(16px);
+      }
+
+      .controls {
+        grid-template-columns: repeat(2, minmax(0, 190px));
+        gap: var(--space-xs);
+        padding: var(--space-xs);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: oklch(15.5% 0.015 175 / 0.86);
+      }
+
+      button {
+        min-height: 44px;
+        border-color: var(--line);
+        border-radius: 6px;
+        background: linear-gradient(180deg, oklch(25% 0.017 175), oklch(18% 0.016 175));
+        color: var(--ink);
+        font-family: var(--font-display);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        transition:
+          border-color 180ms ease,
+          background 180ms ease,
+          color 180ms ease,
+          transform 180ms ease;
+      }
+
+      button.bp5-button {
+        min-height: 44px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: linear-gradient(180deg, oklch(25% 0.017 175), oklch(18% 0.016 175));
+        box-shadow: none;
+        color: var(--ink);
+        font-family: var(--font-display);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      button:hover:not(:disabled) {
+        border-color: var(--line-strong);
+        background: linear-gradient(180deg, oklch(30% 0.02 175), oklch(21% 0.018 175));
+        transform: translateY(-1px);
+      }
+
+      button.bp5-button:hover:not(:disabled) {
+        border-color: var(--line-strong);
+        background: linear-gradient(180deg, oklch(30% 0.02 175), oklch(21% 0.018 175));
+        color: var(--ink);
+      }
+
+      button:active:not(:disabled) {
+        transform: translateY(0);
+      }
+
+      button.primary {
+        border-color: color-mix(in oklch, var(--accent) 72%, black);
+        background: linear-gradient(180deg, var(--accent), oklch(54% 0.105 170));
+        color: var(--accent-ink);
+      }
+
+      button.bp5-button.primary {
+        border-color: color-mix(in oklch, var(--accent) 72%, black);
+        background: linear-gradient(180deg, var(--accent), oklch(54% 0.105 170));
+        color: var(--accent-ink);
+      }
+
+      button.warn {
+        border-color: color-mix(in oklch, var(--danger) 68%, transparent);
+        color: var(--danger);
+      }
+
+      button.bp5-button.warn {
+        border-color: color-mix(in oklch, var(--danger) 68%, transparent);
+        color: var(--danger);
+      }
+
+      button .bp5-icon {
+        margin-right: 7px;
+      }
+
+      button:focus-visible,
+      a:focus-visible {
+        outline: 2px solid var(--amber);
+        outline-offset: 2px;
+      }
+
+      aside {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto;
+        gap: var(--space-sm);
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      section {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--panel);
+        box-shadow: 0 12px 34px oklch(7% 0.018 175 / 0.28);
+        color: var(--ink);
+        padding: var(--space-md);
+      }
+
+      section.bp5-card {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--panel);
+        box-shadow: 0 12px 34px oklch(7% 0.018 175 / 0.28);
+        color: var(--ink);
+        padding: var(--space-md);
+      }
+
+      .bp5-tag.bp5-minimal {
+        color: var(--muted);
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-sm);
+        margin-bottom: var(--space-md);
+      }
+
+      dl {
+        grid-template-columns: 84px minmax(0, 1fr);
+        gap: 12px 14px;
+        font-size: 15px;
+      }
+
+      dt {
+        padding-top: 3px;
+      }
+
+      dd {
+        color: var(--ink);
+        line-height: 1.25;
+      }
+
+      .line {
+        min-height: 52px;
+        color: oklch(94% 0.018 100);
+        font-family: var(--font-display);
+        font-size: 30px;
+        font-weight: 600;
+        line-height: 1.15;
+      }
+
+      .photo {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto;
+        gap: var(--space-sm);
+        min-height: 0;
+      }
+
+      .photo-frame {
+        position: relative;
+        min-height: 0;
+        border: 1px solid var(--line-strong);
+        border-radius: 6px;
+        background:
+          linear-gradient(135deg, oklch(24% 0.018 175), oklch(13% 0.014 175)),
+          repeating-linear-gradient(45deg, oklch(100% 0 0 / 0.035) 0 1px, transparent 1px 8px);
+      }
+
+      .photo-frame img:not([src]),
+      .photo-frame img[src=""] {
+        display: none;
+      }
+
+      .photo-frame::before {
+        position: absolute;
+        inset: 0;
+        background: url("/fetch/static/logo.png") center / min(36%, 180px) auto no-repeat;
+        content: "";
+        filter: grayscale(1) saturate(0.15);
+        opacity: 0.18;
+      }
+
+      .photo-frame:has(#photoPreview[src]:not([src=""]))::before {
+        content: "";
+      }
+
+      .photo-frame::after {
+        position: absolute;
+        inset: auto 0 0;
+        padding: 8px 10px;
+        background: oklch(9% 0.012 175 / 0.76);
+        color: var(--muted);
+        content: "CAPTURE PREVIEW";
+        font-family: var(--font-display);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+
+      .photo a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        color: var(--accent);
+        font-family: var(--font-display);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .photo a.bp5-button {
+        border: 1px solid var(--line);
+        background: oklch(16% 0.014 175);
+        box-shadow: none;
+        color: var(--accent);
+      }
+
+      .photo a.bp5-button:hover {
+        border-color: var(--line-strong);
+        background: oklch(20% 0.017 175);
+        color: var(--accent);
+      }
+
+      .photo a .bp5-icon {
+        margin-right: 7px;
+      }
+
+      .log {
+        display: grid;
+        gap: 7px;
+        max-height: none;
+        overflow: auto;
+        font-family: "SF Mono", Menlo, Consolas, monospace;
+        white-space: normal;
+      }
+
+      .events-panel {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .log-row {
+        display: grid;
+        grid-template-columns: 68px minmax(0, 1fr);
+        gap: var(--space-xs);
+        min-width: 0;
+        padding-bottom: 7px;
+        border-bottom: 1px solid oklch(100% 0 0 / 0.055);
+      }
+
+      .log-time {
+        color: var(--faint);
+      }
+
+      .log-message {
+        min-width: 0;
+        color: var(--muted);
+        overflow-wrap: anywhere;
+      }
+
+      /* Miami-night theme layer. Kept last so it overrides the dark ops base without touching app logic. */
+      :root {
+        --ink: oklch(95% 0.025 92);
+        --muted: oklch(78% 0.045 205);
+        --faint: oklch(65% 0.07 215);
+        --line: oklch(38% 0.055 220);
+        --line-strong: oklch(58% 0.12 205);
+        --bg: oklch(15% 0.045 235);
+        --panel: oklch(21% 0.052 232 / 0.92);
+        --panel-strong: oklch(26% 0.064 230 / 0.94);
+        --accent: oklch(82% 0.145 190);
+        --accent-ink: oklch(14% 0.045 230);
+        --pink: oklch(76% 0.19 348);
+        --coral-hot: oklch(72% 0.18 25);
+        --sunset: oklch(82% 0.15 67);
+        --amber: oklch(84% 0.15 75);
+        --danger: oklch(72% 0.18 25);
+        --ok: oklch(82% 0.145 190);
+        --shadow: 0 24px 70px oklch(5% 0.05 250 / 0.58);
+      }
+
+      body {
+        background:
+          linear-gradient(180deg, oklch(18% 0.062 242 / 0.94), oklch(10% 0.04 245 / 0.98)),
+          radial-gradient(ellipse at 18% 0%, oklch(76% 0.19 348 / 0.28), transparent 30rem),
+          radial-gradient(ellipse at 86% 8%, oklch(82% 0.145 190 / 0.24), transparent 32rem),
+          linear-gradient(115deg, transparent 0 44%, oklch(72% 0.18 25 / 0.12) 44% 46%, transparent 46%),
+          repeating-linear-gradient(
+            90deg,
+            oklch(92% 0.08 195 / 0.04) 0,
+            oklch(92% 0.08 195 / 0.04) 1px,
+            transparent 1px,
+            transparent 54px
+          ),
+          var(--bg);
+      }
+
+      header {
+        border-bottom-color: color-mix(in oklch, var(--accent) 42%, transparent);
+        background:
+          linear-gradient(90deg, oklch(15% 0.052 238 / 0.92), oklch(17% 0.058 236 / 0.82)),
+          linear-gradient(180deg, color-mix(in oklch, var(--pink) 10%, transparent), transparent);
+      }
+
+      h1 {
+        color: var(--ink);
+        text-shadow:
+          0 0 18px color-mix(in oklch, var(--accent) 26%, transparent),
+          0 0 36px color-mix(in oklch, var(--pink) 16%, transparent);
+      }
+
+      .eyebrow,
+      .feed-label,
+      .panel-title,
+      dt {
+        color: color-mix(in oklch, var(--accent) 68%, var(--muted));
+      }
+
+      .status,
+      section.bp5-card {
+        border-color: color-mix(in oklch, var(--accent) 26%, var(--line));
+        background:
+          linear-gradient(180deg, color-mix(in oklch, var(--panel-strong) 82%, var(--pink) 18%), var(--panel)),
+          var(--panel);
+      }
+
+      .status {
+        box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--pink) 12%, transparent);
+      }
+
+      .status[data-state~="connected"]::before,
+      .status[data-state~="camera"]::before,
+      .status[data-state~="running"]::before {
+        background: var(--accent);
+        box-shadow: 0 0 0 4px color-mix(in oklch, var(--accent) 18%, transparent), 0 0 18px var(--accent);
+      }
+
+      .status[data-state~="dog-offline"]::before {
+        background: var(--amber);
+        box-shadow: 0 0 0 4px color-mix(in oklch, var(--amber) 18%, transparent), 0 0 18px var(--amber);
+      }
+
+      .record-toggle {
+        border-color: color-mix(in oklch, var(--coral-hot) 72%, var(--pink));
+        background:
+          linear-gradient(180deg, color-mix(in oklch, var(--coral-hot) 46%, var(--panel)), oklch(18% 0.06 240)),
+          var(--panel);
+        color: oklch(96% 0.035 65);
+      }
+
+      .record-toggle[data-running="true"] {
+        background:
+          linear-gradient(180deg, var(--coral-hot), color-mix(in oklch, var(--pink) 64%, var(--coral-hot))),
+          var(--coral-hot);
+        color: oklch(12% 0.045 245);
+      }
+
+      .video-shell {
+        border-color: color-mix(in oklch, var(--accent) 46%, var(--pink));
+        background:
+          linear-gradient(180deg, oklch(20% 0.065 238), oklch(12% 0.045 244)),
+          linear-gradient(135deg, color-mix(in oklch, var(--pink) 15%, transparent), transparent 45%),
+          var(--bg);
+      }
+
+      .video-shell::before {
+        background:
+          linear-gradient(90deg, color-mix(in oklch, var(--accent) 18%, transparent) 1px, transparent 1px),
+          linear-gradient(0deg, color-mix(in oklch, var(--pink) 12%, transparent) 1px, transparent 1px);
+        background-size: 86px 86px;
+        opacity: 0.42;
+      }
+
+      .video-shell::after {
+        border-color: color-mix(in oklch, var(--sunset) 16%, transparent);
+        box-shadow:
+          inset 0 0 90px oklch(0% 0 0 / 0.5),
+          inset 0 -72px 110px color-mix(in oklch, var(--pink) 14%, transparent);
+      }
+
+      .reticle {
+        border-color: color-mix(in oklch, var(--pink) 72%, var(--accent));
+        box-shadow:
+          0 0 24px color-mix(in oklch, var(--pink) 34%, transparent),
+          inset 0 0 28px color-mix(in oklch, var(--accent) 12%, transparent);
+      }
+
+      .reticle::before,
+      .reticle::after {
+        background: color-mix(in oklch, var(--accent) 64%, var(--pink));
+      }
+
+      .feed-corners::before,
+      .feed-corners::after {
+        border-color: color-mix(in oklch, var(--accent) 74%, var(--pink));
+        background: transparent;
+      }
+
+      .chip {
+        border-color: color-mix(in oklch, var(--accent) 34%, transparent);
+        background: oklch(13% 0.05 238 / 0.78);
+        color: color-mix(in oklch, var(--accent) 46%, var(--ink));
+      }
+
+      .scan-overlay::before {
+        background: linear-gradient(180deg, transparent, var(--pink), var(--accent), transparent);
+        box-shadow:
+          0 0 26px color-mix(in oklch, var(--pink) 68%, transparent),
+          0 0 76px color-mix(in oklch, var(--accent) 44%, transparent);
+      }
+
+      .scan-overlay::after {
+        border-color: color-mix(in oklch, var(--pink) 56%, transparent);
+        background: oklch(12% 0.05 238 / 0.82);
+        color: color-mix(in oklch, var(--sunset) 58%, var(--ink));
+      }
+
+      button.bp5-button,
+      .photo a.bp5-button {
+        border-color: color-mix(in oklch, var(--accent) 24%, var(--line));
+        background:
+          linear-gradient(180deg, oklch(28% 0.07 236), oklch(18% 0.055 240)),
+          var(--panel);
+        color: var(--ink);
+      }
+
+      button.bp5-button:hover:not(:disabled),
+      .photo a.bp5-button:hover {
+        border-color: color-mix(in oklch, var(--pink) 58%, var(--accent));
+        background:
+          linear-gradient(180deg, oklch(33% 0.08 232), oklch(21% 0.064 240)),
+          var(--panel);
+        color: var(--ink);
+      }
+
+      button.bp5-button.primary {
+        border-color: color-mix(in oklch, var(--accent) 54%, var(--pink));
+        background:
+          linear-gradient(180deg, var(--accent), color-mix(in oklch, var(--accent) 42%, var(--pink))),
+          var(--accent);
+        color: oklch(12% 0.045 245);
+      }
+
+      button.bp5-button.warn {
+        border-color: color-mix(in oklch, var(--coral-hot) 66%, var(--pink));
+        color: color-mix(in oklch, var(--coral-hot) 62%, var(--ink));
+      }
+
+      .line {
+        color: oklch(96% 0.04 75);
+        text-shadow: 0 0 20px color-mix(in oklch, var(--sunset) 16%, transparent);
+      }
+
+      .photo-frame {
+        border-color: color-mix(in oklch, var(--pink) 42%, var(--accent));
+        background:
+          linear-gradient(135deg, oklch(26% 0.07 238), oklch(14% 0.05 244)),
+          repeating-linear-gradient(45deg, color-mix(in oklch, var(--accent) 10%, transparent) 0 1px, transparent 1px 9px);
+      }
+
+      .photo-frame::before {
+        color: color-mix(in oklch, var(--pink) 52%, var(--muted));
+      }
+
+      .photo-frame::after {
+        background: oklch(11% 0.048 240 / 0.82);
+        color: color-mix(in oklch, var(--sunset) 52%, var(--muted));
+      }
+
+      .log-row {
+        border-bottom-color: color-mix(in oklch, var(--accent) 10%, transparent);
+      }
+
+      .log-time {
+        color: color-mix(in oklch, var(--pink) 42%, var(--faint));
+      }
+
+      /* South Beach daylight layer: match the bright reference image instead of a dark console. */
+      :root {
+        color-scheme: light;
+        --ink: oklch(23% 0.052 230);
+        --muted: oklch(41% 0.07 214);
+        --faint: oklch(49% 0.09 198);
+        --line: oklch(75% 0.09 190);
+        --line-strong: oklch(68% 0.13 190);
+        --bg: oklch(91% 0.08 86);
+        --panel: oklch(98% 0.036 83 / 0.84);
+        --panel-strong: oklch(99% 0.045 88 / 0.92);
+        --accent: oklch(76% 0.15 194);
+        --accent-ink: oklch(18% 0.055 222);
+        --pink: oklch(72% 0.2 350);
+        --coral-hot: oklch(73% 0.17 27);
+        --sunset: oklch(85% 0.14 70);
+        --amber: oklch(84% 0.15 75);
+        --danger: oklch(70% 0.18 25);
+        --ok: oklch(72% 0.15 185);
+        --shadow: 0 20px 48px oklch(43% 0.09 225 / 0.18);
+      }
+
+      body {
+        background:
+          linear-gradient(90deg, oklch(100% 0.03 95 / 0.9) 0 28%, oklch(100% 0.02 95 / 0.36) 48%, oklch(100% 0.02 95 / 0.16) 100%),
+          linear-gradient(180deg, oklch(92% 0.09 190 / 0.58), oklch(92% 0.08 75 / 0.8)),
+          var(--bg);
+        color: var(--ink);
+      }
+
+      body::before {
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 74% 24%, color-mix(in oklch, var(--pink) 28%, transparent), transparent 24rem),
+          radial-gradient(circle at 18% 20%, oklch(100% 0.035 92 / 0.7), transparent 30rem),
+          linear-gradient(180deg, transparent 0 60%, oklch(92% 0.08 70 / 0.72));
+        content: "";
+      }
+
+      header {
+        border-bottom-color: color-mix(in oklch, var(--accent) 52%, white);
+        background:
+          linear-gradient(90deg, oklch(99% 0.045 90 / 0.9), oklch(91% 0.08 190 / 0.68)),
+          color-mix(in oklch, white 72%, var(--accent));
+        box-shadow: 0 10px 32px oklch(54% 0.1 205 / 0.14);
+      }
+
+      h1 {
+        color: oklch(22% 0.06 235);
+        text-shadow: 0 2px 0 oklch(100% 0.04 85 / 0.68);
+      }
+
+      .eyebrow,
+      .feed-label,
+      .panel-title,
+      dt {
+        color: color-mix(in oklch, var(--accent) 56%, oklch(25% 0.08 216));
+      }
+
+      .status,
+      section.bp5-card {
+        border-color: color-mix(in oklch, var(--accent) 42%, white);
+        background:
+          linear-gradient(180deg, oklch(100% 0.038 88 / 0.92), oklch(97% 0.044 82 / 0.8)),
+          var(--panel);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(16px) saturate(1.25);
+      }
+
+      dd,
+      .log-message {
+        color: var(--ink);
+      }
+
+      .status {
+        color: var(--muted);
+        box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--accent) 20%, transparent), var(--shadow);
+      }
+
+      .record-toggle,
+      button.bp5-button.record-toggle {
+        border-color: color-mix(in oklch, var(--pink) 60%, var(--coral-hot));
+        background:
+          linear-gradient(180deg, oklch(100% 0.04 84 / 0.9), color-mix(in oklch, var(--pink) 16%, white)),
+          white;
+        color: oklch(30% 0.1 350);
+      }
+
+      .record-toggle[data-running="true"],
+      button.bp5-button.record-toggle[data-running="true"] {
+        background: linear-gradient(180deg, var(--pink), var(--coral-hot));
+        color: white;
+      }
+
+      .video-shell {
+        border-color: color-mix(in oklch, var(--pink) 48%, var(--accent));
+        background:
+          linear-gradient(180deg, oklch(93% 0.07 190 / 0.62), oklch(96% 0.058 83 / 0.72)),
+          var(--bg);
+        box-shadow: 0 18px 46px oklch(43% 0.1 215 / 0.18);
+      }
+
+      .video-shell::before {
+        background:
+          linear-gradient(90deg, oklch(30% 0.08 205 / 0.1) 1px, transparent 1px),
+          linear-gradient(0deg, oklch(30% 0.08 205 / 0.08) 1px, transparent 1px);
+        background-size: 94px 94px;
+        opacity: 0.42;
+      }
+
+      .video-shell::after {
+        border-color: color-mix(in oklch, white 45%, var(--pink));
+        box-shadow:
+          inset 0 0 0 999px oklch(100% 0.018 88 / 0.2),
+          inset 0 -80px 120px oklch(86% 0.13 62 / 0.26);
+      }
+
+      .reticle {
+        border-color: color-mix(in oklch, var(--pink) 62%, var(--accent));
+        box-shadow:
+          0 0 28px color-mix(in oklch, var(--pink) 36%, transparent),
+          0 0 80px color-mix(in oklch, var(--accent) 22%, transparent);
+      }
+
+      .reticle::before,
+      .reticle::after {
+        background: color-mix(in oklch, var(--accent) 64%, oklch(22% 0.08 215));
+      }
+
+      .feed-corners::before,
+      .feed-corners::after {
+        border-color: color-mix(in oklch, var(--pink) 62%, var(--accent));
+      }
+
+      .chip {
+        border-color: color-mix(in oklch, var(--accent) 48%, white);
+        background: oklch(99% 0.035 88 / 0.84);
+        color: oklch(25% 0.07 215);
+      }
+
+      button.bp5-button,
+      .photo a.bp5-button {
+        border-color: color-mix(in oklch, var(--accent) 40%, white);
+        background:
+          linear-gradient(180deg, oklch(100% 0.034 88 / 0.92), oklch(95% 0.055 86 / 0.86)),
+          white;
+        color: var(--ink);
+      }
+
+      button.bp5-button:hover:not(:disabled),
+      .photo a.bp5-button:hover {
+        border-color: color-mix(in oklch, var(--pink) 54%, var(--accent));
+        background:
+          linear-gradient(180deg, oklch(100% 0.04 88), color-mix(in oklch, var(--accent) 12%, white)),
+          white;
+        color: var(--ink);
+      }
+
+      .line {
+        color: oklch(28% 0.07 230);
+        text-shadow: none;
+      }
+
+      .photo-frame {
+        border-color: color-mix(in oklch, var(--accent) 58%, white);
+        background:
+          linear-gradient(180deg, oklch(92% 0.08 192 / 0.74), oklch(97% 0.07 82 / 0.78)),
+          var(--bg);
+      }
+
+      .photo-frame::before {
+        color: color-mix(in oklch, var(--pink) 68%, oklch(25% 0.07 230));
+        text-shadow: 0 1px 0 white;
+      }
+
+      .photo-frame::after {
+        background: oklch(100% 0.034 88 / 0.82);
+        color: color-mix(in oklch, var(--coral-hot) 56%, oklch(30% 0.07 215));
+      }
+
+      .log-row {
+        border-bottom-color: color-mix(in oklch, var(--accent) 22%, transparent);
+      }
+
+      .log-time {
+        color: color-mix(in oklch, var(--pink) 48%, var(--muted));
+      }
+
+      /* Final light Miami Vice pass. No image backgrounds; feed placeholder is an actual image element. */
+      :root {
+        color-scheme: light;
+        --ink: oklch(24% 0.045 232);
+        --muted: oklch(47% 0.045 220);
+        --faint: oklch(58% 0.055 205);
+        --line: oklch(84% 0.055 198);
+        --line-strong: oklch(70% 0.11 194);
+        --bg: oklch(97% 0.025 198);
+        --panel: oklch(100% 0.012 195 / 0.9);
+        --panel-strong: oklch(100% 0.012 195);
+        --accent: oklch(75% 0.13 190);
+        --accent-ink: oklch(19% 0.05 232);
+        --pink: oklch(72% 0.18 348);
+        --logo-purple: oklch(62% 0.24 310);
+        --coral-hot: oklch(70% 0.16 28);
+        --sunset: oklch(84% 0.12 74);
+        --amber: oklch(82% 0.12 78);
+        --danger: oklch(65% 0.18 25);
+        --ok: oklch(68% 0.13 165);
+        --scanner-green: oklch(78% 0.17 152);
+        --shadow: 0 18px 42px oklch(45% 0.06 220 / 0.16);
+      }
+
+      body {
+        background:
+          linear-gradient(135deg, oklch(100% 0.008 195 / 0.92) 0%, oklch(100% 0.018 202 / 0.62) 18%, transparent 38%),
+          radial-gradient(circle at 86% 5%, color-mix(in oklch, var(--pink) 18%, transparent), transparent 24rem),
+          radial-gradient(circle at 10% 0%, color-mix(in oklch, var(--accent) 16%, transparent), transparent 28rem),
+          linear-gradient(180deg, oklch(98% 0.025 198), oklch(96% 0.025 82)),
+          var(--bg);
+        color: var(--ink);
+      }
+
+      header {
+        border-bottom-color: var(--line);
+        background: oklch(100% 0.014 195 / 0.9);
+        box-shadow: 0 10px 28px oklch(45% 0.06 220 / 0.08);
+      }
+
+      h1,
+      dd,
+      .log-message,
+      .line {
+        color: var(--ink);
+        text-shadow: none;
+      }
+
+      .eyebrow,
+      .feed-label,
+      .panel-title,
+      dt {
+        color: color-mix(in oklch, var(--accent) 62%, oklch(25% 0.06 230));
+      }
+
+      .status,
+      section.bp5-card {
+        border-color: var(--line);
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(12px);
+      }
+
+      .status {
+        color: var(--muted);
+      }
+
+      .status[data-state~="connected"]::before,
+      .status[data-state~="camera"]::before,
+      .status[data-state~="running"]::before {
+        background: var(--accent);
+        box-shadow: 0 0 0 4px color-mix(in oklch, var(--accent) 18%, transparent);
+      }
+
+      .status[data-state~="dog-offline"]::before {
+        background: var(--amber);
+        box-shadow: 0 0 0 4px color-mix(in oklch, var(--amber) 18%, transparent);
+      }
+
+      .record-toggle,
+      button.bp5-button.record-toggle {
+        min-width: 112px;
+        min-height: 42px;
+        padding: 8px 12px;
+        border-color: color-mix(in oklch, var(--pink) 54%, var(--line));
+        background:
+          linear-gradient(180deg, oklch(100% 0.018 195), color-mix(in oklch, var(--pink) 10%, white)),
+          white;
+        color: color-mix(in oklch, var(--pink) 62%, var(--ink));
+      }
+
+      .record-toggle[data-running="true"],
+      button.bp5-button.record-toggle[data-running="true"] {
+        background: linear-gradient(180deg, var(--pink), color-mix(in oklch, var(--coral-hot) 64%, var(--pink)));
+        color: white;
+      }
+
+      .video-shell {
+        border-color: color-mix(in oklch, var(--accent) 54%, var(--pink));
+        background:
+          linear-gradient(180deg, oklch(10% 0.02 230), oklch(8% 0.018 235)),
+          oklch(9% 0.018 230);
+      }
+
+      .idle-feed {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: right center;
+      }
+
+      body.record3d-mode .idle-feed {
+        display: none;
+      }
+
+      body.dog-mode .idle-feed {
+        display: none;
+      }
+
+      body:not(.record3d-mode):not(.dog-mode) video {
+        display: none;
+      }
+
+      .chip {
+        border-color: color-mix(in oklch, var(--accent) 42%, transparent);
+        background: oklch(99% 0.014 195 / 0.88);
+        color: var(--accent-ink);
+      }
+
+      .scan-overlay::before {
+        width: 5px;
+        background: linear-gradient(180deg, transparent, var(--pink), var(--scanner-green), transparent);
+        box-shadow:
+          0 0 26px color-mix(in oklch, var(--pink) 68%, transparent),
+          0 0 76px color-mix(in oklch, var(--scanner-green) 46%, transparent);
+      }
+
+      .scan-overlay::after {
+        border-color: color-mix(in oklch, var(--pink) 38%, var(--scanner-green));
+        background: oklch(100% 0.012 190 / 0.82);
+        color: var(--accent-ink);
+      }
+
+      button.bp5-button,
+      .photo a.bp5-button {
+        border-color: color-mix(in oklch, var(--accent) 34%, var(--line));
+        background:
+          linear-gradient(180deg, oklch(100% 0.014 195), oklch(96% 0.022 195)),
+          white;
+        color: var(--ink);
+      }
+
+      .photo {
+        grid-template-rows: minmax(0, 1fr) auto;
+        gap: 10px;
+        min-height: 0;
+        overflow: visible;
+        padding: 0;
+      }
+
+      .photo-frame {
+        aspect-ratio: 1 / 1;
+        align-self: start;
+        justify-self: center;
+        width: 100%;
+        height: auto;
+        max-width: 100%;
+        max-height: 100%;
+        overflow: hidden;
+        border-color: color-mix(in oklch, var(--accent) 50%, var(--line));
+        background: white;
+      }
+
+      .photo-frame img {
+        object-fit: cover;
+        object-position: center;
+      }
+
+      .photo-frame::before {
+        color: color-mix(in oklch, var(--pink) 54%, var(--accent));
+        text-shadow: none;
+      }
+
+      .photo-frame::after {
+        background: oklch(9% 0.02 230 / 0.74);
+        color: color-mix(in oklch, var(--sunset) 50%, white);
+      }
+
+      main {
+        height: calc(100dvh - 73px);
+        padding: 18px 24px 10px;
+        overflow: visible;
+      }
+
+      aside {
+        grid-template-rows: minmax(0, 1fr) auto;
+        overflow: visible;
+      }
+
+      .brand {
+        gap: 0;
+      }
+
+      h1 {
+        font-family: var(--font-logo);
+        font-size: 42px;
+        font-weight: 400;
+        letter-spacing: 0;
+        line-height: 1;
+        color: oklch(99% 0.01 345);
+        paint-order: stroke fill;
+        -webkit-text-stroke: 0.45px oklch(14% 0.05 305 / 0.78);
+        text-shadow:
+          0 1px 0 oklch(8% 0.04 305 / 0.86),
+          1px 0 0 oklch(8% 0.04 305 / 0.62),
+          -1px 0 0 oklch(8% 0.04 305 / 0.48),
+          0 0 3px color-mix(in oklch, white 72%, var(--pink)),
+          0 0 9px color-mix(in oklch, var(--pink) 82%, white),
+          0 0 20px color-mix(in oklch, var(--pink) 72%, transparent),
+          0 0 46px color-mix(in oklch, var(--logo-purple) 58%, transparent),
+          0 0 82px color-mix(in oklch, var(--pink) 34%, transparent);
+      }
+
+      .video-shell .line {
+        position: absolute;
+        right: 72px;
+        bottom: 104px;
+        left: 72px;
+        z-index: 5;
+        min-height: 0;
+        margin: 0;
+        color: oklch(99% 0.006 195);
+        font-family: var(--font-display);
+        font-size: 40px;
+        font-weight: 700;
+        line-height: 1.05;
+        text-align: center;
+        text-shadow:
+          0 2px 0 oklch(24% 0.12 306 / 0.92),
+          0 0 2px oklch(24% 0.12 306 / 0.88),
+          1px 1px 0 oklch(24% 0.12 306 / 0.86),
+          -1px 1px 0 oklch(24% 0.12 306 / 0.82),
+          1px -1px 0 oklch(24% 0.12 306 / 0.82),
+          -1px -1px 0 oklch(24% 0.12 306 / 0.78),
+          0 0 14px color-mix(in oklch, var(--logo-purple) 72%, transparent),
+          0 8px 28px color-mix(in oklch, var(--logo-purple) 54%, transparent);
+        text-wrap: balance;
+        pointer-events: none;
+      }
+
+      .photo-frame {
+        aspect-ratio: 1 / 1.16;
+        height: auto;
+        max-height: none;
+        padding: 16px 16px 68px;
+        border: 1px solid oklch(87% 0.035 192);
+        border-radius: 4px;
+        background:
+          linear-gradient(180deg, oklch(99.5% 0.003 195), oklch(97.5% 0.004 195)),
+          white;
+        box-shadow:
+          0 18px 34px oklch(45% 0.06 220 / 0.18),
+          0 1px 0 oklch(100% 0 0 / 0.9) inset;
+      }
+
+      .photo-frame::before {
+        inset: 16px 16px 68px;
+        border: 1px solid oklch(90% 0.026 196);
+        background: oklch(99% 0.006 195);
+        color: color-mix(in oklch, var(--ok) 72%, white);
+      }
+
+      .photo-frame:has(#photoPreview[src]:not([src=""]))::before {
+        display: none;
+      }
+
+      .photo-frame img {
+        position: relative;
+        z-index: 1;
+        border: 1px solid oklch(90% 0.026 196);
+        background: oklch(99% 0.006 195);
+      }
+
+      .photo-frame::after {
+        inset: auto 22% 30px;
+        height: 1px;
+        padding: 0;
+        background: color-mix(in oklch, var(--pink) 18%, transparent);
+        content: "";
+      }
+
+      header {
+        border-bottom: 0;
+        background: transparent;
+        box-shadow: none;
+        backdrop-filter: none;
+      }
+
+      .events-panel,
+      aside > section.bp5-card {
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+        padding: 0;
+        backdrop-filter: none;
+      }
+
+      .photo-frame::after {
+        display: none;
+      }
+
+      .stage > section.bp5-card.events-panel,
+      .events-panel,
+      .events-panel .log,
+      .events-panel .log-row,
+      aside > section.bp5-card {
+        border: 0 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        backdrop-filter: none !important;
+      }
+
+      .stage > section.bp5-card.events-panel,
+      aside > section.bp5-card {
+        padding: 0 !important;
+      }
+
+      body.dog-mode .dog-lidar-pane {
+        border-color: color-mix(in oklch, var(--accent) 58%, white);
+        background:
+          linear-gradient(180deg, oklch(100% 0.01 195 / 0.78), oklch(96% 0.025 198 / 0.64)),
+          oklch(99% 0.012 195 / 0.72);
+        box-shadow:
+          0 16px 38px oklch(45% 0.06 220 / 0.2),
+          inset 0 0 0 1px oklch(100% 0 0 / 0.62);
+        backdrop-filter: blur(12px) saturate(0.88);
+      }
+
+      body.dog-mode .dog-lidar-pane .stream-label {
+        border-color: color-mix(in oklch, var(--accent) 42%, white);
+        background: oklch(100% 0.012 195 / 0.82);
+        color: color-mix(in oklch, var(--logo-purple) 72%, var(--ink));
+      }
+
+      body.dog-mode .dog-lidar-pane.has-lidar .dog-lidar-preview {
+        filter: invert(1) brightness(1.12) contrast(0.9) saturate(0.72);
+        mix-blend-mode: multiply;
+        opacity: 0.86;
+      }
+
+      .dog-lidar-empty {
+        color: color-mix(in oklch, var(--logo-purple) 42%, var(--muted));
+        text-shadow: none;
+      }
+
+      body.dog-mode .dog-lidar-empty {
+        display: none;
+      }
+
+      body.dog-mode .dog-preview {
+        object-position: 82% center;
+      }
+
+      body.dog-mode .dog-lidar-pane {
+        transition:
+          width 180ms ease,
+          height 180ms ease,
+          box-shadow 180ms ease,
+          background 180ms ease;
+      }
+
+      body.dog-mode .dog-lidar-pane:not(.has-lidar) {
+        width: auto;
+        min-width: 0;
+        height: auto;
+        aspect-ratio: auto;
+        overflow: visible;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+        backdrop-filter: none;
+      }
+
+      body.dog-mode .dog-lidar-pane:not(.has-lidar) .stream-label,
+      body.dog-mode .dog-lidar-pane:not(.has-lidar) .dog-lidar-preview {
+        display: none;
+      }
+
+      body.dog-mode .dog-lidar-pane:not(.has-lidar)::before {
+        display: inline-flex;
+        align-items: center;
+        min-height: 36px;
+        border: 1px solid oklch(78% 0.012 225);
+        border-radius: 8px;
+        padding: 8px 12px;
+        background: oklch(100% 0.012 195 / 0.82);
+        color: oklch(70% 0.012 225);
+        content: "NO LIDAR SIGNAL";
+        font-family: var(--font-display);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        line-height: 1;
+        text-transform: uppercase;
+        white-space: nowrap;
+        backdrop-filter: blur(12px);
+      }
+
+      .stage {
+        grid-template-rows: minmax(0, 1fr) auto;
+        gap: 10px;
+      }
+
+      .events-panel {
+        max-height: 150px;
+        overflow: hidden;
+      }
+
+      .log {
+        gap: 0;
+        max-height: 150px;
+        padding: 10px 10px 0;
+        color: color-mix(in oklch, var(--logo-purple) 76%, var(--ink));
+        font-size: 14px;
+        line-height: 1.25;
+      }
+
+      .log-row {
+        grid-template-columns: 80px minmax(0, 1fr);
+        gap: 14px;
+        align-items: baseline;
+        min-height: 25px;
+        padding: 3px 0;
+        border-bottom: 0 !important;
+      }
+
+      .log-time {
+        color: color-mix(in oklch, var(--pink) 82%, var(--logo-purple));
+        font-weight: 500;
+      }
+
+      .log-message {
+        color: color-mix(in oklch, var(--logo-purple) 76%, var(--ink));
+        font-weight: 400;
+      }
+
+      .photo-frame::before {
+        border-color: color-mix(in oklch, var(--accent) 42%, oklch(67% 0.05 205));
+        background: oklch(99% 0.006 195);
+        filter: none;
+        opacity: 1;
+      }
+
+      .photo-frame::after {
+        position: absolute;
+        inset: 16px 16px 68px;
+        display: block;
+        background: url("/fetch/static/logo.png") center / min(48%, 260px) auto no-repeat;
+        content: "";
+        filter: grayscale(1) saturate(0.06) brightness(0.72) contrast(1.35);
+        opacity: 0.5;
+        pointer-events: none;
+      }
+
+      .photo-frame:has(#photoPreview[src]:not([src=""]))::after {
+        display: none;
+      }
+
+      aside {
+        grid-template-rows: auto minmax(0, 1fr);
+        align-content: stretch;
+        gap: 14px;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      .photo {
+        grid-template-rows: auto auto;
+        align-content: start;
+        gap: 10px;
+      }
+
+      .photo-frame {
+        border-color: oklch(75% 0.012 225);
+      }
+
+      .photo-frame::before {
+        display: block !important;
+        z-index: 0;
+      }
+
+      .photo-frame::after {
+        display: none !important;
+      }
+
+      .photo-frame:has(#photoPreview[src]:not([src=""]))::after {
+        display: none !important;
+      }
+
+      .photo-frame:has(#photoPreview[src]:not([src=""]))::before {
+        display: none !important;
+      }
+
+      .photo-frame::before,
+      #photoPreview {
+        border-color: oklch(78% 0.012 225);
+      }
+
+      .photo-watermark {
+        position: absolute !important;
+        inset: 16px 16px 68px;
+        z-index: 1;
+        display: block;
+        width: min(48%, 260px) !important;
+        height: auto !important;
+        max-width: none;
+        max-height: 30%;
+        margin: auto;
+        border: 0 !important;
+        background: transparent !important;
+        filter: grayscale(1) saturate(0.04) brightness(1.08) contrast(0.96);
+        object-fit: contain !important;
+        opacity: 0.28;
+        pointer-events: none;
+      }
+
+      .photo-frame:has(#photoPreview[src]:not([src=""])) .photo-watermark {
+        inset: auto 38px 92px auto;
+        z-index: 4;
+        width: min(24%, 170px) !important;
+        max-height: none;
+        margin: 0;
+        filter: grayscale(0.1) drop-shadow(0 2px 5px oklch(20% 0.02 230 / 0.22));
+        opacity: 0.82;
+      }
+
+      #photoPreview {
+        position: relative;
+        z-index: 2;
+      }
+
+      .events-panel {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr);
+        align-self: stretch;
+        min-height: 0;
+        max-height: none;
+        overflow: hidden;
+      }
+
+      .log {
+        display: block;
+        min-height: 0;
+        max-height: none;
+        height: 100%;
+        padding: 4px 12px 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        color: oklch(75% 0.012 225);
+      }
+
+      .log-row {
+        display: grid;
+        grid-template-columns: 96px minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+        min-height: 0;
+        padding: 6px 0;
+        border-bottom: 0 !important;
+      }
+
+      .log-time,
+      .log-message {
+        color: oklch(75% 0.012 225);
+        font-weight: 400;
+        line-height: 1.34;
+      }
+
+      .log-time {
+        white-space: nowrap;
+      }
+
+      .log-message {
+        min-width: 0;
+        overflow-wrap: anywhere;
+        word-break: normal;
+      }
+
+      .header-metrics .status,
+      .header-metrics .record-toggle,
+      .header-metrics button.bp5-button.record-toggle {
+        box-shadow: none !important;
+        filter: none;
+      }
+
+      @media (max-width: 820px) {
+        body {
+          font-size: 14px;
+          height: auto;
+          min-height: 100dvh;
+          overflow: auto;
+        }
+
+        header {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: var(--space-md);
+        }
+
+        .header-metrics {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          width: 100%;
+        }
+
+        .status {
+          grid-column: span 2;
+          width: 100%;
+        }
+
+        main {
+          grid-template-columns: 1fr;
+          gap: var(--space-md);
+          height: auto;
+          padding: var(--space-sm);
+          overflow: visible;
+        }
+
+        .stage,
+        aside {
+          grid-template-rows: none;
+          overflow: visible;
+        }
+
+        .stage-head {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .video-shell {
+          aspect-ratio: 4 / 3;
+          height: auto;
+          min-height: 280px;
+        }
+
+        .video-shell .line {
+          right: 24px;
+          bottom: 82px;
+          left: 24px;
+          font-size: 28px;
+        }
+
+        .controls {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .photo {
+          grid-template-rows: minmax(220px, auto) auto;
+        }
+      }
+
+      @media (max-width: 440px) {
+        .controls {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .video-shell {
+          aspect-ratio: 4 / 3;
+          height: auto;
+          min-height: 230px;
+        }
+
+        .header-metrics {
+          grid-template-columns: 1fr;
+        }
+
+        .status {
+          grid-column: auto;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+      .audio-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: var(--space-md);
+      }
+      .audio-modal[hidden] {
+        display: none;
+      }
+      .audio-modal-backdrop {
+        position: absolute;
+        inset: 0;
+        background: oklch(8% 0.014 175 / 0.62);
+        animation: audio-fade 160ms ease-out;
+      }
+      .audio-modal-card {
+        position: relative;
+        width: min(440px, 100%);
+        max-height: calc(100dvh - 2 * var(--space-md));
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
+        padding: var(--space-lg);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        animation: audio-rise 180ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .audio-modal-head {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .audio-modal-title {
+        margin: 0;
+        font-family: var(--font-display);
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: var(--ink);
+      }
+      .audio-modal-sub {
+        margin: 0;
+        font-size: 13px;
+        color: var(--faint);
+      }
+      .audio-group-label {
+        display: block;
+        margin-bottom: var(--space-xs);
+        font-family: var(--font-display);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--faint);
+      }
+      .audio-modes {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-xs);
+        border: 0;
+        margin: 0;
+        padding: 0;
+      }
+      .audio-mode {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        gap: var(--space-sm);
+        min-height: 56px;
+        padding: var(--space-sm) var(--space-md);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: color-mix(in oklch, var(--panel-strong) 55%, transparent);
+        cursor: pointer;
+        transition: border-color 160ms ease-out, background 160ms ease-out;
+      }
+      .audio-mode:hover:not(.disabled) {
+        border-color: var(--line-strong);
+        background: var(--panel-strong);
+      }
+      .audio-mode:has(input:checked) {
+        border-color: color-mix(in oklch, var(--accent) 70%, var(--line));
+        background: color-mix(in oklch, var(--accent) 14%, var(--panel-strong));
+      }
+      .audio-mode:has(input:focus-visible) {
+        box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 30%, transparent);
+      }
+      .audio-mode.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .audio-mode input {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--accent);
+      }
+      .audio-mode-body {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        min-width: 0;
+      }
+      .audio-mode-name {
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--ink);
+      }
+      .audio-mode-desc {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .audio-status {
+        font-family: var(--font-display);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 3px 8px;
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+      .audio-status[data-ready="true"] {
+        color: var(--ok);
+        background: color-mix(in oklch, var(--ok) 16%, transparent);
+      }
+      .audio-status[data-ready="false"] {
+        color: var(--amber);
+        background: color-mix(in oklch, var(--amber) 14%, transparent);
+      }
+      .audio-fields {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--space-md);
+      }
+      .audio-field {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-xs);
+        min-width: 0;
+      }
+      .audio-field-label {
+        font-family: var(--font-display);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--faint);
+      }
+      .audio-field select {
+        width: 100%;
+        min-height: 44px;
+        padding: 0 var(--space-sm);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel-strong);
+        color: var(--ink);
+        font-family: var(--font-body);
+        font-size: 14px;
+      }
+      .audio-field select:hover:not(:disabled) {
+        border-color: var(--line-strong);
+      }
+      .audio-field.disabled {
+        opacity: 0.5;
+      }
+      .audio-modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: var(--space-sm);
+        margin-top: var(--space-xs);
+      }
+      @keyframes audio-fade {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes audio-rise {
+        from { opacity: 0; transform: translateY(8px) scale(0.98); }
+        to { opacity: 1; transform: none; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .audio-modal-backdrop,
+        .audio-modal-card {
+          animation: none;
+        }
+      }
+      @media (max-width: 480px) {
+        .audio-fields {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <img class="brand-logo" src="/fetch/static/logo.png" alt="Fetch" />
+      </div>
+      <div class="header-metrics" aria-label="Recording controls">
+        <button id="audioSettings" class="bp5-button" type="button">Audio</button>
+        <button id="recordToggle" class="bp5-button record-toggle" data-running="false">Record</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="stage">
+        <div class="video-shell">
+          <div id="sourceOverlay" class="source-overlay" data-state="offline">
+            <span class="bp5-icon bp5-icon-satellite" aria-hidden="true"></span>
+            <span id="sourceLabel">Record3D RGBD</span>
+          </div>
+          <img id="idleFeed" class="idle-feed" src="/fetch/static/idle-camera-feed.png" alt="" />
+          <div class="dog-grid" aria-label="Go2 WebRTC camera and LiDAR streams">
+            <div class="dog-pane dog-camera-pane">
+              <img
+                id="dogPreview"
+                class="dog-preview"
+                src="/fetch/static/idle-camera-feed.png"
+                alt="Live Go2 camera feed"
+              />
+              <span class="stream-label">Camera</span>
+            </div>
+            <div class="dog-pane dog-lidar-pane">
+              <img id="dogLidarPreview" class="dog-lidar-preview" alt="" />
+              <span class="stream-label">LiDAR</span>
+            </div>
+          </div>
+          <video id="video" playsinline muted autoplay></video>
+          <div class="rgbd-grid" aria-label="Record3D RGB and LiDAR depth streams">
+            <div class="rgbd-pane">
+              <img id="record3dPreview" class="record3d-preview" alt="" />
+              <span class="stream-label">sRGB</span>
+            </div>
+            <div class="rgbd-pane">
+              <img id="depthPreview" class="depth-preview" alt="" />
+              <span class="stream-label">LiDAR depth</span>
+            </div>
+          </div>
+          <div id="scanOverlay" class="scan-overlay" aria-hidden="true"></div>
+          <div class="feed-corners" aria-hidden="true"></div>
+          <div class="reticle" aria-hidden="true"></div>
+          <p id="line" class="line">Hunting for a photogenic target.</p>
+          <div class="video-overlay">
+            <div id="frameRate" class="chip">0 fps</div>
+            <div id="motion" class="chip">cmd 0.00 / 0.00</div>
+            <div id="rgbdStatus" class="chip">rgbd idle</div>
+          </div>
+        </div>
+
+      </div>
+
+      <aside>
+        <div class="photo" aria-label="Instant photo">
+          <div class="photo-frame">
+            <img class="photo-watermark" src="/fetch/static/logo.png" alt="" aria-hidden="true" />
+            <img id="photoPreview" alt="" />
+          </div>
+        </div>
+
+        <section class="bp5-card events-panel">
+          <div id="log" class="log"></div>
+        </section>
+      </aside>
+    </main>
+
+    <div id="audioModal" class="audio-modal" hidden role="dialog" aria-modal="true" aria-labelledby="audioModalTitle">
+      <div class="audio-modal-backdrop" data-close="1"></div>
+      <div class="audio-modal-card">
+        <div class="audio-modal-head">
+          <h2 id="audioModalTitle" class="audio-modal-title">Voice &amp; model</h2>
+          <p class="audio-modal-sub">How Fetch talks to people during an interaction.</p>
+        </div>
+
+        <div>
+          <span class="audio-group-label" id="audioModeLabel">Mode</span>
+          <div class="audio-modes" role="radiogroup" aria-labelledby="audioModeLabel">
+            <label class="audio-mode" data-mode="live">
+              <input type="radio" name="audioMode" value="live" />
+              <span class="audio-mode-body">
+                <span class="audio-mode-name">Live conversation</span>
+                <span class="audio-mode-desc">Two-way voice: jokes, takes the order, photo</span>
+              </span>
+              <span class="audio-status" data-mode-status="live" data-ready="true">Ready</span>
+            </label>
+            <label class="audio-mode" data-mode="gemini_tts">
+              <input type="radio" name="audioMode" value="gemini_tts" />
+              <span class="audio-mode-body">
+                <span class="audio-mode-name">Gemini TTS</span>
+                <span class="audio-mode-desc">One-way spoken lines, Gemini voice</span>
+              </span>
+              <span class="audio-status" data-mode-status="gemini_tts" data-ready="true">Ready</span>
+            </label>
+            <label class="audio-mode" data-mode="openai_tts">
+              <input type="radio" name="audioMode" value="openai_tts" />
+              <span class="audio-mode-body">
+                <span class="audio-mode-name">OpenAI TTS</span>
+                <span class="audio-mode-desc">One-way spoken lines, OpenAI voice</span>
+              </span>
+              <span class="audio-status" data-mode-status="openai_tts" data-ready="true">Ready</span>
+            </label>
+            <label class="audio-mode" data-mode="cartesia_tts">
+              <input type="radio" name="audioMode" value="cartesia_tts" />
+              <span class="audio-mode-body">
+                <span class="audio-mode-name">Cartesia TTS</span>
+                <span class="audio-mode-desc">One-way spoken lines, Sonic (lowest latency)</span>
+              </span>
+              <span class="audio-status" data-mode-status="cartesia_tts" data-ready="true">Ready</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="audio-fields">
+          <label class="audio-field">
+            <span class="audio-field-label">Voice</span>
+            <select id="audioVoice">
+              <option value="alloy">Alloy</option>
+              <option value="echo">Echo</option>
+              <option value="fable">Fable</option>
+              <option value="onyx">Onyx</option>
+              <option value="nova">Nova</option>
+              <option value="shimmer">Shimmer</option>
+            </select>
+          </label>
+          <label class="audio-field" id="audioModelField">
+            <span class="audio-field-label">Live model</span>
+            <select id="audioLiveModel">
+              <option value="gemini-3.1-flash-live-preview">gemini-3.1-flash-live-preview</option>
+              <option value="gemini-2.5-flash-native-audio-preview-12-2025">gemini-2.5-flash-native-audio</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="audio-modal-actions">
+          <button id="audioCancel" class="bp5-button" type="button" data-close="1">Cancel</button>
+          <button id="audioSave" class="bp5-button primary" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="canvas" hidden></canvas>
+    <audio id="audio" playsinline></audio>
+    <audio id="printAudio" preload="auto" playsinline src="/fetch/static/audio/freesound_community-polaroid_600-83252.mp3"></audio>
+
+    <script>
+      const els = {
+        recordToggle: document.getElementById("recordToggle"),
+        audioSettings: document.getElementById("audioSettings"),
+        audioModal: document.getElementById("audioModal"),
+        audioVoice: document.getElementById("audioVoice"),
+        audioLiveModel: document.getElementById("audioLiveModel"),
+        audioSave: document.getElementById("audioSave"),
+        video: document.getElementById("video"),
+        canvas: document.getElementById("canvas"),
+        frameRate: document.getElementById("frameRate"),
+        motion: document.getElementById("motion"),
+        rgbdStatus: document.getElementById("rgbdStatus"),
+        sourceOverlay: document.getElementById("sourceOverlay"),
+        sourceLabel: document.getElementById("sourceLabel"),
+        line: document.getElementById("line"),
+        dogPreview: document.getElementById("dogPreview"),
+        dogLidarPreview: document.getElementById("dogLidarPreview"),
+        record3dPreview: document.getElementById("record3dPreview"),
+        depthPreview: document.getElementById("depthPreview"),
+        photoPreview: document.getElementById("photoPreview"),
+        log: document.getElementById("log"),
+        audio: document.getElementById("audio"),
+        printAudio: document.getElementById("printAudio"),
+      };
+
+      const DOG_PLACEHOLDER_SRC = "/fetch/static/idle-camera-feed.png";
+      const PRINT_SOUND_SRC = "/fetch/static/audio/freesound_community-polaroid_600-83252.mp3";
+      const SCAN_INTERVAL_MS = 650;
+
+      const state = {
+        ws: null,
+        stream: null,
+        scanning: false,
+        workflow: "find_guest",
+        visionSource: "browser",
+        pendingFrame: false,
+        speaking: false,
+        photoInProgress: false,
+        frameId: 0,
+        lastDecisionAt: 0,
+        lastLine: "",
+        lastGreetAt: 0,
+        lastPhotoAt: 0,
+        timer: null,
+        statusTimer: null,
+        transportStatus: "offline",
+        lastDogFrames: 0,
+        lastDogLidarFrames: 0,
+        dogConnectionActive: false,
+        dogCameraStreaming: false,
+        dogCameraLive: false,
+        dogLidarLive: false,
+        robotPreflightPromise: null,
+        robotPreflightComplete: false,
+        lastRecord3dFrames: 0,
+        audioContext: null,
+        realtimePc: null,
+        realtimeDataChannel: null,
+        realtimeSessionPromise: null,
+        realtimePending: null,
+        realtimeDisabled: false,
+        ttsProvider: "cartesia",
+        audioRoute: "speak",
+        realtimeAvailable: false,
+        conversationEnabled: false,
+        conversationActive: false,
+        micStream: null,
+        micSource: null,
+        micWorkletNode: null,
+        micScriptNode: null,
+        playbackSampleRate: 24000,
+        playbackTime: 0,
+        playbackSources: [],
+        echoGate: false,
+        echoSuppress: false,
+        lastConvFrameAt: 0,
+        audioMode: "",
+        audioModeExplicit: false,
+        voice: "echo",
+        liveModel: "gemini-3.1-flash-live-preview",
+        liveModelExplicit: false,
+        openaiAvailable: false,
+        geminiAvailable: false,
+        cartesiaAvailable: false,
+        audioModalOpener: null,
+      };
+
+      const REALTIME_CLIENT_SECRET_TIMEOUT_MS = 5000;
+      const REALTIME_SDP_TIMEOUT_MS = 8000;
+      const MIC_TARGET_RATE = 16000;
+      const CONV_FRAME_INTERVAL_MS = 900;
+      const AUDIO_MODES = ["live", "gemini_tts", "openai_tts", "cartesia_tts"];
+
+      function setStatus(text) {
+        state.transportStatus = text;
+        renderStatus();
+      }
+
+      function setStatusPill(label, stateKey) {
+        const normalizedState = stateKey.toLowerCase().replace(/\s+/g, "-");
+        els.sourceOverlay.dataset.state = normalizedState;
+        els.sourceOverlay.title = label;
+        els.sourceOverlay.setAttribute("aria-label", `${els.sourceLabel.textContent}: ${label}`);
+      }
+
+      function updateRecordAvailability() {
+        const disabled = state.visionSource === "dog" && !state.dogCameraStreaming && !state.scanning;
+        els.recordToggle.disabled = disabled;
+        els.recordToggle.title = disabled ? "I’m waiting for my dog-cam to wake up." : "";
+      }
+
+      function renderStatus() {
+        if (state.visionSource === "dog") {
+          if (state.dogCameraStreaming) {
+            setStatusPill("I’m ready", "connected");
+          } else if (state.dogConnectionActive) {
+            setStatusPill("I’m warming up", "connecting");
+          } else {
+            setStatusPill("I’m offline", "dog offline");
+          }
+          updateRecordAvailability();
+          return;
+        }
+        setStatusPill(state.transportStatus, state.transportStatus);
+        updateRecordAvailability();
+      }
+
+      function log(message) {
+        const time = new Date().toLocaleTimeString();
+        const row = document.createElement("div");
+        const stamp = document.createElement("span");
+        const body = document.createElement("span");
+        row.className = "log-row";
+        stamp.className = "log-time";
+        body.className = "log-message";
+        stamp.textContent = time;
+        body.textContent = message;
+        row.append(stamp, body);
+        els.log.prepend(row);
+        while (els.log.children.length > 28) {
+          els.log.lastElementChild.remove();
+        }
+      }
+
+      function setScanPending(pending) {
+        state.pendingFrame = pending;
+        document.body.classList.toggle("scan-pending", pending);
+      }
+
+      function setWorkflow(workflow, message) {
+        state.workflow = workflow;
+        if (message) {
+          els.line.textContent = message;
+        }
+        log(`workflow ${workflow}`);
+      }
+
+      function decisionSubtitle(message) {
+        if (message.line) {
+          return message.line;
+        }
+
+        const stateName = String(message.state || "search").replace(/_/g, " ");
+        const target = message.target || {};
+        const targetText = target.description && target.description !== "none"
+          ? ` I see ${target.description}.`
+          : "";
+        const evidenceText = target.free_hand_evidence && target.free_hand_evidence !== "none"
+          ? ` ${target.free_hand_evidence}.`
+          : "";
+        const offer = message.offer || {};
+        const offerText = [offer.drink ? "Coke" : "", offer.photo ? "photo" : ""]
+          .filter(Boolean)
+          .join(" and ");
+
+        if (message.state === "idle") {
+          return "I’m getting ready for the next Coke/photo mission.";
+        }
+        if (message.state === "search") {
+          return "Hunting for a photogenic target.";
+        }
+        if (message.state === "approach") {
+          return `I found a good target.${targetText} I’m rolling over now.`;
+        }
+        if (message.state === "wait_for_coke") {
+          return "Hold that Coke up for me. I’m lining up the shot.";
+        }
+        if (message.state === "photo_ready") {
+          return "Perfect. I’ve got the Coke in frame and I’m taking the photo.";
+        }
+        if (offerText) {
+          return `I’m in ${stateName} mode for a ${offerText}.${targetText}${evidenceText}`;
+        }
+        return `I’m in ${stateName} mode.${targetText}${evidenceText}`;
+      }
+
+      function shouldExecuteRobotMove(message, cmd) {
+        const hasMotion = Math.abs(cmd.linear_x || 0) > 0 || Math.abs(cmd.angular_z || 0) > 0;
+        if (!hasMotion) {
+          return false;
+        }
+        if (message.state === "approach") {
+          return true;
+        }
+        if (
+          message.state === "wait_for_coke" &&
+          state.workflow === "confirm_coke" &&
+          state.visionSource === "dog"
+        ) {
+          return true;
+        }
+        return (
+          message.state === "search" &&
+          state.workflow === "find_guest" &&
+          state.visionSource === "dog"
+        );
+      }
+
+      async function startCamera() {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+        state.stream = stream;
+        els.video.srcObject = state.stream;
+        await els.video.play();
+        setVisionSource("browser");
+        setStatus("camera");
+        log("camera ready");
+      }
+
+      function connect() {
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          setStatus("connected");
+          log("socket already open");
+          return;
+        }
+        const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+        state.ws = new WebSocket(`${scheme}://${window.location.host}/fetch/ws`);
+        setStatus("connecting");
+        state.ws.onopen = () => {
+          setStatus("connected");
+          log("socket open");
+          if (state.scanning) {
+            sendFrame();
+          }
+        };
+        state.ws.onclose = () => {
+          setStatus("offline");
+          state.scanning = false;
+          setScanPending(false);
+          setRunningUi(false);
+          closeRealtimeVoiceSession();
+          if (state.conversationActive) {
+            endConversation(false);
+          }
+          log("socket closed");
+        };
+        state.ws.onerror = () => {
+          setStatus("socket error");
+          log("socket error");
+        };
+        state.ws.onmessage = (event) => handleMessage(JSON.parse(event.data));
+      }
+
+      function captureDataUrl(maxWidth = 640) {
+        const videoWidth = els.video.videoWidth || 1280;
+        const videoHeight = els.video.videoHeight || 720;
+        const width = Math.min(maxWidth, videoWidth);
+        const height = Math.round((width / videoWidth) * videoHeight);
+        els.canvas.width = width;
+        els.canvas.height = height;
+        const ctx = els.canvas.getContext("2d", { alpha: false });
+        ctx.drawImage(els.video, 0, 0, width, height);
+        return els.canvas.toDataURL("image/jpeg", 0.72);
+      }
+
+      async function showPhotoResult(url) {
+        els.photoPreview.src = url;
+      }
+
+      function sendFrame() {
+        if (!state.scanning || state.pendingFrame) {
+          return;
+        }
+        if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        if (state.conversationActive) {
+          const nowTs = Date.now();
+          if (nowTs - state.lastConvFrameAt < CONV_FRAME_INTERVAL_MS) {
+            return;
+          }
+          state.lastConvFrameAt = nowTs;
+        }
+        if (state.visionSource === "dog") {
+          if (!state.dogCameraStreaming || state.lastDogFrames === 0) {
+            log("No live Go2 camera frame received yet");
+            return;
+          }
+          setScanPending(true);
+          state.frameId += 1;
+          state.ws.send(
+            JSON.stringify({
+              type: "dog_frame",
+              frame_id: state.frameId,
+              interaction_phase: state.workflow,
+              ts: Date.now(),
+            }),
+          );
+          return;
+        }
+
+        if (state.visionSource === "record3d") {
+          if (state.lastRecord3dFrames === 0) {
+            log("No Record3D frame received yet");
+            return;
+          }
+          setScanPending(true);
+          state.frameId += 1;
+          state.ws.send(
+            JSON.stringify({
+              type: "record3d_frame",
+              frame_id: state.frameId,
+              interaction_phase: state.workflow,
+              ts: Date.now(),
+            }),
+          );
+          return;
+        }
+        if (!els.video.videoWidth) {
+          return;
+        }
+
+        setScanPending(true);
+        state.frameId += 1;
+        state.ws.send(
+          JSON.stringify({
+            type: "frame",
+            frame_id: state.frameId,
+            image: captureDataUrl(),
+            depth_hint: null,
+            interaction_phase: state.workflow,
+            ts: Date.now(),
+          }),
+        );
+      }
+
+      async function handleMessage(message) {
+        if (message.type === "hello") {
+          state.ttsProvider = message.tts_provider || "openai";
+          state.audioRoute = message.audio_route || "speak";
+          state.realtimeAvailable = Boolean(message.realtime_enabled);
+          state.conversationEnabled = Boolean(message.conversation_enabled);
+          state.openaiAvailable = Boolean(message.openai_available);
+          state.geminiAvailable = Boolean(message.gemini_available);
+          state.cartesiaAvailable = Boolean(message.cartesia_available);
+          // Honor the server's --conversation-model unless the user picked one.
+          if (!state.liveModelExplicit && message.conversation_model) {
+            state.liveModel = message.conversation_model;
+          }
+          reconcileAudioMode();
+          refreshAudioModal();
+          if (state.audioRoute !== "realtime_then_speak") {
+            closeRealtimeVoiceSession();
+          }
+          log(`vision ${message.vision_provider || "openai"} ${message.model}; audio ${state.audioRoute}; mode ${state.audioMode}`);
+          return;
+        }
+        if (message.type === "audio_out") {
+          handleAudioOut(message);
+          return;
+        }
+        if (message.type === "transcript") {
+          handleTranscript(message);
+          return;
+        }
+        if (message.type === "interrupted") {
+          handleInterrupted();
+          return;
+        }
+        if (message.type === "conversation_state") {
+          await handleConversationState(message);
+          return;
+        }
+        if (message.type === "error") {
+          setScanPending(false);
+          if (message.dog) {
+            applyDogStatus(message.dog);
+          }
+          log(message.message);
+          return;
+        }
+        if (message.type !== "decision") {
+          return;
+        }
+
+        setScanPending(false);
+        const now = performance.now();
+        const fps = state.lastDecisionAt ? 1000 / (now - state.lastDecisionAt) : 0;
+        state.lastDecisionAt = now;
+        els.frameRate.textContent = `${fps.toFixed(1)} fps`;
+
+        const cmd = message.simulated_cmd_vel || {};
+        els.motion.textContent = `cmd ${(cmd.linear_x || 0).toFixed(2)} / ${(cmd.angular_z || 0).toFixed(2)}`;
+        const canCenterDuringConversation =
+          state.conversationActive &&
+          message.state === "wait_for_coke" &&
+          state.workflow === "confirm_coke";
+        if (shouldExecuteRobotMove(message, cmd) && (!state.conversationActive || canCenterDuringConversation)) {
+          robotAction({
+            action: "move",
+            linear_x: cmd.linear_x || 0,
+            angular_z: cmd.angular_z || 0,
+            duration_s: cmd.duration_s || 0,
+          });
+        }
+        const target = message.target || {};
+        const offer = message.offer || {};
+        const offerText = [offer.drink ? "drink" : "", offer.photo ? "photo" : ""]
+          .filter(Boolean)
+          .join(" + ") || "none";
+
+        els.line.textContent = decisionSubtitle(message);
+        const targetText = `${target.bearing || "unknown"}, ${target.range || "unknown"}: ${target.description || "none"}`;
+        log(`${message.state}/${message.action || "none"}: ${targetText}; ${target.free_hand_evidence || "none"}; offer ${offerText}`);
+        if (message.dog) {
+          applyDogStatus(message.dog);
+          log(`dog camera ${message.dog.frames_received || 0}, lidar ${message.dog.lidar_frames_received || 0}`);
+        }
+        if (message.record3d) {
+          log(`record3d frames ${message.record3d.frames_received || 0}`);
+        }
+
+        if (state.conversationActive) {
+          // The live conversation owns audio and the photo. Vision frames during
+          // a conversation still may emit tiny rotate-only centering commands.
+          return;
+        }
+
+        if (message.state === "greet" && message.line && state.workflow === "find_guest") {
+          await beginOffer(message);
+          return;
+        }
+
+        if (
+          (message.state === "photo_ready" || message.action === "take_photo_dance") &&
+          state.workflow === "confirm_coke"
+        ) {
+          await completePhoto(message);
+          return;
+        }
+
+        if (message.state === "wait_for_coke" && message.line && state.workflow === "confirm_coke") {
+          await speakOnce(message.line, "coached photo pose");
+        }
+      }
+
+      async function beginOffer(message) {
+        const now = Date.now();
+        if (now - state.lastGreetAt < 12000 || state.speaking) {
+          return;
+        }
+        state.lastGreetAt = now;
+        state.lastLine = message.line;
+        els.motion.textContent = "wave";
+        await robotAction({ action: "wave" });
+        if (state.audioMode === "live" && state.conversationEnabled) {
+          await startMic();
+          if (state.micStream) {
+            state.conversationActive = true;
+            state.lastConvFrameAt = Date.now();
+            setWorkflow("confirm_coke", "Live conversation: taking the order and photo.");
+            if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+              state.ws.send(JSON.stringify({
+                type: "conversation_start",
+                context: message.line,
+                voice: state.voice,
+                model: state.liveModel,
+              }));
+            }
+            log("live conversation started");
+            return;
+          }
+          log("mic unavailable; using scripted offer");
+        }
+        log("wave and Coke-for-photo offer");
+        await speakOnce(message.line, "spoke joke and offer");
+        setWorkflow("confirm_coke", "Hold that Coke up for me. I’m lining up the shot.");
+      }
+
+      async function completePhoto(message) {
+        const now = Date.now();
+        if (now - state.lastPhotoAt < 10000 || state.photoInProgress) {
+          return;
+        }
+        state.lastPhotoAt = now;
+        state.photoInProgress = true;
+        try {
+          const line = message.line || "Hold the Coke up front and center. Cheers.";
+          els.line.textContent = line;
+          await speakOnce(line, "spoke cheese cue");
+          await snapPhoto();
+          await playPrintSound();
+          const doneLine = "Got it. Your photo is ready. Tiny victory dance, then I’m off.";
+          els.line.textContent = doneLine;
+          await speakOnce(doneLine, "spoke photo pickup cue");
+          dance();
+          await robotAction({ action: "dance" });
+          log("photo saved; dance triggered");
+          await sleep(2500);
+          const byeLine = "Thanks for hanging out. Bye.";
+          els.line.textContent = byeLine;
+          await speakOnce(byeLine, "spoke goodbye");
+          setWorkflow("find_guest", "Photo printed. I’m sniffing out the next Coke/photo star.");
+        } finally {
+          state.photoInProgress = false;
+        }
+      }
+
+      async function speakOnce(text, successLog) {
+        if (!text || state.speaking) {
+          return;
+        }
+        state.speaking = true;
+        try {
+          await speak(text);
+          if (successLog) {
+            log(successLog);
+          }
+        } catch (err) {
+          log(`speech ${err.message}`);
+        } finally {
+          state.speaking = false;
+        }
+      }
+
+      function getRealtimeSecretValue(payload) {
+        if (!payload || typeof payload !== "object") {
+          return "";
+        }
+        if (payload.client_secret && typeof payload.client_secret === "object") {
+          return payload.client_secret.value || "";
+        }
+        return payload.value || payload.client_secret || "";
+      }
+
+      async function fetchWithTimeout(
+        url,
+        options = {},
+        timeoutMs = 8000,
+        timeoutMessage = "request timeout",
+        readResponse = null,
+      ) {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetch(url, { ...options, signal: controller.signal });
+          const body = readResponse ? await readResponse(response) : null;
+          return { response, body };
+        } catch (err) {
+          if (err && err.name === "AbortError") {
+            throw new Error(timeoutMessage);
+          }
+          throw err;
+        } finally {
+          window.clearTimeout(timeout);
+        }
+      }
+
+      function waitForRealtimeDataChannel(channel, timeoutMs = 7000) {
+        if (channel.readyState === "open") {
+          return Promise.resolve();
+        }
+        return new Promise((resolve, reject) => {
+          const timeout = window.setTimeout(() => {
+            cleanup();
+            reject(new Error("data channel timeout"));
+          }, timeoutMs);
+          function cleanup() {
+            window.clearTimeout(timeout);
+            channel.removeEventListener("open", handleOpen);
+            channel.removeEventListener("error", handleError);
+          }
+          function handleOpen() {
+            cleanup();
+            resolve();
+          }
+          function handleError() {
+            cleanup();
+            reject(new Error("data channel error"));
+          }
+          channel.addEventListener("open", handleOpen);
+          channel.addEventListener("error", handleError);
+        });
+      }
+
+      function settleRealtimePending(error) {
+        const pending = state.realtimePending;
+        if (!pending) {
+          return;
+        }
+        state.realtimePending = null;
+        window.clearTimeout(pending.timeout);
+        if (error) {
+          pending.reject(error);
+          return;
+        }
+        pending.resolve();
+      }
+
+      function handleRealtimeEvent(event) {
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+
+        if (payload.type === "error") {
+          const message = payload.error?.message || "realtime error";
+          settleRealtimePending(new Error(message));
+          return;
+        }
+
+        if (payload.type === "response.done") {
+          if (payload.response?.status === "failed") {
+            settleRealtimePending(new Error("response failed"));
+            return;
+          }
+          settleRealtimePending();
+          return;
+        }
+
+        if (payload.type === "response.output_audio.done") {
+          settleRealtimePending();
+        }
+      }
+
+      function closeRealtimeVoiceSession() {
+        settleRealtimePending(new Error("realtime session closed"));
+        if (state.realtimeDataChannel) {
+          try {
+            state.realtimeDataChannel.close();
+          } catch {}
+        }
+        if (state.realtimePc) {
+          try {
+            state.realtimePc.close();
+          } catch {}
+        }
+        state.realtimePc = null;
+        state.realtimeDataChannel = null;
+        state.realtimeSessionPromise = null;
+      }
+
+      async function ensureRealtimeVoiceSession() {
+        if (state.realtimeDisabled) {
+          throw new Error("disabled");
+        }
+        if (state.realtimeDataChannel?.readyState === "open" && state.realtimePc) {
+          return {
+            pc: state.realtimePc,
+            channel: state.realtimeDataChannel,
+          };
+        }
+        if (state.realtimeSessionPromise) {
+          return state.realtimeSessionPromise;
+        }
+        if (!window.RTCPeerConnection) {
+          state.realtimeDisabled = true;
+          throw new Error("WebRTC unsupported");
+        }
+
+        state.realtimeSessionPromise = (async () => {
+          const { response: tokenResponse, body: tokenPayload } = await fetchWithTimeout(
+            "/realtime/client-secret",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({}),
+            },
+            REALTIME_CLIENT_SECRET_TIMEOUT_MS,
+            "session timeout",
+            (response) => (response.ok ? response.json() : null),
+          );
+          if (!tokenResponse.ok) {
+            state.realtimeDisabled = true;
+            throw new Error(`session ${tokenResponse.status}`);
+          }
+
+          const clientSecret = getRealtimeSecretValue(tokenPayload);
+          if (!clientSecret) {
+            state.realtimeDisabled = true;
+            throw new Error("missing client secret");
+          }
+
+          const pc = new RTCPeerConnection();
+          const channel = pc.createDataChannel("oai-events");
+          pc.addTransceiver("audio", { direction: "recvonly" });
+          pc.ontrack = (trackEvent) => {
+            const [stream] = trackEvent.streams;
+            if (!stream) {
+              return;
+            }
+            els.audio.removeAttribute("src");
+            els.audio.srcObject = stream;
+            els.audio.play().catch((err) => log(`realtime audio ${err.message}`));
+          };
+          channel.addEventListener("message", handleRealtimeEvent);
+          channel.addEventListener("close", () => {
+            if (state.realtimeDataChannel === channel) {
+              state.realtimeDataChannel = null;
+            }
+          });
+          state.realtimePc = pc;
+          state.realtimeDataChannel = channel;
+
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          const { response: sdpResponse, body: answerSdp } = await fetchWithTimeout(
+            "https://api.openai.com/v1/realtime/calls",
+            {
+              method: "POST",
+              body: offer.sdp,
+              headers: {
+                Authorization: `Bearer ${clientSecret}`,
+                "Content-Type": "application/sdp",
+              },
+            },
+            REALTIME_SDP_TIMEOUT_MS,
+            "calls timeout",
+            (response) => (response.ok ? response.text() : ""),
+          );
+          if (!sdpResponse.ok) {
+            throw new Error(`calls ${sdpResponse.status}`);
+          }
+          await pc.setRemoteDescription({
+            type: "answer",
+            sdp: answerSdp,
+          });
+          await waitForRealtimeDataChannel(channel);
+
+          log(`realtime voice ${tokenPayload.model || "connected"}`);
+          return { pc, channel };
+        })();
+
+        try {
+          return await state.realtimeSessionPromise;
+        } catch (err) {
+          state.realtimeDisabled = true;
+          closeRealtimeVoiceSession();
+          throw err;
+        }
+      }
+
+      async function speakRealtime(text) {
+        const line = String(text || "").trim();
+        if (!line) {
+          return;
+        }
+        const { channel } = await ensureRealtimeVoiceSession();
+        if (channel.readyState !== "open") {
+          throw new Error("data channel closed");
+        }
+
+        const event = JSON.stringify({
+          type: "response.create",
+          response: {
+            conversation: "none",
+            input: [
+              {
+                type: "message",
+                role: "user",
+                content: [
+                  {
+                    type: "input_text",
+                    text: `Fetch dog line to speak verbatim:\n${line}`,
+                  },
+                ],
+              },
+            ],
+            output_modalities: ["audio"],
+            instructions: "Speak the provided Fetch dog line exactly once. Do not add anything before or after it.",
+          },
+        });
+        const done = new Promise((resolve, reject) => {
+          state.realtimePending = {
+            resolve,
+            reject,
+            timeout: window.setTimeout(() => {
+              settleRealtimePending(new Error("response timeout"));
+            }, 12000),
+          };
+        });
+
+        try {
+          channel.send(event);
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error("data channel send failed");
+          const pending = state.realtimePending;
+          if (pending) {
+            state.realtimePending = null;
+            window.clearTimeout(pending.timeout);
+          }
+          throw error;
+        }
+        await done;
+      }
+
+      function shouldUseRealtimeAudio() {
+        return (
+          state.realtimeAvailable &&
+          state.audioRoute === "realtime_then_speak" &&
+          !state.realtimeDisabled
+        );
+      }
+
+      function ttsProviderFor(mode) {
+        if (mode === "openai_tts") return "openai";
+        if (mode === "cartesia_tts") return "cartesia";
+        return "gemini";
+      }
+
+      function audioModeLabel(mode) {
+        if (mode === "live") return "Live";
+        if (mode === "openai_tts") return "OpenAI TTS";
+        if (mode === "cartesia_tts") return "Cartesia TTS";
+        return "Gemini TTS";
+      }
+
+      function loadAudioSettings() {
+        try {
+          const mode = localStorage.getItem("fetch.audioMode");
+          const modeExplicit = localStorage.getItem("fetch.audioModeExplicit") === "1";
+          const voice = localStorage.getItem("fetch.voice");
+          const liveModel = localStorage.getItem("fetch.liveModel");
+          if (mode && AUDIO_MODES.includes(mode)) state.audioMode = mode;
+          state.audioModeExplicit = modeExplicit;
+          if (voice) state.voice = voice;
+          if (liveModel) {
+            state.liveModel = liveModel;
+            state.liveModelExplicit = true; // a stored value is an explicit user choice
+          }
+        } catch {}
+      }
+
+      function persistAudioSettings() {
+        try {
+          localStorage.setItem("fetch.audioMode", state.audioMode);
+          localStorage.setItem("fetch.audioModeExplicit", state.audioModeExplicit ? "1" : "0");
+          localStorage.setItem("fetch.voice", state.voice);
+          localStorage.setItem("fetch.liveModel", state.liveModel);
+        } catch {}
+      }
+
+      function audioModeStatus(mode) {
+        // {available, label} per mode. Live needs the conversation flag AND a
+        // Gemini key; each TTS route needs its own provider key. The label tells
+        // the user exactly what is missing rather than just greying the row out.
+        if (mode === "live") {
+          if (!state.conversationEnabled) return { available: false, label: "Server flag off" };
+          if (!state.geminiAvailable) return { available: false, label: "Needs Gemini key" };
+          return { available: true, label: "Ready" };
+        }
+        if (mode === "gemini_tts") {
+          return state.geminiAvailable
+            ? { available: true, label: "Ready" }
+            : { available: false, label: "Needs Gemini key" };
+        }
+        if (mode === "openai_tts") {
+          return state.openaiAvailable
+            ? { available: true, label: "Ready" }
+            : { available: false, label: "Needs OpenAI key" };
+        }
+        if (mode === "cartesia_tts") {
+          return state.cartesiaAvailable
+            ? { available: true, label: "Ready" }
+            : { available: false, label: "Needs Cartesia key" };
+        }
+        return { available: false, label: "Unavailable" };
+      }
+
+      function audioModeAvailable(mode) {
+        return audioModeStatus(mode).available;
+      }
+
+      function defaultAudioMode() {
+        if (state.conversationEnabled && state.geminiAvailable) return "live";
+        if (state.ttsProvider === "openai" && state.openaiAvailable) return "openai_tts";
+        if (state.ttsProvider === "gemini" && state.geminiAvailable) return "gemini_tts";
+        if (state.ttsProvider === "cartesia" && state.cartesiaAvailable) return "cartesia_tts";
+        if (state.geminiAvailable) return "gemini_tts";
+        if (state.openaiAvailable) return "openai_tts";
+        if (state.cartesiaAvailable) return "cartesia_tts";
+        return state.ttsProvider === "openai" ? "openai_tts" : "gemini_tts";
+      }
+
+      function reconcileAudioMode() {
+        // Older builds saved a provisional mode before provider availability was
+        // known. Only explicit modal choices should override the server default.
+        if (
+          !state.audioModeExplicit ||
+          !AUDIO_MODES.includes(state.audioMode) ||
+          !audioModeAvailable(state.audioMode)
+        ) {
+          state.audioMode = defaultAudioMode();
+          state.audioModeExplicit = false;
+        }
+      }
+
+      function refreshAudioModal() {
+        if (!els.audioModal) return;
+        AUDIO_MODES.forEach((mode) => {
+          const radio = els.audioModal.querySelector(`input[value="${mode}"]`);
+          if (!radio) return;
+          const status = audioModeStatus(mode);
+          radio.disabled = !status.available;
+          const row = radio.closest(".audio-mode");
+          if (row) row.classList.toggle("disabled", !status.available);
+          const badge = els.audioModal.querySelector(`[data-mode-status="${mode}"]`);
+          if (badge) {
+            badge.textContent = status.label;
+            badge.dataset.ready = String(status.available);
+          }
+        });
+        const modeRadio = els.audioModal.querySelector(
+          `input[name="audioMode"][value="${state.audioMode}"]`,
+        );
+        if (modeRadio) modeRadio.checked = true;
+        if (els.audioVoice) els.audioVoice.value = state.voice;
+        // Make sure the active model is selectable even if the server was
+        // launched with a model that isn't one of the built-in options.
+        if (els.audioLiveModel && state.liveModel) {
+          const hasOption = [...els.audioLiveModel.options].some(
+            (opt) => opt.value === state.liveModel,
+          );
+          if (!hasOption) {
+            const opt = document.createElement("option");
+            opt.value = state.liveModel;
+            opt.textContent = state.liveModel;
+            els.audioLiveModel.appendChild(opt);
+          }
+          els.audioLiveModel.value = state.liveModel;
+        }
+        // The live model only matters when Live is usable.
+        const liveReady = audioModeStatus("live").available;
+        const modelField = els.audioModal.querySelector("#audioModelField");
+        if (els.audioLiveModel) els.audioLiveModel.disabled = !liveReady;
+        if (modelField) modelField.classList.toggle("disabled", !liveReady);
+        if (els.audioSettings) {
+          els.audioSettings.textContent = `Audio: ${audioModeLabel(state.audioMode)}`;
+        }
+      }
+
+      function openAudioModal() {
+        refreshAudioModal();
+        state.audioModalOpener = document.activeElement;
+        els.audioModal.hidden = false;
+        const focusTarget =
+          els.audioModal.querySelector('input[name="audioMode"]:checked:not(:disabled)') ||
+          els.audioModal.querySelector('input[name="audioMode"]:not(:disabled)') ||
+          els.audioSave;
+        if (focusTarget) focusTarget.focus();
+      }
+
+      function closeAudioModal() {
+        els.audioModal.hidden = true;
+        if (state.audioModalOpener && typeof state.audioModalOpener.focus === "function") {
+          state.audioModalOpener.focus();
+        }
+        state.audioModalOpener = null;
+      }
+
+      function saveAudioSettings() {
+        const checked = els.audioModal.querySelector('input[name="audioMode"]:checked');
+        const wasLive = state.audioMode === "live";
+        if (checked && AUDIO_MODES.includes(checked.value)) state.audioMode = checked.value;
+        state.audioModeExplicit = Boolean(checked);
+        if (els.audioVoice) state.voice = els.audioVoice.value;
+        if (els.audioLiveModel) {
+          state.liveModel = els.audioLiveModel.value;
+          state.liveModelExplicit = true; // user picked a model in the modal
+        }
+        reconcileAudioMode();
+        persistAudioSettings();
+        if (wasLive && state.audioMode !== "live" && state.conversationActive) {
+          endConversation(true);
+        }
+        refreshAudioModal();
+        closeAudioModal();
+        log(`audio mode ${audioModeLabel(state.audioMode)}, voice ${state.voice}`);
+      }
+
+      async function speak(text = els.line.textContent) {
+        if (!text) {
+          return;
+        }
+        if (shouldUseRealtimeAudio()) {
+          try {
+            await speakRealtime(text);
+            return;
+          } catch (err) {
+            log(`realtime ${err.message}; falling back to tts`);
+          }
+        }
+
+        let response;
+        try {
+          response = await fetch("/speak", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text,
+              voice: state.voice,
+              provider: ttsProviderFor(state.audioMode),
+            }),
+          });
+        } catch (err) {
+          log(`speech ${err.message}; using browser voice`);
+          await speakBrowserFallback(text);
+          return;
+        }
+        if (!response.ok) {
+          let detail = `${response.status}`;
+          try {
+            const body = await response.json();
+            detail = body.error || detail;
+          } catch {
+            detail = `${response.status}`;
+          }
+          log(`speech ${detail}; using browser voice`);
+          await speakBrowserFallback(text);
+          return;
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        if (els.audio.src && els.audio.src.startsWith('blob:')) {
+          URL.revokeObjectURL(els.audio.src);
+        }
+        els.audio.srcObject = null;
+        els.audio.src = url;
+        try {
+          await els.audio.play();
+          await waitForAudioEnded(els.audio);
+        } catch (err) {
+          log(`speech playback ${err.message}; using browser voice`);
+          await speakBrowserFallback(text);
+        }
+      }
+
+      async function speakBrowserFallback(text) {
+        if (!("speechSynthesis" in window) || !window.SpeechSynthesisUtterance) {
+          log("browser voice unavailable");
+          return;
+        }
+        await new Promise((resolve) => {
+          const utterance = new SpeechSynthesisUtterance(text);
+          let settled = false;
+          const finish = () => {
+            if (settled) {
+              return;
+            }
+            settled = true;
+            window.clearTimeout(timeout);
+            resolve();
+          };
+          const timeout = window.setTimeout(finish, Math.max(5000, text.length * 120));
+          utterance.rate = 0.95;
+          utterance.pitch = 1.05;
+          utterance.onend = finish;
+          utterance.onerror = finish;
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.speak(utterance);
+        });
+      }
+
+      function waitForAudioEnded(audio, timeoutMs = 20000) {
+        return new Promise((resolve) => {
+          let settled = false;
+          const finish = () => {
+            if (settled) {
+              return;
+            }
+            settled = true;
+            window.clearTimeout(timeout);
+            audio.removeEventListener("ended", finish);
+            audio.removeEventListener("error", finish);
+            resolve();
+          };
+          const timeout = window.setTimeout(finish, timeoutMs);
+          audio.addEventListener("ended", finish);
+          audio.addEventListener("error", finish);
+        });
+      }
+
+      async function playPrintSound() {
+        const audio = els.printAudio || new Audio(PRINT_SOUND_SRC);
+        audio.pause();
+        audio.currentTime = 0;
+        audio.volume = 0.9;
+        try {
+          await audio.play();
+          log("camera print sound");
+          await waitForAudioEnded(audio, 4000);
+        } catch (err) {
+          log(`print sound ${err.message}`);
+        }
+      }
+
+      async function savePhoto(payload) {
+        const response = await fetch("/photos/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          throw new Error(`save photo ${response.status}`);
+        }
+        return response.json();
+      }
+
+      async function snapPhoto() {
+        if (state.visionSource === "dog") {
+          const saved = await savePhoto({ source: "dog" });
+          const url = `${saved.url}?ts=${Date.now()}`;
+          await showPhotoResult(url);
+          log(`dog photo saved ${saved.icloud_path || saved.path || ""}`);
+          return;
+        }
+        if (state.visionSource === "record3d") {
+          const saved = await savePhoto({ source: "record3d" });
+          const url = `${saved.url}?ts=${Date.now()}`;
+          await showPhotoResult(url);
+          log(`record3d photo saved ${saved.icloud_path || saved.path || ""}`);
+          return;
+        }
+        if (!els.video.videoWidth) {
+          return;
+        }
+        const dataUrl = captureDataUrl(1024);
+        const saved = await savePhoto({ image_data_url: dataUrl });
+        const url = `${saved.url}?ts=${Date.now()}`;
+        await showPhotoResult(url);
+        log(`photo saved ${saved.icloud_path || saved.path || ""}`);
+      }
+
+      function dance() {
+        document.body.classList.add("dancing");
+        els.motion.textContent = "dance";
+        window.setTimeout(() => document.body.classList.remove("dancing"), 1800);
+      }
+
+      function ensureAudioContext() {
+        if (!state.audioContext) {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          state.audioContext = new Ctx();
+        }
+        return state.audioContext;
+      }
+
+      function floatToInt16(input) {
+        const out = new Int16Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          const s = Math.max(-1, Math.min(1, input[i]));
+          out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        return out;
+      }
+
+      function downsampleTo16k(input, inRate, outRate) {
+        if (outRate >= inRate) {
+          return floatToInt16(input);
+        }
+        const ratio = inRate / outRate;
+        const newLen = Math.floor(input.length / ratio);
+        const out = new Int16Array(newLen);
+        for (let i = 0; i < newLen; i++) {
+          const start = Math.floor(i * ratio);
+          const end = Math.min(input.length, Math.floor((i + 1) * ratio));
+          let sum = 0;
+          let count = 0;
+          for (let j = start; j < end; j++) {
+            sum += input[j];
+            count += 1;
+          }
+          const sample = count ? sum / count : 0;
+          const s = Math.max(-1, Math.min(1, sample));
+          out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        return out;
+      }
+
+      function int16ToBase64(int16) {
+        const bytes = new Uint8Array(int16.buffer, int16.byteOffset, int16.byteLength);
+        let binary = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return btoa(binary);
+      }
+
+      function base64ToInt16(b64) {
+        let binary;
+        try {
+          binary = atob(b64 || "");
+        } catch {
+          return new Int16Array(0);
+        }
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return new Int16Array(bytes.buffer, 0, Math.floor(bytes.byteLength / 2));
+      }
+
+      async function startMic() {
+        if (state.micStream) {
+          return;
+        }
+        let micStream = null;
+        try {
+          micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+            video: false,
+          });
+          // Only mark the mic as ready once capture is actually wired up, so a
+          // failure here leaves state.micStream null and beginOffer falls back
+          // to the scripted offer instead of opening a silent live session.
+          await initMicCapture(micStream);
+          state.micStream = micStream;
+          log("mic ready");
+        } catch (err) {
+          log(`mic ${err.message}`);
+          if (micStream) {
+            micStream.getTracks().forEach((track) => track.stop());
+          }
+          stopMic();
+        }
+      }
+
+      function stopMic() {
+        if (state.micWorkletNode) {
+          try { state.micWorkletNode.disconnect(); } catch {}
+          state.micWorkletNode = null;
+        }
+        if (state.micScriptNode) {
+          try { state.micScriptNode.disconnect(); } catch {}
+          state.micScriptNode = null;
+        }
+        if (state.micSource) {
+          try { state.micSource.disconnect(); } catch {}
+          state.micSource = null;
+        }
+        if (state.micStream) {
+          state.micStream.getTracks().forEach((track) => track.stop());
+          state.micStream = null;
+        }
+      }
+
+      async function initMicCapture(stream) {
+        const ctx = ensureAudioContext();
+        if (ctx.state === "suspended") {
+          try { await ctx.resume(); } catch {}
+        }
+        const source = ctx.createMediaStreamSource(stream);
+        state.micSource = source;
+        const inRate = ctx.sampleRate;
+
+        const sendChunk = (float32) => {
+          if (!state.conversationActive) {
+            return;
+          }
+          if (state.echoSuppress && state.echoGate) {
+            return;
+          }
+          const pcm16 = downsampleTo16k(float32, inRate, MIC_TARGET_RATE);
+          if (!pcm16.length) {
+            return;
+          }
+          if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+            state.ws.send(JSON.stringify({
+              type: "mic_chunk",
+              data: int16ToBase64(pcm16),
+              ts: Date.now(),
+            }));
+          }
+        };
+
+        if (ctx.audioWorklet) {
+          try {
+            const processorCode = `
+              class MicProcessor extends AudioWorkletProcessor {
+                constructor() {
+                  super();
+                  this._chunks = [];
+                  this._count = 0;
+                  this._target = Math.floor(sampleRate * 0.1);
+                }
+                process(inputs) {
+                  const input = inputs[0];
+                  if (input && input[0]) {
+                    this._chunks.push(input[0].slice(0));
+                    this._count += input[0].length;
+                    if (this._count >= this._target) {
+                      const merged = new Float32Array(this._count);
+                      let offset = 0;
+                      for (const chunk of this._chunks) { merged.set(chunk, offset); offset += chunk.length; }
+                      this.port.postMessage(merged);
+                      this._chunks = [];
+                      this._count = 0;
+                    }
+                  }
+                  return true;
+                }
+              }
+              registerProcessor('mic-processor', MicProcessor);
+            `;
+            const blob = new Blob([processorCode], { type: "application/javascript" });
+            const url = URL.createObjectURL(blob);
+            try {
+              await ctx.audioWorklet.addModule(url);
+            } finally {
+              URL.revokeObjectURL(url);
+            }
+            const node = new AudioWorkletNode(ctx, "mic-processor");
+            node.port.onmessage = (event) => sendChunk(event.data);
+            source.connect(node);
+            const sink = ctx.createGain();
+            sink.gain.value = 0;
+            node.connect(sink);
+            sink.connect(ctx.destination);
+            state.micWorkletNode = node;
+            return;
+          } catch (err) {
+            log(`worklet ${err.message}; using fallback capture`);
+          }
+        }
+
+        const node = ctx.createScriptProcessor(4096, 1, 1);
+        node.onaudioprocess = (event) => sendChunk(event.inputBuffer.getChannelData(0));
+        source.connect(node);
+        // Route through a muted gain node: a ScriptProcessor must stay connected
+        // to a destination to keep firing, but we don't want to monitor the mic.
+        const sink = ctx.createGain();
+        sink.gain.value = 0;
+        node.connect(sink);
+        sink.connect(ctx.destination);
+        state.micScriptNode = node;
+      }
+
+      function handleAudioOut(message) {
+        const ctx = ensureAudioContext();
+        if (ctx.state === "suspended") {
+          ctx.resume().catch(() => {});
+        }
+        const int16 = base64ToInt16(message.data || "");
+        if (!int16.length) {
+          return;
+        }
+        const float32 = new Float32Array(int16.length);
+        for (let i = 0; i < int16.length; i++) {
+          float32[i] = int16[i] / 32768;
+        }
+        const buffer = ctx.createBuffer(1, float32.length, state.playbackSampleRate);
+        buffer.copyToChannel(float32, 0);
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ctx.destination);
+        const now = ctx.currentTime;
+        let startAt = state.playbackTime;
+        if (startAt < now + 0.02) {
+          startAt = now + 0.02;
+        }
+        src.start(startAt);
+        state.playbackTime = startAt + buffer.duration;
+        state.playbackSources.push(src);
+        state.echoGate = true;
+        src.onended = () => {
+          state.playbackSources = state.playbackSources.filter((s) => s !== src);
+          if (state.playbackSources.length === 0) {
+            state.echoGate = false;
+          }
+        };
+      }
+
+      function handleInterrupted() {
+        for (const src of state.playbackSources) {
+          try { src.stop(); } catch {}
+        }
+        state.playbackSources = [];
+        state.playbackTime = 0;
+        state.echoGate = false;
+      }
+
+      function handleTranscript(message) {
+        if (!message.text) {
+          return;
+        }
+        const who = message.speaker === "user" ? "you" : "dog";
+        log(`${who}: ${message.text}`);
+        if (message.speaker === "dog") {
+          els.line.textContent = message.text;
+        }
+      }
+
+      async function handleConversationState(message) {
+        const conversationState = message.state;
+        if (conversationState === "active") {
+          log("conversation active");
+          return;
+        }
+        if (conversationState === "take_photo") {
+          const now = Date.now();
+          if (now - state.lastPhotoAt < 8000 || state.photoInProgress) {
+            return;
+          }
+          state.lastPhotoAt = now;
+          state.photoInProgress = true;
+          try {
+            await snapPhoto();
+            await playPrintSound();
+            log("conversation photo saved");
+          } catch (err) {
+            log(`photo ${err.message}`);
+          } finally {
+            state.photoInProgress = false;
+          }
+          return;
+        }
+        if (conversationState === "celebrate") {
+          dance();
+          log("conversation celebrate");
+          endConversation(false);
+          return;
+        }
+        if (conversationState === "reset") {
+          log(`conversation reset ${(message.data && message.data.reason) || ""}`);
+          endConversation(false);
+          return;
+        }
+      }
+
+      function endConversation(notifyServer = false) {
+        if (notifyServer && state.ws && state.ws.readyState === WebSocket.OPEN) {
+          try { state.ws.send(JSON.stringify({ type: "conversation_stop" })); } catch {}
+        }
+        state.conversationActive = false;
+        stopMic();
+        handleInterrupted();
+        if (state.scanning) {
+          setWorkflow("find_guest", "Looking for the next customer.");
+        } else {
+          state.workflow = "find_guest";
+        }
+      }
+
+      async function robotAction(payload) {
+        try {
+          const response = await fetch("/robot/action", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const result = await response.json();
+          if (result.enabled === false) {
+            return result;
+          }
+          log(`robot ${payload.action}: ${result.ok ? "ok" : result.message || "failed"}`);
+          return result;
+        } catch (err) {
+          log(`robot ${payload.action} ${err.message}`);
+          return { ok: false };
+        }
+      }
+
+      async function robotPreflight() {
+        try {
+          const response = await fetch("/robot/preflight", { method: "POST" });
+          const result = await response.json();
+          if (result.enabled === false) {
+            log("robot preflight skipped");
+            return result;
+          }
+          log(`robot preflight: ${result.ok ? "ok" : "failed"}`);
+          return result;
+        } catch (err) {
+          log(`robot preflight ${err.message}`);
+          return { ok: false };
+        }
+      }
+
+      function startRobotPreflight() {
+        if (state.robotPreflightPromise) {
+          return state.robotPreflightPromise;
+        }
+        if (!state.scanning) {
+          els.line.textContent = "I’m stretching, balancing, and getting camera-ready.";
+        }
+        state.robotPreflightPromise = robotPreflight().then((result) => {
+          state.robotPreflightComplete = Boolean(result && result.ok);
+          if (!state.scanning) {
+            els.line.textContent = state.robotPreflightComplete
+              ? "I’m ready. Hit Record and I’ll scout for a Coke/photo star."
+              : "I’m still getting my paws steady. Hit Record once my dog-cam is live.";
+          }
+          if (!state.robotPreflightComplete) {
+            state.robotPreflightPromise = null;
+          }
+          return result;
+        });
+        return state.robotPreflightPromise;
+      }
+
+      function sourceFromHealth(health) {
+        if (health.vision_source) {
+          return health.vision_source;
+        }
+        if (health.dog_enabled || health.robot_enabled) {
+          return "dog";
+        }
+        if (health.record3d_enabled) {
+          return "record3d";
+        }
+        return "browser";
+      }
+
+      async function loadHealth() {
+        const response = await fetch("/health");
+        if (!response.ok) {
+          throw new Error(`health ${response.status}`);
+        }
+        return response.json();
+      }
+
+      async function selectVisionSource() {
+        const health = await loadHealth();
+        const source = sourceFromHealth(health);
+        setVisionSource(source);
+        return source;
+      }
+
+      function refreshDogPreview() {
+        if (state.visionSource !== "dog") {
+          return;
+        }
+        state.dogCameraLive = true;
+        els.dogPreview.src = `/dog/stream.mjpg?ts=${Date.now()}`;
+      }
+
+      function showDogPlaceholder() {
+        state.dogCameraLive = false;
+        state.dogLidarLive = false;
+        els.dogPreview.src = DOG_PLACEHOLDER_SRC;
+        els.dogLidarPreview.removeAttribute("src");
+        els.dogLidarPreview.hidden = true;
+        els.dogLidarPreview.closest(".dog-lidar-pane")?.classList.remove("has-lidar");
+      }
+
+      function refreshRecord3dPreview() {
+        if (state.visionSource !== "record3d") {
+          return;
+        }
+        els.record3dPreview.src = `/record3d/stream.mjpg?ts=${Date.now()}`;
+        els.depthPreview.src = `/record3d/stream-depth.mjpg?ts=${Date.now()}`;
+      }
+
+      function setVisionSource(source) {
+        state.visionSource = source;
+        document.body.classList.toggle("dog-mode", source === "dog");
+        document.body.classList.toggle("record3d-mode", source === "record3d");
+        els.sourceLabel.textContent =
+          source === "dog" ? "Go2 WebRTC" : source === "record3d" ? "Record3D RGBD" : "Local camera";
+        renderStatus();
+
+        if (source === "dog") {
+          showDogPlaceholder();
+        } else if (source === "record3d") {
+          refreshRecord3dPreview();
+        }
+      }
+
+      function applyDogStatus(status) {
+        if (!status.enabled) {
+          els.rgbdStatus.textContent = "dog off";
+          state.dogConnectionActive = false;
+          state.dogCameraStreaming = false;
+          renderStatus();
+          return;
+        }
+
+        state.lastDogFrames = status.frames_received || 0;
+        state.lastDogLidarFrames = status.lidar_frames_received || 0;
+        state.dogConnectionActive = Boolean(status.connected);
+        state.dogCameraStreaming = Boolean(status.streaming);
+        renderStatus();
+        if (state.visionSource === "dog" && state.scanning && status.streaming && !state.dogCameraLive) {
+          refreshDogPreview();
+        } else if (state.visionSource === "dog" && !status.streaming && state.dogCameraLive) {
+          showDogPlaceholder();
+        }
+        state.dogLidarLive = Boolean(status.lidar_streaming);
+        if (state.dogLidarLive && !els.dogLidarPreview.src) {
+          els.dogLidarPreview.src = `/dog/lidar-stream.mjpg?ts=${Date.now()}`;
+        } else if (!state.dogLidarLive) {
+          els.dogLidarPreview.removeAttribute("src");
+        }
+        els.dogLidarPreview.hidden = !state.dogLidarLive;
+        els.dogLidarPreview.closest(".dog-lidar-pane")?.classList.toggle("has-lidar", state.dogLidarLive);
+        const cameraStatus = status.streaming
+          ? `cam ${state.lastDogFrames}`
+          : status.stale
+            ? "cam stale"
+            : status.waiting_for_frames
+              ? "cam waiting"
+              : status.last_error
+                ? "cam error"
+                : "cam idle";
+        const lidarStatus = status.lidar_streaming
+          ? `lidar ${state.lastDogLidarFrames}`
+          : status.lidar_stale
+            ? "lidar stale"
+            : status.waiting_for_lidar
+              ? "lidar waiting"
+              : status.lidar_last_error
+                ? "lidar error"
+                : "lidar idle";
+        els.rgbdStatus.textContent = `${cameraStatus} / ${lidarStatus}`;
+
+        if (state.scanning && !status.streaming) {
+          els.line.textContent = "I’m waiting for my dog-cam to come online.";
+        }
+      }
+
+      function applyRecord3dStatus(status) {
+        if (!status.enabled) {
+          els.rgbdStatus.textContent = "rgbd off";
+          return;
+        }
+
+        state.lastRecord3dFrames = status.frames_received || 0;
+        if (status.streaming) {
+          els.rgbdStatus.textContent = `rgbd ${state.lastRecord3dFrames}`;
+          return;
+        }
+
+        if (status.stale) {
+          els.rgbdStatus.textContent = "rgbd stale";
+          els.line.textContent = "Record3D is connected but the frame stream is stale. Tap Start again, then restart streaming in Record3D if needed.";
+          return;
+        }
+
+        if (status.waiting_for_frames) {
+          els.rgbdStatus.textContent = "rgbd waiting";
+          els.line.textContent = "Record3D is connected but not streaming frames. Tap the red streaming toggle in the Record3D app.";
+          return;
+        }
+
+        els.rgbdStatus.textContent = status.last_error ? "rgbd error" : "rgbd idle";
+      }
+
+      async function pollDogStatus() {
+        try {
+          const response = await fetch("/dog/status");
+          applyDogStatus(await response.json());
+        } catch (err) {
+          els.rgbdStatus.textContent = "dog status error";
+        }
+      }
+
+      async function pollRecord3dStatus() {
+        try {
+          const response = await fetch("/record3d/status");
+          applyRecord3dStatus(await response.json());
+        } catch (err) {
+          els.rgbdStatus.textContent = "rgbd status error";
+        }
+      }
+
+      async function pollVisionStatus() {
+        if (state.visionSource === "dog") {
+          await pollDogStatus();
+        } else if (state.visionSource === "record3d") {
+          await pollRecord3dStatus();
+        }
+      }
+
+      function startVisionStatusPolling() {
+        if (state.statusTimer) {
+          window.clearInterval(state.statusTimer);
+        }
+        state.statusTimer = window.setInterval(pollVisionStatus, 1500);
+      }
+
+      async function enableDog() {
+        const response = await fetch("/dog/status");
+        const status = await response.json();
+        if (!status.enabled) {
+          throw new Error("Go2 camera is not enabled on the server");
+        }
+
+        setVisionSource("dog");
+        applyDogStatus(status);
+        log(`dog enabled, camera ${status.frames_received || 0}, lidar ${status.lidar_frames_received || 0}`);
+      }
+
+      async function enableRecord3d() {
+        const response = await fetch("/record3d/status");
+        const status = await response.json();
+        if (!status.enabled) {
+          throw new Error("Record3D is not enabled on the server");
+        }
+
+        setVisionSource("record3d");
+        applyRecord3dStatus(status);
+        log(`record3d enabled, frames ${status.frames_received || 0}`);
+      }
+
+      async function restartRecord3d() {
+        const response = await fetch("/record3d/restart", { method: "POST" });
+        const status = await response.json();
+        applyRecord3dStatus(status);
+        log("record3d receiver restarted");
+      }
+
+      function sleep(ms) {
+        return new Promise((resolve) => window.setTimeout(resolve, ms));
+      }
+
+      async function ensureDogReady() {
+        let status = null;
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          const response = await fetch("/dog/status");
+          status = await response.json();
+          if (!status.enabled) {
+            throw new Error("Go2 camera is not enabled on the server");
+          }
+          applyDogStatus(status);
+          if (status.streaming) {
+            if (!status.lidar_streaming) {
+              log("Go2 LiDAR is not streaming yet; continuing with camera only");
+            }
+            return true;
+          }
+          await sleep(500);
+        }
+
+        const cameraReady = status && status.streaming;
+        const lidarReady = status && status.lidar_streaming;
+        if (!cameraReady) {
+          throw new Error("Go2 WebRTC camera is not streaming yet");
+        }
+        if (!lidarReady) {
+          log("Go2 LiDAR is not streaming yet; continuing with camera only");
+        }
+        return true;
+      }
+
+      async function ensureRecord3dReady() {
+        let response = await fetch("/record3d/status");
+        let status = await response.json();
+        if (!status.enabled) {
+          throw new Error("Record3D is not enabled on the server");
+        }
+
+        if (status.waiting_for_frames || status.stale || status.last_error || !status.frames_received) {
+          await restartRecord3d();
+          await sleep(900);
+          response = await fetch("/record3d/status");
+          status = await response.json();
+        }
+
+        applyRecord3dStatus(status);
+        if (!status.streaming) {
+          log("Waiting for Record3D frames before scanning");
+        }
+        return status.streaming;
+      }
+
+      function setRunningUi(running) {
+        els.recordToggle.dataset.running = String(running);
+        els.recordToggle.textContent = running ? "Recording" : "Record";
+        if (running) {
+          setStatus("running");
+        } else if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          setStatus("connected");
+        } else {
+          setStatus("offline");
+        }
+      }
+
+      async function startAutomation() {
+        const source = await selectVisionSource();
+        if (source === "dog") {
+          await enableDog();
+          await ensureDogReady();
+          await startRobotPreflight();
+          refreshDogPreview();
+        } else if (source === "record3d") {
+          await enableRecord3d();
+          await ensureRecord3dReady();
+        } else {
+          await startCamera();
+        }
+        startVisionStatusPolling();
+        if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+          connect();
+        }
+        state.scanning = true;
+        state.workflow = "find_guest";
+        setRunningUi(true);
+        els.line.textContent = "Hunting for a photogenic target.";
+        log("auto scan started: every 1s");
+        sendFrame();
+        if (state.timer) {
+          window.clearInterval(state.timer);
+        }
+        state.timer = window.setInterval(sendFrame, SCAN_INTERVAL_MS);
+      }
+
+      function stopAutomation() {
+        state.scanning = false;
+        state.workflow = "find_guest";
+        setScanPending(false);
+        if (state.conversationActive) {
+          endConversation(true);
+        }
+        closeRealtimeVoiceSession();
+        if (state.timer) {
+          window.clearInterval(state.timer);
+          state.timer = null;
+        }
+        setRunningUi(false);
+        if (state.visionSource === "dog") {
+          showDogPlaceholder();
+        }
+        log("auto scan stopped");
+      }
+
+      function toggleAutomation() {
+        if (state.scanning) {
+          stopAutomation();
+          return;
+        }
+        startAutomation().catch((err) => log(err.message));
+      }
+
+      async function init() {
+        try {
+          const source = await selectVisionSource();
+          if (source === "dog") {
+            connect();
+            await pollDogStatus();
+            startVisionStatusPolling();
+            startRobotPreflight();
+            log("dog mode selected from health");
+          } else if (source === "record3d") {
+            connect();
+            await pollRecord3dStatus();
+            startVisionStatusPolling();
+            log("record3d mode selected from health");
+          } else {
+            els.rgbdStatus.textContent = "camera idle";
+            log("browser camera mode selected from health");
+          }
+        } catch (err) {
+          log(`init ${err.message}`);
+        }
+      }
+
+      els.recordToggle.addEventListener("click", toggleAutomation);
+      window.addEventListener("beforeunload", closeRealtimeVoiceSession);
+      els.photoPreview.addEventListener("error", () => {
+        els.photoPreview.removeAttribute("src");
+        log("photo unavailable");
+      });
+      els.audioSettings.addEventListener("click", openAudioModal);
+      els.audioSave.addEventListener("click", saveAudioSettings);
+      els.audioModal.addEventListener("click", (event) => {
+        if (event.target.dataset && event.target.dataset.close) {
+          closeAudioModal();
+        }
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !els.audioModal.hidden) {
+          closeAudioModal();
+        }
+      });
+      loadAudioSettings();
+      // Don't reconcile yet: provider availability is unknown until the hello
+      // message arrives, which reconciles against the real keys. Keep any stored
+      // choice (or a provisional default) so we don't clobber it prematurely.
+      if (!AUDIO_MODES.includes(state.audioMode)) {
+        state.audioMode = "gemini_tts";
+      }
+      refreshAudioModal();
+      setRunningUi(false);
+      init();
+    </script>
+  </body>
+</html>
