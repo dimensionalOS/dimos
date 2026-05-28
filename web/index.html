@@ -92,7 +92,7 @@
             rttMs: null,        // best clock-sync RTT (ms)
             offsetMs: 0,        // clock offset (ms)
             cmdHz: 0,           // command-send rate (twist for kb/touch, poses for VR)
-            robotTwist: null,   // {linear_x, linear_y, angular_z} the robot is driving
+            cmd: null,          // robot-measured cmd-plane: {latency_ms, jitter_ms, loss_pct, rate_hz}
         };
         let cmdSendCount = 0;   // rolling counter; sampled into cmdHz once/sec
         let hudTimer = null;    // 1Hz refresh of the browser HUD text + color
@@ -928,10 +928,10 @@ angular.z = 0</pre>
             let msg;
             try { msg = JSON.parse(data); } catch (_) { return; }
             if (msg.type === 'pong') applyPong(msg);
-            // The robot reports the twist it's actually driving — the only way
-            // the (modality-agnostic) operator can see what its thumbsticks /
-            // keys resolved to after robot-side scaling.
-            else if (msg.type === 'robot_telemetry') liveStats.robotTwist = msg.twist;
+            // The robot reports command-plane health measured from the inbound
+            // twist stream (E2E latency / jitter / loss) — what actually arrived,
+            // which the operator can't see from its own send side.
+            else if (msg.type === 'robot_telemetry') liveStats.cmd = msg.cmd;
         }
 
         function applyPong(pong) {
@@ -971,12 +971,17 @@ angular.z = 0</pre>
         const HUD_GOOD = '#34d399', HUD_WARN = '#fbbf24', HUD_BAD = '#f87171';
         function statsHealth() {
             const v = liveStats.video;
-            // No video yet, or RTT not learned → neutral/warn, not a false-good.
+            const c = liveStats.cmd;
+            // No video yet → neutral/warn, not a false-good.
             if (!v) return 'warn';
             const fps = v.fps ?? 0;
             const rtt = liveStats.rttMs ?? Infinity;
-            if (fps < 8 || rtt > 200) return 'bad';
-            if (fps < 18 || rtt > 100 || (v.loss_pct ?? 0) > 3) return 'warn';
+            // Command-plane (latency/loss) is the safety-relevant axis: a laggy
+            // or lossy command link is worse than a degraded picture.
+            const cmdLat = c ? (c.latency_ms ?? 0) : 0;
+            const cmdLoss = c ? (c.loss_pct ?? 0) : 0;
+            if (fps < 8 || rtt > 200 || cmdLat > 200 || cmdLoss > 5) return 'bad';
+            if (fps < 18 || rtt > 100 || (v.loss_pct ?? 0) > 3 || cmdLat > 100 || cmdLoss > 1) return 'warn';
             return 'good';
         }
         function healthColor() {
@@ -994,16 +999,19 @@ angular.z = 0</pre>
         // The fuller detail lines (expand panel + VR quad body).
         function hudDetailLines() {
             const v = liveStats.video || {};
-            const t = liveStats.robotTwist;
-            const drive = t
-                ? `lin ${t.linear_x.toFixed(2)},${t.linear_y.toFixed(2)} m/s  yaw ${t.angular_z.toFixed(2)} rad/s`
+            const c = liveStats.cmd;
+            // Command-plane health the robot measured from the arriving twist
+            // stream (latency/jitter/loss); '—' until robot_telemetry arrives.
+            const cmdLine = c
+                ? `lat ${(c.latency_ms ?? 0).toFixed(0)}ms  jit ${(c.jitter_ms ?? 0).toFixed(0)}ms  ` +
+                  `loss ${c.loss_pct != null ? c.loss_pct.toFixed(1) : '—'}%  ${(c.rate_hz ?? 0).toFixed(0)}Hz`
                 : '—';
             return [
                 `Video  ${(v.fps ?? 0).toFixed(0)}fps  ${(((v.kbps ?? 0) / 1000)).toFixed(1)}mbps  ${v.width ?? '—'}x${v.height ?? '—'}`,
                 `       loss ${(v.loss_pct ?? 0).toFixed(1)}%  jbuf ${(v.jitter_buffer_ms ?? 0).toFixed(0)}ms`,
                 `       decode ${(v.decode_ms ?? 0).toFixed(0)}ms  freezes ${v.freezes ?? 0}`,
-                `Drive  ${drive}`,
-                `Cmd    ${liveStats.cmdHz.toFixed(0)}Hz  RTT ${liveStats.rttMs != null ? liveStats.rttMs.toFixed(0) : '—'}ms`,
+                `Cmd    ${cmdLine}`,
+                `Clock  RTT ${liveStats.rttMs != null ? liveStats.rttMs.toFixed(0) : '—'}ms`,
             ];
         }
 
@@ -1094,11 +1102,16 @@ angular.z = 0</pre>
             gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
         }
 
+        // Temporary VR-quad debug: ?vrdebug=1 forces the panel dead-center,
+        // fully opaque + bright bg, so we can tell "off-screen placement" from
+        // "not drawing at all". Remove once placement is dialed in.
+        const VR_HUD_DEBUG = new URLSearchParams(location.search).has('vrdebug');
+
         function renderStatsToCanvas() {
             const ctx = statsCtx, W = statsCanvas.width, H = statsCanvas.height;
             ctx.clearRect(0, 0, W, H);
             // Dimmed dark panel background (the "dimmed" of always-on dimmable).
-            ctx.fillStyle = 'rgba(17,24,39,0.62)';
+            ctx.fillStyle = VR_HUD_DEBUG ? 'rgba(220,38,38,1.0)' : 'rgba(17,24,39,0.62)';
             ctx.fillRect(0, 0, W, H);
 
             // Header: color dot + summary line.
@@ -1133,13 +1146,19 @@ angular.z = 0</pre>
             gl.vertexAttribPointer(quadUniforms.aUV, 2, gl.FLOAT, false, 16, 8);
             gl.uniform1i(quadUniforms.tex, 0);
 
-            // Place top-right of the video quad: same forward dist, shifted +X
-            // (right) and +Y (up) in view space. Video quad is 0.6 half-width,
-            // dropped QUAD_DROP; sit the stats panel just past its top-right.
+            // Place the panel inside the upper-right of the video quad's
+            // footprint so it stays within the FOV (the emulator's FOV is narrow
+            // — pushing it fully outside the video quad's 0.6m half-width put it
+            // off-screen). Slightly nearer (−1.45m) so it sits in front of the
+            // video, no depth test anyway. Video quad: 0.6×0.3375, dropped 0.2.
             const model = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
-            model[12] = 0.62;            // right (+X)
-            model[13] = -QUAD_DROP + 0.30; // up from the video quad's drop
-            model[14] = -1.5;            // same forward dist as the video quad
+            if (VR_HUD_DEBUG) {
+                model[12] = 0.0; model[13] = 0.0; model[14] = -1.0;  // dead-center
+            } else {
+                model[12] = 0.40;              // right, but within the video's right edge
+                model[13] = -QUAD_DROP + 0.22; // upper area of the video quad
+                model[14] = -1.45;             // just in front of the video quad
+            }
             for (const view of pose.views) {
                 const vp = glLayer.getViewport(view);
                 gl.viewport(vp.x, vp.y, vp.width, vp.height);
@@ -1430,7 +1449,7 @@ angular.z = 0</pre>
             liveStats.rttMs = null;
             liveStats.offsetMs = 0;
             liveStats.cmdHz = 0;
-            liveStats.robotTwist = null;
+            liveStats.cmd = null;
             cmdSendCount = 0;
 
             const canvas = document.getElementById('canvas');
