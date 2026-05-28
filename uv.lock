@@ -40,7 +40,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-05-21T13:22:29.307859Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -2028,6 +2028,7 @@ base = [
     { name = "omegaconf" },
     { name = "openai" },
     { name = "pillow" },
+    { name = "python-multipart" },
     { name = "rerun-sdk" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -2159,6 +2160,7 @@ unitree = [
     { name = "omegaconf" },
     { name = "openai" },
     { name = "pillow" },
+    { name = "python-multipart" },
     { name = "rerun-sdk" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -2192,6 +2194,7 @@ unitree-dds = [
     { name = "omegaconf" },
     { name = "openai" },
     { name = "pillow" },
+    { name = "python-multipart" },
     { name = "rerun-sdk" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -2210,6 +2213,7 @@ web = [
     { name = "fastapi" },
     { name = "ffmpeg-python" },
     { name = "jinja2" },
+    { name = "python-multipart" },
     { name = "soundfile" },
     { name = "sse-starlette" },
     { name = "uvicorn" },
@@ -2457,6 +2461,7 @@ requires-dist = [
     { name = "pyrealsense2", marker = "sys_platform != 'darwin' and extra == 'manipulation'" },
     { name = "python-dotenv" },
     { name = "python-multipart", marker = "extra == 'misc'", specifier = ">=0.0.27" },
+    { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.27" },
     { name = "pyturbojpeg", specifier = "==1.8.2" },
     { name = "pyturbojpeg", marker = "extra == 'docker'" },
     { name = "pyyaml", marker = "extra == 'manipulation'", specifier = ">=6.0" },
