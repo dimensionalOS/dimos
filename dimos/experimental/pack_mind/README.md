@@ -7,6 +7,24 @@ A team of robot dogs explores an unknown space. The question the demo answers:
 dogs, same start, same map; the *only* difference is whether they share one discovered
 map or each keep a private one.
 
+## Pitch deck & diagrams
+
+**🎤 Pitch deck (browser):** <https://pack-mind.pages.dev/> — the idea, the two magic beats
+(handoff + inheritance), the A/B proof, and the fleet-memory-layer business case.
+
+**Share meaning, not maps** — a static zone partition is just a brittle special case of
+shared memory (it can't adapt to failure, discovery, or rebalancing):
+
+![Static partition vs shared memory](docs/pack_mind_partition_vs_memory.png)
+
+**How it works** — every dog, every tick: sense → remember → choose → plan → move, all
+over one shared memory; the A/B knob is whether dogs share that memory or each keep their own:
+
+![PACK MIND search loop and shared memory](docs/packmind_how_it_works.png)
+
+System design — one coordination layer, two substrates (sim shares *cells*, live shares
+*zones*, never coordinates): [`docs/packmind_system_design.png`](docs/packmind_system_design.png).
+
 ## Thesis (and honest limits)
 
 - **Speed:** a pack sharing coverage/discovery memory avoids redundant re-searching, so
