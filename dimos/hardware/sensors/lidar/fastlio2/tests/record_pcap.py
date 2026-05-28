@@ -46,7 +46,7 @@ import sys
 import time
 
 DEFAULT_IFACE = "enp2s0"
-DEFAULT_LIDAR_IP = "192.168.1.107"
+DEFAULT_LIDAR_IP = "192.168.1.157"
 DEFAULT_PORT_RANGE = "56101-56501"
 DEFAULT_OUTPUT_DIR = Path("tests/data/mid360_pcap")
 
