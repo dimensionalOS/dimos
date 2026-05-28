@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import time
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from pydantic import Field
 from reactivex.abc import DisposableBase
@@ -32,7 +32,6 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport
 from dimos.memory2.module import StreamModule, stream_to_port
 from dimos.memory2.store.null import NullStore
 from dimos.memory2.stream import Stream
@@ -43,12 +42,7 @@ from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import camera_optical_frame_id, is_fisheye_model
 from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame
-from dimos.spec.perception import Camera
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    from dimos.core.rpc_client import ModuleProxy
 
 logger = setup_logger()
 
@@ -209,22 +203,3 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
     @rpc
     def stop(self) -> None:
         super().stop()
-
-
-def deploy_marker_detection(
-    dimos: ModuleCoordinator,
-    camera: Camera,
-    prefix: str = "/marker_detection",
-    **kwargs: Any,
-) -> ModuleProxy:
-    """Deploy only :class:`MarkerDetectionStreamModule` and publish detections over LCM.
-
-    For detector plus TF mirroring, use :func:`dimos.perception.fiducial.marker_tf_module.deploy`.
-    """
-    deploy_kwargs = dict(kwargs)
-    deploy_kwargs.setdefault("camera_info_source", camera.camera_info)
-    detector = dimos.deploy(MarkerDetectionStreamModule, **deploy_kwargs)
-    detector.color_image.connect(camera.color_image)
-    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection3DArray)
-    detector.start()
-    return detector

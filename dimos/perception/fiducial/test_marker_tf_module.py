@@ -12,125 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
 import pytest
 
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
-from dimos.perception.fiducial.marker_tf_module import (
-    MarkerTfModule,
-    deploy,
-    deploy_tf_consumer,
-)
-
-
-@pytest.fixture
-def dimos():
-    coord = ModuleCoordinator()
-    coord.start()
-    try:
-        yield coord
-    finally:
-        coord.stop()
-
-
-def test_deploy_builds_detector_to_tf_stack(dimos) -> None:
-    camera = MagicMock()
-    camera.color_image = MagicMock()
-    camera.camera_info = MagicMock()
-    detector = MagicMock()
-    detector.color_image = MagicMock()
-    detector.detections = MagicMock()
-    tf = MagicMock()
-    tf.detections = MagicMock()
-
-    with patch.object(dimos, "deploy", side_effect=[detector, tf]) as mock_deploy:
-        result = deploy(dimos, camera, marker_length_m=0.18)
-
-    assert result is tf
-    assert mock_deploy.call_args_list == [
-        call(
-            MarkerDetectionStreamModule,
-            world_frame="world",
-            marker_length_m=0.18,
-            camera_info_source=camera.camera_info,
-        ),
-        call(
-            MarkerTfModule,
-            markers_frame="markers",
-            world_frame="world",
-            marker_namespace_prefix="marker_tf",
-        ),
-    ]
-    detector.color_image.connect.assert_called_once_with(camera.color_image)
-    assert detector.detections.transport.topic.topic == "/marker_detection/detections"
-    tf.detections.connect.assert_called_once_with(detector.detections)
-    tf.start.assert_called_once()
-    detector.start.assert_called_once()
-
-
-def test_deploy_respects_explicit_tf_and_detector_inputs(dimos) -> None:
-    camera = MagicMock()
-    camera.color_image = MagicMock()
-    camera.camera_info = MagicMock()
-    camera_info_source = MagicMock()
-    detector = MagicMock()
-    detector.color_image = MagicMock()
-    detector.detections = MagicMock()
-    tf = MagicMock()
-    tf.detections = MagicMock()
-
-    with patch.object(dimos, "deploy", side_effect=[detector, tf]) as mock_deploy:
-        deploy(
-            dimos,
-            camera,
-            prefix="/custom_marker_detection",
-            tf_prefix="/ignored",
-            marker_namespace_prefix="bot_a",
-            markers_frame="marker_root",
-            world_frame="map",
-            marker_length_m=0.18,
-            camera_info_source=camera_info_source,
-        )
-
-    assert mock_deploy.call_args_list == [
-        call(
-            MarkerDetectionStreamModule,
-            world_frame="map",
-            marker_length_m=0.18,
-            camera_info_source=camera_info_source,
-        ),
-        call(
-            MarkerTfModule,
-            markers_frame="marker_root",
-            world_frame="map",
-            marker_namespace_prefix="bot_a",
-        ),
-    ]
-    assert detector.detections.transport.topic.topic == "/custom_marker_detection/detections"
-
-
-def test_deploy_tf_consumer_empty_prefix_skips_auto_namespace(dimos) -> None:
-    proxy = MagicMock()
-    source = MagicMock()
-    source.detections = MagicMock()
-
-    with patch.object(dimos, "deploy", return_value=proxy) as mock_deploy:
-        deploy_tf_consumer(dimos, source, prefix="")
-
-    mock_deploy.assert_called_once_with(
-        MarkerTfModule,
-        marker_namespace_prefix=None,
-    )
-    proxy.detections.connect.assert_called_once_with(source.detections)
+from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 
 
 def _detection_array(

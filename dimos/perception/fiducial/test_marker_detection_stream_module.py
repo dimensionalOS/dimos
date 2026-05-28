@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import threading
 from typing import Any
-from unittest.mock import MagicMock
 import uuid
 
 import numpy as np
@@ -34,10 +33,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
-from dimos.perception.fiducial.marker_detection_stream_module import (
-    MarkerDetectionStreamModule,
-    deploy_marker_detection,
-)
+from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_transformer import MarkersPerFrame
 from dimos.perception.fiducial.test_helpers import (
     blank_image,
@@ -133,28 +129,6 @@ def test_marker_detection_stream_module_exposes_single_stream_input() -> None:
         assert set(module.outputs) == {"detections"}
     finally:
         module.stop()
-
-
-def test_deploy_passescamera_info_source_via_config_and_wires_only_image_input() -> None:
-    dimos = MagicMock()
-    proxy = MagicMock()
-    dimos.deploy.return_value = proxy
-    camera = MagicMock()
-    camera.color_image = MagicMock()
-    camera.camera_info = MagicMock()
-
-    result = deploy_marker_detection(dimos, camera, marker_length_m=0.18)
-
-    assert result is proxy
-    dimos.deploy.assert_called_once_with(
-        MarkerDetectionStreamModule,
-        marker_length_m=0.18,
-        camera_info_source=camera.camera_info,
-    )
-    proxy.color_image.connect.assert_called_once_with(camera.color_image)
-    assert not hasattr(proxy, "camera_info") or not proxy.camera_info.connect.called
-    assert proxy.detections.transport.topic.topic == "/marker_detection/detections"
-    proxy.start.assert_called_once()
 
 
 def test_markers_per_frame_groups_markers_and_preserves_empty_frames() -> None:
