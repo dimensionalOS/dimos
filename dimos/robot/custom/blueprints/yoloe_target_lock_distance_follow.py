@@ -22,8 +22,8 @@ from dimos.robot.custom.visualization.detection2d_overlay import (
 )
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import (
     rerun_config as go2_rerun_config,
-    unitree_go2_basic,
 )
+from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.vis_module import vis_module
 
@@ -62,9 +62,6 @@ def _target_lock_rerun_blueprint() -> Any:
                 line_grid=rrb.LineGrid3D(
                     plane=rr.components.Plane3D.XY.with_distance(0.5),
                 ),
-                overrides={
-                    "world/lidar": rrb.EntityBehavior(visible=False),
-                },
             ),
             column_shares=[1, 2],
         ),
@@ -92,22 +89,25 @@ _target_lock_vis = vis_module(
 
 yoloe_target_lock_distance_follow = (
     autoconnect(
-        unitree_go2_basic,
+        unitree_go2,
         _target_lock_vis,
         YoloeTrackingModule.blueprint(),
         BBoxSelectionModule.blueprint(),
         TargetLockModule.blueprint(),
         BBoxDistanceBehaviorModule.blueprint(),
         # Keyboard teleop: publishes tele_cmd_vel when keys held; silent otherwise.
-        # MovementManager muxes tele_cmd_vel (priority) + nav_cmd_vel (task) → cmd_vel.
+        # MovementManager (from unitree_go2) muxes tele_cmd_vel (priority) + nav_cmd_vel
+        # (task) → cmd_vel.
         # When teleop fires, MovementManager publishes stop_movement → teleop_active →
         # BBoxDistanceBehaviorModule resets to idle so YOLO keeps detecting while
         # the user drives; clicking a new bbox restarts the approach task.
+        # When a 3D point is clicked, MovementManager also fires stop_movement → cancels
+        # bbox tracking; BBoxDistanceBehaviorModule cancels A* via _planner spec when a
+        # new bbox task starts.
         KeyboardTeleop.blueprint(publish_only_when_active=True),
-        MovementManager.blueprint(),
     )
     .global_config(
-        n_workers=12,
+        n_workers=16,
         robot_model="unitree_go2",
     )
     .remappings(

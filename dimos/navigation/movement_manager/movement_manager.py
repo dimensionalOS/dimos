@@ -94,6 +94,10 @@ class MovementManager(Module):
             return
 
         logger.debug("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
+        # Cancel any active task (e.g. YOLOE bbox tracking) before starting A* navigation.
+        # Only stop_movement is published here — not the NaN-goal cancel used by _cancel_goal —
+        # because the new real goal below will override the planner state immediately.
+        self.stop_movement.publish(Bool(data=True))
         self.way_point.publish(msg)
         self.goal.publish(msg)
 
