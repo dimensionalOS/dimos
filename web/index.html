@@ -82,6 +82,28 @@
         let videoStatsPrev = null;  // previous sample for byte/frame/loss deltas
         const VIDEO_STATS_INTERVAL_MS = 1000;
 
+        // ─── Live metrics (operator-side HUD, shared by browser + VR) ────────
+        // Single source of truth both renderers read. startVideoStats() writes
+        // the latest video sample here (in addition to sending it to the robot);
+        // applyPong() writes rtt/offset; send() counts command sends for rate.
+        // Nothing here is sent anywhere — it's pure local display state.
+        const liveStats = {
+            video: null,        // latest video_stats payload (see startVideoStats)
+            rttMs: null,        // best clock-sync RTT (ms)
+            offsetMs: 0,        // clock offset (ms)
+            cmdHz: 0,           // command-send rate (twist for kb/touch, poses for VR)
+            robotTwist: null,   // {linear_x, linear_y, angular_z} the robot is driving
+        };
+        let cmdSendCount = 0;   // rolling counter; sampled into cmdHz once/sec
+        let hudTimer = null;    // 1Hz refresh of the browser HUD text + color
+
+        // VR stats quad (canvas-rendered text → texture). Separate from the
+        // video quad; reuses the quadProgram shaders + mat4 helpers.
+        let statsCanvas = null; // hidden 2D canvas the VR stats text is drawn to
+        let statsCtx = null;
+        let statsTex = null;    // GL texture the canvas is uploaded into
+        let statsBuf = null;    // its own vertex buffer (smaller, offset quad)
+
         // Probed once at boot. Quest browser → true; desktop/mobile → false.
         let xrSupported = false;
         const xrDetection = (async () => {
@@ -449,6 +471,7 @@
                 await setupWebRTC(sessionId);
                 setStatus(`Connected — ${robotName}`);
                 startKeyboardLoop();
+                mountHud();  // always-on metrics pill (browser view)
             } catch (e) {
                 console.error(e);
                 setStatus(`Connection failed: ${e.message}`);
@@ -892,6 +915,7 @@ angular.z = 0</pre>
                     decode_ms: decodeMs,
                 };
                 try { channel.send(JSON.stringify(payload)); } catch (_) {}
+                liveStats.video = payload;  // latest sample for the HUD/VR quad
             }, VIDEO_STATS_INTERVAL_MS);
         }
 
@@ -904,6 +928,10 @@ angular.z = 0</pre>
             let msg;
             try { msg = JSON.parse(data); } catch (_) { return; }
             if (msg.type === 'pong') applyPong(msg);
+            // The robot reports the twist it's actually driving — the only way
+            // the (modality-agnostic) operator can see what its thumbsticks /
+            // keys resolved to after robot-side scaling.
+            else if (msg.type === 'robot_telemetry') liveStats.robotTwist = msg.twist;
         }
 
         function applyPong(pong) {
@@ -915,6 +943,8 @@ angular.z = 0</pre>
             const offsetSec =
                 ((pong.robot_ts - pong.client_ts) + (pong.robot_ts - recvTsSec)) / 2;
             clockOffsetMs = offsetSec * 1000;
+            liveStats.rttMs = rttMs;        // for the HUD/VR quad
+            liveStats.offsetMs = clockOffsetMs;
             console.log(`[clock-sync] rtt=${rttMs.toFixed(1)}ms offset=${clockOffsetMs.toFixed(1)}ms`);
             // Report the computed RTT/offset back to the robot (it can't derive
             // these from one-way pings). Only fires when a better min-RTT lands.
@@ -930,6 +960,192 @@ angular.z = 0</pre>
         function send(bytes) {
             if (cmdChannel && cmdChannel.readyState === 'open') {
                 cmdChannel.send(bytes);
+                cmdSendCount++;  // for liveStats.cmdHz
+            }
+        }
+
+        // ─── Live metrics: health + shared formatting ────────────────────────
+        // Thresholds drive the color dot (green/amber/red) in BOTH the browser
+        // HUD and the VR stats quad. This is also the signal S5 (stale-video
+        // lockout) will reuse — "bad" is the disable-drive trigger.
+        const HUD_GOOD = '#34d399', HUD_WARN = '#fbbf24', HUD_BAD = '#f87171';
+        function statsHealth() {
+            const v = liveStats.video;
+            // No video yet, or RTT not learned → neutral/warn, not a false-good.
+            if (!v) return 'warn';
+            const fps = v.fps ?? 0;
+            const rtt = liveStats.rttMs ?? Infinity;
+            if (fps < 8 || rtt > 200) return 'bad';
+            if (fps < 18 || rtt > 100 || (v.loss_pct ?? 0) > 3) return 'warn';
+            return 'good';
+        }
+        function healthColor() {
+            return { good: HUD_GOOD, warn: HUD_WARN, bad: HUD_BAD }[statsHealth()];
+        }
+
+        // The compact one-liner shown in the HUD pill and the VR quad header.
+        function hudSummaryLine() {
+            const v = liveStats.video;
+            const fps = v ? `${(v.fps ?? 0).toFixed(0)}fps` : '—fps';
+            const mbps = v ? `${(((v.kbps ?? 0) / 1000)).toFixed(1)}mbps` : '—mbps';
+            const rtt = liveStats.rttMs != null ? `RTT ${liveStats.rttMs.toFixed(0)}ms` : 'RTT —';
+            return `${fps}  ${mbps}  ${rtt}`;
+        }
+        // The fuller detail lines (expand panel + VR quad body).
+        function hudDetailLines() {
+            const v = liveStats.video || {};
+            const t = liveStats.robotTwist;
+            const drive = t
+                ? `lin ${t.linear_x.toFixed(2)},${t.linear_y.toFixed(2)} m/s  yaw ${t.angular_z.toFixed(2)} rad/s`
+                : '—';
+            return [
+                `Video  ${(v.fps ?? 0).toFixed(0)}fps  ${(((v.kbps ?? 0) / 1000)).toFixed(1)}mbps  ${v.width ?? '—'}x${v.height ?? '—'}`,
+                `       loss ${(v.loss_pct ?? 0).toFixed(1)}%  jbuf ${(v.jitter_buffer_ms ?? 0).toFixed(0)}ms`,
+                `       decode ${(v.decode_ms ?? 0).toFixed(0)}ms  freezes ${v.freezes ?? 0}`,
+                `Drive  ${drive}`,
+                `Cmd    ${liveStats.cmdHz.toFixed(0)}Hz  RTT ${liveStats.rttMs != null ? liveStats.rttMs.toFixed(0) : '—'}ms`,
+            ];
+        }
+
+        // ─── Browser HUD (DOM) ───────────────────────────────────────────────
+        // Always-on corner pill while connected; click to expand the detail
+        // panel. Mounted on connect, refreshed at 1Hz, removed on disconnect.
+        function mountHud() {
+            if (document.getElementById('live-hud')) return;  // already mounted
+            const hud = document.createElement('div');
+            hud.id = 'live-hud';
+            hud.style.cssText =
+                'position:fixed;top:12px;right:12px;z-index:50;font-family:ui-monospace,monospace;' +
+                'cursor:pointer;user-select:none;';
+            hud.innerHTML = `
+                <div id="live-hud-pill" style="display:flex;align-items:center;gap:8px;
+                    background:rgba(17,24,39,0.85);border:1px solid #374151;border-radius:9999px;
+                    padding:6px 12px;color:#e5e7eb;font-size:12px;backdrop-filter:blur(4px);">
+                    <span id="live-hud-dot" style="width:9px;height:9px;border-radius:9999px;
+                        background:${HUD_WARN};"></span>
+                    <span id="live-hud-summary">—</span>
+                </div>
+                <pre id="live-hud-panel" style="display:none;margin:6px 0 0;
+                    background:rgba(17,24,39,0.92);border:1px solid #374151;border-radius:8px;
+                    padding:10px 12px;color:#86efac;font-size:11px;line-height:1.5;
+                    white-space:pre;"></pre>`;
+            // Click the pill to expand/collapse the detail panel.
+            hud.onclick = () => {
+                const panel = document.getElementById('live-hud-panel');
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                refreshHud();
+            };
+            document.body.appendChild(hud);
+
+            let lastSampleMs = performance.now();
+            hudTimer = setInterval(() => {
+                // Sample command rate from the running counter (works for both
+                // keyboard twists and VR poses — both go through send()).
+                const now = performance.now();
+                const dt = (now - lastSampleMs) / 1000;
+                if (dt > 0) liveStats.cmdHz = cmdSendCount / dt;
+                cmdSendCount = 0;
+                lastSampleMs = now;
+                refreshHud();
+            }, 1000);
+            refreshHud();
+        }
+        function refreshHud() {
+            const dot = document.getElementById('live-hud-dot');
+            const summary = document.getElementById('live-hud-summary');
+            if (!dot || !summary) return;
+            dot.style.background = healthColor();
+            summary.textContent = hudSummaryLine();
+            const panel = document.getElementById('live-hud-panel');
+            if (panel && panel.style.display !== 'none') {
+                panel.textContent = hudDetailLines().join('\n');
+            }
+        }
+        function unmountHud() {
+            if (hudTimer) { clearInterval(hudTimer); hudTimer = null; }
+            const hud = document.getElementById('live-hud');
+            if (hud) hud.remove();
+        }
+
+        // ─── VR stats quad (WebGL) ───────────────────────────────────────────
+        // Immersive XR has no DOM, so stats are drawn to a hidden 2D canvas,
+        // uploaded as a texture, and rendered as a small dimmed quad top-right
+        // of the video quad. Mirrors initVideoQuad/drawVideoQuad.
+        function initStatsQuad() {
+            statsCanvas = document.createElement('canvas');
+            statsCanvas.width = 512; statsCanvas.height = 256;
+            statsCtx = statsCanvas.getContext('2d');
+
+            statsTex = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, statsTex);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+            // Smaller panel (0.34m wide, 2:1 to match the 512x256 canvas), its
+            // own buffer; reuses the video quad's shader program + attributes.
+            const w = 0.17, h = 0.085;
+            const verts = new Float32Array([
+                -w, -h, 0, 1,   w, -h, 1, 1,   w, h, 1, 0,
+                -w, -h, 0, 1,   w, h, 1, 0,   -w, h, 0, 0,
+            ]);
+            statsBuf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, statsBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+        }
+
+        function renderStatsToCanvas() {
+            const ctx = statsCtx, W = statsCanvas.width, H = statsCanvas.height;
+            ctx.clearRect(0, 0, W, H);
+            // Dimmed dark panel background (the "dimmed" of always-on dimmable).
+            ctx.fillStyle = 'rgba(17,24,39,0.62)';
+            ctx.fillRect(0, 0, W, H);
+
+            // Header: color dot + summary line.
+            ctx.fillStyle = healthColor();
+            ctx.beginPath(); ctx.arc(28, 34, 11, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#e5e7eb';
+            ctx.font = '600 26px ui-monospace, monospace';
+            ctx.fillText(hudSummaryLine(), 50, 43);
+
+            // Body: detail lines.
+            ctx.fillStyle = '#86efac';
+            ctx.font = '22px ui-monospace, monospace';
+            const lines = hudDetailLines();
+            for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 16, 86 + i * 30);
+        }
+
+        function drawStatsQuad(frame, glLayer) {
+            if (!statsBuf) return;
+            const pose = frame.getViewerPose(xrRefSpace);
+            if (!pose) return;
+
+            renderStatsToCanvas();
+            gl.disable(gl.DEPTH_TEST);  // HUD overlay, like the video quad
+            gl.bindTexture(gl.TEXTURE_2D, statsTex);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, statsCanvas);
+
+            gl.useProgram(quadProgram);
+            gl.bindBuffer(gl.ARRAY_BUFFER, statsBuf);
+            gl.enableVertexAttribArray(quadUniforms.aPos);
+            gl.vertexAttribPointer(quadUniforms.aPos, 2, gl.FLOAT, false, 16, 0);
+            gl.enableVertexAttribArray(quadUniforms.aUV);
+            gl.vertexAttribPointer(quadUniforms.aUV, 2, gl.FLOAT, false, 16, 8);
+            gl.uniform1i(quadUniforms.tex, 0);
+
+            // Place top-right of the video quad: same forward dist, shifted +X
+            // (right) and +Y (up) in view space. Video quad is 0.6 half-width,
+            // dropped QUAD_DROP; sit the stats panel just past its top-right.
+            const model = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+            model[12] = 0.62;            // right (+X)
+            model[13] = -QUAD_DROP + 0.30; // up from the video quad's drop
+            model[14] = -1.5;            // same forward dist as the video quad
+            for (const view of pose.views) {
+                const vp = glLayer.getViewport(view);
+                gl.viewport(vp.x, vp.y, vp.width, vp.height);
+                const mvp = mat4mul(view.projectionMatrix, model);
+                gl.uniformMatrix4fv(quadUniforms.mvp, false, mvp);
+                gl.drawArrays(gl.TRIANGLES, 0, 6);
             }
         }
 
@@ -995,6 +1211,7 @@ angular.z = 0</pre>
             if (!gl) throw new Error('WebGL not supported');
             gl.clearColor(0, 0, 0, 0);
             initVideoQuad();
+            initStatsQuad();
         }
 
         // column-major 4x4 multiply (a * b), arrays of length 16.
@@ -1126,6 +1343,20 @@ angular.z = 0</pre>
             gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
             drawVideoQuad(frame, glLayer);
+            sampleCmdHz(time);              // VR has no DOM hudTimer to do this
+            drawStatsQuad(frame, glLayer);  // always-on dimmed metrics quad
+        }
+
+        // Roll cmdSendCount → liveStats.cmdHz once per second. The browser HUD's
+        // hudTimer does this for the DOM view; VR drives it off the XR frame loop.
+        let lastCmdSampleMs = 0;
+        function sampleCmdHz(nowMs) {
+            if (!lastCmdSampleMs) { lastCmdSampleMs = nowMs; return; }
+            const dt = (nowMs - lastCmdSampleMs) / 1000;
+            if (dt < 1.0) return;
+            liveStats.cmdHz = cmdSendCount / dt;
+            cmdSendCount = 0;
+            lastCmdSampleMs = nowMs;
         }
 
         async function startVR() {
@@ -1179,6 +1410,7 @@ angular.z = 0</pre>
             stopKeyboardLoop();
             stopClockSync();
             stopVideoStats();
+            unmountHud();
             if (xrSession) { await xrSession.end().catch(() => {}); xrSession = null; }
             if (cmdChannel) { try { cmdChannel.close(); } catch (_) {} cmdChannel = null; }
             if (stateChannel) { try { stateChannel.close(); } catch (_) {} stateChannel = null; }
@@ -1194,6 +1426,12 @@ angular.z = 0</pre>
             if (pc) { try { pc.close(); } catch (_) {} pc = null; }
             clockOffsetMs = 0;
             bestRttMs = Infinity;
+            liveStats.video = null;
+            liveStats.rttMs = null;
+            liveStats.offsetMs = 0;
+            liveStats.cmdHz = 0;
+            liveStats.robotTwist = null;
+            cmdSendCount = 0;
 
             const canvas = document.getElementById('canvas');
             canvas.style.display = 'none';
