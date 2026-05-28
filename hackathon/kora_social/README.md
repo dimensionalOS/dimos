@@ -1,7 +1,7 @@
 # Kora Social
 
 <p align="center">
-  <img src="static/brand/kora-banner.png" alt="Kora Social" />
+  <img src="static/brand/kora-banner.png" alt="Kora Social" width="520" />
 </p>
 
 Kora Social is a dashboard for a Unitree Go2 robot that captures its own point of view, drafts X posts with OpenRouter vision models, and lets people ask the robot what it sees through X mentions.
@@ -21,13 +21,25 @@ Kora Social is a dashboard for a Unitree Go2 robot that captures its own point o
 </p>
 
 <p align="center">
-  <img src="static/brand/kora.png" alt="Kora robot in Shanghai" width="640" />
+  <img src="static/brand/kora.png" alt="Kora robot in Shanghai" width="420" />
+</p>
+
+## Submission Video
+
+[Watch the Kora Social submission video](static/media/kora-social-submission.mp4)
+
+The video shows the demo flow, the X profile, and example brand activation moments.
+
+<p align="center">
+  <img src="static/media/kora-coke-activation.png" alt="Kora Coca-Cola activation example" width="240" />
+  &nbsp;&nbsp;
+  <img src="static/media/kora-sephora-activation.png" alt="Kora Sephora activation example" width="240" />
 </p>
 
 ## Links
 
 - Kora on X: [@DimensionalKora](https://x.com/DimensionalKora)
-- MadBuilders: [mad.builders](https://www.mad.builders), a Madrid home base for founders, builders, hackathons, meetups, and early-stage ideas
+- MadBuilders: [mad.builders](https://www.mad.builders), a Madrid home base for founders, builders, hackathons, meetups, and early-stage ideas, made possible by [Samplia](https://samplia.com/)
 
 ## What it does
 
