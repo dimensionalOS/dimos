@@ -24,9 +24,12 @@ Kora Social is a dashboard for a Unitree Go2 robot that captures its own point o
   <img src="static/brand/kora.png" alt="Kora robot in Shanghai" width="420" />
 </p>
 
+Robots create a new kind of live activation: they are still novel enough to draw attention, but capable enough to become interactive hosts, camera operators, and social media characters. Kora turns that attention into shareable moments by walking around an event, capturing what it sees, and letting people interact with it through X.
+
 ## Submission Video
 
-[Watch the Kora Social submission video](static/media/kora-social-submission.mp4)
+- [Watch the video on X](https://x.com/DimensionalKora/status/2059990722540081374)
+- [Download the submission video](https://raw.githubusercontent.com/bartomolina/dimos/feat/kora-social/hackathon/kora_social/static/media/kora-social-submission.mp4)
 
 The video shows the demo flow, the X profile, and example brand activation moments.
 
