@@ -12,20 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Blueprint + entrypoint for the path-planner evaluator.
+"""Blueprint for the path-planner evaluator.
 
-Wires the Evaluator and StraightLinePlanner together and bridges all
-streams to rerun. Run with::
+Wires the Evaluator and StraightLinePlanner together and bridges all streams to rerun.
+Run with::
 
-    python -m dimos.navigation.nav_stack.evaluator.main
+    dimos run path-planner-eval
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.nav_stack.evaluator.evaluator import Evaluator
 from dimos.navigation.nav_stack.evaluator.straight_line_planner import StraightLinePlanner
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -38,7 +37,7 @@ def _render_start_pose(msg: Any) -> Any:
 
     return rr.Points3D(
         positions=[[msg.x, msg.y, msg.z]],
-        colors=[[0, 255, 0]],  # green
+        colors=[[0, 255, 0]],
         radii=[_POSE_MARKER_RADIUS],
     )
 
@@ -48,23 +47,21 @@ def _render_goal_pose(msg: Any) -> Any:
 
     return rr.Points3D(
         positions=[[msg.x, msg.y, msg.z]],
-        colors=[[255, 0, 0]],  # red
+        colors=[[255, 0, 0]],
         radii=[_POSE_MARKER_RADIUS],
     )
 
 
-def create_evaluator_blueprint() -> Blueprint:
-    return autoconnect(
-        Evaluator.blueprint(),
-        StraightLinePlanner.blueprint(),
-        RerunBridgeModule.blueprint(
-            visual_override={
-                "world/start_pose": _render_start_pose,
-                "world/goal_pose": _render_goal_pose,
-            }
-        ),
-    )
+path_planner_eval = autoconnect(
+    Evaluator.blueprint(),
+    StraightLinePlanner.blueprint(),
+    RerunBridgeModule.blueprint(
+        visual_override={
+            "world/start_pose": _render_start_pose,
+            "world/goal_pose": _render_goal_pose,
+        }
+    ),
+)
 
 
-if __name__ == "__main__":
-    ModuleCoordinator.build(create_evaluator_blueprint()).loop()
+__all__ = ["path_planner_eval"]
