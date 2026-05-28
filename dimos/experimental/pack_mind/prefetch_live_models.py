@@ -42,17 +42,28 @@ os.environ["TRANSFORMERS_OFFLINE"] = "0"
 
 from huggingface_hub import snapshot_download  # noqa: E402
 
-MODELS: list[tuple[str, str]] = [
-    ("vikhyatk/moondream2", "look_out_for detection VLM (detection_model=moondream)"),
+# Plain snapshot is enough for these (loaded straight from the cached dir).
+SNAPSHOT_MODELS: list[tuple[str, str]] = [
     ("Systran/faster-whisper-base", "WebInput voice STT (faster-whisper)"),
 ]
 
 
 def main() -> None:
-    for repo, why in MODELS:
+    for repo, why in SNAPSHOT_MODELS:
         print(f"\n== {repo}  — {why}")
-        path = snapshot_download(repo)
-        print(f"   cached: {path}")
+        print(f"   cached: {snapshot_download(repo)}")
+
+    # moondream2 is loaded via trust_remote_code, which pulls THREE things a plain
+    # snapshot_download misses: the weights, the custom code modules
+    # (transformers_modules/...), and a SEPARATE tokenizer repo it references
+    # (moondream/starmie-v1). A full from_pretrained fetches all of them, so the
+    # live look_out_for then loads fully offline.
+    print("\n== vikhyatk/moondream2  — look_out_for VLM (full load for transitive deps)")
+    from transformers import AutoModelForCausalLM
+
+    AutoModelForCausalLM.from_pretrained("vikhyatk/moondream2", trust_remote_code=True)
+    print("   moondream2 + code modules + starmie-v1 tokenizer cached")
+
     print("\nDone. Run the live demo with HF_HUB_OFFLINE=1 — models load from cache.")
 
 
