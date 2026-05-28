@@ -35,9 +35,21 @@ camera frame (+depth)
   at `192.168.12.1` as well as standard Wi-Fi.
 - **Fetch is the behavior layer.** The vision-LLM decision loop, persona, approach/
   trade/photo state machine, and voice all sit on top of DimOS primitives.
-- **Real-time by design.** A ~1-second scan loop, a low-latency vision model (the
-  live demo runs on **Gemini 2.5 Flash-Lite**), and fast speech (Cartesia Sonic by
-  default) keep the interaction feeling live, not turn-based.
+- **Real-time by design.** We benchmarked round-trip latency across vision and speech
+  models (`scripts/latency_bench.py`) and run the fastest combo — **Gemini 2.5
+  Flash-Lite** vision + **Cartesia Sonic** speech; camera frames are downscaled
+  (≤640 px) before analysis, and the whole scan loop lands around one second.
+
+## Why a beach?
+
+Quadrupeds earn their keep on terrain wheels can't handle, so we built Fetch around
+that. We chose **sand** for a form-factor reason: the Go2's camera sits low and looks
+*up* at standing people, but on a beach people sit or lie on the sand — dropping into
+the dog's natural eye-line and making the interaction feel natural. And it's feasible
+today: quadrupeds already run on sand
+([RaiBo](https://techxplore.com/news/2023-01-raibo-versatile-robo-dog-sandy-beach.html)
+at 3 m/s) and [sand-walking foot
+adaptations](https://www.popsci.com/technology/robot-moose/) cut foot sinkage ~46%.
 
 ## What We Built
 
@@ -92,6 +104,17 @@ Open `https://127.0.0.1:8455/fetch` and tap **Record** to start the ~1-second sc
 loop. To drive a real dog, add `--robot-ip 192.168.12.1 --robot-connection-method
 local_ap`. The full quickstart (Record3D USB, live Go2, provider keys, and voice
 modes) is in the project README.
+
+## What's Next
+
+- **Sense the trade.** The Go2 EDU's [foot-force sensors](https://www.unitree.com/go2/foot/)
+  could detect a Coke lifted from the back via the change in total load — closing the
+  loop without the camera's framing check.
+- **Real sand.** Fit sand-walking foot adaptations for an outdoor beach deployment.
+
+**The bigger picture:** Fetch is an autonomous **brand ambassador** and **mobile
+vendor** (Coca-Cola here), pointing toward fleets of autonomous robot-dog vendors that
+self-resupply at beachside bars/vendors or autonomous resupply stations.
 
 ## Scope Boundary
 
