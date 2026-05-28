@@ -73,6 +73,7 @@ all_blueprints = {
     "openarm-planner-coordinator": "dimos.robot.manipulators.openarm.blueprints:openarm_planner_coordinator",
     "teleop-phone": "dimos.teleop.phone.blueprints:teleop_phone",
     "teleop-phone-go2": "dimos.teleop.phone.blueprints:teleop_phone_go2",
+    "teleop-phone-go2-agentic": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_phone:teleop_phone_go2_agentic",
     "teleop-phone-go2-fleet": "dimos.teleop.phone.blueprints:teleop_phone_go2_fleet",
     "teleop-quest-dual": "dimos.teleop.quest.blueprints:teleop_quest_dual",
     "teleop-quest-piper": "dimos.teleop.quest.blueprints:teleop_quest_piper",
