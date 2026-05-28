@@ -93,12 +93,22 @@ class SerializableVideoFrame:
 class UnitreeWebRTCConnection(Resource):
     _SPORT_API_ID_RAGEMODE: int = 2059
 
+    _AP_GATEWAY_IP: str = "192.168.12.1"
+
     def __init__(self, ip: str, mode: str = "ai") -> None:
         self.ip = ip
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
-        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
+        # When joined to the robot's own WiFi hotspot the gateway is always
+        # 192.168.12.1 and the peer expects the LocalAP handshake (empty SDP id).
+        # Any other IP means the robot is on a shared LAN → LocalSTA.
+        method = (
+            WebRTCConnectionMethod.LocalAP
+            if self.ip == self._AP_GATEWAY_IP
+            else WebRTCConnectionMethod.LocalSTA
+        )
+        self.conn = LegionConnection(method, ip=self.ip)
         self.connect()
 
     def connect(self) -> None:
