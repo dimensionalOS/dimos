@@ -4,10 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vercel dev",
     "lint": "node --check 'api/[...speaker].js'"
-  },
-  "devDependencies": {
-    "vercel": "^54.5.1"
   }
 }

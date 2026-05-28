@@ -19,7 +19,6 @@ Create a Vercel project from this directory:
 
 ```bash
 cd apps/seat-guide-speaker-vercel
-npm install
 npx vercel
 ```
 
@@ -39,7 +38,6 @@ Tap `Enable speaker`. Keep Safari open and unlocked.
 
 ```bash
 curl -X POST "https://<your-vercel-domain>/api/speak" \
-  -H "authorization: Bearer $SPEAKER_API_TOKEN" \
   -H "content-type: application/json" \
   -d '{"device":"go2-demo","text":"我已经到了, 请坐。"}'
 ```
