@@ -215,7 +215,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 
-
 class MyRobotControl(Module):
     config: ModuleConfig
     cmd_vel: In[Twist]
