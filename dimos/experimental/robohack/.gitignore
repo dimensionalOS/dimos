@@ -1,0 +1,23 @@
+# env / secrets
+.env
+.env.*
+*.key
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.uv/
+
+# os / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# robot artifacts
+*.bag
+*.rrd
+captures/
+maps/

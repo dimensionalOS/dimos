@@ -1,0 +1,8 @@
+{
+  "name": "gateway",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "docker run --rm --network host -e PORT=4470 -e SERVER_URL=http://localhost:4471 -e WEB_URL=http://localhost:4472 -v \"$PWD/Caddyfile.dev:/etc/caddy/Caddyfile:ro\" caddy:2-alpine"
+  }
+}

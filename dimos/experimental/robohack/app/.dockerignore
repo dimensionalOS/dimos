@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+.next
+**/.next
+.turbo
+**/.turbo
+dist
+**/dist
+.git
+.env
+.env.*
+**/.env
+**/.env.*
+*.md
+.DS_Store
