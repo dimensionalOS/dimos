@@ -12,7 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the GPU-free red-object detector (the demo's reliable find path)."""
+"""Tests for the GPU-free red-object detector (the demo's reliable find path).
+
+These cover the detection logic (``red_fraction``). The detector→coordinator glue
+(``look_for_red`` posting a finding with the coordinator filling the claimed zone)
+is covered by the coordinator server tests (report_finding + zone fallback); the
+full chain was also verified manually end-to-end. We don't construct the
+``RedObjectDetector`` Module here because instantiating a DimOS Module standalone
+leaks framework threads that the suite's thread-leak guard rejects.
+"""
 
 import numpy as np
 import pytest
