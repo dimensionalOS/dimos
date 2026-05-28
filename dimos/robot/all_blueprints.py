@@ -125,6 +125,7 @@ all_blueprints = {
     "xarm7-planner-coordinator-agent": "dimos.manipulation.blueprints:xarm7_planner_coordinator_agent",
     "yoloe-keyboard-teleop": "dimos.robot.custom.blueprints.yoloe_keyboard_teleop:yoloe_keyboard_teleop",
     "yoloe-spatial-standoff-follow": "dimos.robot.custom.blueprints.yoloe_spatial_standoff_follow:yoloe_spatial_standoff_follow",
+    "yoloe-spatial-standoff-follow-ui": "dimos.robot.custom.blueprints.yoloe_spatial_standoff_follow:yoloe_spatial_standoff_follow_ui",
     "yoloe-target-lock-distance-follow": "dimos.robot.custom.blueprints.yoloe_target_lock_distance_follow:yoloe_target_lock_distance_follow",
     "yoloe-tracking-test": "dimos.robot.custom.blueprints.yoloe_tracking_test:yoloe_tracking_test",
 }

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dimos.apps.marauders_map.module import ReidMapModule
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
@@ -41,6 +42,7 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import (
     rerun_config as go2_rerun_config,
 )
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
+from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.vis_module import vis_module
 
@@ -161,8 +163,69 @@ yoloe_spatial_standoff_follow = (
     )
 )
 
+yoloe_spatial_standoff_follow_ui = (
+    autoconnect(
+        unitree_go2,
+        _spatial_standoff_vis,
+        YoloeTrackingModule.blueprint(),
+        BBoxSelectionModule.blueprint(),
+        SpatialTargetLockModule.blueprint(),
+        TargetStandoffBehaviorModule.blueprint(),
+        ReidMapModule.blueprint(
+            camera_info=GO2Connection.camera_info_static,
+            enable_reid=False,
+        ),
+    )
+    .global_config(
+        n_workers=16,
+        robot_model="unitree_go2",
+    )
+    .remappings(
+        [
+            (BBoxSelectionModule, "selected_bbox", "user_selected_bbox"),
+            (SpatialTargetLockModule, "selected_bbox", "user_selected_bbox"),
+            (TargetStandoffBehaviorModule, "teleop_active", "stop_movement"),
+            (ReplanningAStarPlanner, "clicked_point", "planner_clicked_point"),
+            (ReidMapModule, "cmd_vel", "tele_cmd_vel"),
+            (ReidMapModule, "pointcloud", "global_map"),
+        ]
+    )
+    .transports(
+        {
+            ("detections", Detection2DArray): LCMTransport(
+                _YOLOE_DETECTIONS_TOPIC,
+                Detection2DArray,
+            ),
+            ("user_selected_bbox", Detection2DArray): LCMTransport(
+                _USER_SELECTED_BBOX_TOPIC,
+                Detection2DArray,
+            ),
+            ("locked_bbox", Detection2DArray): LCMTransport(
+                _LOCKED_BBOX_TOPIC,
+                Detection2DArray,
+            ),
+            ("target_pose", PoseStamped): LCMTransport(
+                _TARGET_POSE_TOPIC,
+                PoseStamped,
+            ),
+            ("nav_cmd_vel", Twist): LCMTransport(
+                _NAV_CMD_VEL_TOPIC,
+                Twist,
+            ),
+            ("tele_cmd_vel", Twist): LCMTransport(
+                _TELE_CMD_VEL_TOPIC,
+                Twist,
+            ),
+        }
+    )
+    .requirements(
+        _require_yoloe_lrpc_model,
+    )
+)
+
 __all__ = [
     "yoloe_spatial_standoff_follow",
+    "yoloe_spatial_standoff_follow_ui",
 ]
 
 

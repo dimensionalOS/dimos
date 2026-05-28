@@ -51,6 +51,7 @@ import time
 from typing import Any
 
 import cv2
+from dimos_lcm.std_msgs import Bool  # planner stop_movement uses LCM std_msgs/Bool
 import numpy as np
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
@@ -72,8 +73,6 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
-from dimos_lcm.std_msgs import Bool  # planner stop_movement uses LCM std_msgs/Bool
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
@@ -391,7 +390,11 @@ class ReidMapModule(Module):
 
         @self.sio.event  # type: ignore[untyped-decorator]
         async def deselect(sid, data) -> None:  # type: ignore[no-untyped-def]
-            """Web clears the selection -> empty Detection2DArray."""
+            """Web clears the selection and interrupts any active task."""
+            try:
+                self.stop_movement.publish(Bool(data=True))
+            except Exception:
+                logger.exception("Marauder's Map: stop_movement publish failed (on deselect)")
             self._publish_selection(None)
 
         @self.sio.event  # type: ignore[untyped-decorator]
@@ -405,8 +408,9 @@ class ReidMapModule(Module):
                 wy = float(data.get("wy"))
             except Exception:
                 return
-            # Clear any locked person so bbox-follow stops driving nav_cmd_vel.
+            # Stop any active task before handing nav_cmd_vel back to the planner.
             try:
+                self.stop_movement.publish(Bool(data=True))
                 self._publish_selection(None)
             except Exception:
                 logger.exception("Marauder's Map: deselect on navigate failed")
