@@ -97,11 +97,12 @@ Telemetry channels stream agent responses, tool calls, and the audit trace as Se
 
 ## Slides
 
-A 6-slide deck for judges + dry-runs ships as a single self-contained HTML file:
+A 6-slide deck for judges + dry-runs:
 
-**[`assets/drop_in_guide_slides.html`](assets/drop_in_guide_slides.html)**
+- **PDF (printable)** — [`assets/drop_in_guide_slides.pdf`](assets/drop_in_guide_slides.pdf)
+- **HTML (browseable)** — [`assets/drop_in_guide_slides.html`](assets/drop_in_guide_slides.html)
 
-Open it in any browser. The styling matches the operator-console screenshot above (dark background, mint accents, italic serif + monospace). To export PDF: open in Chrome/Safari, ⌘P → Save as PDF → choose "Default" page size and Background graphics ON.
+Styling matches the operator-console screenshot above (dark background, mint accents, italic serif + monospace).
 
 Deck contents:
 | # | Slide |

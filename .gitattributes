@@ -21,3 +21,4 @@ docs/capabilities/memory/assets/.gitattributes -filter -diff -merge text
 docs/capabilities/mapping/assets/** filter=lfs diff=lfs merge=lfs -text
 assets/drop_in_guide_operator_console.png -filter -diff -merge
 assets/drop_in_guide_slides.html -filter -diff -merge
+assets/drop_in_guide_slides.pdf -filter -diff -merge
