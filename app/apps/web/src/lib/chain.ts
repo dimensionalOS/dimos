@@ -19,13 +19,16 @@ import { sepolia } from "viem/chains";
 
 export const SEPOLIA_CHAIN_ID = 11155111;
 
+// Canonical "8004" team registry (vanity 0x8004… addresses, same across every
+// chain) — the deployment public explorers (8004scan, 8004agents.ai) index.
 export const IDENTITY_REGISTRY = (process.env
   .NEXT_PUBLIC_ERC8004_IDENTITY_ADDRESS ??
-  "0xf66e7CBdAE1Cb710fee7732E4e1f173624e137A7") as `0x${string}`;
+  "0x8004A818BFB912233c491871b3d84c89A494BD9e") as `0x${string}`;
 
 // Empty string = not configured → on-chain reputation reads/writes are skipped.
 export const REPUTATION_REGISTRY = (process.env
-  .NEXT_PUBLIC_ERC8004_REPUTATION_ADDRESS ?? "") as string;
+  .NEXT_PUBLIC_ERC8004_REPUTATION_ADDRESS ??
+  "0x8004B663056A597Dffe9eCcC1965A193B7388713") as string;
 
 export const reputationConfigured = REPUTATION_REGISTRY.length > 0;
 
