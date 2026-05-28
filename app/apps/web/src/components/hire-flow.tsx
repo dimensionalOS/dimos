@@ -137,7 +137,7 @@ export function HireFlow({ agent }: { agent: Agent }) {
           <span className="font-display text-xl">${service.priceUsd}</span>
         </div>
         <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-secondary/60 px-2 py-0.5 font-mono text-muted-foreground text-xs">
-          {X402_ENABLED ? "x402 · Base Sepolia USDC" : "test payment · no real funds"}
+          {X402_ENABLED ? "instant payment" : "test payment · no real funds"}
         </span>
       </div>
 

@@ -29,7 +29,7 @@ const mono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "robomoo — hire autonomous robot agents",
   description:
-    "A marketplace of hireable robot agents with on-chain identity and reputation. Hire RoboDoc to scan your rooms and build a 3D virtual tour.",
+    "A marketplace of hireable robot agents with verified identities and earned reputation. Hire RoboDoc to scan your rooms and build a 3D virtual tour.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -417,7 +417,7 @@ function RateAgent({
               rel="noopener noreferrer"
               target="_blank"
             >
-              on-chain feedback ↗
+              view receipt ↗
             </a>
           ) : null}
         </p>
@@ -464,8 +464,8 @@ function RateAgent({
       <h2 className="font-display font-semibold text-lg">Rate {agent.name}</h2>
       <p className="text-muted-foreground text-sm leading-relaxed">
         {canOnchain
-          ? "Your rating is written to the ERC-8004 Reputation Registry — it ticks up the agent's on-chain reputation."
-          : "Your rating updates the agent's reputation. (Connect the reputation registry to write it on-chain.)"}
+          ? "Your rating becomes part of this agent's public, tamper-proof track record."
+          : "Your rating updates the agent's reputation."}
       </p>
       <div className="flex items-center gap-1">
         {[1, 2, 3, 4, 5].map((n) => (

@@ -14,10 +14,16 @@ export const dynamic = "force-dynamic";
 
 export default async function AgentPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { slug } = await params;
+  const sp = await searchParams;
+  // Operator-only setup view (?operator=1) — identity management lives here,
+  // out of the public marketplace.
+  const operator = sp.operator === "1" || sp.operator === "true";
   let agent: Agent | null = null;
   try {
     agent = await rpcClient.agents.get({ slug });
@@ -85,50 +91,50 @@ export default async function AgentPage({
           </div>
         </section>
 
-        <section className="flex flex-col gap-3">
-          <h2 className="font-display font-semibold text-lg">
-            On-chain identity
-          </h2>
-          <div className="flex flex-col divide-y rounded-xl border bg-card text-sm">
-            <Row label="Chain">
-              <span className="text-muted-foreground">
-                Ethereum Sepolia · ERC-8004
+        {operator ? (
+          <section className="flex flex-col gap-3">
+            <h2 className="font-display font-semibold text-lg">
+              Identity{" "}
+              <span className="font-normal font-sans text-muted-foreground text-xs">
+                · operator
               </span>
-            </Row>
-            <Row label="Agent ID">
-              {agent.agentId ? (
-                <span className="font-medium font-mono text-verified">
-                  #{agent.agentId}
-                </span>
-              ) : (
-                <span className="text-muted-foreground">not registered</span>
-              )}
-            </Row>
-            <Row label="Wallet">
-              {agent.agentWallet ? (
-                <AddressChip
-                  etherscan={{ type: "address", hash: agent.agentWallet }}
-                  value={agent.agentWallet}
-                />
-              ) : (
-                <span className="text-muted-foreground">—</span>
-              )}
-            </Row>
-            {agent.registerTx ? (
-              <Row label="Register tx">
-                <AddressChip
-                  etherscan={{ type: "tx", hash: agent.registerTx }}
-                  value={agent.registerTx}
-                />
+            </h2>
+            <div className="flex flex-col divide-y rounded-xl border bg-card text-sm">
+              <Row label="Identity">
+                {agent.agentId ? (
+                  <span className="font-medium font-mono text-verified">
+                    #{agent.agentId}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">not set up</span>
+                )}
               </Row>
-            ) : null}
-            {agent.isReal && !agent.agentId ? (
-              <div className="px-4 py-3">
-                <RegisterAgentButton agent={agent} />
-              </div>
-            ) : null}
-          </div>
-        </section>
+              <Row label="Wallet">
+                {agent.agentWallet ? (
+                  <AddressChip
+                    etherscan={{ type: "address", hash: agent.agentWallet }}
+                    value={agent.agentWallet}
+                  />
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </Row>
+              {agent.registerTx ? (
+                <Row label="Record">
+                  <AddressChip
+                    etherscan={{ type: "tx", hash: agent.registerTx }}
+                    value={agent.registerTx}
+                  />
+                </Row>
+              ) : null}
+              {agent.isReal && !agent.agentId ? (
+                <div className="px-4 py-3">
+                  <RegisterAgentButton agent={agent} />
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
 
         <section className="flex flex-col gap-3">
           <h2 className="font-display font-semibold text-lg">Past work</h2>

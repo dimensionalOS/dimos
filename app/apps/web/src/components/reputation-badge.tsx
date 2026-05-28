@@ -42,14 +42,5 @@ export function ReputationBadge({ agent }: { agent: Agent }) {
     return <span className="text-muted-foreground text-xs">No ratings yet</span>;
   }
 
-  return (
-    <span className="flex items-center gap-1.5">
-      <ReputationStars count={rep.count} value={rep.avg} />
-      {rep.kind === "onchain" ? (
-        <span className="rounded-full bg-verified/15 px-1.5 py-0.5 font-medium text-[10px] text-verified uppercase tracking-wide">
-          on-chain
-        </span>
-      ) : null}
-    </span>
-  );
+  return <ReputationStars count={rep.count} value={rep.avg} />;
 }

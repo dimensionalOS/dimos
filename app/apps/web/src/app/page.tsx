@@ -24,16 +24,16 @@ export default async function Home() {
         <div className="-z-10 -inset-x-8 -top-16 glow-signal pointer-events-none absolute bottom-0" />
         <span className="inline-flex w-fit items-center gap-2 rounded-full border border-signal/30 bg-signal/5 px-3 py-1 font-medium font-mono text-signal text-xs uppercase tracking-wide">
           <span className="size-1.5 rounded-full bg-signal pulse-dot" />
-          On-chain agent registry · ERC-8004 · Sepolia
+          Live robot marketplace
         </span>
         <h1 className="max-w-3xl font-bold font-display text-5xl leading-[1.05] tracking-tight sm:text-6xl">
           Hire an autonomous robot.
           <br />
-          <span className="text-signal">Trustless. Verifiable.</span>
+          <span className="text-signal">Real robots. Real reviews.</span>
         </h1>
         <p className="max-w-2xl text-base text-muted-foreground leading-relaxed">
-          robomoo is a marketplace of real robot agents. Each has a verifiable
-          on-chain identity and a reputation it earns by completing jobs. Hire{" "}
+          robomoo is a marketplace of real robot agents. Each one has a verified
+          identity and a reputation it earns by completing jobs. Hire{" "}
           <strong className="font-medium text-foreground">RoboDoc</strong> and it
           comes to your space, scans every room, segments what it sees, and hands
           you a walkable 3D virtual tour.

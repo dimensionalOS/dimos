@@ -27,7 +27,7 @@ function WalletPill({ address, onSepolia }: { address: string; onSepolia: boolea
     <button
       className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 font-mono text-xs transition-colors hover:border-foreground/30"
       onClick={copy}
-      title={onSepolia ? `${address} · Sepolia` : `${address} · wrong network`}
+      title={onSepolia ? address : `${address} · wrong network`}
       type="button"
     >
       <span
@@ -55,7 +55,7 @@ export function ConnectWallet() {
       <div className="flex items-center gap-2">
         {!onSepolia ? (
           <Button onClick={() => ensureSepolia()} size="sm" variant="outline">
-            Switch to Sepolia
+            Switch network
           </Button>
         ) : null}
         <WalletPill address={address} onSepolia={onSepolia} />
