@@ -9,8 +9,8 @@ use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::PointCloud2;
 
 use dimos_voxel_ray_tracing::{
-    build_pointclouds, extract_xyz, update_map, world_to_voxel, Config, LocalBounds, VoxelKey,
-    VoxelMap,
+    build_pointclouds, extract_xyz, update_map, world_to_voxel, LocalBounds, VoxelKey, VoxelMap,
+    VoxelMapperConfig,
 };
 
 #[derive(Module)]
@@ -29,7 +29,7 @@ struct RayTracingVoxelMap {
     local_map: Output<PointCloud2>,
 
     #[config]
-    config: Config,
+    config: VoxelMapperConfig,
 
     map: VoxelMap,
     last_origin: Option<(f32, f32, f32)>,
@@ -38,45 +38,8 @@ struct RayTracingVoxelMap {
 impl RayTracingVoxelMap {
     /// Make sure all the configs are valid on setup
     async fn validate_config(&self) {
-        let cfg = &self.config;
-        if !cfg.voxel_size.is_finite() || cfg.voxel_size <= 0.0 {
-            panic!(
-                "voxel_ray_tracing: voxel_size must be > 0, got {}",
-                cfg.voxel_size
-            );
-        }
-        if !cfg.max_range.is_finite() || cfg.max_range < 0.0 {
-            panic!(
-                "voxel_ray_tracing: max_range must be >= 0, got {}",
-                cfg.max_range
-            );
-        }
-        if !cfg.shadow_depth.is_finite() || cfg.shadow_depth < 0.0 {
-            panic!(
-                "voxel_ray_tracing: shadow_depth must be >= 0, got {}",
-                cfg.shadow_depth
-            );
-        }
-        if !cfg.grace_depth.is_finite() || cfg.grace_depth < 0.0 {
-            panic!(
-                "voxel_ray_tracing: grace_depth must be >= 0, got {}",
-                cfg.grace_depth
-            );
-        }
-        if cfg.ray_subsample == 0 {
-            panic!("voxel_ray_tracing: ray_subsample must be >= 1, got 0");
-        }
-        if cfg.max_health <= 0 {
-            panic!(
-                "voxel_ray_tracing: max_health must be > 0 or voxels can never become visible, got {}",
-                cfg.max_health
-            );
-        }
-        if cfg.min_health >= cfg.max_health {
-            panic!(
-                "voxel_ray_tracing: min_health ({}) must be < max_health ({})",
-                cfg.min_health, cfg.max_health
-            );
+        if let Err(e) = self.config.validate() {
+            panic!("voxel_ray_tracing: {}", e);
         }
     }
 

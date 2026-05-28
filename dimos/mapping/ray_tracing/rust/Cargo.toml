@@ -22,6 +22,7 @@ serde = { version = "1", features = ["derive"] }
 ahash = "0.8"
 tracing = "0.1"
 pyo3 = { version = "0.22", features = ["extension-module", "abi3-py310"] }
+numpy = "0.22"
 
 [profile.release]
 lto = "thin"

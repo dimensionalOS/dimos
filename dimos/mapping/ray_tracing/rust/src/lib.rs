@@ -1,9 +1,14 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(clippy::useless_conversion)]
+
 use ahash::{AHashMap, AHashSet};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
+use numpy::ndarray::Array2;
+use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use serde::Deserialize;
 
@@ -11,7 +16,7 @@ pub type VoxelKey = (i32, i32, i32);
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Config {
+pub struct VoxelMapperConfig {
     pub voxel_size: f32,
     pub max_range: f32,
     pub ray_subsample: u32,
@@ -35,11 +40,50 @@ pub struct LocalBounds {
     pub z_max: f32,
 }
 
+impl VoxelMapperConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.voxel_size.is_finite() || self.voxel_size <= 0.0 {
+            return Err(format!("voxel_size must be > 0, got {}", self.voxel_size));
+        }
+        if !self.max_range.is_finite() || self.max_range < 0.0 {
+            return Err(format!("max_range must be >= 0, got {}", self.max_range));
+        }
+        if !self.shadow_depth.is_finite() || self.shadow_depth < 0.0 {
+            return Err(format!(
+                "shadow_depth must be >= 0, got {}",
+                self.shadow_depth
+            ));
+        }
+        if !self.grace_depth.is_finite() || self.grace_depth < 0.0 {
+            return Err(format!(
+                "grace_depth must be >= 0, got {}",
+                self.grace_depth
+            ));
+        }
+        if self.ray_subsample == 0 {
+            return Err("ray_subsample must be >= 1, got 0".into());
+        }
+        if self.max_health <= 0 {
+            return Err(format!(
+                "max_health must be > 0 or voxels can never become visible, got {}",
+                self.max_health
+            ));
+        }
+        if self.min_health >= self.max_health {
+            return Err(format!(
+                "min_health ({}) must be < max_health ({})",
+                self.min_health, self.max_health
+            ));
+        }
+        Ok(())
+    }
+}
+
 pub fn update_map(
     map: &mut VoxelMap,
     origin: (f32, f32, f32),
     points: &[(f32, f32, f32)],
-    cfg: &Config,
+    cfg: &VoxelMapperConfig,
 ) {
     let inv = 1.0_f32 / cfg.voxel_size;
     let max_range_sq = if cfg.max_range > 0.0 {
@@ -394,8 +438,92 @@ pub fn build_pointclouds(
     (global_cloud, local_cloud)
 }
 
+#[pyclass]
+pub struct VoxelRayMap {
+    config: VoxelMapperConfig,
+    map: VoxelMap,
+}
+
+#[pymethods]
+impl VoxelRayMap {
+    #[new]
+    #[pyo3(signature = (
+        voxel_size,
+        max_range,
+        ray_subsample = 1,
+        shadow_depth = 0.2,
+        grace_depth = 0.2,
+        min_health = -2,
+        max_health = 1,
+    ))]
+    fn new(
+        voxel_size: f32,
+        max_range: f32,
+        ray_subsample: u32,
+        shadow_depth: f32,
+        grace_depth: f32,
+        min_health: i32,
+        max_health: i32,
+    ) -> PyResult<Self> {
+        let config = VoxelMapperConfig {
+            voxel_size,
+            max_range,
+            ray_subsample,
+            shadow_depth,
+            grace_depth,
+            min_health,
+            max_health,
+        };
+        config.validate().map_err(PyValueError::new_err)?;
+        Ok(Self {
+            config,
+            map: VoxelMap::default(),
+        })
+    }
+
+    fn add_frame(
+        &mut self,
+        points: PyReadonlyArray2<'_, f32>,
+        origin: (f32, f32, f32),
+    ) -> PyResult<()> {
+        let arr = points.as_array();
+        let shape = arr.shape();
+        if shape.len() != 2 || shape[1] != 3 {
+            return Err(PyValueError::new_err(format!(
+                "points must be (N, 3) float32, got shape {:?}",
+                shape
+            )));
+        }
+        let n = shape[0];
+        let pts: Vec<(f32, f32, f32)> = (0..n)
+            .map(|i| (arr[[i, 0]], arr[[i, 1]], arr[[i, 2]]))
+            .collect();
+        update_map(&mut self.map, origin, &pts, &self.config);
+        Ok(())
+    }
+
+    fn global_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        let voxel_size = self.config.voxel_size;
+        let half = voxel_size * 0.5;
+        let mut positions: Vec<f32> = Vec::with_capacity(self.map.voxels.len() * 3);
+        for (&(kx, ky, kz), &health) in &self.map.voxels {
+            if health <= 0 {
+                continue;
+            }
+            positions.push(kx as f32 * voxel_size + half);
+            positions.push(ky as f32 * voxel_size + half);
+            positions.push(kz as f32 * voxel_size + half);
+        }
+        let n = positions.len() / 3;
+        Array2::from_shape_vec((n, 3), positions)
+            .expect("3 elements pushed per voxel")
+            .into_pyarray_bound(py)
+    }
+}
+
 #[pymodule]
-fn _voxel_ray_tracing(_py: Python<'_>, _m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _voxel_ray_tracing(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<VoxelRayMap>()?;
     Ok(())
 }
 
@@ -403,8 +531,8 @@ fn _voxel_ray_tracing(_py: Python<'_>, _m: &Bound<'_, PyModule>) -> PyResult<()>
 mod tests {
     use super::*;
 
-    fn basic_config() -> Config {
-        Config {
+    fn basic_config() -> VoxelMapperConfig {
+        VoxelMapperConfig {
             voxel_size: 1.0,
             max_range: 100.0,
             ray_subsample: 1,
@@ -572,7 +700,7 @@ mod tests {
 
     #[test]
     fn point_beyond_max_range_does_not_clear() {
-        let cfg = Config {
+        let cfg = VoxelMapperConfig {
             max_range: 3.0,
             ..basic_config()
         };
@@ -584,7 +712,7 @@ mod tests {
 
     #[test]
     fn two_hits_needed_when_min_health_is_negative() {
-        let cfg = Config {
+        let cfg = VoxelMapperConfig {
             min_health: -1,
             ..basic_config()
         };
@@ -693,7 +821,7 @@ mod tests {
 
     #[test]
     fn two_misses_needed_when_max_health_is_two() {
-        let cfg = Config {
+        let cfg = VoxelMapperConfig {
             max_health: 2,
             ..basic_config()
         };

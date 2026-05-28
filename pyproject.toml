@@ -396,6 +396,10 @@ tests = [
     "md-babel-py>=1.2.0",
     "py-spy",
 
+    # For Rust ffi
+    "pybind11>=2.12",
+    "setuptools-rust>=1.10",
+
     # LSP
     "python-lsp-server[all]==1.14.0",
     "python-lsp-ruff==2.3.0",
@@ -445,8 +449,6 @@ lint = [
 tests-self-hosted = [
     {include-group = "tests"},
     "dimos[agents,perception,manipulation,sim,unitree,misc]",
-    # Needed to compile the in-tree extensions.
-    "pybind11>=2.12",
 ]
 
 [tool.uv]
