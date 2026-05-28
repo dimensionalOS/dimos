@@ -23,6 +23,8 @@ Maps are PointCloud2 obstacle clouds, start/goal are Odometry poses, and
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from pathlib import Path
 
 import numpy as np
 
@@ -30,12 +32,15 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.evaluator.mesh_loader import load_voxelized_mesh
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 WORLD_FRAME = "map"
 # Walls must reach above the planner's robot_height (default 1.5m) to block surface above.
 _WALL_HEIGHT_M = 2.0
 
-MESH_PATH = "/home/andrew/Downloads/19_fairdale_ave_papakura.glb"
+MESH_PATH = os.environ.get("MESH_PATH")
 
 
 @dataclass
@@ -142,18 +147,24 @@ def two_rooms_one_door() -> PlannerScenario:
 
 def _mesh_scenarios() -> list[PlannerScenario]:
     """Two scenarios on a real building mesh: ground-level traverse and a stair climb."""
-    cloud = _cloud(load_voxelized_mesh(MESH_PATH))
+    if MESH_PATH is None:
+        logger.info("MESH_PATH not set, skipping mesh scenarios")
+        return []
+    if not Path(MESH_PATH).is_file():
+        logger.warning("Mesh file not found, skipping mesh scenarios", path=MESH_PATH)
+        return []
+    points = load_voxelized_mesh(MESH_PATH)
     return [
         PlannerScenario(
             name="mesh_outside",
-            global_map=cloud,
+            global_map=_cloud(points),
             start_pose=_odom(-20.45, -19.85, 1.75),
             goal_pose=_odom(21.95, -4.25, 1.75),
             expect_path=True,
         ),
         PlannerScenario(
             name="mesh_up_the_stairs",
-            global_map=cloud,
+            global_map=_cloud(points),
             start_pose=_odom(7.15, -3.55, 2.05),
             goal_pose=_odom(5.55, -2.05, 5.65),
             expect_path=True,

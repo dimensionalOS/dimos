@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Blueprint + entrypoint for the path-planner evaluator.
+"""Blueprint for the path-planner evaluator.
 
 Wires the Evaluator and MLSPlanner together and bridges all streams to rerun.
 Run with::
 
-    python -m dimos.navigation.nav_stack.evaluator.main
+    dimos run path-planner-eval
 """
 
 from __future__ import annotations
@@ -28,8 +28,7 @@ from typing import Any
 import numpy as np
 from scipy.sparse.csgraph import connected_components
 
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.nav_stack.evaluator.evaluator import Evaluator
 from dimos.navigation.nav_stack.modules.mls_planner.mls_planner import (
     NODE_STEP_THRESHOLD_M,
@@ -146,24 +145,23 @@ def _render_node_edges(msg: Any) -> Any:
     return rr.LineStrips3D(strips, colors=colors, radii=[0.04] * len(strips))
 
 
-def create_evaluator_blueprint() -> Blueprint:
-    planner_voxel = MLSPlannerConfig().voxel_size
-    return autoconnect(
-        Evaluator.blueprint(),
-        MLSPlanner.blueprint(),
-        RerunWebSocketServer.blueprint(),
-        RerunBridgeModule.blueprint(
-            visual_override={
-                "world/start_pose": _render_start_pose,
-                "world/goal_pose": _render_goal_pose,
-                "world/global_map": _render_global_map,
-                "world/surface_map": partial(_render_surface_map, planner_voxel),
-                "world/nodes": _render_nodes,
-                "world/node_edges": _render_node_edges,
-            }
-        ),
-    )
+_planner_voxel = MLSPlannerConfig().voxel_size
+
+path_planner_eval = autoconnect(
+    Evaluator.blueprint(),
+    MLSPlanner.blueprint(),
+    RerunWebSocketServer.blueprint(),
+    RerunBridgeModule.blueprint(
+        visual_override={
+            "world/start_pose": _render_start_pose,
+            "world/goal_pose": _render_goal_pose,
+            "world/global_map": _render_global_map,
+            "world/surface_map": partial(_render_surface_map, _planner_voxel),
+            "world/nodes": _render_nodes,
+            "world/node_edges": _render_node_edges,
+        }
+    ),
+)
 
 
-if __name__ == "__main__":
-    ModuleCoordinator.build(create_evaluator_blueprint()).loop()
+__all__ = ["path_planner_eval"]

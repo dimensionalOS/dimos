@@ -49,12 +49,10 @@ class ScenarioResult:
 
 
 class EvaluatorConfig(ModuleConfig):
-    # Pause between publishing each input so the planner
-    # has all three before its goal-trigger fires. LCM doesn't order topics.
     input_publish_delay: float = 0.2
     # Max seconds to wait for the planner's path reply per scenario.
     path_timeout: float = 2.0
-    # Pause between scenarios so rerun has time to show each one distinctly.
+    # Pause between scenes
     scenario_dwell: float = 2.0
 
 
@@ -104,8 +102,6 @@ class Evaluator(Module):
     async def _run_one(self, scenario: PlannerScenario) -> ScenarioResult:
         logger.info("Scenario start", name=scenario.name, expect_path=scenario.expect_path)
         assert self._path_received is not None
-        self._latest_path = None
-        self._path_received.clear()
 
         now = time.time()
         scenario.global_map.ts = now
@@ -117,6 +113,9 @@ class Evaluator(Module):
         self.start_pose.publish(scenario.start_pose)
         await asyncio.sleep(self.config.input_publish_delay)
         self.goal_pose.publish(scenario.goal_pose)
+
+        self._latest_path = None
+        self._path_received.clear()
 
         try:
             await asyncio.wait_for(self._path_received.wait(), timeout=self.config.path_timeout)
