@@ -300,25 +300,21 @@ class PerceptionLoopModule(Module):
                 _shared_buffer = {k: v for k, v in _shared_buffer.items()
                                   if now - v.last_seen <= _BUFFER_TTL}
 
-            # Frame annotation — every loop iteration (was throttled to every
-            # 3rd, which capped the dashboard camera at ~5fps; YOLO is the real
-            # gate so writing every frame just keeps up with the loop).
-            if True:
-                with _shared_lock:
-                    mode = _active_mode
-                if mode is None:
-                    try:
-                        snap = [t for t in _shared_buffer.values() if now - t.last_seen <= _BUFFER_TTL]
-                        det_list = [{"bbox": t.bbox, "track_id": t.track_id, "label": t.name} for t in snap]
-                        write_annotated_frame(image.to_opencv(), det_list, overlay_text="PERCEPTION\nACTIVE")
-                        write_state({
-                            "mode":    "perception",
-                            "state":   "ACTIVE",
-                            "objects": len(det_list),
-                            "classes": list({t.name for t in snap}),
-                        })
-                    except Exception:
-                        pass
+            with _shared_lock:
+                mode = _active_mode
+            if mode is None:
+                try:
+                    snap = [t for t in _shared_buffer.values() if now - t.last_seen <= _BUFFER_TTL]
+                    det_list = [{"bbox": t.bbox, "track_id": t.track_id, "label": t.name} for t in snap]
+                    write_annotated_frame(image.to_opencv(), det_list, overlay_text="PERCEPTION\nACTIVE")
+                    write_state({
+                        "mode":    "perception",
+                        "state":   "ACTIVE",
+                        "objects": len(det_list),
+                        "classes": list({t.name for t in snap}),
+                    })
+                except Exception:
+                    pass
 
             sleep_dur = next_t - time.monotonic()
             if sleep_dur > 0:
