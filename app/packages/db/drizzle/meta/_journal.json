@@ -50,6 +50,13 @@
       "when": 1779887915411,
       "tag": "0006_amazing_magik",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1779901780527,
+      "tag": "0007_parched_cardiac",
+      "breakpoints": true
     }
   ]
 }

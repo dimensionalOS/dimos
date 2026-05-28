@@ -1,9 +1,11 @@
 import type { RouterClient } from "@orpc/server";
 import {
+	agents,
 	type Database,
 	frameAnalyses,
 	frameAnalysisObjects,
 	frames,
+	jobs,
 	maps,
 	messages,
 	splats,
@@ -11,13 +13,23 @@ import {
 	user,
 } from "@robomoo/db";
 import {
+	type Agent,
+	type AgentService,
+	type AgentStats,
+	type AgentStatus,
+	agentSchema,
+	agentStatsSchema,
 	commandInput,
+	createJobInput,
 	createMessageInput,
 	type Frame,
 	type FrameAnalysis,
 	type FrameAnalysisObject,
 	frameAnalysisSchema,
 	frameSchema,
+	type Job,
+	type JobStatus,
+	jobSchema,
 	type MapSnapshot,
 	type Message,
 	mapSnapshotSchema,
@@ -25,6 +37,7 @@ import {
 	newId,
 	type ScanRun,
 	type ScanRunHeader,
+	setAgentOnchainInput,
 	type Splat,
 	scanRunHeaderSchema,
 	scanRunSchema,
@@ -32,7 +45,7 @@ import {
 	type Trajectory,
 	trajectorySchema,
 } from "@robomoo/shared";
-import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure, publicProcedure } from "../api";
 
@@ -507,6 +520,339 @@ const commandSend = protectedProcedure
 		return { ok: true };
 	});
 
+// ─── Agent marketplace (the ERC-8004 registry surface) ──────────────────────
+
+async function toAgent(
+	row: typeof agents.$inferSelect,
+	presignGet: PresignFn,
+): Promise<Agent> {
+	return {
+		id: row.id,
+		slug: row.slug,
+		name: row.name,
+		tagline: row.tagline,
+		description: row.description,
+		avatarUrl: row.avatarKey ? await presignGet(row.avatarKey) : null,
+		emoji: row.emoji,
+		services: row.services as AgentService[],
+		basePriceUsd: row.basePriceUsd,
+		isReal: row.isReal,
+		status: row.status as AgentStatus,
+		chain: row.chain,
+		agentId: row.agentId,
+		agentWallet: row.agentWallet,
+		registerTx: row.registerTx,
+		capabilities: row.capabilities,
+		createdAt: row.createdAt.toISOString(),
+	};
+}
+
+function toJob(row: typeof jobs.$inferSelect): Job {
+	return {
+		id: row.id,
+		agentSlug: row.agentSlug,
+		requesterAddr: row.requesterAddr,
+		requesterUserId: row.requesterUserId,
+		service: row.service,
+		status: row.status as JobStatus,
+		priceUsd: row.priceUsd,
+		paid: row.paid,
+		paymentMode: row.paymentMode,
+		paymentTx: row.paymentTx,
+		command: row.command,
+		run: row.run,
+		splatId: row.splatId,
+		rating: row.rating,
+		feedbackTx: row.feedbackTx,
+		createdAt: row.createdAt.toISOString(),
+		dispatchedAt: row.dispatchedAt ? row.dispatchedAt.toISOString() : null,
+		completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+	};
+}
+
+// Claim-latest reconciliation: pin the freshest scan run (and then a splat
+// deliverable) produced after the job was dispatched. Mutates the job row on
+// read — fine for a single-dog demo. A run is claimed when its earliest frame
+// landed at/after dispatch; a splat is attached once a run is pinned.
+async function reconcileJob(
+	db: Database,
+	row: typeof jobs.$inferSelect,
+): Promise<typeof jobs.$inferSelect> {
+	let job = row;
+
+	if (
+		(job.status === "scanning" || job.status === "dispatched") &&
+		!job.run &&
+		job.dispatchedAt
+	) {
+		const dispatchedAt = job.dispatchedAt;
+		const runRows = await db
+			.select({
+				run: frames.run,
+				firstAt: sql<Date>`min(${frames.createdAt})`,
+			})
+			.from(frames)
+			.where(isNotNull(frames.run))
+			.groupBy(frames.run);
+		const claimed = runRows
+			.filter(
+				(r): r is { run: string; firstAt: Date } =>
+					r.run !== null && r.firstAt >= dispatchedAt,
+			)
+			.sort((a, b) => b.firstAt.getTime() - a.firstAt.getTime())[0];
+		if (claimed) {
+			const [updated] = await db
+				.update(jobs)
+				.set({ run: claimed.run, status: "scanning" })
+				.where(eq(jobs.id, job.id))
+				.returning();
+			if (updated) job = updated;
+		}
+	}
+
+	if (job.run && !job.splatId && job.dispatchedAt) {
+		const [s] = await db
+			.select()
+			.from(splats)
+			.where(gt(splats.createdAt, job.dispatchedAt))
+			.orderBy(desc(splats.createdAt))
+			.limit(1);
+		if (s) {
+			const [updated] = await db
+				.update(jobs)
+				.set({ splatId: s.id, status: "done", completedAt: new Date() })
+				.where(eq(jobs.id, job.id))
+				.returning();
+			if (updated) job = updated;
+		}
+	}
+
+	return job;
+}
+
+const agentsList = publicProcedure
+	.output(z.array(agentSchema))
+	.handler(async ({ context }): Promise<Agent[]> => {
+		const rows = await context.db
+			.select()
+			.from(agents)
+			.orderBy(desc(agents.isReal), asc(agents.createdAt));
+		return Promise.all(rows.map((r) => toAgent(r, context.presignGet)));
+	});
+
+const agentsGet = publicProcedure
+	.input(z.object({ slug: z.string() }))
+	.output(agentSchema.nullable())
+	.handler(async ({ context, input }): Promise<Agent | null> => {
+		const [row] = await context.db
+			.select()
+			.from(agents)
+			.where(eq(agents.slug, input.slug))
+			.limit(1);
+		return row ? await toAgent(row, context.presignGet) : null;
+	});
+
+// Persist the result of a browser-wallet ERC-8004 register() call. Public for
+// the demo (no operator auth) — anyone who registers an agent can bind its id.
+const agentsSetOnchain = publicProcedure
+	.input(setAgentOnchainInput)
+	.output(agentSchema)
+	.handler(async ({ context, input }): Promise<Agent> => {
+		const [row] = await context.db
+			.update(agents)
+			.set({
+				agentId: input.agentId,
+				agentWallet: input.agentWallet,
+				registerTx: input.registerTx,
+			})
+			.where(eq(agents.slug, input.slug))
+			.returning();
+		if (!row) throw new Error("unknown agent");
+		return toAgent(row, context.presignGet);
+	});
+
+// Job-derived reputation fallback (used when no on-chain summary is available).
+const agentsStats = publicProcedure
+	.input(z.object({ slug: z.string() }))
+	.output(agentStatsSchema)
+	.handler(async ({ context, input }): Promise<AgentStats> => {
+		const rows = await context.db
+			.select({ status: jobs.status, rating: jobs.rating })
+			.from(jobs)
+			.where(eq(jobs.agentSlug, input.slug));
+		const completed = rows.filter((r) => r.status === "done").length;
+		const ratings = rows
+			.map((r) => r.rating)
+			.filter((n): n is number => typeof n === "number");
+		const avgRating =
+			ratings.length > 0
+				? ratings.reduce((a, b) => a + b, 0) / ratings.length
+				: null;
+		return { completed, rated: ratings.length, avgRating };
+	});
+
+const jobsCreate = publicProcedure
+	.input(createJobInput)
+	.output(jobSchema)
+	.handler(async ({ context, input }): Promise<Job> => {
+		const [agent] = await context.db
+			.select()
+			.from(agents)
+			.where(eq(agents.slug, input.agentSlug))
+			.limit(1);
+		if (!agent) throw new Error("unknown agent");
+		const svc = (agent.services as AgentService[]).find(
+			(s) => s.key === input.service,
+		);
+		if (!svc) throw new Error("unknown service");
+		const [row] = await context.db
+			.insert(jobs)
+			.values({
+				id: newId("job"),
+				agentSlug: input.agentSlug,
+				service: input.service,
+				requesterAddr: input.requesterAddr,
+				priceUsd: svc.priceUsd,
+				status: "booked",
+			})
+			.returning();
+		if (!row) throw new Error("insert returned no row");
+		return toJob(row);
+	});
+
+const jobsPay = publicProcedure
+	.input(
+		z.object({
+			id: z.string(),
+			paymentMode: z.enum(["mock", "x402"]).default("mock"),
+			paymentTx: z.string().nullable().default(null),
+		}),
+	)
+	.output(jobSchema)
+	.handler(async ({ context, input }): Promise<Job> => {
+		const [row] = await context.db
+			.update(jobs)
+			.set({
+				paid: true,
+				paymentMode: input.paymentMode,
+				paymentTx: input.paymentTx,
+			})
+			.where(eq(jobs.id, input.id))
+			.returning();
+		if (!row) throw new Error("unknown job");
+		return toJob(row);
+	});
+
+const jobsDispatch = publicProcedure
+	.input(z.object({ id: z.string(), command: z.string().min(1).max(500) }))
+	.output(jobSchema)
+	.handler(async ({ context, input }): Promise<Job> => {
+		const [row] = await context.db
+			.update(jobs)
+			.set({
+				status: "scanning",
+				dispatchedAt: new Date(),
+				command: input.command,
+			})
+			.where(eq(jobs.id, input.id))
+			.returning();
+		if (!row) throw new Error("unknown job");
+		// Best-effort forward to the live robot. The demo proceeds even with no
+		// agent endpoint configured (sendAgentCommand throws → swallowed).
+		try {
+			await context.sendAgentCommand(input.command);
+		} catch (e) {
+			console.warn(
+				`[jobs.dispatch] agent command not sent for ${row.id}:`,
+				e instanceof Error ? e.message : e,
+			);
+		}
+		return toJob(row);
+	});
+
+const jobsGet = publicProcedure
+	.input(z.object({ id: z.string() }))
+	.output(jobSchema.nullable())
+	.handler(async ({ context, input }): Promise<Job | null> => {
+		const [row] = await context.db
+			.select()
+			.from(jobs)
+			.where(eq(jobs.id, input.id))
+			.limit(1);
+		if (!row) return null;
+		return toJob(await reconcileJob(context.db, row));
+	});
+
+const jobsList = publicProcedure
+	.input(z.object({ address: z.string().nullable().default(null) }).optional())
+	.output(z.array(jobSchema))
+	.handler(async ({ context, input }): Promise<Job[]> => {
+		const addr = input?.address ?? null;
+		const rows = await context.db
+			.select()
+			.from(jobs)
+			.where(addr ? eq(jobs.requesterAddr, addr) : sql`1=1`)
+			.orderBy(desc(jobs.createdAt))
+			.limit(50);
+		const reconciled = await Promise.all(
+			rows.map((r) =>
+				r.status === "scanning" || r.status === "dispatched"
+					? reconcileJob(context.db, r)
+					: Promise.resolve(r),
+			),
+		);
+		return reconciled.map(toJob);
+	});
+
+const jobsAttachRun = publicProcedure
+	.input(z.object({ id: z.string(), run: z.string() }))
+	.output(jobSchema)
+	.handler(async ({ context, input }): Promise<Job> => {
+		const [row] = await context.db
+			.update(jobs)
+			.set({ run: input.run, status: "scanning" })
+			.where(eq(jobs.id, input.id))
+			.returning();
+		if (!row) throw new Error("unknown job");
+		return toJob(row);
+	});
+
+const jobsComplete = publicProcedure
+	.input(z.object({ id: z.string(), splatId: z.string().nullable().default(null) }))
+	.output(jobSchema)
+	.handler(async ({ context, input }): Promise<Job> => {
+		const [row] = await context.db
+			.update(jobs)
+			.set({
+				status: "done",
+				completedAt: new Date(),
+				...(input.splatId ? { splatId: input.splatId } : {}),
+			})
+			.where(eq(jobs.id, input.id))
+			.returning();
+		if (!row) throw new Error("unknown job");
+		return toJob(row);
+	});
+
+const jobsSetFeedback = publicProcedure
+	.input(
+		z.object({
+			id: z.string(),
+			rating: z.number().int().min(1).max(5),
+			feedbackTx: z.string().nullable().default(null),
+		}),
+	)
+	.output(jobSchema)
+	.handler(async ({ context, input }): Promise<Job> => {
+		const [row] = await context.db
+			.update(jobs)
+			.set({ rating: input.rating, feedbackTx: input.feedbackTx })
+			.where(eq(jobs.id, input.id))
+			.returning();
+		if (!row) throw new Error("unknown job");
+		return toJob(row);
+	});
+
 export const appRouter = {
 	messages: { list, add },
 	frames: {
@@ -520,6 +866,22 @@ export const appRouter = {
 	trajectory: { latest: trajectoryLatest },
 	splats: { list: splatsList },
 	commands: { send: commandSend },
+	agents: {
+		list: agentsList,
+		get: agentsGet,
+		setOnchain: agentsSetOnchain,
+		stats: agentsStats,
+	},
+	jobs: {
+		create: jobsCreate,
+		pay: jobsPay,
+		dispatch: jobsDispatch,
+		get: jobsGet,
+		list: jobsList,
+		attachRun: jobsAttachRun,
+		complete: jobsComplete,
+		setFeedback: jobsSetFeedback,
+	},
 };
 
 export type AppRouter = typeof appRouter;

@@ -5,3 +5,5 @@ export * from "./maps.db";
 export * from "./splats.db";
 export * from "./trajectories.db";
 export * from "./frame_analyses.db";
+export * from "./agents.db";
+export * from "./jobs.db";

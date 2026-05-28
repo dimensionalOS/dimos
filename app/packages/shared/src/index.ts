@@ -182,3 +182,101 @@ export const commandInput = z.object({
 	text: z.string().min(1).max(500),
 });
 export type CommandInput = z.infer<typeof commandInput>;
+
+// ─── Agent marketplace / ERC-8004 registry ──────────────────────────────────
+
+// One hireable task an agent offers.
+export const agentServiceSchema = z.object({
+	key: z.string(),
+	name: z.string(),
+	desc: z.string(),
+	priceUsd: z.number(),
+	durationHint: z.string().optional(),
+});
+export type AgentService = z.infer<typeof agentServiceSchema>;
+
+export const agentStatusSchema = z.enum(["live", "coming_soon"]);
+export type AgentStatus = z.infer<typeof agentStatusSchema>;
+
+// A marketplace agent as returned to the web client. `avatarUrl` is a freshly
+// presigned URL (or null → fall back to `emoji`). `agentId`/`agentWallet`/
+// `registerTx` are populated once the agent is registered on-chain (ERC-8004).
+export const agentSchema = z.object({
+	id: z.string(),
+	slug: z.string(),
+	name: z.string(),
+	tagline: z.string(),
+	description: z.string(),
+	avatarUrl: z.string().nullable(),
+	emoji: z.string().nullable(),
+	services: z.array(agentServiceSchema),
+	basePriceUsd: z.number(),
+	isReal: z.boolean(),
+	status: agentStatusSchema,
+	chain: z.string(),
+	agentId: z.string().nullable(),
+	agentWallet: z.string().nullable(),
+	registerTx: z.string().nullable(),
+	capabilities: z.array(z.string()),
+	createdAt: z.string(),
+});
+export type Agent = z.infer<typeof agentSchema>;
+
+// Persist the result of an on-chain ERC-8004 register() (browser-wallet signed).
+export const setAgentOnchainInput = z.object({
+	slug: z.string(),
+	agentId: z.string(),
+	agentWallet: z.string().nullable().default(null),
+	registerTx: z.string().nullable().default(null),
+});
+export type SetAgentOnchainInput = z.infer<typeof setAgentOnchainInput>;
+
+export const jobStatusSchema = z.enum([
+	"booked",
+	"dispatched",
+	"scanning",
+	"reconstructing",
+	"done",
+	"failed",
+	"cancelled",
+]);
+export type JobStatus = z.infer<typeof jobStatusSchema>;
+
+// A hire of an agent, with its produced deliverables linked in.
+export const jobSchema = z.object({
+	id: z.string(),
+	agentSlug: z.string(),
+	requesterAddr: z.string().nullable(),
+	requesterUserId: z.string().nullable(),
+	service: z.string(),
+	status: jobStatusSchema,
+	priceUsd: z.number(),
+	paid: z.boolean(),
+	paymentMode: z.string(),
+	paymentTx: z.string().nullable(),
+	command: z.string().nullable(),
+	run: z.string().nullable(),
+	splatId: z.string().nullable(),
+	rating: z.number().nullable(),
+	feedbackTx: z.string().nullable(),
+	createdAt: z.string(),
+	dispatchedAt: z.string().nullable(),
+	completedAt: z.string().nullable(),
+});
+export type Job = z.infer<typeof jobSchema>;
+
+export const createJobInput = z.object({
+	agentSlug: z.string(),
+	service: z.string(),
+	requesterAddr: z.string().nullable().default(null),
+});
+export type CreateJobInput = z.infer<typeof createJobInput>;
+
+// Aggregate of completed/rated jobs for an agent — the job-derived fallback for
+// the reputation badge when an on-chain ERC-8004 summary isn't available.
+export const agentStatsSchema = z.object({
+	completed: z.number(),
+	rated: z.number(),
+	avgRating: z.number().nullable(),
+});
+export type AgentStats = z.infer<typeof agentStatsSchema>;

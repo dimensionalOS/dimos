@@ -10,6 +10,7 @@ import { newId } from "@robomoo/shared";
 import { Hono } from "hono";
 import { auth } from "./auth/auth";
 import { env } from "./env";
+import { handleAgentCard } from "./http/agents";
 import {
 	handleRobotFrame,
 	handleRobotFrameAnalysis,
@@ -18,6 +19,7 @@ import {
 	handleRobotTrajectory,
 } from "./http/robot";
 import { sendAgentCommand } from "./agent";
+import { seedAgents } from "./seed-agents";
 import { handleUpload } from "./http/upload";
 import { presignGet, readObject } from "./storage/bucket";
 
@@ -54,6 +56,9 @@ if (seeded.length === 0) {
 	console.log("seeded demo message");
 }
 
+// Seed the marketplace agents (RoboDoc + fictional listings). Idempotent.
+await seedAgents(db);
+
 const app = new Hono();
 const rpcHandler = new RPCHandler(appRouter);
 
@@ -82,6 +87,11 @@ app.post("/api/robot/frame/:id/analysis", (c) =>
 app.post("/api/robot/map", (c) => handleRobotMap(c.req.raw, db));
 app.post("/api/robot/splat", (c) => handleRobotSplat(c.req.raw, db));
 app.post("/api/robot/trajectory", (c) => handleRobotTrajectory(c.req.raw, db));
+
+// ERC-8004 agentURI document — the metadata `register(agentURI)` points at.
+app.get("/api/agents/:slug/card.json", (c) =>
+	handleAgentCard(db, c.req.param("slug"), env.APP_URL),
+);
 
 // Public read API for room scans, grouped run → positions → angle-sorted images
 // (an "array of arrays" of presigned image URLs). Friendly for external callers
