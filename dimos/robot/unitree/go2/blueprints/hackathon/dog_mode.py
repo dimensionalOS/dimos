@@ -14,7 +14,6 @@ Threat levels (assigned per track_id on first detection, random):
 from __future__ import annotations
 
 import random
-import subprocess
 import time
 from pathlib import Path
 from threading import Event, RLock, Thread
@@ -273,7 +272,7 @@ class DogModeModule(Module):
                     last_sniff = now
                     next_sniff_in = random.uniform(_SNIFF_INTERVAL_MIN, _SNIFF_INTERVAL_MAX)
                     self._do_sniff()
-                    time.sleep(3.2)  # wait for animation to complete
+                    self._should_stop.wait(timeout=3.2)
                     sniffing = False
 
             else:
