@@ -4,7 +4,7 @@ Hackathon submission from **Team Pivot** — Philip Seifi ([@seifip](https://git
 
 **A Unitree Go2 robot dog that trades ice-cold Cokes for instant photos.**
 
-## If You Only Have 60 Seconds
+## If You Only Have 90 Seconds
 
 1. Watch the demo: https://www.youtube.com/watch?v=8hHYE1239wg
 2. Full source: https://github.com/seifip/robodog-fetch
