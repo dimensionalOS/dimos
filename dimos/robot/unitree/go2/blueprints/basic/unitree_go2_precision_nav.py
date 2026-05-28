@@ -98,35 +98,39 @@ from dimos.utils.benchmarking.characterization_recorder import CharacterizationR
 from dimos.utils.path_utils import get_project_root
 from dimos.visualization.vis_module import vis_module
 
-unitree_go2_precision_nav = autoconnect(
-    unitree_go2_coordinator,
-    vis_module(viewer_backend=global_config.viewer),
-    KeyboardTeleop.blueprint(
-        publish_only_when_active=True,
-        disable_movement=True,  # 0-9 e_max slider only; no WASD Twist
-    ),
-    VoxelGridMapper.blueprint(emit_every=5),
-    CostMapper.blueprint(),
-    ReplanningAStarPlanner.blueprint(),
-    CharacterizationRecorder.blueprint(
-        robot_id="go2",
-        tag="precision_nav",
-        out_dir=str(get_project_root() / "data" / "precision_nav" / "go2"),
-    ),
-).transports(
-    {
-        # KeyboardTeleop 0-9 -> coord.e_max -> precision_follower.set_e_max.
-        ("e_max", Float32): LCMTransport("/e_max", Float32),
-        # ReplanningAStarPlanner.path -> coord.path -> precision_follower.set_path.
-        ("path", Path): LCMTransport("/precision_nav/path", Path),
-        # Recorder taps — same conventions as B1/B2.
-        ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
-        # KeyboardTeleop's gate stream stays available for any tool that
-        # wants ENTER/K/Backspace; no consumer in B3 today.
-        ("gate", Int8): LCMTransport("/precision_nav/gate", Int8),
-    }
+unitree_go2_precision_nav = (
+    autoconnect(
+        unitree_go2_coordinator,
+        vis_module(viewer_backend=global_config.viewer),
+        KeyboardTeleop.blueprint(
+            publish_only_when_active=True,
+            disable_movement=True,  # 0-9 e_max slider only; no WASD Twist
+        ),
+        VoxelGridMapper.blueprint(emit_every=5),
+        CostMapper.blueprint(),
+        ReplanningAStarPlanner.blueprint(),
+        CharacterizationRecorder.blueprint(
+            robot_id="go2",
+            tag="precision_nav",
+            out_dir=str(get_project_root() / "data" / "precision_nav" / "go2"),
+        ),
+    )
+    .transports(
+        {
+            # KeyboardTeleop 0-9 -> coord.e_max -> precision_follower.set_e_max.
+            ("e_max", Float32): LCMTransport("/e_max", Float32),
+            # ReplanningAStarPlanner.path -> coord.path -> precision_follower.set_path.
+            ("path", Path): LCMTransport("/precision_nav/path", Path),
+            # Recorder taps — same conventions as B1/B2.
+            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+            ("odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
+            # KeyboardTeleop's gate stream stays available for any tool that
+            # wants ENTER/K/Backspace; no consumer in B3 today.
+            ("gate", Int8): LCMTransport("/precision_nav/gate", Int8),
+        }
+    )
+    .global_config(n_workers=10, robot_model="unitree_go2")
 )
 
 __all__ = ["unitree_go2_precision_nav"]
