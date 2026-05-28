@@ -132,7 +132,7 @@ class FindSkillContainer(Module):
             query: What to look for, e.g. "red chair", "dog", "person with backpack"
             explore: If True (default), start autonomous exploration while searching.
             then_approach: If True, automatically approach and get close after finding.
-            timeout_s: Give up after this many seconds (default 120s).
+            timeout_s: Give up after this many seconds (0 = no timeout, runs until found or stopped).
 
         Returns:
             Immediate confirmation. Will send tool_update when found or timed out.
