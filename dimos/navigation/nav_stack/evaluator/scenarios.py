@@ -146,18 +146,18 @@ def _mesh_scenarios() -> list[PlannerScenario]:
     if not Path(MESH_PATH).is_file():
         logger.warning("Mesh file not found, skipping mesh scenarios", path=MESH_PATH)
         return []
-    cloud = _cloud(load_voxelized_mesh(MESH_PATH))
+    points = load_voxelized_mesh(MESH_PATH)
     return [
         PlannerScenario(
             name="mesh_outside",
-            global_map=cloud,
+            global_map=_cloud(points),
             start_pose=_odom(-20.45, -19.85, 1.75),
             goal_pose=_odom(21.95, -4.25, 1.75),
             expect_path=True,
         ),
         PlannerScenario(
             name="mesh_up_the_stairs",
-            global_map=cloud,
+            global_map=_cloud(points),
             start_pose=_odom(7.15, -3.55, 2.05),
             goal_pose=_odom(5.55, -2.05, 5.65),
             expect_path=True,

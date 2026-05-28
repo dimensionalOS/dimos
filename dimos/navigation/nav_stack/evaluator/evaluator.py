@@ -102,8 +102,6 @@ class Evaluator(Module):
     async def _run_one(self, scenario: PlannerScenario) -> ScenarioResult:
         logger.info("Scenario start", name=scenario.name, expect_path=scenario.expect_path)
         assert self._path_received is not None
-        self._latest_path = None
-        self._path_received.clear()
 
         now = time.time()
         scenario.global_map.ts = now
@@ -115,6 +113,9 @@ class Evaluator(Module):
         self.start_pose.publish(scenario.start_pose)
         await asyncio.sleep(self.config.input_publish_delay)
         self.goal_pose.publish(scenario.goal_pose)
+
+        self._latest_path = None
+        self._path_received.clear()
 
         try:
             await asyncio.wait_for(self._path_received.wait(), timeout=self.config.path_timeout)
