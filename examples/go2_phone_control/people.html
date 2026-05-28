@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Go2 BOY · 活点地图</title>
+  <style>
+    :root {
+      --body: #c9c8bd; --body-dark: #b0afa3; --bezel: #58586a;
+      --lcd: #9bbc0f; --lcd-2: #8aac0c; --lcd-dark: #0f380f; --pill: #7d7c88;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; height: 100%; background: #2a2a2a;
+      font-family: -apple-system, system-ui, sans-serif; overflow: hidden; }
+    .gb { height: 100dvh; max-width: 480px; margin: 0 auto; display: flex; flex-direction: column;
+      padding: 12px 14px; padding-top: max(12px, env(safe-area-inset-top));
+      padding-bottom: max(14px, env(safe-area-inset-bottom));
+      background: linear-gradient(160deg, var(--body) 0%, var(--body-dark) 100%); }
+    .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .brand b { color: #2a2a30; font-weight: 800; font-style: italic; font-size: 14px; }
+    .brand a { text-decoration: none; background: var(--pill); color: #2a2a30; font-weight: 800;
+      font-size: 12px; padding: 5px 10px; border-radius: 14px; }
+    /* tracking banner */
+    .banner { background: var(--bezel); color: #f5f5f0; padding: 7px 10px;
+      border-radius: 9px; margin-bottom: 8px; display: flex; align-items: center;
+      gap: 6px; font-size: 12px; flex-wrap: wrap; }
+    .banner.following { background: #8e334f; }
+    .banner.hidden { display: none; }
+    .banner button { border: none; padding: 5px 10px; border-radius: 12px;
+      font-weight: 800; font-size: 11px; color: #fff; }
+    .banner .follow { background: #2e7d32; }
+    .banner .stop { background: #b71c1c; }
+    .banner .clear { background: #555; }
+    .banner .spacer { flex: 1; }
+    .banner button.hidden { display: none; }
+    /* MAP */
+    .map-wrap { background: var(--bezel); border-radius: 10px;
+      padding: 8px; box-shadow: inset 0 2px 6px rgba(0,0,0,.5); margin-bottom: 8px; }
+    .map { background:
+        repeating-linear-gradient(0deg, var(--lcd) 0 3px, var(--lcd-2) 3px 4px);
+      border-radius: 6px; display: block; width: 100%; height: 42vh; min-height: 220px;
+      touch-action: manipulation; }
+    .map text { font-family: ui-monospace, monospace; font-weight: 800; fill: var(--lcd-dark); }
+    /* LISTS */
+    .lists { flex: 1; min-height: 0; display: flex; gap: 8px; }
+    .panel { background: var(--bezel); border-radius: 10px; padding: 6px 8px;
+      box-shadow: inset 0 2px 6px rgba(0,0,0,.5); flex: 1; min-height: 0;
+      display: flex; flex-direction: column; }
+    .panel h2 { margin: 0 0 4px; font-size: 10px; color: #c7c7e0; letter-spacing: .04em;
+      display: flex; justify-content: space-between; }
+    .panel h2 .cnt { color: #9aa7b8; }
+    .lcd-box { background: repeating-linear-gradient(0deg, var(--lcd) 0 3px, var(--lcd-2) 3px 4px);
+      border-radius: 5px; padding: 4px 6px; flex: 1; overflow-y: auto;
+      font-family: ui-monospace, monospace; color: var(--lcd-dark); font-size: 11px; }
+    .row { display: flex; align-items: center; gap: 5px; padding: 3px 1px;
+      border-bottom: 1px dashed rgba(15,56,15,.2); cursor: pointer; border-radius: 3px; }
+    .row:last-child { border-bottom: none; }
+    .row.tracked { background: rgba(15,56,15,.22); outline: 2px solid #0f380f; outline-offset: -2px; }
+    .avatar-sm { width: 22px; height: 22px; border-radius: 3px; flex: 0 0 22px;
+      image-rendering: pixelated; }
+    .who { font-weight: 800; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .count { font-weight: 800; background: rgba(15,56,15,.18); border-radius: 8px; padding: 0 5px; }
+    .ago { font-size: 10px; opacity: .65; }
+    .empty { opacity: .5; font-size: 11px; padding: 4px 1px; }
+    /* PANIC STOP */
+    .panic { position: fixed; right: 16px; bottom: 16px; z-index: 999;
+      width: 72px; height: 72px; border-radius: 50%; border: 4px solid #fff;
+      background: #d32f2f; color: #fff; font-weight: 900; font-size: 12px;
+      box-shadow: 0 4px 14px rgba(0,0,0,.4);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; }
+    .panic:active { transform: scale(0.94); background: #b71c1c; }
+    .panic .ico { font-size: 20px; }
+    /* avatar markers on the map */
+    .pin { cursor: pointer; }
+    .pin .halo { fill: rgba(15,56,15,.18); }
+    .pin.tracked .ring { stroke: #b71c1c; stroke-width: 2.5; fill: none; }
+    .pin.invisible .body { opacity: 0.35; }
+    @keyframes blip { 0%,100% { r: 18; opacity: .15 } 50% { r: 24; opacity: 0 } }
+  </style>
+</head>
+<body>
+  <div class="gb">
+    <div class="brand">
+      <b>🗺️ 活点地图 · Marauder's Map</b>
+      <a href="/">◀ REMOTE</a>
+    </div>
+
+    <!-- Tracking banner -->
+    <div class="banner hidden" id="banner">
+      <span id="bannerIcon">🎯</span>
+      <span id="bannerLabel">SELECTED:</span>
+      <span id="bannerName">—</span>
+      <span class="spacer"></span>
+      <button class="follow" id="followBtn">▶ FOLLOW</button>
+      <button class="stop hidden" id="stopBtn">■ STOP</button>
+      <button class="clear" id="clearBtn">✕ CLEAR</button>
+    </div>
+
+    <!-- MAP: top-down view, dog at center facing +y (up). +x maps to screen-up. -->
+    <div class="map-wrap">
+      <!-- viewBox: meters, +x_world(forward) maps to -y_screen; +y_world(left) maps to -x_screen -->
+      <svg class="map" id="map" viewBox="-3.2 -3.2 6.4 6.4" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+
+    <!-- Two compact lists side by side -->
+    <div class="lists">
+      <div class="panel">
+        <h2><span>① ALL</span><span class="cnt" id="allCnt">0</span></h2>
+        <div class="lcd-box" id="allList"></div>
+      </div>
+      <div class="panel">
+        <h2><span>② VIEW · 7s</span><span class="cnt" id="viewCnt">0</span></h2>
+        <div class="lcd-box" id="viewList"></div>
+      </div>
+    </div>
+
+    <button class="panic" id="panicBtn" title="Emergency stop">
+      <span class="ico">🛑</span><span>STOP</span>
+    </button>
+  </div>
+
+  <script>
+    // --- coordinate system ---
+    // World (dog frame): +x forward, +y left, meters
+    // Screen (SVG):       map() rotates so "up" = forward
+    // We render with viewBox in meters; transform each marker via worldToView().
+    function worldToView(x, y) {
+      // forward(+x) shows up the screen → screen_y = -x
+      // left(+y) shows to the left → screen_x = -y
+      return { sx: -y, sy: -x };
+    }
+
+    const mapEl = document.getElementById('map');
+    const allList = document.getElementById('allList');
+    const viewList = document.getElementById('viewList');
+    const allCnt = document.getElementById('allCnt');
+    const viewCnt = document.getElementById('viewCnt');
+    const banner = document.getElementById('banner');
+    const bannerIcon = document.getElementById('bannerIcon');
+    const bannerLabel = document.getElementById('bannerLabel');
+    const bannerName = document.getElementById('bannerName');
+    const clearBtn = document.getElementById('clearBtn');
+    const followBtn = document.getElementById('followBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const panicBtn = document.getElementById('panicBtn');
+
+    let trackedLid = null;
+    let following = false;
+
+    // ---- SVG render helpers ----
+    function drawGrid() {
+      // Static elements: grid + range rings + dog + cone.
+      const ns = 'http://www.w3.org/2000/svg';
+      let h = '';
+      // 1m grid lines
+      for (let v = -3; v <= 3; v++) {
+        h += `<line x1="${v}" y1="-3.2" x2="${v}" y2="3.2" stroke="rgba(15,56,15,.18)" stroke-width="0.02"/>`;
+        h += `<line x1="-3.2" y1="${v}" x2="3.2" y2="${v}" stroke="rgba(15,56,15,.18)" stroke-width="0.02"/>`;
+      }
+      // range rings
+      for (const r of [1, 2, 3]) {
+        h += `<circle cx="0" cy="0" r="${r}" fill="none" stroke="rgba(15,56,15,.28)" stroke-width="0.025" stroke-dasharray="0.08 0.08"/>`;
+        h += `<text x="${r}" y="-0.06" font-size="0.18" fill="rgba(15,56,15,.5)">${r}m</text>`;
+      }
+      // 90° front cone (matches mock CONE_HALF_ANGLE = 45°). Cone points up (forward = -y on screen).
+      h += `<polygon points="0,0 ${-4*Math.tan(Math.PI/4)},${-4} ${4*Math.tan(Math.PI/4)},${-4}" fill="rgba(15,56,15,.07)" stroke="rgba(15,56,15,.2)" stroke-width="0.02"/>`;
+      // Dog at origin: small chevron pointing forward (up)
+      h += `<g id="dog">
+        <circle cx="0" cy="0" r="0.18" fill="#0f380f"/>
+        <polygon points="0,-0.32 -0.14,0.0 0.14,0.0" fill="#0f380f"/>
+        <text x="0" y="0.45" text-anchor="middle" font-size="0.18">🐕</text>
+      </g>`;
+      return h;
+    }
+
+    function pinSvg(p) {
+      const v = worldToView(p.pos_x, p.pos_y);
+      const cls = 'pin'
+        + (trackedLid === p.long_term_id ? ' tracked' : '')
+        + (p.visible ? '' : ' invisible');
+      // Avatar embedded via <image> using the data: URL.
+      const size = 0.45;
+      return `<g class="${cls}" data-lid="${p.long_term_id}" data-name="${p.name}" transform="translate(${v.sx},${v.sy})">
+        <circle class="halo" cx="0" cy="0" r="0.34"/>
+        <image class="body" href="${p.thumbnail}" x="${-size/2}" y="${-size/2}" width="${size}" height="${size}" preserveAspectRatio="xMidYMid slice" style="clip-path:circle(${size/2}px)"/>
+        <circle class="ring" cx="0" cy="0" r="${size/2 + 0.04}"/>
+        <text text-anchor="middle" y="${size/2 + 0.28}" font-size="0.22">${p.name}</text>
+      </g>`;
+    }
+
+    function renderMap(state) {
+      // Deduplicate by long_term_id; "all" has every known person with pos.
+      const html = drawGrid() + state.all.map(pinSvg).join('');
+      mapEl.innerHTML = html;
+      // wire clicks on each pin
+      mapEl.querySelectorAll('.pin').forEach(g => {
+        g.addEventListener('click', () => {
+          const lid = parseInt(g.dataset.lid, 10);
+          selectTarget(lid, g.dataset.name);
+        });
+      });
+    }
+
+    function rowAll(p) {
+      const cls = (trackedLid === p.long_term_id) ? 'row tracked' : 'row';
+      return `<div class="${cls}" data-lid="${p.long_term_id}" data-name="${p.name}">
+        <img class="avatar-sm" src="${p.thumbnail}" alt="${p.name}">
+        <span class="who">${p.name}</span>
+        <span class="count">×${p.count}</span>
+      </div>`;
+    }
+    function rowView(p) {
+      const ago = p.secs_ago <= 0.6 ? 'now' : `${p.secs_ago}s`;
+      const cls = (trackedLid === p.long_term_id) ? 'row tracked' : 'row';
+      return `<div class="${cls}" data-lid="${p.long_term_id}" data-name="${p.name}">
+        <img class="avatar-sm" src="${p.thumbnail}" alt="${p.name}">
+        <span class="who">${p.name}</span>
+        <span class="ago">${ago}</span>
+      </div>`;
+    }
+
+    async function selectTarget(lid, name) {
+      if (trackedLid === lid) {
+        await fetch('/api/track/clear', { method: 'POST' });
+        trackedLid = null; following = false;
+      } else {
+        const r = await fetch('/api/track/select', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ long_term_id: lid }),
+        });
+        if (!r.ok) return;
+        trackedLid = lid;
+      }
+      updateBanner(name);
+      tick();
+    }
+    function updateBanner(name) {
+      if (trackedLid === null) { banner.classList.add('hidden'); return; }
+      bannerName.textContent = name || '—';
+      banner.classList.remove('hidden');
+      if (following) {
+        banner.classList.add('following');
+        bannerIcon.textContent = '🏃';
+        bannerLabel.textContent = 'FOLLOWING:';
+        followBtn.classList.add('hidden');
+        stopBtn.classList.remove('hidden');
+      } else {
+        banner.classList.remove('following');
+        bannerIcon.textContent = '🎯';
+        bannerLabel.textContent = 'SELECTED:';
+        followBtn.classList.remove('hidden');
+        stopBtn.classList.add('hidden');
+      }
+    }
+
+    // List click delegation
+    [allList, viewList].forEach(el => el.addEventListener('click', (e) => {
+      const row = e.target.closest('.row');
+      if (!row) return;
+      selectTarget(parseInt(row.dataset.lid, 10), row.dataset.name);
+    }));
+    clearBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await fetch('/api/track/clear', { method: 'POST' });
+      trackedLid = null; following = false; updateBanner(); tick();
+    });
+    followBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const r = await fetch('/api/follow/start', { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      following = !!d.following;
+      updateBanner(bannerName.textContent); tick();
+    });
+    stopBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await fetch('/api/follow/stop', { method: 'POST' });
+      following = false; updateBanner(bannerName.textContent); tick();
+    });
+    panicBtn.addEventListener('click', async () => {
+      panicBtn.style.background = '#7b1010';
+      try { await fetch('/api/halt', { method: 'POST' }); } catch (_) {}
+      trackedLid = null; following = false; updateBanner();
+      setTimeout(() => { panicBtn.style.background = ''; tick(); }, 400);
+    });
+
+    async function tick() {
+      try {
+        const r = await fetch('/api/people');
+        const s = await r.json();
+        trackedLid = s.tracked_lid ?? null;
+        following = !!s.following;
+        const trackedName = trackedLid !== null
+          ? (s.all.find(p => p.long_term_id === trackedLid)?.name || '—')
+          : '';
+        updateBanner(trackedName);
+
+        renderMap(s);
+        allCnt.textContent = s.all.length;
+        viewCnt.textContent = s.in_view.length;
+        allList.innerHTML = s.all.length ? s.all.map(rowAll).join('')
+          : '<div class="empty">no one seen yet</div>';
+        viewList.innerHTML = s.in_view.length ? s.in_view.map(rowView).join('')
+          : '<div class="empty">nobody in view</div>';
+      } catch (e) {
+        // server unreachable; keep last frame
+      }
+    }
+    tick();
+    setInterval(tick, 1000);
+  </script>
+</body>
+</html>

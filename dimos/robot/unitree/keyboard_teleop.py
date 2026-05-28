@@ -29,8 +29,14 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Force X11 driver to avoid OpenGL threading issues
-os.environ["SDL_VIDEODRIVER"] = "x11"
+# Force X11 driver on Linux to avoid OpenGL threading issues. macOS doesn't
+# have X11 by default; use the native Cocoa driver instead.
+import sys as _sys
+
+if _sys.platform == "darwin":
+    os.environ.setdefault("SDL_VIDEODRIVER", "cocoa")
+else:
+    os.environ["SDL_VIDEODRIVER"] = "x11"
 
 DEFAULT_LINEAR_SPEED: float = 0.5  # m/s
 DEFAULT_ANGULAR_SPEED: float = 0.8  # rad/s

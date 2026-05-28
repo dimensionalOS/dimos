@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Go2 BOY</title>
+  <style>
+    :root {
+      --body: #c9c8bd; --body-dark: #b0afa3; --bezel: #58586a;
+      --lcd: #9bbc0f; --lcd-2: #8aac0c; --lcd-dark: #0f380f;
+      --ab: #8e334f; --cross: #2b2b30; --pill: #7d7c88;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #2a2a2a;
+      font-family: -apple-system, system-ui, sans-serif; }
+    .gb { height: 100dvh; max-width: 480px; margin: 0 auto;
+      display: flex; flex-direction: column; padding: 14px 16px;
+      padding-top: max(14px, env(safe-area-inset-top));
+      padding-bottom: calc(max(20px, env(safe-area-inset-bottom)) + 34px);
+      background: linear-gradient(160deg, var(--body) 0%, var(--body-dark) 100%); }
+    .screen-wrap { background: var(--bezel); border-radius: 10px 10px 28px 10px;
+      padding: 14px 18px 18px; box-shadow: inset 0 2px 6px rgba(0,0,0,.5); }
+    .brand { display: flex; align-items: center; justify-content: space-between;
+      color: #8a8ab0; font-size: 11px; letter-spacing: .08em; margin-bottom: 8px; }
+    .brand b { color: #d0d0e8; font-weight: 800; font-style: italic; }
+    .lcd { display: flex; background: var(--lcd); border-radius: 6px;
+      height: 35vh; min-height: 172px; overflow: hidden; }
+    /* LEFT: 3/4 (45°) stage */
+    .stage { position: relative; flex: 0 0 52%; overflow: hidden;
+      border-right: 2px solid rgba(15,56,15,.25); }
+    /* tilted floor = diamond grid (two diagonal line sets) */
+    .field { position: absolute; inset: -20px;
+      background-image:
+        repeating-linear-gradient(63deg,  rgba(15,56,15,.22) 0 1px, transparent 1px 15px),
+        repeating-linear-gradient(-63deg, rgba(15,56,15,.22) 0 1px, transparent 1px 15px);
+      background-size: 26px 26px; }
+    .field.mv-f { animation: fDown .5s linear infinite; }
+    .field.mv-b { animation: fUp   .5s linear infinite; }
+    .field.mv-l { animation: fRight .5s linear infinite; }
+    .field.mv-r { animation: fLeft  .5s linear infinite; }
+    @keyframes fDown  { from { background-position: 0 0 } to { background-position: 0 26px } }
+    @keyframes fUp    { from { background-position: 0 0 } to { background-position: 0 -26px } }
+    @keyframes fRight { from { background-position: 0 0 } to { background-position: 26px 0 } }
+    @keyframes fLeft  { from { background-position: 0 0 } to { background-position: -26px 0 } }
+    /* 3/4-view dog, centered, facing the viewer */
+    .dog { position: absolute; left: 50%; top: 52%; width: 52px; height: 56px;
+      transform: translate(-50%, -50%); transition: transform .15s ease; will-change: transform; }
+    .dog svg { width: 100%; height: 100%; image-rendering: pixelated; display: block;
+      position: absolute; inset: 0;
+      filter: drop-shadow(0 3px 0 rgba(15,56,15,.18)); }
+    .dog .sv-lie { display: none; }
+    .dog.lie .sv-stand { display: none; }
+    .dog.lie .sv-lie { display: block; }
+    /* directional lean (movement feedback); base stays translate(-50%,-50%) */
+    .dog.lean-f { transform: translate(-50%,-60%); }
+    .dog.lean-b { transform: translate(-50%,-40%); }
+    .dog.lean-l { transform: translate(-58%,-50%) rotate(-9deg); }
+    .dog.lean-r { transform: translate(-42%,-50%) rotate(9deg); }
+    .bubble { position: absolute; left: 50%; top: 5%; transform: translateX(-50%) scale(0);
+      font-size: 26px; opacity: 0; transition: transform .15s, opacity .15s; z-index: 2; }
+    .bubble.show { transform: translateX(-50%) scale(1); opacity: 1; }
+    @keyframes pop  { 0%{transform:translate(-50%,-50%) scale(.8)} 60%{transform:translate(-50%,-50%) scale(1.12)} 100%{transform:translate(-50%,-50%) scale(1)} }
+    @keyframes bob  { 0%,100%{transform:translate(-50%,-50%) translateY(0)} 50%{transform:translate(-50%,-50%) translateY(-5px)} }
+    @keyframes wag  { 0%,100%{transform:translate(-50%,-50%) rotate(0)} 25%{transform:translate(-50%,-50%) rotate(-13deg)} 75%{transform:translate(-50%,-50%) rotate(13deg)} }
+    .dog.pop   { animation: pop .36s ease 1; }
+    .dog.march { animation: bob .24s ease 5; }
+    .dog.wag   { animation: wag .4s ease 2; }
+    /* RIGHT: log list */
+    .loglist { flex: 1; padding: 6px 8px; overflow-y: auto;
+      font-family: ui-monospace, "SF Mono", monospace; font-size: 12px; line-height: 1.6;
+      color: var(--lcd-dark); }
+    .loglist .row { display: flex; gap: 6px; white-space: nowrap; }
+    .loglist .t { opacity: .55; }
+    .loglist .row.err { color: #5a1010; font-weight: 700; }
+    /* controls */
+    .controls { flex: 1; display: grid; grid-template-columns: 1fr 1fr;
+      align-items: center; padding: 18px 4px 6px; }
+    /* 3x3 keypad matching the official keyboard teleop layout:
+         Q W E  (top:    strafe-L / forward / strafe-R)
+         A S D  (middle: turn-L  / back    / turn-R)
+         [ STOP ]  [⚡ FAST]   modifier row */
+    .keypad { display: grid; grid-template-columns: repeat(3, 44px);
+      gap: 8px; justify-self: center; }
+    .keypad button { background: var(--cross); color: #f0f0f0; border: none;
+      width: 44px; height: 44px; border-radius: 8px; font-weight: 800; font-size: 14px;
+      font-family: ui-monospace, monospace; letter-spacing: .04em; }
+    .keypad .stop { grid-column: 1 / -1; height: 36px; width: auto;
+      background: #b71c1c; font-size: 13px; }
+    .keypad .fast { grid-column: 1 / -1; height: 30px; width: auto;
+      background: var(--pill); color: #2a2a30; font-size: 12px; }
+    .keypad .fast.on { background: #ffd54f; color: #5d3b00;
+      box-shadow: inset 0 0 0 2px #fff; }
+    .keypad button:active { filter: brightness(1.35); transform: translateY(1px); }
+    .ab { position: relative; height: 132px; justify-self: center; width: 140px; }
+    .ab button { position: absolute; width: 60px; height: 60px; border-radius: 50%;
+      background: var(--ab); color: #fff; border: none; font-size: 24px;
+      box-shadow: 0 3px 0 #5e2236; display: flex; align-items: center; justify-content: center; }
+    .ab .a { right:0; top:16px; } .ab .b { left:0; top:54px; }
+    .ab .lbl { position: absolute; font-size: 12px; font-weight: 800; color: #6a2a40; }
+    .ab .lbl-a { right:22px; top:2px; } .ab .lbl-b { left:18px; top:42px; }
+    .pills { display: flex; gap: 16px; justify-content: center; padding: 6px 0 2px;
+      margin-bottom: 18px; transform: rotate(-12deg); }
+    .pills button { background: var(--pill); color: #2a2a30; border: none;
+      border-radius: 22px; padding: 9px 18px; font-size: 20px; box-shadow: 0 2px 0 #5a5963; }
+    button:active { filter: brightness(1.25); transform: translateY(1px); }
+    .ab button:active { transform: translateY(2px); box-shadow: 0 1px 0 #5e2236; }
+  </style>
+</head>
+<body>
+  <div class="gb">
+    <div class="screen-wrap">
+      <div class="brand"><a href="/people" style="color:#c7c7e0;text-decoration:none;font-weight:800">🧙&nbsp;PEOPLE</a><b>Go2&nbsp;BOY</b></div>
+      <div class="lcd">
+        <!-- LEFT: 3/4 dog stage -->
+        <div class="stage">
+          <div class="field" id="field"></div>
+          <div class="bubble" id="bubble"></div>
+          <div class="dog" id="dog">
+            <!-- STANDING, 3/4 front view (you see the dog's face), viewBox 14x15 -->
+            <svg class="sv-stand" viewBox="0 0 14 15" xmlns="http://www.w3.org/2000/svg" fill="#0f380f">
+              <rect x="3" y="0" width="1" height="1"/>   <!-- L ear tip -->
+              <rect x="10" y="0" width="1" height="1"/>  <!-- R ear tip -->
+              <rect x="2" y="1" width="3" height="1"/>   <!-- L ear -->
+              <rect x="9" y="1" width="3" height="1"/>   <!-- R ear -->
+              <rect x="2" y="2" width="10" height="1"/>  <!-- head top -->
+              <rect x="3" y="3" width="8" height="1"/>   <!-- head -->
+              <rect x="3" y="4" width="8" height="1"/>   <!-- head (eyes) -->
+              <rect x="3" y="5" width="8" height="1"/>   <!-- head -->
+              <rect x="5" y="6" width="4" height="1"/>   <!-- snout -->
+              <rect x="3" y="7" width="8" height="1"/>   <!-- chest -->
+              <rect x="3" y="8" width="8" height="1"/>   <!-- body -->
+              <rect x="4" y="9" width="6" height="1"/>   <!-- lower body -->
+              <rect x="3" y="10" width="2" height="1"/>  <!-- L front leg -->
+              <rect x="9" y="10" width="2" height="1"/>  <!-- R front leg -->
+              <rect x="5" y="10" width="4" height="1"/>  <!-- belly -->
+              <rect x="3" y="11" width="2" height="1"/>  <!-- L paw -->
+              <rect x="9" y="11" width="2" height="1"/>  <!-- R paw -->
+              <rect x="5" y="4" width="1" height="1" fill="#9bbc0f"/> <!-- L eye -->
+              <rect x="8" y="4" width="1" height="1" fill="#9bbc0f"/> <!-- R eye -->
+              <rect x="6" y="6" width="1" height="1" fill="#9bbc0f"/> <!-- nose -->
+            </svg>
+            <!-- LYING, 3/4: head up, body lowered + wider, forelegs splayed toward viewer -->
+            <svg class="sv-lie" viewBox="0 0 14 15" xmlns="http://www.w3.org/2000/svg" fill="#0f380f">
+              <rect x="3" y="1" width="1" height="1"/>   <!-- L ear tip -->
+              <rect x="10" y="1" width="1" height="1"/>  <!-- R ear tip -->
+              <rect x="2" y="2" width="3" height="1"/>   <!-- L ear -->
+              <rect x="9" y="2" width="3" height="1"/>   <!-- R ear -->
+              <rect x="2" y="3" width="10" height="1"/>  <!-- head top -->
+              <rect x="3" y="4" width="8" height="1"/>   <!-- head (eyes) -->
+              <rect x="3" y="5" width="8" height="1"/>   <!-- head -->
+              <rect x="5" y="6" width="4" height="1"/>   <!-- snout -->
+              <rect x="2" y="7" width="10" height="1"/>  <!-- wide chest -->
+              <rect x="2" y="8" width="10" height="1"/>  <!-- wide body -->
+              <rect x="2" y="9" width="10" height="1"/>  <!-- wide body -->
+              <rect x="1" y="10" width="3" height="1"/>  <!-- L foreleg splayed -->
+              <rect x="10" y="10" width="3" height="1"/> <!-- R foreleg splayed -->
+              <rect x="5" y="10" width="4" height="1"/>  <!-- belly -->
+              <rect x="1" y="11" width="2" height="1"/>  <!-- L paw -->
+              <rect x="11" y="11" width="2" height="1"/> <!-- R paw -->
+              <rect x="5" y="4" width="1" height="1" fill="#9bbc0f"/> <!-- L eye -->
+              <rect x="8" y="4" width="1" height="1" fill="#9bbc0f"/> <!-- R eye -->
+            </svg>
+          </div>
+        </div>
+        <!-- RIGHT: action log -->
+        <div class="loglist" id="loglist"></div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="keypad">
+        <button data-key="Q">Q</button>
+        <button data-key="W">W</button>
+        <button data-key="E">E</button>
+        <button data-key="A">A</button>
+        <button data-key="S">S</button>
+        <button data-key="D">D</button>
+        <button class="stop"  id="stopKey">STOP</button>
+        <button class="fast"  id="fastBtn">⚡ FAST</button>
+      </div>
+      <div class="ab">
+        <span class="lbl lbl-a">A</span>
+        <span class="lbl lbl-b">B</span>
+        <button class="a" data-post="/api/stand_up">🧍</button>
+        <button class="b" data-post="/api/lie_down">🛌</button>
+      </div>
+    </div>
+
+    <div class="pills">
+      <button data-post="/api/march" data-body='{"reps":10}'>👣</button>
+      <button data-post="/api/wave">👋</button>
+      <button data-post="/api/observe">👀</button>
+    </div>
+  </div>
+
+  <script>
+    const dog = document.getElementById('dog');
+    const bubble = document.getElementById('bubble');
+    const loglist = document.getElementById('loglist');
+    const field = document.getElementById('field');
+
+    function logRow(emoji, text, isErr) {
+      const t = new Date().toLocaleTimeString([], { hour12: false });
+      const row = document.createElement('div');
+      row.className = 'row' + (isErr ? ' err' : '');
+      row.innerHTML = `<span class="t">${t}</span><span>${emoji}</span><span>${text}</span>`;
+      loglist.appendChild(row);
+      while (loglist.childElementCount > 40) loglist.removeChild(loglist.firstChild);
+      loglist.scrollTop = loglist.scrollHeight;
+    }
+    function isLying() { return dog.classList.contains('lie'); }
+    function resetDog() { dog.className = isLying() ? 'dog lie' : 'dog'; }
+    function showBubble(e) {
+      bubble.textContent = e; bubble.classList.add('show');
+      clearTimeout(showBubble._t);
+      showBubble._t = setTimeout(() => bubble.classList.remove('show'), 1300);
+    }
+    function anim(cls, ms) { resetDog(); void dog.offsetWidth; dog.classList.add(cls);
+      if (ms) setTimeout(resetDog, ms); }
+
+    const ACT = {
+      '/api/stand_up': { emoji: '🧍', label: 'stand up', run: () => { dog.classList.remove('lie'); anim('pop', 380); } },
+      '/api/lie_down': { emoji: '🛌', label: 'lie down', run: () => { resetDog(); dog.classList.add('lie'); } },
+      '/api/wave':     { emoji: '👋', label: 'wave',     run: () => anim('wag', 800) },
+      '/api/march':    { emoji: '👣', label: 'march x10', run: () => anim('march', 1200) },
+      '/api/observe':  { emoji: '👀', label: 'observe',  run: () => {} },
+    };
+    // Official 7-command set (mirrors dimos/robot/unitree/keyboard_teleop.py):
+    //   W/S = forward/back   Q/E = strafe L/R   A/D = turn L/R
+    //   STOP = single zero twist (dog stays standing)
+    //   FAST = ×2 speed multiplier (sticky toggle, equivalent to Shift)
+    const KEY_VIS = {
+      W: { emoji: '⬆️', label: 'W · forward',  mv: 'mv-f', lean: 'lean-f' },
+      S: { emoji: '⬇️', label: 'S · back',     mv: 'mv-b', lean: 'lean-b' },
+      Q: { emoji: '⬅️', label: 'Q · strafe L', mv: 'mv-l', lean: 'lean-l' },
+      E: { emoji: '➡️', label: 'E · strafe R', mv: 'mv-r', lean: 'lean-r' },
+      A: { emoji: '↺',  label: 'A · turn L',   lean: 'lean-l' },  // yaw only
+      D: { emoji: '↻',  label: 'D · turn R',   lean: 'lean-r' },
+    };
+    let fastOn = false;
+
+    async function post(path, body) {
+      const a = ACT[path];
+      try {
+        const res = await fetch(path, { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: body ? JSON.stringify(body) : '{}' });
+        const data = await res.json();
+        if (data.ok) {
+          a.run();
+          if (path === '/api/observe') {
+            const r = data.result;
+            const txt = (r && r.count) ? `${r.count}p${r.near_count ? ' '+r.near_count+'❗' : ''}` : 'none';
+            showBubble('👀'); logRow('👀', txt);
+          } else { showBubble(a.emoji); logRow(a.emoji, a.label); }
+        } else { logRow('❌', (data.error || 'error').slice(0, 16), true); }
+      } catch (e) { logRow('📵', 'net err', true); }
+    }
+    async function sendKey(k) {
+      const v = KEY_VIS[k];
+      if (!v) return;
+      field.classList.remove('mv-f', 'mv-b', 'mv-l', 'mv-r');
+      void field.offsetWidth;
+      if (v.mv) field.classList.add(v.mv);
+      if (!isLying()) { resetDog(); if (v.lean) dog.classList.add(v.lean); }
+      showBubble((fastOn ? '⚡' : '') + v.emoji);
+      logRow(fastOn ? '⚡' : v.emoji, v.label + (fastOn ? ' (fast)' : ''));
+      setTimeout(() => { if (v.mv) field.classList.remove(v.mv); resetDog(); }, 900);
+      try {
+        await fetch('/api/step', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: k, fast: fastOn }),
+        });
+      } catch (e) { logRow('📵', 'net err', true); }
+    }
+    async function sendStop() {
+      logRow('■', 'STOP (zero twist)');
+      resetDog();
+      field.classList.remove('mv-f', 'mv-b', 'mv-l', 'mv-r');
+      try {
+        await fetch('/api/stop_move', { method: 'POST' });
+      } catch (e) { logRow('📵', 'net err', true); }
+    }
+
+    document.querySelectorAll('button[data-post]').forEach(b =>
+      b.addEventListener('click', () => post(b.dataset.post, b.dataset.body ? JSON.parse(b.dataset.body) : null)));
+    document.querySelectorAll('button[data-key]').forEach(b =>
+      b.addEventListener('click', () => sendKey(b.dataset.key)));
+    document.getElementById('stopKey').addEventListener('click', sendStop);
+    const fastBtn = document.getElementById('fastBtn');
+    fastBtn.addEventListener('click', () => {
+      fastOn = !fastOn;
+      fastBtn.classList.toggle('on', fastOn);
+      fastBtn.textContent = fastOn ? '⚡ FAST · ON' : '⚡ FAST';
+      logRow(fastOn ? '⚡' : '·', 'fast ' + (fastOn ? 'ON' : 'off'));
+    });
+
+    logRow('🐕', 'online');
+  </script>
+</body>
+</html>

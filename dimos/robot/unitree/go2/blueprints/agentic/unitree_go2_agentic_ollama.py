@@ -23,7 +23,7 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree
 unitree_go2_agentic_ollama = autoconnect(
     unitree_go2_spatial,
     McpServer.blueprint(),
-    McpClient.blueprint(model="ollama:qwen3:8b"),
+    McpClient.blueprint(model="ollama:qwen3:4b"),
     _common_agentic,
 ).requirements(
     ollama_installed,
