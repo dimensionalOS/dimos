@@ -148,7 +148,7 @@ def _voxel_downsample(pts: np.ndarray, voxel_size: float) -> np.ndarray:
 
 
 class _SimplePGO:
-    key_poses: list[KeyPose] = None
+    key_poses: list[KeyPose]
 
     def __init__(self, config: PGOConfig) -> None:
         self.key_poses = []
