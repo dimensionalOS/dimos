@@ -50,6 +50,7 @@ from dimos.perception.fiducial.marker_detect import (
 )
 from dimos.perception.fiducial.marker_pose import (
     camera_info_to_cv_matrices,
+    camera_optical_frame_id,
     create_aruco_detector,
 )
 from dimos.types.timestamped import TimestampedBufferCollection
@@ -184,8 +185,8 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
         self, upstream: Iterator[Observation[Image]]
     ) -> Iterator[Observation[Detection3DMarker]]:
         for obs in upstream:
-            pose = obs.pose
-            if pose is None:
+            pose_tuple = obs.pose_tuple
+            if pose_tuple is None:
                 logger.debug("DetectMarkers: obs %s has no .pose; skipping", obs.id)
                 continue
 
@@ -212,11 +213,11 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                 )
                 continue
 
-            t_world_optical = Transform(
-                translation=pose.position,
-                rotation=pose.orientation,
+            optical_frame = camera_optical_frame_id(image, info)
+            t_world_optical = _pose_tuple_to_transform(
+                pose_tuple,
                 frame_id=self.world_frame,
-                child_frame_id="optical",
+                child_frame_id=optical_frame,
                 ts=obs.ts,
             )
 

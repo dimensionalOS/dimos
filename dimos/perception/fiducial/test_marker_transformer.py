@@ -12,73 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
 import numpy as np
 import pytest
 
 pytest.importorskip("cv2.aruco")
 
 from dimos.memory2.type.observation import Observation
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
-
-
-def _camera_info(ts: float = 10.0) -> CameraInfo:
-    info = CameraInfo.from_intrinsics(
-        fx=600.0,
-        fy=600.0,
-        cx=320.0,
-        cy=240.0,
-        width=640,
-        height=480,
-        frame_id="camera_optical",
-    )
-    info.ts = ts
-    return info
-
-
-def _synthetic_marker_image(marker_id: int = 7, ts: float = 10.0) -> Image:
-    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-    side_px = 220
-    tile = np.zeros((side_px, side_px), dtype=np.uint8)
-    cv2.aruco.generateImageMarker(dictionary, marker_id, side_px, tile)
-    canvas = np.full((480, 640), 255, dtype=np.uint8)
-    y0 = (canvas.shape[0] - side_px) // 2
-    x0 = (canvas.shape[1] - side_px) // 2
-    canvas[y0 : y0 + side_px, x0 : x0 + side_px] = tile
-    return Image(
-        data=cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR),
-        format=ImageFormat.BGR,
-        frame_id="camera_optical",
-        ts=ts,
-    )
-
-
-def _world_T_optical(ts: float = 10.0) -> Transform:
-    return Transform(
-        translation=Vector3(1.0, 2.0, 3.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="world",
-        child_frame_id="camera_optical",
-        ts=ts,
-    )
+from dimos.perception.fiducial.test_helpers import (
+    camera_info,
+    synthetic_marker_image,
+    world_T_optical,
+)
 
 
 def test_detect_markers_in_image_builds_rich_marker_detection() -> None:
     marker_id = 7
     marker_length_m = 0.18
-    image = _synthetic_marker_image(marker_id)
-    info = _camera_info(image.ts)
+    image = synthetic_marker_image(marker_id)
+    info = camera_info(image.ts)
 
     detections = detect_markers_in_image(
         image,
         camera_info=info,
-        world_T_optical=_world_T_optical(image.ts),
+        world_T_optical=world_T_optical(image.ts),
         marker_length_m=marker_length_m,
         aruco_dictionary="DICT_APRILTAG_36h11",
     )
@@ -116,8 +76,8 @@ def test_detect_markers_in_image_returns_empty_for_no_marker_frame() -> None:
 
     detections = detect_markers_in_image(
         image,
-        camera_info=_camera_info(ts),
-        world_T_optical=_world_T_optical(ts),
+        camera_info=camera_info(ts),
+        world_T_optical=world_T_optical(ts),
         marker_length_m=0.18,
         aruco_dictionary="DICT_APRILTAG_36h11",
     )
@@ -127,7 +87,7 @@ def test_detect_markers_in_image_returns_empty_for_no_marker_frame() -> None:
 
 def test_detect_markers_transformer_preserves_observation_context_and_tags() -> None:
     marker_id = 7
-    image = _synthetic_marker_image(marker_id, ts=12.0)
+    image = synthetic_marker_image(marker_id, ts=12.0)
     obs = Observation[Image](
         id=42,
         ts=image.ts,
@@ -136,7 +96,7 @@ def test_detect_markers_transformer_preserves_observation_context_and_tags() -> 
         _data=image,
     )
     transformer = DetectMarkers(
-        camera_info=_camera_info(image.ts),
+        camera_info=camera_info(image.ts),
         marker_length_m=0.18,
         aruco_dictionary="DICT_APRILTAG_36h11",
     )
@@ -170,7 +130,7 @@ def test_detect_markers_transformer_can_emit_empty_frame_sentinel() -> None:
         _data=image,
     )
     transformer = DetectMarkers(
-        camera_info=_camera_info(image.ts),
+        camera_info=camera_info(image.ts),
         marker_length_m=0.18,
         aruco_dictionary="DICT_APRILTAG_36h11",
         emit_empty_frames=True,
@@ -187,8 +147,8 @@ def test_detect_markers_transformer_can_emit_empty_frame_sentinel() -> None:
     assert out.tags["marker_frame_count"] == 0
 
 
-def test_detect_markers_transformer_uses_callable_camera_info_source() -> None:
-    image = _synthetic_marker_image(marker_id=7, ts=14.0)
+def test_detect_markers_transformer_uses_callablecamera_info_source() -> None:
+    image = synthetic_marker_image(marker_id=7, ts=14.0)
     obs = Observation[Image](
         id=44,
         ts=image.ts,
@@ -206,7 +166,7 @@ def test_detect_markers_transformer_uses_callable_camera_info_source() -> None:
 
     assert list(transformer(iter([obs]))) == []
 
-    latest_info = _camera_info(image.ts)
+    latest_info = camera_info(image.ts)
     results = list(transformer(iter([obs])))
 
     assert len(results) == 1
@@ -217,10 +177,10 @@ def test_detect_markers_transformer_uses_callable_camera_info_source() -> None:
 def test_detect_markers_rebuilds_intrinsics_without_resetting_smoothing_track() -> None:
     marker_id = 7
     marker_length_m = 0.18
-    image_a = _synthetic_marker_image(marker_id=marker_id, ts=15.0)
-    image_b = _synthetic_marker_image(marker_id=marker_id, ts=15.2)
-    info_a = _camera_info(image_a.ts)
-    info_b = _camera_info(image_b.ts)
+    image_a = synthetic_marker_image(marker_id=marker_id, ts=15.0)
+    image_b = synthetic_marker_image(marker_id=marker_id, ts=15.2)
+    info_a = camera_info(image_a.ts)
+    info_b = camera_info(image_b.ts)
     info_b.K = info_b.K.copy()
     info_b.P = info_b.P.copy()
     info_b.K[0] = info_b.K[4] = 900.0

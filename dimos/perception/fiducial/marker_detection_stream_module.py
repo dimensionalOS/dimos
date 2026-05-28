@@ -211,13 +211,16 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
         super().stop()
 
 
-def deploy(
+def deploy_marker_detection(
     dimos: ModuleCoordinator,
     camera: Camera,
     prefix: str = "/marker_detection",
     **kwargs: Any,
 ) -> ModuleProxy:
-    """Deploy the live marker detector and publish detections over LCM."""
+    """Deploy only :class:`MarkerDetectionStreamModule` and publish detections over LCM.
+
+    For detector plus TF mirroring, use :func:`dimos.perception.fiducial.marker_tf_module.deploy`.
+    """
     deploy_kwargs = dict(kwargs)
     deploy_kwargs.setdefault("camera_info_source", camera.camera_info)
     detector = dimos.deploy(MarkerDetectionStreamModule, **deploy_kwargs)

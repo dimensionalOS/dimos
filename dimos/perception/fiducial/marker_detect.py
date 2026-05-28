@@ -27,6 +27,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import (
     camera_info_to_cv_matrices,
+    camera_optical_frame_id,
     create_aruco_detector,
     estimate_marker_pose,
     marker_corners_to_bbox,
@@ -69,7 +70,7 @@ def detect_markers_in_image(
     if ids is None or len(ids) == 0:
         return []
 
-    optical_frame = world_T_optical.child_frame_id or "optical"
+    optical_frame = camera_optical_frame_id(image, camera_info)
     t_world_optical = Transform(
         translation=world_T_optical.translation,
         rotation=world_T_optical.rotation,

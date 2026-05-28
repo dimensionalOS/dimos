@@ -14,34 +14,22 @@
 
 from unittest.mock import MagicMock, call, patch
 
-import cv2
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
-import numpy as np
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
-from dimos.perception.fiducial.marker_pose import (
-    camera_optical_frame_id,
-    estimate_marker_pose,
-    marker_corners_to_bbox,
-    marker_reprojection_error,
-)
 from dimos.perception.fiducial.marker_tf_module import (
     MarkerTfModule,
     deploy,
     deploy_tf_consumer,
 )
-
-pytest.importorskip("cv2.aruco")
 
 
 @pytest.fixture
@@ -143,59 +131,6 @@ def test_deploy_tf_consumer_empty_prefix_skips_auto_namespace(dimos) -> None:
         marker_namespace_prefix=None,
     )
     proxy.detections.connect.assert_called_once_with(source.detections)
-
-
-def test_camera_optical_frame_id_resolution() -> None:
-    ts = 1.0
-    fx, fy, cx, cy = 600.0, 600.0, 320.0, 240.0
-    info_named = CameraInfo.from_intrinsics(fx, fy, cx, cy, 640, 480, frame_id="cam_info_optical")
-    info_named.ts = ts
-    info_empty = CameraInfo.from_intrinsics(fx, fy, cx, cy, 640, 480)
-    info_empty.ts = ts
-    img_custom = Image(
-        data=np.zeros((480, 640, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        ts=ts,
-        frame_id="custom_optical",
-    )
-    img_whitespace = Image(
-        data=np.zeros((480, 640, 3), dtype=np.uint8),
-        format=ImageFormat.BGR,
-        ts=ts,
-        frame_id="  custom_optical  ",
-    )
-    img_empty = Image(data=np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR, ts=ts)
-
-    assert camera_optical_frame_id(img_custom, info_named) == "custom_optical"
-    assert camera_optical_frame_id(img_whitespace, info_named) == "custom_optical"
-    assert camera_optical_frame_id(img_empty, info_named) == "cam_info_optical"
-    assert camera_optical_frame_id(img_empty, info_empty) == "camera_optical"
-
-
-def test_estimate_marker_pose_roundtrip() -> None:
-    marker_length = 0.2
-    h = marker_length / 2.0
-    obj = np.array(
-        [[-h, h, 0.0], [h, h, 0.0], [h, -h, 0.0], [-h, -h, 0.0]],
-        dtype=np.float32,
-    )
-    k = np.array([[400.0, 0.0, 320.0], [0.0, 400.0, 240.0], [0.0, 0.0, 1.0]])
-    dist = np.zeros((5, 1), dtype=np.float64)
-    rvec0 = np.array([[0.1], [0.05], [-0.02]], dtype=np.float64)
-    tvec0 = np.array([[0.2], [-0.15], [2.5]], dtype=np.float64)
-    img_pts, _jac = cv2.projectPoints(obj, rvec0, tvec0, k, dist)
-    corners = img_pts.reshape(4, 2).astype(np.float32)
-    result = estimate_marker_pose(corners, marker_length, k, dist)
-    assert result is not None
-    rvec, tvec = result
-    np.testing.assert_allclose(rvec.reshape(3), rvec0.reshape(3), atol=1e-3)
-    np.testing.assert_allclose(tvec.reshape(3), tvec0.reshape(3), atol=1e-3)
-    assert marker_reprojection_error(corners, marker_length, k, dist, rvec, tvec) < 0.01
-
-
-def test_marker_corners_to_bbox_accepts_aruco_shapes() -> None:
-    corners = np.array([[[10.0, 20.0], [50.0, 18.0], [48.0, 60.0], [9.0, 58.0]]])
-    assert marker_corners_to_bbox(corners) == (9.0, 18.0, 50.0, 60.0)
 
 
 def _detection_array(

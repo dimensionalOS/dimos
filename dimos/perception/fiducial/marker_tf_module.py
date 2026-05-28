@@ -180,10 +180,13 @@ def deploy(
     world_frame: str = "world",
     **kwargs: Any,
 ) -> ModuleProxy:
-    """Deploy marker detection and mirror its output into TF.
+    """Deploy marker detection and mirror its output into TF (detector + :class:`MarkerTfModule`).
 
     Registers the module via :meth:`~dimos.core.coordination.module_coordinator.ModuleCoordinator.deploy`
     so lifecycle and deployment routing match other perception modules.
+
+    For detector-only deployment, use
+    :func:`dimos.perception.fiducial.marker_detection_stream_module.deploy_marker_detection`.
 
     ``prefix`` is the detector LCM topic prefix. ``tf_prefix`` maps to
     :attr:`MarkerTfModuleConfig.marker_namespace_prefix` with a leading ``/``

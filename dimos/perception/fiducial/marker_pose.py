@@ -195,7 +195,3 @@ def marker_reprojection_error(
     )
     residual = projected.reshape(4, 2) - observed.reshape(4, 2)
     return float(np.sqrt(np.mean(np.sum(residual * residual, axis=1))))
-
-
-_is_fisheye_model = is_fisheye_model
-_camera_optical_frame_id = camera_optical_frame_id

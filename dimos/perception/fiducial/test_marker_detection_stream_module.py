@@ -19,7 +19,6 @@ from typing import Any
 from unittest.mock import MagicMock
 import uuid
 
-import cv2
 import numpy as np
 import pytest
 
@@ -32,14 +31,19 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_detection_stream_module import (
     MarkerDetectionStreamModule,
-    deploy,
+    deploy_marker_detection,
 )
 from dimos.perception.fiducial.marker_transformer import MarkersPerFrame
+from dimos.perception.fiducial.test_helpers import (
+    blank_image,
+    camera_info,
+    synthetic_marker_image,
+)
 
 
 class CameraInfoSource:
@@ -66,46 +70,6 @@ def _reset_thread_pool() -> None:
 
     tp.scheduler.executor.shutdown(wait=True)
     tp.scheduler = reactivex.scheduler.ThreadPoolScheduler(max_workers=tp.get_max_workers())
-
-
-def _camera_info(ts: float = 10.0) -> CameraInfo:
-    info = CameraInfo.from_intrinsics(
-        fx=600.0,
-        fy=600.0,
-        cx=320.0,
-        cy=240.0,
-        width=640,
-        height=480,
-        frame_id="camera_optical",
-    )
-    info.ts = ts
-    return info
-
-
-def _blank_image(ts: float = 10.0) -> Image:
-    return Image(
-        data=np.full((480, 640, 3), 255, dtype=np.uint8),
-        format=ImageFormat.BGR,
-        frame_id="camera_optical",
-        ts=ts,
-    )
-
-
-def _synthetic_marker_image(marker_id: int = 7, ts: float = 10.0) -> Image:
-    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-    side_px = 220
-    tile = np.zeros((side_px, side_px), dtype=np.uint8)
-    cv2.aruco.generateImageMarker(dictionary, marker_id, side_px, tile)
-    canvas = np.full((480, 640), 255, dtype=np.uint8)
-    y0 = (canvas.shape[0] - side_px) // 2
-    x0 = (canvas.shape[1] - side_px) // 2
-    canvas[y0 : y0 + side_px, x0 : x0 + side_px] = tile
-    return Image(
-        data=cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR),
-        format=ImageFormat.BGR,
-        frame_id="camera_optical",
-        ts=ts,
-    )
 
 
 def _marker(image: Image, marker_id: int) -> Detection3DMarker:
@@ -163,7 +127,7 @@ def _marker_obs(
 
 
 def test_marker_detection_stream_module_exposes_single_stream_input() -> None:
-    module = MarkerDetectionStreamModule(marker_length_m=0.18, camera_info=_camera_info())
+    module = MarkerDetectionStreamModule(marker_length_m=0.18, camera_info=camera_info())
     try:
         assert set(module.inputs) == {"color_image"}
         assert set(module.outputs) == {"detections"}
@@ -171,7 +135,7 @@ def test_marker_detection_stream_module_exposes_single_stream_input() -> None:
         module.stop()
 
 
-def test_deploy_passes_camera_info_source_via_config_and_wires_only_image_input() -> None:
+def test_deploy_passescamera_info_source_via_config_and_wires_only_image_input() -> None:
     dimos = MagicMock()
     proxy = MagicMock()
     dimos.deploy.return_value = proxy
@@ -179,7 +143,7 @@ def test_deploy_passes_camera_info_source_via_config_and_wires_only_image_input(
     camera.color_image = MagicMock()
     camera.camera_info = MagicMock()
 
-    result = deploy(dimos, camera, marker_length_m=0.18)
+    result = deploy_marker_detection(dimos, camera, marker_length_m=0.18)
 
     assert result is proxy
     dimos.deploy.assert_called_once_with(
@@ -194,8 +158,8 @@ def test_deploy_passes_camera_info_source_via_config_and_wires_only_image_input(
 
 
 def test_markers_per_frame_groups_markers_and_preserves_empty_frames() -> None:
-    image = _blank_image(ts=10.0)
-    empty_image = _blank_image(ts=11.0)
+    image = blank_image(ts=10.0)
+    empty_image = blank_image(ts=11.0)
     marker_a = _marker(image, 7)
     marker_b = _marker(image, 42)
 
@@ -229,12 +193,12 @@ def test_markers_per_frame_groups_markers_and_preserves_empty_frames() -> None:
 def test_marker_detection_stream_pipeline_outputs_arrays_for_marker_and_empty_frame() -> None:
     marker_id = 7
     marker_length_m = 0.18
-    marker_image = _synthetic_marker_image(marker_id, ts=10.0)
-    empty_image = _blank_image(ts=11.0)
+    marker_image = synthetic_marker_image(marker_id, ts=10.0)
+    empty_image = blank_image(ts=11.0)
 
     module = MarkerDetectionStreamModule(
         marker_length_m=marker_length_m,
-        camera_info=_camera_info(marker_image.ts),
+        camera_info=camera_info(marker_image.ts),
         quality_window_s=0.01,
     )
     try:
@@ -269,11 +233,11 @@ def test_marker_detection_stream_pipeline_outputs_arrays_for_marker_and_empty_fr
 
 
 def test_marker_detection_stream_pipeline_speed_limit_is_config_gated() -> None:
-    info = _camera_info()
+    info = camera_info()
     images = [
-        _blank_image(ts=10.0),
-        _blank_image(ts=11.0),
-        _blank_image(ts=12.0),
+        blank_image(ts=10.0),
+        blank_image(ts=11.0),
+        blank_image(ts=12.0),
     ]
     poses = [
         (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
@@ -308,8 +272,8 @@ def test_marker_detection_stream_pipeline_speed_limit_is_config_gated() -> None:
 
 
 def test_append_image_with_pose_uses_camera_optical_tf_without_recomputing_pose() -> None:
-    image = _blank_image(ts=12.0)
-    info = _camera_info(image.ts)
+    image = blank_image(ts=12.0)
+    info = camera_info(image.ts)
     t_world_optical = Transform(
         translation=Vector3(4.0, 5.0, 6.0),
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -359,8 +323,8 @@ def test_append_image_with_pose_uses_camera_optical_tf_without_recomputing_pose(
     assert observations[0].pose_tuple == pytest.approx((4.0, 5.0, 6.0, 0.0, 0.0, 0.0, 1.0))
 
 
-def test_append_image_with_pose_skips_without_camera_info_or_tf() -> None:
-    image = _blank_image(ts=13.0)
+def test_append_image_with_pose_skips_withoutcamera_info_or_tf() -> None:
+    image = blank_image(ts=13.0)
 
     module = MarkerDetectionStreamModule(marker_length_m=0.18)
     try:
@@ -383,7 +347,7 @@ def test_append_image_with_pose_skips_without_camera_info_or_tf() -> None:
             pass
 
     missing_tf = MissingTf()
-    module = MarkerDetectionStreamModule(marker_length_m=0.18, camera_info=_camera_info(image.ts))
+    module = MarkerDetectionStreamModule(marker_length_m=0.18, camera_info=camera_info(image.ts))
     module._tf = missing_tf
     try:
         with MemoryStore() as store:
@@ -438,10 +402,10 @@ def test_marker_detection_stream_module_start_publishes_detection_array_over_lcm
 
     module.start()
     try:
-        source.publish(_camera_info(ts=10.0))
-        module.color_image.transport.publish(_synthetic_marker_image(marker_id, ts=10.0))
-        module.color_image.transport.publish(_blank_image(ts=11.0))
-        module.color_image.transport.publish(_blank_image(ts=12.0))
+        source.publish(camera_info(ts=10.0))
+        module.color_image.transport.publish(synthetic_marker_image(marker_id, ts=10.0))
+        module.color_image.transport.publish(blank_image(ts=11.0))
+        module.color_image.transport.publish(blank_image(ts=12.0))
 
         assert done.wait(timeout=5.0), f"Timed out waiting for marker detections, got {received}"
         marker_msg = received[0]
