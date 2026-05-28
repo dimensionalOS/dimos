@@ -672,47 +672,38 @@ def send(
     topic_send(topic, message_expr)
 
 
-@main.command(name="export-premap")
-def export_premap_cmd(
+@main.command(name="map")
+def map_cmd(
     dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
-    output: Path | None = typer.Option(None, "-o", "--output", help="Output .pc2.lcm path"),
-    voxel_size: float = typer.Option(0.05, "--voxel-size", help="Voxel size for the rebuild"),
-    duration: float | None = typer.Option(
-        None, "--duration", help="Limit to first N seconds (default: full log)"
-    ),
+    voxel: float = typer.Option(0.05, "--voxel", help="Voxel size for the rebuild"),
     device: str = typer.Option(
-        "CUDA:0",
-        "--device",
-        help="Open3D compute device (e.g. CUDA:0, CPU:0); fallback to CPU if unavailable",
+        "CUDA:0", "--device", help="Open3D compute device (e.g. CUDA:0, CPU:0)"
+    ),
+    pgo: bool = typer.Option(
+        False, "--pgo", help="Run pose graph optimization before rebuilding (twopass)"
     ),
     block_count: int = typer.Option(
-        2_000_000,
-        "--block-count",
-        help="VoxelBlockGrid capacity",
+        2_000_000, "--block-count", help="VoxelBlockGrid capacity (--pgo only)"
     ),
+    export: bool = typer.Option(
+        False,
+        "--export",
+        help="Export PGO twopass map to ./<dataset>.pc2.lcm in cwd (implies --pgo)",
+    ),
+    no_gui: bool = typer.Option(False, "--no-gui", help="Skip rerun visualization"),
 ) -> None:
-    """Export a twopass relocalization premap (.pc2.lcm) from a recorded SQLite dataset."""
-    from dimos.mapping.relocalization.pgo import pgo_then_voxels
-    from dimos.memory2.store.sqlite import SqliteStore
-    from dimos.utils.data import get_data_dir, resolve_named_path
+    """Rebuild a voxel map from a recorded SQLite dataset and view it in rerun."""
+    from dimos.utils.cli.map import main as map_main
 
-    db_path = resolve_named_path(dataset, ".db")
-
-    store = SqliteStore(path=db_path)
-    lidar = store.streams.lidar
-    if duration is not None:
-        lidar = lidar.before(lidar.first().ts + duration)
-
-    typer.echo(f"computing twopass map from {db_path} (voxel_size={voxel_size})...")
-    twopass_map = pgo_then_voxels(
-        lidar, voxel_size=voxel_size, block_count=block_count, device=device
+    map_main(
+        dataset=dataset,
+        voxel=voxel,
+        device=device,
+        pgo=pgo,
+        block_count=block_count,
+        export=export,
+        no_gui=no_gui,
     )
-
-    if output is None:
-        output = get_data_dir() / f"{db_path.stem}_twopass_map.pc2.lcm"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(twopass_map.lcm_encode())
-    typer.echo(f"wrote {output}")
 
 
 @main.command()
