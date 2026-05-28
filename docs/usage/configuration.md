@@ -30,7 +30,6 @@ try:
 except (TypeError, ValidationError) as e:
     print(f"Error: {e}")
 
-
 ```
 
 ```results
@@ -66,12 +65,10 @@ class MyModule(Module):
         super().__init__(**kwargs)
         print(self.config)
 
-
 myModule = MyModule(frame_id="frame_id_override", device="CPU")
 
 # In production, use dimos.deploy() instead:
 # myModule = dimos.deploy(MyModule, frame_id="frame_id_override")
-
 
 ```
 

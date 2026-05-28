@@ -71,7 +71,7 @@ export ROBOT_IP=<discovered_ip>
 
 ### Pre-flight checks
 
-1. Robot is reachable and low latency <10ms, 0% packet loss
+1. Robot is reachable and low latency `<10ms`, 0% packet loss
 ```bash
 ping $ROBOT_IP
 ```
