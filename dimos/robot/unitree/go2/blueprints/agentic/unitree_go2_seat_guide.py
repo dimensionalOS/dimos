@@ -15,15 +15,13 @@
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.perception.spatial_perception import SpatialMemory
-from dimos.robot.unitree.go2.blueprints.agentic._common_agentic import _common_agentic
+from dimos.robot.unitree.go2.blueprints.agentic._seat_guide_agentic import _seat_guide_agentic
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
 unitree_go2_seat_guide = autoconnect(
     unitree_go2,
-    SpatialMemory.blueprint(),
     McpServer.blueprint(),
-    _common_agentic,
+    _seat_guide_agentic,
 ).global_config(n_workers=10)
 
 __all__ = ["unitree_go2_seat_guide"]

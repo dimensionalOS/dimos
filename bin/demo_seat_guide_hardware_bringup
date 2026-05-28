@@ -3,20 +3,26 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bin/demo_seat_guide_hardware_bringup [--robot-ip <ip>] [--skip-start] [--skip-smoke]
+Usage: bin/demo_seat_guide_hardware_bringup [--robot-ip <ip>] [--detection-model <model>] [--skip-start] [--skip-smoke]
 
 Start the real Go2 SeatGuide stack, run no-motion readiness checks, then run
 the browser-microphone hardware acceptance flow.
 
 Options:
   --robot-ip <ip>   Go2 robot IP. Default: 192.168.123.161
+  --detection-model <model>
+                    VLM detector. Default: moondream. Use qwen only when
+                    ALIBABA_API_KEY is configured.
   --skip-start      Use the currently running DimOS stack instead of starting one.
   --skip-smoke      Skip the no-motion smoke wrapper and go straight to hardware acceptance.
   -h, --help        Show this help.
 
 Required environment:
-  ALIBABA_API_KEY   Qwen/VLM chair/person detection.
-  OPENAI_API_KEY    TTS speech feedback.
+  ALIBABA_API_KEY   Required only when --detection-model qwen.
+  OPENROUTER_API_KEY or OPENAI_API_KEY
+                    LLM agent for normal voice/text commands.
+  OPENAI_API_KEY    Optional for TTS speech feedback. Hardware acceptance
+                    still reports TTS as no-go when this is missing.
 EOF
 }
 
@@ -29,6 +35,7 @@ run_dimos() {
 }
 
 robot_ip="${SEAT_GUIDE_ROBOT_IP:-192.168.123.161}"
+detection_model="${SEAT_GUIDE_DETECTION_MODEL:-moondream}"
 skip_start=0
 skip_smoke=0
 
@@ -41,6 +48,15 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       robot_ip="$2"
+      shift 2
+      ;;
+    --detection-model)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --detection-model." >&2
+        usage >&2
+        exit 2
+      fi
+      detection_model="$2"
       shift 2
       ;;
     --skip-start)
@@ -64,29 +80,41 @@ while [[ $# -gt 0 ]]; do
 done
 
 missing=0
-if [[ -z "${ALIBABA_API_KEY:-}" ]]; then
-  echo "SeatGuide bring-up no-go: ALIBABA_API_KEY is not set." >&2
+if [[ "${detection_model}" == "qwen" && -z "${ALIBABA_API_KEY:-}" ]]; then
+  echo "SeatGuide bring-up no-go: ALIBABA_API_KEY is not set for detection_model=qwen." >&2
   missing=1
 fi
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "SeatGuide bring-up no-go: OPENAI_API_KEY is not set." >&2
+if [[ -z "${OPENROUTER_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" ]]; then
+  echo "SeatGuide bring-up no-go: neither OPENROUTER_API_KEY nor OPENAI_API_KEY is set." >&2
   missing=1
 fi
 if [[ "${missing}" != "0" ]]; then
   cat >&2 <<'EOF'
 Set the required keys in the same terminal that will start DimOS, for example:
 
+  export OPENROUTER_API_KEY=...
+  export OPENROUTER_MODEL=openai/gpt-4o-mini
+
+If you choose --detection-model qwen, also set:
+
   export ALIBABA_API_KEY=...
+
+For spoken TTS feedback during official hardware acceptance, also set:
+
   export OPENAI_API_KEY=...
 EOF
   exit 2
 fi
 
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  echo "SeatGuide bring-up warning: OPENAI_API_KEY is not set; TTS speech feedback will be unavailable." >&2
+fi
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ "${skip_start}" != "1" ]]; then
-  echo "Starting real Go2 SeatGuide stack at robot IP ${robot_ip}..."
-  run_dimos run unitree-go2-seat-guide-agentic --robot-ip "${robot_ip}" --daemon
+  echo "Starting real Go2 SeatGuide stack at robot IP ${robot_ip} with detection_model=${detection_model}..."
+  run_dimos --robot-ip "${robot_ip}" --detection-model "${detection_model}" run unitree-go2-seat-guide-agentic --daemon
 else
   echo "Using the currently running DimOS stack."
 fi

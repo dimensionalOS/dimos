@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from threading import Thread
 from typing import TYPE_CHECKING, Any
 
 import reactivex as rx
 import reactivex.operators as ops
+import requests
 
 from dimos.agents.annotation import skill
 from dimos.agents.skills.seat_guide import (
@@ -54,6 +56,9 @@ class WebInput(Module):
     _agent_responses: rx.subject.Subject[str] | None = None
     _stt_node: Any | None = None
     _stt_error: str | None = None
+    _speaker_cloud_url_env = "SEAT_GUIDE_SPEAKER_URL"
+    _speaker_cloud_token_env = "SEAT_GUIDE_SPEAKER_TOKEN"
+    _speaker_cloud_device_env = "SEAT_GUIDE_SPEAKER_DEVICE"
 
     @rpc
     def start(self) -> None:
@@ -151,6 +156,35 @@ class WebInput(Module):
             f"human_transport={human_transport}; url={url}."
         )
 
+    @skill
+    def phone_speaker_test(self, text: str = "SeatGuide speaker test.") -> str:
+        """Send a test message to the browser or phone speaker page.
+
+        Args:
+            text: Text to speak on the connected browser or phone speaker page.
+        """
+        if self._agent_responses is None:
+            local_result = "local=missing"
+        else:
+            self._publish_agent_response(text)
+            local_result = "local=sent"
+        cloud_result = self._post_cloud_speaker(text)
+        return f"Phone speaker test sent: {text}; {local_result}; {cloud_result}"
+
+    @skill
+    def phone_seat_request(self, text: str = "Find an empty seat.") -> str:
+        """Route a SeatGuide request and speak the result on the phone page.
+
+        Args:
+            text: SeatGuide request text, for example asking for an empty seat.
+        """
+        if self._seat_guide is None:
+            return "SeatGuide direct route is not connected."
+        response = self._seat_guide.handle_seat_request(text)
+        self._publish_agent_response(response)
+        self._post_cloud_speaker(response)
+        return response
+
     def _route_text(self, text: str) -> None:
         logger.info("WebInput received text", text=text)
         if parse_seat_guide_intent(text).should_find_seat and self._seat_guide is not None:
@@ -178,3 +212,25 @@ class WebInput(Module):
         if self._agent_responses is None:
             return
         self._agent_responses.on_next(text)
+
+    def _post_cloud_speaker(self, text: str) -> str:
+        base_url = os.environ.get(self._speaker_cloud_url_env)
+        if not base_url:
+            return "cloud=not_configured"
+        token = os.environ.get(self._speaker_cloud_token_env)
+        device = os.environ.get(self._speaker_cloud_device_env, "go2-demo")
+        headers = {"content-type": "application/json"}
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+        try:
+            response = requests.post(
+                f"{base_url.rstrip('/')}/api/speak",
+                json={"device": device, "text": text},
+                headers=headers,
+                timeout=5.0,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("Cloud phone speaker post failed", error=str(exc))
+            return f"cloud=error({type(exc).__name__})"
+        return "cloud=sent"

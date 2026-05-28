@@ -307,7 +307,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def publish_camera_info(self) -> None:
         while True:
-            self.camera_info.publish(self.camera_info_static)
+            self.camera_info.publish(self.camera_info_static.with_ts(time.time()))
             time.sleep(1.0)
 
     @rpc

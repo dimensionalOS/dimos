@@ -145,6 +145,10 @@ camera_provider_ready_for_hardware() {
   grep -Fq "credential=present" <<<"${output}" \
     && grep -Eq "image=[0-9]+x[0-9]+" <<<"${output}" \
     && grep -Fq "image_fresh=true" <<<"${output}" \
+    && grep -Eq "camera_info=[0-9]+x[0-9]+" <<<"${output}" \
+    && grep -Fq "camera_info_fresh=true" <<<"${output}" \
+    && grep -Eq "lidar=[1-9][0-9]* points" <<<"${output}" \
+    && grep -Fq "lidar_fresh=true" <<<"${output}" \
     && grep -Fq "odom=(" <<<"${output}" \
     && grep -Fq "odom_fresh=true" <<<"${output}" \
     && grep -Fq "override=inactive" <<<"${output}" \
@@ -155,13 +159,25 @@ camera_provider_ready_for_hardware() {
 log_camera_provider_no_go_details() {
   local output="$1"
   if grep -Fq "credential=missing" <<<"${output}"; then
-    log "  - VLM credential is missing. Export ALIBABA_API_KEY in the environment used to start the DimOS daemon, then restart the SeatGuide stack."
+    log "  - VLM credential is missing. For qwen, export ALIBABA_API_KEY in the environment used to start the DimOS daemon, then restart the SeatGuide stack. For moondream, verify the local model cache."
   fi
   if grep -Fq "image=missing" <<<"${output}" || ! grep -Eq "image=[0-9]+x[0-9]+" <<<"${output}"; then
     log "  - Camera image is missing. Check the Go2 camera stream and confirm the robot is publishing color_image."
   fi
   if grep -Fq "image_fresh=false" <<<"${output}"; then
     log "  - Camera image is stale. Restart/fix the camera stream before using visual detections for a live goal."
+  fi
+  if grep -Fq "camera_info=missing" <<<"${output}" || ! grep -Eq "camera_info=[0-9]+x[0-9]+" <<<"${output}"; then
+    log "  - Camera calibration is missing. Check GO2Connection.camera_info so 2D detections can be projected into 3D."
+  fi
+  if grep -Fq "camera_info_fresh=false" <<<"${output}"; then
+    log "  - Camera calibration timestamps are stale. Restart/fix camera_info publishing before projecting detections into 3D."
+  fi
+  if grep -Fq "lidar=missing" <<<"${output}" || ! grep -Eq "lidar=[1-9][0-9]* points" <<<"${output}"; then
+    log "  - LiDAR point cloud is missing. Check the Go2 L1 LiDAR stream; SeatGuide needs 3D points for real navigation targets."
+  fi
+  if grep -Fq "lidar_fresh=false" <<<"${output}"; then
+    log "  - LiDAR point cloud is stale. Restart/fix the LiDAR stream before using live SeatGuide navigation."
   fi
   if grep -Fq "odom=missing" <<<"${output}"; then
     log "  - Odometry is missing. Check localization/odom before sending a map-frame navigation goal."
@@ -224,7 +240,7 @@ log_seat_guide_no_go_details() {
   fi
   if grep -Fq "source=camera_detection_error" <<<"${output}" \
     || grep -Fq "perception=camera_detection_error" <<<"${output}"; then
-    log "  - SeatGuide camera detection failed. Check ALIBABA_API_KEY, VLM model setup, and DimOS logs."
+    log "  - SeatGuide camera detection failed. Check the configured VLM model, required credential or local model cache, and DimOS logs."
   fi
   if grep -Fq "is not live camera" <<<"${output}" \
     || grep -Fq "source=configured_fallback" <<<"${output}" \
@@ -642,7 +658,7 @@ log ""
 log "Checking current SeatGuide scene..."
 run_capture mcp call seat_guide_status
 scene_output="${run_output}"
-if ! grep -Fq "SeatGuide scene source=camera:" <<<"${scene_output}"; then
+if ! grep -Eq "SeatGuide scene source=camera(_3d)?:" <<<"${scene_output}"; then
   log "Hardware acceptance no-go: seat_guide_status did not report live camera perception."
   log_seat_guide_no_go_details "${scene_output}"
   log "Transcript saved to: ${log_file}"
@@ -686,7 +702,12 @@ log ""
 log "Previewing selected goal without moving..."
 run_capture mcp call preview_empty_seat_goal
 preview_goal_output="${run_output}"
-require_output_contains "${preview_goal_output}" "SeatGuide preview source=camera:" "preview_empty_seat_goal"
+if ! grep -Eq "SeatGuide preview source=camera(_3d)?:" <<<"${preview_goal_output}"; then
+  log "Hardware acceptance no-go: preview_empty_seat_goal did not use live camera perception."
+  log_seat_guide_no_go_details "${preview_goal_output}"
+  log "Transcript saved to: ${log_file}"
+  exit 3
+fi
 require_output_contains "${preview_goal_output}" "selected" "preview_empty_seat_goal"
 require_output_contains "${preview_goal_output}" "goal=(" "preview_empty_seat_goal"
 

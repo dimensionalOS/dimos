@@ -36,8 +36,9 @@ class MoondreamConfig(HuggingFaceModelConfig, VlModelConfig):
     """Configuration for MoondreamVlModel."""
 
     model_name: str = "vikhyatk/moondream2"
-    dtype: torch.dtype = torch.bfloat16
+    dtype: torch.dtype = torch.float32
     auto_resize: tuple[int, int] | None = MOONDREAM_DEFAULT_AUTO_RESIZE
+    compile_model: bool = False
 
 
 class MoondreamVlModel(HuggingFaceModel, VlModel):
@@ -52,7 +53,8 @@ class MoondreamVlModel(HuggingFaceModel, VlModel):
             trust_remote_code=self.config.trust_remote_code,
             torch_dtype=self.config.dtype,
         ).to(self.config.device)
-        model.compile()
+        if self.config.compile_model:
+            model.compile()
         return model
 
     def _to_pil(self, image: Image | np.ndarray[Any, Any]) -> PILImage.Image:

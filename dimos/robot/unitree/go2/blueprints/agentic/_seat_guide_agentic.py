@@ -13,17 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.mcp.mcp_client import McpClient
-from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.skills.navigation import NavigationSkillContainer
+from dimos.agents.skills.seat_guide import CameraSeatObservationProvider, SeatGuideSkillContainer
+from dimos.agents.skills.unitree_speak_skill import UnitreeSpeakSkill
+from dimos.agents.web_human_input import WebInput
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.unitree.go2.blueprints.agentic._seat_guide_agentic import _seat_guide_agentic
-from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
+from dimos.robot.unitree.unitree_skill_container import UnitreeSkillContainer
 
-unitree_go2_seat_guide_agentic = autoconnect(
-    unitree_go2,
-    McpServer.blueprint(),
-    McpClient.blueprint(),
-    _seat_guide_agentic,
-).global_config(n_workers=10)
+_seat_guide_agentic = autoconnect(
+    NavigationSkillContainer.blueprint(),
+    CameraSeatObservationProvider.blueprint(),
+    SeatGuideSkillContainer.blueprint(),
+    UnitreeSkillContainer.blueprint(),
+    WebInput.blueprint(),
+    UnitreeSpeakSkill.blueprint(),
+)
 
-__all__ = ["unitree_go2_seat_guide_agentic"]
+__all__ = ["_seat_guide_agentic"]

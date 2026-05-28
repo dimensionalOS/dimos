@@ -1,0 +1,542 @@
+#!/usr/bin/env -S uv run python
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Capture a macOS webcam frame and annotate empty-seat detections with Moondream2."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+from pathlib import Path
+import sys
+import time
+import webbrowser
+
+import cv2
+import numpy as np
+
+from dimos.models.vl.moondream import MoondreamVlModel
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+
+Bbox = tuple[float, float, float, float]
+
+
+@dataclass(frozen=True)
+class SeatCandidate:
+    bbox: Bbox
+    occupied: bool
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Capture one frame from a macOS webcam, detect chairs and people with "
+            "Moondream2, then draw empty-chair candidates."
+        )
+    )
+    parser.add_argument("--camera-index", type=int, default=0)
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=720)
+    parser.add_argument("--warmup-frames", type=int, default=5)
+    parser.add_argument("--max-objects", type=int, default=10)
+    parser.add_argument(
+        "--browser-camera",
+        action="store_true",
+        help="Use a local browser page for camera capture instead of OpenCV/AVFoundation.",
+    )
+    parser.add_argument(
+        "--no-browser-fallback",
+        action="store_true",
+        help="Do not fall back to browser camera capture when OpenCV camera access is denied.",
+    )
+    parser.add_argument("--port", type=int, default=5566, help="Browser camera server port.")
+    parser.add_argument(
+        "--preview",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Show a live camera window before capturing a frame. Press Space/Enter to capture.",
+    )
+    parser.add_argument(
+        "--image",
+        type=Path,
+        default=None,
+        help="Use an existing image instead of opening the macOS camera.",
+    )
+    parser.add_argument(
+        "--occupancy-padding",
+        type=float,
+        default=0.15,
+        help="Expand chair boxes by this fraction before checking whether a person is sitting there.",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=Path("/tmp/seat_guide_macos_empty_seat.png"),
+        help="Annotated output image path.",
+    )
+    parser.add_argument(
+        "--raw-out",
+        type=Path,
+        default=Path("/tmp/seat_guide_macos_webcam_raw.jpg"),
+        help="Raw captured frame path.",
+    )
+    parser.add_argument("--no-open", action="store_true", help="Do not open the output image.")
+    return parser.parse_args()
+
+
+def _capture_frame(args: argparse.Namespace) -> tuple[object, int, int]:
+    if args.image is not None:
+        frame = cv2.imread(str(args.image))
+        if frame is None:
+            raise RuntimeError(f"Failed to read image: {args.image}")
+        height, width = frame.shape[:2]
+        return frame, width, height
+
+    cap = cv2.VideoCapture(args.camera_index)
+    if not cap.isOpened():
+        raise RuntimeError(
+            f"Failed to open camera index {args.camera_index}. "
+            "Check macOS Camera permission or try --camera-index 1."
+        )
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
+
+    frame = None
+    ok = False
+    window_name = "SeatGuide macOS camera - Space/Enter captures, q/Esc quits"
+
+    for _ in range(max(0, args.warmup_frames)):
+        ok, frame = cap.read()
+        if not ok:
+            break
+
+    if args.preview:
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        while True:
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                break
+
+            preview = frame.copy()
+            cv2.rectangle(preview, (0, 0), (preview.shape[1], 44), (0, 0, 0), -1)
+            cv2.putText(
+                preview,
+                "SeatGuide camera preview: Space/Enter capture, q/Esc quit",
+                (12, 29),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+            cv2.imshow(window_name, preview)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (13, 32):
+                break
+            if key in (27, ord("q")):
+                cap.release()
+                cv2.destroyWindow(window_name)
+                raise RuntimeError("Camera preview was cancelled.")
+        cv2.destroyWindow(window_name)
+    else:
+        ok, frame = cap.read()
+
+    cap.release()
+
+    if not ok or frame is None:
+        raise RuntimeError(f"Failed to read a frame from camera index {args.camera_index}.")
+
+    height, width = frame.shape[:2]
+    return frame, width, height
+
+
+def _to_dimos_image(bgr: object) -> Image:
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    return Image.from_numpy(
+        rgb,
+        format=ImageFormat.RGB,
+        frame_id="mac_camera",
+        ts=time.time(),
+    )
+
+
+def _detect_bboxes(model: MoondreamVlModel, image: Image, query: str, max_objects: int) -> list[Bbox]:
+    result = model.query_detections(image, query, max_objects=max_objects)
+    return [detection.bbox for detection in result.detections]
+
+
+def _expanded_bbox(bbox: Bbox, width: int, height: int, fraction: float) -> Bbox:
+    x1, y1, x2, y2 = bbox
+    pad_x = max(0.0, (x2 - x1) * fraction)
+    pad_y = max(0.0, (y2 - y1) * fraction)
+    return (
+        max(0.0, x1 - pad_x),
+        max(0.0, y1 - pad_y),
+        min(float(width), x2 + pad_x),
+        min(float(height), y2 + pad_y),
+    )
+
+
+def _center(bbox: Bbox) -> tuple[float, float]:
+    x1, y1, x2, y2 = bbox
+    return (x1 + x2) / 2.0, (y1 + y2) / 2.0
+
+
+def _contains_point(bbox: Bbox, point: tuple[float, float]) -> bool:
+    x1, y1, x2, y2 = bbox
+    x, y = point
+    return x1 <= x <= x2 and y1 <= y <= y2
+
+
+def _classify_seats(
+    chairs: list[Bbox],
+    people: list[Bbox],
+    *,
+    width: int,
+    height: int,
+    occupancy_padding: float,
+) -> list[SeatCandidate]:
+    people_centers = [_center(person) for person in people]
+    seats: list[SeatCandidate] = []
+    for chair in chairs:
+        occupancy_region = _expanded_bbox(chair, width, height, occupancy_padding)
+        occupied = any(_contains_point(occupancy_region, center) for center in people_centers)
+        seats.append(SeatCandidate(bbox=chair, occupied=occupied))
+    return seats
+
+
+def _draw_label(
+    image: object,
+    label: str,
+    origin: tuple[int, int],
+    color: tuple[int, int, int],
+    *,
+    scale: float = 0.65,
+) -> None:
+    x, y = origin
+    thickness = 2
+    (text_w, text_h), baseline = cv2.getTextSize(
+        label,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        scale,
+        thickness,
+    )
+    top = max(0, y - text_h - baseline - 8)
+    cv2.rectangle(image, (x, top), (x + text_w + 8, top + text_h + baseline + 8), color, -1)
+    cv2.putText(
+        image,
+        label,
+        (x + 4, top + text_h + 3),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        scale,
+        (255, 255, 255),
+        thickness,
+        cv2.LINE_AA,
+    )
+
+
+def _draw_results(
+    frame: object,
+    seats: list[SeatCandidate],
+    people: list[Bbox],
+) -> object:
+    annotated = frame.copy()
+    green = (0, 180, 0)
+    red = (0, 0, 220)
+    blue = (220, 120, 0)
+
+    for index, seat in enumerate(seats, start=1):
+        x1, y1, x2, y2 = [round(value) for value in seat.bbox]
+        color = red if seat.occupied else green
+        label = f"occupied chair {index}" if seat.occupied else f"EMPTY SEAT {index}"
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
+        _draw_label(annotated, label, (x1, y1), color)
+
+    for index, person in enumerate(people, start=1):
+        x1, y1, x2, y2 = [round(value) for value in person]
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), blue, 2)
+        _draw_label(annotated, f"person {index}", (x1, y1), blue, scale=0.55)
+
+    empty_count = sum(1 for seat in seats if not seat.occupied)
+    summary = f"chairs={len(seats)} people={len(people)} empty={empty_count}"
+    cv2.rectangle(annotated, (0, 0), (min(annotated.shape[1], 520), 42), (0, 0, 0), -1)
+    cv2.putText(
+        annotated,
+        summary,
+        (12, 29),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.85,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    return annotated
+
+
+def _run_detection(frame: object, args: argparse.Namespace) -> tuple[dict[str, object], object]:
+    height, width = frame.shape[:2]
+    image = _to_dimos_image(frame)
+    print("SeatGuide detection: loading Moondream2 without torch.compile for demo latency.")
+    model = MoondreamVlModel(compile_model=False)
+    print("SeatGuide detection: detecting chairs...")
+    chairs = _detect_bboxes(model, image, "chair", args.max_objects)
+    print(f"SeatGuide detection: detected {len(chairs)} chair candidates.")
+    print("SeatGuide detection: detecting people...")
+    people = _detect_bboxes(model, image, "person", args.max_objects)
+    print(f"SeatGuide detection: detected {len(people)} people.")
+    seats = _classify_seats(
+        chairs,
+        people,
+        width=width,
+        height=height,
+        occupancy_padding=args.occupancy_padding,
+    )
+    annotated = _draw_results(frame, seats, people)
+    empty_count = sum(1 for seat in seats if not seat.occupied)
+    summary: dict[str, object] = {
+        "chairs": len(seats),
+        "people": len(people),
+        "empty": empty_count,
+        "seats": [
+            {
+                "id": f"seat_{index}",
+                "status": "empty" if not seat.occupied else "occupied",
+                "bbox": [round(value, 1) for value in seat.bbox],
+            }
+            for index, seat in enumerate(seats, start=1)
+        ],
+    }
+    return summary, annotated
+
+
+def _write_detection_outputs(
+    frame: object,
+    annotated: object,
+    args: argparse.Namespace,
+) -> None:
+    args.raw_out.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(args.raw_out), frame)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(args.out), annotated)
+
+
+def _html_page() -> bytes:
+    return b"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>SeatGuide Camera</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #101214; color: white; }
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
+    video, img { width: 100%; background: #000; border: 1px solid #333; }
+    button { font-size: 16px; padding: 10px 14px; margin: 12px 8px 12px 0; }
+    pre { white-space: pre-wrap; background: #181b1f; padding: 12px; min-height: 80px; }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <h2>Camera Preview</h2>
+      <video id="video" autoplay playsinline></video>
+      <button id="capture">Detect empty seat</button>
+      <button id="stop">Stop camera</button>
+      <pre id="status">Starting camera...</pre>
+    </section>
+    <section>
+      <h2>Moondream2 Result</h2>
+      <img id="result" alt="Detection result will appear here">
+    </section>
+  </main>
+  <canvas id="canvas" hidden></canvas>
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const statusEl = document.getElementById('status');
+    const result = document.getElementById('result');
+    const captureButton = document.getElementById('capture');
+    let stream;
+
+    async function start() {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
+      video.srcObject = stream;
+      await new Promise(resolve => {
+        if (video.readyState >= 2 && video.videoWidth > 0) {
+          resolve();
+          return;
+        }
+        video.onloadedmetadata = resolve;
+      });
+      await video.play();
+      statusEl.textContent = 'Camera ready. Click "Detect empty seat".';
+    }
+
+    captureButton.onclick = async () => {
+      captureButton.disabled = true;
+      try {
+        if (video.videoWidth === 0 || video.videoHeight === 0) {
+          throw new Error('Camera frame is not ready yet. Wait for the preview to render, then retry.');
+        }
+        statusEl.textContent = 'Captured browser frame. Sending it to local Python server...';
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Browser canvas is unavailable.');
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const image = canvas.toDataURL('image/jpeg', 0.92);
+        statusEl.textContent =
+          `Frame ${canvas.width}x${canvas.height} captured. Running Moondream2...\\n` +
+          'Watch the terminal for: received frame -> loading model -> detecting chairs -> detecting people.';
+        const response = await fetch('/detect', {
+          method: 'POST',
+          headers: {'content-type': 'application/json'},
+          body: JSON.stringify({image})
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Detection failed');
+        result.src = payload.annotated_image;
+        statusEl.textContent =
+          `chairs=${payload.chairs} people=${payload.people} empty=${payload.empty}\\n` +
+          payload.seats.map(s => `${s.id}: ${s.status} bbox=${s.bbox.join(',')}`).join('\\n') +
+          `\\n\\nsaved=${payload.saved}`;
+      } catch (err) {
+        statusEl.textContent = 'Detection failed before/while calling backend: ' + err.message;
+      } finally {
+        captureButton.disabled = false;
+      }
+    };
+
+    document.getElementById('stop').onclick = () => {
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      statusEl.textContent = 'Camera stopped.';
+    };
+
+    start().catch(err => {
+      statusEl.textContent = 'Camera failed: ' + err.message;
+    });
+  </script>
+</body>
+</html>
+"""
+
+
+def _serve_browser_camera(args: argparse.Namespace) -> int:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path != "/":
+                self.send_error(404)
+                return
+            body = _html_page()
+            self.send_response(200)
+            self.send_header("content-type", "text/html; charset=utf-8")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self) -> None:
+            if self.path != "/detect":
+                self.send_error(404)
+                return
+            try:
+                content_length = int(self.headers.get("content-length", "0"))
+                payload = json.loads(self.rfile.read(content_length))
+                print("SeatGuide browser camera: received frame; starting detection.")
+                image_data = str(payload["image"]).split(",", 1)[1]
+                encoded = base64.b64decode(image_data)
+                frame = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_COLOR)
+                if frame is None:
+                    raise RuntimeError("Failed to decode browser camera frame.")
+                summary, annotated = _run_detection(frame, args)
+                _write_detection_outputs(frame, annotated, args)
+                ok, png = cv2.imencode(".png", annotated)
+                if not ok:
+                    raise RuntimeError("Failed to encode annotated image.")
+                response = {
+                    **summary,
+                    "saved": str(args.out),
+                    "annotated_image": "data:image/png;base64,"
+                    + base64.b64encode(png.tobytes()).decode("ascii"),
+                }
+                body = json.dumps(response).encode("utf-8")
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception as exc:
+                body = json.dumps({"error": str(exc)}).encode("utf-8")
+                self.send_response(500)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    url = f"http://127.0.0.1:{args.port}/"
+    print(f"SeatGuide browser camera server: {url}")
+    print("Use the browser preview, then click 'Detect empty seat'. Press Ctrl-C here to stop.")
+    webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+def main() -> int:
+    args = _parse_args()
+    if args.browser_camera:
+        return _serve_browser_camera(args)
+    try:
+        frame, width, height = _capture_frame(args)
+        summary, annotated = _run_detection(frame, args)
+        _write_detection_outputs(frame, annotated, args)
+
+        print(
+            f"SeatGuide macOS camera result: chairs={summary['chairs']} "
+            f"people={summary['people']} empty={summary['empty']}"
+        )
+        print(f"raw_image={args.raw_out}")
+        print(f"annotated_image={args.out}")
+        for seat in summary["seats"]:
+            print(f"{seat['id']}: {seat['status']} bbox={tuple(seat['bbox'])}")
+
+        if not args.no_open:
+            import subprocess
+
+            subprocess.run(["open", str(args.out)], check=False)
+        return 0
+    except Exception as exc:
+        if not args.image and not args.no_browser_fallback:
+            print(
+                f"OpenCV camera failed ({exc}). Falling back to browser camera capture.",
+                file=sys.stderr,
+            )
+            return _serve_browser_camera(args)
+        print(f"SeatGuide macOS camera detection failed: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

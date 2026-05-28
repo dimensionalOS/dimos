@@ -53,12 +53,17 @@ from dimos.agents.web_human_input import WebInput, _create_whisper_node
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.base import NavigationState
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.web.robot_web_interface import RobotWebInterface
 
 REPO_ROOT = Path(__file__).parents[3]
@@ -108,6 +113,30 @@ class FakeNavigation:
         return True
 
 
+class SequencedNavigation(FakeNavigation):
+    def __init__(
+        self,
+        *,
+        states: list[NavigationState],
+        goal_reached_values: list[bool],
+    ) -> None:
+        super().__init__(state=states[-1], goal_reached=goal_reached_values[-1])
+        self.states = states
+        self.goal_reached_values = goal_reached_values
+        self.state_calls = 0
+        self.goal_reached_calls = 0
+
+    def get_state(self) -> NavigationState:
+        index = min(self.state_calls, len(self.states) - 1)
+        self.state_calls += 1
+        return self.states[index]
+
+    def is_goal_reached(self) -> bool:
+        index = min(self.goal_reached_calls, len(self.goal_reached_values) - 1)
+        self.goal_reached_calls += 1
+        return self.goal_reached_values[index]
+
+
 class FakeSeatObservationProvider:
     def __init__(self, scene: SeatSceneObservation) -> None:
         self.scene = scene
@@ -124,6 +153,65 @@ class CountingSeatObservationProvider(FakeSeatObservationProvider):
     def get_seat_scene(self) -> SeatSceneObservation:
         self.calls += 1
         return super().get_seat_scene()
+
+
+class SequenceSeatObservationProvider:
+    def __init__(self, scenes: list[SeatSceneObservation]) -> None:
+        self.scenes = scenes
+        self.calls = 0
+
+    def get_seat_scene(self) -> SeatSceneObservation:
+        index = min(self.calls, len(self.scenes) - 1)
+        self.calls += 1
+        return self.scenes[index]
+
+
+class FakeExplorer:
+    def __init__(self) -> None:
+        self.begin_calls = 0
+        self.end_calls = 0
+
+    def begin_exploration(self) -> str:
+        self.begin_calls += 1
+        return "Started exploration skill."
+
+    def end_exploration(self) -> str:
+        self.end_calls += 1
+        return "Stopped exploration."
+
+
+class FakeRelativeMover:
+    def __init__(self, result: str = "Navigation goal reached") -> None:
+        self.result = result
+        self.moves: list[tuple[float, float, float]] = []
+
+    def relative_move(
+        self,
+        forward: float = 0.0,
+        left: float = 0.0,
+        degrees: float = 0.0,
+        x: float = 0.0,
+        y: float = 0.0,
+        duration: float = 0.0,
+    ) -> str:
+        self.moves.append((forward, left, degrees))
+        return self.result
+
+
+class FakeDirectMover:
+    def __init__(self, result: str = "Direct move sent") -> None:
+        self.result = result
+        self.moves: list[tuple[float, float, float, float]] = []
+
+    def direct_move(
+        self,
+        x: float,
+        y: float = 0.0,
+        yaw: float = 0.0,
+        duration: float = 1.0,
+    ) -> str:
+        self.moves.append((x, y, yaw, duration))
+        return self.result
 
 
 class FakeSpeaker:
@@ -202,6 +290,16 @@ class FakeVlModel:
     def query_detections(self, image: Image, query: str) -> SimpleNamespace:
         self.queries.append(query)
         return SimpleNamespace(detections=self._detections_by_query.get(query, []))
+
+
+class FakeFastDetector:
+    def __init__(self, detections: list[Any]) -> None:
+        self._detections = detections
+        self.calls = 0
+
+    def process_image(self, image: Image) -> ImageDetections2D:
+        self.calls += 1
+        return ImageDetections2D(image, list(self._detections))
 
 
 class OdomMutatingFakeVlModel(FakeVlModel):
@@ -460,7 +558,10 @@ def test_handle_seat_request_delegates_to_scene_provider() -> None:
         )
     )
 
-    message = skill.handle_seat_request("Please help me find an empty seat")
+    message = skill.handle_seat_request(
+        "Please help me find an empty seat",
+        wait_for_arrival=False,
+    )
 
     assert "seat_2" in message
     assert fake_navigation.goal is not None
@@ -484,11 +585,71 @@ def test_handle_seat_request_speaks_feedback_when_speaker_is_connected() -> None
         )
     )
 
-    skill.handle_seat_request("Please help me find an empty seat")
+    skill.handle_seat_request(
+        "Please help me find an empty seat",
+        wait_for_arrival=False,
+    )
 
     assert fake_speaker.spoken == [
         ("I found an empty seat seat_2. Please follow me to the chair beside the table.", False)
     ]
+
+
+def test_handle_seat_request_waits_and_speaks_when_arrived() -> None:
+    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
+    fake_navigation = SequencedNavigation(
+        states=[NavigationState.IDLE, NavigationState.FOLLOWING_PATH, NavigationState.IDLE],
+        goal_reached_values=[False, False, True],
+    )
+    fake_speaker = FakeSpeaker()
+    skill._navigation = fake_navigation
+    skill._speaker = fake_speaker
+    skill._seat_observation_provider = FakeSeatObservationProvider(
+        SeatSceneObservation(
+            seats=[SeatObservation("empty", x=1.0, y=0.0, yaw=0.0)],
+            people=[],
+            source="camera_3d",
+        )
+    )
+
+    message = skill.handle_seat_request(
+        "Please help me find an empty seat",
+        wait_for_arrival=True,
+        arrival_timeout_s=2.0,
+    )
+
+    assert "我已经到了, 空椅子在我右边, 请坐。" in message
+    assert fake_speaker.spoken == [
+        ("I found an empty seat seat_1. Please follow me to the chair beside the table.", False),
+        ("我已经到了, 空椅子在我右边, 请坐。", False),
+    ]
+
+
+def test_handle_seat_request_reports_when_navigation_stops_before_arrival() -> None:
+    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
+    fake_navigation = SequencedNavigation(
+        states=[NavigationState.IDLE, NavigationState.FOLLOWING_PATH, NavigationState.IDLE],
+        goal_reached_values=[False, False, False],
+    )
+    fake_speaker = FakeSpeaker()
+    skill._navigation = fake_navigation
+    skill._speaker = fake_speaker
+    skill._seat_observation_provider = FakeSeatObservationProvider(
+        SeatSceneObservation(
+            seats=[SeatObservation("empty", x=1.0, y=0.0, yaw=0.0)],
+            people=[],
+            source="camera_3d",
+        )
+    )
+
+    message = skill.handle_seat_request(
+        "Please help me find an empty seat",
+        wait_for_arrival=True,
+        arrival_timeout_s=2.0,
+    )
+
+    assert "navigation stopped before reaching it" in message
+    assert fake_speaker.spoken[-1] == (message, False)
 
 
 def test_handle_seat_request_requires_live_camera_by_default() -> None:
@@ -505,7 +666,10 @@ def test_handle_seat_request_requires_live_camera_by_default() -> None:
         )
     )
 
-    message = skill.handle_seat_request("Please help me find an empty seat")
+    message = skill.handle_seat_request(
+        "Please help me find an empty seat",
+        wait_for_arrival=False,
+    )
 
     assert message == (
         "SeatGuide requires live camera perception before navigation; "
@@ -530,7 +694,10 @@ def test_handle_seat_request_reports_camera_detection_error_next_step() -> None:
         )
     )
 
-    message = skill.handle_seat_request("Please help me find an empty seat")
+    message = skill.handle_seat_request(
+        "Please help me find an empty seat",
+        wait_for_arrival=False,
+    )
 
     assert message == (
         "SeatGuide requires live camera perception before navigation; "
@@ -555,11 +722,252 @@ def test_handle_seat_request_can_explicitly_allow_fallback_calibration() -> None
     message = skill.handle_seat_request(
         "Please help me find an empty seat",
         require_live_perception=False,
+        wait_for_arrival=False,
     )
 
     assert "seat_1" in message
     assert fake_navigation.goal is not None
     assert fake_navigation.goal.position.x == pytest.approx(1.65)
+
+
+def test_handle_seat_request_searches_when_no_seat_visible_then_navigates() -> None:
+    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
+    fake_navigation = FakeNavigation()
+    fake_explorer = FakeExplorer()
+    skill._navigation = fake_navigation
+    skill._explorer = fake_explorer
+    skill._seat_observation_provider = SequenceSeatObservationProvider(
+        [
+            SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected"),
+            SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected"),
+            SeatSceneObservation(
+                seats=[SeatObservation("visible", x=1.0, y=0.0, yaw=0.0)],
+                people=[],
+                source="camera_3d",
+            ),
+        ]
+    )
+
+    message = skill.handle_seat_request(
+        "Please help me find an empty seat",
+        wait_for_arrival=False,
+    )
+
+    assert "seat_1" in message
+    assert fake_explorer.begin_calls == 1
+    assert fake_explorer.end_calls == 1
+    assert fake_navigation.goal is not None
+    assert fake_navigation.goal.position.x == pytest.approx(1.65)
+
+
+def test_handle_seat_request_prefers_rotate_scan_when_no_seat_visible() -> None:
+    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
+    fake_navigation = FakeNavigation()
+    fake_explorer = FakeExplorer()
+    fake_relative_mover = FakeRelativeMover()
+    skill._navigation = fake_navigation
+    skill._explorer = fake_explorer
+    skill._relative_mover = fake_relative_mover
+    skill._seat_observation_provider = SequenceSeatObservationProvider(
+        [
+            SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected"),
+            SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected"),
+            SeatSceneObservation(
+                seats=[SeatObservation("visible", x=1.0, y=0.0, yaw=0.0)],
+                people=[],
+                source="camera_3d",
+            ),
+            SeatSceneObservation(
+                seats=[SeatObservation("visible", x=1.0, y=0.0, yaw=0.0)],
+                people=[],
+                source="camera_3d",
+            ),
+        ]
+    )
+
+    message = skill.handle_seat_request(
+        "Please help me find an empty seat",
+        wait_for_arrival=False,
+    )
+
+    assert "seat_1" in message
+    assert fake_relative_mover.moves == [(0.0, 0.0, 30.0)]
+    assert fake_explorer.begin_calls == 0
+    assert fake_explorer.end_calls == 0
+    assert fake_navigation.goal is not None
+    assert fake_navigation.goal.position.x == pytest.approx(1.65)
+
+
+def test_scan_for_empty_seat_prefers_direct_turn_over_relative_navigation() -> None:
+    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
+    fake_navigation = FakeNavigation()
+    fake_direct_mover = FakeDirectMover()
+    fake_relative_mover = FakeRelativeMover()
+    skill._navigation = fake_navigation
+    skill._direct_mover = fake_direct_mover
+    skill._relative_mover = fake_relative_mover
+    skill._seat_observation_provider = SequenceSeatObservationProvider(
+        [
+            SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected"),
+            SeatSceneObservation(
+                seats=[SeatObservation("visible", x=1.0, y=0.0, yaw=0.0)],
+                people=[],
+                source="camera_3d",
+            ),
+            SeatSceneObservation(
+                seats=[SeatObservation("visible", x=1.0, y=0.0, yaw=0.0)],
+                people=[],
+                source="camera_3d",
+            ),
+        ]
+    )
+
+    message = skill.scan_for_empty_seat_from_scene(
+        max_turn_degrees=30.0,
+        step_degrees=30.0,
+        settle_s=0.1,
+        turn_yaw_rate_rad_s=0.5,
+    )
+
+    assert "seat_1" in message
+    assert len(fake_direct_mover.moves) == 1
+    x, y, yaw, duration = fake_direct_mover.moves[0]
+    assert x == 0.0
+    assert y == 0.0
+    assert yaw == pytest.approx(0.5)
+    assert duration == pytest.approx(math.radians(30.0) / 0.5)
+    assert fake_relative_mover.moves == []
+    assert fake_navigation.goal is not None
+
+
+def test_handle_seat_request_searches_when_visible_seats_are_occupied() -> None:
+    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
+    fake_navigation = FakeNavigation()
+    fake_explorer = FakeExplorer()
+    skill._navigation = fake_navigation
+    skill._explorer = fake_explorer
+    skill._seat_observation_provider = SequenceSeatObservationProvider(
+        [
+            SeatSceneObservation(
+                seats=[SeatObservation("occupied", x=1.0, y=0.0, yaw=0.0)],
+                people=[PersonObservation(x=1.1, y=0.0)],
+                source="camera_3d",
+            ),
+            SeatSceneObservation(
+                seats=[SeatObservation("occupied", x=1.0, y=0.0, yaw=0.0)],
+                people=[PersonObservation(x=1.1, y=0.0)],
+                source="camera_3d",
+            ),
+            SeatSceneObservation(
+                seats=[
+                    SeatObservation("occupied", x=1.0, y=0.0, yaw=0.0),
+                    SeatObservation("empty", x=2.0, y=0.0, yaw=0.0),
+                ],
+                people=[PersonObservation(x=1.1, y=0.0)],
+                source="camera_3d",
+            ),
+        ]
+    )
+
+    message = skill.handle_seat_request(
+        "Please help me find an empty seat",
+        wait_for_arrival=False,
+    )
+
+    assert "seat_2" in message
+    assert fake_explorer.begin_calls == 1
+    assert fake_explorer.end_calls == 1
+    assert fake_navigation.goal is not None
+    assert fake_navigation.goal.position.x == pytest.approx(2.65)
+
+
+def test_scan_for_empty_seat_rotates_until_empty_seat_visible() -> None:
+    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
+    fake_navigation = FakeNavigation()
+    fake_relative_mover = FakeRelativeMover()
+    skill._navigation = fake_navigation
+    skill._relative_mover = fake_relative_mover
+    skill._seat_observation_provider = SequenceSeatObservationProvider(
+        [
+            SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected"),
+            SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected"),
+            SeatSceneObservation(
+                seats=[SeatObservation("visible", x=2.0, y=0.0, yaw=0.0)],
+                people=[],
+                source="camera_3d",
+            ),
+            SeatSceneObservation(
+                seats=[SeatObservation("visible", x=2.0, y=0.0, yaw=0.0)],
+                people=[],
+                source="camera_3d",
+            ),
+        ]
+    )
+
+    message = skill.scan_for_empty_seat_from_scene(
+        max_turn_degrees=90.0,
+        step_degrees=30.0,
+        settle_s=0.1,
+    )
+
+    assert "seat_1" in message
+    assert fake_relative_mover.moves == [(0.0, 0.0, 30.0), (0.0, 0.0, 30.0)]
+    assert fake_navigation.goal is not None
+    assert fake_navigation.goal.position.x == pytest.approx(2.65)
+
+
+def test_scan_for_empty_seat_reports_rotation_failure() -> None:
+    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
+    fake_navigation = FakeNavigation()
+    fake_relative_mover = FakeRelativeMover("Navigation was cancelled or failed")
+    fake_speaker = FakeSpeaker()
+    skill._navigation = fake_navigation
+    skill._relative_mover = fake_relative_mover
+    skill._speaker = fake_speaker
+    skill._seat_observation_provider = FakeSeatObservationProvider(
+        SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected")
+    )
+
+    message = skill.scan_for_empty_seat_from_scene(
+        max_turn_degrees=30.0,
+        step_degrees=30.0,
+        settle_s=0.1,
+    )
+
+    assert message == (
+        "SeatGuide scan stopped because rotation failed: "
+        "Navigation was cancelled or failed."
+    )
+    assert fake_relative_mover.moves == [(0.0, 0.0, 30.0)]
+    assert fake_navigation.goal is None
+    assert fake_speaker.spoken == [(message, False)]
+
+
+def test_search_for_empty_seat_stops_exploration_on_timeout() -> None:
+    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
+    fake_navigation = FakeNavigation()
+    fake_explorer = FakeExplorer()
+    fake_speaker = FakeSpeaker()
+    skill._navigation = fake_navigation
+    skill._explorer = fake_explorer
+    skill._speaker = fake_speaker
+    skill._seat_observation_provider = FakeSeatObservationProvider(
+        SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected")
+    )
+
+    message = skill.search_for_empty_seat_from_scene(
+        search_timeout_s=1.0,
+        poll_interval_s=0.2,
+    )
+
+    assert message == (
+        "I searched but still cannot see an empty seat. Please reposition me "
+        "or point the camera toward the conference table."
+    )
+    assert fake_explorer.begin_calls == 1
+    assert fake_explorer.end_calls == 1
+    assert fake_navigation.goal is None
+    assert fake_speaker.spoken == [(message, False)]
 
 
 def test_handle_seat_request_rejects_unrelated_text() -> None:
@@ -1013,6 +1421,144 @@ def test_web_input_submit_query_http_route_reaches_seat_guide_preview() -> None:
     assert fake_agent_responses.published == ["previewed"]
 
 
+def test_web_input_phone_speaker_test_publishes_response() -> None:
+    web_input = WebInput.__new__(WebInput)
+    fake_agent_responses = FakeAgentResponses()
+    web_input._agent_responses = fake_agent_responses
+
+    message = web_input.phone_speaker_test("i am here")
+
+    assert message == "Phone speaker test sent: i am here; local=sent; cloud=not_configured"
+    assert fake_agent_responses.published == ["i am here"]
+
+
+def test_web_input_phone_speaker_test_posts_cloud_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_post(url: str, **kwargs: Any) -> FakeResponse:
+        calls.append({"url": url, **kwargs})
+        return FakeResponse()
+
+    monkeypatch.setenv("SEAT_GUIDE_SPEAKER_URL", "https://speaker.example")
+    monkeypatch.setenv("SEAT_GUIDE_SPEAKER_TOKEN", "test-token")
+    monkeypatch.setenv("SEAT_GUIDE_SPEAKER_DEVICE", "go2-lab")
+    monkeypatch.setattr(web_human_input_module.requests, "post", fake_post)
+
+    web_input = WebInput.__new__(WebInput)
+    web_input._agent_responses = None
+
+    message = web_input.phone_speaker_test("i am here")
+
+    assert message == "Phone speaker test sent: i am here; local=missing; cloud=sent"
+    assert calls == [
+        {
+            "url": "https://speaker.example/api/speak",
+            "json": {"device": "go2-lab", "text": "i am here"},
+            "headers": {
+                "content-type": "application/json",
+                "authorization": "Bearer test-token",
+            },
+            "timeout": 5.0,
+        }
+    ]
+
+
+def test_web_input_phone_seat_request_routes_and_publishes_response() -> None:
+    web_input = WebInput.__new__(WebInput)
+    fake_seat_guide = FakeSeatGuideRequest()
+    fake_agent_responses = FakeAgentResponses()
+    web_input._seat_guide = fake_seat_guide
+    web_input._agent_responses = fake_agent_responses
+
+    message = web_input.phone_seat_request("帮我找一个空位")
+
+    assert message == "handled"
+    assert fake_seat_guide.requests == ["帮我找一个空位"]
+    assert fake_agent_responses.published == ["handled"]
+
+
+def test_seat_guide_speaker_page_exposes_phone_speaker_stream() -> None:
+    interface = RobotWebInterface(
+        port=5555,
+        text_streams={"agent_responses": web_human_input_module.rx.subject.Subject()},
+    )
+
+    response = TestClient(interface.app).get("/seat-guide-speaker")
+
+    assert response.status_code == 200
+    assert "/text_stream/agent_responses" in response.text
+    assert "speechSynthesis" in response.text
+    assert "Enable speaker" in response.text
+
+
+def test_seat_guide_camera_detect_frame_returns_object_description() -> None:
+    class FakeSeatGuideCameraModel:
+        def query(self, image: Image, query: str) -> str:
+            return "The image shows a laptop and a coffee mug."
+
+        def query_detections(self, image: Image, query: str, **kwargs: Any) -> SimpleNamespace:
+            detections = [SimpleNamespace(bbox=(10.0, 10.0, 40.0, 40.0))] if query == "chair" else []
+            return SimpleNamespace(detections=detections)
+
+    interface = RobotWebInterface(port=5555)
+    interface._seat_guide_model = FakeSeatGuideCameraModel()
+
+    result = interface._detect_seat_guide_frame(
+        np.zeros((60, 80, 3), dtype=np.uint8),
+        detector="moondream",
+    )
+
+    assert result["detector"] == "moondream2"
+    assert result["description"] == "The image shows a laptop and a coffee mug."
+    assert result["chairs"] == 1
+    assert result["people"] == 0
+    assert result["empty"] == 1
+
+
+def test_seat_guide_camera_detect_frame_uses_yolo_detector() -> None:
+    class FakeSeatGuideYoloDetector:
+        def process_image(self, image: Image) -> ImageDetections2D:
+            return ImageDetections2D(
+                image,
+                [
+                    Detection2DBBox(
+                        bbox=(10.0, 10.0, 40.0, 40.0),
+                        track_id=1,
+                        class_id=56,
+                        confidence=0.9,
+                        name="chair",
+                        ts=image.ts,
+                        image=image,
+                    ),
+                    Detection2DBBox(
+                        bbox=(12.0, 12.0, 38.0, 38.0),
+                        track_id=2,
+                        class_id=0,
+                        confidence=0.8,
+                        name="person",
+                        ts=image.ts,
+                        image=image,
+                    ),
+                ],
+            )
+
+    interface = RobotWebInterface(port=5555)
+    interface._seat_guide_yolo_detector = FakeSeatGuideYoloDetector()
+
+    result = interface._detect_seat_guide_frame(np.zeros((60, 80, 3), dtype=np.uint8))
+
+    assert result["detector"] == "yolo11n"
+    assert result["chairs"] == 1
+    assert result["people"] == 1
+    assert result["empty"] == 0
+
+
 def test_web_input_upload_audio_http_route_emits_audio_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1228,6 +1774,7 @@ def test_autoconnect_injects_scene_provider_and_navigation() -> None:
         message = seat_guide.handle_seat_request(
             "Please find me an empty seat",
             require_live_perception=False,
+            wait_for_arrival=False,
         )
 
         assert "seat_2" in message
@@ -1263,6 +1810,7 @@ def test_autoconnect_uses_runtime_configured_synthetic_scene() -> None:
         message = seat_guide.handle_seat_request(
             "Please find me an empty seat",
             require_live_perception=False,
+            wait_for_arrival=False,
         )
 
         assert "seat_2" in message
@@ -1292,6 +1840,7 @@ def test_autoconnect_injects_speaker_for_feedback() -> None:
         seat_guide.handle_seat_request(
             "Please find me an empty seat",
             require_live_perception=False,
+            wait_for_arrival=False,
         )
 
         assert speaker.get_spoken() == [
@@ -1327,6 +1876,16 @@ def test_seat_guide_exposes_agent_friendly_skills() -> None:
             "title": "Require Live Perception",
             "type": "boolean",
         },
+        "wait_for_arrival": {
+            "default": True,
+            "title": "Wait For Arrival",
+            "type": "boolean",
+        },
+        "arrival_timeout_s": {
+            "default": 60.0,
+            "title": "Arrival Timeout S",
+            "type": "number",
+        },
     }
     assert request_schema["required"] == ["text"]
 
@@ -1342,7 +1901,17 @@ def test_seat_guide_exposes_agent_friendly_skills() -> None:
             "default": True,
             "title": "Require Live Perception",
             "type": "boolean",
-        }
+        },
+        "wait_for_arrival": {
+            "default": False,
+            "title": "Wait For Arrival",
+            "type": "boolean",
+        },
+        "arrival_timeout_s": {
+            "default": 60.0,
+            "title": "Arrival Timeout S",
+            "type": "number",
+        },
     }
 
     preflight_schema = skill_infos["seat_guide_preflight"]
@@ -1572,23 +2141,25 @@ def test_seat_guide_go2_blueprints_include_real_runtime_modules() -> None:
 
     assert {
         "GO2Connection",
-        "SpatialMemory",
         "McpServer",
         "McpClient",
         "CameraSeatObservationProvider",
         "SeatGuideSkillContainer",
         "WebInput",
-        "SpeakSkill",
+        "UnitreeSpeakSkill",
     } <= agentic_modules
     assert {
         "GO2Connection",
-        "SpatialMemory",
         "McpServer",
         "CameraSeatObservationProvider",
         "SeatGuideSkillContainer",
         "WebInput",
-        "SpeakSkill",
+        "UnitreeSpeakSkill",
     } <= direct_modules
+    assert "SpatialMemory" not in agentic_modules
+    assert "SpatialMemory" not in direct_modules
+    assert "PersonFollowSkillContainer" not in agentic_modules
+    assert "PersonFollowSkillContainer" not in direct_modules
     assert "McpClient" not in direct_modules
 
 
@@ -1707,6 +2278,151 @@ def test_camera_observation_provider_detects_scene_from_image() -> None:
     assert [person.x for person in scene.people] == pytest.approx([2.0])
     assert [person.y for person in scene.people] == pytest.approx([-1.12])
     assert scene.source == "camera"
+
+
+def test_camera_observation_provider_prefers_fast_detector() -> None:
+    image = Image.from_numpy(np.zeros((100, 100, 3), dtype=np.uint8))
+    provider = CameraSeatObservationProvider.__new__(CameraSeatObservationProvider)
+    provider.config = CameraSeatSceneConfig(
+        seats=[],
+        people=[],
+        robot_x=0.0,
+        robot_y=0.0,
+        chair_distance_m=2.0,
+        lateral_span_m=4.0,
+    )
+    provider._scene_override = None
+    provider._scene_lock = RLock()
+    provider._latest_image = image
+    provider._latest_odom = PoseStamped(
+        frame_id="map",
+        position=Vector3(0.0, 0.0, 0.0),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
+    )
+    provider._vl_model = None
+    provider._fast_detector = FakeFastDetector(
+        [
+            Detection2DBBox(
+                bbox=(40.0, 20.0, 60.0, 80.0),
+                track_id=1,
+                class_id=56,
+                confidence=0.9,
+                name="chair",
+                ts=image.ts,
+                image=image,
+            ),
+            Detection2DBBox(
+                bbox=(80.0, 20.0, 100.0, 80.0),
+                track_id=2,
+                class_id=0,
+                confidence=0.8,
+                name="person",
+                ts=image.ts,
+                image=image,
+            ),
+            Detection2DBBox(
+                bbox=(10.0, 10.0, 20.0, 20.0),
+                track_id=3,
+                class_id=0,
+                confidence=0.7,
+                name="book",
+                ts=image.ts,
+                image=image,
+            ),
+        ]
+    )
+
+    scene = provider.get_seat_scene()
+
+    assert provider._fast_detector.calls == 1
+    assert len(scene.seats) == 1
+    assert len(scene.people) == 1
+    assert scene.source == "camera"
+
+
+def test_camera_observation_provider_empty_fast_detector_does_not_fallback_to_vlm() -> None:
+    image = Image.from_numpy(np.zeros((100, 100, 3), dtype=np.uint8))
+    provider = CameraSeatObservationProvider.__new__(CameraSeatObservationProvider)
+    provider.config = CameraSeatSceneConfig(
+        seats=[],
+        people=[],
+        robot_x=0.0,
+        robot_y=0.0,
+    )
+    provider._scene_override = None
+    provider._scene_lock = RLock()
+    provider._latest_image = image
+    provider._latest_odom = PoseStamped(
+        frame_id="map",
+        position=Vector3(0.0, 0.0, 0.0),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
+    )
+    provider._vl_model = None
+    provider._fast_detector = FakeFastDetector([])
+
+    scene = provider.get_seat_scene()
+
+    assert provider._fast_detector.calls == 1
+    assert scene.source == "camera_no_seats_detected"
+    assert scene.seats == []
+
+
+def test_camera_observation_provider_projects_detections_with_lidar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(seat_guide_module.time, "time", lambda: 11.0)
+    provider = CameraSeatObservationProvider.__new__(CameraSeatObservationProvider)
+    provider.config = CameraSeatSceneConfig(
+        seats=[],
+        people=[],
+        robot_x=0.0,
+        robot_y=0.0,
+        chair_distance_m=2.0,
+        lateral_span_m=4.0,
+    )
+    provider._scene_override = None
+    provider._scene_lock = RLock()
+    provider._latest_image = Image.from_numpy(np.zeros((100, 100, 3), dtype=np.uint8), ts=10.0)
+    provider._latest_camera_info = CameraInfo(width=100, height=100, ts=10.0)
+    provider._latest_lidar = PointCloud2.from_numpy(
+        np.array([[4.0, 1.0, 0.4], [4.2, 1.2, 0.5]], dtype=np.float32),
+        frame_id="world",
+        timestamp=10.0,
+    )
+    provider._latest_odom = PoseStamped(
+        ts=10.0,
+        frame_id="map",
+        position=Vector3(1.0, 1.0, 0.0),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
+    )
+    provider._vl_model = FakeVlModel(
+        {
+            "chair": [SimpleNamespace(name="chair", bbox=(40.0, 20.0, 60.0, 80.0))],
+            "person": [],
+        }
+    )
+    provider._tf = SimpleNamespace(get=lambda *args: SimpleNamespace())
+
+    def fake_from_2d(**kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            pointcloud=PointCloud2.from_numpy(
+                np.array(
+                    [[3.0, 2.0, 0.1], [5.0, 4.0, 0.8], [5.2, 4.2, 0.9]],
+                    dtype=np.float32,
+                ),
+                frame_id="world",
+                timestamp=10.0,
+            )
+        )
+
+    monkeypatch.setattr(seat_guide_module.Detection3DPC, "from_2d", fake_from_2d)
+
+    scene = provider.get_seat_scene()
+
+    assert scene.source == "camera_3d"
+    assert scene.seats[0].x == pytest.approx(5.1)
+    assert scene.seats[0].y == pytest.approx(4.1)
+    assert scene.seats[0].yaw == pytest.approx(math.atan2(1.0 - 4.1, 1.0 - 5.1))
 
 
 def test_camera_observation_provider_projects_detections_from_latest_odom() -> None:
@@ -1934,8 +2650,11 @@ def test_camera_seat_provider_status_reports_missing_runtime_inputs(
 
     assert provider.camera_seat_provider_status() == (
         "CameraSeatObservationProvider status: image=missing; image_fresh=missing; "
-        "odom=missing; odom_fresh=missing; detection_model=qwen; "
-        "credential=missing; override=inactive; "
+        "camera_info=missing; camera_info_fresh=missing; "
+        "lidar=missing; lidar_fresh=missing; "
+        "odom=missing; odom_fresh=missing; fast_detector=yolo; "
+        "detection_model=moondream; "
+        "credential=present; override=inactive; "
         "configured_fallback_seats=1; configured_fallback_people=1."
     )
 
@@ -1952,6 +2671,12 @@ def test_camera_seat_provider_status_reports_live_inputs_and_credentials(
     provider._latest_image = Image.from_numpy(
         np.zeros((120, 160, 3), dtype=np.uint8), ts=100.0
     )
+    provider._latest_camera_info = CameraInfo(width=160, height=120, ts=100.0)
+    provider._latest_lidar = PointCloud2.from_numpy(
+        np.array([[1.0, 2.0, 0.5]], dtype=np.float32),
+        frame_id="world",
+        timestamp=100.0,
+    )
     provider._latest_odom = PoseStamped(
         ts=100.0,
         frame_id="map",
@@ -1961,10 +2686,30 @@ def test_camera_seat_provider_status_reports_live_inputs_and_credentials(
 
     assert provider.camera_seat_provider_status() == (
         "CameraSeatObservationProvider status: image=160x120; "
-        "image_fresh=true; odom=(1.00, 2.00, yaw=0.50); "
-        "odom_fresh=true; detection_model=qwen; "
+        "image_fresh=true; camera_info=160x120; camera_info_fresh=true; "
+        "lidar=1 points; lidar_fresh=true; odom=(1.00, 2.00, yaw=0.50); "
+        "odom_fresh=true; fast_detector=yolo; detection_model=moondream; "
         "credential=present; override=inactive; configured_fallback_seats=0; "
         "configured_fallback_people=0."
+    )
+
+
+def test_camera_seat_provider_status_reports_missing_qwen_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ALIBABA_API_KEY", raising=False)
+    provider = CameraSeatObservationProvider.__new__(CameraSeatObservationProvider)
+    provider.config = CameraSeatSceneConfig(
+        g=GlobalConfig(detection_model="moondream"),
+        detection_model="qwen",
+    )
+    provider._scene_override = None
+    provider._scene_lock = RLock()
+    provider._latest_image = None
+    provider._latest_odom = None
+
+    assert "detection_model=qwen; credential=missing" in (
+        provider.camera_seat_provider_status()
     )
 
 
@@ -2066,6 +2811,7 @@ def test_camera_observation_provider_reports_missing_qwen_key_as_detection_error
         robot_x=-1.0,
         robot_y=2.0,
         detection_model="qwen",
+        vlm_fallback_enabled=True,
     )
     provider._scene_override = None
     provider._scene_lock = RLock()
@@ -2172,6 +2918,10 @@ Using WebInput URL: http://localhost:5555
 {"modules": {"CameraSeatObservationProvider": ["camera_seat_provider_status"], "SeatGuideSkillContainer": ["seat_guide_status"], "WebInput": ["web_input_status"], "SpeakSkill": ["speech_status"]}}
 image=160x120
 image_fresh=true
+camera_info=160x120
+camera_info_fresh=true
+lidar=1200 points
+lidar_fresh=true
 credential=present
 odom=(1.00, 2.00, yaw=0.50)
 odom_fresh=true
@@ -2266,6 +3016,10 @@ def test_acceptance_log_verifier_accepts_earlier_stale_goal_reached_status(
         ("stt=connected; ", "WebInput speech-to-text pipeline"),
         ("image=160x120\n", "camera image readiness"),
         ("image_fresh=true\n", "fresh camera image readiness"),
+        ("camera_info=160x120\n", "camera calibration readiness"),
+        ("camera_info_fresh=true\n", "fresh camera calibration readiness"),
+        ("lidar=1200 points\n", "LiDAR point cloud readiness"),
+        ("lidar_fresh=true\n", "fresh LiDAR readiness"),
         ("odom_fresh=true\n", "fresh odometry readiness"),
         ("override=inactive\n", "camera runtime override disabled"),
         ("configured_fallback_seats=0\n", "camera fallback seats disabled"),
@@ -3171,7 +3925,7 @@ def test_hardware_acceptance_web_input_no_go_details_are_actionable(
     ("status_text", "expected_returncode"),
     [
         (
-            "CameraSeatObservationProvider status: image=160x120; image_fresh=true; odom=(1.00, 2.00, yaw=0.50); odom_fresh=true; detection_model=qwen; credential=present; override=inactive; configured_fallback_seats=0; configured_fallback_people=0.",
+            "CameraSeatObservationProvider status: image=160x120; image_fresh=true; camera_info=160x120; camera_info_fresh=true; lidar=1200 points; lidar_fresh=true; odom=(1.00, 2.00, yaw=0.50); odom_fresh=true; detection_model=qwen; credential=present; override=inactive; configured_fallback_seats=0; configured_fallback_people=0.",
             0,
         ),
         (
@@ -3583,7 +4337,11 @@ def test_hardware_bringup_starts_real_stack_then_runs_smoke_and_acceptance() -> 
     script = HARDWARE_BRINGUP_SCRIPT.read_text()
 
     assert 'robot_ip="${SEAT_GUIDE_ROBOT_IP:-192.168.123.161}"' in script
-    assert 'run_dimos run unitree-go2-seat-guide-agentic --robot-ip "${robot_ip}" --daemon' in script
+    assert 'detection_model="${SEAT_GUIDE_DETECTION_MODEL:-moondream}"' in script
+    assert (
+        'run_dimos --robot-ip "${robot_ip}" --detection-model "${detection_model}" '
+        "run unitree-go2-seat-guide-agentic --daemon"
+    ) in script
     assert "demo_seat_guide_smoke" in script
     assert "demo_seat_guide_hardware_acceptance" in script
     assert "unitree-go2-agentic" not in script.replace(
@@ -3595,9 +4353,17 @@ def test_hardware_bringup_requires_real_perception_and_speech_credentials() -> N
     script = HARDWARE_BRINGUP_SCRIPT.read_text()
 
     assert 'ALIBABA_API_KEY' in script
+    assert 'OPENROUTER_API_KEY' in script
     assert 'OPENAI_API_KEY' in script
-    assert "SeatGuide bring-up no-go: ALIBABA_API_KEY is not set." in script
-    assert "SeatGuide bring-up no-go: OPENAI_API_KEY is not set." in script
+    assert (
+        "SeatGuide bring-up no-go: ALIBABA_API_KEY is not set for detection_model=qwen."
+        in script
+    )
+    assert (
+        "SeatGuide bring-up no-go: neither OPENROUTER_API_KEY nor OPENAI_API_KEY is set."
+        in script
+    )
+    assert "TTS speech feedback will be unavailable" in script
 
 
 def test_hardware_bringup_allows_existing_stack_and_smoke_skip() -> None:
@@ -3619,7 +4385,10 @@ def test_seat_guide_doc_does_not_recommend_rejected_general_go2_stack() -> None:
     doc = SEAT_GUIDE_DOC.read_text()
 
     assert "bin/demo_seat_guide_hardware_bringup --robot-ip" in doc
-    assert "dimos run unitree-go2-seat-guide-agentic --robot-ip" in doc
+    assert (
+        "dimos --robot-ip 192.168.123.161 --detection-model moondream "
+        "run unitree-go2-seat-guide-agentic --daemon"
+    ) in doc
     assert "dimos --replay run unitree-go2-seat-guide-agentic --daemon" in doc
     assert "dimos run unitree-go2-agentic --robot-ip" not in doc
 
