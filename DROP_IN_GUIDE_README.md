@@ -95,6 +95,26 @@ Telemetry channels stream agent responses, tool calls, and the audit trace as Se
 
 ---
 
+## Slides
+
+A 6-slide deck for judges + dry-runs ships as a single self-contained HTML file:
+
+**[`assets/drop_in_guide_slides.html`](assets/drop_in_guide_slides.html)**
+
+Open it in any browser. The styling matches the operator-console screenshot above (dark background, mint accents, italic serif + monospace). To export PDF: open in Chrome/Safari, ⌘P → Save as PDF → choose "Default" page size and Background graphics ON.
+
+Deck contents:
+| # | Slide |
+|---|---|
+| 01 | Cover — Drop-in Guide, muShanghai 2026 / Agents track |
+| 02 | The thesis — inverting the system-integrator model |
+| 03 | The three intelligences — motion / task / interaction |
+| 04 | 3-phase runtime — priming → guidance → reactive Q&A |
+| 05 | The defining gesture — voice-triggered pause + auto-arrival wave |
+| 06 | Submission summary — PR #2289, validated in replay + on Go2 |
+
+---
+
 ## Setup
 
 ### Prerequisites

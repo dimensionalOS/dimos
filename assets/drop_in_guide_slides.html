@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Drop-in Guide — muShanghai 2026 deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Inter:wght@300;400;500&display=swap" />
+<style>
+  :root {
+    --bg: #0c1411;
+    --bg-2: #0f1a16;
+    --bg-rule: #131e1a;
+    --mint: #9ee3b8;
+    --mint-dim: rgba(158, 227, 184, 0.22);
+    --mint-faint: rgba(158, 227, 184, 0.08);
+    --amber: #d99a4a;
+    --cream: #efe7d4;
+    --cream-dim: #c8bba3;
+    --mono-muted: #9b9079;
+    --rule: rgba(158, 227, 184, 0.18);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--cream);
+    font-family: 'JetBrains Mono', monospace;
+    -webkit-font-smoothing: antialiased;
+  }
+  .deck {
+    display: flex; flex-direction: column;
+    gap: 0;
+  }
+  .slide {
+    position: relative;
+    width: 100%;
+    min-height: 100vh;
+    padding: 4rem 7rem 4rem 7rem;
+    display: flex; flex-direction: column;
+    background:
+      radial-gradient(ellipse at 80% 10%, rgba(158, 227, 184, 0.04), transparent 60%),
+      radial-gradient(ellipse at 10% 90%, rgba(217, 154, 74, 0.03), transparent 55%),
+      var(--bg);
+    border-bottom: 1px solid var(--rule);
+    overflow: hidden;
+  }
+
+  /* Top label — small caps sans serif */
+  .eyebrow {
+    font-family: 'Inter', sans-serif;
+    font-weight: 400;
+    font-size: 0.74rem;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--cream-dim);
+    margin-bottom: 1.6rem;
+  }
+  .eyebrow .dash { color: var(--mint); margin: 0 0.55em 0 0.4em; opacity: 0.7; }
+
+  /* Title — italic serif large */
+  h1 {
+    font-family: 'Cormorant Garamond', serif;
+    font-style: italic;
+    font-weight: 500;
+    font-size: 6.2rem;
+    line-height: 1.0;
+    margin: 0 0 1rem 0;
+    color: var(--cream);
+    letter-spacing: -0.01em;
+  }
+  h1 .accent {
+    color: var(--mint);
+    text-shadow: 0 0 22px rgba(158, 227, 184, 0.22);
+  }
+  h2 {
+    font-family: 'Cormorant Garamond', serif;
+    font-style: italic;
+    font-weight: 500;
+    font-size: 3.4rem;
+    line-height: 1.05;
+    margin: 0 0 0.9rem 0;
+    color: var(--cream);
+    letter-spacing: -0.005em;
+  }
+  h2 .accent { color: var(--mint); }
+
+  /* Section number left-margin */
+  .number {
+    font-family: 'Cormorant Garamond', serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: 1.6rem;
+    color: var(--mint);
+    position: absolute;
+    left: 3rem;
+    top: 4rem;
+    opacity: 0.85;
+  }
+
+  /* Lede — monospace italic */
+  .lede {
+    font-family: 'JetBrains Mono', monospace;
+    font-style: italic;
+    font-weight: 300;
+    font-size: 1.05rem;
+    line-height: 1.65;
+    max-width: 38em;
+    color: var(--cream-dim);
+    margin-bottom: 2.4rem;
+  }
+  .lede strong {
+    color: var(--mint);
+    font-weight: 400;
+  }
+
+  /* Horizontal rule under heading */
+  .rule {
+    width: 14rem;
+    border-top: 1px solid var(--mint);
+    margin: 0.4rem 0 2.4rem 0;
+    opacity: 0.55;
+  }
+
+  /* Vertical right-edge text — design flourish */
+  .vert {
+    position: absolute;
+    right: 1.6rem;
+    top: 50%;
+    transform: translateY(-50%) rotate(180deg);
+    writing-mode: vertical-rl;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.66rem;
+    letter-spacing: 0.55em;
+    text-transform: uppercase;
+    color: var(--cream-dim);
+    opacity: 0.45;
+    white-space: nowrap;
+  }
+
+  /* Meta panel — top-right boxes */
+  .meta {
+    position: absolute;
+    top: 4rem;
+    right: 7rem;
+    display: grid;
+    grid-template-columns: repeat(4, auto);
+    gap: 2.2rem;
+    padding: 1.3rem 1.8rem;
+    border: 1px solid var(--rule);
+    background: var(--bg-rule);
+  }
+  .meta .field { display: flex; flex-direction: column; gap: 0.4rem; }
+  .meta .key {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.66rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--cream-dim);
+  }
+  .meta .val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.95rem;
+    color: var(--cream);
+  }
+  .meta .val.dot::before {
+    content: '●';
+    color: var(--mint);
+    margin-right: 0.5em;
+    font-size: 0.7em;
+    vertical-align: middle;
+  }
+
+  /* Body card / list / two-column */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; margin-top: 1rem; }
+  .card {
+    border: 1px solid var(--rule);
+    background: var(--bg-2);
+    padding: 1.6rem 1.8rem;
+  }
+  .card .tag {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.65rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--mint);
+    margin-bottom: 0.7rem;
+  }
+  .card h3 {
+    font-family: 'Cormorant Garamond', serif;
+    font-style: italic;
+    font-weight: 500;
+    font-size: 1.7rem;
+    margin: 0 0 0.7rem 0;
+    color: var(--cream);
+  }
+  .card p {
+    font-family: 'JetBrains Mono', monospace;
+    font-style: italic;
+    font-size: 0.92rem;
+    line-height: 1.55;
+    color: var(--cream-dim);
+    margin: 0;
+    font-weight: 300;
+  }
+
+  /* Table-ish list */
+  .rows { display: flex; flex-direction: column; gap: 1.2rem; max-width: 60em; }
+  .row {
+    display: grid;
+    grid-template-columns: 6rem 1fr;
+    gap: 1.6rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--mint-faint);
+  }
+  .row:last-child { border-bottom: none; }
+  .row .label {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.72rem;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--mint);
+    padding-top: 0.35rem;
+  }
+  .row .body {
+    font-family: 'JetBrains Mono', monospace;
+    font-style: italic;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: var(--cream-dim);
+    font-weight: 300;
+  }
+  .row .body b {
+    color: var(--cream);
+    font-style: normal;
+    font-weight: 400;
+  }
+
+  /* Inline pill button */
+  .pill {
+    display: inline-block;
+    padding: 0.55rem 1.1rem;
+    border: 1px solid var(--mint);
+    color: var(--mint);
+    font-family: 'Inter', sans-serif;
+    font-size: 0.75rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+  }
+
+  /* Quote / signature line */
+  .signature {
+    margin-top: 2rem;
+    padding: 1.6rem 2rem;
+    border-left: 2px solid var(--mint);
+    background: var(--mint-faint);
+    font-family: 'Cormorant Garamond', serif;
+    font-style: italic;
+    font-size: 1.55rem;
+    color: var(--cream);
+    max-width: 50em;
+    line-height: 1.4;
+  }
+  .signature .who {
+    display: block;
+    margin-top: 0.6rem;
+    font-family: 'Inter', sans-serif;
+    font-style: normal;
+    font-size: 0.7rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--mint);
+    opacity: 0.8;
+  }
+
+  /* Phase chain — horizontal flow */
+  .chain { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 1rem; margin-top: 2rem; }
+  .chain .step {
+    border: 1px solid var(--rule);
+    padding: 1.4rem 1.2rem;
+    background: var(--bg-2);
+    min-height: 9rem;
+  }
+  .chain .step .n {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.66rem;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--mint);
+    margin-bottom: 0.6rem;
+  }
+  .chain .step h4 {
+    font-family: 'Cormorant Garamond', serif;
+    font-style: italic;
+    font-weight: 500;
+    font-size: 1.4rem;
+    margin: 0 0 0.5rem 0;
+  }
+  .chain .step p {
+    font-family: 'JetBrains Mono', monospace;
+    font-style: italic;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: var(--cream-dim);
+    margin: 0;
+    font-weight: 300;
+  }
+  .chain .arrow {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 1.6rem;
+    color: var(--mint);
+    text-align: center;
+    opacity: 0.7;
+  }
+
+  /* Footer per slide */
+  .footer {
+    position: absolute;
+    bottom: 2.5rem;
+    left: 7rem;
+    right: 7rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.66rem;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--cream-dim);
+    opacity: 0.55;
+  }
+  .footer .dot { color: var(--mint); margin: 0 0.75em; }
+
+  /* Code block */
+  pre.code {
+    background: var(--bg-rule);
+    border: 1px solid var(--rule);
+    padding: 1.2rem 1.6rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    line-height: 1.65;
+    color: var(--cream);
+    max-width: 60em;
+    margin-top: 1.4rem;
+    overflow-x: auto;
+    font-weight: 300;
+  }
+  pre.code .you { color: var(--mint); }
+  pre.code .it  { color: var(--amber); }
+  pre.code .sys { color: var(--mono-muted); font-style: italic; }
+
+  /* Print: each slide = single page */
+  @media print {
+    @page { size: 1280px 800px; margin: 0; }
+    html, body { background: var(--bg) !important; }
+    .slide {
+      width: 1280px;
+      height: 800px;
+      min-height: 0;
+      page-break-after: always;
+      padding: 3rem 5rem 3rem 5rem;
+      border-bottom: none;
+    }
+    .meta { right: 5rem; top: 3rem; }
+    .footer { left: 5rem; right: 5rem; bottom: 2rem; }
+    .number { left: 2rem; top: 3rem; }
+    .vert { right: 1rem; }
+    h1 { font-size: 5rem; }
+    h2 { font-size: 2.8rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="deck">
+
+<!-- SLIDE 1 -- COVER -->
+<section class="slide">
+  <div class="eyebrow">— STATION 005 <span class="dash">·</span> MUSHANGHAI 2026 <span class="dash">·</span> AGENTS TRACK</div>
+  <h1>Drop-in <span class="accent">Guide</span></h1>
+  <div class="rule"></div>
+  <p class="lede">
+    A calm dispatch terminal for an agentic guide robot. Drop a robot in any building.
+    <strong>It learns the space by asking questions.</strong> It guides any visitor
+    through it — and waits if you fall behind.
+  </p>
+
+  <div class="meta">
+    <div class="field"><span class="key">Track</span><span class="val dot">agents</span></div>
+    <div class="field"><span class="key">Robot</span><span class="val">unitree go2</span></div>
+    <div class="field"><span class="key">Layer</span><span class="val">interaction</span></div>
+    <div class="field"><span class="key">Deadline</span><span class="val">may 28 · 18:00</span></div>
+  </div>
+
+  <div class="signature" style="margin-top: 3rem;">
+    "It's not a delivery bot. It's a guide that knows when to wait for you."
+    <span class="who">Drop-in Guide · v1.0 · field-tested at venue</span>
+  </div>
+
+  <div class="vert">DIMENSIONAL · DROP-IN GUIDE · OPERATOR</div>
+
+  <div class="footer">
+    <span>ABRAHAM ONOJA <span class="dot">·</span> GITHUB.COM/AROME3/DROP-IN-GUIDE</span>
+    <span>01 / 06</span>
+  </div>
+</section>
+
+<!-- SLIDE 2 -- THE THESIS -->
+<section class="slide">
+  <div class="number">02</div>
+  <div class="eyebrow">— THE THESIS <span class="dash">·</span> INVERTING SYSTEM INTEGRATION</div>
+  <h2><span class="accent">The robot</span> authors its own scene memory.</h2>
+  <div class="rule"></div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="tag">today</div>
+      <h3>system integrators</h3>
+      <p>
+        Existing embodied-AI guides (AGIBOT, hospital wayfinders, museum
+        robots) need <b>pre-mapped environments</b> and <b>operator-authored
+        knowledge bases</b>. The deployment model is "send a system
+        integrator, spend a week."
+      </p>
+    </div>
+    <div class="card">
+      <div class="tag">drop-in guide</div>
+      <h3>operator + AI together</h3>
+      <p>
+        The robot proposes tags from a 5-minute walkthrough; the operator
+        confirms with a keypress. Same priciple as Rehnova's
+        <b>operator-grounded verification</b> — but in physical space, not
+        spreadsheet rows.
+      </p>
+    </div>
+  </div>
+
+  <div class="vert">DIMENSIONAL · DROP-IN GUIDE · OPERATOR</div>
+  <div class="footer">
+    <span>THE THESIS</span>
+    <span>02 / 06</span>
+  </div>
+</section>
+
+<!-- SLIDE 3 -- THREE INTELLIGENCES -->
+<section class="slide">
+  <div class="number">03</div>
+  <div class="eyebrow">— ARCHITECTURE <span class="dash">·</span> THE THREE INTELLIGENCES</div>
+  <h2>Where this <span class="accent">project</span> lives.</h2>
+  <div class="rule"></div>
+
+  <div class="rows">
+    <div class="row">
+      <div class="label">motion</div>
+      <div class="body">
+        <b>Unitree Go2 hardware + dimOS nav stack</b> — A* planning,
+        frontier exploration, PGO loop closure. Locomotion, obstacle
+        avoidance, low-level control. Provided.
+      </div>
+    </div>
+    <div class="row">
+      <div class="label">task</div>
+      <div class="body">
+        <b>dimOS skill runtime + Claude Sonnet 4.6 via MCP</b> — decides
+        which skill to call when, manages dialogue state, parses natural
+        language into tool sequences. Provided.
+      </div>
+    </div>
+    <div class="row">
+      <div class="label">interaction ★</div>
+      <div class="body">
+        <b>This PR.</b> Generative priming dialogue, grounded narration,
+        decision audit, voice-triggered "I'll wait for you", auto-arrival
+        greeting. <span style="color: var(--mint);">The interaction layer
+        is where we add value.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="vert">DIMENSIONAL · DROP-IN GUIDE · OPERATOR</div>
+  <div class="footer">
+    <span>THE THREE INTELLIGENCES <span class="dot">·</span> FRAMING BORROWED FROM AGIBOT</span>
+    <span>03 / 06</span>
+  </div>
+</section>
+
+<!-- SLIDE 4 -- 3-PHASE FLOW -->
+<section class="slide">
+  <div class="number">04</div>
+  <div class="eyebrow">— RUNTIME <span class="dash">·</span> THREE PHASES, ONE PROMPT</div>
+  <h2>Priming. <span class="accent">Guidance.</span> Q&amp;A.</h2>
+  <div class="rule"></div>
+
+  <p class="lede">
+    The same <strong>Claude system prompt</strong> drives all three phases —
+    text, voice, and WASD keypress inputs produce identical agent behavior,
+    including the calibrated-uncertainty checks and the
+    <strong>[SYSTEM ARRIVAL EVENT]</strong> chain.
+  </p>
+
+  <div class="chain">
+    <div class="step">
+      <div class="n">phase 1</div>
+      <h4>priming</h4>
+      <p>
+        Operator drives. Robot proposes tags from what it sees. Operator
+        confirms with one keypress.
+      </p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <div class="n">phase 2</div>
+      <h4>guidance</h4>
+      <p>
+        Visitor says "take me to X". Robot logs grounding, waves,
+        navigates, <b>auto-waves on arrival.</b> Pauses on "wait".
+      </p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <div class="n">phase 3</div>
+      <h4>reactive Q&amp;A</h4>
+      <p>
+        "What places do you know?" "Give me a tour." "What did you
+        skip?" Audit trail backs every answer.
+      </p>
+    </div>
+  </div>
+
+  <div class="vert">DIMENSIONAL · DROP-IN GUIDE · OPERATOR</div>
+  <div class="footer">
+    <span>SAME PROMPT <span class="dot">·</span> TEXT, VOICE, KEYPRESS → IDENTICAL BEHAVIOR</span>
+    <span>04 / 06</span>
+  </div>
+</section>
+
+<!-- SLIDE 5 -- THE DEFINING GESTURE -->
+<section class="slide">
+  <div class="number">05</div>
+  <div class="eyebrow">— DEFINING GESTURE <span class="dash">·</span> "I'LL WAIT FOR YOU"</div>
+  <h2>The pause is what makes it a <span class="accent">guide</span>.</h2>
+  <div class="rule"></div>
+
+  <p class="lede">
+    A delivery bot drives to a destination. A guide notices when you've
+    fallen behind. We can't see backward through the Go2's front camera,
+    so the visitor controls the pace with their voice — the
+    <strong>natural way a human guide would work.</strong>
+  </p>
+
+<pre class="code"><span class="sys"># validated end-to-end in dimOS replay</span>
+<span class="you">visitor:</span>  take me to the copier
+<span class="it">robot:</span>    log_nav_decision(copier, semantic, 0.4)
+         speak("Making my best guess — follow me!")
+         navigate_with_text("copier")
+         <span class="sys">[walking...]</span>
+
+<span class="you">visitor:</span>  wait, hold on, I'm behind
+<span class="it">robot:</span>    stop_navigation()
+         <span class="sys">▶</span> speak("I'll wait for you here.")  <span class="sys">← signature line</span>
+
+<span class="you">visitor:</span>  okay, I'm ready, let's go
+<span class="it">robot:</span>    log_nav_decision(copier, semantic, 0.4)
+         navigate_with_text("copier")  <span class="sys">← resumes same target</span>
+
+<span class="sys">[planner] /goal_reached = True</span>
+<span class="it">robot:</span>    speak("Here's the copier — anything else?")
+         execute_sport_command("Hello")  <span class="sys">← auto-arrival wave</span></pre>
+
+  <div class="vert">DIMENSIONAL · DROP-IN GUIDE · OPERATOR</div>
+  <div class="footer">
+    <span>VOICE-TRIGGERED PAUSE + AUTO-ARRIVAL WAVE <span class="dot">·</span> PROMPT-DRIVEN</span>
+    <span>05 / 06</span>
+  </div>
+</section>
+
+<!-- SLIDE 6 -- SUBMISSION SUMMARY -->
+<section class="slide">
+  <div class="number">06</div>
+  <div class="eyebrow">— SUBMISSION <span class="dash">·</span> WHAT'S IN THE PR</div>
+  <h2>One blueprint. <span class="accent">Six skills.</span> 1,330 lines.</h2>
+  <div class="rule"></div>
+
+  <div class="rows">
+    <div class="row">
+      <div class="label">blueprint</div>
+      <div class="body">
+        <b>drop_in_guide.py</b> — composes from unitree_go2 base, skips
+        CUDA-only modules, registers 3-phase system prompt.
+      </div>
+    </div>
+    <div class="row">
+      <div class="label">skills</div>
+      <div class="body">
+        <b>scene_caption</b> · <b>teleop_velocity</b> ·
+        <b>arrival_announcer</b> · <b>decision_audit</b> ·
+        <b>lead_with_follow</b> · <b>reactive_qa</b>
+      </div>
+    </div>
+    <div class="row">
+      <div class="label">validated</div>
+      <div class="body">
+        Replay run on <b>data/go2_short.db</b>: 22 modules load,
+        /goal_reached chain fires, voice-wait + resume both verified.
+        No hallucinated arrival in any test.
+      </div>
+    </div>
+    <div class="row">
+      <div class="label">field</div>
+      <div class="body">
+        Tested live on Go2 at venue. <b>obstacle_avoidance=False</b>
+        baked into config. macOS multicast workaround documented.
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: 2.5rem;">
+    <span class="pill">PR · DIMENSIONALOS/DIMOS #2289</span>
+    &nbsp;&nbsp;
+    <span class="pill" style="color: var(--amber); border-color: var(--amber);">TOOLING · AROME3/DROP-IN-GUIDE</span>
+  </div>
+
+  <div class="vert">DIMENSIONAL · DROP-IN GUIDE · OPERATOR</div>
+  <div class="footer">
+    <span>THANK YOU <span class="dot">·</span> ABRAHAM ONOJA <span class="dot">·</span> MUSHANGHAI 2026</span>
+    <span>06 / 06</span>
+  </div>
+</section>
+
+</div>
+</body>
+</html>
