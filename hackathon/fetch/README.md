@@ -35,8 +35,9 @@ camera frame (+depth)
   at `192.168.12.1` as well as standard Wi-Fi.
 - **Fetch is the behavior layer.** The vision-LLM decision loop, persona, approach/
   trade/photo state machine, and voice all sit on top of DimOS primitives.
-- **Real-time by design.** A ~1-second scan loop and low-latency speech (Cartesia
-  Sonic by default) keep the interaction feeling live, not turn-based.
+- **Real-time by design.** A ~1-second scan loop, a low-latency vision model (the
+  live demo runs on **Gemini 2.5 Flash-Lite**), and fast speech (Cartesia Sonic by
+  default) keep the interaction feeling live, not turn-based.
 
 ## What We Built
 
@@ -45,9 +46,10 @@ camera frame (+depth)
 - The full interaction flow: scan for a relaxed guest → obstacle-aware approach
   (turning to keep the subject in frame) → wave + personalized one-liner →
   "grab a Coke, pose" → snap the instant photo + dance.
-- **Instant photo → the guest's phone.** Shots save locally and can mirror to an
-  iCloud or Google Drive folder (`FETCH_PHOTO_MIRROR_DIRS`) so the demo phone syncs
-  the picture seconds after it's taken.
+- **Instant, Fetch-branded photo → the guest's phone.** Each capture is composited
+  with the Fetch logo in a Polaroid-style branded photo view (with a print sound),
+  saved locally and optionally mirrored to an iCloud or Google Drive folder
+  (`FETCH_PHOTO_MIRROR_DIRS`) so the demo phone syncs it seconds after it's taken.
 - A single-page phone UI (camera feed, previews, live decision display, audio
   routing, photo flow) backed by FastAPI + WebSocket.
 - Runtime-switchable **voice**: one-way TTS across Cartesia / Gemini Live / OpenAI,
@@ -61,10 +63,10 @@ camera frame (+depth)
 | Piece | What it does |
 | --- | --- |
 | **Camera sources** | One loop, three inputs: phone browser camera (zero hardware), Record3D USB RGBD (real iPhone LiDAR depth), and a live Go2 over WebRTC. |
-| **Vision policy** | `FetchPolicy.analyze_frame()` sends image + prompt to the vision LLM and normalizes the JSON into a decision dict (default OpenAI `gpt-5-mini`; `--vision-provider gemini` for `gemini-3.5-flash`). |
+| **Vision policy** | `FetchPolicy.analyze_frame()` sends image + prompt to a provider-selectable vision LLM (OpenAI or Gemini) and normalizes the JSON into a decision dict; the live demo runs on **Gemini 2.5 Flash-Lite** for the lowest latency. |
 | **Go2 transport** | DimOS Unitree WebRTC; `--robot-connection-method auto\|local_ap\|local_sta` (default `local_ap`) + `--robot-ip` select how to reach the dog. |
 | **Voice** | Provider-switchable TTS at runtime (no restart) plus an optional persistent Gemini Live session with server-side VAD / barge-in. |
-| **Photos** | Capture to `static/captures/`, optionally mirrored to iCloud/Drive folders via `FETCH_PHOTO_MIRROR_DIRS`. |
+| **Photos** | Fetch-branded capture (logo composited via `<canvas>`) to `static/captures/`, optionally mirrored to iCloud/Drive folders via `FETCH_PHOTO_MIRROR_DIRS`. |
 | **Tests** | **76 passing tests**, all providers mocked — no live API calls needed to review (policy, middleware routes, TTS, conversation tools, photo saving). |
 
 ## Reviewer Map
