@@ -1,6 +1,8 @@
 "use client";
 
 import type { Agent } from "@robomoo/shared";
+import { Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { registerAgentOnchain } from "@/lib/chain";
@@ -12,6 +14,7 @@ import { useWallet } from "@/lib/wallet";
 // success the minted agentId + tx are persisted so the marketplace shows a
 // verified identity. See the PR description for the full how-to.
 export function RegisterAgentButton({ agent }: { agent: Agent }) {
+  const router = useRouter();
   const { address, connect, ensureSepolia, onSepolia } = useWallet();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -44,7 +47,7 @@ export function RegisterAgentButton({ agent }: { agent: Agent }) {
       const { txHash, agentId } = await registerAgentOnchain(address, agentURI);
       if (!agentId) {
         setError(
-          `Registered (tx ${txHash.slice(0, 10)}…) but couldn't read the agentId from the receipt. Check the tx on Sepolia Etherscan and set it manually.`,
+          "The register transaction landed, but we couldn't read the agent ID back from it. Check the tx on Sepolia Etherscan and set it manually.",
         );
         return;
       }
@@ -55,8 +58,8 @@ export function RegisterAgentButton({ agent }: { agent: Agent }) {
         agentWallet: address,
         registerTx: txHash,
       });
-      setMsg(`Registered as agent #${agentId}. Reloading…`);
-      window.location.reload();
+      setMsg(`Verified as agent #${agentId} ✓`);
+      router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "registration failed");
     } finally {
@@ -65,13 +68,9 @@ export function RegisterAgentButton({ agent }: { agent: Agent }) {
   };
 
   return (
-    <div className="flex flex-col gap-1">
-      <Button
-        disabled={busy}
-        onClick={run}
-        size="sm"
-        variant="outline"
-      >
+    <div className="flex flex-col gap-1.5">
+      <Button disabled={busy} onClick={run} size="sm" variant="outline">
+        {busy ? <Loader2 className="animate-spin" size={14} /> : null}
         {busy
           ? "Registering…"
           : address

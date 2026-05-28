@@ -2,12 +2,19 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ── robomoo · mission-control dark theme ──────────────────────────────
+   Near-black cool-tinted base. One signature accent (Signal Lime) reserved
+   for brand + live/active. Cyan = on-chain/verified, Amber = working,
+   Red = failed. Light tokens kept for completeness but the app forces dark. */
+
 :root {
   --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
@@ -20,25 +27,41 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+
+  --signal: oklch(0.86 0.21 128);
+  --signal-foreground: oklch(0.2 0.04 128);
+  --verified: oklch(0.78 0.13 210);
+  --verified-foreground: oklch(0.18 0.03 210);
+  --working: oklch(0.8 0.16 75);
+  --working-foreground: oklch(0.2 0.04 75);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --background: oklch(0.16 0.012 264);
+  --foreground: oklch(0.965 0.004 264);
+  --card: oklch(0.205 0.014 264);
+  --card-foreground: oklch(0.965 0.004 264);
+  --popover: oklch(0.19 0.014 264);
+  --popover-foreground: oklch(0.965 0.004 264);
+  --primary: oklch(0.86 0.21 128);
+  --primary-foreground: oklch(0.2 0.04 128);
+  --secondary: oklch(0.255 0.012 264);
+  --secondary-foreground: oklch(0.965 0.004 264);
+  --muted: oklch(0.26 0.012 264);
+  --muted-foreground: oklch(0.71 0.018 264);
+  --accent: oklch(0.27 0.014 264);
+  --accent-foreground: oklch(0.965 0.004 264);
+  --destructive: oklch(0.64 0.21 25);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.86 0.21 128);
+
+  --signal: oklch(0.86 0.21 128);
+  --signal-foreground: oklch(0.2 0.04 128);
+  --verified: oklch(0.8 0.13 210);
+  --verified-foreground: oklch(0.16 0.03 210);
+  --working: oklch(0.82 0.16 75);
+  --working-foreground: oklch(0.2 0.04 75);
 }
 
 @theme inline {
@@ -46,10 +69,18 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-bricolage), var(--font-hanken), ui-sans-serif,
+    sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SFMono-Regular", monospace;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -62,6 +93,16 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-verified: var(--verified);
+  --color-verified-foreground: var(--verified-foreground);
+  --color-working: var(--working);
+  --color-working-foreground: var(--working-foreground);
+
+  --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.8s linear infinite;
 }
 
 @layer base {
@@ -71,5 +112,88 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
   }
+  ::selection {
+    background-color: oklch(0.86 0.21 128 / 0.3);
+  }
+}
+
+/* ── motion + texture utilities ──────────────────────────────────────── */
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 oklch(0.86 0.21 128 / 0.55);
+  }
+  50% {
+    opacity: 0.75;
+    box-shadow: 0 0 0 5px oklch(0.86 0.21 128 / 0);
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* one-shot staggered entrance — set style={{ animationDelay }} per item */
+.fade-rise {
+  animation: fade-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* live pulsing dot — pair with bg-signal */
+.pulse-dot {
+  animation: var(--animate-pulse-dot);
+}
+
+/* scan-line shimmer for skeleton/loading surfaces */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    oklch(0.86 0.21 128 / 0.07),
+    transparent
+  );
+  animation: var(--animate-shimmer);
+}
+
+/* faint dotted-grid backdrop for the marketplace / console panels */
+.bg-grid {
+  background-image: radial-gradient(
+    oklch(1 0 0 / 0.05) 1px,
+    transparent 1px
+  );
+  background-size: 22px 22px;
+}
+
+/* soft radial glow behind the hero */
+.glow-signal {
+  background: radial-gradient(
+    60% 80% at 15% 0%,
+    oklch(0.86 0.21 128 / 0.12),
+    transparent 70%
+  );
 }

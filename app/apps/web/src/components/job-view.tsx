@@ -1,80 +1,88 @@
 "use client";
 
 import type { Agent, Job, JobStatus } from "@robomoo/shared";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Check,
+  Loader2,
+  Sparkles,
+  Star,
+} from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { JobScans } from "@/components/job-scans";
 import { MapView } from "@/components/map-view";
 import { SplatViewer } from "@/components/splat-viewer";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { giveFeedbackOnchain, reputationConfigured } from "@/lib/chain";
 import { rpcClient } from "@/lib/orpc";
+import { useLiveQuery } from "@/lib/use-live-query";
+import { cn } from "@/lib/utils";
 import { useWallet } from "@/lib/wallet";
 
-const STEPS: { key: JobStatus; label: string }[] = [
-  { key: "booked", label: "Booked" },
-  { key: "scanning", label: "Scanning" },
-  { key: "reconstructing", label: "Reconstructing" },
-  { key: "done", label: "Done" },
+const STEPS: { label: string }[] = [
+  { label: "Hired" },
+  { label: "Dispatched" },
+  { label: "Scanning" },
+  { label: "Reconstructing" },
+  { label: "Delivered" },
 ];
 
-function stepIndex(status: JobStatus): number {
-  switch (status) {
+function currentStep(job: Job): number {
+  switch (job.status) {
     case "booked":
       return 0;
     case "dispatched":
-    case "scanning":
       return 1;
-    case "reconstructing":
+    case "scanning":
       return 2;
-    case "done":
+    case "reconstructing":
       return 3;
+    case "done":
+      return 4;
+    case "failed":
+    case "cancelled":
+      return job.run ? 3 : job.dispatchedAt ? 2 : 1;
     default:
       return 0;
   }
 }
 
 export function JobView({ jobId }: { jobId: string }) {
-  const [job, setJob] = useState<Job | null>(null);
+  const { data: job, loading, refetch } = useLiveQuery<Job | null>(
+    () => rpcClient.jobs.get({ id: jobId }),
+    2500,
+    [jobId],
+  );
   const [agent, setAgent] = useState<Agent | null>(null);
-  const [notFound, setNotFound] = useState(false);
-
-  const reload = useCallback(async () => {
-    const j = await rpcClient.jobs.get({ id: jobId });
-    if (!j) {
-      setNotFound(true);
-      return;
-    }
-    setJob(j);
-    if (!agent) {
-      const a = await rpcClient.agents.get({ slug: j.agentSlug });
-      setAgent(a);
-    }
-  }, [jobId, agent]);
 
   useEffect(() => {
-    let active = true;
-    const tick = async () => {
-      try {
-        if (active) await reload();
-      } catch {
-        /* keep last good state */
-      }
-    };
-    tick();
-    const t = setInterval(tick, 3500);
-    return () => {
-      active = false;
-      clearInterval(t);
-    };
-  }, [reload]);
+    if (job && !agent) {
+      rpcClient.agents
+        .get({ slug: job.agentSlug })
+        .then(setAgent)
+        .catch(() => {});
+    }
+  }, [job, agent]);
 
-  if (notFound) {
+  if (loading && !job) {
+    return (
+      <main className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-12">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-14 w-full" />
+        <Skeleton className="h-[50vh] w-full" />
+      </main>
+    );
+  }
+
+  if (!job) {
     return (
       <main className="mx-auto max-w-2xl px-4 py-12">
         <p className="text-muted-foreground">
           Job not found.{" "}
-          <Link className="underline" href="/">
+          <Link className="text-signal hover:underline" href="/">
             Back to marketplace
           </Link>
         </p>
@@ -82,118 +90,194 @@ export function JobView({ jobId }: { jobId: string }) {
     );
   }
 
-  if (!job) {
-    return (
-      <main className="mx-auto max-w-2xl px-4 py-12 text-muted-foreground">
-        Loading job…
-      </main>
-    );
-  }
-
-  const idx = stepIndex(job.status);
   const inFlight =
     job.status === "dispatched" ||
     job.status === "scanning" ||
     job.status === "reconstructing";
+  const failed = job.status === "failed" || job.status === "cancelled";
+  const done = job.status === "done";
 
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-12">
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-3">
         <Link
-          className="text-muted-foreground text-sm hover:text-foreground"
+          className="inline-flex w-fit items-center gap-1.5 text-muted-foreground text-sm transition-colors hover:text-foreground"
           href={`/agents/${job.agentSlug}`}
         >
-          ← {agent?.name ?? job.agentSlug}
+          <ArrowLeft size={14} /> {agent?.name ?? job.agentSlug}
         </Link>
-        <h1 className="font-bold text-3xl tracking-tight">
-          {agent?.emoji ?? "🤖"} Job{" "}
-          <span className="font-mono text-2xl text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="font-bold font-display text-3xl tracking-tight">
+            {agent?.emoji ?? "🤖"} {agent?.name ?? "Agent"}
+          </h1>
+          <JobStatusPill status={job.status} />
+          <span className="font-mono text-muted-foreground text-sm">
             {job.id}
           </span>
-        </h1>
-        <p className="text-muted-foreground text-sm">
-          {job.service} · ${job.priceUsd} ·{" "}
-          {job.paid ? `paid (${job.paymentMode})` : "unpaid"}
-        </p>
+        </div>
       </div>
 
-      <Stepper currentIndex={idx} status={job.status} />
+      <Stepper job={job} />
+
+      <Telemetry agent={agent} job={job} />
 
       {inFlight ? (
-        <section className="flex flex-col gap-3">
-          <h2 className="font-semibold text-lg">
-            Live — {agent?.name ?? "the agent"} on the move
-          </h2>
+        <ConsolePanel
+          live
+          title={`${agent?.name ?? "Agent"} — live feed`}
+        >
           <MapView />
-        </section>
+        </ConsolePanel>
       ) : null}
 
       {job.run ? (
         <section className="flex flex-col gap-3">
-          <h2 className="font-semibold text-lg">Scanned rooms (segmented)</h2>
+          <h2 className="font-display font-semibold text-lg">
+            Scanned rooms · segmented
+          </h2>
           <JobScans run={job.run} />
         </section>
       ) : inFlight ? (
-        <p className="text-muted-foreground text-sm">
-          Waiting for the first scan to come in… (the scan run attaches
-          automatically once RoboDoc starts capturing)
-        </p>
+        <ConsolePanel title="Capturing rooms">
+          <div className="flex flex-col gap-3 p-4">
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+              <Loader2 className="animate-spin text-working" size={15} />
+              Waiting for the first scan — the run attaches automatically once
+              {" "}
+              {agent?.name ?? "the agent"} starts capturing.
+            </div>
+            <div className="flex gap-2">
+              {[0, 1, 2, 3].map((i) => (
+                <Skeleton className="shimmer h-24 w-32 rounded-md" key={i} />
+              ))}
+            </div>
+          </div>
+        </ConsolePanel>
       ) : null}
 
-      {job.status === "done" || job.splatId ? (
+      {failed ? <FailedPanel job={job} /> : null}
+
+      {done || job.splatId ? (
         <section className="flex flex-col gap-3">
-          <h2 className="font-semibold text-lg">Your 3D virtual tour</h2>
+          <div className="flex items-center gap-2">
+            <Sparkles className="text-signal" size={18} />
+            <h2 className="font-display font-semibold text-lg">
+              Your 3D virtual tour is ready
+            </h2>
+          </div>
           <SplatViewer />
         </section>
       ) : null}
 
-      {job.status === "done" && agent ? (
-        <RateAgent agent={agent} job={job} onRated={reload} />
+      {done && agent ? (
+        <RateAgent agent={agent} job={job} onRated={refetch} />
       ) : null}
 
-      <DemoControls job={job} onChange={reload} />
+      <DemoControls job={job} onChange={refetch} />
     </main>
   );
 }
 
-function Stepper({
-  currentIndex,
-  status,
-}: {
-  currentIndex: number;
-  status: JobStatus;
-}) {
+function JobStatusPill({ status }: { status: JobStatus }) {
+  const inFlight =
+    status === "dispatched" ||
+    status === "scanning" ||
+    status === "reconstructing";
   const failed = status === "failed" || status === "cancelled";
+  const cls = failed
+    ? "bg-destructive/15 text-destructive"
+    : status === "done"
+      ? "bg-signal/15 text-signal"
+      : inFlight
+        ? "bg-working/15 text-working"
+        : "bg-muted text-muted-foreground";
   return (
-    <div className="flex items-center gap-2">
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-medium text-xs uppercase tracking-wide",
+        cls,
+      )}
+    >
+      {inFlight ? (
+        <span className="size-1.5 rounded-full bg-current pulse-dot" />
+      ) : null}
+      {inFlight ? "Live" : status}
+    </span>
+  );
+}
+
+function Stepper({ job }: { job: Job }) {
+  const idx = currentStep(job);
+  const failed = job.status === "failed" || job.status === "cancelled";
+  const done = job.status === "done";
+
+  return (
+    <div className="flex items-start">
       {STEPS.map((s, i) => {
-        const done = i < currentIndex;
-        const active = i === currentIndex;
+        const isDone = done || i < idx;
+        const isActive = !done && !failed && i === idx;
+        const isFailed = failed && i === idx;
+        const lineDone = done || i < idx;
         return (
-          <div className="flex flex-1 items-center gap-2" key={s.key}>
-            <div className="flex flex-col items-center gap-1">
+          // biome-ignore lint/suspicious/noArrayIndexKey: fixed-length static list
+          <div className="flex flex-1 flex-col items-center gap-2" key={i}>
+            <div className="flex w-full items-center">
+              <div className={i === 0 ? "flex-1" : "flex-1"}>
+                {i > 0 ? (
+                  <div
+                    className={cn(
+                      "h-0.5 w-full",
+                      done || i <= idx ? "bg-signal" : "bg-border",
+                    )}
+                  />
+                ) : null}
+              </div>
               <span
-                className={`flex size-7 items-center justify-center rounded-full text-xs ${
-                  done
-                    ? "bg-emerald-500 text-white"
-                    : active
-                      ? failed
-                        ? "bg-destructive text-white"
-                        : "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground"
-                }`}
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-full font-medium text-xs transition-colors",
+                  isDone && "bg-signal text-signal-foreground",
+                  isActive &&
+                    "bg-working/20 text-working ring-2 ring-working/40 pulse-dot",
+                  isFailed && "bg-destructive text-white",
+                  !isDone &&
+                    !isActive &&
+                    !isFailed &&
+                    "bg-muted text-muted-foreground",
+                )}
               >
-                {done ? "✓" : i + 1}
+                {isDone ? (
+                  <Check size={15} />
+                ) : isFailed ? (
+                  <AlertTriangle size={14} />
+                ) : isActive ? (
+                  <Loader2 className="animate-spin" size={14} />
+                ) : (
+                  i + 1
+                )}
               </span>
-              <span className="text-[10px] text-muted-foreground">
-                {s.label}
-              </span>
+              <div className="flex-1">
+                {i < STEPS.length - 1 ? (
+                  <div
+                    className={cn(
+                      "h-0.5 w-full",
+                      lineDone ? "bg-signal" : "bg-border",
+                    )}
+                  />
+                ) : null}
+              </div>
             </div>
-            {i < STEPS.length - 1 ? (
-              <div
-                className={`h-0.5 flex-1 ${done ? "bg-emerald-500" : "bg-border"}`}
-              />
-            ) : null}
+            <span
+              className={cn(
+                "text-[10px] uppercase tracking-wide",
+                isActive
+                  ? "text-working"
+                  : isDone
+                    ? "text-foreground"
+                    : "text-muted-foreground",
+              )}
+            >
+              {s.label}
+            </span>
           </div>
         );
       })}
@@ -201,8 +285,119 @@ function Stepper({
   );
 }
 
+function Telemetry({ job, agent }: { job: Job; agent: Agent | null }) {
+  const cells: { label: string; value: React.ReactNode }[] = [
+    {
+      label: "Elapsed",
+      value: <Elapsed since={job.dispatchedAt} />,
+    },
+    {
+      label: "Run",
+      value: job.run ? (
+        <span className="text-foreground">{job.run.slice(0, 12)}</span>
+      ) : (
+        "—"
+      ),
+    },
+    {
+      label: "Command",
+      value: job.command ? (
+        <span className="truncate text-foreground" title={job.command}>
+          {job.command}
+        </span>
+      ) : (
+        "—"
+      ),
+    },
+    {
+      label: "Payment",
+      value: job.paid ? (
+        <span className="text-signal">
+          ${job.priceUsd} · {job.paymentMode}
+        </span>
+      ) : (
+        <span className="text-muted-foreground">unpaid</span>
+      ),
+    },
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-border sm:grid-cols-4">
+      {cells.map((c) => (
+        <div className="flex flex-col gap-1 bg-card p-3" key={c.label}>
+          <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
+            {c.label}
+          </span>
+          <span className="overflow-hidden font-mono text-sm">{c.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Elapsed({ since }: { since: string | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!since) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [since]);
+  if (!since) return <span className="text-muted-foreground">—</span>;
+  const s = Math.max(0, Math.floor((now - new Date(since).getTime()) / 1000));
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  return (
+    <span className="text-foreground tabular-nums">
+      {mm}:{ss.toString().padStart(2, "0")}
+    </span>
+  );
+}
+
+function ConsolePanel({
+  title,
+  live,
+  children,
+}: {
+  title: string;
+  live?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border bg-card">
+      <div className="flex items-center justify-between border-b bg-secondary/30 px-4 py-2">
+        <span className="font-mono text-muted-foreground text-xs uppercase tracking-wider">
+          {title}
+        </span>
+        {live ? (
+          <span className="inline-flex items-center gap-1.5 font-medium font-mono text-[10px] text-signal uppercase tracking-wide">
+            <span className="size-1.5 rounded-full bg-signal pulse-dot" /> Live
+          </span>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function FailedPanel({ job }: { job: Job }) {
+  return (
+    <section className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-5">
+      <AlertTriangle className="mt-0.5 shrink-0 text-destructive" size={18} />
+      <div className="flex flex-col gap-1">
+        <h2 className="font-display font-semibold text-destructive">
+          This job didn&apos;t complete
+        </h2>
+        <p className="text-muted-foreground text-sm leading-relaxed">
+          The job is marked <span className="font-mono">{job.status}</span>. If
+          the robot was running, use the demo controls below to attach a scan run
+          or mark it delivered.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 // Star rating → ERC-8004 giveFeedback (on-chain when registered + configured),
-// always recorded off-chain on the job so the agent's reputation reflects it.
+// always recorded off-chain on the job so reputation reflects it.
 function RateAgent({
   agent,
   job,
@@ -214,29 +409,41 @@ function RateAgent({
 }) {
   const { address, connect, ensureSepolia } = useWallet();
   const [rating, setRating] = useState(5);
+  const [hover, setHover] = useState(0);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   if (job.rating) {
     return (
-      <section className="flex flex-col gap-1 rounded-xl border bg-card p-5">
-        <h2 className="font-semibold text-lg">Rated</h2>
-        <p className="text-sm">
-          You rated {agent.name}{" "}
-          <span className="text-amber-500">{"★".repeat(job.rating)}</span>
+      <section className="flex flex-col gap-2 rounded-xl border border-signal/30 bg-signal/5 p-5">
+        <h2 className="font-display font-semibold text-lg">Rated · thank you</h2>
+        <p className="flex flex-wrap items-center gap-2 text-sm">
+          You rated {agent.name}
+          <span className="inline-flex">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <Star
+                className={
+                  i < (job.rating ?? 0)
+                    ? "text-amber-400"
+                    : "text-muted-foreground/30"
+                }
+                fill={i < (job.rating ?? 0) ? "currentColor" : "none"}
+                key={i}
+                size={16}
+                strokeWidth={i < (job.rating ?? 0) ? 0 : 1.5}
+              />
+            ))}
+          </span>
           {job.feedbackTx ? (
-            <>
-              {" · "}
-              <a
-                className="underline"
-                href={`https://sepolia.etherscan.io/tx/${job.feedbackTx}`}
-                rel="noopener noreferrer"
-                target="_blank"
-              >
-                on-chain feedback ↗
-              </a>
-            </>
+            <a
+              className="text-signal hover:underline"
+              href={`https://sepolia.etherscan.io/tx/${job.feedbackTx}`}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              on-chain feedback ↗
+            </a>
           ) : null}
         </p>
       </section>
@@ -275,28 +482,38 @@ function RateAgent({
     }
   };
 
+  const shown = hover || rating;
+
   return (
     <section className="flex flex-col gap-3 rounded-xl border bg-card p-5">
-      <h2 className="font-semibold text-lg">Rate {agent.name}</h2>
-      <p className="text-muted-foreground text-sm">
+      <h2 className="font-display font-semibold text-lg">Rate {agent.name}</h2>
+      <p className="text-muted-foreground text-sm leading-relaxed">
         {canOnchain
           ? "Your rating is written to the ERC-8004 Reputation Registry — it ticks up the agent's on-chain reputation."
           : "Your rating updates the agent's reputation. (Connect the reputation registry to write it on-chain.)"}
       </p>
-      <div className="flex items-center gap-1 text-2xl">
+      <div className="flex items-center gap-1">
         {[1, 2, 3, 4, 5].map((n) => (
           <button
             aria-label={`${n} stars`}
-            className={n <= rating ? "text-amber-500" : "text-muted-foreground"}
+            className="transition-transform hover:scale-110"
             key={n}
             onClick={() => setRating(n)}
+            onMouseEnter={() => setHover(n)}
+            onMouseLeave={() => setHover(0)}
             type="button"
           >
-            ★
+            <Star
+              className={n <= shown ? "text-amber-400" : "text-muted-foreground/40"}
+              fill={n <= shown ? "currentColor" : "none"}
+              size={28}
+              strokeWidth={n <= shown ? 0 : 1.5}
+            />
           </button>
         ))}
       </div>
       <Button className="w-fit" disabled={busy} onClick={submit}>
+        {busy ? <Loader2 className="animate-spin" size={16} /> : null}
         {busy ? "Submitting…" : `Submit ${rating}★ rating`}
       </Button>
       {msg ? <span className="text-muted-foreground text-xs">{msg}</span> : null}
@@ -351,9 +568,9 @@ function DemoControls({
   };
 
   return (
-    <section className="rounded-xl border border-dashed bg-muted/30 p-4 text-sm">
+    <section className="rounded-xl border border-dashed bg-muted/20 p-4 text-sm">
       <button
-        className="text-muted-foreground text-xs"
+        className="font-mono text-muted-foreground text-xs uppercase tracking-wider"
         onClick={() => setOpen((o) => !o)}
         type="button"
       >
@@ -361,18 +578,25 @@ function DemoControls({
       </button>
       {open ? (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button disabled={busy} onClick={claimLatestRun} size="sm" variant="outline">
+          <Button
+            disabled={busy}
+            onClick={claimLatestRun}
+            size="sm"
+            variant="outline"
+          >
             Attach latest scan run
           </Button>
           <Button disabled={busy} onClick={markDone} size="sm" variant="outline">
-            Mark done
+            Mark delivered
           </Button>
           {job.run ? (
-            <span className="text-muted-foreground text-xs">
-              run: <span className="font-mono">{job.run}</span>
+            <span className="font-mono text-muted-foreground text-xs">
+              run: {job.run}
             </span>
           ) : null}
-          {error ? <span className="text-destructive text-xs">{error}</span> : null}
+          {error ? (
+            <span className="text-destructive text-xs">{error}</span>
+          ) : null}
         </div>
       ) : null}
     </section>

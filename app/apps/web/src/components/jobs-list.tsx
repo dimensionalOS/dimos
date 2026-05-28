@@ -1,44 +1,42 @@
 "use client";
 
 import type { Job } from "@robomoo/shared";
+import { Star } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { StatusPill } from "@/components/status-pill";
+import { Skeleton } from "@/components/ui/skeleton";
 import { rpcClient } from "@/lib/orpc";
+import { useLiveQuery } from "@/lib/use-live-query";
+import { cn } from "@/lib/utils";
 import { useWallet } from "@/lib/wallet";
 
 // "My jobs" — defaults to the connected wallet's jobs, with a toggle to show
 // every recent job (useful for a shared demo machine).
 export function JobsList() {
   const { address } = useWallet();
-  const [jobs, setJobs] = useState<Job[]>([]);
   const [mineOnly, setMineOnly] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-    const load = async () => {
-      try {
-        const rows = await rpcClient.jobs.list(
-          mineOnly && address ? { address } : { address: null },
-        );
-        if (active) setJobs(rows);
-      } catch {
-        /* ignore */
-      }
-    };
-    load();
-    const t = setInterval(load, 6000);
-    return () => {
-      active = false;
-      clearInterval(t);
-    };
-  }, [address, mineOnly]);
+  const { data: jobs, loading } = useLiveQuery<Job[]>(
+    () =>
+      rpcClient.jobs.list(
+        mineOnly && address ? { address } : { address: null },
+      ),
+    6000,
+    [address, mineOnly],
+  );
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3 text-sm">
-        <label className="flex items-center gap-2">
+        <label
+          className={cn(
+            "inline-flex items-center gap-2",
+            !address && "opacity-50",
+          )}
+        >
           <input
             checked={mineOnly}
+            className="accent-signal"
             disabled={!address}
             onChange={(e) => setMineOnly(e.target.checked)}
             type="checkbox"
@@ -52,34 +50,41 @@ export function JobsList() {
         ) : null}
       </div>
 
-      {jobs.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
-          No jobs yet.{" "}
-          <Link className="underline" href="/">
+      {loading && !jobs ? (
+        <div className="flex flex-col gap-2">
+          {[0, 1, 2].map((i) => (
+            <Skeleton className="h-16 w-full rounded-lg" key={i} />
+          ))}
+        </div>
+      ) : !jobs || jobs.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-12 text-center">
+          <p className="text-muted-foreground text-sm">No jobs yet.</p>
+          <Link className="font-medium text-signal text-sm hover:underline" href="/">
             Hire an agent →
           </Link>
-        </p>
+        </div>
       ) : (
         <div className="flex flex-col gap-2">
           {jobs.map((j) => (
             <Link
-              className="flex items-center justify-between rounded-lg border bg-card px-4 py-3 text-sm hover:border-foreground/30"
+              className="flex items-center justify-between gap-4 rounded-lg border bg-card px-4 py-3 transition-colors hover:border-signal/40"
               href={`/jobs/${j.id}`}
               key={j.id}
             >
-              <span className="flex flex-col gap-0.5">
-                <span className="font-medium">{j.agentSlug}</span>
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="font-display font-medium">{j.agentSlug}</span>
                 <span className="font-mono text-muted-foreground text-xs">
                   {j.id}
                 </span>
               </span>
-              <span className="flex items-center gap-3">
-                <span className="text-muted-foreground text-xs">
+              <span className="flex shrink-0 items-center gap-3">
+                <span className="font-mono text-muted-foreground text-xs">
                   ${j.priceUsd}
                 </span>
                 {j.rating ? (
-                  <span className="text-amber-500 text-xs">
-                    {"★".repeat(j.rating)}
+                  <span className="inline-flex items-center gap-0.5 text-amber-400 text-xs">
+                    <Star fill="currentColor" size={12} strokeWidth={0} />
+                    {j.rating}
                   </span>
                 ) : null}
                 <StatusPill status={j.status} />
@@ -89,19 +94,5 @@ export function JobsList() {
         </div>
       )}
     </div>
-  );
-}
-
-function StatusPill({ status }: { status: Job["status"] }) {
-  const color =
-    status === "done"
-      ? "bg-emerald-500/15 text-emerald-600"
-      : status === "failed" || status === "cancelled"
-        ? "bg-destructive/15 text-destructive"
-        : "bg-amber-500/15 text-amber-600";
-  return (
-    <span className={`rounded px-2 py-0.5 text-[10px] uppercase ${color}`}>
-      {status}
-    </span>
   );
 }
