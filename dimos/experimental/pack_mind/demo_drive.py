@@ -72,8 +72,8 @@ def _look_and_announce(adapter: McpAdapter) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="PACK MIND keyboard driver")
     parser.add_argument("--url", default=None, help="MCP URL (default localhost:9990/mcp)")
-    parser.add_argument("--step", type=float, default=0.6, help="metres per forward/back press")
-    parser.add_argument("--turn", type=float, default=30.0, help="degrees per turn press")
+    parser.add_argument("--step", type=float, default=0.5, help="forward speed (m/s)")
+    parser.add_argument("--turn", type=float, default=0.8, help="turn speed (rad/s)")
     parser.add_argument(
         "--no-auto-look", action="store_true", help="don't auto look_for_red after each move"
     )
@@ -93,11 +93,14 @@ def main() -> None:
     print("PACK MIND driver — w/s move · a/d turn · space=look · f=speak · +/- step · x=quit")
     print(f"connected to {adapter.url}  (step={step}m turn={turn}°)\n")
 
+    # Velocity teleop (drive) — instant, bypasses the planner + flaky is_goal_reached
+    # RPC. step = m/s forward burst; turn = rad/s; each press moves for `burst` seconds.
+    burst = 0.6
     moves = {
-        "w": lambda: ("relative_move", {"forward": step, "left": 0.0, "degrees": 0.0}),
-        "s": lambda: ("relative_move", {"forward": -step, "left": 0.0, "degrees": 0.0}),
-        "a": lambda: ("relative_move", {"forward": 0.0, "left": 0.0, "degrees": turn}),
-        "d": lambda: ("relative_move", {"forward": 0.0, "left": 0.0, "degrees": -turn}),
+        "w": lambda: ("drive", {"forward": step, "turn": 0.0, "duration": burst}),
+        "s": lambda: ("drive", {"forward": -step, "turn": 0.0, "duration": burst}),
+        "a": lambda: ("drive", {"forward": 0.0, "turn": turn, "duration": burst}),
+        "d": lambda: ("drive", {"forward": 0.0, "turn": -turn, "duration": burst}),
     }
 
     while True:

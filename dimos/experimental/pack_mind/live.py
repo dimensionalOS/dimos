@@ -44,6 +44,7 @@ from dimos.agents.skills.person_follow import PersonFollowSkillContainer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.experimental.pack_mind.pack_search_skills import PackSearchSkills
 from dimos.experimental.pack_mind.red_detector import RedObjectDetector
+from dimos.experimental.pack_mind.velocity_teleop import VelocityTeleop
 from dimos.experimental.security_demo.security_module import SecurityModule
 from dimos.robot.unitree.go2.blueprints.agentic._common_agentic import _common_agentic
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree_go2_spatial
@@ -85,6 +86,7 @@ unitree_go2_pack = autoconnect(
     _common_agentic,
     PackSearchSkills.blueprint(),
     RedObjectDetector.blueprint(),  # fast GPU-free "red object" find (vs slow moondream)
+    VelocityTeleop.blueprint(),  # direct cmd_vel teleop (vs planner-RPC relative_move)
 ).disabled_modules(SecurityModule, PersonFollowSkillContainer)
 
 __all__ = ["unitree_go2_pack", "PACK_SYSTEM_PROMPT"]
