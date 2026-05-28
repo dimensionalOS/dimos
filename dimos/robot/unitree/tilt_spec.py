@@ -1,4 +1,4 @@
-# Copyright 2026 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,6 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Literal
+from typing import Protocol
 
-VlModelName = Literal["qwen", "moondream", "gemini"]
+from dimos.spec.utils import Spec
+
+
+# Module-ref spec for tilting the robot body. Resolves (structurally) to
+# UnitreeSkillContainer.tilt_body, letting another module (e.g. TakePictureSkill)
+# aim the body-fixed camera without owning the WebRTC connection.
+class TiltSpec(Spec, Protocol):
+    def tilt_body(
+        self, pitch_deg: float = 0.0, roll_deg: float = 0.0, yaw_deg: float = 0.0
+    ) -> str: ...

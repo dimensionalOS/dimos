@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import time
 from typing import Any
 
@@ -19,9 +20,11 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.models.qwen.bbox import BBox
+from dimos.models.vl.create import create
+from dimos.models.vl.types import VlModelName
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
@@ -37,7 +40,14 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+class Config(ModuleConfig):
+    # VL model used to detect objects in view for semantic navigation.
+    vl_model_name: VlModelName = "qwen"
+
+
 class NavigationSkillContainer(Module):
+    config: Config
+
     _latest_image: Image | None = None
     _latest_odom: PoseStamped | None = None
     _skill_started: bool = False
@@ -54,10 +64,7 @@ class NavigationSkillContainer(Module):
         super().__init__(**kwargs)
         self._skill_started = False
 
-        # Here to prevent unwanted imports in the file.
-        from dimos.models.vl.qwen import QwenVlModel
-
-        self._vl_model = QwenVlModel()
+        self._vl_model = create(self.config.vl_model_name)
 
     @rpc
     def start(self) -> None:
@@ -142,6 +149,25 @@ class NavigationSkillContainer(Module):
             return success_msg
 
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
+
+    @skill
+    def navigate_to_coordinates(self, x: float, y: float, yaw_deg: float = 0.0) -> str:
+        """Navigate to a specific point on the map given its coordinates.
+
+        Use when given an explicit (x, y) location on the map — e.g. a point the
+        user picked on the map view — rather than a described place. x and y are
+        in meters in the map frame; yaw_deg is the optional final heading
+        (default: unspecified).
+        """
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+
+        goal_pose = PoseStamped(
+            position=make_vector3(x, y, 0.0),
+            orientation=Quaternion.from_euler(make_vector3(0.0, 0.0, math.radians(yaw_deg))),
+            frame_id="map",
+        )
+        return self._navigate_to(goal_pose, f"Going to map coordinates ({x:.2f}, {y:.2f})")
 
     def _navigate_by_tagged_location(self, query: str) -> str | None:
         robot_location = self._spatial_memory.query_tagged_location(query)

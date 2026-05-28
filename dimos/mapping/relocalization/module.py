@@ -61,20 +61,36 @@ class RelocalizationModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._premap: PointCloud2 | None = None
+        self._current_map: str | None = None
+        self._latest_local: PointCloud2 | None = None
+        self._armed = False
         self._last_skip_log = 0.0
         self._world_to_map: Subject[Transform | None] = Subject()
 
     @rpc
     def start(self) -> None:
         super().start()
+        # Arm the pipeline unconditionally so a map can be (re)loaded at runtime
+        # (e.g. by RoomManager) even when none is configured at startup.
+        self._arm()
+        if self.config.map_file:
+            self._load_premap(self.config.map_file)
+        else:
+            logger.info(
+                "Relocalization module armed without a map — waiting for load_map()"
+            )
 
-        if not self.config.map_file:
-            logger.info("Relocalization module disabled (no map_file configured)")
+    def _arm(self) -> None:
+        """Wire the relocalize / merge / publish subscriptions exactly once."""
+        if self._armed:
             return
+        self._armed = True
 
-        path = resolve_named_path(self.config.map_file, MAP_SUFFIX)
-        self._premap = PointCloud2.lcm_decode(path.read_bytes())
-        self._premap.frame_id = FRAME_MAP
+        self.register_disposable(
+            self.global_map.observable().subscribe(  # type: ignore[no-untyped-call]
+                lambda m: setattr(self, "_latest_local", m)
+            )
+        )
 
         self.register_disposable(
             backpressure(
@@ -99,14 +115,59 @@ class RelocalizationModule(Module):
 
         self.register_disposable(
             rx.interval(PUBLISH_INTERVAL)
-            .pipe(ops.with_latest_from(self._world_to_map))
+            .pipe(ops.with_latest_from(self._world_to_map.pipe(ops.start_with(None))))
             .subscribe(self._publish_periodic)
         )
 
-        logger.info(
-            f"Relocalization module started: map_file={self.config.map_file!r}  "
-            f"loaded_map.frame_id={self._premap.frame_id!r}"
-        )
+    def _load_premap(self, name: str) -> bool:
+        """Decode a named premap and make it the active map. Drops any prior
+        relocalization anchor so the next successful scan-match re-anchors."""
+        try:
+            path = resolve_named_path(name, MAP_SUFFIX)
+            premap = PointCloud2.lcm_decode(path.read_bytes())
+        except Exception:
+            logger.exception("failed to load premap %r", name)
+            return False
+        premap.frame_id = FRAME_MAP
+        self._premap = premap
+        self._current_map = name
+        # Drop the old world->map anchor; consumers treat None as "not localized".
+        self._world_to_map.on_next(None)
+        logger.info("relocalization map loaded: %r", name)
+        return True
+
+    @rpc
+    def load_map(self, name: str) -> bool:
+        """Load a named premap (.pc2.lcm) and commit the robot to that map.
+
+        The next lidar scan that registers above ``fitness_threshold`` publishes
+        a fresh ``world->map`` TF, re-anchoring the robot into the loaded map.
+        """
+        return self._load_premap(name)
+
+    @rpc
+    def score_map(self, name: str) -> float:
+        """Attempt to register the latest live scan against a named premap and
+        return the ICP fitness (0..1) WITHOUT committing the anchor. Used to pick
+        which of several candidate room maps the robot is currently in."""
+        local = self._latest_local
+        if local is None:
+            logger.warning("score_map(%r): no live scan yet", name)
+            return 0.0
+        try:
+            path = resolve_named_path(name, MAP_SUFFIX)
+            premap = PointCloud2.lcm_decode(path.read_bytes())
+            _, fitness = _relocalize(premap.pointcloud, local.pointcloud)
+        except Exception:
+            logger.exception("score_map(%r) failed", name)
+            return 0.0
+        logger.info("score_map(%r): fitness=%.3f (n_pts=%d)", name, fitness, len(local))
+        return float(fitness)
+
+    @rpc
+    def current_map(self) -> str | None:
+        """Name of the currently loaded premap, or None if none is loaded."""
+        return self._current_map
 
     def _maybe_log_skip(self, msg: PointCloud2) -> None:
         if self._has_enough_points(msg):
@@ -127,7 +188,8 @@ class RelocalizationModule(Module):
         self._world_to_map.on_next(tf)
 
     def _try_relocalize(self, msg: PointCloud2) -> Transform | None:
-        assert self._premap is not None
+        if self._premap is None:
+            return None  # armed but no map loaded yet
         t0 = time.monotonic()
         try:
             T, fitness = _relocalize(self._premap.pointcloud, msg.pointcloud)
@@ -162,9 +224,9 @@ class RelocalizationModule(Module):
         )
         return new_tf
 
-    def _publish_periodic(self, pair: tuple[int, Transform]) -> None:
+    def _publish_periodic(self, pair: tuple[int, Transform | None]) -> None:
         _, tf = pair
-        if self._premap is None:
+        if self._premap is None or tf is None:
             return
         if self.config.publish_loaded_map:
             self.loaded_map.publish(self._premap)

@@ -1,4 +1,4 @@
-# Copyright 2026 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,6 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Literal
+from typing import Protocol
 
-VlModelName = Literal["qwen", "moondream", "gemini"]
+from dimos.spec.utils import Spec
+
+
+# Module-ref spec for querying frontier-exploration state. Resolves (structurally)
+# to WavefrontFrontierExplorer, the only deployed module exposing
+# is_exploration_active(). Lets a skill gate work on whether exploration is running.
+class FrontierExplorerSpec(Spec, Protocol):
+    def is_exploration_active(self) -> bool: ...

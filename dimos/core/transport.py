@@ -163,14 +163,23 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
 
 
 class pSHMTransport(PubSubTransport[T]):
+    """Pickled shared-memory transport for local Python object streams."""
+
     _started: bool = False
 
     def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(topic)
+        self._kwargs = kwargs
         self.shm = PickleSharedMemory(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (pSHMTransport, (self.topic,))
+        # Preserve sizing options such as default_capacity when the coordinator
+        # sends this transport to workers or to Rerun.
+        return (pSHMTransport, (self.topic,), self._kwargs)
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self._kwargs = state
+        self.shm = PickleSharedMemory(**state)
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
@@ -193,14 +202,23 @@ class pSHMTransport(PubSubTransport[T]):
 
 
 class SHMTransport(PubSubTransport[T]):
+    """Raw bytes shared-memory transport for local fixed-size payloads."""
+
     _started: bool = False
 
     def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(topic)
+        self._kwargs = kwargs
         self.shm = BytesSharedMemory(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (SHMTransport, (self.topic,))
+        # Preserve sizing options such as default_capacity when the coordinator
+        # sends this transport to workers or to Rerun.
+        return (SHMTransport, (self.topic,), self._kwargs)
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self._kwargs = state
+        self.shm = BytesSharedMemory(**state)
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
@@ -223,6 +241,8 @@ class SHMTransport(PubSubTransport[T]):
 
 
 class JpegShmTransport(PubSubTransport[T]):
+    """JPEG-compressed shared-memory transport for local image streams."""
+
     _started: bool = False
 
     def __init__(self, topic: str, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -233,9 +253,19 @@ class JpegShmTransport(PubSubTransport[T]):
 
         self.shm = JpegSharedMemory(quality=quality, **kwargs)
         self.quality = quality
+        self._kwargs = kwargs
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (JpegShmTransport, (self.topic, self.quality))
+        # Preserve quality and sizing options when crossing worker boundaries.
+        return (JpegShmTransport, (self.topic, self.quality), self._kwargs)
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        from dimos.protocol.pubsub.impl.jpeg_shm import (
+            JpegSharedMemory,
+        )  # deferred to avoid pulling in Image/cv2/rerun
+
+        self._kwargs = state
+        self.shm = JpegSharedMemory(quality=self.quality, **state)
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:

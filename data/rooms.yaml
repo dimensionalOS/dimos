@@ -1,0 +1,17 @@
+# Per-room map registry for the multi-room relocalization blueprint
+# (unitree-go2-agentic-gemini-rooms).
+#
+# Each room maps to a premap name resolvable by
+# resolve_named_path(<map>, ".pc2.lcm") — i.e. data/<map>.pc2.lcm, produced by:
+#     dimos --robot-ip <ip> run unitree-go2-memory -o go2memory.db_path=<room>.db
+#     dimos export-premap <room>.db        # -> data/<room>_twopass_map.pc2.lcm
+#
+# `marker_id` is optional (an ArUco/AprilTag id physically placed in the room),
+# used only when the marker-based auto-detect add-on is enabled.
+rooms:
+  kitchen:
+    map: kitchen_twopass_map
+    marker_id: 0
+  office:
+    map: office_twopass_map
+    marker_id: 1
