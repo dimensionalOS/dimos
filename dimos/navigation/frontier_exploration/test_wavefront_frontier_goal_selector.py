@@ -366,3 +366,23 @@ def test_performance_timing() -> None:
         assert result["goal_time"] < 1.5, f"Goal selection too slow: {result['goal_time']}s"
 
     print("\nPerformance test passed - all operations completed within time limits")
+
+
+def test_exploration_loop_releases_movement_on_exit(explorer, mocker) -> None:
+    """`_exploration_loop` closes the `begin_exploration` tool-stream on every
+    exit path, so natural completion (no-gain / consecutive failures) releases
+    the `movement` capability -- not only the explicit `end_exploration` path.
+    """
+    stop_spy = mocker.patch.object(explorer, "stop_tool")
+
+    # Inner loop self-terminates normally.
+    mocker.patch.object(explorer, "_run_exploration_loop", return_value=None)
+    explorer._exploration_loop()
+    stop_spy.assert_called_once_with("begin_exploration")
+
+    # An unexpected error still releases the hold via `finally`.
+    stop_spy.reset_mock()
+    mocker.patch.object(explorer, "_run_exploration_loop", side_effect=RuntimeError("boom"))
+    with pytest.raises(RuntimeError):
+        explorer._exploration_loop()
+    stop_spy.assert_called_once_with("begin_exploration")
