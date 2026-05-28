@@ -6,7 +6,7 @@ Hackathon submission from **Team Pivot** — Philip Seifi ([@seifip](https://git
 
 ## If You Only Have 60 Seconds
 
-1. Watch the demo: _publishing to YouTube — link coming shortly._
+1. Watch the demo: https://www.youtube.com/watch?v=8hHYE1239wg
 2. Full source: https://github.com/seifip/robodog-fetch
 3. Run it yourself (zero hardware — phone or laptop browser camera):
    https://github.com/seifip/robodog-fetch#quickstart-run-it-yourself
@@ -73,7 +73,7 @@ camera frame (+depth)
 
 | Question | Open this |
 | --- | --- |
-| What is the demo? | _Publishing to YouTube — link coming shortly._ |
+| What is the demo? | https://www.youtube.com/watch?v=8hHYE1239wg |
 | Where is the full source? | https://github.com/seifip/robodog-fetch |
 | How do I run it (no hardware)? | https://github.com/seifip/robodog-fetch#quickstart-run-it-yourself |
 | How does the decision loop work? | https://github.com/seifip/robodog-fetch#how-it-works-at-a-glance |
