@@ -12,12 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Blueprint for the path-planner evaluator.
+"""Simulate various inputs and outputs to test path planners.
 
-Wires the Evaluator and StraightLinePlanner together and bridges all streams to rerun.
-Run with::
-
-    dimos run path-planner-eval
+dimos run path-planner-eval
 """
 
 from __future__ import annotations
