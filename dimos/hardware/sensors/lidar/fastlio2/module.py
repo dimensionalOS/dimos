@@ -72,8 +72,6 @@ from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
 
 _CONFIG_DIR = Path(__file__).parent / "config"
-# tcpdump fails fast (EPERM, bad iface) within a few ms; pause briefly so poll() catches that.
-_TCPDUMP_STARTUP_PROBE_SEC = 0.3
 _logger = setup_logger()
 
 
@@ -137,24 +135,7 @@ class FastLio2Config(NativeModuleConfig):
     # Resolved in __post_init__, passed as --config_path to the binary
     config_path: str | None = None
 
-    # Offline replay. When set, the C++ binary skips SDK init and feeds
-    # packets from this pcap into the same callbacks the SDK would, with
-    # publish timestamps driven by the pcap clock.
-    replay_pcap: Path | None = None
-    # Replay-only: drop pcap records with pcap_ts < this. Used to mimic
-    # the SDK warmup window from the paired live run. demo_replay.py
-    # populates this from a `<pcap>.first.ns` sidecar written by live mode.
-    replay_skip_until_ns: int | None = None
-
-    # Live-only: file path where the C++ binary writes the wall_ns of the
-    # first SDK callback. Auto-set in start() when record_pcap=True so the
-    # sidecar lives next to the pcap.
-    first_packet_marker: Path | None = None
-
-    # Raw UDP pcap recording (diagnostic). When enabled, the module spawns
-    # tcpdump alongside the SDK to capture wire-level Mid-360 traffic, so a
-    # fastlio anomaly can be checked against ground-truth network bytes.
-    # The capture is independent of the SDK and adds no load to it.
+    # raw network data on mid360
     record_pcap: bool = False
     # Output path. Relative paths resolve against the process CWD. `{ts}` is
     # substituted with a YYYYMMDD_HHMMSS timestamp at start time. `~` is
@@ -164,18 +145,9 @@ class FastLio2Config(NativeModuleConfig):
     # Per-packet capture length. Mid-360 point packets are ≤1500 B; 2048 is
     # comfortable. Drop to 200 for header-only captures.
     record_pcap_snaplen: int = 2048
-
-    # Force single-threaded FAST-LIO via OMP_NUM_THREADS=1. Eliminates the
-    # OpenMP-reduction-order source of non-determinism for record + replay
-    # workflows; live use leaves this False to keep multi-thread perf.
-    single_threaded: bool = False
-
-    # Drive scan boundaries + publish ts off the sensor packet timestamp
-    # (pkt->timestamp) in both live and replay, so they produce bit-for-bit
-    # identical outputs. Side effect: published header.stamp is sensor-boot
-    # seconds instead of unix wall time. Off by default; the record/replay
-    # demos flip it on.
-    deterministic_clock: bool = False
+    # tcpdump fails fast (EPERM, bad iface) within a few ms; pause this long
+    # so poll() catches early exits before declaring success.
+    tcpdump_startup_probe_sec: float = 0.3
 
     # init_pose is computed from mount; config is resolved to config_path
     init_pose: list[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
@@ -224,10 +196,9 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
 
     @rpc
     def start(self) -> None:
-        if self.config.replay_pcap is None:
-            self._validate_network()
-            if self.config.record_pcap:
-                self._start_pcap()
+        self._validate_network()
+        if self.config.record_pcap:
+            self._start_pcap()
         super().start()
         self.register_disposable(
             Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
@@ -299,7 +270,7 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
             start_new_session=True,
         )
         # tcpdump exits within a few ms on EPERM; wait briefly so we can detect that.
-        time.sleep(_TCPDUMP_STARTUP_PROBE_SEC)
+        time.sleep(self.config.tcpdump_startup_probe_sec)
         if proc.poll() is not None:
             stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
             self._pcap_proc = None
