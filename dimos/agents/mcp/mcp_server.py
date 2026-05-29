@@ -54,6 +54,7 @@ app.state.skills = []
 app.state.rpc_calls = {}
 app.state.sse_queues = []
 app.state.event_loop = None
+app.state.lane_locks = {}
 
 
 def _jsonrpc_result(req_id: Any, result: Any) -> dict[str, Any]:
@@ -89,13 +90,19 @@ def _handle_tools_list(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
         tool: dict[str, Any] = {"name": s.func_name, "inputSchema": schema}
         if description:
             tool["description"] = description
+        if s.lane is not None:
+            tool["_meta"] = {"lane": s.lane}
         tools.append(tool)
 
     return _jsonrpc_result(req_id, {"tools": tools})
 
 
 async def _handle_tools_call(
-    req_id: Any, params: dict[str, Any], rpc_calls: dict[str, Any]
+    req_id: Any,
+    params: dict[str, Any],
+    skills: list[SkillInfo],
+    rpc_calls: dict[str, Any],
+    lane_locks: dict[str, asyncio.Lock],
 ) -> dict[str, Any]:
     name = params.get("name", "")
     args: dict[str, Any] = params.get("arguments") or {}
@@ -107,6 +114,8 @@ async def _handle_tools_call(
         logger.warning("MCP tool not found", tool=name)
         return _jsonrpc_result_text(req_id, f"Tool not found: {name}")
 
+    lane = next((s.lane for s in skills if s.func_name == name), None)
+
     logger.info("MCP tool call", tool=name, args=args, progress_token=progress_token)
     t0 = time.monotonic()
 
@@ -116,10 +125,16 @@ async def _handle_tools_call(
     if progress_token is not None:
         call_kwargs["_mcp_context"] = {"progress_token": progress_token}
 
+    async def run_rpc_call() -> Any:
+        return await asyncio.get_event_loop().run_in_executor(None, lambda: rpc_call(**call_kwargs))
+
     try:
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: rpc_call(**call_kwargs)
-        )
+        if lane is None:
+            result = await run_rpc_call()
+        else:
+            lock = lane_locks.setdefault(lane, asyncio.Lock())
+            async with lock:
+                result = await run_rpc_call()
     except Exception as e:
         logger.exception("MCP tool error", tool=name, duration=f"{time.monotonic() - t0:.3f}s")
         return _jsonrpc_result_text(req_id, f"Error running tool '{name}': {e}")
@@ -158,7 +173,13 @@ async def handle_request(
     if method == "tools/list":
         return _handle_tools_list(req_id, skills)
     if method == "tools/call":
-        return await _handle_tools_call(req_id, params, rpc_calls)
+        return await _handle_tools_call(
+            req_id,
+            params,
+            skills,
+            rpc_calls,
+            app.state.lane_locks,
+        )
     return _jsonrpc_error(req_id, -32601, f"Unknown: {method}")
 
 

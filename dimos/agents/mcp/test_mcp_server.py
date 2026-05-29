@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+import time
 from unittest.mock import MagicMock
 
 from dimos.agents.mcp.mcp_server import handle_request
@@ -66,6 +68,60 @@ def test_mcp_module_request_flow() -> None:
     )
     assert response["result"]["content"][0]["text"] == "5"
     rpc_calls["add"].assert_called_once_with(x=2, y=3)
+
+
+def test_mcp_module_lists_skill_lane_metadata() -> None:
+    schema = json.dumps({"type": "object", "properties": {}})
+    skills = [
+        SkillInfo(class_name="TestSkills", func_name="drive", args_schema=schema, lane="motion")
+    ]
+    rpc_calls = _make_rpc_calls(skills, {"drive": "ok"})
+
+    response = asyncio.run(handle_request({"method": "tools/list", "id": 1}, skills, rpc_calls))
+
+    assert response["result"]["tools"][0]["_meta"] == {"lane": "motion"}
+
+
+def test_mcp_module_serializes_same_lane_calls() -> None:
+    schema = json.dumps({"type": "object", "properties": {}})
+    skills = [
+        SkillInfo(class_name="TestSkills", func_name="drive", args_schema=schema, lane="motion")
+    ]
+    rpc_calls = _make_rpc_calls(skills, {})
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def slow_drive() -> str:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return "ok"
+
+    rpc_calls["drive"].side_effect = slow_drive
+
+    async def run_two_calls() -> None:
+        await asyncio.gather(
+            handle_request(
+                {"method": "tools/call", "id": 1, "params": {"name": "drive", "arguments": {}}},
+                skills,
+                rpc_calls,
+            ),
+            handle_request(
+                {"method": "tools/call", "id": 2, "params": {"name": "drive", "arguments": {}}},
+                skills,
+                rpc_calls,
+            ),
+        )
+
+    asyncio.run(run_two_calls())
+
+    assert rpc_calls["drive"].call_count == 2
+    assert max_active == 1
 
 
 def test_mcp_module_injects_progress_token_as_mcp_context() -> None:

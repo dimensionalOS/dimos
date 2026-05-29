@@ -18,7 +18,7 @@ import functools
 import inspect
 import threading
 import time
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar, cast, overload
 
 from dimos.core.core import rpc
 from dimos.utils.logging_config import setup_logger
@@ -66,7 +66,10 @@ def _stamp_and_log(func_name: str, result: Any, elapsed_ms: float) -> Any:
     return result
 
 
-def skill(func: F) -> F:
+def _decorate_skill(func: F, *, lane: str | None = None) -> F:
+    if lane == "":
+        raise ValueError("skill lane must be a non-empty string or None")
+
     if inspect.iscoroutinefunction(func):
 
         @functools.wraps(func)
@@ -108,4 +111,25 @@ def skill(func: F) -> F:
 
     wrapped = rpc(context_wrapper)
     wrapped.__skill__ = True  # type: ignore[attr-defined]
+    wrapped.__skill_lane__ = lane  # type: ignore[attr-defined]
     return cast("F", wrapped)
+
+
+@overload
+def skill(func: F) -> F: ...
+
+
+@overload
+def skill(*, lane: str | None = None) -> Callable[[F], F]: ...
+
+
+def skill(func: F | None = None, *, lane: str | None = None) -> F | Callable[[F], F]:
+    """Mark a method as an agent skill.
+
+    `lane` optionally names a sequential execution lane. MCP callers serialize
+    calls within the same lane while leaving unlaned or differently-laned skills
+    free to run concurrently.
+    """
+    if func is None:
+        return lambda wrapped_func: _decorate_skill(wrapped_func, lane=lane)
+    return _decorate_skill(func, lane=lane)

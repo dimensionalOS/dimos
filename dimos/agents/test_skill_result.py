@@ -206,3 +206,20 @@ class TestSkillDecoratorTiming:
         assert sentinel.duration_ms == 999.0  # untouched
         # Decorator overwrites with actual measured elapsed (very small).
         assert result.duration_ms != 999.0
+
+    def test_parameterized_decorator_records_lane(self):
+        @skill(lane="motion")
+        def go_home() -> SkillResult:
+            return SkillResult.ok("done")
+
+        assert go_home.__skill__ is True
+        assert go_home.__skill_lane__ == "motion"
+        assert go_home().is_success()
+
+    def test_bare_decorator_records_no_lane(self):
+        @skill
+        def inspect_scene() -> SkillResult:
+            return SkillResult.ok("done")
+
+        assert inspect_scene.__skill__ is True
+        assert inspect_scene.__skill_lane__ is None

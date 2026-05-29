@@ -69,6 +69,7 @@ class SkillInfo:
     class_name: str
     func_name: str
     args_schema: str
+    lane: str | None = None
 
 
 class PeekNotFound:
@@ -440,7 +441,10 @@ class ModuleBase(Configurable, CompositeResource):
                 schema = json.dumps(tool(attr).args_schema.model_json_schema())
                 skills.append(
                     SkillInfo(
-                        class_name=self.__class__.__name__, func_name=name, args_schema=schema
+                        class_name=self.__class__.__name__,
+                        func_name=name,
+                        args_schema=schema,
+                        lane=getattr(attr, "__skill_lane__", None),
                     )
                 )
         return skills
