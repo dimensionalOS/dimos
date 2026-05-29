@@ -105,6 +105,7 @@ class SpeedWarner(Module):
     _max_mph: float = 0.0
     _last_pos: tuple[float, float, float] | None = None
     _last_ts: float | None = None
+    _last_print_ts: float = 0.0
 
     async def handle_fastlio_odometry(self, msg: Odometry) -> None:
         ts = msg.ts or time.time()
@@ -120,11 +121,13 @@ class SpeedWarner(Module):
         speed_mph = math.sqrt(dx * dx + dy * dy + dz * dz) / dt * MPH_PER_MPS
         if speed_mph > self._max_mph:
             self._max_mph = speed_mph
-        print(
-            f"\rspeed: {speed_mph:6.2f} mph  max: {self._max_mph:6.2f} mph ",
-            end="",
-            flush=True,
-        )
+        if ts - self._last_print_ts >= 1.0:
+            self._last_print_ts = ts
+            print(
+                f"\rspeed: {speed_mph:6.2f} mph  max: {self._max_mph:6.2f} mph ",
+                end="",
+                flush=True,
+            )
         if not self._tripped and speed_mph > SPEED_LIMIT_MPH:
             self._tripped = True
             self._peak_mph = speed_mph
@@ -150,7 +153,6 @@ unitree_go2_record = autoconnect(
         map_freq=-1,
         lidar_ip=os.getenv("LIDAR_IP", "192.168.1.155"),
         record_pcap=True,
-        deterministic_clock=True,
     ).remappings(
         [
             (FastLio2, "lidar", "fastlio_lidar"),
