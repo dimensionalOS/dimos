@@ -14,8 +14,8 @@
 
 from __future__ import annotations
 
-import time
 from threading import RLock
+import time
 from typing import TYPE_CHECKING, Any
 
 import cv2
