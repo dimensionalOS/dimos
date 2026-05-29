@@ -9,7 +9,7 @@ mod plan;
 mod surfaces;
 mod voxel;
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dimos_module::{error_throttled, run, warn_throttled, Input, LcmTransport, Module, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
@@ -137,19 +137,27 @@ impl MlsPlanner {
 
         let cfg = &self.config;
 
+        let t_surface = Instant::now();
         // convert whatever map we got in to voxels
         let voxel_map: AHashSet<VoxelKey> = points
             .iter()
             .map(|&p| voxelize(p, cfg.voxel_size))
             .collect();
-
         let surface_cells = extract_surfaces(
             &voxel_map,
             self.clearance_cells,
             cfg.surface_dilation_passes,
             cfg.surface_erosion_passes,
         );
+        let surface_ms = ms(t_surface.elapsed());
 
+        let surface_points: Vec<(f32, f32, f32)> = surface_cells
+            .iter()
+            .map(|&(ix, iy, iz)| surface_point_xyz(ix, iy, iz, cfg.voxel_size))
+            .collect();
+        publish_cloud(&self.surface_map, &surface_points, &cfg.world_frame, now()).await;
+
+        let t_nodes = Instant::now();
         let sg = place_nodes(
             &surface_cells,
             cfg.voxel_size,
@@ -157,37 +165,31 @@ impl MlsPlanner {
             cfg.node_spacing_m,
             cfg.node_wall_buffer_m,
         );
-
+        let nodes_ms = ms(t_nodes.elapsed());
         let n_nodes = sg.nodes.len();
+
+        let node_points: Vec<(f32, f32, f32)> = sg.nodes.iter().map(|n| n.pos).collect();
+        publish_cloud(&self.nodes, &node_points, &cfg.world_frame, now()).await;
+
+        let t_edges = Instant::now();
         let plg = add_node_edges(sg);
+        let edges_ms = ms(t_edges.elapsed());
         let n_edges = plg.node_edges.len();
+
+        let edges_path = build_segments_path(&plg, cfg.voxel_size, &cfg.world_frame, now());
+        publish_path(&self.node_edges, &edges_path).await;
+
         info!(
             obstacle_points = points.len(),
             obstacle_voxels = voxel_map.len(),
             surface_cells = surface_cells.len(),
             nodes = n_nodes,
             edges = n_edges,
+            surface_ms,
+            nodes_ms,
+            edges_ms,
             "global_map processed",
         );
-
-        let stamp = now();
-        let surface_points: Vec<(f32, f32, f32)> = surface_cells
-            .iter()
-            .map(|&(ix, iy, iz)| surface_point_xyz(ix, iy, iz, cfg.voxel_size))
-            .collect();
-        publish_cloud(
-            &self.surface_map,
-            &surface_points,
-            &cfg.world_frame,
-            stamp.clone(),
-        )
-        .await;
-
-        let node_points: Vec<(f32, f32, f32)> = plg.nodes.iter().map(|n| n.pos).collect();
-        publish_cloud(&self.nodes, &node_points, &cfg.world_frame, stamp.clone()).await;
-
-        let edges_path = build_segments_path(&plg, cfg.voxel_size, &cfg.world_frame, stamp.clone());
-        publish_path(&self.node_edges, &edges_path).await;
 
         self.planner_graph = Some(plg);
     }
@@ -213,6 +215,7 @@ impl MlsPlanner {
         let p = &msg.pose.pose.position;
         let goal = (p.x as f32, p.y as f32, p.z as f32);
 
+        let t_plan = Instant::now();
         let waypoints = match plan::plan(
             plg,
             start,
@@ -227,12 +230,17 @@ impl MlsPlanner {
                 return;
             }
         };
+        let plan_ms = ms(t_plan.elapsed());
 
         let stamp = now();
         let path_msg = build_path_from_waypoints(&waypoints, &self.config.world_frame, stamp);
-        info!(waypoints = waypoints.len(), "path planned");
+        info!(waypoints = waypoints.len(), plan_ms, "path planned");
         publish_path(&self.path, &path_msg).await;
     }
+}
+
+fn ms(d: Duration) -> f64 {
+    d.as_secs_f64() * 1000.0
 }
 
 async fn publish_cloud(
