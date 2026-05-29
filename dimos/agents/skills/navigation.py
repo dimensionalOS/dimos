@@ -43,7 +43,7 @@ class NavigationSkillContainer(Module):
     _skill_started: bool = False
     _similarity_threshold: float = 0.23
 
-    _spatial_memory: SpatialMemorySpec
+    _spatial_memory: SpatialMemorySpec | None = None
     _navigation: NavigationInterfaceSpec
     _object_tracking: ObjectTrackingSpec | None = None
 
@@ -104,6 +104,9 @@ class NavigationSkillContainer(Module):
             rotation=(rotation.x, rotation.y, rotation.z),
         )
 
+        if self._spatial_memory is None:
+            return "Spatial memory is unavailable, cannot tag location."
+
         if not self._spatial_memory.tag_location(location):
             return f"Error: Failed to store '{location_name}' in the spatial memory"
 
@@ -144,6 +147,9 @@ class NavigationSkillContainer(Module):
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
 
     def _navigate_by_tagged_location(self, query: str) -> str | None:
+        if self._spatial_memory is None:
+            return None
+
         robot_location = self._spatial_memory.query_tagged_location(query)
 
         if not robot_location:
@@ -227,6 +233,9 @@ class NavigationSkillContainer(Module):
         return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
 
     def _navigate_using_semantic_map(self, query: str) -> str:
+        if self._spatial_memory is None:
+            return "Spatial memory is unavailable."
+
         results = self._spatial_memory.query_by_text(query)
 
         if not results:

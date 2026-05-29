@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,12 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Protocol
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.unitree.go2.blueprints.agentic._seat_guide_agentic import _seat_guide_agentic
+from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.spec.utils import Spec
+unitree_go2_seat_guide_agentic = autoconnect(
+    unitree_go2,
+    McpServer.blueprint(),
+    McpClient.blueprint(),
+    _seat_guide_agentic,
+).global_config(n_workers=10)
 
-
-class GO2ConnectionSpec(Spec, Protocol):
-    def move(self, twist: Twist, duration: float = 0.0) -> bool: ...
-    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]: ...
+__all__ = ["unitree_go2_seat_guide_agentic"]

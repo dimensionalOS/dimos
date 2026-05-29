@@ -18,7 +18,7 @@ import asyncio
 import json
 from unittest.mock import MagicMock
 
-from dimos.agents.mcp.mcp_server import handle_request
+from dimos.agents.mcp.mcp_server import McpServer, app, handle_request
 from dimos.core.module import SkillInfo
 
 
@@ -66,6 +66,51 @@ def test_mcp_module_request_flow() -> None:
     )
     assert response["result"]["content"][0]["text"] == "5"
     rpc_calls["add"].assert_called_once_with(x=2, y=3)
+
+
+def test_mcp_server_registers_own_skills_without_self_rpc(monkeypatch) -> None:
+    class OtherSkills:
+        def other(self) -> str:
+            """Other skill."""
+            return "ok"
+
+    OtherSkills.other.__skill__ = True  # type: ignore[attr-defined]
+
+    schema = json.dumps({"type": "object", "properties": {}})
+    server_skill = SkillInfo(
+        class_name="McpServer",
+        func_name="server_status",
+        args_schema=schema,
+    )
+    remote_skill = SkillInfo(
+        class_name="OtherSkills",
+        func_name="other",
+        args_schema=schema,
+    )
+
+    server = McpServer.__new__(McpServer)
+    server.rpc = MagicMock()
+    monkeypatch.setattr(server, "get_skills", MagicMock(return_value=[server_skill]))
+
+    server_proxy = MagicMock()
+    server_proxy.remote_name = "McpServer"
+    server_proxy.get_skills.side_effect = AssertionError("self get_skills must be local")
+
+    remote_proxy = MagicMock()
+    remote_proxy.remote_name = "OtherSkills"
+    remote_proxy.actor_class = OtherSkills
+    remote_proxy.get_skills.return_value = [remote_skill]
+
+    try:
+        server.on_system_modules([server_proxy, remote_proxy])
+
+        assert {skill.func_name for skill in app.state.skills} == {"server_status", "other"}
+        server_proxy.get_skills.assert_not_called()
+        assert app.state.rpc_calls["server_status"] == server.server_status
+        assert app.state.rpc_calls["other"]._remote_name == "OtherSkills"
+    finally:
+        app.state.skills = []
+        app.state.rpc_calls = {}
 
 
 def test_mcp_module_injects_progress_token_as_mcp_context() -> None:

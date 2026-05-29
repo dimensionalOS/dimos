@@ -26,6 +26,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
@@ -208,15 +209,49 @@ class UnitreeSkillContainer(Module):
         super().stop()
 
     @skill
-    def relative_move(self, forward: float = 0.0, left: float = 0.0, degrees: float = 0.0) -> str:
+    def direct_move(
+        self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 1.0
+    ) -> str:
+        """Move the Go2 with direct velocity commands for hardware bring-up.
+
+        Use this before navigation-based SeatGuide tests to verify that the robot
+        can receive and execute low-level movement commands. Keep values small
+        during bring-up.
+
+        Args:
+            x: Forward velocity in meters per second. Negative moves backward.
+            y: Left velocity in meters per second. Negative moves right.
+            yaw: Counter-clockwise yaw velocity in radians per second. Negative turns right.
+            duration: How long to keep sending the command in seconds.
+        """
+        x, y, yaw, duration = float(x), float(y), float(yaw), float(duration)
+        twist = Twist(linear=Vector3(x, y, 0.0), angular=Vector3(0.0, 0.0, yaw))
+        if self._connection.move(twist, duration=duration):
+            return f"Direct move sent: x={x}, y={y}, yaw={yaw}, duration={duration}."
+        return "Direct move failed to send."
+
+    @skill
+    def relative_move(
+        self,
+        forward: float = 0.0,
+        left: float = 0.0,
+        degrees: float = 0.0,
+        x: float = 0.0,
+        y: float = 0.0,
+        duration: float = 0.0,
+    ) -> str:
         """Move the robot relative to its current position.
 
         The `degrees` arguments refers to the rotation the robot should be at the end, relative to its current rotation.
+        The `x`, `y`, and `duration` arguments are accepted for compatibility with
+        velocity-style movement requests; `x` maps to `forward`, `y` maps to `left`,
+        and `duration` is ignored because this skill sends a relative navigation goal.
 
         Example calls:
 
             # Move to a point that's 2 meters forward and 1 to the right.
             relative_move(forward=2, left=-1, degrees=0)
+            relative_move(x=2, y=-1, degrees=0)
 
             # Move back 1 meter, while still facing the same direction.
             relative_move(forward=-1, left=0, degrees=0)
@@ -228,6 +263,11 @@ class UnitreeSkillContainer(Module):
             relative_move(forward=0, left=3, degrees=90)
         """
         forward, left, degrees = float(forward), float(left), float(degrees)
+        x, y = float(x), float(y)
+        if forward == 0.0 and x != 0.0:
+            forward = x
+        if left == 0.0 and y != 0.0:
+            left = y
 
         tf = self.tf.get("world", "base_link")
         if tf is None:

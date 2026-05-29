@@ -41,7 +41,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-DEFAULT_TIMEOUT = 30
+DEFAULT_TIMEOUT = 120
 
 
 class McpError(Exception):

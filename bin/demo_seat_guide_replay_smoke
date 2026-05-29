@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+run_dimos() {
+  if command -v dimos >/dev/null 2>&1; then
+    dimos "$@"
+  else
+    uv run dimos "$@"
+  fi
+}
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if ! netstat -nr | awk '/224\.0\.0(\.0)?\/4/ && /lo0/ { found = 1 } END { exit found ? 0 : 1 }'; then
+    cat >&2 <<'EOF'
+SeatGuide replay smoke requires multicast route 224.0.0.0/4 on lo0.
+
+Run this once in an interactive terminal, then rerun this script:
+
+  sudo route delete -net 224.0.0.0/4 || true
+  sudo route add -net 224.0.0.0/4 -interface lo0
+EOF
+    exit 2
+  fi
+fi
+
+cleanup() {
+  run_dimos stop >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "Starting SeatGuide replay stack..."
+run_dimos --replay run unitree-go2-seat-guide-agentic --daemon
+
+echo
+echo "Running SeatGuide no-motion smoke against replay stack..."
+"$(dirname "$0")/demo_seat_guide_smoke"
+
+echo
+echo "SeatGuide replay smoke completed."

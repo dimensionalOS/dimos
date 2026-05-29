@@ -19,7 +19,7 @@ import concurrent.futures
 import json
 import os
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,6 +92,13 @@ def _handle_tools_list(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
         tools.append(tool)
 
     return _jsonrpc_result(req_id, {"tools": tools})
+
+
+def _module_class_has_skills(module: RPCClient) -> bool:
+    return any(
+        callable(attr) and hasattr(attr, "__skill__")
+        for attr in (getattr(module.actor_class, name, None) for name in dir(module.actor_class))
+    )
 
 
 async def _handle_tools_call(
@@ -243,6 +250,8 @@ async def mcp_sse_endpoint() -> StreamingResponse:
 
 
 class McpServer(Module):
+    dedicated_worker: ClassVar[bool] = True
+
     _uvicorn_server: uvicorn.Server | None = None
     _serve_future: concurrent.futures.Future[None] | None = None
     _tool_stream_cleanup: Callable[[], None] | None = None
@@ -279,15 +288,26 @@ class McpServer(Module):
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
-        app.state.skills = [
-            skill_info for module in modules for skill_info in (module.get_skills() or [])
-        ]
-        app.state.rpc_calls = {
-            skill_info.func_name: RpcCall(
-                None, self.rpc, skill_info.func_name, skill_info.class_name, []
-            )
-            for skill_info in app.state.skills
-        }
+        skills: list[SkillInfo] = []
+        rpc_calls: dict[str, Any] = {}
+
+        for module in modules:
+            if module.remote_name == self.__class__.__name__:
+                module_skills = self.get_skills()
+                for skill_info in module_skills:
+                    rpc_calls[skill_info.func_name] = getattr(self, skill_info.func_name)
+            else:
+                if not _module_class_has_skills(module):
+                    continue
+                module_skills = module.get_skills() or []
+                for skill_info in module_skills:
+                    rpc_calls[skill_info.func_name] = RpcCall(
+                        None, self.rpc, skill_info.func_name, skill_info.class_name, []
+                    )
+            skills.extend(module_skills)
+
+        app.state.skills = skills
+        app.state.rpc_calls = rpc_calls
 
     @skill
     def server_status(self) -> str:

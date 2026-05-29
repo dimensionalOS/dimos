@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SeatGuide Speaker</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: #f6f8fb;
+      background: #101316;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      width: min(720px, 100%);
+      margin: 0 auto;
+      padding: 24px 16px;
+    }
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid #2a3036;
+    }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+    .state {
+      min-width: 150px;
+      border: 1px solid #3a454f;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #cbd5df;
+      background: #171c21;
+      font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-align: center;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin: 20px 0;
+    }
+    input, button {
+      min-height: 48px;
+      border: 1px solid #46525e;
+      border-radius: 8px;
+      padding: 0 14px;
+      font-size: 16px;
+    }
+    input {
+      grid-column: 1 / -1;
+      background: #171c21;
+      color: #f6f8fb;
+    }
+    button {
+      background: #e8eef5;
+      color: #11161b;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #20262c;
+      color: #f6f8fb;
+    }
+    .panel {
+      border: 1px solid #2a3036;
+      border-radius: 8px;
+      background: #171c21;
+      overflow: hidden;
+    }
+    .panel-head {
+      padding: 12px 14px;
+      border-bottom: 1px solid #2a3036;
+      color: #cbd5df;
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .messages {
+      min-height: 280px;
+      max-height: 56vh;
+      overflow-y: auto;
+      padding: 12px;
+    }
+    .message {
+      margin-bottom: 10px;
+      padding: 12px;
+      border: 1px solid #333c45;
+      border-radius: 8px;
+      background: #11161a;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .time {
+      display: block;
+      margin-bottom: 5px;
+      color: #8e9baa;
+      font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    @media (max-width: 560px) {
+      header { flex-direction: column; }
+      .state { width: 100%; text-align: left; }
+      .controls { grid-template-columns: 1fr; }
+      input { grid-column: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>SeatGuide Speaker</h1>
+      <div class="state" id="state">audio=locked</div>
+    </header>
+    <div class="controls">
+      <input id="device" autocomplete="off" value="go2-demo" aria-label="Device id">
+      <button id="enable">Enable speaker</button>
+      <button id="test" class="secondary">Play test</button>
+    </div>
+    <section class="panel">
+      <div class="panel-head">Messages</div>
+      <div class="messages" id="messages"></div>
+    </section>
+  </main>
+  <script>
+    const state = document.getElementById('state');
+    const deviceInput = document.getElementById('device');
+    const enable = document.getElementById('enable');
+    const test = document.getElementById('test');
+    const messages = document.getElementById('messages');
+    let audioContext = null;
+    let enabled = false;
+    let lastMessageId = localStorage.getItem('seatGuideLastMessageId') || '';
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('device')) deviceInput.value = params.get('device');
+
+    function setState(text) {
+      state.textContent = text;
+    }
+
+    function isChinese(text) {
+      return /[\u3400-\u9fff]/.test(text);
+    }
+
+    function appendMessage(text, createdAt) {
+      const item = document.createElement('div');
+      item.className = 'message';
+      const stamp = document.createElement('span');
+      stamp.className = 'time';
+      stamp.textContent = createdAt ? new Date(createdAt).toLocaleTimeString() : new Date().toLocaleTimeString();
+      item.appendChild(stamp);
+      item.appendChild(document.createTextNode(text));
+      messages.prepend(item);
+      while (messages.children.length > 30) messages.removeChild(messages.lastChild);
+    }
+
+    function beep() {
+      if (!audioContext) return;
+      const now = audioContext.currentTime;
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      oscillator.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.85, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.75);
+      oscillator.connect(gain).connect(audioContext.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.8);
+    }
+
+    function speak(text, createdAt) {
+      appendMessage(text, createdAt);
+      if (!enabled) {
+        setState('audio=locked');
+        return;
+      }
+      beep();
+      if (!('speechSynthesis' in window)) {
+        setState('speech=missing');
+        return;
+      }
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = isChinese(text) ? 'zh-CN' : 'en-US';
+      utterance.volume = 1.0;
+      utterance.rate = 0.95;
+      utterance.pitch = 1.0;
+      utterance.onstart = () => setState('speech=playing');
+      utterance.onend = () => setState('speech=ready');
+      utterance.onerror = () => setState('speech=error');
+      window.speechSynthesis.speak(utterance);
+    }
+
+    async function unlockAudio() {
+      audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioContext.state !== 'running') await audioContext.resume();
+      enabled = true;
+      setState('speech=ready');
+      speak('SeatGuide speaker ready.');
+    }
+
+    async function poll() {
+      const device = encodeURIComponent(deviceInput.value.trim() || 'go2-demo');
+      try {
+        const response = await fetch(`/api/latest?device=${device}`, { cache: 'no-store' });
+        const payload = await response.json();
+        if (payload.ok && payload.message && payload.message.id !== lastMessageId) {
+          lastMessageId = payload.message.id;
+          localStorage.setItem('seatGuideLastMessageId', lastMessageId);
+          speak(payload.message.text, payload.message.createdAt);
+        }
+        if (enabled) setState('stream=ready');
+      } catch (error) {
+        setState('stream=error');
+      } finally {
+        setTimeout(poll, 700);
+      }
+    }
+
+    enable.onclick = () => unlockAudio().catch(error => setState(`audio=error ${error.message}`));
+    test.onclick = () => speak('SeatGuide speaker test.');
+    deviceInput.onchange = () => {
+      const url = new URL(window.location.href);
+      url.searchParams.set('device', deviceInput.value.trim() || 'go2-demo');
+      window.history.replaceState(null, '', url);
+    };
+
+    poll();
+  </script>
+</body>
+</html>

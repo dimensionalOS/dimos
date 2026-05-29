@@ -20,6 +20,9 @@ from langchain_core.messages import HumanMessage
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.base import NavigationState
 from dimos.robot.unitree.unitree_skill_container import _UNITREE_COMMANDS, UnitreeSkillContainer
 
@@ -43,6 +46,10 @@ class StubNavigation(Module):
 
 
 class StubGO2Connection(Module):
+    @rpc
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
+        return True
+
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         return {}
@@ -70,3 +77,16 @@ def test_did_you_mean() -> None:
     suggestions = difflib.get_close_matches("Pounce", _UNITREE_COMMANDS.keys(), n=3, cutoff=0.6)
     assert "FrontPounce" in suggestions
     assert "Pose" in suggestions
+
+
+def test_relative_move_accepts_velocity_style_aliases() -> None:
+    skill = UnitreeSkillContainer.__new__(UnitreeSkillContainer)
+    current_pose = PoseStamped(
+        position=Vector3(1.0, 2.0, 0.0),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
+    )
+
+    goal = skill._generate_new_goal(current_pose, forward=0.4, left=-0.2, degrees=0.0)
+
+    assert goal.position.x == 1.4
+    assert goal.position.y == 1.8

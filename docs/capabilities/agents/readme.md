@@ -17,7 +17,7 @@ Human Input ──→ Agent ──→ Skill Calls ──→ Robot
 - `agent: Out[BaseMessage]`: publishes agent responses (text, tool calls, images)
 - `agent_idle: Out[bool]`: signals when the agent is waiting for input
 
-The agent uses LangGraph with a configurable LLM. The default is `gpt-4o` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.
+The agent uses LangGraph with a configurable LLM. The default is `gpt-4o`; provide `OPENAI_API_KEY` for direct OpenAI, or provide `OPENROUTER_API_KEY` to route the agent through OpenRouter's OpenAI-compatible chat API. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.
 
 ## Skills
 
@@ -86,6 +86,8 @@ dimos mcp status                                    # Server status
 
 | Config | Model | Notes |
 |--------|-------|-------|
-| Default | `gpt-4o` | Best quality, requires `OPENAI_API_KEY` |
+| Default | `gpt-4o` | Uses `OPENAI_API_KEY` unless `OPENROUTER_API_KEY` is set |
+| OpenRouter default | `gpt-4o` mapped to `openai/gpt-4o` | Set `OPENROUTER_API_KEY`; optionally override with `OPENROUTER_MODEL` |
+| `openrouter:<model>` | OpenRouter model id | Example: `McpClient.blueprint(model="openrouter:openai/gpt-4o-mini")`; choose a model that supports tool calling |
 | `ollama:llama3.1` | Local Ollama | Requires `ollama serve` running |
 | Custom | Any LangChain-compatible | Set via `McpClient.blueprint(model="...")` |
