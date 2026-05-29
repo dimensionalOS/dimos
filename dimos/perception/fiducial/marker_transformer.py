@@ -64,7 +64,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-CameraInfoSource = CameraInfo | Callable[[], CameraInfo | None]
+CameraInfoSource = CameraInfo | Callable[[], CameraInfo | None] | None
 
 
 def _camera_info_key(info: CameraInfo) -> tuple[Any, ...]:
