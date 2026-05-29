@@ -528,14 +528,23 @@ def process_markdown(
     return new_content, changes, errors
 
 
+_SKIPPED_DIR_NAMES = frozenset({"node_modules", ".git", "__pycache__", ".venv", "venv"})
+
+
+def _is_under_skipped_dir(path: Path) -> bool:
+    return any(part in _SKIPPED_DIR_NAMES for part in path.parts)
+
+
 def collect_markdown_files(paths: list[str]) -> list[Path]:
     """Collect markdown files from paths, expanding directories recursively."""
     result: list[Path] = []
     for p in paths:
         path = Path(p)
         if path.is_dir():
-            result.extend(path.rglob("*.md"))
-        elif path.exists():
+            for md_path in path.rglob("*.md"):
+                if not _is_under_skipped_dir(md_path):
+                    result.append(md_path)
+        elif path.exists() and not _is_under_skipped_dir(path):
             result.append(path)
     return sorted(set(result))
 

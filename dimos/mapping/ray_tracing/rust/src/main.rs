@@ -1,8 +1,10 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::time::Duration;
+
 use ahash::{AHashMap, AHashSet};
-use dimos_module::{run, Input, LcmTransport, Module, Output};
+use dimos_module::{error_throttled, run, warn_throttled, Input, LcmTransport, Module, Output};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -28,6 +30,14 @@ struct VoxelMap {
     voxels: AHashMap<VoxelKey, i32>,
 }
 
+struct LocalBounds {
+    origin_x: f32,
+    origin_y: f32,
+    r_xy_max_sq: f32,
+    z_min: f32,
+    z_max: f32,
+}
+
 #[derive(Module)]
 #[module(setup = validate_config)]
 struct RayTracingVoxelMap {
@@ -39,6 +49,9 @@ struct RayTracingVoxelMap {
 
     #[output(encode = PointCloud2::encode)]
     global_map: Output<PointCloud2>,
+
+    #[output(encode = PointCloud2::encode)]
+    local_map: Output<PointCloud2>,
 
     #[config]
     config: Config,
@@ -111,7 +124,11 @@ impl RayTracingVoxelMap {
         let points = match extract_xyz(&msg) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("voxel_ray_tracing: bad cloud, dropped: {e}");
+                warn_throttled!(
+                    Duration::from_secs(1),
+                    error = %e,
+                    "Failed to get lidar points, dropped a cloud.",
+                );
                 return;
             }
         };
@@ -120,24 +137,54 @@ impl RayTracingVoxelMap {
         }
 
         let inv = 1.0_f32 / voxel_size;
+        let half = voxel_size * 0.5;
         let mut live: AHashSet<VoxelKey> = AHashSet::with_capacity(points.len());
+        let mut z_min = f32::INFINITY;
+        let mut z_max = f32::NEG_INFINITY;
+        let mut r_xy_max_sq = 0.0_f32;
         for &(x, y, z) in &points {
-            live.insert(world_to_voxel(x, y, z, inv));
+            let key = world_to_voxel(x, y, z, inv);
+            live.insert(key);
+            let cx = key.0 as f32 * voxel_size + half;
+            let cy = key.1 as f32 * voxel_size + half;
+            let cz = key.2 as f32 * voxel_size + half;
+            z_min = z_min.min(cz);
+            z_max = z_max.max(cz);
+            let dx = cx - origin.0;
+            let dy = cy - origin.1;
+            r_xy_max_sq = r_xy_max_sq.max(dx * dx + dy * dy);
         }
+        let cylinder = LocalBounds {
+            origin_x: origin.0,
+            origin_y: origin.1,
+            r_xy_max_sq,
+            z_min,
+            z_max,
+        };
 
         update_map(&mut self.map, origin, &points, &self.config);
 
-        // Echo the input cloud's frame; the global map lives in the same
-        // world frame as the upstream lidar/odometry.
-        let cloud = build_pointcloud(
+        let (global_cloud, local_cloud) = build_pointclouds(
             &self.map,
             &live,
             voxel_size,
+            &cylinder,
             &msg.header.frame_id,
             msg.header.stamp,
         );
-        if let Err(e) = self.global_map.publish(&cloud).await {
-            eprintln!("voxel_ray_tracing: publish failed: {e}");
+        if let Err(e) = self.global_map.publish(&global_cloud).await {
+            error_throttled!(
+                Duration::from_secs(1),
+                error = %e,
+                "Updated global voxel map failed to publish",
+            );
+        }
+        if let Err(e) = self.local_map.publish(&local_cloud).await {
+            error_throttled!(
+                Duration::from_secs(1),
+                error = %e,
+                "Updated local voxel map failed to publish",
+            );
         }
     }
 }
@@ -213,7 +260,7 @@ fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
     )
 }
 
-/// Amanatides & Woo 3-D DDA. Records voxels on ray in between the end of the shadow region
+/// Amanatides & Woo 3d DDA. Records voxels on ray in between the end of the shadow region
 /// and origin if it is in the map. Voxels within grace region of the endpoint are spared from being marked as misses.
 #[allow(clippy::too_many_arguments)]
 fn find_misses_along_ray(
@@ -283,8 +330,19 @@ fn find_misses_along_ray(
     let shadow_sq = shadow_depth.powi(2);
     let grace_sq = grace_depth.powi(2);
 
+    let ray_len = (dx * dx + dy * dy + dz * dz).sqrt();
+    let t_max = 1.0 + shadow_depth / ray_len.max(f32::EPSILON);
+
     let mut past_endpoint = false;
     loop {
+        let t_enter = tx.min(ty).min(tz);
+        if t_enter > t_max {
+            return;
+        }
+        if t_enter >= 1.0 {
+            past_endpoint = true;
+        }
+
         if tx < ty {
             if tx < tz {
                 x += step_x;
@@ -303,6 +361,12 @@ fn find_misses_along_ray(
 
         if (x, y, z) == endpoint {
             past_endpoint = true;
+            continue;
+        }
+
+        // don't remove points in the same xy plane as the hit, unless the plane only walks that plane
+        // we do this to preserve floors, which is more important than some missed points
+        if origin_voxel.2 != endpoint.2 && z == endpoint.2 {
             continue;
         }
 
@@ -396,41 +460,62 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
     f32::from_le_bytes(bytes)
 }
 
-fn build_pointcloud(
+fn build_pointclouds(
     map: &VoxelMap,
     live: &AHashSet<VoxelKey>,
     voxel_size: f32,
+    cylinder: &LocalBounds,
     frame_id: &str,
     stamp: Time,
-) -> PointCloud2 {
+) -> (PointCloud2, PointCloud2) {
     let half = voxel_size * 0.5;
-    let mut data = Vec::with_capacity((map.voxels.len() + live.len()) * 16);
-    let mut n: i32 = 0;
+    let mut global_data = Vec::with_capacity((map.voxels.len() + live.len()) * 16);
+    let mut local_data = Vec::with_capacity(live.len() * 2 * 16);
+    let mut global_n: i32 = 0;
+    let mut local_n: i32 = 0;
 
-    // helper just to inline the data handling, makes it a little faster
-    let mut add_to_cloud = |kx: i32, ky: i32, kz: i32| {
-        let x = kx as f32 * voxel_size + half;
-        let y = ky as f32 * voxel_size + half;
-        let z = kz as f32 * voxel_size + half;
+    let write_point = |data: &mut Vec<u8>, n: &mut i32, x: f32, y: f32, z: f32| {
         data.extend_from_slice(&x.to_le_bytes());
         data.extend_from_slice(&y.to_le_bytes());
         data.extend_from_slice(&z.to_le_bytes());
         data.extend_from_slice(&0.0_f32.to_le_bytes());
-        n += 1;
+        *n += 1;
     };
 
-    // add the healthy voxels
+    // if point is within local map
+    let in_cylinder = |x: f32, y: f32, z: f32| -> bool {
+        if z < cylinder.z_min || z > cylinder.z_max {
+            return false;
+        }
+        let dx = x - cylinder.origin_x;
+        let dy = y - cylinder.origin_y;
+        dx * dx + dy * dy <= cylinder.r_xy_max_sq
+    };
+
+    // add healthy voxels to global, and local if necessary
     for (&(kx, ky, kz), &health) in &map.voxels {
-        if health > 0 {
-            add_to_cloud(kx, ky, kz);
+        if health <= 0 {
+            continue;
+        }
+        let x = kx as f32 * voxel_size + half;
+        let y = ky as f32 * voxel_size + half;
+        let z = kz as f32 * voxel_size + half;
+        write_point(&mut global_data, &mut global_n, x, y, z);
+        if in_cylinder(x, y, z) {
+            write_point(&mut local_data, &mut local_n, x, y, z);
         }
     }
 
-    // add in the live voxels if they aren't already there
+    // add live voxels to both if they aren't already there
     for &(kx, ky, kz) in live {
-        if !matches!(map.voxels.get(&(kx, ky, kz)), Some(h) if *h > 0) {
-            add_to_cloud(kx, ky, kz);
+        if matches!(map.voxels.get(&(kx, ky, kz)), Some(h) if *h > 0) {
+            continue;
         }
+        let x = kx as f32 * voxel_size + half;
+        let y = ky as f32 * voxel_size + half;
+        let z = kz as f32 * voxel_size + half;
+        write_point(&mut global_data, &mut global_n, x, y, z);
+        write_point(&mut local_data, &mut local_n, x, y, z);
     }
 
     let make_field = |name: &str, off: i32| PointField {
@@ -439,28 +524,45 @@ fn build_pointcloud(
         datatype: PointField::FLOAT32 as u8,
         count: 1,
     };
+    let fields = vec![
+        make_field("x", 0),
+        make_field("y", 4),
+        make_field("z", 8),
+        make_field("intensity", 12),
+    ];
 
-    // assemble the final cloud
-    PointCloud2 {
+    let global_cloud = PointCloud2 {
+        header: Header {
+            seq: 0,
+            stamp: stamp.clone(),
+            frame_id: frame_id.into(),
+        },
+        height: 1,
+        width: global_n,
+        fields: fields.clone(),
+        is_bigendian: false,
+        point_step: 16,
+        row_step: 16 * global_n,
+        data: global_data,
+        is_dense: true,
+    };
+    let local_cloud = PointCloud2 {
         header: Header {
             seq: 0,
             stamp,
             frame_id: frame_id.into(),
         },
         height: 1,
-        width: n,
-        fields: vec![
-            make_field("x", 0),
-            make_field("y", 4),
-            make_field("z", 8),
-            make_field("intensity", 12),
-        ],
+        width: local_n,
+        fields,
         is_bigendian: false,
         point_step: 16,
-        row_step: 16 * n,
-        data,
+        row_step: 16 * local_n,
+        data: local_data,
         is_dense: true,
-    }
+    };
+
+    (global_cloud, local_cloud)
 }
 
 #[tokio::main]
@@ -540,7 +642,7 @@ mod tests {
         let origin_voxel = world_to_voxel(origin.0, origin.1, origin.2, inv);
         let endpoint = world_to_voxel(end.0, end.1, end.2, inv);
 
-        let expected: AHashSet<VoxelKey> = [
+        let walked: AHashSet<VoxelKey> = [
             (1, 0, 0),
             (1, 1, 0),
             (1, 1, 1),
@@ -553,7 +655,7 @@ mod tests {
         .into_iter()
         .collect();
         let mut map_voxels: AHashMap<VoxelKey, i32> = AHashMap::new();
-        for v in &expected {
+        for v in &walked {
             map_voxels.insert(*v, 1);
         }
 
@@ -570,6 +672,13 @@ mod tests {
             endpoint,
         );
 
+        // z-slab protection skips voxels in the endpoint's z-slab (z=1) when the
+        // ray crosses z-slabs.
+        let expected: AHashSet<VoxelKey> = walked
+            .iter()
+            .filter(|v| v.2 != endpoint.2)
+            .copied()
+            .collect();
         assert_eq!(misses, expected);
     }
 
@@ -668,6 +777,163 @@ mod tests {
 
         update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
         assert_eq!(map.voxels.get(&(5, 0, 0)), Some(&1));
+    }
+
+    fn cloud_points(c: &PointCloud2) -> AHashSet<(u32, u32, u32)> {
+        let mut out = AHashSet::new();
+        let step = c.point_step as usize;
+        for i in 0..c.width as usize {
+            let base = i * step;
+            let x = f32::from_le_bytes(c.data[base..base + 4].try_into().unwrap());
+            let y = f32::from_le_bytes(c.data[base + 4..base + 8].try_into().unwrap());
+            let z = f32::from_le_bytes(c.data[base + 8..base + 12].try_into().unwrap());
+            out.insert((x.to_bits(), y.to_bits(), z.to_bits()));
+        }
+        out
+    }
+
+    fn voxel_center(kx: i32, ky: i32, kz: i32) -> (u32, u32, u32) {
+        (
+            (kx as f32 + 0.5).to_bits(),
+            (ky as f32 + 0.5).to_bits(),
+            (kz as f32 + 0.5).to_bits(),
+        )
+    }
+
+    #[test]
+    fn local_map_includes_voxel_inside_cylinder() {
+        let mut map = VoxelMap::default();
+        map.voxels.insert((0, 0, 0), 1);
+        let live: AHashSet<VoxelKey> = AHashSet::new();
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 4.0,
+            z_min: 0.0,
+            z_max: 1.0,
+        };
+        let (global, local) =
+            build_pointclouds(&map, &live, 1.0, &cylinder, "world", Time::default());
+        assert!(cloud_points(&global).contains(&voxel_center(0, 0, 0)));
+        assert!(cloud_points(&local).contains(&voxel_center(0, 0, 0)));
+    }
+
+    #[test]
+    fn local_map_excludes_voxel_outside_radius() {
+        let mut map = VoxelMap::default();
+        map.voxels.insert((5, 0, 0), 1);
+        let live: AHashSet<VoxelKey> = AHashSet::new();
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 4.0,
+            z_min: -10.0,
+            z_max: 10.0,
+        };
+        let (global, local) =
+            build_pointclouds(&map, &live, 1.0, &cylinder, "world", Time::default());
+        assert!(cloud_points(&global).contains(&voxel_center(5, 0, 0)));
+        assert!(!cloud_points(&local).contains(&voxel_center(5, 0, 0)));
+        assert_eq!(local.width, 0);
+    }
+
+    #[test]
+    fn local_map_excludes_voxel_outside_z_range() {
+        let mut map = VoxelMap::default();
+        map.voxels.insert((0, 0, 5), 1);
+        let live: AHashSet<VoxelKey> = AHashSet::new();
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 100.0,
+            z_min: 0.0,
+            z_max: 1.0,
+        };
+        let (global, local) =
+            build_pointclouds(&map, &live, 1.0, &cylinder, "world", Time::default());
+        assert!(cloud_points(&global).contains(&voxel_center(0, 0, 5)));
+        assert!(!cloud_points(&local).contains(&voxel_center(0, 0, 5)));
+        assert_eq!(local.width, 0);
+    }
+
+    #[test]
+    fn local_map_always_includes_live_voxels() {
+        let map = VoxelMap::default();
+        let mut live: AHashSet<VoxelKey> = AHashSet::new();
+        live.insert((10, 10, 10));
+        let cylinder = LocalBounds {
+            origin_x: 0.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 0.0,
+            z_min: 0.0,
+            z_max: 0.0,
+        };
+        let (global, local) =
+            build_pointclouds(&map, &live, 1.0, &cylinder, "world", Time::default());
+        assert!(cloud_points(&global).contains(&voxel_center(10, 10, 10)));
+        assert!(cloud_points(&local).contains(&voxel_center(10, 10, 10)));
+    }
+
+    /// Test how bad the planar ray clipping is.
+    /// For example, points on floors can be counted as misses because they are close to the same ray as the hit.
+    #[test]
+    fn ground_clipping_single_ray() {
+        let voxel_size = 0.1_f32;
+        let lidar_height = 1.0_f32;
+        let cfg = Config {
+            voxel_size,
+            max_range: 50.0,
+            ray_subsample: 1,
+            shadow_depth: 0.2,
+            grace_depth: 0.2,
+            min_health: 0,
+            max_health: 1,
+        };
+        let inv = 1.0 / voxel_size;
+
+        // Cover the full range we will probe, plus a little for shadow.
+        let max_x = 25.0_f32;
+        let n_ground = (max_x / voxel_size).ceil() as i32;
+
+        let ranges: Vec<f32> = (1..=20).map(|i| i as f32).collect();
+        let mut table = format!(
+            "voxel_size={voxel_size} lidar_height={lidar_height} grace={} shadow={}\n\
+             range_m  ground_voxels_in_row  clipped  clipped_pct\n",
+            cfg.grace_depth, cfg.shadow_depth
+        );
+        let mut total_clipped = 0usize;
+        for &range in &ranges {
+            let mut map = VoxelMap::default();
+            for i in 0..n_ground {
+                let x = (i as f32) * voxel_size + voxel_size * 0.5;
+                let key = world_to_voxel(x, 0.0, 0.0, inv);
+                map.voxels.insert(key, cfg.max_health);
+            }
+            let n_before = map.voxels.len();
+
+            let origin = (0.0_f32, 0.0_f32, lidar_height);
+            let hits = vec![(range, 0.0_f32, 0.0_f32)];
+            update_map(&mut map, origin, &hits, &cfg);
+
+            let n_after_ground: usize = (0..n_ground)
+                .filter(|i| {
+                    let x = (*i as f32) * voxel_size + voxel_size * 0.5;
+                    let key = world_to_voxel(x, 0.0, 0.0, inv);
+                    map.voxels.contains_key(&key)
+                })
+                .count();
+            let clipped = n_before - n_after_ground;
+            let pct = 100.0 * clipped as f32 / n_before as f32;
+            table.push_str(&format!(
+                "{range:>6.1}  {n_before:>20}  {clipped:>7}  {pct:>10.1}\n"
+            ));
+            total_clipped += clipped;
+        }
+        eprint!("{table}");
+        assert!(
+            total_clipped == 0,
+            "planar grace regressed, ground voxels clipped:\n{table}"
+        );
     }
 
     #[test]
