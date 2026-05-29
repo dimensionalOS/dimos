@@ -27,7 +27,6 @@ import numpy as np
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
@@ -46,21 +45,21 @@ class StraightLinePlanner(Module):
     config: StraightLinePlannerConfig
 
     global_map: In[PointCloud2]
-    start_pose: In[Odometry]
-    goal_pose: In[Odometry]
+    start_pose: In[PoseStamped]
+    goal_pose: In[PoseStamped]
     path: Out[Path]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._latest_start: Odometry | None = None
+        self._latest_start: PoseStamped | None = None
 
     async def handle_global_map(self, _msg: PointCloud2) -> None:
         return
 
-    async def handle_start_pose(self, msg: Odometry) -> None:
+    async def handle_start_pose(self, msg: PoseStamped) -> None:
         self._latest_start = msg
 
-    async def handle_goal_pose(self, msg: Odometry) -> None:
+    async def handle_goal_pose(self, msg: PoseStamped) -> None:
         start = self._latest_start
         if start is None:
             logger.warning("StraightLinePlanner received goal before start; skipping")
@@ -68,7 +67,7 @@ class StraightLinePlanner(Module):
         path = self._straight_line(start, msg)
         self.path.publish(path)
 
-    def _straight_line(self, start: Odometry, goal: Odometry) -> Path:
+    def _straight_line(self, start: PoseStamped, goal: PoseStamped) -> Path:
         n = max(2, self.config.num_waypoints)
         sx, sy, sz = start.x, start.y, start.z
         gx, gy, gz = goal.x, goal.y, goal.z

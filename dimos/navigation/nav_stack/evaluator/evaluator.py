@@ -28,7 +28,7 @@ from typing import Any
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.evaluator.scenarios import (
@@ -62,8 +62,8 @@ class Evaluator(Module):
     config: EvaluatorConfig
 
     global_map: Out[PointCloud2]
-    start_pose: Out[Odometry]
-    goal_pose: Out[Odometry]
+    start_pose: Out[PoseStamped]
+    goal_pose: Out[PoseStamped]
     path: In[Path]
 
     def __init__(self, **kwargs: Any) -> None:
