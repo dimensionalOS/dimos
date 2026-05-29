@@ -204,7 +204,7 @@ Singleton config. Values cascade: defaults → `.env` → env vars → blueprint
 
 ### Global flags
 
-Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simulation`, `--replay/--no-replay`, `--viewer {rerun|rerun-web|foxglove|none}`, `--mcp-port`, `--n-workers`, etc. Flags override `.env` and env vars.
+Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simulation`, `--replay/--no-replay`, `--viewer {rerun|rerun-web|rerun-connect|none}`, `--mcp-port`, `--n-workers`, etc. Flags override `.env` and env vars.
 
 ### Core commands
 
@@ -373,7 +373,7 @@ CI asserts the file is current — if it's stale, CI fails.
 ## Git Workflow
 
 - Branch prefixes: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`, `perf/`
-- **PRs target `dev`** — never push to `main` or `dev` directly
+- **PRs target `main`** — `main` is the unstable development branch. Work and PR off of `main`. Never push to `main` directly.
 - **Don't force-push** unless after a rebase with conflicts
 - **Minimize pushes** — every push triggers CI (~1 hour on self-hosted runners). Batch commits locally, push once.
 

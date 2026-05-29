@@ -42,7 +42,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.spec import perception
 from dimos.utils.reactive import backpressure
 
@@ -449,9 +448,6 @@ def main() -> None:
     dimos.start()
 
     camera = dimos.deploy(RealSenseCamera, enable_pointcloud=True, pointcloud_fps=5.0)
-    foxglove_bridge = FoxgloveBridge()
-    foxglove_bridge.start()
-
     camera.color_image.transport = LCMTransport("/camera/color", Image)
     camera.depth_image.transport = LCMTransport("/camera/depth", Image)
     camera.pointcloud.transport = LCMTransport("/camera/pointcloud", PointCloud2)

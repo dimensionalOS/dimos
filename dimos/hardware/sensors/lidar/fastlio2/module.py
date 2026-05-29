@@ -113,6 +113,8 @@ class FastLio2Config(NativeModuleConfig):
         Path, validate_as(...).transform(lambda p: p if p.is_absolute() else _CONFIG_DIR / p)
     ] = Path("mid360.yaml")
 
+    debug: bool = False
+
     # SDK port configuration (see livox/ports.py for defaults)
     cmd_data_port: int = SDK_CMD_DATA_PORT
     push_msg_port: int = SDK_PUSH_MSG_PORT

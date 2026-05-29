@@ -41,6 +41,8 @@ __pycache__
 node_modules
 package.json
 package-lock.json
+!docs/package.json
+!docs/package-lock.json
 
 # Ignore build artifacts
 dist/
@@ -84,3 +86,6 @@ htmlcov/
 
 # Memory2 autorecord
 recording*.db
+
+# Rerun recordings
+*.rrd

@@ -29,6 +29,7 @@ Keyboard controls:
 """
 
 import os
+from pathlib import Path
 import threading
 import time
 from typing import Any
@@ -65,9 +66,11 @@ def _clamp(value: float, min_val: float, max_val: float) -> float:
 
 
 class KeyboardTeleopConfig(ModuleConfig):
-    model_path: str = ""
+    # Accept str or Path-like (incl. LfsPath, which lazy-resolves on str()).
+    model_path: str | Path = ""
     ee_joint_id: int = 6
     task_name: str = "cartesian_ik_arm"
+    home_joints: list[float] | None = None
 
 
 class KeyboardTeleopModule(Module):
@@ -109,8 +112,8 @@ class KeyboardTeleopModule(Module):
         ee_joint_id = self.config.ee_joint_id
         task_name = self.config.task_name
 
-        # Initialize pose from forward kinematics at zero configuration
-        home_pose = JogState.from_fk(model_path, ee_joint_id)
+        # Initialize pose from forward kinematics at the robot's home configuration
+        home_pose = JogState.from_fk(model_path, ee_joint_id, self.config.home_joints)
         current_pose = home_pose.copy()
 
         # Publish initial pose

@@ -28,6 +28,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.agents.annotation import skill
+from dimos.agents.skill_result import SkillResult
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.docker_module import DockerModuleProxy as DockerRunner
@@ -37,6 +38,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
+from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -152,17 +154,20 @@ class PickAndPlaceModule(ManipulationModule):
         return result
 
     @skill
-    def clear_perception_obstacles(self) -> str:
+    def clear_perception_obstacles(self) -> SkillResult[ManipulationSkillError]:
         """Clear all perception obstacles from the planning world.
 
         Use this when the planner reports COLLISION_AT_START — detected objects
         may overlap the robot's current position and block planning.
         """
         if self._world_monitor is None:
-            return "No world monitor available"
+            return SkillResult.fail(
+                "WORLD_MONITOR_UNAVAILABLE",
+                "No world monitor available",
+            )
         count = self._world_monitor.clear_perception_obstacles()
         self._detection_snapshot = []
-        return f"Cleared {count} perception obstacle(s) from planning world"
+        return SkillResult.ok(f"Cleared {count} perception obstacle(s) from planning world")
 
     @rpc
     def get_perception_status(self) -> dict[str, int]:
@@ -410,7 +415,7 @@ class PickAndPlaceModule(ManipulationModule):
         return det.center.x, det.center.y, det.center.z
 
     @skill
-    def get_scene_info(self, robot_name: str | None = None) -> str:
+    def get_scene_info(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Get current robot state, detected objects, and scene information.
 
         Returns a summary of the robot's joint positions, end-effector pose,
@@ -445,7 +450,8 @@ class PickAndPlaceModule(ManipulationModule):
         # Perception
         perception = self.get_perception_status()
         lines.append(
-            f"Perception: {perception.get('cached', 0)} cached, {perception.get('added', 0)} obstacles added"
+            f"Perception: {perception.get('cached', 0)} cached, "
+            f"{perception.get('added', 0)} obstacles added"
         )
 
         detections = self._detection_snapshot
@@ -465,10 +471,10 @@ class PickAndPlaceModule(ManipulationModule):
         # State
         lines.append(f"State: {self.get_state()}")
 
-        return "\n".join(lines)
+        return SkillResult.ok("\n".join(lines))
 
     @skill
-    def look(self, robot_name: str | None = None) -> str:
+    def look(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Quick check of what objects are visible from the current camera position.
 
         Does NOT move the arm. Returns objects currently detected in the camera view.
@@ -480,7 +486,7 @@ class PickAndPlaceModule(ManipulationModule):
 
         detections = self._detection_snapshot
         if not detections:
-            return "No objects visible from current position"
+            return SkillResult.ok("No objects visible from current position")
 
         lines = [f"Currently see {len(detections)} object(s):"]
         for det in detections:
@@ -492,14 +498,14 @@ class PickAndPlaceModule(ManipulationModule):
         if obstacles:
             lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
 
-        return "\n".join(lines)
+        return SkillResult.ok("\n".join(lines))
 
     @skill
     def scan_objects(
         self,
         min_duration: float = 0.0,
         robot_name: str | None = None,
-    ) -> str:
+    ) -> SkillResult[ManipulationSkillError]:
         """Scan for objects — moves to init position first for a clear camera view, \
 then refreshes perception obstacles.
 
@@ -511,14 +517,15 @@ then refreshes perception obstacles.
         """
         # Go to init for a clear camera view
         init_result = self.go_init(robot_name)
-        if init_result.startswith("Error:"):
-            return f"Failed to reach init position: {init_result}"
+        if not init_result.is_success():
+            return init_result
 
         obstacles = self.refresh_obstacles(min_duration)
 
         detections = self._detection_snapshot
         if not detections:
-            return "No objects detected in scene"
+            # See look(): an empty scan is a valid observation, not a failure.
+            return SkillResult.ok("No objects detected in scene")
 
         lines = [f"Detected {len(detections)} object(s):"]
         for det in detections:
@@ -530,7 +537,7 @@ then refreshes perception obstacles.
         if obstacles:
             lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
 
-        return "\n".join(lines)
+        return SkillResult.ok("\n".join(lines))
 
     @skill
     def pick(
@@ -538,7 +545,7 @@ then refreshes perception obstacles.
         object_name: str,
         object_id: str | None = None,
         robot_name: str | None = None,
-    ) -> str:
+    ) -> SkillResult[ManipulationSkillError]:
         """Pick up an object by name using grasp planning and motion execution.
 
         Generates grasp poses, plans collision-free approach/grasp/retract motions,
@@ -551,7 +558,7 @@ then refreshes perception obstacles.
         """
         robot = self._get_robot(robot_name)
         if robot is None:
-            return "Error: Robot not found"
+            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
         rname, _, config, _ = robot
         pre_grasp_offset = config.pre_grasp_offset
 
@@ -559,12 +566,15 @@ then refreshes perception obstacles.
         logger.info(f"Generating grasp poses for '{object_name}'...")
         grasp_poses = self._generate_grasps_for_pick(object_name, object_id)
         if not grasp_poses:
-            return f"Error: No grasp poses found for '{object_name}'. Object may not be detected."
+            return SkillResult.fail(
+                "GRASP_GENERATION_FAILED",
+                f"No grasp poses found for '{object_name}'. Object may not be detected.",
+            )
 
         # Lift if EE is low before approaching
-        err = self._lift_if_low(rname)
-        if err:
-            return err
+        lift = self._lift_if_low(rname)
+        if not lift.is_success():
+            return lift
 
         # 2. Try each grasp candidate
         max_attempts = min(len(grasp_poses), 5)
@@ -586,17 +596,17 @@ then refreshes perception obstacles.
             time.sleep(0.5)
 
             # 4. Execute approach to pre-grasp
-            err = self._preview_execute_wait(rname)
-            if err:
-                return err
+            exec_result = self._preview_execute_wait(rname)
+            if not exec_result.is_success():
+                return exec_result
 
             # 5. Move to grasp pose
             logger.info("Moving to grasp position...")
             if not self.plan_to_pose(grasp_pose, rname):
-                return "Error: Grasp pose planning failed"
-            err = self._preview_execute_wait(rname)
-            if err:
-                return err
+                return SkillResult.fail("PLANNING_FAILED", "Grasp pose planning failed")
+            exec_result = self._preview_execute_wait(rname)
+            if not exec_result.is_success():
+                return exec_result
 
             # 6. Close gripper
             logger.info("Closing gripper...")
@@ -606,17 +616,20 @@ then refreshes perception obstacles.
             # 7. Retract to pre-grasp
             logger.info("Retracting with object...")
             if not self.plan_to_pose(pre_grasp_pose, rname):
-                return "Error: Retract planning failed"
-            err = self._preview_execute_wait(rname)
-            if err:
-                return err
+                return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
+            exec_result = self._preview_execute_wait(rname)
+            if not exec_result.is_success():
+                return exec_result
 
             # Store pick pose so place_back() can return with same orientation
             self._last_pick_pose = grasp_pose
 
-            return f"Pick complete — grasped '{object_name}' successfully"
+            return SkillResult.ok(f"Pick complete — grasped '{object_name}' successfully")
 
-        return f"Error: All {max_attempts} grasp attempts failed for '{object_name}'"
+        return SkillResult.fail(
+            "GRASP_ATTEMPTS_EXHAUSTED",
+            f"All {max_attempts} grasp attempts failed for '{object_name}'",
+        )
 
     @skill
     def place(
@@ -625,7 +638,7 @@ then refreshes perception obstacles.
         y: float,
         z: float,
         robot_name: str | None = None,
-    ) -> str:
+    ) -> SkillResult[ManipulationSkillError]:
         """Place a held object at the specified position.
 
         Plans and executes an approach, lowers to the target, releases the gripper,
@@ -648,11 +661,11 @@ then refreshes perception obstacles.
         z: float,
         orientation: Quaternion,
         robot_name: str | None = None,
-    ) -> str:
+    ) -> SkillResult[ManipulationSkillError]:
         """Internal place with explicit orientation."""
         robot = self._get_robot(robot_name)
         if robot is None:
-            return "Error: Robot not found"
+            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
         rname, _, config, _ = robot
         pre_place_offset = config.pre_grasp_offset
 
@@ -665,26 +678,26 @@ then refreshes perception obstacles.
         pre_place_pose = self._compute_pre_grasp_pose(place_pose, pre_place_offset)
 
         # Lift if EE is low before approaching
-        err = self._lift_if_low(rname)
-        if err:
-            return err
+        lift = self._lift_if_low(rname)
+        if not lift.is_success():
+            return lift
 
         # 1. Move to pre-place
         logger.info(f"Planning approach to place position ({x:.3f}, {y:.3f}, {z:.3f})...")
         if not self.plan_to_pose(pre_place_pose, rname):
-            return "Error: Pre-place approach planning failed"
+            return SkillResult.fail("PLANNING_FAILED", "Pre-place approach planning failed")
 
-        err = self._preview_execute_wait(rname)
-        if err:
-            return err
+        exec_result = self._preview_execute_wait(rname)
+        if not exec_result.is_success():
+            return exec_result
 
         # 2. Lower to place position
         logger.info("Lowering to place position...")
         if not self.plan_to_pose(place_pose, rname):
-            return "Error: Place pose planning failed"
-        err = self._preview_execute_wait(rname)
-        if err:
-            return err
+            return SkillResult.fail("PLANNING_FAILED", "Place pose planning failed")
+        exec_result = self._preview_execute_wait(rname)
+        if not exec_result.is_success():
+            return exec_result
 
         # 3. Release
         logger.info("Releasing object...")
@@ -694,15 +707,15 @@ then refreshes perception obstacles.
         # 4. Retract
         logger.info("Retracting...")
         if not self.plan_to_pose(pre_place_pose, rname):
-            return "Error: Retract planning failed"
-        err = self._preview_execute_wait(rname)
-        if err:
-            return err
+            return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
+        exec_result = self._preview_execute_wait(rname)
+        if not exec_result.is_success():
+            return exec_result
 
-        return f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})"
+        return SkillResult.ok(f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})")
 
     @skill
-    def place_back(self, robot_name: str | None = None) -> str:
+    def place_back(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
         """Place the held object back at its original pick position.
 
         Uses the position stored from the last successful pick operation.
@@ -711,7 +724,10 @@ then refreshes perception obstacles.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
         if self._last_pick_pose is None:
-            return "Error: No previous pick position stored — run pick() first"
+            return SkillResult.fail(
+                "NO_PRIOR_POSE",
+                "No previous pick position stored — run pick() first",
+            )
 
         p = self._last_pick_pose.position
         o = self._last_pick_pose.orientation
@@ -724,7 +740,7 @@ then refreshes perception obstacles.
         target_object_name: str,
         z_offset: float = 0.1,
         robot_name: str | None = None,
-    ) -> str:
+    ) -> SkillResult[ManipulationSkillError]:
         """Drop a held object on top of a detected object.
 
         Resolves the target object's position with occlusion correction and
@@ -737,7 +753,10 @@ then refreshes perception obstacles.
         """
         pos = self._resolve_object_position(target_object_name)
         if pos is None:
-            return f"Error: Target object '{target_object_name}' not found in detections"
+            return SkillResult.fail(
+                "OBJECT_NOT_DETECTED",
+                f"Target object '{target_object_name}' not found in detections",
+            )
         x, y, z = pos
         z += z_offset
         logger.info(
@@ -754,7 +773,7 @@ then refreshes perception obstacles.
         place_z: float,
         object_id: str | None = None,
         robot_name: str | None = None,
-    ) -> str:
+    ) -> SkillResult[ManipulationSkillError]:
         """Pick up an object and place it at a target location.
 
         Combines the pick and place skills into a single end-to-end operation.
@@ -768,13 +787,14 @@ then refreshes perception obstacles.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
         logger.info(
-            f"Starting pick and place: pick '{object_name}' → place at ({place_x:.3f}, {place_y:.3f}, {place_z:.3f})"
+            f"Starting pick and place: pick '{object_name}' → place at "
+            f"({place_x:.3f}, {place_y:.3f}, {place_z:.3f})"
         )
 
         # Pick phase
-        result = self.pick(object_name, object_id, robot_name)
-        if result.startswith("Error:"):
-            return result
+        pick_result = self.pick(object_name, object_id, robot_name)
+        if not pick_result.is_success():
+            return pick_result
 
         # Place phase
         return self.place(place_x, place_y, place_z, robot_name)

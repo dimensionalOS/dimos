@@ -44,6 +44,7 @@
 
 // FAST-LIO (header-only core, compiled sources linked via CMake)
 #include "fast_lio.hpp"
+#include "fast_lio_debug.hpp"
 
 using livox_common::GRAVITY_MS2;
 using livox_common::DATA_TYPE_IMU;
@@ -349,8 +350,10 @@ static void on_info_change(const uint32_t handle, const LivoxLidarInfo* info,
     char ip[17] = {};
     std::memcpy(ip, info->lidar_ip, 16);
 
-    printf("[fastlio2] Device connected: handle=%u type=%u sn=%s ip=%s\n",
-           handle, info->dev_type, sn, ip);
+    if (fastlio_debug) {
+        printf("[fastlio2] Device connected: handle=%u type=%u sn=%s ip=%s\n",
+               handle, info->dev_type, sn, ip);
+    }
 
     SetLivoxLidarWorkMode(handle, kLivoxLidarNormal, nullptr, nullptr);
     EnableLivoxLidarImuData(handle, nullptr, nullptr);
@@ -408,6 +411,11 @@ int main(int argc, char** argv) {
     float map_max_range = mod.arg_float("map_max_range", 100.0f);
     float map_freq = mod.arg_float("map_freq", 0.0f);
 
+    // Verbose logging — propagates to the FAST-LIO C++ core via the
+    // `fastlio_debug` global. Default false → only real errors print.
+    bool debug = mod.arg_bool("debug", false);
+    fastlio_debug = debug;
+
     // SDK network ports (defaults from SdkPorts struct in livox_sdk_config.hpp)
     livox_common::SdkPorts ports;
     const livox_common::SdkPorts port_defaults;
@@ -440,27 +448,29 @@ int main(int argc, char** argv) {
         }
     }
 
-    printf("[fastlio2] Starting FAST-LIO2 + Livox Mid-360 native module\n");
-    if (has_init_pose()) {
-        printf("[fastlio2] init_pose: xyz=(%.3f, %.3f, %.3f) quat=(%.4f, %.4f, %.4f, %.4f)\n",
-               g_init_x, g_init_y, g_init_z, g_init_qx, g_init_qy, g_init_qz, g_init_qw);
+    if (debug) {
+        printf("[fastlio2] Starting FAST-LIO2 + Livox Mid-360 native module\n");
+        if (has_init_pose()) {
+            printf("[fastlio2] init_pose: xyz=(%.3f, %.3f, %.3f) quat=(%.4f, %.4f, %.4f, %.4f)\n",
+                   g_init_x, g_init_y, g_init_z, g_init_qx, g_init_qy, g_init_qz, g_init_qw);
+        }
+        printf("[fastlio2] lidar topic: %s\n",
+               g_lidar_topic.empty() ? "(disabled)" : g_lidar_topic.c_str());
+        printf("[fastlio2] odometry topic: %s\n",
+               g_odometry_topic.empty() ? "(disabled)" : g_odometry_topic.c_str());
+        printf("[fastlio2] global_map topic: %s\n",
+               g_map_topic.empty() ? "(disabled)" : g_map_topic.c_str());
+        printf("[fastlio2] config: %s\n", config_path.c_str());
+        printf("[fastlio2] host_ip: %s  lidar_ip: %s  frequency: %.1f Hz\n",
+               host_ip.c_str(), lidar_ip.c_str(), g_frequency);
+        printf("[fastlio2] pointcloud_freq: %.1f Hz  odom_freq: %.1f Hz\n",
+               pointcloud_freq, odom_freq);
+        printf("[fastlio2] voxel_size: %.3f  sor_mean_k: %d  sor_stddev: %.1f\n",
+               filter_cfg.voxel_size, filter_cfg.sor_mean_k, filter_cfg.sor_stddev);
+        if (!g_map_topic.empty())
+            printf("[fastlio2] map_voxel_size: %.3f  map_max_range: %.1f  map_freq: %.1f Hz\n",
+                   map_voxel_size, map_max_range, map_freq);
     }
-    printf("[fastlio2] lidar topic: %s\n",
-           g_lidar_topic.empty() ? "(disabled)" : g_lidar_topic.c_str());
-    printf("[fastlio2] odometry topic: %s\n",
-           g_odometry_topic.empty() ? "(disabled)" : g_odometry_topic.c_str());
-    printf("[fastlio2] global_map topic: %s\n",
-           g_map_topic.empty() ? "(disabled)" : g_map_topic.c_str());
-    printf("[fastlio2] config: %s\n", config_path.c_str());
-    printf("[fastlio2] host_ip: %s  lidar_ip: %s  frequency: %.1f Hz\n",
-           host_ip.c_str(), lidar_ip.c_str(), g_frequency);
-    printf("[fastlio2] pointcloud_freq: %.1f Hz  odom_freq: %.1f Hz\n",
-           pointcloud_freq, odom_freq);
-    printf("[fastlio2] voxel_size: %.3f  sor_mean_k: %d  sor_stddev: %.1f\n",
-           filter_cfg.voxel_size, filter_cfg.sor_mean_k, filter_cfg.sor_stddev);
-    if (!g_map_topic.empty())
-        printf("[fastlio2] map_voxel_size: %.3f  map_max_range: %.1f  map_freq: %.1f Hz\n",
-               map_voxel_size, map_max_range, map_freq);
 
     // Signal handlers
     signal(SIGTERM, signal_handler);
@@ -475,13 +485,14 @@ int main(int argc, char** argv) {
     g_lcm = &lcm;
 
     // Init FAST-LIO with config
-    printf("[fastlio2] Initializing FAST-LIO...\n");
+    if (debug) printf("[fastlio2] Initializing FAST-LIO...\n");
     FastLio fast_lio(config_path, msr_freq, main_freq);
     g_fastlio = &fast_lio;
-    printf("[fastlio2] FAST-LIO initialized.\n");
+    if (debug) printf("[fastlio2] FAST-LIO initialized.\n");
 
-    // Init Livox SDK (in-memory config, no temp files)
-    if (!livox_common::init_livox_sdk(host_ip, lidar_ip, ports)) {
+    // Init Livox SDK (in-memory config, no temp files).
+    // Pass `debug` so the SDK's spdlog console sink is disabled when off.
+    if (!livox_common::init_livox_sdk(host_ip, lidar_ip, ports, debug)) {
         return 1;
     }
 
@@ -497,7 +508,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    printf("[fastlio2] SDK started, waiting for device...\n");
+    if (debug) printf("[fastlio2] SDK started, waiting for device...\n");
 
     // Main loop
     auto frame_interval = std::chrono::microseconds(
@@ -616,11 +627,11 @@ int main(int argc, char** argv) {
     }
 
     // Cleanup
-    printf("[fastlio2] Shutting down...\n");
+    if (debug) printf("[fastlio2] Shutting down...\n");
     g_fastlio = nullptr;
     LivoxLidarSdkUninit();
     g_lcm = nullptr;
 
-    printf("[fastlio2] Done.\n");
+    if (debug) printf("[fastlio2] Done.\n");
     return 0;
 }

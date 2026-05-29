@@ -1,16 +1,29 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
+use tracing::{error, info, warn};
+use tracing_subscriber::EnvFilter;
 
 use serde::de::DeserializeOwned;
 
 use crate::transport::Transport;
 
-const INPUT_CHANNEL_CAPACITY: usize = 16;
-const PUBLISH_CHANNEL_CAPACITY: usize = 64;
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .json()
+        .with_writer(std::io::stderr)
+        .with_env_filter(filter)
+        .try_init();
+}
+
+const INPUT_CHANNEL_CAPACITY: usize = 1024;
+const PUBLISH_CHANNEL_CAPACITY: usize = 1024;
 
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's mpsc channel.
@@ -22,16 +35,34 @@ struct TypedRoute<T: Send + 'static> {
     topic: String,
     decode: fn(&[u8]) -> io::Result<T>,
     sender: mpsc::Sender<T>,
+    drop_count: AtomicU64,
+    last_log_ns: AtomicU64,
 }
 
 impl<T: Send + 'static> Route for TypedRoute<T> {
     fn try_dispatch(&self, data: &[u8]) {
         match (self.decode)(data) {
-            // If the input channel is full, the newest message is dropped.
-            Ok(msg) => {
-                let _ = self.sender.try_send(msg);
-            }
-            Err(e) => eprintln!("dimos_module: decode error on {}: {e}", self.topic),
+            Ok(msg) => match self.sender.try_send(msg) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    // throttle the warning logging per route
+                    // we can't use warn_throttled! because this code is shared across all route instances
+                    let n = self.drop_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    if crate::log::check_and_record(
+                        &self.last_log_ns,
+                        Duration::from_secs(1).as_nanos() as u64,
+                    ) {
+                        warn!(
+                            topic = %self.topic,
+                            dropped = n,
+                            queue_cap = INPUT_CHANNEL_CAPACITY,
+                            "Dispatcher could not send message because handler was full.",
+                        );
+                    }
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {}
+            },
+            Err(e) => error!(topic = %self.topic, error = %e, "decode error"),
         }
     }
 }
@@ -149,6 +180,8 @@ impl Builder {
                 topic: topic.clone(),
                 decode,
                 sender: tx,
+                drop_count: AtomicU64::new(0),
+                last_log_ns: AtomicU64::new(0),
             }));
         Input {
             topic,
@@ -183,7 +216,7 @@ pub(crate) fn spawn_pubsub_tasks<T: Transport>(
                         }
                     }
                 }
-                Err(e) => eprintln!("dimos_module: recv error: {e}"),
+                Err(e) => error!(error = %e, "recv error"),
             }
         }
     });
@@ -192,7 +225,7 @@ pub(crate) fn spawn_pubsub_tasks<T: Transport>(
     let pub_handle = tokio::spawn(async move {
         while let Some((topic, data)) = publish_rx.recv().await {
             if let Err(e) = pub_transport.publish(&topic, &data).await {
-                eprintln!("dimos_module: publish error on {topic}: {e}");
+                error!(topic = %topic, error = %e, "publish error");
             }
         }
     });
@@ -202,9 +235,9 @@ pub(crate) fn spawn_pubsub_tasks<T: Transport>(
 
 fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
     match res {
-        Ok(()) => eprintln!("dimos_module: {name} task exited unexpectedly"),
+        Ok(()) => error!(task = name, "task exited unexpectedly"),
         Err(e) => {
-            eprintln!("dimos_module: {name} task panicked, propagating");
+            error!(task = name, "task panicked, propagating");
             std::panic::resume_unwind(e.into_panic());
         }
     }
@@ -215,6 +248,8 @@ where
     M: Module,
     T: Transport,
 {
+    init_tracing();
+
     let mut line = String::new();
     BufReader::new(tokio::io::stdin())
         .read_line(&mut line)
@@ -225,11 +260,10 @@ where
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "unknown".to_string());
-    eprintln!("[{exe}] topics received:");
     for (port, topic) in &topics {
-        eprintln!("  {port} -> {topic}");
+        info!(exe = %exe, port = %port, topic = %topic, "topic mapping");
     }
-    eprintln!("[{exe}] config: {config:?}");
+    info!(exe = %exe, config = ?config, "config loaded");
 
     let (publish_tx, publish_rx) = mpsc::channel::<(String, Vec<u8>)>(PUBLISH_CHANNEL_CAPACITY);
     let mut builder = Builder::new(topics, publish_tx);
@@ -563,5 +597,22 @@ mod tests {
     #[test]
     fn ok_does_not_panic() {
         propagate_task_failure("recv", Ok(()));
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn typed_route_warns_and_counts_on_drop() {
+        let (tx, _rx) = mpsc::channel::<Vec<u8>>(1);
+        let route = TypedRoute {
+            topic: "/test".to_string(),
+            decode: |b| Ok(b.to_vec()),
+            sender: tx,
+            drop_count: AtomicU64::new(0),
+            last_log_ns: AtomicU64::new(0),
+        };
+        route.try_dispatch(&[1u8]); // fill queue
+        route.try_dispatch(&[1u8]); // now we warn
+        assert_eq!(route.drop_count.load(Ordering::Relaxed), 1);
+        assert!(logs_contain("handler was full"));
     }
 }

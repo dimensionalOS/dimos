@@ -15,6 +15,11 @@ NC='\033[0m' # No Color
 ROOT=$(git rev-parse --show-toplevel)
 cd $ROOT
 
+TAR_PROGRESS=()
+if tar --version 2>/dev/null | grep -q "GNU tar"; then
+    TAR_PROGRESS=(--checkpoint=1000 --checkpoint-action=dot)
+fi
+
 # Check if data/ exists
 if [ ! -d "data/" ]; then
     echo -e "${YELLOW}No data directory found, skipping compression.${NC}"
@@ -62,8 +67,7 @@ for entry_path in data/*; do
         --exclude='*.temp' \
         --exclude='.DS_Store' \
         --exclude='Thumbs.db' \
-        --checkpoint=1000 \
-        --checkpoint-action=dot \
+        "${TAR_PROGRESS[@]}" \
         -C "data/" \
         "$entry_name"
 

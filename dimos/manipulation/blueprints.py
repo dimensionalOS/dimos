@@ -44,7 +44,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
-from dimos.visualization.vis_module import vis_module
 
 # Single XArm6 planner (standalone, no coordinator)
 _xarm6_planner_cfg = _catalog_xarm6(
@@ -99,6 +98,7 @@ _xarm7_cfg = _catalog_xarm7(
     name="arm",
     adapter_type="xarm" if global_config.xarm7_ip else "mock",
     address=global_config.xarm7_ip,
+    add_gripper=True,
 )
 
 xarm7_planner_coordinator = autoconnect(
@@ -196,7 +196,6 @@ xarm_perception = (
             use_aabb=True,
             max_obstacle_width=0.06,
         ),
-        vis_module("foxglove"),
     )
     .transports(
         {

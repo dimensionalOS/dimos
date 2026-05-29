@@ -13,11 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-)
-from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image
@@ -44,12 +39,6 @@ unitree_go2_detection = (
             # Detection 3D module outputs
             ("detections", Detection3DModule): LCMTransport(
                 "/detector3d/detections", Detection2DArray
-            ),
-            ("annotations", Detection3DModule): LCMTransport(
-                "/detector3d/annotations", ImageAnnotations
-            ),
-            ("scene_update", Detection3DModule): LCMTransport(
-                "/detector3d/scene_update", SceneUpdate
             ),
             ("detected_pointcloud_0", Detection3DModule): LCMTransport(
                 "/detector3d/pointcloud/0", PointCloud2

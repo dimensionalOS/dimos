@@ -53,7 +53,7 @@ class RobotConfig(BaseModel):
 
     # Required fields
     name: str
-    model_path: Path
+    model_path: Path | None = None
     end_effector_link: str | None = None
 
     # Physical dimensions (meters)
@@ -115,6 +115,11 @@ class RobotConfig(BaseModel):
     def _ensure_parsed(self) -> ModelDescription:
         """Parse model lazily on first access."""
         if self._parsed is None:
+            if self.model_path is None:
+                raise ValueError(
+                    f"RobotConfig '{self.name}' has no model_path — "
+                    "joint/link info is unavailable. Set model_path to a URDF/MJCF."
+                )
             self._parsed = parse_model(self.model_path, self.package_paths, self.xacro_args)
             self._ensure_prefix()
             if self.joint_names is None:
@@ -193,6 +198,11 @@ class RobotConfig(BaseModel):
                 f"RobotConfig '{self.name}' has no end_effector_link — "
                 "cannot generate RobotModelConfig for manipulation."
             )
+        if self.model_path is None:
+            raise ValueError(
+                f"RobotConfig '{self.name}' has no model_path — "
+                "cannot generate RobotModelConfig for manipulation."
+            )
         bp = self.base_pose
         base_pose = PoseStamped(
             position=Vector3(x=bp[0], y=bp[1], z=bp[2]),
@@ -257,6 +267,7 @@ class RobotConfig(BaseModel):
         task_type: str | None = None,
         task_name: str | None = None,
         priority: int | None = None,
+        auto_start: bool = False,
         **task_kwargs: Any,
     ) -> TaskConfig:
         """Generate TaskConfig for ControlCoordinator.
@@ -265,15 +276,20 @@ class RobotConfig(BaseModel):
             task_type: Override task type (default: self.task_type).
             task_name: Override task name (default: self.coordinator_task_name).
             priority: Override priority (default: self.task_priority).
-            **task_kwargs: Extra fields passed to TaskConfig (e.g., model_path,
+            auto_start: Whether the coordinator should start this task on startup.
+            **task_kwargs: Task-specific params (e.g., model_path,
                 ee_joint_id, hand, gripper_joint, gripper_open_pos, gripper_closed_pos).
         """
+        params = dict(task_kwargs.pop("params", {}))
+        params.update(task_kwargs)
+
         return TaskConfig(
             name=task_name if task_name is not None else self.coordinator_task_name,
             type=task_type if task_type is not None else self.task_type,
             joint_names=self.coordinator_joint_names,
             priority=priority if priority is not None else self.task_priority,
-            **task_kwargs,
+            auto_start=auto_start,
+            params=params,
         )
 
 

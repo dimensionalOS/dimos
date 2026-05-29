@@ -1,0 +1,191 @@
+{
+  "theme": "mint",
+  "name": "Dimensional",
+  "description": "Official documentation for Dimensional (DimOS) \u2014 the modern operating system for generalist robotics: Python-first, agent-native, and hardware-agnostic.",
+  "colors": {
+    "primary": "#1682a3",
+    "light": "#1682a3",
+    "dark": "#1682a3"
+  },
+  "favicon": "assets/favicon.png",
+  "seo": {
+    "metatags": {
+      "og:site_name": "Dimensional",
+      "apple-mobile-web-app-title": "Dimensional"
+    }
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "introduction",
+          "quickstart",
+          "requirements"
+        ]
+      },
+      {
+        "group": "Installation",
+        "pages": [
+          "installation/ubuntu",
+          "installation/osx",
+          "installation/nix"
+        ]
+      },
+      {
+        "group": "Usage",
+        "pages": [
+          "usage/modules",
+          "usage/blueprints",
+          "usage/configuration",
+          "usage/lcm",
+          "usage/transforms",
+          "usage/visualization",
+          "usage/cli",
+          "usage/python-api",
+          "usage/camera_calibration",
+          "usage/native_modules",
+          "usage/tool_streams",
+          {
+            "group": "Data streams",
+            "pages": [
+              "usage/data_streams/advanced_streams",
+              "usage/data_streams/quality_filter",
+              "usage/data_streams/reactivex",
+              "usage/data_streams/storage_replay",
+              "usage/data_streams/temporal_alignment"
+            ]
+          },
+          {
+            "group": "Sensor streams",
+            "pages": [
+              "usage/sensor_streams/advanced_streams",
+              "usage/sensor_streams/quality_filter",
+              "usage/sensor_streams/reactivex",
+              "usage/sensor_streams/storage_replay",
+              "usage/sensor_streams/temporal_alignment"
+            ]
+          },
+          {
+            "group": "Transports",
+            "pages": [
+              "usage/transports/index",
+              "usage/transports/dds"
+            ]
+          }
+        ]
+      },
+      {
+        "group": "Agents",
+        "pages": [
+          "agents/index",
+          "agents/style",
+          "agents/testing",
+          {
+            "group": "Authoring agent docs",
+            "pages": [
+              "agents/docs/index",
+              "agents/docs/codeblocks",
+              "agents/docs/doclinks"
+            ]
+          }
+        ]
+      },
+      {
+        "group": "Capabilities",
+        "pages": [
+          {
+            "group": "Manipulation",
+            "pages": [
+              "capabilities/manipulation/adding_a_custom_arm",
+              "capabilities/manipulation/openarm_integration"
+            ]
+          },
+          {
+            "group": "Memory",
+            "pages": [
+              "capabilities/memory/index",
+              "capabilities/memory/algo_comparison",
+              "capabilities/memory/plot"
+            ]
+          },
+          {
+            "group": "Navigation",
+            "pages": [
+              "capabilities/navigation/nav_stack",
+              {
+                "group": "Native",
+                "pages": [
+                  "capabilities/navigation/native/index"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "group": "Platforms",
+        "pages": [
+          {
+            "group": "Quadruped",
+            "pages": [
+              "platforms/quadruped/go2/index"
+            ]
+          },
+          {
+            "group": "Humanoid",
+            "pages": [
+              "platforms/humanoid/g1/index"
+            ]
+          }
+        ]
+      },
+      {
+        "group": "Development",
+        "pages": [
+          "development/conventions",
+          "development/testing",
+          "development/docker",
+          "development/grid_testing",
+          "development/large_file_management",
+          "development/profiling_dimos",
+          "development/writing_docs"
+        ]
+      }
+    ]
+  },
+  "logo": {
+    "light": "/assets/dimensional-logo-master-transparent.png",
+    "dark": "/assets/dimensional-logo-master-transparent.png"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Dimensional",
+        "href": "/"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get started",
+      "href": "https://github.com/dimensionalOS/dimos"
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "mcp",
+      "cursor",
+      "vscode"
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/dimensionalOS/dimos"
+    }
+  }
+}
