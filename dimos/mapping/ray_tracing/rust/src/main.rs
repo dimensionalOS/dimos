@@ -330,8 +330,19 @@ fn find_misses_along_ray(
     let shadow_sq = shadow_depth.powi(2);
     let grace_sq = grace_depth.powi(2);
 
+    let ray_len = (dx * dx + dy * dy + dz * dz).sqrt();
+    let t_max = 1.0 + shadow_depth / ray_len.max(f32::EPSILON);
+
     let mut past_endpoint = false;
     loop {
+        let t_enter = tx.min(ty).min(tz);
+        if t_enter > t_max {
+            return;
+        }
+        if t_enter >= 1.0 {
+            past_endpoint = true;
+        }
+
         if tx < ty {
             if tx < tz {
                 x += step_x;
@@ -350,6 +361,12 @@ fn find_misses_along_ray(
 
         if (x, y, z) == endpoint {
             past_endpoint = true;
+            continue;
+        }
+
+        // don't remove points in the same xy plane as the hit, unless the plane only walks that plane
+        // we do this to preserve floors, which is more important than some missed points
+        if origin_voxel.2 != endpoint.2 && z == endpoint.2 {
             continue;
         }
 
@@ -625,7 +642,7 @@ mod tests {
         let origin_voxel = world_to_voxel(origin.0, origin.1, origin.2, inv);
         let endpoint = world_to_voxel(end.0, end.1, end.2, inv);
 
-        let expected: AHashSet<VoxelKey> = [
+        let walked: AHashSet<VoxelKey> = [
             (1, 0, 0),
             (1, 1, 0),
             (1, 1, 1),
@@ -638,7 +655,7 @@ mod tests {
         .into_iter()
         .collect();
         let mut map_voxels: AHashMap<VoxelKey, i32> = AHashMap::new();
-        for v in &expected {
+        for v in &walked {
             map_voxels.insert(*v, 1);
         }
 
@@ -655,6 +672,13 @@ mod tests {
             endpoint,
         );
 
+        // z-slab protection skips voxels in the endpoint's z-slab (z=1) when the
+        // ray crosses z-slabs.
+        let expected: AHashSet<VoxelKey> = walked
+            .iter()
+            .filter(|v| v.2 != endpoint.2)
+            .copied()
+            .collect();
         assert_eq!(misses, expected);
     }
 
@@ -848,6 +872,68 @@ mod tests {
             build_pointclouds(&map, &live, 1.0, &cylinder, "world", Time::default());
         assert!(cloud_points(&global).contains(&voxel_center(10, 10, 10)));
         assert!(cloud_points(&local).contains(&voxel_center(10, 10, 10)));
+    }
+
+    /// Test how bad the planar ray clipping is.
+    /// For example, points on floors can be counted as misses because they are close to the same ray as the hit.
+    #[test]
+    fn ground_clipping_single_ray() {
+        let voxel_size = 0.1_f32;
+        let lidar_height = 1.0_f32;
+        let cfg = Config {
+            voxel_size,
+            max_range: 50.0,
+            ray_subsample: 1,
+            shadow_depth: 0.2,
+            grace_depth: 0.2,
+            min_health: 0,
+            max_health: 1,
+        };
+        let inv = 1.0 / voxel_size;
+
+        // Cover the full range we will probe, plus a little for shadow.
+        let max_x = 25.0_f32;
+        let n_ground = (max_x / voxel_size).ceil() as i32;
+
+        let ranges: Vec<f32> = (1..=20).map(|i| i as f32).collect();
+        let mut table = format!(
+            "voxel_size={voxel_size} lidar_height={lidar_height} grace={} shadow={}\n\
+             range_m  ground_voxels_in_row  clipped  clipped_pct\n",
+            cfg.grace_depth, cfg.shadow_depth
+        );
+        let mut total_clipped = 0usize;
+        for &range in &ranges {
+            let mut map = VoxelMap::default();
+            for i in 0..n_ground {
+                let x = (i as f32) * voxel_size + voxel_size * 0.5;
+                let key = world_to_voxel(x, 0.0, 0.0, inv);
+                map.voxels.insert(key, cfg.max_health);
+            }
+            let n_before = map.voxels.len();
+
+            let origin = (0.0_f32, 0.0_f32, lidar_height);
+            let hits = vec![(range, 0.0_f32, 0.0_f32)];
+            update_map(&mut map, origin, &hits, &cfg);
+
+            let n_after_ground: usize = (0..n_ground)
+                .filter(|i| {
+                    let x = (*i as f32) * voxel_size + voxel_size * 0.5;
+                    let key = world_to_voxel(x, 0.0, 0.0, inv);
+                    map.voxels.contains_key(&key)
+                })
+                .count();
+            let clipped = n_before - n_after_ground;
+            let pct = 100.0 * clipped as f32 / n_before as f32;
+            table.push_str(&format!(
+                "{range:>6.1}  {n_before:>20}  {clipped:>7}  {pct:>10.1}\n"
+            ));
+            total_clipped += clipped;
+        }
+        eprint!("{table}");
+        assert!(
+            total_clipped == 0,
+            "planar grace regressed, ground voxels clipped:\n{table}"
+        );
     }
 
     #[test]

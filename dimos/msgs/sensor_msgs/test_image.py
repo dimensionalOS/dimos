@@ -31,7 +31,6 @@ def img():
     return Image.from_file(str(image_file_path))
 
 
-@pytest.mark.self_hosted
 def test_file_load(img: Image) -> None:
     assert isinstance(img.data, np.ndarray)
     assert img.width == 1024
@@ -46,7 +45,6 @@ def test_file_load(img: Image) -> None:
     assert img.data.flags["C_CONTIGUOUS"]
 
 
-@pytest.mark.self_hosted
 def test_lcm_encode_decode(img: Image) -> None:
     binary_msg = img.lcm_encode()
     decoded_img = Image.lcm_decode(binary_msg)
@@ -56,14 +54,12 @@ def test_lcm_encode_decode(img: Image) -> None:
     assert decoded_img == img
 
 
-@pytest.mark.self_hosted
 def test_rgb_bgr_conversion(img: Image) -> None:
     rgb = img.to_rgb()
     assert not rgb == img
     assert rgb.to_bgr() == img
 
 
-@pytest.mark.self_hosted
 def test_opencv_conversion(img: Image) -> None:
     ocv = img.to_opencv()
     decoded_img = Image.from_opencv(ocv)
