@@ -5,7 +5,7 @@ mod adjacency;
 mod dijkstra;
 mod edges;
 mod nodes;
-mod plan;
+mod planner;
 mod surfaces;
 mod voxel;
 
@@ -191,7 +191,7 @@ impl MlsPlanner {
         let goal = (p.x as f32, p.y as f32, p.z as f32);
 
         let t_plan = Instant::now();
-        let waypoints = match plan::plan(
+        let waypoints = match planner::plan(
             plg,
             start,
             goal,
