@@ -712,6 +712,39 @@ def test_handle_seat_request_prefers_rotate_scan_when_no_seat_visible() -> None:
     assert fake_navigation.goal.position.x == pytest.approx(1.65)
 
 
+def test_handle_seat_request_uses_rotate_scan_without_explorer() -> None:
+    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
+    fake_navigation = FakeNavigation()
+    fake_relative_mover = FakeRelativeMover()
+    skill._navigation = fake_navigation
+    skill._relative_mover = fake_relative_mover
+    skill._seat_observation_provider = SequenceSeatObservationProvider(
+        [
+            SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected"),
+            SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected"),
+            SeatSceneObservation(
+                seats=[SeatObservation("visible", x=1.0, y=0.0, yaw=0.0)],
+                people=[],
+                source="camera_3d",
+            ),
+            SeatSceneObservation(
+                seats=[SeatObservation("visible", x=1.0, y=0.0, yaw=0.0)],
+                people=[],
+                source="camera_3d",
+            ),
+        ]
+    )
+
+    message = skill.handle_seat_request(
+        "Please help me find an empty seat",
+        wait_for_arrival=False,
+    )
+
+    assert "seat_1" in message
+    assert fake_relative_mover.moves == [(0.0, 0.0, 30.0)]
+    assert fake_navigation.goal is not None
+
+
 def test_scan_for_empty_seat_prefers_direct_turn_over_relative_navigation() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation()
@@ -1228,9 +1261,11 @@ def test_web_input_routes_seat_voice_text_directly_to_seat_guide() -> None:
     fake_seat_guide = FakeSeatGuideRequest()
     fake_transport = FakeHumanTransport()
     fake_agent_responses = FakeAgentResponses()
+    cloud_posts: list[str] = []
     web_input._seat_guide = fake_seat_guide
     web_input._human_transport = fake_transport
     web_input._agent_responses = fake_agent_responses
+    web_input._post_cloud_speaker = cloud_posts.append
 
     web_input._route_text("帮我找一个空位")
 
@@ -1238,6 +1273,7 @@ def test_web_input_routes_seat_voice_text_directly_to_seat_guide() -> None:
     assert fake_seat_guide.preview_requests == []
     assert fake_transport.published == []
     assert fake_agent_responses.published == ["handled"]
+    assert cloud_posts == ["handled"]
 
 
 def test_web_input_logs_live_seat_guide_route_for_voice_bringup(
@@ -1248,9 +1284,11 @@ def test_web_input_logs_live_seat_guide_route_for_voice_bringup(
     fake_transport = FakeHumanTransport()
     fake_agent_responses = FakeAgentResponses()
     fake_logger = FakeLogger()
+    cloud_posts: list[str] = []
     web_input._seat_guide = fake_seat_guide
     web_input._human_transport = fake_transport
     web_input._agent_responses = fake_agent_responses
+    web_input._post_cloud_speaker = cloud_posts.append
     monkeypatch.setattr(web_human_input_module, "logger", fake_logger)
 
     web_input._route_text("帮我找一个空位")
@@ -1269,9 +1307,11 @@ def test_web_input_routes_preview_seat_voice_text_without_navigation_request(
     fake_transport = FakeHumanTransport()
     fake_agent_responses = FakeAgentResponses()
     fake_logger = FakeLogger()
+    cloud_posts: list[str] = []
     web_input._seat_guide = fake_seat_guide
     web_input._human_transport = fake_transport
     web_input._agent_responses = fake_agent_responses
+    web_input._post_cloud_speaker = cloud_posts.append
     monkeypatch.setattr(web_human_input_module, "logger", fake_logger)
 
     web_input._route_text("预检帮我找一个空位")
@@ -1280,6 +1320,7 @@ def test_web_input_routes_preview_seat_voice_text_without_navigation_request(
     assert fake_seat_guide.requests == []
     assert fake_transport.published == []
     assert fake_agent_responses.published == ["previewed"]
+    assert cloud_posts == []
     assert fake_logger.info_calls == [
         ("WebInput received text", {"text": "预检帮我找一个空位"}),
         (
@@ -4155,7 +4196,7 @@ def test_hardware_bringup_starts_real_stack_then_runs_smoke_and_acceptance() -> 
     )
 
 
-def test_hardware_bringup_requires_real_perception_and_agent_credentials() -> None:
+def test_hardware_bringup_requires_real_perception_and_allows_no_agent_key() -> None:
     script = HARDWARE_BRINGUP_SCRIPT.read_text()
 
     assert 'ALIBABA_API_KEY' in script
@@ -4165,10 +4206,8 @@ def test_hardware_bringup_requires_real_perception_and_agent_credentials() -> No
         "SeatGuide bring-up no-go: ALIBABA_API_KEY is not set for detection_model=qwen."
         in script
     )
-    assert (
-        "SeatGuide bring-up no-go: neither OPENROUTER_API_KEY nor OPENAI_API_KEY is set."
-        in script
-    )
+    assert "neither OPENROUTER_API_KEY nor OPENAI_API_KEY is set" not in script
+    assert "direct SeatGuide voice/MCP routing still works" in script
     assert "TTS speech feedback will be unavailable" not in script
 
 

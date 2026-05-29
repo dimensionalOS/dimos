@@ -240,7 +240,7 @@ Manual preparation:
 
 1. Power on the robot dog and connect it to the same network as the Mac.
 2. Confirm the Go2 IP. The default example is `192.168.123.161`.
-3. Prepare API keys. The normal agent can use OpenRouter; seat/person VLM still requires Alibaba/Qwen when Qwen is selected:
+3. Optionally prepare an API key for the normal agent. The SeatGuide direct voice/MCP path does not need an LLM key; seat/person VLM still requires Alibaba/Qwen when Qwen is selected:
 
 ```bash
 export OPENROUTER_API_KEY="your OpenRouter key"
@@ -255,7 +255,7 @@ bin/demo_seat_guide_hardware_bringup --robot-ip 192.168.123.161
 
 The script automatically:
 
-1. Checks the local Moondream2 model cache, and the agent key from either `OPENROUTER_API_KEY` or `OPENAI_API_KEY`.
+1. Checks the local Moondream2 model cache; if no agent key is set, normal agent chat is disabled but the direct SeatGuide route still works.
 2. Starts `unitree-go2-seat-guide-agentic`.
 3. Runs `bin/demo_seat_guide_smoke` for no-motion checks.
 4. Runs `bin/demo_seat_guide_hardware_acceptance` for real browser voice input and navigation acceptance.

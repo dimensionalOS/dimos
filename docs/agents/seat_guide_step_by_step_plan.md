@@ -240,7 +240,7 @@ bin/demo_seat_guide_replay_smoke
 
 1. 机器狗上电，和 Mac 在同一网络。
 2. 确认 Go2 IP，默认示例是 `192.168.123.161`。
-3. 准备 API keys。普通 agent 可以使用 OpenRouter；找座位 VLM 如果选择 Qwen 仍然需要 Alibaba/Qwen：
+3. 可选准备普通 agent 的 API key。SeatGuide 直连语音/MCP 路径不需要 LLM key；如果选择 Qwen 作为找座位 VLM，仍然需要 Alibaba/Qwen：
 
 ```bash
 export OPENROUTER_API_KEY="你的 OpenRouter key"
@@ -255,7 +255,7 @@ bin/demo_seat_guide_hardware_bringup --robot-ip 192.168.123.161
 
 这个脚本会自动执行：
 
-1. 检查本地 Moondream2 模型缓存，以及 agent 使用的 `OPENROUTER_API_KEY` 或 `OPENAI_API_KEY`。
+1. 检查本地 Moondream2 模型缓存；如果没有 agent key，普通 agent chat 会禁用，但 SeatGuide 直连路径仍然可用。
 2. 启动 `unitree-go2-seat-guide-agentic`。
 3. 跑 `bin/demo_seat_guide_smoke` 做 no-motion 检查。
 4. 跑 `bin/demo_seat_guide_hardware_acceptance` 做真实浏览器语音和导航验收。

@@ -13,6 +13,24 @@ The system scans a conference room with one long table, detects chairs and
 people, selects the nearest reachable empty chair, navigates beside it, and
 publishes a short instruction to the web or phone relay.
 
+End-to-end demo data path:
+
+1. User speaks or types a SeatGuide request in the browser, or calls
+   `phone_seat_request`.
+2. `WebInput` routes matching SeatGuide text directly to `handle_seat_request`;
+   unrelated text stays on the normal agent path.
+3. `CameraSeatObservationProvider` reads the latest RGB frame, camera
+   calibration, LiDAR/pointcloud, and odometry. It detects chairs/people and
+   produces map-frame `SeatSceneObservation` data. If no chair is visible but a
+   direct/relative mover is wired, SeatGuide rotates in place and checks again.
+4. `SeatGuidePlanner` classifies occupied chairs, selects the nearest empty
+   chair, and computes the guide pose beside that chair in the `map` frame.
+5. `NavigationInterfaceSpec.set_goal()` receives the guide pose; SeatGuide waits
+   for `goal_reached=true` when live requests use the default arrival wait.
+6. After navigation completes or fails, `WebInput` publishes the result to the
+   web response stream and posts the same result to the configured phone speaker
+   relay. The phone plays the message; Go2 body audio is not used.
+
 ## Modules
 
 | Module | Owner boundary | Input | Output | Can build in parallel | Current status |
@@ -169,6 +187,8 @@ before any live motion:
 One-command real Go2 bring-up:
 
 ```bash
+# Optional: enables the normal LLM agent path. SeatGuide direct voice/MCP
+# routing still works without it.
 export OPENROUTER_API_KEY=...
 export OPENROUTER_MODEL=openai/gpt-4o-mini
 bin/demo_seat_guide_hardware_bringup --robot-ip 192.168.123.161

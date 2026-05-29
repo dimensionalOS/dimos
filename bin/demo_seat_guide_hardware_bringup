@@ -19,8 +19,11 @@ Options:
 
 Required environment:
   ALIBABA_API_KEY   Required only when --detection-model qwen.
+
+Optional environment:
   OPENROUTER_API_KEY or OPENAI_API_KEY
-                    LLM agent for normal voice/text commands.
+                    Enables the normal LLM agent path. SeatGuide direct voice
+                    routing and MCP tools still work without it.
 EOF
 }
 
@@ -82,16 +85,9 @@ if [[ "${detection_model}" == "qwen" && -z "${ALIBABA_API_KEY:-}" ]]; then
   echo "SeatGuide bring-up no-go: ALIBABA_API_KEY is not set for detection_model=qwen." >&2
   missing=1
 fi
-if [[ -z "${OPENROUTER_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "SeatGuide bring-up no-go: neither OPENROUTER_API_KEY nor OPENAI_API_KEY is set." >&2
-  missing=1
-fi
 if [[ "${missing}" != "0" ]]; then
   cat >&2 <<'EOF'
 Set the required keys in the same terminal that will start DimOS, for example:
-
-  export OPENROUTER_API_KEY=...
-  export OPENROUTER_MODEL=openai/gpt-4o-mini
 
 If you choose --detection-model qwen, also set:
 
@@ -99,6 +95,10 @@ If you choose --detection-model qwen, also set:
 
 EOF
   exit 2
+fi
+
+if [[ -z "${OPENROUTER_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" ]]; then
+  echo "SeatGuide bring-up note: no LLM API key is set; normal agent chat will be disabled, but direct SeatGuide voice/MCP routing still works." >&2
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

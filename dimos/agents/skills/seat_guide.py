@@ -72,7 +72,7 @@ class SeatGuideResult:
     goal_x: float
     goal_y: float
     goal_yaw: float
-    spoken_summary: str
+    guidance_summary: str
 
 
 @dataclass(frozen=True)
@@ -163,7 +163,7 @@ class SeatGuidePlanner:
             goal_x=goal_x,
             goal_y=goal_y,
             goal_yaw=selected.yaw,
-            spoken_summary=(
+            guidance_summary=(
                 f"I found an empty seat {selected.seat_id}. "
                 "Please follow me to the chair beside the table."
             ),
@@ -285,7 +285,7 @@ class SeatGuideSkillContainer(Module):
         self._seat_guide_goal_sequence = getattr(self, "_seat_guide_goal_sequence", 0) + 1
         self._seat_guide_goal_reached_reset_required = previous_goal_reached
         navigating_message = (
-            f"{result.spoken_summary} Navigating to ({result.goal_x:.2f}, {result.goal_y:.2f})."
+            f"{result.guidance_summary} Navigating to ({result.goal_x:.2f}, {result.goal_y:.2f})."
         )
         if not wait_for_arrival:
             return navigating_message
@@ -587,13 +587,18 @@ class SeatGuideSkillContainer(Module):
             if self._seat_observation_provider is not None
             else None
         )
+        can_scan_or_explore = (
+            self._direct_mover is not None
+            or self._relative_mover is not None
+            or self._explorer is not None
+        )
         if (
             scene is not None
             and (
                 (scene.source == "camera_no_seats_detected" and not scene.seats)
                 or (_is_live_camera_source(scene.source) and not _scene_has_empty_seat(scene))
             )
-            and self._explorer is not None
+            and can_scan_or_explore
         ):
             return self.search_for_empty_seat_from_scene(
                 require_live_perception=require_live_perception,
@@ -632,8 +637,8 @@ class SeatGuideSkillContainer(Module):
 
         Use this on the real Go2 before asking a person to follow the robot. It
         checks navigation reachability at the interface level, the current seat
-        scene source, whether an empty seat can be selected, and whether speech
-        feedback is connected. This never calls navigation.
+        scene source, and whether an empty seat can be selected. This never
+        calls navigation.
 
         Args:
             require_live_perception: When true, only a camera-backed scene can

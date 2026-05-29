@@ -196,6 +196,8 @@ class WebInput(Module):
                     logger.info("WebInput routing text to SeatGuide live request", text=text)
                     response = self._seat_guide.handle_seat_request(text)
                 self._publish_agent_response(response)
+                if not is_seat_guide_preview_request(text):
+                    self._post_cloud_speaker(response)
                 return
             except Exception:
                 logger.exception(
