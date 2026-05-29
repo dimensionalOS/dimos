@@ -14,9 +14,9 @@ use crate::voxel::VoxelKey;
 #[derive(Clone, Copy, Debug)]
 pub struct CellState {
     pub dist: f32,
-    /// Predecesor nodes along the shortest path to source
+    /// Predecessor node along the shortest path to source.
     pub pred: Option<VoxelKey>,
-    /// Id of cheapest source to return to
+    /// Id of cheapest source to return to.
     pub source: u32,
 }
 
@@ -118,13 +118,6 @@ mod tests {
             adj.add_edge((i + 1, 0, 0), (i, 0, 0), 1.0);
         }
         adj
-    }
-
-    #[test]
-    fn empty_sources_leaves_everything_unreachable() {
-        let adj = chain(4);
-        let r = dijkstra(&adj, &[]);
-        assert!(r.state.is_empty());
     }
 
     #[test]

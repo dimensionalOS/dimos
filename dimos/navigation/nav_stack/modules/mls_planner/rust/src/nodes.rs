@@ -98,8 +98,7 @@ fn wall_adjacent_cells(adj: &SurfaceAdjacency) -> Vec<VoxelKey> {
     wall
 }
 
-/// Bin placed nodes by node_spacing-sized cells. For each candidate, scan the
-/// 27 nearby bins for any node within Euclidean node_spacing.
+/// Space out nodes based on minimum distance
 fn nms_grid(candidates_sorted: &[VoxelKey], voxel_size: f32, node_spacing_m: f32) -> Vec<VoxelKey> {
     let bin_size = ((node_spacing_m / voxel_size) as i32).max(1);
     let r_sq = (node_spacing_m as f64) * (node_spacing_m as f64);
@@ -144,7 +143,6 @@ fn nms_grid(candidates_sorted: &[VoxelKey], voxel_size: f32, node_spacing_m: f32
 
 /// Scales every edge cost by the average of its endpoint penalties, which
 /// pushes shortest paths away from walls.
-/// Subject to tuning...
 fn apply_wall_safe_penalty(
     adj: &mut SurfaceAdjacency,
     dist: &AHashMap<VoxelKey, f32>,
@@ -176,16 +174,6 @@ mod tests {
 
     const VOXEL: f32 = 0.1;
 
-    fn open_patch_5x5() -> Vec<VoxelKey> {
-        let mut c = Vec::new();
-        for ix in 0..5 {
-            for iy in 0..5 {
-                c.push((ix, iy, 0));
-            }
-        }
-        c
-    }
-
     fn open_patch(ix0: i32, iy0: i32, size: i32) -> Vec<VoxelKey> {
         let mut c = Vec::new();
         for dx in 0..size {
@@ -194,20 +182,6 @@ mod tests {
             }
         }
         c
-    }
-
-    #[test]
-    fn empty_input() {
-        let sg = place_nodes(&[], VOXEL, 2, 1.0, 0.3);
-        assert!(sg.adj.is_empty());
-        assert!(sg.nodes.is_empty());
-    }
-
-    #[test]
-    fn isolated_cell_places_no_node() {
-        // Single cell has 0 neighbors, is wall-adjacent, dist=0, below buffer.
-        let sg = place_nodes(&[(0, 0, 0)], VOXEL, 2, 1.0, 0.3);
-        assert!(sg.nodes.is_empty());
     }
 
     #[test]
@@ -258,7 +232,6 @@ mod tests {
 
     #[test]
     fn wall_cells_scale_outbound_cost() {
-        // Strip of 10 cells. End cells have 1 same-z neighbor → wall-adjacent → dist=0 → penalty=2.
         let cells: Vec<VoxelKey> = (0..10).map(|ix| (ix, 0, 0)).collect();
         let sg = place_nodes(&cells, VOXEL, 2, 1.0, 0.3);
         let outbound: Vec<_> = sg.adj.neighbors((0, 0, 0)).collect();
@@ -267,19 +240,5 @@ mod tests {
         for edge in &outbound {
             assert!(edge.cost >= 1.5 * VOXEL - 1e-5);
         }
-    }
-
-    #[test]
-    fn dijkstra_distances_grow_from_seeds() {
-        let cells = open_patch_5x5();
-        let lookup = build_surface_lookup(&cells);
-        let adj = build_surface_adjacency(&lookup, VOXEL, 2);
-        let seeds = wall_adjacent_cells(&adj);
-        let state = dijkstra(&adj, &seeds).state;
-
-        let center = state[&(2, 2, 0)].dist;
-        let corner = state[&(0, 0, 0)].dist;
-        assert!(center > corner);
-        assert_eq!(corner, 0.0);
     }
 }

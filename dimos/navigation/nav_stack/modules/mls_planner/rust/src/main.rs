@@ -75,36 +75,11 @@ struct MlsPlanner {
 impl MlsPlanner {
     async fn setup(&mut self) {
         let cfg = &self.config;
-        if !cfg.voxel_size.is_finite() || cfg.voxel_size <= 0.0 {
-            panic!(
-                "mls_planner: voxel_size must be > 0, got {}",
-                cfg.voxel_size
-            );
-        }
-        if !cfg.robot_height.is_finite() || cfg.robot_height <= 0.0 {
-            panic!(
-                "mls_planner: robot_height must be > 0, got {}",
-                cfg.robot_height
-            );
-        }
-        if !cfg.node_spacing_m.is_finite() || cfg.node_spacing_m <= 0.0 {
-            panic!(
-                "mls_planner: node_spacing_m must be > 0, got {}",
-                cfg.node_spacing_m
-            );
-        }
-        if !cfg.node_wall_buffer_m.is_finite() || cfg.node_wall_buffer_m < 0.0 {
-            panic!(
-                "mls_planner: node_wall_buffer_m must be >= 0, got {}",
-                cfg.node_wall_buffer_m
-            );
-        }
-        if !cfg.node_step_threshold_m.is_finite() || cfg.node_step_threshold_m < 0.0 {
-            panic!(
-                "mls_planner: node_step_threshold_m must be >= 0, got {}",
-                cfg.node_step_threshold_m
-            );
-        }
+        require_positive("voxel_size", cfg.voxel_size);
+        require_positive("robot_height", cfg.robot_height);
+        require_positive("node_spacing_m", cfg.node_spacing_m);
+        require_non_negative("node_wall_buffer_m", cfg.node_wall_buffer_m);
+        require_non_negative("node_step_threshold_m", cfg.node_step_threshold_m);
 
         self.clearance_cells = (cfg.robot_height / cfg.voxel_size).ceil() as i32;
         self.step_cells = (cfg.node_step_threshold_m / cfg.voxel_size).floor() as i32;
@@ -180,8 +155,8 @@ impl MlsPlanner {
         publish_path(&self.node_edges, &edges_path).await;
 
         info!(
-            obstacle_points = points.len(),
-            obstacle_voxels = voxel_map.len(),
+            global_map_points = points.len(),
+            voxels = voxel_map.len(),
             surface_cells = surface_cells.len(),
             nodes = n_nodes,
             edges = n_edges,
@@ -241,6 +216,18 @@ impl MlsPlanner {
 
 fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
+}
+
+fn require_positive(name: &str, v: f32) {
+    if !v.is_finite() || v <= 0.0 {
+        panic!("mls_planner: {name} must be > 0, got {v}");
+    }
+}
+
+fn require_non_negative(name: &str, v: f32) {
+    if !v.is_finite() || v < 0.0 {
+        panic!("mls_planner: {name} must be >= 0, got {v}");
+    }
 }
 
 async fn publish_cloud(
@@ -330,9 +317,8 @@ fn build_path_from_waypoints(waypoints: &[(f32, f32, f32)], frame_id: &str, stam
     }
 }
 
-/// Emit edges as alternating PoseStamped pairs (p1, p2, p1', p2', ...) with
-/// orientation.w carrying the segment's per-edge cost. This is the
-/// nav_msgs/LineSegments3D wire hack the Python side already decodes.
+/// Emit edges as alternating PoseStamped pairs with orientation.w carrying
+/// the per-edge cost.
 fn build_segments_path(plg: &PlannerGraph, voxel_size: f32, frame_id: &str, stamp: Time) -> Path {
     let segments = edges_to_segments(plg, voxel_size);
     let mut poses: Vec<PoseStamped> = Vec::with_capacity(segments.len() * 2);

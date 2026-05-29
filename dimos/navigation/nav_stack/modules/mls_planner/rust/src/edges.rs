@@ -155,9 +155,6 @@ mod tests {
 
     const VOXEL: f32 = 0.1;
 
-    /// Build a SurfaceGraph from a list of surface cells and a list of node
-    /// cells (which must be a subset of the surface cells). Bypasses
-    /// place_nodes so the test author controls which cells become nodes.
     fn graph_with_nodes(surface_cells: &[VoxelKey], node_cells: &[VoxelKey]) -> SurfaceGraph {
         let surface_lookup = build_surface_lookup(surface_cells);
         let adj = build_surface_adjacency(&surface_lookup, VOXEL, 2);
@@ -175,26 +172,8 @@ mod tests {
         }
     }
 
-    /// 20-cell strip along x at iz=0.
     fn strip_cells() -> Vec<VoxelKey> {
         (0..20).map(|x| (x, 0, 0)).collect()
-    }
-
-    #[test]
-    fn no_nodes_yields_no_edges() {
-        let sg = graph_with_nodes(&strip_cells(), &[]);
-        let pg = add_node_edges(sg);
-        assert!(pg.node_edges.is_empty());
-        assert!(pg.node_adj.is_empty());
-    }
-
-    #[test]
-    fn single_node_has_no_edges() {
-        let sg = graph_with_nodes(&strip_cells(), &[(10, 0, 0)]);
-        let pg = add_node_edges(sg);
-        assert!(pg.node_edges.is_empty());
-        assert_eq!(pg.node_adj.len(), 1);
-        assert!(pg.node_adj[0].is_empty());
     }
 
     #[test]

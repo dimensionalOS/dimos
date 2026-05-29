@@ -1,9 +1,9 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Surface extraction: from a voxelized obstacle set, mark cells with
-//! robot-height clearance above as standable, then morphologically close
-//! per-z-level holes without letting closing bridge across walls.
+//! Surface extraction: from a voxel map, mark cells with robot-height
+//! clearance above as standable, then morphologically close per-z-level
+//! holes without letting closing bridge across walls.
 
 use ahash::{AHashMap, AHashSet};
 use image::{GrayImage, Luma};
@@ -17,13 +17,12 @@ const OFF: Luma<u8> = Luma([0]);
 
 type ColumnIz = AHashMap<(i32, i32), Vec<i32>>;
 
-/// A cell is standable if it has at least the robots height of clear
+/// A cell is standable if it has at least the robot's height of clear
 /// space above it.
 fn is_standable(ix: i32, iy: i32, iz: i32, by_col: &ColumnIz, clearance_cells: i32) -> bool {
     let Some(zs) = by_col.get(&(ix, iy)) else {
         return true;
     };
-    // first obstacle strictly above iz, if any
     let idx = zs.partition_point(|&z| z <= iz);
     match zs.get(idx) {
         Some(&next) => next - iz > clearance_cells,
@@ -132,14 +131,11 @@ fn close_at_z(
     let x0 = min_x - pad;
     let y0 = min_y - pad;
 
-    // we treat the xy slice as a binary image, either surface (on) or not surface (off)
     let mut img = GrayImage::from_pixel(w, h, OFF);
     for &(ix, iy) in xys {
         img.put_pixel((ix - x0) as u32, (iy - y0) as u32, ON);
     }
 
-    // use L1 dilation/erosion, expand out in cross shape
-    // could use alternative methods here as well, subject to tuning
     if dilation_passes > 0 {
         img = dilate(&img, Norm::L1, dilation_passes as u8);
     }
@@ -156,7 +152,6 @@ fn close_at_z(
             let ix = x0 + px as i32;
             let iy = y0 + py as i32;
 
-            // filter out if the surface has expanded to any non standable areas
             if !is_standable(ix, iy, iz, by_col, clearance_cells) {
                 continue;
             }
@@ -194,7 +189,7 @@ mod tests {
 
     #[test]
     fn gap_larger_than_headroom_makes_lower_cell_standable() {
-        // Obstacles at iz=0 and iz=10 with clearance_cells=5. Lower cell has gap=10 > 5.
+        // Voxel map points at iz=0 and iz=10 with clearance_cells=5. Lower cell has gap=10 > 5.
         let mut s = extract_surfaces(&voxel_map(&[(0, 0, 0), (0, 0, 10)]), 5, 0, 0);
         s.sort();
         assert_eq!(s, vec![(0, 0, 0), (0, 0, 10)]);
@@ -202,7 +197,7 @@ mod tests {
 
     #[test]
     fn morphological_closing_fills_center_hole() {
-        // Ring of 8 cells around (0,0) at iz=0, no obstacles above.
+        // Ring of 8 cells around (0,0) at iz=0, nothing above.
         let cells: Vec<VoxelKey> = [
             (-1, -1),
             (-1, 0),
@@ -224,9 +219,9 @@ mod tests {
     }
 
     #[test]
-    fn closing_does_not_bridge_obstacle_in_headroom() {
-        // Ring of 8 cells at iz=0 + an obstacle directly above the hole at (0,0,1).
-        // The hole at (0,0,0) is vetoed because its headroom column has an obstacle.
+    fn closing_does_not_bridge_voxel_in_headroom() {
+        // Ring of 8 cells at iz=0 plus a voxel directly above the hole at (0,0,1).
+        // The hole at (0,0,0) is vetoed because its headroom column is occupied.
         let mut cells: Vec<VoxelKey> = [
             (-1, -1),
             (-1, 0),

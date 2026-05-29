@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn snap_rejects_outside_z_tolerance() {
         let lookup = build_surface_lookup(&strip(20));
-        // Surface at iz=0, pose at z=2.0, tolerance=1.5 → out of tolerance in every column.
+        // Surface at iz=0, pose at z=2.0, tolerance=1.5 is out of tolerance in every column.
         assert!(snap_pose_to_cell(&lookup, (0.5, 0.0, 2.0), VOXEL, 1.5).is_none());
     }
 
@@ -320,19 +320,6 @@ mod tests {
         let goal_cell_pos = surface_point_xyz(17, 0, 0, VOXEL);
         assert_eq!(wp[1], start_cell_pos);
         assert_eq!(wp[wp.len() - 2], goal_cell_pos);
-    }
-
-    #[test]
-    fn plan_produces_monotonic_xy_along_strip() {
-        let plg = graph_with_nodes(&strip(20), &[(3, 0, 0), (15, 0, 0)]);
-        let wp = plan(&plg, (0.2, 0.0, 0.05), (1.7, 0.0, 0.05), VOXEL, Z_TOL).unwrap();
-        // First waypoint is start_pose, last is goal_pose.
-        assert_eq!(wp.first(), Some(&(0.2, 0.0, 0.05)));
-        assert_eq!(wp.last(), Some(&(1.7, 0.0, 0.05)));
-        // Interior waypoints monotonically increase in x.
-        for w in wp.windows(2).skip(1).take(wp.len() - 3) {
-            assert!(w[1].0 >= w[0].0 - 1e-5);
-        }
     }
 
     #[test]

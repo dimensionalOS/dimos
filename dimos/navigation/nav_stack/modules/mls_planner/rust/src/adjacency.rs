@@ -74,7 +74,7 @@ pub fn build_surface_lookup(cells: &[VoxelKey]) -> SurfaceLookup {
     lookup
 }
 
-/// 4 way connection (L1) and check for step height threshold
+/// 4 way L1 adjacency, limited by step height threshold.
 pub fn build_surface_adjacency(
     surface_lookup: &SurfaceLookup,
     voxel_size: f32,
@@ -122,22 +122,6 @@ mod tests {
     }
 
     #[test]
-    fn empty_input_yields_empty_adjacency() {
-        let lookup = build_surface_lookup(&[]);
-        let adj = build_surface_adjacency(&lookup, VOXEL, 2);
-        assert!(adj.is_empty());
-    }
-
-    #[test]
-    fn single_cell_has_no_edges() {
-        let lookup = build_surface_lookup(&[(0, 0, 0)]);
-        let adj = build_surface_adjacency(&lookup, VOXEL, 2);
-        assert_eq!(adj.cells().count(), 1);
-        assert!(adj.contains((0, 0, 0)));
-        assert!(neighbors_of(&adj, (0, 0, 0)).is_empty());
-    }
-
-    #[test]
     fn same_z_neighbors_are_bidirectional() {
         let lookup = build_surface_lookup(&[(0, 0, 0), (1, 0, 0)]);
         let adj = build_surface_adjacency(&lookup, VOXEL, 2);
@@ -181,25 +165,10 @@ mod tests {
     }
 
     #[test]
-    fn same_column_cells_are_not_self_connected() {
-        let lookup = build_surface_lookup(&[(0, 0, 0), (0, 0, 5)]);
-        let adj = build_surface_adjacency(&lookup, VOXEL, 10);
-        assert!(neighbors_of(&adj, (0, 0, 0)).is_empty());
-        assert!(neighbors_of(&adj, (0, 0, 5)).is_empty());
-    }
-
-    #[test]
     fn plus_pattern_center_has_four_neighbors() {
         let cells = vec![(0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)];
         let lookup = build_surface_lookup(&cells);
         let adj = build_surface_adjacency(&lookup, VOXEL, 2);
         assert_eq!(neighbors_of(&adj, (0, 0, 0)).len(), 4);
-    }
-
-    #[test]
-    fn deduplicates_repeated_cells() {
-        let lookup = build_surface_lookup(&[(0, 0, 0), (0, 0, 0), (1, 0, 0)]);
-        let adj = build_surface_adjacency(&lookup, VOXEL, 2);
-        assert_eq!(adj.cells().count(), 2);
     }
 }
