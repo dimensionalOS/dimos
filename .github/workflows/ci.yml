@@ -335,6 +335,8 @@ jobs:
       contents: read  # For checkout
       packages: read  # For pulling the ros-dev container from ghcr.io
       id-token: write  # For codecov-action's OIDC upload
+    container:
+      image: ghcr.io/dimensionalos/ros-dev:dev
 
     steps:
       - name: Checkout
