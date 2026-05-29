@@ -59,7 +59,7 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     speed_limit_max_mps: float = Field(0.05, gt=0.0)
     speed_limit_max_dps: float = Field(15.0, gt=0.0)
     tf_lookup_tolerance: float = Field(0.5, ge=0.0)
-    camera_info: CameraInfo | None
+    camera_info: CameraInfo | None = None
 
 
 class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
