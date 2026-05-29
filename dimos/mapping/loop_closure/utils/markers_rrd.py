@@ -20,15 +20,17 @@ Walks a recorded SQLite dataset and writes an rrd containing:
 - per detection: marker box in world frame, at the detection timestamp
 
 Usage:
-    uv run python -m dimos.mapping.loop_closure.utils.markers_rrd hk_village1 --out hk.rrd
+    uv run python -m dimos.utils.cli.markers_rrd hk_village1 --out hk.rrd
     rerun hk.rrd
 
-Throwaway script; remove once the apriltag reliability work lands.
+Throwaway script next to ``map.py``; remove once the apriltag reliability work
+lands.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import rerun as rr
 import typer
@@ -80,12 +82,12 @@ def main(
         color_image = store.stream("color_image", Image)
         lidar = store.stream("lidar", PointCloud2)
 
-        # Pass 1: robot base pose over time (from lidar.pose).
+        # ---- pass 1: robot base pose over time (from lidar.pose) ----
         for lidar_obs in lidar:
-            if lidar_obs.pose_tuple is None:
+            if lidar_obs.pose is None:
                 continue
             rr.set_time(TIMELINE, timestamp=lidar_obs.ts)
-            x, y, z, qx, qy, qz, qw = lidar_obs.pose_tuple
+            x, y, z, qx, qy, qz, qw = lidar_obs.pose
             rr.log(
                 "world/robot",
                 rr.Transform3D(
@@ -93,12 +95,12 @@ def main(
                 ),
             )
 
-        # Pass 2: camera pose + image per color_image frame.
+        # ---- pass 2: camera pose + image per color_image frame ----
         n_img = color_image.count()
         for i, img_obs in enumerate(color_image):
             rr.set_time(TIMELINE, timestamp=img_obs.ts)
-            if img_obs.pose_tuple is not None:
-                x, y, z, qx, qy, qz, qw = img_obs.pose_tuple
+            if img_obs.pose is not None:
+                x, y, z, qx, qy, qz, qw = img_obs.pose
                 rr.log(
                     "world/camera",
                     rr.Transform3D(
@@ -115,9 +117,9 @@ def main(
             if (i + 1) % 50 == 0 or i + 1 == n_img:
                 print(f"images: {i + 1}/{n_img}")
 
-        # Pass 3: marker detections, filtered the same way as `dimos map`.
+        # ---- pass 3: marker detections (filtered same way as `dimos map`) ----
         xf = DetectMarkers(camera_info=cam_info, marker_length_m=marker_size)
-        pipeline: Stream[Image] = color_image.transform(
+        pipeline: Stream[Any] = color_image.transform(
             QualityWindow(lambda img: img.sharpness, window=quality_window)
         )
         if marker_max_speed > 0:
@@ -173,7 +175,7 @@ def main(
             )
         print(f"detections: {n_det}")
 
-        # Pass 4: averaged tracks (smoothing_window > 0 → per-track ids).
+        # ---- pass 4: averaged tracks (smoothing_window > 0 → per-track ids) ----
         # Re-runs the same filtered pipeline through a smoothing detector;
         # each track yields one entity that updates as the windowed average
         # refines. Color stable per track_id for visual identity.
@@ -183,7 +185,7 @@ def main(
                 marker_length_m=marker_size,
                 smoothing_window=smoothing_window,
             )
-            pipeline_tracked: Stream[Image] = color_image.transform(
+            pipeline_tracked: Stream[Any] = color_image.transform(
                 QualityWindow(lambda img: img.sharpness, window=quality_window)
             )
             if marker_max_speed > 0:

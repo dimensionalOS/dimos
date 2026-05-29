@@ -65,6 +65,9 @@ class StreamAccessor(Generic[S]):
             raise KeyError(name)
         return self._container.stream(name)
 
+    def __contains__(self, name: str) -> bool:
+        return name in self._container.list_streams()
+
     def __dir__(self) -> list[str]:
         return self._container.list_streams()
 
@@ -199,6 +202,10 @@ class Store(Configurable, CompositeResource):
     def list_streams(self) -> list[str]:
         """Return names of all streams in this store."""
         return list(self._streams.keys())
+
+    def summary(self) -> str:
+        """One line per stream — name, count, ts range. See :meth:`Stream.summary`."""
+        return "\n".join(stream.summary() for _, stream in self.streams.items())
 
     def delete_stream(self, name: str) -> None:
         """Delete a stream by name (from cache and underlying storage)."""
