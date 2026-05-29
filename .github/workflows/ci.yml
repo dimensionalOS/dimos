@@ -186,8 +186,11 @@ jobs:
       - name: Install dependency for pyaudio (macOS)
         if: matrix.os == 'macos'
         run: brew install portaudio
-      - name: Remove git LFS to avoid accidental large downloads
-        run: sudo rm -f /usr/bin/git-lfs
+      - name: Cap accidental LFS downloads at 1 MiB
+        run: |
+          sudo mv /usr/bin/git-lfs /usr/bin/git-lfs.orig
+          sudo install -m 0755 bin/git-lfs-guard /usr/bin/git-lfs
+          git config --global --unset-all filter.lfs.process || true
       - name: Set PYTHON_GIL=0 for free-threading builds
         if: ${{ endsWith(matrix.pyver, 't') }}
         run: echo "PYTHON_GIL=0" >> $GITHUB_ENV

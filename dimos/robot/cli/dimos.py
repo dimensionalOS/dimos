@@ -39,6 +39,7 @@ from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
+from dimos.utils.cli.map import main as _map_main
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
 
@@ -672,38 +673,7 @@ def send(
     topic_send(topic, message_expr)
 
 
-@main.command(name="map")
-def map_cmd(
-    dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
-    voxel: float = typer.Option(0.05, "--voxel", help="Voxel size for the rebuild"),
-    device: str = typer.Option(
-        "CUDA:0", "--device", help="Open3D compute device (e.g. CUDA:0, CPU:0)"
-    ),
-    pgo: bool = typer.Option(
-        False, "--pgo", help="Run pose graph optimization before rebuilding (twopass)"
-    ),
-    block_count: int = typer.Option(
-        2_000_000, "--block-count", help="VoxelBlockGrid capacity (--pgo only)"
-    ),
-    export: bool = typer.Option(
-        False,
-        "--export",
-        help="Export PGO twopass map to ./<dataset>.pc2.lcm in cwd (implies --pgo)",
-    ),
-    no_gui: bool = typer.Option(False, "--no-gui", help="Skip rerun visualization"),
-) -> None:
-    """Rebuild a voxel map from a recorded SQLite dataset and view it in rerun."""
-    from dimos.utils.cli.map import main as map_main
-
-    map_main(
-        dataset=dataset,
-        voxel=voxel,
-        device=device,
-        pgo=pgo,
-        block_count=block_count,
-        export=export,
-        no_gui=no_gui,
-    )
+main.command(name="map")(_map_main)
 
 
 @main.command()
