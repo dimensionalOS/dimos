@@ -6,9 +6,16 @@
     <title>DimOS Teleop</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
+        // DimOS palette (sourced from dimensionalos.com Framer tokens):
+        // bg #181919, deep #151515, fg #fff, accent #b0e1f0 (pale desaturated cyan).
         tailwind.config = {
             theme: { extend: { colors: {
-                dim: { 50:'#f0f9ff',100:'#e0f2fe',500:'#0ea5e9',600:'#0284c7',700:'#0369a1',900:'#0c4a6e' }
+                // Pale cyan accent — same hue across the scale so hover/active
+                // stay on-brand instead of veering to a generic Tailwind blue.
+                dim: { 50:'#eaf6fb', 100:'#d4ecf5', 400:'#c4e7f3', 500:'#b0e1f0',
+                       600:'#8fcfe2', 700:'#6db8cf', 900:'#3d6a7a' },
+                // Dark backgrounds matching the site (replaces Tailwind grays).
+                bg: { 900:'#181919', 950:'#151515' },
             }}}
         }
     </script>
@@ -21,7 +28,7 @@
         .kb-key {
             width: 56px; height: 56px;
             display: flex; align-items: center; justify-content: center;
-            background: #1f2937; border: 1px solid #374151;
+            background: #151515; border: 1px solid #2a2a2a;
             border-radius: 8px; font-family: monospace; font-weight: 600;
             color: #d1d5db;
             user-select: none;
@@ -32,12 +39,12 @@
         }
         .kb-key.wide { width: 96px; font-size: 0.85rem; }
         .kb-key.pressed {
-            background: #0284c7; border-color: #38bdf8;
-            color: white;
+            background: #b0e1f0; border-color: #8fcfe2;
+            color: #151515;  /* dark text on pale cyan (white is unreadable) */
         }
     </style>
 </head>
-<body class="bg-gray-950 text-gray-100 min-h-screen">
+<body class="bg-bg-900 text-white min-h-screen">
     <div id="app"></div>
     <canvas id="canvas"></canvas>
 

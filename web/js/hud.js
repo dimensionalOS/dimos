@@ -3,7 +3,9 @@
 
 import { state } from './state.js';
 
-const HUD_GOOD = '#34d399', HUD_WARN = '#fbbf24', HUD_BAD = '#f87171';
+// Brand-aligned: warn → DimOS yellow, bad softened so it doesn't dominate.
+// Green kept universal for "good" (traffic-light semantics).
+const HUD_GOOD = '#34d399', HUD_WARN = '#ffcc00', HUD_BAD = '#ff5252';
 
 // Drives the color dot in both surfaces. Command-plane (latency/loss) is the
 // safety-relevant axis — a laggy command link is worse than a degraded picture.
@@ -62,15 +64,15 @@ export function mountHud() {
         'cursor:pointer;user-select:none;';
     hud.innerHTML = `
         <div id="live-hud-pill" style="display:flex;align-items:center;gap:8px;
-            background:rgba(17,24,39,0.85);border:1px solid #374151;border-radius:9999px;
+            background:rgba(21,21,21,0.88);border:1px solid #2a2a2a;border-radius:9999px;
             padding:6px 12px;color:#e5e7eb;font-size:12px;backdrop-filter:blur(4px);">
             <span id="live-hud-dot" style="width:9px;height:9px;border-radius:9999px;
                 background:${HUD_WARN};"></span>
             <span id="live-hud-summary">—</span>
         </div>
         <pre id="live-hud-panel" style="display:none;margin:6px 0 0;
-            background:rgba(17,24,39,0.92);border:1px solid #374151;border-radius:8px;
-            padding:10px 12px;color:#86efac;font-size:11px;line-height:1.5;
+            background:rgba(21,21,21,0.92);border:1px solid #2a2a2a;border-radius:8px;
+            padding:10px 12px;color:#b0e1f0;font-size:11px;line-height:1.5;
             white-space:pre;"></pre>`;
     hud.onclick = () => {
         const panel = document.getElementById('live-hud-panel');
@@ -144,7 +146,7 @@ const VR_HUD_DEBUG = new URLSearchParams(location.search).has('vrdebug');
 function renderStatsToCanvas() {
     const ctx = state.statsCtx, W = state.statsCanvas.width, H = state.statsCanvas.height;
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = VR_HUD_DEBUG ? 'rgba(220,38,38,1.0)' : 'rgba(17,24,39,0.62)';
+    ctx.fillStyle = VR_HUD_DEBUG ? 'rgba(220,38,38,1.0)' : 'rgba(21,21,21,0.62)';
     ctx.fillRect(0, 0, W, H);
 
     ctx.fillStyle = healthColor();
@@ -153,7 +155,7 @@ function renderStatsToCanvas() {
     ctx.font = '600 26px ui-monospace, monospace';
     ctx.fillText(hudSummaryLine(), 50, 43);
 
-    ctx.fillStyle = '#86efac';
+    ctx.fillStyle = '#b0e1f0';  // brand pale-cyan for detail lines
     ctx.font = '22px ui-monospace, monospace';
     const lines = hudDetailLines();
     for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 16, 86 + i * 30);

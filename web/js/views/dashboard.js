@@ -12,32 +12,32 @@ export async function renderDashboard(c) {
                 <h1 class="text-2xl font-bold text-white">Dashboard</h1>
                 <p class="text-gray-400 text-sm">${escHtml(state.userEmail)}</p>
             </div>
-            <button id="logoutBtn" class="px-4 py-2 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-lg hover:border-gray-600 transition-colors">
+            <button id="logoutBtn" class="px-4 py-2 text-sm text-gray-400 hover:text-white border border-[#2a2a2a] rounded-lg hover:border-[#3a3a3a] transition-colors">
                 Log Out
             </button>
         </header>
 
         <!-- API Keys -->
-        <section class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+        <section class="bg-bg-950 border border-[#2a2a2a] rounded-xl p-6 mb-6">
             <div class="flex items-center justify-between mb-4">
                 <div>
                     <h2 class="text-lg font-semibold text-white">API Keys</h2>
                     <p class="text-gray-400 text-sm">Authenticate your robots with the teleop service</p>
                 </div>
-                <button id="newKeyBtn" class="px-4 py-2 bg-dim-600 hover:bg-dim-700 text-white text-sm font-medium rounded-lg transition-colors">
+                <button id="newKeyBtn" class="px-4 py-2 bg-dim-500 hover:bg-dim-600 text-bg-950 text-sm font-medium rounded-lg transition-colors">
                     + New Key
                 </button>
             </div>
 
-            <div id="create-key-form" class="hidden mb-4 p-4 bg-gray-800 rounded-lg border border-gray-700">
+            <div id="create-key-form" class="hidden mb-4 p-4 bg-[#1f1f1f] rounded-lg border border-[#2a2a2a]">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                     <input id="key-name" type="text" placeholder="Key name (e.g. Lab Robot 01)"
-                        class="px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-dim-500">
+                        class="px-3 py-2 bg-bg-950 border border-[#2a2a2a] rounded-lg text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-dim-400">
                     <input id="key-robot-id" type="text" placeholder="Robot ID (optional)"
-                        class="px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-dim-500">
+                        class="px-3 py-2 bg-bg-950 border border-[#2a2a2a] rounded-lg text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-dim-400">
                 </div>
                 <div class="flex gap-2">
-                    <button id="generateKeyBtn" class="px-4 py-2 bg-dim-600 hover:bg-dim-700 text-white text-sm rounded-lg transition-colors">Generate Key</button>
+                    <button id="generateKeyBtn" class="px-4 py-2 bg-dim-500 hover:bg-dim-600 text-bg-950 text-sm rounded-lg transition-colors">Generate Key</button>
                     <button id="cancelKeyBtn" class="px-4 py-2 text-gray-400 hover:text-white text-sm rounded-lg transition-colors">Cancel</button>
                 </div>
             </div>
@@ -45,8 +45,8 @@ export async function renderDashboard(c) {
             <div id="new-key-reveal" class="hidden mb-4 p-4 bg-green-900/20 border border-green-800 rounded-lg">
                 <p class="text-green-400 text-sm font-medium mb-2">🔑 Key created! Copy it now — it won't be shown again.</p>
                 <div class="flex items-center gap-2">
-                    <code id="new-key-value" class="key-reveal flex-1 px-3 py-2 bg-gray-900 rounded text-green-300 text-sm"></code>
-                    <button id="copyKeyBtn" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white transition-colors">Copy</button>
+                    <code id="new-key-value" class="key-reveal flex-1 px-3 py-2 bg-bg-950 rounded text-green-300 text-sm"></code>
+                    <button id="copyKeyBtn" class="px-3 py-2 bg-[#2a2a2a] hover:bg-[#3a3a3a] rounded text-sm text-white transition-colors">Copy</button>
                 </div>
                 <p class="text-gray-500 text-xs mt-2">Use it as <code>broker_api_key</code> when starting <code>HostedTeleopModule</code>.</p>
             </div>
@@ -57,13 +57,13 @@ export async function renderDashboard(c) {
         </section>
 
         <!-- Connected robots -->
-        <section class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <section class="bg-bg-950 border border-[#2a2a2a] rounded-xl p-6">
             <div class="flex items-center justify-between mb-4">
                 <div>
                     <h2 class="text-lg font-semibold text-white">Available Robots</h2>
                     <p class="text-gray-400 text-sm">Robots online — click Connect to teleoperate</p>
                 </div>
-                <button id="refreshRobotsBtn" class="px-4 py-2 text-sm text-gray-300 border border-gray-700 rounded-lg hover:bg-gray-800 transition-colors">
+                <button id="refreshRobotsBtn" class="px-4 py-2 text-sm text-gray-300 border border-[#2a2a2a] rounded-lg hover:bg-[#1f1f1f] transition-colors">
                     Refresh
                 </button>
             </div>
@@ -121,11 +121,11 @@ async function loadKeys() {
             return;
         }
         listEl.innerHTML = data.keys.map(k => `
-            <div class="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
+            <div class="flex items-center justify-between p-3 bg-[#1f1f1f] rounded-lg">
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2">
                         <span class="text-white text-sm font-medium">${escHtml(k.name)}</span>
-                        ${k.robot_id ? `<span class="text-xs px-2 py-0.5 bg-gray-700 rounded text-gray-300">${escHtml(k.robot_id)}</span>` : ''}
+                        ${k.robot_id ? `<span class="text-xs px-2 py-0.5 bg-[#2a2a2a] rounded text-gray-300">${escHtml(k.robot_id)}</span>` : ''}
                     </div>
                     <div class="flex items-center gap-3 mt-1">
                         <code class="text-gray-400 text-xs">${escHtml(k.key_prefix)}...</code>
@@ -171,7 +171,7 @@ async function loadRobots() {
             return;
         }
         listEl.innerHTML = arr.map(s => `
-            <div class="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
+            <div class="flex items-center justify-between p-3 bg-[#1f1f1f] rounded-lg">
                 <div class="flex items-center gap-3">
                     <div class="w-2 h-2 rounded-full ${s.state === 'active' ? 'bg-green-400' : s.state === 'idle' ? 'bg-yellow-400' : 'bg-gray-500'}"></div>
                     <div>
@@ -181,7 +181,7 @@ async function loadRobots() {
                     </div>
                 </div>
                 <button data-id="${s.session_id}" data-name="${escHtml(s.robot_name)}"
-                    class="connect-btn px-4 py-2 bg-dim-600 hover:bg-dim-700 text-white text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="connect-btn px-4 py-2 bg-dim-500 hover:bg-dim-600 text-bg-950 text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     ${s.state === 'active' ? 'disabled' : ''}>
                     ${s.state === 'active' ? 'Busy' : 'Connect'}
                 </button>

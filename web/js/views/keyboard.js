@@ -10,26 +10,26 @@ export function renderKeyboard(c) {
     <div class="min-h-screen flex flex-col items-center justify-center p-6 fade-in select-none">
         <div class="w-full max-w-xl text-center">
             <h1 class="text-3xl font-bold text-white mb-2">${escHtml(state.activeRobot?.robot_name || 'Keyboard teleop')}</h1>
-            <div id="teleop-status" class="text-lg text-gray-300 px-4 py-3 bg-gray-900 border border-gray-800 rounded-lg my-4">
+            <div id="teleop-status" class="text-lg text-gray-300 px-4 py-3 bg-bg-950 border border-[#2a2a2a] rounded-lg my-4">
                 Negotiating...
             </div>
 
             <video id="robot-cam" autoplay muted playsinline
-                class="w-full rounded-lg border border-gray-800 bg-black my-4"
+                class="w-full rounded-lg border border-[#2a2a2a] bg-black my-4"
                 style="display:none; max-height: 360px; object-fit: contain;"></video>
 
             <div class="grid grid-cols-2 gap-4 my-6 text-left">
-                <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                <div class="bg-bg-950 border border-[#2a2a2a] rounded-lg p-4">
                     <div class="text-xs text-gray-500 mb-2">Controls</div>
                     <div class="text-sm text-gray-300 space-y-1">
-                        <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">W</kbd> / <kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">S</kbd> — forward / back</div>
-                        <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">A</kbd> / <kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">D</kbd> — turn left / right</div>
-                        <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">Shift</kbd> — 2× faster (any)</div>
-                        <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">Ctrl</kbd>+<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">W</kbd>/<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">S</kbd> — slow (½×)</div>
-                        <div><kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">Ctrl</kbd>+<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">A</kbd>/<kbd class="px-2 py-0.5 bg-gray-800 rounded font-mono">D</kbd> — strafe</div>
+                        <div><kbd class="px-2 py-0.5 bg-[#1f1f1f] rounded font-mono">W</kbd> / <kbd class="px-2 py-0.5 bg-[#1f1f1f] rounded font-mono">S</kbd> — forward / back</div>
+                        <div><kbd class="px-2 py-0.5 bg-[#1f1f1f] rounded font-mono">A</kbd> / <kbd class="px-2 py-0.5 bg-[#1f1f1f] rounded font-mono">D</kbd> — turn left / right</div>
+                        <div><kbd class="px-2 py-0.5 bg-[#1f1f1f] rounded font-mono">Shift</kbd> — 2× faster (any)</div>
+                        <div><kbd class="px-2 py-0.5 bg-[#1f1f1f] rounded font-mono">Ctrl</kbd>+<kbd class="px-2 py-0.5 bg-[#1f1f1f] rounded font-mono">W</kbd>/<kbd class="px-2 py-0.5 bg-[#1f1f1f] rounded font-mono">S</kbd> — slow (½×)</div>
+                        <div><kbd class="px-2 py-0.5 bg-[#1f1f1f] rounded font-mono">Ctrl</kbd>+<kbd class="px-2 py-0.5 bg-[#1f1f1f] rounded font-mono">A</kbd>/<kbd class="px-2 py-0.5 bg-[#1f1f1f] rounded font-mono">D</kbd> — strafe</div>
                     </div>
                 </div>
-                <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                <div class="bg-bg-950 border border-[#2a2a2a] rounded-lg p-4">
                     <div class="text-xs text-gray-500 mb-2">Live twist</div>
                     <pre id="twist-readout" class="text-sm text-green-300 font-mono">linear.x  = 0
 linear.y  = 0
@@ -38,7 +38,7 @@ angular.z = 0</pre>
                 </div>
             </div>
 
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 my-6">
+            <div class="bg-bg-950 border border-[#2a2a2a] rounded-lg p-6 my-6">
                 <div class="flex flex-col items-center gap-2">
                     <div id="key-w" class="kb-key">W</div>
                     <div class="flex gap-2">
@@ -53,7 +53,7 @@ angular.z = 0</pre>
                 </div>
             </div>
 
-            <button id="disconnectBtn" class="mt-4 px-6 py-2.5 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors">
+            <button id="disconnectBtn" class="mt-4 px-6 py-2.5 bg-[#2a2a2a] hover:bg-[#3a3a3a] text-white text-sm font-medium rounded-lg transition-colors">
                 Disconnect
             </button>
         </div>

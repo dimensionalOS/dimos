@@ -14,9 +14,9 @@ export function renderAuth(c) {
                 <h1 class="text-3xl font-bold text-white mb-2">DimOS Teleop</h1>
                 <p class="text-gray-400">Remote robot teleoperation platform</p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-xl">
-                <div class="flex mb-6 bg-gray-800 rounded-lg p-1">
-                    <button id="tab-login" class="flex-1 py-2 px-4 rounded-md text-sm font-medium bg-dim-600 text-white">Log In</button>
+            <div class="bg-bg-950 border border-[#2a2a2a] rounded-xl p-6 shadow-xl">
+                <div class="flex mb-6 bg-[#1f1f1f] rounded-lg p-1">
+                    <button id="tab-login" class="flex-1 py-2 px-4 rounded-md text-sm font-medium bg-dim-500 text-bg-950">Log In</button>
                     <button id="tab-register" class="flex-1 py-2 px-4 rounded-md text-sm font-medium text-gray-400 hover:text-white">Sign Up</button>
                 </div>
                 <form id="auth-form">
@@ -24,17 +24,17 @@ export function renderAuth(c) {
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-1">Email</label>
                             <input id="email" type="email" required value="${escHtml(state.userEmail)}"
-                                class="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-dim-500"
+                                class="w-full px-4 py-2.5 bg-[#1f1f1f] border border-[#2a2a2a] rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-dim-400"
                                 placeholder="you@company.com">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-1">Password</label>
                             <input id="password" type="password" required
-                                class="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-dim-500"
+                                class="w-full px-4 py-2.5 bg-[#1f1f1f] border border-[#2a2a2a] rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-dim-400"
                                 placeholder="••••••••">
                         </div>
                         <div id="auth-error" class="text-red-400 text-sm hidden"></div>
-                        <button type="submit" class="w-full py-2.5 bg-dim-600 hover:bg-dim-700 text-white font-medium rounded-lg transition-colors">
+                        <button type="submit" class="w-full py-2.5 bg-dim-500 hover:bg-dim-600 text-bg-950 font-medium rounded-lg transition-colors">
                             <span id="auth-btn-text">Log In</span>
                         </button>
                     </div>
@@ -53,7 +53,7 @@ export function renderAuth(c) {
 
 function showAuthTab(mode) {
     authMode = mode;
-    const active = 'flex-1 py-2 px-4 rounded-md text-sm font-medium bg-dim-600 text-white';
+    const active = 'flex-1 py-2 px-4 rounded-md text-sm font-medium bg-dim-500 text-bg-950';
     const inactive = 'flex-1 py-2 px-4 rounded-md text-sm font-medium text-gray-400 hover:text-white';
     document.getElementById('tab-login').className = mode === 'login' ? active : inactive;
     document.getElementById('tab-register').className = mode === 'register' ? active : inactive;
