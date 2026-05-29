@@ -1,0 +1,52 @@
+###### v2_imu — IMU-coupled, corrected for this Go2-L1: measured acc_norm 10.434,
+###### imu_time_inte 0.004 (~223-250 Hz), and extrinsic_R = Rx(pi)=diag(1,-1,-1) for the
+###### IMU's 180-deg roll vs the lidar (doc 20260529-06: imu2lidar = [0,0,0,pi,0,0]).
+###### extrinsic_T ~ 0 (L1 IMU is co-located inside the lidar). Tight lidar cov + match_s 81.
+common:
+    lid_topic: "/unilidar/cloud"
+    imu_topic: "/unilidar/imu"
+    con_frame: false
+    con_frame_num: 1
+    cut_frame: false
+    cut_frame_time_interval: 0.1
+    time_lag_imu_to_lidar: 0.0
+preprocess:
+    lidar_type: 5
+    scan_line: 18
+    timestamp_unit: 0
+    blind: 0.5
+mapping:
+    imu_en: true
+    start_in_aggressive_motion: false
+    extrinsic_est_en: false
+    imu_time_inte: 0.004
+    satu_acc: 30.0
+    satu_gyro: 35
+    acc_norm: 10.434
+    lidar_meas_cov: 0.01
+    acc_cov_output: 500
+    gyr_cov_output: 1000
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
+    imu_meas_acc_cov: 0.1
+    imu_meas_omg_cov: 0.1
+    gyr_cov_input: 0.01
+    acc_cov_input: 0.1
+    plane_thr: 0.1
+    match_s: 81
+    fov_degree: 180
+    det_range: 100.0
+    gravity_align: true
+    gravity: [0.0, 0.0, -9.810]
+    gravity_init: [0.0, 0.0, -9.810]
+    extrinsic_T: [ 0, 0, 0 ]
+    extrinsic_R: [ 1, 0, 0,  0, -1, 0,  0, 0, -1 ]
+odometry:
+    publish_odometry_without_downsample: enable
+publish:
+    path_en: true
+    scan_publish_en: true
+    scan_bodyframe_pub_en: false
+pcd_save:
+    pcd_save_en: true
+    interval: -1

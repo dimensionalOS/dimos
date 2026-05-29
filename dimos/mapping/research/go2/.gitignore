@@ -1,0 +1,36 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+worktrees/
+queue/
+
+# Agent prompt files (generated per-session by launchers)
+CLAUDE.md
+AGENTS.md
+
+# Experimental code/artifacts
+dev/
+
+# Results file (leave untracked)
+results.tsv
+
+# experiment artifacts
+run.log
+
+# large human-debug recordings (kept on disk, not in git; derivable from the mcap)
+human-debug/*.mcap
+human-debug/*.rrd
+
+# point_lio build + per-run outputs (regenerated each run)
+point_lio/build/
+point_lio/Log/*
+!point_lio/Log/.gitkeep
+point_lio/PCD/*
+!point_lio/PCD/do_not_delete_this_file.txt
+point_lio/config/_active.yaml
