@@ -66,10 +66,11 @@ adaptations](https://www.popsci.com/technology/robot-moose/) cut foot sinkage ~4
 - The full interaction flow: scan for a relaxed guest → obstacle-aware approach
   (turning to keep the subject in frame) → wave + personalized one-liner →
   "grab a Coke, pose" → snap the instant photo + dance.
-- **Instant, Fetch-branded photo → the guest's phone.** Each capture is composited
-  with the Fetch logo in a Polaroid-style branded photo view (with a print sound),
-  saved locally and optionally mirrored to an iCloud or Google Drive folder
-  (`FETCH_PHOTO_MIRROR_DIRS`) so the demo phone syncs it seconds after it's taken.
+- **Instant photo → the guest's hands.** Captured from the Go2's camera + LiDAR and
+  composited with the Fetch logo (Polaroid-style branded view + print sound), the shot —
+  plus our demo recordings — syncs to iCloud / Google Drive via mirror folders
+  (`FETCH_PHOTO_MIRROR_DIRS`); at the event, a synced phone sends it to a **Xiaomi
+  mini-printer** through the printer's app for an instant physical print.
 - A single-page phone UI (camera feed, previews, live decision display, audio
   routing, photo flow) backed by FastAPI + WebSocket.
 - Runtime-switchable **voice**: one-way TTS across Cartesia / Gemini Live / OpenAI,
@@ -86,7 +87,7 @@ adaptations](https://www.popsci.com/technology/robot-moose/) cut foot sinkage ~4
 | **Vision policy** | `FetchPolicy.analyze_frame()` sends image + prompt to a provider-selectable vision LLM (OpenAI or Gemini) and normalizes the JSON into a decision dict; the live demo runs on **Gemini 2.5 Flash-Lite** for the lowest latency. |
 | **Go2 transport** | DimOS Unitree WebRTC; `--robot-connection-method auto\|local_ap\|local_sta` (default `local_ap`) + `--robot-ip` select how to reach the dog. |
 | **Voice** | Provider-switchable TTS at runtime (no restart) plus an optional persistent Gemini Live session with server-side VAD / barge-in. |
-| **Photos** | Fetch-branded capture (logo composited via `<canvas>`) to `static/captures/`, optionally mirrored to iCloud/Drive folders via `FETCH_PHOTO_MIRROR_DIRS`. |
+| **Photos** | Fetch-branded capture (logo composited via `<canvas>`) to `static/captures/`, mirrored to iCloud/Drive folders via `FETCH_PHOTO_MIRROR_DIRS`; a synced phone then prints it on a Xiaomi mini-printer via the printer's app. |
 | **Tests** | **76 passing tests**, all providers mocked — no live API calls needed to review (policy, middleware routes, TTS, conversation tools, photo saving). |
 
 ## Reviewer Map
