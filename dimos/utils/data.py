@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from datetime import datetime
 from functools import cache
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 import tarfile
@@ -116,11 +118,34 @@ def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
     p = Path(s)
     if p.is_absolute() or p.exists():
         return p
+    if (DIMOS_PROJECT_ROOT / p).exists():
+        return DIMOS_PROJECT_ROOT / p
     if suffix and not s.endswith(suffix):
         p = Path(s + suffix)
         if p.is_absolute() or p.exists():
             return p
+        if (DIMOS_PROJECT_ROOT / p).exists():
+            return DIMOS_PROJECT_ROOT / p
     return get_data(p.name)
+
+
+def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:
+    path = Path(path)
+    if not path.exists():
+        return None
+
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    backup = path.with_name(f"{path.stem}.{ts}{path.suffix}")
+    path.rename(backup)
+
+    pattern = re.compile(rf"^{re.escape(path.stem)}\.\d{{14}}{re.escape(path.suffix)}$")
+    backups = sorted(
+        p for p in path.parent.glob(f"{path.stem}.*{path.suffix}") if pattern.match(p.name)
+    )
+    for old in backups[:-keep_last] if keep_last > 0 else backups:
+        old.unlink()
+
+    return backup if backup.exists() else None
 
 
 @cache
