@@ -18,6 +18,7 @@ Available subclasses:
     - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track), task name routing
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
     - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the Quest over /ws
+    - Go2TeleopModule: Thumbstick → Twist velocity for the Go2 + camera over /ws
 """
 
 import asyncio
@@ -31,13 +32,47 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.teleop.quest.quest_teleop_module import Hand, QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+async def _ws_send_jpeg(ws: WebSocket, data: bytes) -> None:
+    try:
+        await ws.send_bytes(data)
+    except Exception:
+        # Client closed or write failed — drop the frame; the base /ws
+        # disconnect handler evicts the dead client.
+        pass
+
+
+def _push_jpeg(module: QuestTeleopModule, msg: Image, quality: int) -> None:
+    """JPEG-encode an Image and push it to all of module's connected /ws clients.
+
+    Runs on the RX thread; sends are scheduled on the asyncio loop captured by
+    QuestTeleopModule when the first client connected.
+    """
+    try:
+        bgr = msg.to_opencv()
+        ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+        if not ok:
+            return
+        jpeg = buf.tobytes()
+    except Exception:
+        logger.exception("Failed to encode camera frame")
+        return
+
+    loop = module._ws_loop
+    if loop is None or not module._connected_clients:
+        return
+    for ws in list(module._connected_clients):
+        asyncio.run_coroutine_threadsafe(_ws_send_jpeg(ws, jpeg), loop)
 
 
 class TwistTeleopConfig(QuestTeleopConfig):
@@ -186,38 +221,79 @@ class VideoArmTeleopModule(ArmTeleopModule):
     color_image: In[Image]
 
     def _on_image(self, msg: Image) -> None:
-        """Encode incoming Image to JPEG and push to all connected /ws clients."""
-        try:
-            bgr = msg.to_opencv()
-            ok, buf = cv2.imencode(
-                ".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), self.config.video_jpeg_quality]
-            )
-            if not ok:
-                return
-            jpeg = buf.tobytes()
-        except Exception:
-            logger.exception("Failed to encode camera frame")
-            return
-
-        # _on_image runs on the RX thread; WebSocket sends must run on the
-        # asyncio loop captured when the first client connected.
-        loop = self._ws_loop
-        if loop is None or not self._connected_clients:
-            return
-        for ws in list(self._connected_clients):
-            asyncio.run_coroutine_threadsafe(self._safe_send(ws, jpeg), loop)
-
-    @staticmethod
-    async def _safe_send(ws: WebSocket, data: bytes) -> None:
-        try:
-            await ws.send_bytes(data)
-        except Exception:
-            # Client closed or write failed — drop the frame; the disconnect
-            # handler in the base /ws loop will evict the dead client.
-            pass
+        _push_jpeg(self, msg, self.config.video_jpeg_quality)
 
     @rpc
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_image)))
         logger.info("Quest teleop: camera feed subscribed → /ws push")
+
+
+class Go2TeleopConfig(QuestTeleopConfig):
+    """Configuration for Go2TeleopModule."""
+
+    linear_speed: float = 0.5  # m/s at full stick deflection
+    angular_speed: float = 0.8  # rad/s at full stick deflection
+    deadzone: float = 0.1
+    video_jpeg_quality: int = 70
+
+
+class Go2TeleopModule(QuestTeleopModule):
+    """Quest teleop for the Unitree Go2: thumbstick driving + camera in the headset.
+
+    Velocity is derived from the controller thumbsticks as each Joy message
+    arrives (left stick → forward/strafe, right stick → yaw) and published on
+    cmd_vel for GO2Connection.move. The Go2 camera (color_image) is JPEG-encoded
+    and pushed to the headset over /ws. A deadzone suppresses stick drift.
+
+    Inputs:
+        - color_image: In[Image] (wire to the Go2 camera output)
+
+    Outputs:
+        - cmd_vel: Twist (base velocity command)
+    """
+
+    config: Go2TeleopConfig
+
+    color_image: In[Image]
+    cmd_vel: Out[Twist]
+
+    def _deadzone(self, v: float) -> float:
+        return 0.0 if abs(v) < self.config.deadzone else v
+
+    def _on_joy_bytes(self, data: bytes) -> None:
+        super()._on_joy_bytes(data)
+        with self._lock:
+            left = self._controllers.get(Hand.LEFT)
+            right = self._controllers.get(Hand.RIGHT)
+        twist = Twist()
+        twist.linear = Vector3(0.0, 0.0, 0.0)
+        twist.angular = Vector3(0.0, 0.0, 0.0)
+        if left is not None:
+            twist.linear.x = -self._deadzone(left.thumbstick.y) * self.config.linear_speed
+            twist.linear.y = -self._deadzone(left.thumbstick.x) * self.config.linear_speed
+        if right is not None:
+            twist.angular.z = -self._deadzone(right.thumbstick.x) * self.config.angular_speed
+        self.cmd_vel.publish(twist)
+
+    def _on_image(self, msg: Image) -> None:
+        _push_jpeg(self, msg, self.config.video_jpeg_quality)
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(Disposable(self.color_image.subscribe(self._on_image)))
+        logger.info("Quest teleop: Go2 camera subscribed → /ws push")
+
+    @rpc
+    def stop(self) -> None:
+        # Send one zero Twist so the base halts if teleop dies mid-motion.
+        try:
+            zero = Twist()
+            zero.linear = Vector3(0.0, 0.0, 0.0)
+            zero.angular = Vector3(0.0, 0.0, 0.0)
+            self.cmd_vel.publish(zero)
+        except Exception:
+            logger.exception("Failed to publish stop Twist")
+        super().stop()

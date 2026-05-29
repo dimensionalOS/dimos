@@ -74,6 +74,7 @@ all_blueprints = {
     "teleop-phone-go2": "dimos.teleop.phone.blueprints:teleop_phone_go2",
     "teleop-phone-go2-fleet": "dimos.teleop.phone.blueprints:teleop_phone_go2_fleet",
     "teleop-quest-dual": "dimos.teleop.quest.blueprints:teleop_quest_dual",
+    "teleop-quest-go2": "dimos.teleop.quest.blueprints:teleop_quest_go2",
     "teleop-quest-piper": "dimos.teleop.quest.blueprints:teleop_quest_piper",
     "teleop-quest-rerun": "dimos.teleop.quest.blueprints:teleop_quest_rerun",
     "teleop-quest-xarm6": "dimos.teleop.quest.blueprints:teleop_quest_xarm6",

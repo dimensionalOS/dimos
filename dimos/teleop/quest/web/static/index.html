@@ -143,7 +143,7 @@
         const PANEL_POS_X = 0.0;
         const PANEL_POS_Y = 1.4;   // ~eye height
         const PANEL_POS_Z = -1.5;  // 1.5m in front of starting position
-        const PANEL_HEIGHT = 1.2;
+        const PANEL_HEIGHT = 0.9;
 
         // UI elements
         const statusEl = document.getElementById('status');
@@ -372,14 +372,11 @@
                 // Send Joy message with all buttons and axes
                 const gamepad = inputSource.gamepad;
                 if (gamepad) {
-                    // Axes layout:
-                    // [0] = thumbstick X (-1 to 1)
-                    // [1] = thumbstick Y (-1 to 1)
-                    // [2] = trigger (analog 0.0-1.0)
-                    // [3] = grip (analog 0.0-1.0)
+                    const stickX = gamepad.axes[2] ?? gamepad.axes[0] ?? 0.0;
+                    const stickY = gamepad.axes[3] ?? gamepad.axes[1] ?? 0.0;
                     const axes = [
-                        gamepad.axes[0] ?? 0.0,
-                        gamepad.axes[1] ?? 0.0,
+                        stickX,
+                        stickY,
                         gamepad.buttons[0]?.value ?? 0.0,
                         gamepad.buttons[1]?.value ?? 0.0,
                     ];

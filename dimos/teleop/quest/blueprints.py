@@ -19,6 +19,7 @@ Single sim/real blueprints — pass `--simulation` to run inside MuJoCo, omit fo
 hardware. The underlying coordinator blueprints branch on `global_config.simulation`.
 """
 
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.control.blueprints.teleop import (
     coordinator_teleop_dual,
     coordinator_teleop_piper,
@@ -26,10 +27,16 @@ from dimos.control.blueprints.teleop import (
     coordinator_teleop_xarm7,
 )
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
+from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule, VideoArmTeleopModule
+from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.teleop.quest.quest_extensions import (
+    ArmTeleopModule,
+    Go2TeleopModule,
+    VideoArmTeleopModule,
+)
 from dimos.teleop.quest.quest_types import Buttons
 from dimos.visualization.vis_module import vis_module
 
@@ -120,8 +127,27 @@ teleop_quest_dual = autoconnect(
 )
 
 
+# Go2 quadruped: thumbstick velocity teleop + camera streamed to the headset.
+teleop_quest_go2 = (
+    autoconnect(
+        Go2TeleopModule.blueprint(),
+        GO2Connection.blueprint(),
+    )
+    .transports(
+        {
+            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+            ("color_image", Image): pSHMTransport(
+                "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+            ),
+        }
+    )
+    .global_config(robot_model="unitree_go2")
+)
+
+
 __all__ = [
     "teleop_quest_dual",
+    "teleop_quest_go2",
     "teleop_quest_piper",
     "teleop_quest_rerun",
     "teleop_quest_xarm6",
