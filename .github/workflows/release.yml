@@ -1,0 +1,254 @@
+# DO NOT RENAME — the basename `release.yml` is bound by PyPI/TestPyPI trusted publisher
+# configuration. Renaming this file breaks publishing (which is the intended defence: a
+# rename by an attacker also disables them).
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        type: boolean
+        default: false
+        description: >-
+          Publish only to TestPyPI.
+          This is used to test the workflow itself, do NOT install dimos from TestPyPI.
+          TestPyPI is highly vulnerable to supply chain attacks.
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false  # Never cancel a release in flight
+
+permissions: {}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    outputs:
+      version: ${{ steps.read-version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Verify dispatched from a release/* branch
+        run: |
+          branch="${GITHUB_REF#refs/heads/}"
+          if [[ "$branch" != release/* ]]; then
+            echo "::error::release.yml must be dispatched from a release/* branch (got: $branch)"
+            exit 1
+          fi
+      - name: Read project version
+        id: read-version
+        run: |
+          version=$(uv version --short --frozen)
+          if [[ -z "$version" ]]; then
+            echo "::error::could not read project version via uv"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing version: $version"
+      - name: Verify version not already on PyPI
+        run: |
+          version="${{ steps.read-version.outputs.version }}"
+          http_code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            "https://pypi.org/pypi/dimos/${version}/json" 2>/dev/null || true)
+          case "$http_code" in
+            200) echo "::error::dimos ${version} already exists on PyPI"; exit 1 ;;
+            404) echo "ok: ${version} not on PyPI" ;;
+            *)   echo "::error::PyPI version check failed (HTTP code: '${http_code}')"; exit 2 ;;
+          esac
+      - name: Verify tag does not exist
+        run: |
+          if git ls-remote --tags origin "refs/tags/v${{ steps.read-version.outputs.version }}" | grep -q .; then
+            echo "::error::Tag v${{ steps.read-version.outputs.version }} already exists"
+            exit 1
+          fi
+
+  build-sdist:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read       # For checkout
+      id-token: write      # For attest-build-provenance's OIDC sigstore signing
+      attestations: write  # For uploading the SLSA build-provenance attestation
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Build sdist
+        run: uv build --sdist
+      - name: Attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/*.tar.gz'
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  build-wheels:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    arch: x86_64 }
+          - { os: ubuntu-24.04-arm, arch: aarch64 }
+          - { os: macos-13,         arch: x86_64 }
+          - { os: macos-14,         arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read       # For checkout
+      id-token: write      # For attest-build-provenance's OIDC sigstore signing
+      attestations: write  # For uploading the SLSA build-provenance attestation
+    env:
+      CIBW_ENABLE: "cpython-freethreading"
+      CIBW_ARCHS: ${{ matrix.arch }}
+      CIBW_TEST_COMMAND: "python -c 'from dimos.navigation.replanning_a_star.min_cost_astar_ext import min_cost_astar_cpp'"
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v3.4.1
+      - name: Attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'wheelhouse/*.whl'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+
+  publish-testpypi:
+    needs: [validate, build-sdist, build-wheels]
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/dimos/${{ needs.validate.outputs.version }}/
+    permissions:
+      id-token: write      # For pypi-publish's OIDC trusted-publisher exchange (TestPyPI)
+      attestations: write  # For PEP 740 attestations attached to each uploaded file
+    steps:
+      - name: Download wheels/sdist
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - name: Install twine
+        run: uv tool install twine
+      - name: Validate distributions
+        run: twine check dist/*
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          attestations: true
+          skip-existing: true
+
+  publish-pypi:
+    if: ${{ ! inputs.dry-run }}
+    needs: [validate, publish-testpypi]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/dimos/${{ needs.validate.outputs.version }}/
+    permissions:
+      id-token: write      # For pypi-publish's OIDC trusted-publisher exchange (PyPI)
+      attestations: write  # For PEP 740 attestations attached to each uploaded file
+    steps:
+      - name: Download wheels/sdist
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
+
+  tag-and-release:
+    if: ${{ ! inputs.dry-run }}
+    needs: [validate, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # For pushing the signed release tag and creating the GitHub Release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Download wheels/sdist
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Import signing key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          git_user_signingkey: true
+          git_tag_gpgsign: true
+      - name: Create and push signed tag
+        run: |
+          tag="v${{ needs.validate.outputs.version }}"
+          git tag -s -a "$tag" -m "Release $tag"
+          git push origin "$tag"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ needs.validate.outputs.version }}" \
+            --verify-tag \
+            --title "v${{ needs.validate.outputs.version }}" \
+            --notes "See CHANGELOG / commit history for changes." \
+            dist/*
+
+  merge-back:
+    if: ${{ ! inputs.dry-run }}
+    needs: [validate, tag-and-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # For pushing the merge-back/* branch
+      pull-requests: write  # For opening the merge-back PR via gh pr create
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Open empty-diff merge-back PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ github.ref_name }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$RELEASE_BRANCH"
+          branch="merge-back/v$VERSION"
+          git checkout -b "$branch" main
+          # -s ours: take only main's content, preserve two-parent topology so
+          # `git log --first-parent main` can reach the release tag via the merge commit.
+          git merge --no-ff -s ours "origin/$RELEASE_BRANCH" -m "Merge $RELEASE_BRANCH to main"
+          git push -u origin "$branch"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "Merge $RELEASE_BRANCH back to main (DO NOT SQUASH)" \
+            --body "**Merge with \"Create a merge commit\" — NOT squash, NOT rebase.**
+
+          This PR keeps the release branch/tag history synced into main.
+          It contains no file changes."

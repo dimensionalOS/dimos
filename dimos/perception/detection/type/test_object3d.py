@@ -15,7 +15,6 @@
 import pytest
 
 from dimos.perception.detection.moduleDB import Object3D
-from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 
 pytestmark = pytest.mark.self_hosted
 
@@ -155,25 +154,3 @@ def test_objectdb_module(object_db_module) -> None:
     # Center should be valid (no specific value check since we're using real detections)
     assert hasattr(combined, "center")
     assert combined.center is not None
-
-    # def test_image_detections3d_scene_update(object_db_module):
-    """Test ImageDetections3DPC to Foxglove scene update conversion."""
-    # Get some detections
-    objects = list(object_db_module.objects.values())
-    if not objects:
-        pytest.skip("No objects in database")
-
-    detections = [obj.best_detection for obj in objects[:3]]  # Take up to 3
-
-    image_detections = ImageDetections3DPC(image=detections[0].image, detections=detections)
-
-    scene_update = image_detections.to_foxglove_scene_update()
-
-    assert scene_update is not None
-    assert scene_update.entities_length == len(detections)
-
-    for i, entity in enumerate(scene_update.entities):
-        assert entity.id == str(detections[i].track_id)
-        assert entity.frame_id == detections[i].frame_id
-        assert entity.cubes_length == 1
-        assert entity.texts_length == 1

@@ -204,7 +204,7 @@ Singleton config. Values cascade: defaults → `.env` → env vars → blueprint
 
 ### Global flags
 
-Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simulation`, `--replay/--no-replay`, `--viewer {rerun|rerun-web|foxglove|none}`, `--mcp-port`, `--n-workers`, etc. Flags override `.env` and env vars.
+Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simulation`, `--replay/--no-replay`, `--viewer {rerun|rerun-web|rerun-connect|none}`, `--mcp-port`, `--n-workers`, etc. Flags override `.env` and env vars.
 
 ### Core commands
 

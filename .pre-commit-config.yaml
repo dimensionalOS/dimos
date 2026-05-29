@@ -94,6 +94,7 @@ repos:
         entry: python -m dimos.utils.docs.doclinks docs/
         language: system
         files: ^docs/.*\.md$
+        exclude: ^docs/node_modules/
 
       - id: filter-commit-message
         name: Filter generated signatures from commit message
@@ -117,7 +118,7 @@ repos:
             git ls-files "*Cargo.toml" | while read -r m; do
               cargo locate-project --manifest-path "$m" --workspace --message-format plain
             done | sort -u | while read -r root; do
-              cargo fmt --manifest-path "$root" --all --check
+              cargo fmt --manifest-path "$root" --all
             done
           '
         language: system

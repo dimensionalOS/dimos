@@ -22,7 +22,6 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
 to_svg(unitree_go2, "assets/go2_nav.svg")
 ```
-<!--Result:-->
 ![output](assets/go2_nav.svg)
 
 ## Camera Module
@@ -43,8 +42,7 @@ from dimos.hardware.sensors.camera.module import CameraModule
 print(CameraModule.io())
 ```
 
-<!--Result:-->
-```
+```results
 ┌┴─────────────┐
 │ CameraModule │
 └┬─────────────┘
@@ -85,8 +83,7 @@ time.sleep(0.5)
 camera.stop()
 ```
 
-<!--Result:-->
-```
+```results
 Out color_image[Image] @ CameraModule
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)
@@ -100,7 +97,6 @@ Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
 ```
 
-
 ## Connecting modules
 
 Let's load a standard 2D detector module and hook it up to a camera.
@@ -110,8 +106,7 @@ from dimos.perception.detection.module2D import Detection2DModule, Config
 print(Detection2DModule.io())
 ```
 
-<!--Result:-->
-```
+```results
  ├─ color_image: Image
 ┌┴──────────────────┐
 │ Detection2DModule │
@@ -130,7 +125,7 @@ print(Detection2DModule.io())
  ├─ RPC stop() -> None
 ```
 
-<!-- TODO: add easy way to print config -->
+{/* TODO: add easy way to print config */}
 
 Looks like the detector just needs an image input and outputs some sort of detection and annotation messages. Let's connect it to a camera.
 
@@ -160,6 +155,20 @@ As we build module structures, we'll quickly want to utilize all cores on the ma
 For this, we use `dimos.core` and DimOS transport protocols.
 
 Defining message exchange protocols and message types also gives us the ability to write models in faster languages.
+
+### Dedicated workers
+
+By default the coordinator assigns modules to worker processes by least-load, so multiple modules share a worker. Heavy modules (robot connections, voxel mappers) should run alone so they don't contend with anything else for CPU or the GIL. Set `dedicated_worker = True` on the class and the coordinator will give that module a worker process to itself.
+
+```python
+from dimos.core.module import Module
+
+
+class HeavyModule(Module):
+    dedicated_worker = True
+```
+
+If declaring dedicated modules would push the pool past half-dedicated, the coordinator auto-grows it so non-dedicated workers always at least match the dedicated count.
 
 ## Restarting a module
 
@@ -197,7 +206,6 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-
 
 class MovementManager(Module):
     clicked_point: In[PointStamped]
@@ -237,7 +245,6 @@ Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are
 from dimos.core.core import rpc
 from dimos.core.module import Module
 
-
 class NameModule(Module):
     @rpc
     async def say_hello(self, name: str) -> str:
@@ -258,11 +265,9 @@ from typing import Protocol
 from dimos.core.module import Module
 from dimos.spec.utils import Spec
 
-
 class NameSpec(Spec, Protocol):
     async def say_hello(self, name: str) -> str: ...
     async def set_my_name(self, new_name: str) -> None: ...
-
 
 class StartModule(Module):
     _name_module: NameSpec
@@ -278,7 +283,6 @@ class StartModule(Module):
 from typing import Protocol
 
 from dimos.spec.utils import Spec
-
 
 class SyncNameSpec(Spec, Protocol):
     def say_hello(self, name: str) -> str: ...
@@ -298,7 +302,6 @@ import asyncio
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
-
 
 class TimerExample(Module):
     @rpc
@@ -343,7 +346,6 @@ from typing import Any
 
 from dimos.core.module import Module
 
-
 def create(name: str) -> Any:
     del name
     class _Model:
@@ -351,7 +353,6 @@ def create(name: str) -> Any:
             pass
 
     return _Model()
-
 
 class PersonFollowSkillContainer(Module):
     async def main(self) -> AsyncIterator[None]:
@@ -379,8 +380,6 @@ from dimos.robot.unitree_webrtc.unitree_go2_blueprints import agentic
 to_svg(agentic, "assets/go2_agentic.svg")
 ```
 
-<!--Result:-->
 ![output](assets/go2_agentic.svg)
-
 
 To see more information on how to use Blueprints, see [Blueprints](/docs/usage/blueprints.md).

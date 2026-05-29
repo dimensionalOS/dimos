@@ -8,8 +8,8 @@ In robotics, we deal with hardware that produces data at its own pace - a camera
 
 **The problem:** A fast producer can overwhelm a slow consumer, causing memory buildup or dropped frames. We might have multiple subscribers to the same hardware that operate at different speeds.
 
-
-<details><summary>Pikchr</summary>
+<details>
+<summary>Pikchr</summary>
 
 ```pikchr fold output=assets/backpressure.svg
 color = white
@@ -26,9 +26,7 @@ text "items pile up!" at (Queue.x, Queue.y - 0.45in)
 
 </details>
 
-<!--Result:-->
 ![output](assets/backpressure.svg)
-
 
 **The solution:** The `backpressure()` wrapper handles this by:
 
@@ -67,16 +65,15 @@ print(f"slow got {len(slow_results)} items (skipped {len(fast_results) - len(slo
 scheduler.executor.shutdown(wait=True)
 ```
 
-<!--Result:-->
-```
+```results
 fast got 20 items: [0, 1, 2, 3, 4]...
 slow got 7 items (skipped 13)
 ```
 
 ### How it works
 
-
-<details><summary>Pikchr</summary>
+<details>
+<summary>Pikchr</summary>
 
 ```pikchr fold output=assets/backpressure_solution.svg
 color = white
@@ -96,7 +93,6 @@ Slow: box "Slow Sub" rad 5px fit wid 170% ht 170%
 
 </details>
 
-<!--Result:-->
 ![output](assets/backpressure_solution.svg)
 
 The `LATEST` strategy means: when the slow subscriber finishes processing, it gets whatever the most recent value is, skipping any values that arrived while it was busy.
@@ -119,7 +115,6 @@ class MLModel(Module):
        self.color_image.observable().subscribe(...)
        # non-backpressured - will pile up queue
        self.color_image.pure_observable().subscribe(...)
-
 
 ```
 
@@ -148,7 +143,6 @@ If you are doing this periodically as a part of a processing loop, it is very li
         ops.sample(0.05),
     ).subscribe(self.twist.publish) # shoots off the Twist out of the module
 ```
-
 
 If you'd still like to switch to synchronous fetching, we provide two approaches, `getter_hot()` and `getter_cold()`
 
@@ -192,7 +186,6 @@ box invis "instant" fit wid 150%
 
 text "always subscribed" italic with .n at Blk0.s + (0, -0.1in)
 
-
 # === getter_cold section ===
 C_Title: box "getter_cold()" rad 5px fit wid 170% ht 170% with .nw at H_Title.sw + (0, -1.6in)
 
@@ -234,9 +227,7 @@ text "blocking" italic with .n at Blk2.n + (0, -0.05in)
 
 </details>
 
-<!--Result:-->
 ![output](assets/getter_hot_cold.svg)
-
 
 **Prefer `getter_cold()`** when you can afford to wait and warmup isn't expensive. It's simpler (no cleanup needed) and doesn't hold resources. Only use `getter_hot()` when you need instant reads or the source is expensive to start.
 
@@ -265,8 +256,7 @@ print("after 700ms:", get_val())
 get_val.dispose()  # Don't forget to clean up!
 ```
 
-<!--Result:-->
-```
+```results
 first call: 0
 after 350ms: 3
 after 700ms: 6
@@ -288,8 +278,7 @@ print("call 2:", get_val())  # subscribes again, gets 0, disposes
 print("call 3:", get_val())  # subscribes again, gets 0, disposes
 ```
 
-<!--Result:-->
-```
+```results
 call 1: 0
 call 2: 0
 call 3: 0

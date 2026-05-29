@@ -39,6 +39,7 @@ from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
+from dimos.utils.cli.map import main as _map_main
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
 
@@ -234,7 +235,6 @@ def run(
     )
     from dimos.core.run_registry import (
         RunEntry,
-        check_port_conflicts,
         cleanup_stale,
         generate_run_id,
     )
@@ -253,16 +253,6 @@ def run(
     stale = cleanup_stale()
     if stale:
         logger.info(f"Cleaned {stale} stale run entries")
-
-    # Port conflict check
-    conflict = check_port_conflicts()
-    if conflict:
-        typer.echo(
-            f"Error: Ports in use by {conflict.run_id} (PID {conflict.pid}). "
-            f"Run 'dimos stop' first.",
-            err=True,
-        )
-        raise typer.Exit(1)
 
     blueprint_name = "-".join(robot_types)
     run_id = generate_run_id(blueprint_name)
@@ -316,7 +306,7 @@ def run(
 
         daemonize(log_dir)
 
-        rpyc_port = coordinator.start_rpyc_service()  # After daemonize().
+        coordinator.start_rpc_service()  # After daemonize().
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -325,7 +315,6 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
@@ -333,7 +322,7 @@ def run(
         install_signal_handlers(entry, coordinator)
         coordinator.loop()
     else:
-        rpyc_port = coordinator.start_rpyc_service()
+        coordinator.start_rpc_service()
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -342,7 +331,6 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
@@ -685,12 +673,28 @@ def send(
     topic_send(topic, message_expr)
 
 
+main.command(name="map")(_map_main)
+
+
 @main.command()
 def cameracalibrate(
-    source: str = typer.Option(..., "--source", help="Frame source: webcam or folder"),
+    source: str = typer.Option(..., "--source", help="Frame source: webcam, folder, or topic"),
     device_index: int = typer.Option(0, "--device-index", help="Webcam device index"),
     images: Path | None = typer.Option(
         None, "--images", help="Directory of calibration images for --source folder"
+    ),
+    topic: str | None = typer.Option(
+        None,
+        "--topic",
+        help=(
+            "Pubsub URI for --source topic (proto:channel), "
+            "e.g. 'jpeg_lcm:/color_image' or 'pshm:color_image'."
+        ),
+    ),
+    topic_timeout_sec: float = typer.Option(
+        60.0,
+        "--topic-timeout-sec",
+        help="Abort --source topic if no frames arrive within this many seconds.",
     ),
     cols: int = typer.Option(..., "--cols", help="Inner chessboard corner columns"),
     rows: int = typer.Option(..., "--rows", help="Inner chessboard corner rows"),
@@ -704,6 +708,14 @@ def cameracalibrate(
     camera_name: str = typer.Option("webcam", "--camera-name", help="Camera name in YAML"),
     target_count: int = typer.Option(20, "--target-count", help="Accepted webcam frame count"),
     no_display: bool = typer.Option(False, "--no-display", help="Disable OpenCV preview windows"),
+    distortion_model: str = typer.Option(
+        "plumb_bob",
+        "--distortion-model",
+        help=(
+            "Lens model: 'plumb_bob' (5 coeffs, near-pinhole) or 'fisheye' "
+            "(4 coeffs, wide-angle / fisheye; written as ROS 'equidistant')."
+        ),
+    ),
 ) -> None:
     """Calibrate camera intrinsics and write ROS CameraInfo YAML."""
     from dimos.utils.cli.cameracalibrate.cameracalibrate import run_calibration
@@ -716,6 +728,8 @@ def cameracalibrate(
             source=source,
             device_index=device_index,
             images=images,
+            topic=topic,
+            topic_timeout_sec=topic_timeout_sec,
             cols=cols,
             rows=rows,
             square_size_m=square_size_m,
@@ -724,6 +738,7 @@ def cameracalibrate(
             camera_name=camera_name,
             target_count=target_count,
             no_display=no_display,
+            distortion_model=distortion_model,
         )
     except (ValueError, RuntimeError) as exc:
         raise typer.BadParameter(str(exc)) from exc

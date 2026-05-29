@@ -14,8 +14,6 @@
 
 import pytest
 
-from dimos.core.transport import LCMTransport
-from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.perception.detection.reid.module import ReidModule
 
@@ -38,7 +36,6 @@ def test_reid_ingress(imageDetections2d) -> None:
 
     reid_module = ReidModule(idsystem=idsystem, warmup=False)
     print("Processing detections through ReidModule...")
-    reid_module.annotations._transport = LCMTransport("/annotations", ImageAnnotations)
     reid_module.ingress(imageDetections2d)
     reid_module._close_module()
     print("✓ ReidModule ingress test completed successfully")

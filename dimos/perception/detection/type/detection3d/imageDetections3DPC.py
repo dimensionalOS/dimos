@@ -16,8 +16,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
-
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
@@ -58,24 +56,3 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
             is not None
         ]
         return cls(image=detections_2d.image, detections=detections_3d)
-
-    def to_foxglove_scene_update(self) -> SceneUpdate:
-        """Convert all detections to a Foxglove SceneUpdate message.
-
-        Returns:
-            SceneUpdate containing SceneEntity objects for all detections
-        """
-
-        # Create SceneUpdate message with all detections
-        scene_update = SceneUpdate()
-        scene_update.deletions_length = 0
-        scene_update.deletions = []
-        scene_update.entities = []
-
-        # Process each detection
-        for i, detection in enumerate(self.detections):
-            entity = detection.to_foxglove_scene_entity(entity_id=f"detection_{detection.name}_{i}")
-            scene_update.entities.append(entity)
-
-        scene_update.entities_length = len(scene_update.entities)
-        return scene_update

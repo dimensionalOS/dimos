@@ -79,6 +79,7 @@ class SpatialMemory(Module):
     """
 
     config: SpatialConfig
+    dedicated_worker = True
 
     # LCM inputs
     color_image: In[Image]

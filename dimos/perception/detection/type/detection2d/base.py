@@ -17,7 +17,6 @@ from collections.abc import Callable
 
 from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D
 
-from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.types.timestamped import Timestamped
 
@@ -28,11 +27,6 @@ class Detection2D(Timestamped):
     @abstractmethod
     def cropped_image(self, padding: int = 20) -> Image:
         """Return a cropped version of the image focused on the detection area."""
-        ...
-
-    @abstractmethod
-    def to_image_annotations(self) -> ImageAnnotations:
-        """Convert detection to Foxglove ImageAnnotations for visualization."""
         ...
 
     @abstractmethod

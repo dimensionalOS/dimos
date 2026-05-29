@@ -20,6 +20,18 @@ import pytest
 
 from dimos.core.tests.stress_test_module import StressTestModule
 from dimos.porcelain.dimos import Dimos
+from dimos.porcelain.remote_module_source import RemoteModuleSource
+
+
+def _connect_in_process() -> Dimos:
+    """Connect over LCM without consulting the run registry.
+
+    For tests where the coordinator and the client live in the same
+    process and there is no `RunEntry` on disk.
+    """
+    instance = Dimos()
+    instance._source = RemoteModuleSource()
+    return instance
 
 
 @pytest.fixture
@@ -50,9 +62,9 @@ def running_app() -> Iterator[Dimos]:
 
 @pytest.fixture
 def client(running_app: Dimos) -> Iterator[Dimos]:
-    """Rpyc client paired with the per-test `running_app`."""
-    port = running_app._coordinator.start_rpyc_service()
-    instance = Dimos.connect(host="localhost", port=port)
+    """LCM @rpc client paired with the per-test `running_app`."""
+    running_app._coordinator.start_rpc_service()
+    instance = _connect_in_process()
     try:
         yield instance
     finally:

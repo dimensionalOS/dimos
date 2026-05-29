@@ -25,8 +25,10 @@ from typer.testing import CliRunner
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as DimosCameraInfo
 from dimos.perception.common.utils import load_camera_info, load_camera_info_opencv
 from dimos.utils.cli.cameracalibrate.cameracalibrate import (
+    DistortionModel,
     app,
     calibrate_from_frames,
+    capture_frames_from_topic,
     capture_frames_from_webcam,
     find_chessboard_corners,
     load_frames_from_folder,
@@ -182,6 +184,8 @@ def test_cli_help_lists_cameracalibrate_flags() -> None:
         "--source",
         "--device-index",
         "--images",
+        "--topic",
+        "--topic-timeout-sec",
         "--cols",
         "--rows",
         "--square-size-m",
@@ -189,6 +193,7 @@ def test_cli_help_lists_cameracalibrate_flags() -> None:
         "--camera-name",
         "--target-count",
         "--no-display",
+        "--distortion-model",
     ]:
         assert flag in output_plain
 
@@ -434,6 +439,171 @@ def test_opencv_video_capture_device_zero_opens_when_camera_available() -> None:
         cap.release()
 
 
+class _FakeTopicTransport:
+    """Stand-in for a started ``PubSubTransport`` used by topic-source tests."""
+
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+def _make_subscribe_pubsub_uri_stub(
+    fire_with: object | None,
+    *,
+    record: dict[str, object] | None = None,
+):
+    """Return a fake ``subscribe_pubsub_uri`` that optionally fires the cb once."""
+
+    def _stub(uri, callback, *, msg_type=None):  # type: ignore[no-untyped-def]
+        if record is not None:
+            record["uri"] = uri
+            record["msg_type"] = msg_type
+        transport = _FakeTopicTransport()
+        if fire_with is not None:
+            callback(fire_with)
+        unsubscribed: dict[str, bool] = {"called": False}
+
+        def _unsub() -> None:
+            unsubscribed["called"] = True
+
+        if record is not None:
+            record["unsub_state"] = unsubscribed
+        return transport, _unsub
+
+    return _stub
+
+
+def test_capture_frames_from_topic_mocked_space_fills_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SPACE accepts frames delivered over a fake pubsub subscription."""
+    from dimos.msgs.sensor_msgs.Image import Image
+
+    cols, rows = 9, 6
+    gray = _synthetic_chessboard_gray(640, 480, cols, rows, square_px=40)
+    bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    image_msg = Image.from_opencv(bgr)
+
+    record: dict[str, object] = {}
+    monkeypatch.setattr(
+        "dimos.protocol.pubsub.registry.subscribe_pubsub_uri",
+        _make_subscribe_pubsub_uri_stub(fire_with=image_msg, record=record),
+    )
+
+    keys_iter = iter([ord(" ")] * 3)
+
+    def _fake_wait_key(_delay: int = 0) -> int:
+        try:
+            return next(keys_iter)
+        except StopIteration:
+            return 0
+
+    monkeypatch.setattr(cv2, "waitKey", _fake_wait_key)
+
+    out = capture_frames_from_topic(
+        "jpeg_lcm:/color_image",
+        3,
+        cols,
+        rows,
+        no_display=True,
+    )
+    assert len(out) == 3
+    assert all(np.array_equal(f, bgr) for f in out)
+    assert record["uri"] == "jpeg_lcm:/color_image"
+    assert record["msg_type"] is Image
+    assert record["unsub_state"]["called"] is True  # type: ignore[index]
+
+
+def test_capture_frames_from_topic_no_frames_within_timeout_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Timeout fires if the subscription never delivers a frame."""
+    monkeypatch.setattr(
+        "dimos.protocol.pubsub.registry.subscribe_pubsub_uri",
+        _make_subscribe_pubsub_uri_stub(fire_with=None),
+    )
+    monkeypatch.setattr(cv2, "waitKey", lambda _delay=0: 0)
+
+    with pytest.raises(RuntimeError, match="No frames received"):
+        capture_frames_from_topic(
+            "lcm:/never_published",
+            1,
+            9,
+            6,
+            no_display=True,
+            timeout_sec=0.05,
+        )
+
+
+def test_cli_topic_source_uri_passes_through(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``--source topic --topic <uri>`` forwards the URI verbatim to the registry."""
+    from dimos.msgs.sensor_msgs.Image import Image
+
+    cols, rows = 9, 6
+    gray = _synthetic_chessboard_gray(640, 480, cols, rows, square_px=40)
+    bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    image_msg = Image.from_opencv(bgr)
+
+    record: dict[str, object] = {}
+    monkeypatch.setattr(
+        "dimos.protocol.pubsub.registry.subscribe_pubsub_uri",
+        _make_subscribe_pubsub_uri_stub(fire_with=image_msg, record=record),
+    )
+    monkeypatch.setattr(cv2, "waitKey", lambda _delay=0: ord(" "))
+
+    out = tmp_path / "camera_info.yaml"
+    result = CliRunner().invoke(
+        app,
+        [
+            "--source",
+            "topic",
+            "--topic",
+            "jpeg_lcm:/color_image",
+            "--cols",
+            "9",
+            "--rows",
+            "6",
+            "--square-size-m",
+            "0.025",
+            "--target-count",
+            "1",
+            "--out",
+            str(out),
+            "--no-display",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert record["uri"] == "jpeg_lcm:/color_image"
+    assert out.exists()
+
+
+def test_cli_topic_source_without_topic_flag_is_rejected() -> None:
+    """``--source topic`` without ``--topic`` should fail with a helpful message."""
+    result = CliRunner().invoke(
+        app,
+        [
+            "--source",
+            "topic",
+            "--cols",
+            "9",
+            "--rows",
+            "6",
+            "--square-size-m",
+            "0.025",
+            "--no-display",
+        ],
+    )
+    assert result.exit_code != 0
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--topic is required" in output_plain
+
+
 def test_load_frames_from_folder_count_order_and_pixels(tmp_path: Path) -> None:
     """Sorted ``*.png`` / ``*.jpg`` / ``*.jpeg``; correct count and load order."""
     h, w = 24, 32
@@ -495,6 +665,149 @@ def test_calibrate_from_frames_accepts_square_count_request() -> None:
     assert out["n_used"] == 10
     assert out["pattern_size"] == (11, 7)
     assert out["pattern_label"] == "requested square count"
+
+
+def _synthetic_fisheye_image_points(
+    *,
+    cols: int = 9,
+    rows: int = 6,
+    width: int = 1280,
+    height: int = 720,
+    square_size_m: float = 0.025,
+    count: int = 15,
+    K_true: np.ndarray | None = None,
+    D_true: np.ndarray | None = None,
+) -> tuple[list[np.ndarray], list[np.ndarray], np.ndarray, np.ndarray]:
+    """Project a flat chessboard through a known fisheye model.
+
+    Returns ``(dummy_frames, image_points_hint, K_true, D_true)``: the frames are
+    just zeros sized correctly so ``calibrate_from_frames`` accepts them; the
+    image-point hints carry the synthetic projections so the solver can run
+    without a real corner detector.
+    """
+    if K_true is None:
+        K_true = np.array(
+            [[400.0, 0.0, width / 2.0], [0.0, 400.0, height / 2.0], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+    if D_true is None:
+        D_true = np.array([-0.05, 0.01, 0.0, 0.0], dtype=np.float64)
+
+    objp = np.zeros((rows * cols, 1, 3), dtype=np.float32)
+    objp[:, 0, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2).astype(np.float32)
+    objp *= float(square_size_m)
+
+    rng = np.random.default_rng(0)
+    dummy_frames: list[np.ndarray] = []
+    image_points_hint: list[np.ndarray] = []
+    margin_px = 20  # keep projections strictly inside frame so the solver is well-conditioned
+    while len(dummy_frames) < count:
+        rvec = rng.uniform(-0.25, 0.25, size=3).astype(np.float64).reshape(1, 1, 3)
+        tvec = np.array(
+            [
+                rng.uniform(-0.03, 0.03),
+                rng.uniform(-0.03, 0.03),
+                rng.uniform(0.45, 0.65),
+            ],
+            dtype=np.float64,
+        ).reshape(1, 1, 3)
+        imgpts, _ = cv2.fisheye.projectPoints(objp, rvec, tvec, K_true, D_true)
+        pts = np.asarray(imgpts, dtype=np.float64).reshape(-1, 2)
+        if (
+            pts[:, 0].min() < margin_px
+            or pts[:, 0].max() > width - margin_px
+            or pts[:, 1].min() < margin_px
+            or pts[:, 1].max() > height - margin_px
+        ):
+            continue
+        image_points_hint.append(np.asarray(imgpts, dtype=np.float32).reshape(-1, 1, 2))
+        dummy_frames.append(np.zeros((height, width), dtype=np.uint8))
+    return dummy_frames, image_points_hint, K_true, D_true
+
+
+def test_calibrate_from_frames_fisheye_recovers_K_near_truth_and_emits_four_coeffs() -> None:
+    """Synthetic fisheye projections recover ``K`` close to truth and yield 4 dist coeffs."""
+    cols, rows = 9, 6
+    width, height = 1280, 720
+    square_size_m = 0.025
+    frames, image_points, K_true, _D_true = _synthetic_fisheye_image_points(
+        cols=cols,
+        rows=rows,
+        width=width,
+        height=height,
+        square_size_m=square_size_m,
+        count=15,
+    )
+
+    out = calibrate_from_frames(
+        frames,
+        cols,
+        rows,
+        square_size_m,
+        pattern_hint=(cols, rows, "requested inner corners"),
+        image_points_hint=image_points,
+        distortion_model=DistortionModel.fisheye,
+    )
+
+    assert out["n_used"] == 15
+    assert out["image_size"] == (width, height)
+
+    K_est = np.asarray(out["K"], dtype=np.float64).reshape(3, 3)
+    # Fisheye solve from synthetic projections should land within ~5% on fx/fy
+    # and within a couple of pixels on the principal point.
+    rel_focal = max(
+        abs(K_est[0, 0] - K_true[0, 0]) / K_true[0, 0],
+        abs(K_est[1, 1] - K_true[1, 1]) / K_true[1, 1],
+    )
+    assert rel_focal < 0.05, f"focal length recovery off by {rel_focal:.3%}"
+    assert abs(K_est[0, 2] - K_true[0, 2]) < 5.0
+    assert abs(K_est[1, 2] - K_true[1, 2]) < 5.0
+
+    D_est = np.asarray(out["D"], dtype=np.float64).ravel()
+    assert D_est.shape == (4,), "fisheye writes 4 distortion coefficients"
+
+
+def test_cli_distortion_model_fisheye_writes_equidistant_yaml_and_four_coeffs(
+    tmp_path: Path,
+) -> None:
+    """``--distortion-model fisheye`` produces a YAML with the ROS-canonical name."""
+    cols, rows = 9, 6
+    frames, image_points, _K_true, _D_true = _synthetic_fisheye_image_points(
+        cols=cols, rows=rows, count=15
+    )
+    images_dir = tmp_path / "fisheye_frames"
+    images_dir.mkdir()
+    for i, frame in enumerate(frames):
+        assert cv2.imwrite(str(images_dir / f"{i:02d}.png"), frame)
+
+    # The folder source has no chessboard corners in the synthetic dummies, so route
+    # through calibrate_from_frames directly to exercise the YAML emit path.
+    out_path = tmp_path / "fisheye.yaml"
+    cal = calibrate_from_frames(
+        frames,
+        cols,
+        rows,
+        0.025,
+        pattern_hint=(cols, rows, "requested inner corners"),
+        image_points_hint=image_points,
+        distortion_model=DistortionModel.fisheye,
+    )
+    write_camera_info_yaml(
+        str(out_path),
+        image_width=int(cal["image_size"][0]),
+        image_height=int(cal["image_size"][1]),
+        camera_name="fisheye_test",
+        K=np.asarray(cal["K"], dtype=np.float64),
+        D=np.asarray(cal["D"], dtype=np.float64),
+        distortion_model=DistortionModel.fisheye.to_ros_name(),
+    )
+
+    import yaml as _yaml
+
+    payload = _yaml.safe_load(out_path.read_text(encoding="utf-8"))
+    assert payload["distortion_model"] == "equidistant"
+    assert payload["distortion_coefficients"]["cols"] == 4
+    assert len(payload["distortion_coefficients"]["data"]) == 4
 
 
 def test_write_camera_info_yaml_round_trip_matches_k_d_size_and_model(tmp_path: Path) -> None:

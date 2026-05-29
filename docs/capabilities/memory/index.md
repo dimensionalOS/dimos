@@ -1,6 +1,7 @@
-<details><summary>Python</summary>
+<details>
+<summary>Python</summary>
 
-```python fold session=mem output=none
+```python title="Python" fold session=mem output=none
 import pickle
 from dimos.mapping.pointclouds.occupancy import general_occupancy, simple_occupancy, height_cost_occupancy
 from dimos.mapping.occupancy.inflation import simple_inflate
@@ -16,15 +17,14 @@ from dimos.memory2.vis.space.elements import Point
 
 we init our recording, investigate available streams
 
-```python session=mem
+```python title="Python" session=mem
 store = SqliteStore(path=get_data("go2_bigoffice.db"))
 
 for name, stream in store.streams.items():
    print(stream.summary())
 ```
 
-<!--Result:-->
-```
+```results
 Stream("color_image"): 4164 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s)
 Stream("color_image_embedded"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
 Stream("lidar"): 2251 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.3s)
@@ -33,7 +33,7 @@ Stream("odom"): 5465 items, 2025-12-26 11:09:08 — 2025-12-26 11:14:00 (292.5s)
 
 Any stream is drawable
 
-```python session=mem output=none
+```python title="Python" session=mem output=none
 global_map = pickle.loads(get_data("unitree_go2_bigoffice_map.pickle").read_bytes())
 
 drawing = Space()
@@ -44,15 +44,13 @@ drawing.add(store.streams.color_image)
 drawing.to_svg("assets/color_image.svg")
 ```
 
-
-
 our drawing system applies turbo color scheme to timestamps by default
 
 ![output](assets/color_image.svg)
 
 we can create new streams by querying existing streams, and we can save, further transform or draw those
 
-```python session=mem output=none
+```python title="Python" session=mem output=none
 
 drawing = Space()
 drawing.add(global_map)
@@ -71,7 +69,7 @@ drawing.to_svg("assets/speed.svg")
 
 we can do all kinds of things with this, for example map out room lighting
 
-```python session=mem output=none
+```python title="Python" session=mem output=none
 drawing = Space()
 drawing.add(global_map)
 
@@ -91,7 +89,7 @@ drawing.to_svg("assets/brightness.svg")
 
 So knowing above, we can create embeddings for the full stream,
 
-```python session=mem skip
+```python title="Python" session=mem skip
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.memory2.transform import QualityWindow
@@ -121,7 +119,7 @@ for obs in pipeline:
 
 let's query it!
 
-```python session=mem output=none
+```python title="Python" session=mem output=none
 from dimos.models.embedding.clip import CLIPModel
 
 drawing = Space()
@@ -138,7 +136,7 @@ drawing.to_svg("assets/embedding.svg")
 
 We don't really have to deal with the whole global map actually, let's get top 10 embeddings, and render only lidar around those.
 
-```python session=mem output=none
+```python title="Python" session=mem output=none
 from dimos.models.embedding.clip import CLIPModel
 from dimos.mapping.voxels import VoxelMapTransformer
 drawing = Space()
@@ -160,17 +158,17 @@ drawing.add(matches)
 drawing.to_svg("assets/embedding_focused.svg")
 ```
 
-<!--Result:-->
-```
+```results
 Stream("color_image_embedded") | vector_search(k=30)
-08:19:54.129 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
+13:15:15.190 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
 ```
 
 ![output](assets/embedding_focused.svg)
 
-<details><summary>Python</summary>
+<details>
+<summary>Python</summary>
 
-```python fold session=mem
+```python title="Python" fold session=mem
 import matplotlib
 import matplotlib.pyplot as plt
 import math
@@ -203,7 +201,7 @@ def plot_mosaic(frames, path, cols=5):
 
 let's view those images
 
-```python session=mem
+```python title="Python" session=mem
 plot_mosaic(matches.map(lambda obs: obs.data).to_list(), "assets/grid.png")
 ```
 

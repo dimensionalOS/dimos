@@ -17,9 +17,6 @@
 
 from typing import Any
 
-from dimos_lcm.foxglove_msgs import SceneUpdate
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.zed import compat as zed
@@ -72,12 +69,6 @@ unitree_g1_detection = (
             ("detections", Detection3DModule): LCMTransport(
                 "/detector3d/detections", Detection2DArray
             ),
-            ("annotations", Detection3DModule): LCMTransport(
-                "/detector3d/annotations", ImageAnnotations
-            ),
-            ("scene_update", Detection3DModule): LCMTransport(
-                "/detector3d/scene_update", SceneUpdate
-            ),
             ("detected_pointcloud_0", Detection3DModule): LCMTransport(
                 "/detector3d/pointcloud/0", PointCloud2
             ),
@@ -94,10 +85,6 @@ unitree_g1_detection = (
             ("detections", ObjectDBModule): LCMTransport(
                 "/detectorDB/detections", Detection2DArray
             ),
-            ("annotations", ObjectDBModule): LCMTransport(
-                "/detectorDB/annotations", ImageAnnotations
-            ),
-            ("scene_update", ObjectDBModule): LCMTransport("/detectorDB/scene_update", SceneUpdate),
             ("detected_pointcloud_0", ObjectDBModule): LCMTransport(
                 "/detectorDB/pointcloud/0", PointCloud2
             ),
