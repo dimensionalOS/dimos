@@ -33,9 +33,13 @@ recorded 1080p; equidistant/fisheye distortion; base->cam extrinsic chain).
 from __future__ import annotations
 
 from itertools import combinations
+import json
+import os
 import struct
 
 import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 # --- current settings -------------------------------------------------------
 TAG_SIZE_M = 0.10
@@ -129,21 +133,24 @@ def quat_to_R(x, y, z, w):
 
 
 def euler_deg_to_R(rpy_deg):
-    """ZYX (yaw·pitch·roll) from mat_out's SO3ToEuler (degrees, pitch=asin(2(wy-zx)))."""
-    r, p, y = np.radians(rpy_deg)
+    """ZYX (yaw·pitch·roll) from mat_out's SO3ToEuler (degrees, pitch=asin(2(wy-zx))).
+    Vectorized: rpy_deg (3,) -> (3,3); (N,3) -> (N,3,3)."""
+    a = np.radians(np.atleast_2d(np.asarray(rpy_deg, float)))
+    r, p, y = a[:, 0], a[:, 1], a[:, 2]
     cr, sr, cp, sp, cy, sy = np.cos(r), np.sin(r), np.cos(p), np.sin(p), np.cos(y), np.sin(y)
-    Rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
-    Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
-    Rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
-    return Rz @ Ry @ Rx
+    R = np.empty((len(r), 3, 3))
+    R[:, 0, 0] = cy * cp; R[:, 0, 1] = cy * sp * sr - sy * cr; R[:, 0, 2] = cy * sp * cr + sy * sr
+    R[:, 1, 0] = sy * cp; R[:, 1, 1] = sy * sp * sr + cy * cr; R[:, 1, 2] = sy * sp * cr - cy * sr
+    R[:, 2, 0] = -sp;     R[:, 2, 1] = cp * sr;                R[:, 2, 2] = cp * cr
+    return R[0] if np.ndim(rpy_deg) == 1 else R
 
 
 # --- trajectory loaders -----------------------------------------------------
 def load_mat_out(path):
     """Point-LIO Log/mat_out.txt -> (t_rel[N], pos[N,3], R[N,3,3]). Harness output."""
-    M = np.loadtxt(path)
+    M = np.loadtxt(path, usecols=(0, 1, 2, 3, 4, 5, 6))  # t, euler(rpy deg), pos(xyz) — skip the rest
     t, eul, pos = M[:, 0], M[:, 1:4], M[:, 4:7]
-    R = np.array([euler_deg_to_R(e) for e in eul])
+    R = euler_deg_to_R(eul)  # vectorized -> (N,3,3)
     return t, pos, R
 
 
@@ -203,12 +210,23 @@ def _path_len(P):
     return float(np.sum(np.linalg.norm(np.diff(P, axis=0), axis=1)))
 
 
-def _dataset_z_travel(mcap_path):
+def _dataset_key(mcap_path):
     s = str(mcap_path)
-    for k, v in Z_TRAVEL_M.items():
+    for k in Z_TRAVEL_M:
         if k in s:
-            return v
+            return k
     return None
+
+
+def _dataset_z_travel(mcap_path):
+    k = _dataset_key(mcap_path)
+    return Z_TRAVEL_M.get(k) if k else None
+
+
+def _predetect_path(mcap_path):
+    """Cache produced by predetect.py: {first_lidar_pub_ns, gt_xy_path_m, detections}."""
+    k = _dataset_key(mcap_path)
+    return os.path.join(HERE, "predetect", k + ".json") if k else None
 
 
 # --- C2: floor flatness/level ----------------------------------------------
@@ -264,7 +282,10 @@ def c3_z_ramp(t, z, ann):
 
 
 # --- C1: AprilTag 3D spread -------------------------------------------------
-def c1_tag_spread(t_rel, pos, R, first_lidar_pub_ns, mcap_path):
+def _detect_tags(mcap_path):
+    """EXPENSIVE, trajectory-independent: read the video, detect 36h11, solvePnP ->
+    list of (t_ns, tag_id, tvec_cam[3]) (tag centre in the camera-optical frame).
+    Used by predetect.py to build the cache; also the no-cache fallback."""
     import cv2
     from mcap.reader import make_reader
 
@@ -273,33 +294,44 @@ def c1_tag_spread(t_rel, pos, R, first_lidar_pub_ns, mcap_path):
         cv2.aruco.DetectorParameters(),
     )
     s = TAG_SIZE_M
-    objp = np.array(
-        [[-s / 2, s / 2, 0], [s / 2, s / 2, 0], [s / 2, -s / 2, 0], [-s / 2, -s / 2, 0]]
-    )
-    traj_abs = first_lidar_pub_ns + (
-        t_rel * 1e9
-    )  # video matched on the same clock (≈; latency «drift)
-    dets = {}  # id -> list of (abs_ns, world_xyz)
+    objp = np.array([[-s / 2, s / 2, 0], [s / 2, s / 2, 0], [s / 2, -s / 2, 0], [-s / 2, -s / 2, 0]])
+    out = []
     with open(mcap_path, "rb") as f:
         for _, _ch, m in make_reader(f).iter_messages(topics=["rt/frontvideo"]):
-            jpeg = _decode_jpeg_bytes(m.data)
-            img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_GRAYSCALE)
+            img = cv2.imdecode(
+                np.frombuffer(_decode_jpeg_bytes(m.data), np.uint8), cv2.IMREAD_GRAYSCALE
+            )
             corners, ids, _ = det.detectMarkers(img)
             if ids is None:
                 continue
-            i = int(np.clip(np.searchsorted(traj_abs, m.publish_time), 0, len(traj_abs) - 1))
             for cn, idv in zip(corners, ids.flatten(), strict=False):
                 und = cv2.fisheye.undistortPoints(cn.reshape(-1, 1, 2).astype(np.float64), K, DIST)
-                ok, rvec, tvec = cv2.solvePnP(
+                ok, _rvec, tvec = cv2.solvePnP(
                     objp, und, np.eye(3), None, flags=cv2.SOLVEPNP_IPPE_SQUARE
                 )
-                if not ok:
-                    continue
-                p_base = R_OPT2LINK @ tvec.ravel() + T_LINK2BASE
-                world = R[i] @ p_base + pos[i]
-                dets.setdefault(int(idv), []).append((m.publish_time, world))
+                if ok:
+                    out.append((int(m.publish_time), int(idv), [float(x) for x in tvec.ravel()]))
+    return out
+
+
+def c1_tag_spread(t_rel, pos, R, first_lidar_pub_ns, mcap_path, dets=None):
+    """Project pre-detected tag poses (camera frame) to world via the INPUT trajectory,
+    group same-id detections into per-visit tracks (>15 s gap), measure their spread.
+    `dets` = [(t_ns, id, tvec_cam)]; loaded from the predetect cache when None (no mcap/cv2)."""
+    if dets is None:
+        cache = _predetect_path(mcap_path)
+        if cache and os.path.exists(cache):
+            dets = [(d["t_ns"], d["id"], d["tvec"]) for d in json.load(open(cache))["detections"]]
+        else:
+            dets = _detect_tags(mcap_path)
+    traj_abs = first_lidar_pub_ns + (t_rel * 1e9)  # video on the same clock (≈; latency « drift)
+    byid = {}  # id -> list of (t_ns, world_xyz)
+    for t_ns, idv, tvec in dets:
+        i = int(np.clip(np.searchsorted(traj_abs, t_ns), 0, len(traj_abs) - 1))
+        p_base = R_OPT2LINK @ np.asarray(tvec) + T_LINK2BASE
+        byid.setdefault(int(idv), []).append((t_ns, R[i] @ p_base + pos[i]))
     per, spreads = {}, []
-    for idv, lst in dets.items():
+    for idv, lst in byid.items():
         lst.sort()
         ts = np.array([d[0] for d in lst])
         W = np.array([d[1] for d in lst])
@@ -374,13 +406,28 @@ if __name__ == "__main__":
     ap.add_argument("--ann", required=True, help="annotations.json")
     ap.add_argument("--traj", help="mat_out.txt to score; omitted -> use robot_odom from --mcap")
     ap.add_argument("--no-tags", action="store_true")
+    ap.add_argument(
+        "--allow-fallback",
+        action="store_true",
+        help="allow the slow no-cache path (read mcap + detect). Default off: require a "
+        "predetect cache; if absent, print empty JSON and exit (run predetect.py first).",
+    )
     a = ap.parse_args()
+    cache = _predetect_path(a.mcap)
+    cdat = json.load(open(cache)) if (cache and os.path.exists(cache)) else None
+    if cdat is None and not a.allow_fallback:
+        print(json.dumps({}))  # no predetect cache and fallback disabled — nothing to score
+        raise SystemExit(0)
     ann = json.load(open(a.ann))
-    rt_t, rt_pos, rt_R, flp = load_robot_odom(a.mcap)  # gt horizontal reference + lidar clock
-    gt_xy_path = _path_len(rt_pos[:, :2])
     if a.traj:
         t, pos, R = load_mat_out(a.traj)
-    else:
-        t, pos, R = rt_t, rt_pos, rt_R
+        if cdat:  # FAST path: constants from the predetect cache; no robot_odom mcap pass
+            flp, gt_xy_path = cdat["first_lidar_pub_ns"], cdat["gt_xy_path_m"]
+        else:  # un-preprocessed fallback
+            _, rt_pos, _, flp = load_robot_odom(a.mcap)
+            gt_xy_path = _path_len(rt_pos[:, :2])
+    else:  # scoring robot_odom itself (baseline) — needs the odom pass
+        t, pos, R, flp = load_robot_odom(a.mcap)
+        gt_xy_path = _path_len(pos[:, :2])
     res = score_3d(t, pos, R, flp, a.mcap, ann, gt_xy_path, with_tags=not a.no_tags)
     print(json.dumps(res, indent=2))
