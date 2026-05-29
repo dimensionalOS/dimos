@@ -12,31 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections.abc import Callable, Iterable
 import math
 from pathlib import Path
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import rerun as rr
 import rerun.blueprint as rrb
 import typer
 
-from dimos.mapping.loop_closure.pgo import PGO, PoseGraph
-from dimos.mapping.voxels import VoxelMapTransformer
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.stream import Stream
-from dimos.memory2.transform import QualityWindow, SpeedLimit
-from dimos.memory2.type.observation import Observation
-from dimos.memory2.vis.color import Color
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.fiducial.marker_transformer import DetectMarkers
-from dimos.robot.unitree.go2.connection import _camera_info_static
-from dimos.utils.data import resolve_named_path
-from dimos.visualization.rerun.init import rerun_init
+# Heavy dimos imports (mapping/memory2 → torch, transformers, open3d, sklearn) are
+# deferred into the function bodies below so that `dimos --help` — which imports this
+# module just to register the `map` subcommand — stays fast. See test_cli_startup.py.
+if TYPE_CHECKING:
+    from dimos.mapping.loop_closure.pgo import PoseGraph
+    from dimos.memory2.stream import Stream
+    from dimos.memory2.type.observation import Observation
+    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 PATH_THICKNESS = 0.01
 # Pin pattern (from dimos/memory2/vis/space/rerun.py): thin vertical line
@@ -108,6 +104,7 @@ def _accumulate(
     Returns the final ``PointCloud2`` (or ``None`` if the input was empty).
     Disposal of the underlying ``VoxelGrid`` is handled by ``VoxelMapTransformer``.
     """
+    from dimos.mapping.voxels import VoxelMapTransformer
 
     def prepared() -> Iterable[Observation[PointCloud2]]:
         for obs in obs_iter:
@@ -228,6 +225,18 @@ def main(
     ),
 ) -> None:
     """Rebuild a voxel map from a recorded SQLite dataset and view it in rerun."""
+    from dimos.mapping.loop_closure.pgo import PGO
+    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory2.transform import QualityWindow, SpeedLimit
+    from dimos.memory2.vis.color import Color
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.perception.fiducial.marker_transformer import DetectMarkers
+    from dimos.robot.unitree.go2.connection import _camera_info_static
+    from dimos.utils.data import resolve_named_path
+    from dimos.visualization.rerun.init import rerun_init
+
     db_path = resolve_named_path(dataset, ".db")
     if export or full_pgo:
         pgo = True
