@@ -3,7 +3,7 @@
 This is the first demo-oriented module plan for the conference room seat-finding
 hackathon idea. The goal is to keep each boundary testable without a Go2 while
 the default Go2 path uses real browser/Whisper voice input, camera-backed VLM
-seat/person recognition, robot navigation, and phone/web feedback.
+seat/person recognition (YOLO fast path, VLM fallback), robot navigation, and phone/web feedback.
 
 ## Demo-critical flow
 
@@ -57,12 +57,12 @@ Direct skill arguments:
 Provider-backed scene:
 
 - `SeatObservationProviderSpec.get_seat_scene()`
-- `CameraSeatObservationProvider` subscribes to `color_image` and `odom`, asks the VLM for `chair` and `person` detections separately, and converts image-space detections to an approximate map-frame scene using the latest robot pose
+- `CameraSeatObservationProvider` subscribes to `color_image` and `odom`, runs YOLO fast detection for `chair` and `person` by default, and converts image-space detections to an approximate map-frame scene using the latest robot pose
 - `camera_seat_provider_status()` reports camera frame, odometry, input freshness, VLM credential, runtime override, and fallback configuration readiness without running VLM detection
 - `CameraSeatObservationProvider.set_seat_scene()` remains available as explicit runtime calibration/fallback when camera/VLM detection is unavailable
 - `SyntheticSeatObservationProvider` remains for repeatable Go2-free tests and demos
 - `unitree-go2-seat-guide` and `unitree-go2-seat-guide-agentic` include `CameraSeatObservationProvider` so the default SeatGuide bring-up path uses real camera recognition
-- the default `moondream` VLM path uses the local Moondream2 model cache; if `qwen` is selected, missing `ALIBABA_API_KEY` makes SeatGuide report `camera_detection_error` instead of silently treating missing credentials as a real no-seat observation
+- the default runtime path uses YOLO `yolo11n.pt` as the fast chair/person detector. `moondream` and `qwen` remain VLM fallback options when `vlm_fallback_enabled` is turned on; if `qwen` is selected, missing `ALIBABA_API_KEY` makes SeatGuide report `camera_detection_error` instead of silently treating missing credentials as a real no-seat observation
 
 Voice/text intake:
 
@@ -176,7 +176,7 @@ before any live motion:
 | Track | Owner checks | Passing evidence | No-go action |
 | --- | --- | --- | --- |
 | Voice intake | Browser page opens; microphone permission granted; Chinese preview phrase reaches WebInput. | `web_input_status` shows `web=started`, `thread=running`, `seat_route=seat_guide_direct`, `responses=connected`, `voice_upload=connected`, `stt=connected`, `human_transport=connected`; acceptance log shows `WebInput received text` for `预检帮我找一个空位`. | Fix browser/microphone/WebInput before touching navigation. |
-| Perception | Go2 camera frame, odometry, and the configured VLM detector are live; no fallback scene is active. | `camera_seat_provider_status` shows `image=<width>x<height>`, `image_fresh=true`, `odom=(...)`, `odom_fresh=true`, `detection_model=moondream`, `credential=present`, `override=inactive`, `configured_fallback_seats=0`, `configured_fallback_people=0`; `seat_guide_status` starts with `SeatGuide scene source=camera:`. | Turn robot toward the table, verify the local Moondream2 cache or selected VLM credential, restore stale camera/odom streams, or explicitly mark fallback calibration as non-acceptance. |
+| Perception | Go2 camera frame, odometry, and the YOLO fast detector are live; no fallback scene is active. | `camera_seat_provider_status` shows `image=<width>x<height>`, `image_fresh=true`, `odom=(...)`, `odom_fresh=true`, `fast_detector=yolo`, `override=inactive`, `configured_fallback_seats=0`, `configured_fallback_people=0`; `seat_guide_status` starts with `SeatGuide scene source=camera:`. | Turn robot toward the table, restore stale camera/odom streams, or explicitly mark fallback calibration as non-acceptance. |
 | Planner | Empty/occupied counts and selected goal make sense before motion. | `seat_guide_preflight`, `seat_guide_readiness_report`, and `preview_empty_seat_goal` report `empty=N occupied=N`, `selected=...`, and `goal=(...)` without sending a goal. | Adjust camera view or chair/person layout before live voice. |
 | Navigation | Robot is idle before SeatGuide sends the live goal and reports completion after it. | Preflight has `navigation=IDLE`; after live voice, `seat_guide_navigation_status` reports a new `goal_sequence` and `goal_reached=true`. | Wait/cancel existing navigation or inspect navigation logs; do not rerun live voice until idle. |
 | Phone feedback | The web response stream is visible, and a mounted phone can play messages if audible feedback is required. | `web_input_status` shows `responses=connected`; optional phone relay checks can use `phone_speaker_test`. | Keep the phone speaker page open on the mounted phone; do not depend on Go2 body audio. |
@@ -239,9 +239,7 @@ default `gpt-4o` model to `openai/gpt-4o` on OpenRouter. If neither
 `OPENROUTER_API_KEY` nor `OPENAI_API_KEY` is set, `McpClient` disables the LLM
 agent but the direct SeatGuide voice route and MCP tools still start.
 
-The default camera detector uses the local Moondream2 VLM. Make sure the
-`vikhyatk/moondream2` Hugging Face snapshot is cached before hardware bring-up,
-or configure a different supported `detection_model`. If `qwen` is selected,
+The default camera detector uses YOLO `yolo11n.pt` for low-latency chair/person detection. Moondream and Qwen are VLM fallback options only when `vlm_fallback_enabled` is enabled. If `qwen` is selected,
 set `ALIBABA_API_KEY`; otherwise `camera_seat_provider_status` reports
 `credential=missing` and `seat_guide_status` reports
 `source=camera_detection_error`. Use logs or `set_seat_scene` only as an

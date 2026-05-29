@@ -7,7 +7,7 @@ Goal: let a user tell the Go2, through browser microphone or typed text, "find m
 | Module | Responsibility | Input | Output | Can run in parallel | Current verification |
 | --- | --- | --- | --- | --- | --- |
 | 1. Basic voice/text control entry | Accept browser microphone, browser text, or normal agent text; first recognize basic movement/posture commands, then recognize seat-finding intent | WebInput `/submit_query`, `/upload_audio`, Whisper text, agent text | Normal agent tool call, or SeatGuide preview/live request | Yes | MCP tool acceptance, WebInput unit tests, HTTP TestClient, hardware acceptance script |
-| 2. Scene perception | Use Go2 RGB image + odom + Moondream2/VLM to detect chairs and people, then project them into map coordinates | `color_image`, `odom`, local Moondream2 model cache | `SeatSceneObservation` | Yes | Camera provider unit tests, `camera_seat_provider_status` |
+| 2. Scene perception | Use Go2 RGB image + odom + YOLO fast detection for chairs and people, with optional VLM fallback, then project them into map coordinates | `color_image`, `odom`, YOLO `yolo11n.pt` | `SeatSceneObservation` | Yes | Camera provider unit tests, `camera_seat_provider_status` |
 | 3. Empty-seat planning | Decide which chairs are occupied, select the nearest empty seat, and generate the guide pose for the robot | Chair poses, person positions, robot position | Selected chair and navigation goal pose | Yes | Planner unit tests, `preview_empty_seat_goal` |
 | 4. Navigation execution | Send the target pose to the existing navigation module and read completion status | SeatGuide goal pose | `set_goal()`, `goal_reached` | Partially | Fake navigator unit tests, `seat_guide_navigation_status` |
 | 5. Phone/web feedback | Tell the user which seat was found, whether to follow, or why the request failed | SeatGuide result text | Web response text, phone speaker relay | Yes | `web_input_status`, optional `phone_speaker_test` |
@@ -255,7 +255,7 @@ bin/demo_seat_guide_hardware_bringup --robot-ip 192.168.123.161
 
 The script automatically:
 
-1. Checks the local Moondream2 model cache; if no agent key is set, normal agent chat is disabled but the direct SeatGuide route still works.
+1. Checks the YOLO fast detection path; if no agent key is set, normal agent chat is disabled but the direct SeatGuide route still works.
 2. Starts `unitree-go2-seat-guide-agentic`.
 3. Runs `bin/demo_seat_guide_smoke` for no-motion checks.
 4. Runs `bin/demo_seat_guide_hardware_acceptance` for real browser voice input and navigation acceptance.
@@ -285,7 +285,7 @@ Pass criteria:
 | STT is not working | `web_input_status` | Whisper/faster-whisper initialization failed | Inspect DimOS logs and confirm dependencies |
 | No image | `camera_seat_provider_status` | Go2 camera/replay stream did not arrive | Turn toward the table, confirm replay/SHM stream |
 | Odom missing or stale | `camera_seat_provider_status` | Localization did not start or stale odom | Wait for odom, inspect Go2/replay stack |
-| VLM failed | `seat_guide_status` | Missing local Moondream2 model, model load failure, or missing remote VLM key | Download the model or re-export the matching key, then restart the stack |
+| YOLO/VLM failed | `seat_guide_status` | YOLO model load failure, or missing remote VLM key after enabling VLM fallback | Confirm `yolo11n.pt` can load; if using Qwen fallback, re-export the matching key, then restart the stack |
 | No chairs found | `seat_guide_status` | Camera not facing the table, lighting or recognition issue | Adjust robot view; use fallback only for debugging |
 | Navigation busy | `seat_guide_preflight` | `navigation=FOLLOWING_PATH` or `RECOVERY` | Wait for the task to finish or stop navigation before retrying |
 | Phone feedback unavailable | `web_input_status` / `phone_speaker_test` | Phone has not opened the relay page or the relay is unreachable | First confirm the web response stream; if sound is needed, open a reachable relay page on the phone |

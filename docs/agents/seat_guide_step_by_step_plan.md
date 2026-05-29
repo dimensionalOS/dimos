@@ -7,7 +7,7 @@
 | 模块 | 负责什么 | 输入 | 输出 | 是否可并行 | 当前验证方式 |
 | --- | --- | --- | --- | --- | --- |
 | 1. 基础语音/文字控制入口 | 接收浏览器麦克风、浏览器文字、普通 agent text，先识别普通运动/姿态命令，再识别找座位请求 | WebInput `/submit_query`、`/upload_audio`、Whisper 文本、agent text | 普通 agent tool call，或 SeatGuide preview/live 请求 | 是 | MCP tool 验收、WebInput 单测、HTTP TestClient、硬件验收脚本 |
-| 2. 场景感知 | 用 Go2 RGB 图像 + odom + Moondream2/VLM 识别椅子和人，并投影成 map 坐标 | `color_image`、`odom`、本地 Moondream2 模型缓存 | `SeatSceneObservation` | 是 | Camera provider 单测、`camera_seat_provider_status` |
+| 2. 场景感知 | 用 Go2 RGB 图像 + odom + YOLO 快速识别椅子和人，必要时用 VLM fallback，并投影成 map 坐标 | `color_image`、`odom`、YOLO `yolo11n.pt` | `SeatSceneObservation` | 是 | Camera provider 单测、`camera_seat_provider_status` |
 | 3. 空位规划 | 判断哪些椅子被占用，选择最近空位，生成机器人应到达的引导点 | 椅子位姿、人员位置、机器人位置 | 选中椅子、导航目标 pose | 是 | Planner 单测、`preview_empty_seat_goal` |
 | 4. 导航执行 | 把目标 pose 发给已有导航模块，并读取完成状态 | SeatGuide goal pose | `set_goal()`、`goal_reached` | 部分并行 | fake navigator 单测、`seat_guide_navigation_status` |
 | 5. 手机/网页反馈 | 告诉用户找到哪个位置、是否需要跟随、失败原因 | SeatGuide 结果文本 | web response text、手机扬声器 relay | 是 | `web_input_status`、可选 `phone_speaker_test` |
@@ -255,7 +255,7 @@ bin/demo_seat_guide_hardware_bringup --robot-ip 192.168.123.161
 
 这个脚本会自动执行：
 
-1. 检查本地 Moondream2 模型缓存；如果没有 agent key，普通 agent chat 会禁用，但 SeatGuide 直连路径仍然可用。
+1. 检查 YOLO 快速检测路径；如果没有 agent key，普通 agent chat 会禁用，但 SeatGuide 直连路径仍然可用。
 2. 启动 `unitree-go2-seat-guide-agentic`。
 3. 跑 `bin/demo_seat_guide_smoke` 做 no-motion 检查。
 4. 跑 `bin/demo_seat_guide_hardware_acceptance` 做真实浏览器语音和导航验收。
@@ -285,7 +285,7 @@ bin/demo_seat_guide_hardware_bringup --robot-ip 192.168.123.161
 | STT 不工作 | `web_input_status` | Whisper/faster-whisper 初始化失败 | 看 DimOS log，确认依赖安装 |
 | 没有图像 | `camera_seat_provider_status` | Go2 camera/replay stream 没到 | 转向桌子，确认 replay/SHM 流 |
 | odom 缺失或过期 | `camera_seat_provider_status` | localization 没启动或 stale | 等待 odom，检查 Go2/replay stack |
-| VLM 失败 | `seat_guide_status` | 本地 Moondream2 模型缺失、模型加载失败，或远程 VLM key 缺失 | 拉取模型或重新 export 对应 key，并重启 stack |
+| YOLO/VLM 失败 | `seat_guide_status` | YOLO 模型加载失败，或启用 VLM fallback 后远程 VLM key 缺失 | 确认 `yolo11n.pt` 可加载；如果使用 Qwen fallback，重新 export 对应 key，并重启 stack |
 | 找不到椅子 | `seat_guide_status` | 摄像头没朝向桌子、光照/识别失败 | 调整机器人视角；只调试时可 fallback |
 | 导航忙 | `seat_guide_preflight` | `navigation=FOLLOWING_PATH` 或 `RECOVERY` | 等任务结束或停止导航后重跑 |
 | 手机反馈不可用 | `web_input_status` / `phone_speaker_test` | 手机没有打开 relay 页面或网络不可达 | 先确认 web response stream；需要声音时让手机访问可用的 relay 页面 |
