@@ -254,7 +254,8 @@ jobs:
     container: ${{ matrix.container }}
 
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
           clean: false
           # If we ever allow external PRs on custom runner, persisting credentials
@@ -336,7 +337,8 @@ jobs:
       id-token: write  # For codecov-action's OIDC upload
 
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout
+        uses: actions/checkout@v6
         with:
           clean: false
           # If we ever allow external PRs on custom runner, persisting credentials
