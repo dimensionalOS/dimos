@@ -48,6 +48,10 @@ package-lock.json
 dist/
 build/
 
+# Rust build artifacts
+**/target/
+**/*.rs.bk
+
 # Ignore data directory but keep .lfs subdirectory
 data/*
 !data/.lfs/
