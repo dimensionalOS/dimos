@@ -38,6 +38,7 @@ from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.mapping.loop_closure.utils.summary import main as _map_summary_main
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 from dimos.utils.cli.map import main as _map_main
 from dimos.utils.logging_config import setup_logger
@@ -673,7 +674,10 @@ def send(
     topic_send(topic, message_expr)
 
 
-main.command(name="map")(_map_main)
+map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
+main.add_typer(map_app, name="map")
+map_app.command("reconstruct")(_map_main)
+map_app.command("summary")(_map_summary_main)
 
 
 @main.command()
