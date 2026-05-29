@@ -86,3 +86,6 @@ htmlcov/
 
 # Memory2 autorecord
 recording*.db
+
+# Packet captures (FastLio2 / Mid-360 raw UDP recordings, etc.)
+*.pcap

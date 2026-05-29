@@ -33,11 +33,15 @@ Convert the recording to a relocalization premap (`.pc2.lcm`):
 
 ```bash
 # default name from step 1:
-dimos export-premap recording_go2
+dimos map recording_go2 --export
 
 # renamed:
-dimos export-premap {DB_NAME}
+dimos map {DB_NAME} --export
 ```
+
+`--export` implies `--pgo` (runs pose graph optimization) and writes
+`./{DB_NAME}.pc2.lcm` to the current working directory. Add `--no-gui`
+to skip the rerun viewer for headless runs.
 
 `{DB_NAME}` can be a file name (with or without extension), or a relative / absolute path.
 
@@ -49,28 +53,20 @@ When a bare file name is given, the tool searches in:
 Examples:
 
 ```bash
-dimos export-premap go2_hongkong_office
-dimos export-premap ./go2_hongkong_office.db
-dimos export-premap data/go2_hongkong_office.db
-dimos export-premap /abs/path/to/scan.db
-```
-
-Output defaults to `data/{basename}_twopass_map.pc2.lcm`. Pass `-o
-<path>` to save elsewhere. Relative paths resolve against the current
-working directory; parent directories are created on demand.
-
-```bash
-dimos export-premap recording_go2 -o /tmp/scan.pc2.lcm
-dimos export-premap recording_go2 -o ./recording_go2_twopass_map.pc2.lcm
+dimos map go2_hongkong_office --export
+dimos map ./go2_hongkong_office.db --export
+dimos map data/go2_hongkong_office.db --export
+dimos map /abs/path/to/scan.db --export
 ```
 
 Sample log:
 
 ```
-computing twopass map from /Users/dimos/Desktop/dimos-reloc/recording_go2.db (voxel_size=0.05)...
+running PGO twopass map...
   Pass 1: 908 frames, 1 keyframes
 12:54:32.025[inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CPU:0
-wrote /Users/dimos/Desktop/dimos-reloc/data/recording_go2_twopass_map.pc2.lcm
+exporting PGO twopass map to /Users/dimos/Desktop/dimos-reloc/recording_go2.pc2.lcm...
+wrote /Users/dimos/Desktop/dimos-reloc/recording_go2.pc2.lcm
 ```
 
 ## 3. Relocalize against replay
@@ -81,16 +77,16 @@ standard `unitree-go2` stack plus `RelocalizationModule`:
 
 ```bash
 dimos --replay --replay-db {DB_NAME} run unitree-go2-relocalization \
-  -o relocalizationmodule.map_file={DB_NAME}_twopass_map
+  -o relocalizationmodule.map_file={DB_NAME}
 ```
 
-`{DB_NAME}_twopass_map` is resolved the same way as in section 2: cwd
+`{DB_NAME}` is resolved the same way as in section 2: cwd
 first, then `data/`.
 
 Sample log:
 
 ```
-12:58:51.469[inf][imos/mapping/relocalization.py] Relocalization module started: map_file='recording_go2_twopass_map'  loaded_map.frame_id='map'  placeholder TF 'world' -> 'map'  z_offset=20.0
+12:58:51.469[inf][imos/mapping/relocalization.py] Relocalization module started: map_file='recording_go2'  loaded_map.frame_id='map'  placeholder TF 'world' -> 'map'  z_offset=20.0
 12:58:56.528[war][imos/mapping/relocalization.py] relocalize skipped: n_pts=14198 < MIN_LOCAL_POINTS=20000
 12:59:04.777[war][imos/mapping/relocalization.py] relocalize rejected: fitness=0.466 < threshold=0.6 time_cost=5.3s n_pts=20231
 12:59:14.880[war][imos/mapping/relocalization.py] relocalize rejected: fitness=0.433 < threshold=0.6 time_cost=8.1s n_pts=37770
@@ -129,5 +125,5 @@ recorded `.db`:
 
 ```bash
 dimos --robot-ip {YOUR_ROBOT_IP} run unitree-go2-relocalization \
-  -o relocalizationmodule.map_file={DB_NAME}_twopass_map
+  -o relocalizationmodule.map_file={DB_NAME}
 ```
