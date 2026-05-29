@@ -21,12 +21,10 @@ quality-gated images, optional motion gating, marker fan-out, then one
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import time
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, cast
 
 from pydantic import Field
-from reactivex.abc import DisposableBase
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -47,16 +45,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-@runtime_checkable
-class CameraInfoSubscriptionSource(Protocol):
-    """Stream-like source that can push live CameraInfo updates into config."""
-
-    def subscribe(
-        self,
-        callback: Callable[[CameraInfo], Any],
-    ) -> Callable[[], None] | DisposableBase: ...
-
-
 class MarkerDetectionStreamModuleConfig(ModuleConfig):
     """Configuration for :class:`MarkerDetectionStreamModule`."""
 
@@ -71,8 +59,7 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     speed_limit_max_mps: float = Field(0.05, gt=0.0)
     speed_limit_max_dps: float = Field(15.0, gt=0.0)
     tf_lookup_tolerance: float = Field(0.5, ge=0.0)
-    camera_info: CameraInfo | None = None
-    camera_info_source: CameraInfoSubscriptionSource | None = None
+    camera_info: CameraInfo | None
 
 
 class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
@@ -103,7 +90,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             "Stream[Detection3DMarker | None]",
             result.transform(
                 DetectMarkers(
-                    camera_info=self._latest_camera_info,
+                    camera_info=self.config.camera_info,
                     marker_length_m=self.config.marker_length_m,
                     aruco_dictionary=self.config.aruco_dictionary,
                     world_frame=self.config.world_frame,
@@ -113,9 +100,6 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             ),
         )
         return markers.transform(MarkersPerFrame(frame_id=self.config.world_frame))
-
-    def _latest_camera_info(self) -> CameraInfo | None:
-        return self.config.camera_info
 
     def _maybe_warn_distortion(self, camera_info: CameraInfo) -> None:
         model = (camera_info.distortion_model or "").strip().lower()
@@ -182,15 +166,6 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
 
         if self.config.camera_info is not None:
             self._maybe_warn_distortion(self.config.camera_info)
-
-        def on_camera_info(msg: CameraInfo) -> None:
-            self.config.camera_info = msg
-            self._maybe_warn_distortion(msg)
-
-        source = self.config.camera_info_source
-        if source is not None:
-            unsub_info = source.subscribe(on_camera_info)
-            self.register_disposable(Disposable(unsub_info) if callable(unsub_info) else unsub_info)
 
         unsub_image = self.color_image.subscribe(
             lambda image: self._append_image_with_pose(stream, image)
