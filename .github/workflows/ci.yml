@@ -245,7 +245,10 @@ jobs:
             container: null  # run on host — `container:` is Linux-only
             markers: "self_hosted"
             experimental: true
-    runs-on: [self-hosted, ${{ matrix.os }}, base]
+    runs-on:
+      - self-hosted
+      - ${{ matrix.os }}
+      - base
     continue-on-error: ${{ matrix.experimental }}
     permissions:
       contents: read  # For checkout
