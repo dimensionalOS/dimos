@@ -238,10 +238,13 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
     for i, obs in enumerate(observations):
         path = f"scene/observations/{i}"
         data = obs.data
+        ps = obs.pose_stamped
+        if ps is None:
+            continue
         img = _as_image(data)
         if img is not None:
             # Apply base→optical extrinsics for camera frustum rendering
-            world_T_optical = Transform.from_pose("world", obs.pose_stamped) + _BASE_TO_OPTICAL
+            world_T_optical = Transform.from_pose("world", ps) + _BASE_TO_OPTICAL
             rr.log(path, world_T_optical.to_pose().to_rerun(), static=True)
             h, w = img.shape[:2]
             focal = max(w, h)
@@ -257,13 +260,13 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
             )
             rr.log(f"{path}/image", img.to_rerun(), static=True)
         elif isinstance(data, PointCloud2):
-            rr.log(path, obs.pose_stamped.to_rerun(), static=True)
+            rr.log(path, ps.to_rerun(), static=True)
             rr.log(f"{path}/pointcloud", data.to_rerun(), static=True)
         elif isinstance(data, (int, float)):
             rr.log(
                 path,
                 rr.Points3D(
-                    positions=[[obs.pose_stamped.x, obs.pose_stamped.y, 0]],
+                    positions=[[ps.x, ps.y, 0]],
                     labels=[str(data)],
                     radii=[0.025],
                 ),
@@ -283,7 +286,7 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
             if line:
                 lines.append(line)
             label = "\n".join(lines)
-            x, y = obs.pose_stamped.x, obs.pose_stamped.y
+            x, y = ps.x, ps.y
             # Pin: line from ground up, label at the tip
             rr.log(
                 f"{path}/pin",
@@ -306,7 +309,7 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
         else:
             rr.log(
                 path,
-                rr.Points3D(positions=[[obs.pose_stamped.x, obs.pose_stamped.y, 0]], radii=[0.05]),
+                rr.Points3D(positions=[[ps.x, ps.y, 0]], radii=[0.05]),
                 static=True,
             )
 

@@ -240,8 +240,7 @@ m = mosaic(semantic_peaks.map_data(lambda obs: moondream.query_detections(obs.da
 m.data.save("assets/plants_auto.png")
 ```
 
-<!--Result:-->
-```
+```results
 14:59:33.042 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
 t=  14.1s score=0.224 prominence=0.031
 t=  26.3s score=0.225 prominence=0.033
@@ -259,7 +258,6 @@ t= 240.4s score=0.243 prominence=0.047
 t= 245.6s score=0.224 prominence=0.028
 t= 279.6s score=0.230 prominence=0.030
 ```
-
 
 ![output](assets/plot_plantness_autopeaks.svg)
 
@@ -294,7 +292,6 @@ m.data.save("assets/plants_meaningful.png")
 
 plot.to_svg("assets/plot_plantness_significant.svg")
 ```
-
 
 ![output](assets/plot_plantness_significant.svg)
 

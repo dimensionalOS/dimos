@@ -250,6 +250,7 @@ manipulation = [
     "piper-sdk",
     "pyrealsense2; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
+    "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -401,7 +402,7 @@ tests = [
 
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
-    "dimos[apriltag,psql,drone,cpu]",
+    "dimos[apriltag,mapping,psql,drone,cpu]",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -525,6 +526,8 @@ exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/c
 [[tool.mypy.overrides]]
 module = [
     "annotation_protocol",
+    "a750_control",
+    "a750_control.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",

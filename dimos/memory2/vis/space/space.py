@@ -96,7 +96,10 @@ class Space:
             for item in element:
                 v = _autocolor_value(item)
                 if v is not None and isinstance(item, Observation):
-                    self._elements.append(Arrow(msg=item.pose_stamped, color=color_range(v)))
+                    ps = item.pose_stamped
+                    if ps is None:
+                        continue
+                    self._elements.append(Arrow(msg=ps, color=color_range(v)))
                 else:
                     self.add(item, **kwargs)
         else:

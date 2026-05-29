@@ -17,14 +17,14 @@
 Accepts streaming joint positions (e.g., from teleoperation) and outputs them
 directly to hardware each tick. Useful for teleoperation, visual servoing,
 or any real-time control where you don't want trajectory planning overhead.
-
-CRITICAL: Uses t_now from CoordinatorState, never calls time.time()
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import threading
+import time
+from typing import Any
 
 from dimos.control.task import (
     BaseControlTask,
@@ -33,6 +33,7 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -46,11 +47,17 @@ class JointServoTaskConfig:
         joint_names: List of joint names this task controls
         priority: Priority for arbitration (higher wins)
         timeout: If no command received for this many seconds, go inactive (0 = never timeout)
+        default_positions: Optional initial target held until/unless a
+            new target arrives via set_target(). Must match joint_names
+            length if provided. Useful for "hold at this pose" tasks
+            (e.g. arms during whole-body locomotion). Pair with
+            timeout=0.0 to hold indefinitely.
     """
 
     joint_names: list[str]
     priority: int = 10
     timeout: float = 0.5  # 500ms default timeout
+    default_positions: list[float] | None = None
 
 
 class JointServoTask(BaseControlTask):
@@ -98,6 +105,15 @@ class JointServoTask(BaseControlTask):
         self._target: list[float] | None = None
         self._last_update_time: float = 0.0
         self._active = False
+
+        if config.default_positions is not None:
+            if len(config.default_positions) != self._num_joints:
+                raise ValueError(
+                    f"JointServoTask '{name}': default_positions length "
+                    f"{len(config.default_positions)} does not match "
+                    f"joint_names length {self._num_joints}"
+                )
+            self._target = list(config.default_positions)
 
         logger.info(f"JointServoTask {name} initialized for joints: {config.joint_names}")
 
@@ -211,6 +227,11 @@ class JointServoTask(BaseControlTask):
         """Activate the task (start accepting and outputting commands)."""
         with self._lock:
             self._active = True
+            # Refresh the timeout reference so a caller that re-starts
+            # the task after a long idle window (or uses default_positions
+            # with a non-zero timeout) doesn't time out on the first tick
+            # from the stale 0.0 left at construction.
+            self._last_update_time = time.perf_counter()
         logger.info(f"JointServoTask {self._name} started")
 
     def stop(self) -> None:
@@ -236,3 +257,23 @@ __all__ = [
     "JointServoTask",
     "JointServoTaskConfig",
 ]
+
+
+class JointServoTaskParams(BaseConfig):
+    timeout: float | None = None
+    default_positions: list[float] | None = None
+
+
+def create_task(cfg: Any, hardware: Any) -> JointServoTask:
+    params = JointServoTaskParams.model_validate(cfg.params)
+    kwargs: dict[str, object] = {
+        "joint_names": cfg.joint_names,
+        "priority": cfg.priority,
+    }
+    if params.timeout is not None:
+        kwargs["timeout"] = params.timeout
+    if params.default_positions is not None:
+        kwargs["default_positions"] = params.default_positions
+        # Zero timeout pairs naturally with default-hold.
+        kwargs.setdefault("timeout", 0.0)
+    return JointServoTask(cfg.name, JointServoTaskConfig(**kwargs))  # type: ignore[arg-type]

@@ -14,11 +14,12 @@
 
 """Connected hardware for the ControlCoordinator.
 
-Provides two wrapper types:
+Provides runtime wrappers for coordinator-managed hardware:
 - ConnectedHardware: Wraps ManipulatorAdapter for joint-controlled arms
 - ConnectedTwistBase: Wraps TwistBaseAdapter for velocity-commanded platforms
+- ConnectedWholeBody: Wraps WholeBodyAdapter for full-body motor control
 
-Both share the same duck-type interface (read_state, write_command, etc.)
+They share the same duck-type interface (read_state, write_command, etc.)
 so the tick loop treats them uniformly.
 """
 
@@ -332,6 +333,34 @@ class ConnectedWholeBody(ConnectedHardware):
         self._component = component
         self._joint_names = component.joints
 
+        # Resolve per-joint PD gains once at wire-up time.  Gains live on
+        # the WB-specific sub-config; fall back to _DEFAULT_KP/_DEFAULT_KD
+        # if the blueprint didn't supply a wb_config.
+        n = len(self._joint_names)
+        wb = component.wb_config
+        kp_in = wb.kp if wb is not None else None
+        kd_in = wb.kd if wb is not None else None
+        if kp_in is not None:
+            if len(kp_in) != n:
+                raise ValueError(
+                    f"HardwareComponent '{component.hardware_id}': wb_config.kp length "
+                    f"{len(kp_in)} does not match joints length {n}"
+                )
+            self._kp = list(kp_in)
+        else:
+            self._kp = [_DEFAULT_KP] * n
+        if kd_in is not None:
+            if len(kd_in) != n:
+                raise ValueError(
+                    f"HardwareComponent '{component.hardware_id}': wb_config.kd length "
+                    f"{len(kd_in)} does not match joints length {n}"
+                )
+            self._kd = list(kd_in)
+        else:
+            self._kd = [_DEFAULT_KD] * n
+        self._kp_by_name = dict(zip(self._joint_names, self._kp, strict=False))
+        self._kd_by_name = dict(zip(self._joint_names, self._kd, strict=False))
+
         self._last_commanded: dict[str, float] = {}
         self._initialized = False
         self._warned_unknown_joints: set[str] = set()
@@ -361,10 +390,13 @@ class ConnectedWholeBody(ConnectedHardware):
         }
 
     def write_command(self, commands: dict[str, float], mode: ControlMode) -> bool:
-        """Write position commands — converts to MotorCommand with PD gains.
+        """Write position commands — converts to MotorCommand with per-joint PD gains.
 
         Only POSITION / SERVO_POSITION are supported; other modes are warned
         and dropped (matches ConnectedHardware's warn-and-skip pattern).
+        Per-joint kp/kd come from ``component.wb_config`` (resolved in
+        ``__init__``); fall back to ``_DEFAULT_KP``/``_DEFAULT_KD`` when
+        the blueprint didn't supply gains.
         """
         from dimos.hardware.whole_body.spec import MotorCommand
 
@@ -392,8 +424,8 @@ class ConnectedWholeBody(ConnectedHardware):
             MotorCommand(
                 q=self._last_commanded[name],
                 dq=0.0,
-                kp=_DEFAULT_KP,
-                kd=_DEFAULT_KD,
+                kp=self._kp_by_name[name],
+                kd=self._kd_by_name[name],
                 tau=0.0,
             )
             for name in self._joint_names

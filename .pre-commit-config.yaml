@@ -94,6 +94,7 @@ repos:
         entry: python -m dimos.utils.docs.doclinks docs/
         language: system
         files: ^docs/.*\.md$
+        exclude: ^docs/node_modules/
 
       - id: filter-commit-message
         name: Filter generated signatures from commit message
