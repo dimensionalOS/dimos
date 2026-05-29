@@ -350,6 +350,10 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Install dependency for pyaudio
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
