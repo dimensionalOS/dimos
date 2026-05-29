@@ -15,7 +15,6 @@
 
 from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.agents.skills.seat_guide import CameraSeatObservationProvider, SeatGuideSkillContainer
-from dimos.agents.skills.unitree_speak_skill import UnitreeSpeakSkill
 from dimos.agents.web_human_input import WebInput
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.unitree_skill_container import UnitreeSkillContainer
@@ -26,7 +25,6 @@ _seat_guide_agentic = autoconnect(
     SeatGuideSkillContainer.blueprint(),
     UnitreeSkillContainer.blueprint(),
     WebInput.blueprint(),
-    UnitreeSpeakSkill.blueprint(),
 )
 
 __all__ = ["_seat_guide_agentic"]

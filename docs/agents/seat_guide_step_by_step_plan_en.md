@@ -1,6 +1,6 @@
 # SeatGuide Robot Dog Empty-Seat Guidance Step-by-Step Plan
 
-Goal: let a user tell the Go2, through browser microphone or typed text, "find me an empty seat." The system should use the real camera to recognize chairs and people, decide which seats are empty, send a navigation goal, and respond with speech. When the Go2 is not connected, every locally verifiable module must have unit or smoke coverage. After the Go2 is connected, we should only need to run the hardware acceptance flow instead of assembling functionality on the spot.
+Goal: let a user tell the Go2, through browser microphone or typed text, "find me an empty seat." The system should use the real camera to recognize chairs and people, decide which seats are empty, send a navigation goal, and respond through the web or phone relay. When the Go2 is not connected, every locally verifiable module must have unit or smoke coverage. After the Go2 is connected, we should only need to run the hardware acceptance flow instead of assembling functionality on the spot.
 
 ## Overall Module Split
 
@@ -10,7 +10,7 @@ Goal: let a user tell the Go2, through browser microphone or typed text, "find m
 | 2. Scene perception | Use Go2 RGB image + odom + Moondream2/VLM to detect chairs and people, then project them into map coordinates | `color_image`, `odom`, local Moondream2 model cache | `SeatSceneObservation` | Yes | Camera provider unit tests, `camera_seat_provider_status` |
 | 3. Empty-seat planning | Decide which chairs are occupied, select the nearest empty seat, and generate the guide pose for the robot | Chair poses, person positions, robot position | Selected chair and navigation goal pose | Yes | Planner unit tests, `preview_empty_seat_goal` |
 | 4. Navigation execution | Send the target pose to the existing navigation module and read completion status | SeatGuide goal pose | `set_goal()`, `goal_reached` | Partially | Fake navigator unit tests, `seat_guide_navigation_status` |
-| 5. Speech feedback | Tell the user which seat was found, whether to follow, or why the request failed | SeatGuide result text | TTS audio, web response text | Yes | `speech_status`, TTS audio check, operator `HEARD` |
+| 5. Phone/web feedback | Tell the user which seat was found, whether to follow, or why the request failed | SeatGuide result text | Web response text, phone speaker relay | Yes | `web_input_status`, optional `phone_speaker_test` |
 | 6. Acceptance scripts | Chain no-motion checks, real voice input, and real navigation, then save a transcript | Current DimOS stack | Pass/fail reason and acceptance log | Yes | `bin/demo_seat_guide_*` |
 
 ## Stage 1: Basic Voice-Control Acceptance
@@ -168,9 +168,9 @@ Pass criteria:
   - `configured_fallback_people=0`
 - `seat_guide_status` must start with `SeatGuide scene source=camera:`.
 
-## Stage 5: Navigation And Speech Feedback
+## Stage 5: Navigation And Phone/Web Feedback
 
-Purpose: after finding an empty seat, the Go2 must actually receive a navigation goal and provide audible or visible feedback to the user.
+Purpose: after finding an empty seat, the Go2 must actually receive a navigation goal and provide visible feedback through the web, or audible feedback through a phone mounted on the robot.
 
 Work items:
 
@@ -178,13 +178,13 @@ Work items:
 2. On a live request, call `set_goal(PoseStamped)`.
 3. If navigation is busy, refuse to overwrite the current task.
 4. Read `navigation_state` and `goal_reached`.
-5. Inject `SpeakSkillSpec` into SeatGuide and speak the result when available.
-6. Use `speech_status` to distinguish missing TTS key, missing audio output, and ready state.
+5. Return clear SeatGuide result text and publish it to the WebInput `agent_responses` stream.
+6. If audible feedback is required, open the speaker relay on the mounted phone and verify it with `phone_speaker_test`.
 
 Verification:
 
 ```bash
-uv run pytest dimos/agents/skills/test_seat_guide.py dimos/agents/skills/test_speak_skill.py -q
+uv run pytest dimos/agents/skills/test_seat_guide.py -q
 ```
 
 Pre-hardware checks:
@@ -192,7 +192,6 @@ Pre-hardware checks:
 ```bash
 dimos mcp call seat_guide_preflight
 dimos mcp call preview_empty_seat_goal
-dimos mcp call speech_status
 dimos mcp call seat_guide_navigation_status
 ```
 
@@ -200,7 +199,7 @@ Pass criteria:
 
 - Preflight shows `navigation=IDLE`.
 - Preview includes `selected=...` and `goal=(...)`.
-- Speech shows `tts=ready` and `audio_output=connected`.
+- The WebInput response stream is visible; if sound is needed, the phone relay can play a test message.
 - After live navigation, `seat_guide_navigation_status` eventually shows a new `goal_sequence` and `goal_reached=true`.
 
 ## Stage 6: Mac Replay / SHM Video Stream Fix
@@ -241,14 +240,11 @@ Manual preparation:
 
 1. Power on the robot dog and connect it to the same network as the Mac.
 2. Confirm the Go2 IP. The default example is `192.168.123.161`.
-3. Prepare API keys. The normal agent can use OpenRouter; TTS speech output still requires OpenAI, and seat/person VLM still requires Alibaba/Qwen:
+3. Prepare API keys. The normal agent can use OpenRouter; seat/person VLM still requires Alibaba/Qwen when Qwen is selected:
 
 ```bash
 export OPENROUTER_API_KEY="your OpenRouter key"
 export OPENROUTER_MODEL="openai/gpt-4o-mini"
-
-# Optional: only needed for robot speech/TTS output
-export OPENAI_API_KEY="your OpenAI key"
 ```
 
 Start one-command bring-up:
@@ -268,10 +264,9 @@ Manual actions during the script:
 
 1. Open the WebInput URL printed by the script.
 2. Allow browser microphone access.
-3. After hearing the TTS check phrase, type `HEARD` in the terminal.
-4. During the no-motion stage, say into the browser: `预检帮我找一个空位`.
-5. After confirming the area around the Go2 is physically safe, type `LIVE` in the terminal.
-6. During the live stage, say into the browser: `帮我找一个空位`.
+3. During the no-motion stage, say into the browser: `预检帮我找一个空位`.
+4. After confirming the area around the Go2 is physically safe, type `LIVE` in the terminal.
+5. During the live stage, say into the browser: `帮我找一个空位`.
 
 Pass criteria:
 
@@ -293,7 +288,7 @@ Pass criteria:
 | VLM failed | `seat_guide_status` | Missing local Moondream2 model, model load failure, or missing remote VLM key | Download the model or re-export the matching key, then restart the stack |
 | No chairs found | `seat_guide_status` | Camera not facing the table, lighting or recognition issue | Adjust robot view; use fallback only for debugging |
 | Navigation busy | `seat_guide_preflight` | `navigation=FOLLOWING_PATH` or `RECOVERY` | Wait for the task to finish or stop navigation before retrying |
-| TTS unavailable | `speech_status` | Missing `OPENAI_API_KEY` or missing audio output | If acceptance requires spoken feedback, set the OpenAI key and connect audio output; if only browser text feedback is being accepted, record this as non-blocking first |
+| Phone feedback unavailable | `web_input_status` / `phone_speaker_test` | Phone has not opened the relay page or the relay is unreachable | First confirm the web response stream; if sound is needed, open a reachable relay page on the phone |
 
 ## Current Completion Status
 
@@ -302,7 +297,7 @@ Completed:
 - SeatGuide planner / scene / intent / navigation integration.
 - WebInput Chinese voice and text directly routed to SeatGuide.
 - Camera/VLM/odom provider.
-- SpeakSkill readiness and TTS audio check.
+- WebInput response stream and optional phone speaker relay.
 - Go2 SeatGuide blueprints.
 - macOS replay SHM route integration.
 - One-command hardware bring-up script.
@@ -310,10 +305,10 @@ Completed:
 
 Verified:
 
-- SeatGuide/Speak/MCP tests pass.
+- SeatGuide/MCP tests pass.
 - pubsub/Rerun SHM tests pass.
 - `bin/demo_seat_guide_replay_smoke` completes on Mac.
 
 Not complete yet:
 
-- Real Go2 hardware transcript. Final completion requires proof of real browser microphone input, real camera/VLM/odom, audible TTS confirmation, real navigation, and `goal_reached=true`.
+- Real Go2 hardware transcript. Final completion requires proof of real browser microphone input, real camera/VLM/odom, real navigation, and `goal_reached=true`.

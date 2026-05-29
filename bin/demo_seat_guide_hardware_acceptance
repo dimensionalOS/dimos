@@ -100,8 +100,7 @@ seat_guide_goal_completed_after_sequence() {
 seat_guide_preflight_ready_for_hardware() {
   local output="$1"
   grep -Fq "SeatGuide preflight ready" <<<"${output}" \
-    && grep -Fq "navigation=IDLE" <<<"${output}" \
-    && grep -Fq "speaker=connected" <<<"${output}"
+    && grep -Fq "navigation=IDLE" <<<"${output}"
 }
 
 web_input_ready_for_seat_guide() {
@@ -194,16 +193,6 @@ log_camera_provider_no_go_details() {
   fi
 }
 
-log_speech_no_go_details() {
-  local output="$1"
-  if ! grep -Fq "tts=ready" <<<"${output}"; then
-    log "  - TTS is not ready. Export OPENAI_API_KEY in the environment used to start the DimOS daemon, then restart the SeatGuide stack."
-  fi
-  if ! grep -Fq "audio_output=connected" <<<"${output}"; then
-    log "  - Audio output is not connected. Check the robot/local speaker device before relying on spoken feedback."
-  fi
-}
-
 log_seat_guide_no_go_details() {
   local output="$1"
   if grep -Fq "navigation=FOLLOWING_PATH" <<<"${output}" \
@@ -213,9 +202,6 @@ log_seat_guide_no_go_details() {
   if grep -Fq "navigation=missing" <<<"${output}" \
     || grep -Fq "navigation=error(" <<<"${output}"; then
     log "  - Navigation is unavailable. Check the NavigationSkillContainer wiring and navigation logs before sending a SeatGuide goal."
-  fi
-  if grep -Fq "speaker=missing" <<<"${output}"; then
-    log "  - SeatGuide speaker wiring is missing. Confirm SpeakSkill is in the SeatGuide blueprint and connected before official hardware acceptance."
   fi
   if grep -Fq "source=no_camera_image" <<<"${output}" \
     || grep -Fq "perception=no_camera_image" <<<"${output}"; then
@@ -523,7 +509,7 @@ require_tool() {
   local tool_name="$2"
   if ! grep -q "\"${tool_name}\"" <<<"${tools}"; then
     log "Hardware acceptance no-go: missing MCP tool '${tool_name}'."
-    log "Confirm the running blueprint is unitree-go2-seat-guide or unitree-go2-seat-guide-agentic and includes the SeatGuide, WebInput, camera provider, and SpeakSkill modules."
+    log "Confirm the running blueprint is unitree-go2-seat-guide or unitree-go2-seat-guide-agentic and includes the SeatGuide, WebInput, and camera provider modules."
     log "Transcript saved to: ${log_file}"
     exit 3
   fi
@@ -587,8 +573,6 @@ require_tool "${tools}" "seat_guide_navigation_status"
 require_tool "${tools}" "preview_seat_request"
 require_tool "${tools}" "preview_empty_seat_goal"
 require_tool "${tools}" "handle_seat_request"
-require_tool "${tools}" "speech_status"
-require_tool "${tools}" "speak"
 
 log ""
 log "Checking SeatGuide module wiring..."
@@ -597,7 +581,6 @@ modules_output="${run_output}"
 require_output_contains "${modules_output}" "CameraSeatObservationProvider" "mcp modules"
 require_output_contains "${modules_output}" "SeatGuideSkillContainer" "mcp modules"
 require_output_contains "${modules_output}" "WebInput" "mcp modules"
-require_output_contains "${modules_output}" "SpeakSkill" "mcp modules"
 
 log ""
 log "Checking WebInput route..."
@@ -622,34 +605,6 @@ camera_output="${run_output}"
 if ! camera_provider_ready_for_hardware "${camera_output}"; then
   log "Hardware acceptance no-go: camera_seat_provider_status was not hardware ready."
   log_camera_provider_no_go_details "${camera_output}"
-  log "Transcript saved to: ${log_file}"
-  exit 3
-fi
-
-log ""
-log "Checking speech output readiness..."
-run_capture mcp call speech_status
-speech_output="${run_output}"
-if ! grep -Fq "tts=ready" <<<"${speech_output}" \
-  || ! grep -Fq "audio_output=connected" <<<"${speech_output}"; then
-  log "Hardware acceptance no-go: speech_status was not hardware ready."
-  log_speech_no_go_details "${speech_output}"
-  log "Transcript saved to: ${log_file}"
-  exit 3
-fi
-run_capture mcp call speak --json-args '{"text": "SeatGuide audio check. I can guide you to an empty seat.", "blocking": true}'
-audio_check_output="${run_output}"
-require_output_contains "${audio_check_output}" "Spoke: SeatGuide audio check" "speak audio check"
-cat <<'EOF' | tee -a "${log_file}"
-
-Audio output confirmation:
-  Type HEARD if you clearly heard: SeatGuide audio check. I can guide you to an empty seat.
-  Anything else is a no-go for official hardware acceptance.
-EOF
-read -r audio_confirmation
-log "Operator audio confirmation: ${audio_confirmation}"
-if [[ "${audio_confirmation}" != "HEARD" ]]; then
-  log "Hardware acceptance no-go: operator did not confirm audible SeatGuide speech output."
   log "Transcript saved to: ${log_file}"
   exit 3
 fi

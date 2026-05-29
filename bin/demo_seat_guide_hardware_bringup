@@ -21,8 +21,6 @@ Required environment:
   ALIBABA_API_KEY   Required only when --detection-model qwen.
   OPENROUTER_API_KEY or OPENAI_API_KEY
                     LLM agent for normal voice/text commands.
-  OPENAI_API_KEY    Optional for TTS speech feedback. Hardware acceptance
-                    still reports TTS as no-go when this is missing.
 EOF
 }
 
@@ -99,15 +97,8 @@ If you choose --detection-model qwen, also set:
 
   export ALIBABA_API_KEY=...
 
-For spoken TTS feedback during official hardware acceptance, also set:
-
-  export OPENAI_API_KEY=...
 EOF
   exit 2
-fi
-
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "SeatGuide bring-up warning: OPENAI_API_KEY is not set; TTS speech feedback will be unavailable." >&2
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -138,9 +129,8 @@ SeatGuide hardware acceptance will now verify the real browser microphone path.
 You will need to:
   1. Open the WebInput URL printed by the script.
   2. Allow microphone access.
-  3. Type HEARD after the TTS audio check is audible.
-  4. Type LIVE only when the Go2 is physically clear to move.
-  5. Say the prompted Chinese phrases into the browser microphone.
+  3. Type LIVE only when the Go2 is physically clear to move.
+  4. Say the prompted Chinese phrases into the browser microphone.
 EOF
 
 "${script_dir}/demo_seat_guide_hardware_acceptance"

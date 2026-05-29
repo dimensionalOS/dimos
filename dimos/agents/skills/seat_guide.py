@@ -25,7 +25,6 @@ from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
-from dimos.agents.skills.speak_skill_spec import SpeakSkillSpec
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -196,7 +195,6 @@ class SeatGuideSkillContainer(Module):
     _explorer: ExplorationSpec | None = None
     _direct_mover: DirectMoveSpec | None = None
     _relative_mover: RelativeMoveSpec | None = None
-    _speaker: SpeakSkillSpec | None = None
     _seat_guide_goal_sequence: int = 0
     _seat_guide_goal_reached_reset_required: bool = False
 
@@ -235,7 +233,7 @@ class SeatGuideSkillContainer(Module):
             wait_for_arrival: When true, wait for navigation to finish before returning.
             arrival_timeout_s: Maximum seconds to wait for arrival.
             arrival_poll_s: Delay between navigation status checks.
-            arrival_message: Speech feedback to play after arrival.
+            arrival_message: Text response to return after arrival.
         """
         seat_observations = _parse_seats(seats)
         person_observations = _parse_people(people)
@@ -244,7 +242,6 @@ class SeatGuideSkillContainer(Module):
                 "I cannot see any seats yet. Please face the conference table or calibrate "
                 "the room layout."
             )
-            self._speak_feedback(message)
             return message
 
         planner = SeatGuidePlanner()
@@ -256,7 +253,6 @@ class SeatGuideSkillContainer(Module):
         )
         if result is None:
             message = "I could not find an empty seat in the conference room."
-            self._speak_feedback(message)
             return message
 
         goal = PoseStamped(
@@ -270,7 +266,6 @@ class SeatGuideSkillContainer(Module):
                 f"Found empty seat {result.seat.seat_id}, but navigation is not ready "
                 f"for a new goal: {navigation_text}."
             )
-            self._speak_feedback(message)
             return message
 
         previous_goal_reached = self._navigation_goal_reached_or_false()
@@ -281,17 +276,14 @@ class SeatGuideSkillContainer(Module):
                 f"Found empty seat {result.seat.seat_id}, but navigation raised an error: "
                 f"{exc}."
             )
-            self._speak_feedback(message)
             return message
 
         if not goal_started:
             message = f"Found empty seat {result.seat.seat_id}, but failed to start navigation."
-            self._speak_feedback(message)
             return message
 
         self._seat_guide_goal_sequence = getattr(self, "_seat_guide_goal_sequence", 0) + 1
         self._seat_guide_goal_reached_reset_required = previous_goal_reached
-        self._speak_feedback(result.spoken_summary)
         navigating_message = (
             f"{result.spoken_summary} Navigating to ({result.goal_x:.2f}, {result.goal_y:.2f})."
         )
@@ -303,21 +295,18 @@ class SeatGuideSkillContainer(Module):
             poll_s=arrival_poll_s,
         )
         if arrival_result == "arrived":
-            self._speak_feedback(arrival_message)
             return f"{navigating_message} {arrival_message}"
         if arrival_result == "failed":
             message = (
                 f"{navigating_message} I found the empty seat, but navigation stopped "
                 "before reaching it."
             )
-            self._speak_feedback(message)
             return message
 
         message = (
             f"{navigating_message} I found the empty seat, but navigation did not "
             f"finish within {arrival_timeout_s:.0f} seconds."
         )
-        self._speak_feedback(message)
         return message
 
     @skill
@@ -341,13 +330,11 @@ class SeatGuideSkillContainer(Module):
         """
         if self._seat_observation_provider is None:
             message = "No seat observation provider is connected."
-            self._speak_feedback(message)
             return message
 
         scene = self._seat_observation_provider.get_seat_scene()
         if require_live_perception and not _is_live_camera_source(scene.source):
             message = _describe_live_perception_required(scene)
-            self._speak_feedback(message)
             return message
         seats = _flatten_seats(scene.seats)
         people = _flatten_people(scene.people)
@@ -386,7 +373,6 @@ class SeatGuideSkillContainer(Module):
         """
         if self._seat_observation_provider is None:
             message = "No seat observation provider is connected."
-            self._speak_feedback(message)
             return message
 
         if self._direct_mover is not None or self._relative_mover is not None:
@@ -404,7 +390,6 @@ class SeatGuideSkillContainer(Module):
                 "I cannot see any seats yet, and no exploration module is connected "
                 "to search for one."
             )
-            self._speak_feedback(message)
             return message
 
         search_timeout_s = max(1.0, min(search_timeout_s, 120.0))
@@ -422,7 +407,6 @@ class SeatGuideSkillContainer(Module):
             and not _is_live_camera_source(initial_scene.source)
         ):
             message = _describe_live_perception_required(initial_scene)
-            self._speak_feedback(message)
             return message
 
         self._explorer.begin_exploration()
@@ -450,7 +434,6 @@ class SeatGuideSkillContainer(Module):
             "I searched but still cannot see an empty seat. Please reposition me "
             "or point the camera toward the conference table."
         )
-        self._speak_feedback(message)
         return message
 
     @skill
@@ -483,14 +466,12 @@ class SeatGuideSkillContainer(Module):
         """
         if self._seat_observation_provider is None:
             message = "No seat observation provider is connected."
-            self._speak_feedback(message)
             return message
         if self._direct_mover is None and self._relative_mover is None:
             message = (
                 "I cannot rotate-scan for a seat because no relative movement "
                 "module is connected."
             )
-            self._speak_feedback(message)
             return message
 
         max_turn_degrees = max(30.0, min(float(max_turn_degrees), 720.0))
@@ -514,7 +495,6 @@ class SeatGuideSkillContainer(Module):
             and scene.source != "camera_no_seats_detected"
         ):
             message = _describe_live_perception_required(scene)
-            self._speak_feedback(message)
             return message
 
         for _ in range(steps):
@@ -524,7 +504,6 @@ class SeatGuideSkillContainer(Module):
             )
             if "failed" in move_result.lower() or "cancelled" in move_result.lower():
                 message = f"SeatGuide scan stopped because rotation failed: {move_result}."
-                self._speak_feedback(message)
                 return message
             time.sleep(settle_s)
 
@@ -542,7 +521,6 @@ class SeatGuideSkillContainer(Module):
             "I rotated in place but still cannot see an empty seat. Please reposition me "
             "or point the camera toward the conference table."
         )
-        self._speak_feedback(message)
         return message
 
     def _turn_in_place(self, *, degrees: float, yaw_rate_rad_s: float) -> str:
@@ -602,7 +580,6 @@ class SeatGuideSkillContainer(Module):
         intent = parse_seat_guide_intent(text)
         if not intent.should_find_seat:
             message = "I did not hear a request to find an empty seat."
-            self._speak_feedback(message)
             return message
 
         scene = (
@@ -644,11 +621,9 @@ class SeatGuideSkillContainer(Module):
         intent = parse_seat_guide_intent(text)
         if not intent.should_find_seat:
             message = "I did not hear a request to find an empty seat."
-            self._speak_feedback(message)
             return message
 
         message = self.seat_guide_preflight()
-        self._speak_feedback(message)
         return message
 
     @skill
@@ -668,7 +643,7 @@ class SeatGuideSkillContainer(Module):
             return (
                 "SeatGuide preflight no-go: "
                 f"{self._navigation_readiness_text()[0]}; perception=missing; "
-                f"{self._speaker_readiness_text()}."
+                "feedback=phone_or_web."
             )
 
         scene = self._seat_observation_provider.get_seat_scene()
@@ -790,14 +765,6 @@ class SeatGuideSkillContainer(Module):
 
         return "timeout"
 
-    def _speak_feedback(self, text: str) -> None:
-        if self._speaker is None:
-            return
-        try:
-            self._speaker.speak(text, blocking=False)
-        except Exception:
-            logger.warning("SeatGuide speech feedback failed", exc_info=True)
-
     def _navigation_readiness_text(self) -> tuple[str, bool]:
         if not hasattr(self, "_navigation") or self._navigation is None:
             return "navigation=missing", False
@@ -807,9 +774,6 @@ class SeatGuideSkillContainer(Module):
         except Exception as exc:
             return f"navigation=error({exc})", False
 
-    def _speaker_readiness_text(self) -> str:
-        return "speaker=connected" if self._speaker is not None else "speaker=missing"
-
     def _describe_preflight(
         self,
         scene: SeatSceneObservation,
@@ -817,18 +781,19 @@ class SeatGuideSkillContainer(Module):
         require_live_perception: bool,
     ) -> str:
         navigation_text, navigation_ok = self._navigation_readiness_text()
-        speaker_text = self._speaker_readiness_text()
 
         if not scene.seats:
             return (
                 "SeatGuide preflight no-go: "
-                f"{navigation_text}; perception={scene.source} no seats; {speaker_text}."
+                f"{navigation_text}; perception={scene.source} no seats; "
+                "feedback=phone_or_web."
             )
         if require_live_perception and not _is_live_camera_source(scene.source):
             return (
                 "SeatGuide preflight no-go: "
                 f"{navigation_text}; perception={scene.source} is not live camera; "
-                f"seats={len(scene.seats)} people={len(scene.people)}; {speaker_text}."
+                f"seats={len(scene.seats)} people={len(scene.people)}; "
+                "feedback=phone_or_web."
             )
 
         planner = SeatGuidePlanner()
@@ -843,7 +808,8 @@ class SeatGuideSkillContainer(Module):
             return (
                 "SeatGuide preflight no-go: "
                 f"{navigation_text}; perception={scene.source}; no empty seat; "
-                f"empty={empty_count} occupied={occupied_count}; {speaker_text}."
+                f"empty={empty_count} occupied={occupied_count}; "
+                "feedback=phone_or_web."
             )
 
         verdict = "ready" if navigation_ok else "no-go"
@@ -853,7 +819,7 @@ class SeatGuideSkillContainer(Module):
             f"empty={empty_count} occupied={occupied_count}; "
             f"selected={result.seat.seat_id}; "
             f"goal=({result.goal_x:.2f}, {result.goal_y:.2f}, yaw={result.goal_yaw:.2f}); "
-            f"{speaker_text}."
+            "feedback=phone_or_web."
         )
 
 

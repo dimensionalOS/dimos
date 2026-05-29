@@ -15,7 +15,7 @@ require_tool() {
   local tool_name="$2"
   if ! grep -q "\"${tool_name}\"" <<<"${tools}"; then
     echo "SeatGuide smoke no-go: missing MCP tool '${tool_name}'." >&2
-    echo "Confirm the running blueprint is unitree-go2-seat-guide or unitree-go2-seat-guide-agentic and includes SeatGuide, WebInput, camera provider, and SpeakSkill modules." >&2
+    echo "Confirm the running blueprint is unitree-go2-seat-guide or unitree-go2-seat-guide-agentic and includes SeatGuide, WebInput, and camera provider modules." >&2
     exit 3
   fi
 }
@@ -94,7 +94,6 @@ require_tool "${tools}" "seat_guide_status"
 require_tool "${tools}" "preview_empty_seat_goal"
 require_tool "${tools}" "web_input_status"
 require_tool "${tools}" "camera_seat_provider_status"
-require_tool "${tools}" "speech_status"
 
 echo
 echo "Checking WebInput voice/text route status..."
@@ -115,10 +114,6 @@ run_dimos mcp call camera_seat_provider_status
 echo
 echo "Checking current SeatGuide scene..."
 run_dimos mcp call seat_guide_status
-
-echo
-echo "Checking speech output readiness..."
-run_dimos mcp call speech_status
 
 echo
 echo "Running no-motion readiness report..."

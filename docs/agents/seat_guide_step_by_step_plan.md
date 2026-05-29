@@ -1,6 +1,6 @@
 # SeatGuide 机器狗空位引导 Step-by-Step 计划
 
-目标：让用户通过浏览器麦克风或文字对 Go2 说“帮我找一个空位”，系统用真实相机识别椅子和人，判断空位，给导航下发目标，并用语音反馈结果。没有连接 G2 时，所有能本地验证的模块都必须有单测或 smoke 验证；连接 G2 后只跑硬件验收，不再临场拼功能。
+目标：让用户通过浏览器麦克风或文字对 Go2 说“帮我找一个空位”，系统用真实相机识别椅子和人，判断空位，给导航下发目标，并通过网页/手机反馈结果。没有连接 G2 时，所有能本地验证的模块都必须有单测或 smoke 验证；连接 G2 后只跑硬件验收，不再临场拼功能。
 
 ## 总体模块拆分
 
@@ -10,7 +10,7 @@
 | 2. 场景感知 | 用 Go2 RGB 图像 + odom + Moondream2/VLM 识别椅子和人，并投影成 map 坐标 | `color_image`、`odom`、本地 Moondream2 模型缓存 | `SeatSceneObservation` | 是 | Camera provider 单测、`camera_seat_provider_status` |
 | 3. 空位规划 | 判断哪些椅子被占用，选择最近空位，生成机器人应到达的引导点 | 椅子位姿、人员位置、机器人位置 | 选中椅子、导航目标 pose | 是 | Planner 单测、`preview_empty_seat_goal` |
 | 4. 导航执行 | 把目标 pose 发给已有导航模块，并读取完成状态 | SeatGuide goal pose | `set_goal()`、`goal_reached` | 部分并行 | fake navigator 单测、`seat_guide_navigation_status` |
-| 5. 语音反馈 | 告诉用户找到哪个位置、是否需要跟随、失败原因 | SeatGuide 结果文本 | TTS 音频、web response text | 是 | `speech_status`、TTS audio check、operator `HEARD` |
+| 5. 手机/网页反馈 | 告诉用户找到哪个位置、是否需要跟随、失败原因 | SeatGuide 结果文本 | web response text、手机扬声器 relay | 是 | `web_input_status`、可选 `phone_speaker_test` |
 | 6. 验收脚本 | 把 no-motion、真实语音、真实导航串起来，保存 transcript | 当前 DimOS stack | 通过/失败原因、验收日志 | 是 | `bin/demo_seat_guide_*` |
 
 ## 阶段 1：基础语音控制验收
@@ -168,9 +168,9 @@ dimos mcp call seat_guide_status
   - `configured_fallback_people=0`
 - `seat_guide_status` 必须以 `SeatGuide scene source=camera:` 开头。
 
-## 阶段 5：导航和语音反馈
+## 阶段 5：导航和手机/网页反馈
 
-目的：找到空位以后，Go2 能真正下发导航目标，并给用户可听或可见反馈。
+目的：找到空位以后，Go2 能真正下发导航目标，并通过网页或绑在机器狗上的手机给用户可见/可听反馈。
 
 要做的工作：
 
@@ -178,13 +178,13 @@ dimos mcp call seat_guide_status
 2. live request 时调用 `set_goal(PoseStamped)`。
 3. 如果导航忙，拒绝覆盖当前任务。
 4. 读取 `navigation_state` 和 `goal_reached`。
-5. SeatGuide 注入 `SpeakSkillSpec`，可用时播报结果。
-6. `speech_status` 区分 TTS key 缺失、audio output 缺失和可用状态。
+5. SeatGuide 返回明确的结果文本，并让 WebInput 发布到 `agent_responses`。
+6. 如果需要可听反馈，让手机打开 speaker relay 页面并用 `phone_speaker_test` 验证。
 
 验收方式：
 
 ```bash
-uv run pytest dimos/agents/skills/test_seat_guide.py dimos/agents/skills/test_speak_skill.py -q
+uv run pytest dimos/agents/skills/test_seat_guide.py -q
 ```
 
 硬件前检查：
@@ -192,7 +192,6 @@ uv run pytest dimos/agents/skills/test_seat_guide.py dimos/agents/skills/test_sp
 ```bash
 dimos mcp call seat_guide_preflight
 dimos mcp call preview_empty_seat_goal
-dimos mcp call speech_status
 dimos mcp call seat_guide_navigation_status
 ```
 
@@ -200,7 +199,7 @@ dimos mcp call seat_guide_navigation_status
 
 - preflight 显示 `navigation=IDLE`。
 - preview 有 `selected=...` 和 `goal=(...)`。
-- speech 显示 `tts=ready` 和 `audio_output=connected`。
+- WebInput response stream 可见；需要声音时手机 relay 可播放测试消息。
 - live 后 `seat_guide_navigation_status` 最终显示新的 `goal_sequence` 且 `goal_reached=true`。
 
 ## 阶段 6：Mac replay / SHM 视频流修复
@@ -241,14 +240,11 @@ bin/demo_seat_guide_replay_smoke
 
 1. 机器狗上电，和 Mac 在同一网络。
 2. 确认 Go2 IP，默认示例是 `192.168.123.161`。
-3. 准备 API keys。普通 agent 可以使用 OpenRouter；TTS 语音播报仍然需要 OpenAI，找座位 VLM 仍然需要 Alibaba/Qwen：
+3. 准备 API keys。普通 agent 可以使用 OpenRouter；找座位 VLM 如果选择 Qwen 仍然需要 Alibaba/Qwen：
 
 ```bash
 export OPENROUTER_API_KEY="你的 OpenRouter key"
 export OPENROUTER_MODEL="openai/gpt-4o-mini"
-
-# 可选：只有需要机器狗语音播报/TTS 时才需要
-export OPENAI_API_KEY="你的 OpenAI key"
 ```
 
 启动一键 bring-up：
@@ -268,10 +264,9 @@ bin/demo_seat_guide_hardware_bringup --robot-ip 192.168.123.161
 
 1. 打开脚本打印的 WebInput URL。
 2. 允许浏览器麦克风权限。
-3. 听到 TTS 检查语音后，在终端输入 `HEARD`。
-4. no-motion 阶段对浏览器说：`预检帮我找一个空位`。
-5. 确认 Go2 周围安全后，在终端输入 `LIVE`。
-6. live 阶段对浏览器说：`帮我找一个空位`。
+3. no-motion 阶段对浏览器说：`预检帮我找一个空位`。
+4. 确认 Go2 周围安全后，在终端输入 `LIVE`。
+5. live 阶段对浏览器说：`帮我找一个空位`。
 
 通过标准：
 
@@ -293,7 +288,7 @@ bin/demo_seat_guide_hardware_bringup --robot-ip 192.168.123.161
 | VLM 失败 | `seat_guide_status` | 本地 Moondream2 模型缺失、模型加载失败，或远程 VLM key 缺失 | 拉取模型或重新 export 对应 key，并重启 stack |
 | 找不到椅子 | `seat_guide_status` | 摄像头没朝向桌子、光照/识别失败 | 调整机器人视角；只调试时可 fallback |
 | 导航忙 | `seat_guide_preflight` | `navigation=FOLLOWING_PATH` 或 `RECOVERY` | 等任务结束或停止导航后重跑 |
-| TTS 不可用 | `speech_status` | `OPENAI_API_KEY` 缺失或 audio output 缺失 | 如果验收需要语音播报，设置 OpenAI key 并连接音频输出；如果只验收浏览器文字反馈，可先记录为非阻塞项 |
+| 手机反馈不可用 | `web_input_status` / `phone_speaker_test` | 手机没有打开 relay 页面或网络不可达 | 先确认 web response stream；需要声音时让手机访问可用的 relay 页面 |
 
 ## 当前已完成状态
 
@@ -302,7 +297,7 @@ bin/demo_seat_guide_hardware_bringup --robot-ip 192.168.123.161
 - SeatGuide planner / scene / intent / navigation integration。
 - WebInput 中文语音和文字直连 SeatGuide。
 - Camera/VLM/odom provider。
-- SpeakSkill readiness 和 TTS audio check。
+- WebInput response stream 和可选手机 speaker relay。
 - Go2 SeatGuide blueprints。
 - macOS replay SHM route 集成。
 - 一键硬件 bring-up 脚本。
@@ -310,10 +305,10 @@ bin/demo_seat_guide_hardware_bringup --robot-ip 192.168.123.161
 
 已验证：
 
-- SeatGuide/Speak/MCP 相关测试通过。
+- SeatGuide/MCP 相关测试通过。
 - pubsub/Rerun SHM 相关测试通过。
 - `bin/demo_seat_guide_replay_smoke` 在 Mac 上完整跑完。
 
 未完成：
 
-- 真实 Go2 硬件 transcript。最终完成标准必须包含真实浏览器麦克风输入、真实 camera/VLM/odom、TTS 可听确认、真实导航和 `goal_reached=true`。
+- 真实 Go2 硬件 transcript。最终完成标准必须包含真实浏览器麦克风输入、真实 camera/VLM/odom、真实导航和 `goal_reached=true`。

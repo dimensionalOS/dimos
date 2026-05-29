@@ -3,7 +3,7 @@
 This is the first demo-oriented module plan for the conference room seat-finding
 hackathon idea. The goal is to keep each boundary testable without a Go2 while
 the default Go2 path uses real browser/Whisper voice input, camera-backed VLM
-seat/person recognition, robot navigation, and speech feedback.
+seat/person recognition, robot navigation, and phone/web feedback.
 
 ## Demo-critical flow
 
@@ -11,7 +11,7 @@ User asks: "Find me an empty seat."
 
 The system scans a conference room with one long table, detects chairs and
 people, selects the nearest reachable empty chair, navigates beside it, and
-speaks a short instruction.
+publishes a short instruction to the web or phone relay.
 
 ## Modules
 
@@ -21,7 +21,7 @@ speaks a short instruction.
 | Seat Perception | Detects chair poses and person positions in the conference room. | Go2 RGB camera frames/replay frames plus odometry | `SeatSceneObservation` in map frame | Yes | `CameraSeatObservationProvider` implemented with VLM detection, odom-backed map projection, and explicit calibrated fallback |
 | Seat Occupancy Planner | Decides which chairs are empty and picks the nearest empty chair. | Chair poses, person positions, robot pose | Selected seat and guide pose | Yes | Implemented in `SeatGuidePlanner` |
 | Guide Navigation | Sends the robot to a pose beside the selected chair and reports completion. | Guide pose in `map` frame | Navigation goal plus `goal_reached` status | Yes | Uses `NavigationInterfaceSpec` |
-| Speech Feedback | Tells the user what was found and where to follow. | Planner result and navigation status | Spoken phrase | Yes | Optional `SpeakSkillSpec` integration implemented |
+| Phone/Web Feedback | Tells the user what was found and where to follow. | Planner result and navigation status | Web response text or phone speaker relay | Yes | `WebInput` exposes the response stream and phone speaker relay |
 | Acceptance Harness | Runs the same flow without Go2 hardware. | Fixed synthetic or recorded image layout | Test result and expected goal pose | Yes | Covered by unit tests |
 
 ## Current software boundary
@@ -52,7 +52,7 @@ Voice/text intake:
 - `handle_seat_request(text)` rejects unrelated text or delegates to `find_empty_seat_from_scene()`; by default it only navigates from live `camera` perception
 - `preview_seat_request(text)` validates a spoken/typed SeatGuide request and runs no-motion preflight instead of navigation
 - `seat_guide_readiness_report()` runs scene status, live-perception preflight, and goal preview in one no-motion report
-- `seat_guide_preflight()` checks navigation state, scene source, empty/occupied seat counts, selected seat/goal, and speaker wiring without moving; hardware acceptance requires `navigation=IDLE` and `speaker=connected`, it only passes live `camera` perception by default, and fallback calibration must be allowed explicitly with `require_live_perception=false`
+- `seat_guide_preflight()` checks navigation state, scene source, empty/occupied seat counts, and selected seat/goal without moving; hardware acceptance requires `navigation=IDLE`, it only passes live `camera` perception by default, and fallback calibration must be allowed explicitly with `require_live_perception=false`
 - `seat_guide_status()` reports the current scene source, visible/configured seats, people, and robot pose without navigating
 - `preview_empty_seat_goal()` runs the same planner and reports empty/occupied seat counts, the selected chair, and map-frame navigation goal without moving
 - `seat_guide_navigation_status()` reports navigation state and `goal_reached` after a live SeatGuide request, so acceptance can prove the robot completed the task rather than only accepted a goal; if navigation already reported reached before the SeatGuide goal was sent, status waits to see `goal_reached=false` once before accepting a later `true`
@@ -77,11 +77,11 @@ to move and reports the source, seat/person counts, robot pose, and a specific
 next step. This is intentional: fallback coordinates can be useful for
 calibration, but they should not be mistaken for real chair/person recognition.
 
-Speech feedback:
+Phone/web feedback:
 
-- if `SpeakSkill` is connected, SeatGuide speaks result/failure messages with `blocking=False`
-- if no speaker is connected, SeatGuide still returns text and the core tests keep running
-- `speech_status()` reports whether OpenAI TTS and local audio output are ready without speaking
+- SeatGuide returns result/failure text and publishes it to the web `agent_responses` stream.
+- If a phone is mounted on the Go2, the phone can open the SeatGuide speaker page or cloud relay and play the latest message through the phone speaker.
+- The Go2 body-audio path is intentionally not part of SeatGuide acceptance because hardware testing showed it is not a reliable output device.
 
 This keeps perception independent from navigation. A later detector can return
 the same scene contract without changing the planner tests.
@@ -103,7 +103,7 @@ The Go2-free acceptance path is:
 9. Verify `CameraSeatObservationProvider` converts camera/VLM chair/person detections into a map-frame `SeatSceneObservation` using latest odometry when available.
 10. Verify `WebInput` creates Whisper without forcing English, so Chinese phrases such as "帮我找一个空位" can be transcribed by language auto-detection.
 11. Verify `seat_guide_status()` can diagnose whether the scene came from camera detection, runtime calibration, or configured fallback before navigation is attempted.
-12. Verify `seat_guide_preflight()` reports navigation/perception/speaker readiness without calling navigation, and that fallback scenes are no-go unless explicitly allowed.
+12. Verify `seat_guide_preflight()` reports navigation/perception readiness without calling navigation, and that fallback scenes are no-go unless explicitly allowed.
 13. Verify `seat_guide_readiness_report()` combines status, preflight, and preview without calling navigation.
 14. Verify `handle_seat_request()` refuses fallback scenes by default and only navigates with fallback when `require_live_perception=false` is explicitly passed.
 15. Verify `preview_empty_seat_goal()` reports the selected chair and map-frame goal without calling navigation.
@@ -161,7 +161,7 @@ before any live motion:
 | Perception | Go2 camera frame, odometry, and the configured VLM detector are live; no fallback scene is active. | `camera_seat_provider_status` shows `image=<width>x<height>`, `image_fresh=true`, `odom=(...)`, `odom_fresh=true`, `detection_model=moondream`, `credential=present`, `override=inactive`, `configured_fallback_seats=0`, `configured_fallback_people=0`; `seat_guide_status` starts with `SeatGuide scene source=camera:`. | Turn robot toward the table, verify the local Moondream2 cache or selected VLM credential, restore stale camera/odom streams, or explicitly mark fallback calibration as non-acceptance. |
 | Planner | Empty/occupied counts and selected goal make sense before motion. | `seat_guide_preflight`, `seat_guide_readiness_report`, and `preview_empty_seat_goal` report `empty=N occupied=N`, `selected=...`, and `goal=(...)` without sending a goal. | Adjust camera view or chair/person layout before live voice. |
 | Navigation | Robot is idle before SeatGuide sends the live goal and reports completion after it. | Preflight has `navigation=IDLE`; after live voice, `seat_guide_navigation_status` reports a new `goal_sequence` and `goal_reached=true`. | Wait/cancel existing navigation or inspect navigation logs; do not rerun live voice until idle. |
-| Speech feedback | TTS and local audio output are ready, or the team agrees to use web text as the user-facing fallback. | `speech_status` shows `tts=ready` and `audio_output=connected`; hardware acceptance also calls `speak` with `SeatGuide audio check. I can guide you to an empty seat.`, requires `Spoke: SeatGuide audio check`, and requires operator confirmation `HEARD`. | Set `OPENAI_API_KEY` and connect audio before official spoken-feedback acceptance; OpenRouter covers the agent, not TTS. |
+| Phone feedback | The web response stream is visible, and a mounted phone can play messages if audible feedback is required. | `web_input_status` shows `responses=connected`; optional phone relay checks can use `phone_speaker_test`. | Keep the phone speaker page open on the mounted phone; do not depend on Go2 body audio. |
 | Acceptance evidence | The run is hardware, not replay/sim, and uses the SeatGuide blueprint. | `bin/demo_seat_guide_hardware_acceptance` records the run registry, no-motion gates, browser microphone gates, camera source, speech output check plus operator heard confirmation, ordered WebInput route logs, and `goal_reached=true`; `bin/demo_seat_guide_verify_acceptance_log <log>` passes. | Treat failures as real no-go evidence; do not replace them with direct MCP live calls. |
 
 ### Bring-up commands
@@ -171,9 +171,6 @@ One-command real Go2 bring-up:
 ```bash
 export OPENROUTER_API_KEY=...
 export OPENROUTER_MODEL=openai/gpt-4o-mini
-
-# Optional: only required for TTS speech feedback.
-export OPENAI_API_KEY=...
 bin/demo_seat_guide_hardware_bringup --robot-ip 192.168.123.161
 ```
 
@@ -221,8 +218,6 @@ tool-calling model such as `openai/gpt-4o-mini`; otherwise DimOS maps the
 default `gpt-4o` model to `openai/gpt-4o` on OpenRouter. If neither
 `OPENROUTER_API_KEY` nor `OPENAI_API_KEY` is set, `McpClient` disables the LLM
 agent but the direct SeatGuide voice route and MCP tools still start.
-`SpeakSkill` still requires `OPENAI_API_KEY` for TTS and degrades to a no-op
-instead of failing startup.
 
 The default camera detector uses the local Moondream2 VLM. Make sure the
 `vikhyatk/moondream2` Hugging Face snapshot is cached before hardware bring-up,
@@ -259,8 +254,8 @@ automated gates pass: the DimOS run registry must show a hardware run, not
 `voice_upload=connected`, `stt=connected`, and
 `human_transport=connected`; camera frames, odometry, and VLM credentials must
 be present, the camera provider runtime override must be inactive, and
-configured fallback seats/people must both be zero; TTS/audio output must be ready; preflight must be ready with
-`navigation=IDLE` and `speaker=connected`; the goal preview must select a seat;
+configured fallback seats/people must both be zero; preflight must be ready with
+`navigation=IDLE`; the goal preview must select a seat;
 and the script must resolve the active WebInput URL from `web_input_status`. Posting
 `预检帮我找一个空位` to that WebInput HTTP text
 endpoint must publish a `SeatGuide preflight ready` response on the web
@@ -296,8 +291,7 @@ The hardware script automatically audits the saved transcript after the live
 request completes. It requires the DimOS run registry path, hardware run mode,
 SeatGuide Go2 blueprint name, running WebInput server/thread/transport, direct
 SeatGuide routing, resolved WebInput URL, camera/odometry/VLM readiness,
-`image_fresh=true` and `odom_fresh=true`, TTS audio check phrase, `Spoke:`
-completion, operator audio confirmation `HEARD`, typed and spoken no-motion
+`image_fresh=true` and `odom_fresh=true`, typed and spoken no-motion
 responses, explicit browser microphone no-motion/live gates with the required
 spoken phrases, WebInput preview/live route logs, empty/occupied seat counts,
 DimOS log snapshots after no-motion checks and after the live request, the
@@ -339,7 +333,6 @@ Run the no-motion readiness path without relying on microphone or LLM behavior:
 dimos mcp call seat_guide_status
 dimos mcp call web_input_status
 dimos mcp call camera_seat_provider_status
-dimos mcp call speech_status
 dimos mcp call seat_guide_readiness_report
 dimos mcp call seat_guide_preflight
 dimos mcp call seat_guide_navigation_status
@@ -358,15 +351,14 @@ Run the real voice path:
 3. First speak "预检帮我找一个空位" or "preview find me an empty seat" to validate the real microphone path without motion.
 4. Then speak "帮我找一个空位" or "Please find me an empty seat" when live navigation is intended.
 5. The browser audio is transcribed by `WhisperNode` with language auto-detection; no-motion preview text is routed to `preview_seat_request()`, and live SeatGuide text is routed directly to `handle_seat_request()`.
-6. Watch the web `agent_responses` stream for the exact SeatGuide result, especially if `SpeakSkill` is unavailable or audio output is hard to hear during bring-up.
+6. Watch the web `agent_responses` stream for the exact SeatGuide result; use the phone speaker page only when audible feedback is required.
 
 If MCP is healthy, this should route through:
 
 `seat_guide_readiness_report` for combined no-motion checks ->
 `WebInput` -> `WhisperNode` -> `handle_seat_request` ->
 `CameraSeatObservationProvider.get_seat_scene` using camera frames and odom ->
-`SeatGuidePlanner.find_empty_seat` -> `NavigationInterfaceSpec.set_goal` ->
-optional `SpeakSkillSpec.speak`.
+`SeatGuidePlanner.find_empty_seat` -> `NavigationInterfaceSpec.set_goal`.
 
 Calibrate the fallback scene at runtime if camera/VLM detection is not reliable:
 

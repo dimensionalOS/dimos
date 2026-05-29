@@ -214,18 +214,6 @@ class FakeDirectMover:
         return self.result
 
 
-class FakeSpeaker:
-    def __init__(self, *, raises: bool = False) -> None:
-        self.spoken: list[tuple[str, bool]] = []
-        self.raises = raises
-
-    def speak(self, text: str, blocking: bool = True) -> str:
-        if self.raises:
-            raise RuntimeError("audio device unavailable")
-        self.spoken.append((text, blocking))
-        return f"Spoke: {text}"
-
-
 class FakeSeatGuideRequest:
     def __init__(self, *, raises: bool = False) -> None:
         self.requests: list[str] = []
@@ -349,23 +337,6 @@ class RecordingNavigation(Module):
         return self._last_goal.position.x, self._last_goal.position.y
 
 
-class RecordingSpeaker(Module):
-    _spoken: list[str]
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._spoken = []
-
-    @rpc
-    def speak(self, text: str, blocking: bool = True) -> str:
-        self._spoken.append(text)
-        return f"Spoke: {text}"
-
-    @rpc
-    def get_spoken(self) -> list[str]:
-        return self._spoken
-
-
 def test_planner_selects_nearest_empty_seat() -> None:
     planner = SeatGuidePlanner(occupied_radius_m=0.75, aisle_offset_m=0.5)
     seats = [
@@ -483,21 +454,6 @@ def test_skill_refuses_to_override_active_navigation_goal() -> None:
     assert fake_navigation.goal is None
 
 
-def test_skill_continues_when_speech_feedback_raises() -> None:
-    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
-    fake_navigation = FakeNavigation()
-    skill._navigation = fake_navigation
-    skill._speaker = FakeSpeaker(raises=True)
-
-    message = skill.find_empty_seat(seats=[1.0, 0.0, 0.0], people=[])
-
-    assert message == (
-        "I found an empty seat seat_1. Please follow me to the chair beside the table. "
-        "Navigating to (1.65, 0.00)."
-    )
-    assert fake_navigation.goal is not None
-
-
 def test_skill_uses_connected_observation_provider() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation()
@@ -530,9 +486,7 @@ def test_skill_reports_missing_observation_provider() -> None:
 
 def test_skill_reports_no_visible_seats_separately() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
-    fake_speaker = FakeSpeaker()
     skill._navigation = FakeNavigation()
-    skill._speaker = fake_speaker
 
     message = skill.find_empty_seat(seats=[], people=[])
 
@@ -540,7 +494,6 @@ def test_skill_reports_no_visible_seats_separately() -> None:
         "I cannot see any seats yet. Please face the conference table or calibrate "
         "the room layout."
     )
-    assert fake_speaker.spoken == [(message, False)]
 
 
 def test_handle_seat_request_delegates_to_scene_provider() -> None:
@@ -568,42 +521,13 @@ def test_handle_seat_request_delegates_to_scene_provider() -> None:
     assert fake_navigation.goal.position.x == pytest.approx(1.65)
 
 
-def test_handle_seat_request_speaks_feedback_when_speaker_is_connected() -> None:
-    skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
-    fake_navigation = FakeNavigation()
-    fake_speaker = FakeSpeaker()
-    skill._navigation = fake_navigation
-    skill._speaker = fake_speaker
-    skill._seat_observation_provider = FakeSeatObservationProvider(
-        SeatSceneObservation(
-            seats=[
-                SeatObservation("occupied", x=0.0, y=0.0, yaw=0.0),
-                SeatObservation("empty", x=1.0, y=0.0, yaw=0.0),
-            ],
-            people=[PersonObservation(x=0.1, y=0.0)],
-            source="camera",
-        )
-    )
-
-    skill.handle_seat_request(
-        "Please help me find an empty seat",
-        wait_for_arrival=False,
-    )
-
-    assert fake_speaker.spoken == [
-        ("I found an empty seat seat_2. Please follow me to the chair beside the table.", False)
-    ]
-
-
-def test_handle_seat_request_waits_and_speaks_when_arrived() -> None:
+def test_handle_seat_request_waits_and_reports_when_arrived() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = SequencedNavigation(
         states=[NavigationState.IDLE, NavigationState.FOLLOWING_PATH, NavigationState.IDLE],
         goal_reached_values=[False, False, True],
     )
-    fake_speaker = FakeSpeaker()
     skill._navigation = fake_navigation
-    skill._speaker = fake_speaker
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(
             seats=[SeatObservation("empty", x=1.0, y=0.0, yaw=0.0)],
@@ -619,10 +543,6 @@ def test_handle_seat_request_waits_and_speaks_when_arrived() -> None:
     )
 
     assert "我已经到了, 空椅子在我右边, 请坐。" in message
-    assert fake_speaker.spoken == [
-        ("I found an empty seat seat_1. Please follow me to the chair beside the table.", False),
-        ("我已经到了, 空椅子在我右边, 请坐。", False),
-    ]
 
 
 def test_handle_seat_request_reports_when_navigation_stops_before_arrival() -> None:
@@ -631,9 +551,7 @@ def test_handle_seat_request_reports_when_navigation_stops_before_arrival() -> N
         states=[NavigationState.IDLE, NavigationState.FOLLOWING_PATH, NavigationState.IDLE],
         goal_reached_values=[False, False, False],
     )
-    fake_speaker = FakeSpeaker()
     skill._navigation = fake_navigation
-    skill._speaker = fake_speaker
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(
             seats=[SeatObservation("empty", x=1.0, y=0.0, yaw=0.0)],
@@ -649,15 +567,12 @@ def test_handle_seat_request_reports_when_navigation_stops_before_arrival() -> N
     )
 
     assert "navigation stopped before reaching it" in message
-    assert fake_speaker.spoken[-1] == (message, False)
 
 
 def test_handle_seat_request_requires_live_camera_by_default() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation()
-    fake_speaker = FakeSpeaker()
     skill._navigation = fake_navigation
-    skill._speaker = fake_speaker
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(
             seats=[SeatObservation("fallback", x=1.0, y=0.0, yaw=0.0)],
@@ -677,7 +592,6 @@ def test_handle_seat_request_requires_live_camera_by_default() -> None:
         "next=use require_live_perception=false only for explicit fallback calibration."
     )
     assert fake_navigation.goal is None
-    assert fake_speaker.spoken == [(message, False)]
 
 
 def test_handle_seat_request_reports_camera_detection_error_next_step() -> None:
@@ -920,10 +834,8 @@ def test_scan_for_empty_seat_reports_rotation_failure() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation()
     fake_relative_mover = FakeRelativeMover("Navigation was cancelled or failed")
-    fake_speaker = FakeSpeaker()
     skill._navigation = fake_navigation
     skill._relative_mover = fake_relative_mover
-    skill._speaker = fake_speaker
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected")
     )
@@ -940,17 +852,14 @@ def test_scan_for_empty_seat_reports_rotation_failure() -> None:
     )
     assert fake_relative_mover.moves == [(0.0, 0.0, 30.0)]
     assert fake_navigation.goal is None
-    assert fake_speaker.spoken == [(message, False)]
 
 
 def test_search_for_empty_seat_stops_exploration_on_timeout() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation()
     fake_explorer = FakeExplorer()
-    fake_speaker = FakeSpeaker()
     skill._navigation = fake_navigation
     skill._explorer = fake_explorer
-    skill._speaker = fake_speaker
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(seats=[], people=[], source="camera_no_seats_detected")
     )
@@ -967,7 +876,6 @@ def test_search_for_empty_seat_stops_exploration_on_timeout() -> None:
     assert fake_explorer.begin_calls == 1
     assert fake_explorer.end_calls == 1
     assert fake_navigation.goal is None
-    assert fake_speaker.spoken == [(message, False)]
 
 
 def test_handle_seat_request_rejects_unrelated_text() -> None:
@@ -981,9 +889,7 @@ def test_handle_seat_request_rejects_unrelated_text() -> None:
 def test_preview_seat_request_runs_preflight_without_navigating() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation()
-    fake_speaker = FakeSpeaker()
     skill._navigation = fake_navigation
-    skill._speaker = fake_speaker
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(
             seats=[SeatObservation("empty", x=2.0, y=0.0, yaw=0.0)],
@@ -998,7 +904,6 @@ def test_preview_seat_request_runs_preflight_without_navigating() -> None:
 
     assert "SeatGuide preflight ready" in message
     assert fake_navigation.goal is None
-    assert fake_speaker.spoken == [(message, False)]
 
 
 def test_seat_guide_status_describes_current_scene() -> None:
@@ -1090,7 +995,6 @@ def test_seat_guide_preflight_reports_ready_without_navigating() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation()
     skill._navigation = fake_navigation
-    skill._speaker = FakeSpeaker()
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(
             seats=[
@@ -1109,7 +1013,7 @@ def test_seat_guide_preflight_reports_ready_without_navigating() -> None:
     assert message == (
         "SeatGuide preflight ready: navigation=IDLE; perception=camera seats=2 people=1; "
         "empty=1 occupied=1; selected=empty; "
-        "goal=(2.65, 0.00, yaw=0.00); speaker=connected."
+        "goal=(2.65, 0.00, yaw=0.00); feedback=phone_or_web."
     )
     assert fake_navigation.goal is None
 
@@ -1118,18 +1022,16 @@ def test_seat_guide_preflight_reports_no_go_without_provider() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     skill._navigation = FakeNavigation()
     skill._seat_observation_provider = None
-    skill._speaker = None
 
     assert (
         skill.seat_guide_preflight()
-        == "SeatGuide preflight no-go: navigation=IDLE; perception=missing; speaker=missing."
+        == "SeatGuide preflight no-go: navigation=IDLE; perception=missing; feedback=phone_or_web."
     )
 
 
 def test_seat_guide_preflight_reports_no_go_without_visible_seats() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     skill._navigation = FakeNavigation()
-    skill._speaker = None
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(seats=[], people=[], source="camera_detection_error")
     )
@@ -1137,14 +1039,13 @@ def test_seat_guide_preflight_reports_no_go_without_visible_seats() -> None:
     assert (
         skill.seat_guide_preflight()
         == "SeatGuide preflight no-go: navigation=IDLE; perception=camera_detection_error "
-        "no seats; speaker=missing."
+        "no seats; feedback=phone_or_web."
     )
 
 
 def test_seat_guide_preflight_reports_no_empty_seat_counts() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     skill._navigation = FakeNavigation()
-    skill._speaker = None
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(
             seats=[
@@ -1161,7 +1062,7 @@ def test_seat_guide_preflight_reports_no_empty_seat_counts() -> None:
 
     assert skill.seat_guide_preflight() == (
         "SeatGuide preflight no-go: navigation=IDLE; perception=camera; "
-        "no empty seat; empty=0 occupied=2; speaker=missing."
+        "no empty seat; empty=0 occupied=2; feedback=phone_or_web."
     )
 
 
@@ -1169,7 +1070,6 @@ def test_seat_guide_preflight_reports_no_go_when_navigation_is_busy() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation(state=NavigationState.FOLLOWING_PATH)
     skill._navigation = fake_navigation
-    skill._speaker = None
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(
             seats=[SeatObservation("empty", x=2.0, y=0.0, yaw=0.0)],
@@ -1183,7 +1083,7 @@ def test_seat_guide_preflight_reports_no_go_when_navigation_is_busy() -> None:
     assert message == (
         "SeatGuide preflight no-go: navigation=FOLLOWING_PATH; "
         "perception=camera seats=1 people=0; empty=1 occupied=0; selected=empty; "
-        "goal=(2.65, 0.00, yaw=0.00); speaker=missing."
+        "goal=(2.65, 0.00, yaw=0.00); feedback=phone_or_web."
     )
     assert fake_navigation.goal is None
 
@@ -1192,7 +1092,6 @@ def test_seat_guide_preflight_requires_live_camera_by_default() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation()
     skill._navigation = fake_navigation
-    skill._speaker = None
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(
             seats=[SeatObservation("fallback", x=2.0, y=0.0, yaw=0.0)],
@@ -1205,7 +1104,7 @@ def test_seat_guide_preflight_requires_live_camera_by_default() -> None:
 
     assert message == (
         "SeatGuide preflight no-go: navigation=IDLE; perception=configured_fallback "
-        "is not live camera; seats=1 people=0; speaker=missing."
+        "is not live camera; seats=1 people=0; feedback=phone_or_web."
     )
     assert fake_navigation.goal is None
 
@@ -1214,7 +1113,6 @@ def test_seat_guide_preflight_can_explicitly_allow_fallback_calibration() -> Non
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation()
     skill._navigation = fake_navigation
-    skill._speaker = None
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(
             seats=[SeatObservation("fallback", x=2.0, y=0.0, yaw=0.0)],
@@ -1234,7 +1132,6 @@ def test_seat_guide_readiness_report_combines_no_motion_checks() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation()
     skill._navigation = fake_navigation
-    skill._speaker = FakeSpeaker()
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(
             seats=[
@@ -1261,7 +1158,6 @@ def test_seat_guide_readiness_report_keeps_fallback_no_go_by_default() -> None:
     skill = SeatGuideSkillContainer.__new__(SeatGuideSkillContainer)
     fake_navigation = FakeNavigation()
     skill._navigation = fake_navigation
-    skill._speaker = None
     skill._seat_observation_provider = FakeSeatObservationProvider(
         SeatSceneObservation(
             seats=[SeatObservation("fallback", x=2.0, y=0.0, yaw=0.0)],
@@ -1288,7 +1184,6 @@ def test_seat_guide_readiness_report_reads_scene_once() -> None:
         )
     )
     skill._navigation = FakeNavigation()
-    skill._speaker = None
     skill._seat_observation_provider = provider
 
     skill.seat_guide_readiness_report()
@@ -1819,7 +1714,7 @@ def test_autoconnect_uses_runtime_configured_synthetic_scene() -> None:
         coordinator.stop()
 
 
-def test_autoconnect_injects_speaker_for_feedback() -> None:
+def test_autoconnect_wires_seat_guide_without_robot_speaker() -> None:
     blueprint = autoconnect(
         SeatGuideSkillContainer.blueprint(),
         SyntheticSeatObservationProvider.blueprint(
@@ -1829,23 +1724,19 @@ def test_autoconnect_injects_speaker_for_feedback() -> None:
             robot_y=0.0,
         ),
         RecordingNavigation.blueprint(),
-        RecordingSpeaker.blueprint(),
     )
     coordinator = ModuleCoordinator.build(blueprint, {"g": {"viewer": "none"}})
 
     try:
         seat_guide = coordinator.get_instance(SeatGuideSkillContainer)
-        speaker = coordinator.get_instance(RecordingSpeaker)
 
-        seat_guide.handle_seat_request(
+        message = seat_guide.handle_seat_request(
             "Please find me an empty seat",
             require_live_perception=False,
             wait_for_arrival=False,
         )
 
-        assert speaker.get_spoken() == [
-            "I found an empty seat seat_2. Please follow me to the chair beside the table."
-        ]
+        assert "seat_2" in message
     finally:
         coordinator.stop()
 
@@ -2146,7 +2037,6 @@ def test_seat_guide_go2_blueprints_include_real_runtime_modules() -> None:
         "CameraSeatObservationProvider",
         "SeatGuideSkillContainer",
         "WebInput",
-        "UnitreeSpeakSkill",
     } <= agentic_modules
     assert {
         "GO2Connection",
@@ -2154,8 +2044,9 @@ def test_seat_guide_go2_blueprints_include_real_runtime_modules() -> None:
         "CameraSeatObservationProvider",
         "SeatGuideSkillContainer",
         "WebInput",
-        "UnitreeSpeakSkill",
     } <= direct_modules
+    assert "UnitreeSpeakSkill" not in agentic_modules
+    assert "UnitreeSpeakSkill" not in direct_modules
     assert "SpatialMemory" not in agentic_modules
     assert "SpatialMemory" not in direct_modules
     assert "PersonFollowSkillContainer" not in agentic_modules
@@ -2915,7 +2806,7 @@ Hardware run mode: hardware.
 Hardware blueprint: unitree-go2-seat-guide-agentic
 WebInput status: web=started; thread=running; seat_route=seat_guide_direct; responses=connected; voice_upload=connected; stt=connected; human_transport=connected; url=http://localhost:5555.
 Using WebInput URL: http://localhost:5555
-{"modules": {"CameraSeatObservationProvider": ["camera_seat_provider_status"], "SeatGuideSkillContainer": ["seat_guide_status"], "WebInput": ["web_input_status"], "SpeakSkill": ["speech_status"]}}
+{"modules": {"CameraSeatObservationProvider": ["camera_seat_provider_status"], "SeatGuideSkillContainer": ["seat_guide_status"], "WebInput": ["web_input_status"]}}
 image=160x120
 image_fresh=true
 camera_info=160x120
@@ -2928,14 +2819,8 @@ odom_fresh=true
 override=inactive
 configured_fallback_seats=0
 configured_fallback_people=0
-tts=ready
-audio_output=connected
-+ dimos mcp call speak --json-args {"text": "SeatGuide audio check. I can guide you to an empty seat.", "blocking": true}
-Spoke: SeatGuide audio check. I can guide you to an empty seat.
-Audio output confirmation:
-Operator audio confirmation: HEARD
 SeatGuide scene source=camera: 2 seats [seat_1=(1.00, 2.00, yaw=0.00)], 0 people [none], robot=(1.00, 2.00).
-SeatGuide preflight ready: navigation=IDLE; perception=camera seats=2 people=0; empty=2 occupied=0; selected=seat_1; goal=(1.65, 2.00, yaw=0.00); speaker=connected.
+SeatGuide preflight ready: navigation=IDLE; perception=camera seats=2 people=0; empty=2 occupied=0; selected=seat_1; goal=(1.65, 2.00, yaw=0.00); feedback=phone_or_web.
 SeatGuide preview source=camera: selected seat_1 empty=2 occupied=0 seat=(1.00, 2.00, yaw=0.00) goal=(1.65, 2.00, yaw=0.00).
 Captured WebInput agent_responses stream
 Manual no-motion voice gate:
@@ -3053,12 +2938,6 @@ def test_acceptance_log_verifier_accepts_earlier_stale_goal_reached_status(
             "Capturing DimOS log snapshot after live request\n",
             "live DimOS log snapshot",
         ),
-        ("speaker=connected", "SeatGuide speaker wiring"),
-        (
-            "Spoke: SeatGuide audio check. I can guide you to an empty seat.\n",
-            "TTS audio check completion",
-        ),
-        ("Operator audio confirmation: HEARD\n", "operator heard TTS confirmation"),
         ("goal_reached=true\n", "navigation completion"),
     ],
 )
@@ -3261,33 +3140,6 @@ def test_acceptance_log_verifier_rejects_navigation_before_live_route(
 
     assert result.returncode == 3
     assert "live route before navigation order" in result.stderr
-
-
-def test_acceptance_log_verifier_rejects_audio_confirmation_before_tts_completion(
-    tmp_path: Path,
-) -> None:
-    log_file = tmp_path / "acceptance.log"
-    log_file.write_text(
-        _complete_acceptance_transcript().replace(
-            "Spoke: SeatGuide audio check. I can guide you to an empty seat.\n"
-            "Audio output confirmation:\n"
-            "Operator audio confirmation: HEARD\n",
-            "Audio output confirmation:\n"
-            "Operator audio confirmation: HEARD\n"
-            "Spoke: SeatGuide audio check. I can guide you to an empty seat.\n",
-            1,
-        )
-    )
-
-    result = subprocess.run(
-        ["bash", str(ACCEPTANCE_LOG_VERIFIER), str(log_file)],
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-
-    assert result.returncode == 3
-    assert "TTS completion before operator audio confirmation order" in result.stderr
 
 
 def test_acceptance_log_verifier_rejects_goal_reached_before_polling(
@@ -3656,31 +3508,6 @@ def _run_camera_provider_no_go_details(
     )
 
 
-def _run_speech_no_go_details(
-    tmp_path: Path,
-    status_text: str,
-) -> subprocess.CompletedProcess[str]:
-    script_source = HARDWARE_ACCEPTANCE_SCRIPT.read_text()
-    wrapper = tmp_path / "speech_details.sh"
-    wrapper.write_text(
-        "\n".join(
-            [
-                "set -euo pipefail",
-                _extract_bash_function(script_source, "log"),
-                _extract_bash_function(script_source, "log_speech_no_go_details"),
-                'log_file="$1"',
-                'log_speech_no_go_details "$2"',
-            ]
-        )
-    )
-    return subprocess.run(
-        ["bash", str(wrapper), str(tmp_path / "speech.log"), status_text],
-        check=False,
-        text=True,
-        capture_output=True,
-    )
-
-
 def _run_seat_guide_no_go_details(
     tmp_path: Path,
     status_text: str,
@@ -3827,24 +3654,20 @@ def test_hardware_acceptance_goal_completion_requires_new_reached_goal(
     ("status_text", "expected_returncode"),
     [
         (
-            "SeatGuide preflight ready: navigation=IDLE; perception=camera seats=2 people=0; selected=seat_1; goal=(1.65, 2.00, yaw=0.00); speaker=connected.",
+            "SeatGuide preflight ready: navigation=IDLE; perception=camera seats=2 people=0; selected=seat_1; goal=(1.65, 2.00, yaw=0.00); feedback=phone_or_web.",
             0,
         ),
         (
-            "SeatGuide preflight ready: navigation=FOLLOWING_PATH; perception=camera seats=2 people=0; selected=seat_1; goal=(1.65, 2.00, yaw=0.00); speaker=connected.",
+            "SeatGuide preflight ready: navigation=FOLLOWING_PATH; perception=camera seats=2 people=0; selected=seat_1; goal=(1.65, 2.00, yaw=0.00); feedback=phone_or_web.",
             1,
         ),
         (
-            "SeatGuide preflight ready: navigation=IDLE; perception=camera seats=2 people=0; selected=seat_1; goal=(1.65, 2.00, yaw=0.00); speaker=missing.",
-            1,
-        ),
-        (
-            "SeatGuide preflight no-go: navigation=IDLE; perception=camera no seats; speaker=connected.",
+            "SeatGuide preflight no-go: navigation=IDLE; perception=camera no seats; feedback=phone_or_web.",
             1,
         ),
     ],
 )
-def test_hardware_acceptance_preflight_requires_navigation_and_speaker_ready(
+def test_hardware_acceptance_preflight_requires_navigation_ready(
     tmp_path: Path,
     status_text: str,
     expected_returncode: int,
@@ -3998,21 +3821,6 @@ def test_hardware_acceptance_camera_provider_no_go_details_are_actionable(
     assert "Configured fallback seats/people are non-zero" in result.stdout
 
 
-def test_hardware_acceptance_speech_no_go_details_are_actionable(
-    tmp_path: Path,
-) -> None:
-    status_text = (
-        "SpeakSkill status: tts=unavailable; reason=OPENAI_API_KEY is not set; "
-        "audio_output=missing; background_speech_threads=0."
-    )
-
-    result = _run_speech_no_go_details(tmp_path, status_text)
-
-    assert result.returncode == 0
-    assert "OPENAI_API_KEY" in result.stdout
-    assert "Audio output is not connected" in result.stdout
-
-
 def test_hardware_acceptance_seat_guide_no_go_details_are_actionable(
     tmp_path: Path,
 ) -> None:
@@ -4020,7 +3828,7 @@ def test_hardware_acceptance_seat_guide_no_go_details_are_actionable(
         "SeatGuide readiness report: SeatGuide scene source=stale_camera_image: "
         "no seats visible or configured; 0 people detected. | "
         "SeatGuide preflight no-go: navigation=FOLLOWING_PATH; "
-        "perception=stale_camera_odom no seats; speaker=missing. | "
+        "perception=stale_camera_odom no seats; feedback=phone_or_web. | "
         "SeatGuide preflight no-go: perception=camera_detection_error no seats. | "
         "SeatGuide preview source=configured_fallback: no empty seat available."
     )
@@ -4029,7 +3837,6 @@ def test_hardware_acceptance_seat_guide_no_go_details_are_actionable(
 
     assert result.returncode == 0
     assert "Navigation is busy" in result.stdout
-    assert "speaker wiring is missing" in result.stdout
     assert "cannot see chairs" in result.stdout
     assert "camera frames are stale" in result.stdout
     assert "odometry is stale" in result.stdout
@@ -4052,12 +3859,11 @@ def test_hardware_acceptance_has_actionable_mcp_tools_failure_message() -> None:
     assert 'if ! tools="$(run_dimos mcp list-tools 2>&1)"; then' in script
     assert "Hardware acceptance no-go: MCP tools are unavailable." in script
     assert "Hardware acceptance no-go: missing MCP tool" in script
-    assert "SeatGuide, WebInput, camera provider, and SpeakSkill modules" in script
+    assert "SeatGuide, WebInput, and camera provider modules" in script
     assert "unitree-go2-seat-guide-agentic and includes McpServer" in script
-    assert 'require_tool "${tools}" "speak"' in script
-    assert "SeatGuide audio check. I can guide you to an empty seat." in script
-    assert "Operator audio confirmation" in script
-    assert 'require_output_contains "${audio_check_output}" "Spoke: SeatGuide audio check"' in script
+    assert 'require_tool "${tools}" "speak"' not in script
+    assert "SeatGuide audio check. I can guide you to an empty seat." not in script
+    assert "Operator audio confirmation" not in script
     assert "Transcript saved to: ${log_file}" in script
 
 
@@ -4281,7 +4087,7 @@ def test_no_motion_smoke_has_actionable_missing_stack_and_mcp_messages() -> None
     assert "dimos run unitree-go2-seat-guide-agentic --robot-ip" in script
     assert "SeatGuide smoke no-go: MCP tools are unavailable." in script
     assert "SeatGuide smoke no-go: missing MCP tool" in script
-    assert "SeatGuide, WebInput, camera provider, and SpeakSkill modules" in script
+    assert "SeatGuide, WebInput, and camera provider modules" in script
     assert "includes McpServer" in script
 
 
@@ -4349,7 +4155,7 @@ def test_hardware_bringup_starts_real_stack_then_runs_smoke_and_acceptance() -> 
     )
 
 
-def test_hardware_bringup_requires_real_perception_and_speech_credentials() -> None:
+def test_hardware_bringup_requires_real_perception_and_agent_credentials() -> None:
     script = HARDWARE_BRINGUP_SCRIPT.read_text()
 
     assert 'ALIBABA_API_KEY' in script
@@ -4363,7 +4169,7 @@ def test_hardware_bringup_requires_real_perception_and_speech_credentials() -> N
         "SeatGuide bring-up no-go: neither OPENROUTER_API_KEY nor OPENAI_API_KEY is set."
         in script
     )
-    assert "TTS speech feedback will be unavailable" in script
+    assert "TTS speech feedback will be unavailable" not in script
 
 
 def test_hardware_bringup_allows_existing_stack_and_smoke_skip() -> None:
@@ -4402,7 +4208,7 @@ def test_seat_guide_doc_has_parallel_hardware_day_checklist() -> None:
         "Perception",
         "Planner",
         "Navigation",
-        "Speech feedback",
+        "Phone feedback",
         "Acceptance evidence",
     ]:
         assert f"| {track} |" in doc
@@ -4441,7 +4247,7 @@ def test_go2_system_prompt_mentions_seat_guide_flow() -> None:
     assert "seat_guide_status" in SYSTEM_PROMPT
     assert "camera_seat_provider_status" in SYSTEM_PROMPT
     assert "web_input_status" in SYSTEM_PROMPT
-    assert "speech_status" in SYSTEM_PROMPT
+    assert "phone_speaker_test" in SYSTEM_PROMPT
     assert "preview_empty_seat_goal" in SYSTEM_PROMPT
     assert "seat_guide_navigation_status" in SYSTEM_PROMPT
     assert "goal_reached=true" in SYSTEM_PROMPT
