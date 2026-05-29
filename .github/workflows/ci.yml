@@ -277,7 +277,7 @@ jobs:
         # `import rclpy` / `ament_index_python` would fail. Sourcing the ROS
         # setup script and exporting PYTHONPATH/AMENT_PREFIX_PATH/etc into
         # GITHUB_ENV makes them importable from `uv run`.
-        if: contains(toJSON(matrix.runner), 'Linux')
+        if: matrix.os == 'Linux'
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash
@@ -307,7 +307,7 @@ jobs:
           disable_search: true
           fail_ci_if_error: true
           files: ./coverage.xml
-          flags: SelfHosted-${{ matrix.runner[1] }}
+          flags: SelfHosted-${{ matrix.os }}
           use_oidc: true
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
