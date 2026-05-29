@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 
+from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.perception.detection.type.detection3d.bbox import Detection3DBBox
 
 
@@ -36,7 +37,30 @@ class Detection3DMarker(Detection3DBBox):
     marker_id: int = -1
     corners_px: np.ndarray = field(default_factory=lambda: np.zeros((4, 2), dtype=np.float32))
     dictionary: str = ""
+    reprojection_error: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.name = self.marker_label
+
+    @property
+    def marker_label(self) -> str:
+        """Dictionary-qualified marker label used for display and wire class id."""
+        return f"{self.dictionary}:{self.marker_id}"
+
+    def to_detection3d_msg(self) -> Detection3D:
+        """Convert to a ROS Detection3D message, preserving marker identity."""
+        msg = super().to_detection3d_msg()
+        msg.id = str(self.marker_id)
+        if msg.results:
+            msg.results[0].hypothesis.class_id = self.marker_label
+        msg.results_length = len(msg.results)
+        return msg
 
     def to_repr_dict(self) -> dict[str, Any]:
         parent = super().to_repr_dict()
-        return {**parent, "marker_id": str(self.marker_id), "dict": self.dictionary}
+        return {
+            **parent,
+            "marker_id": str(self.marker_id),
+            "dict": self.dictionary,
+            "reproj": f"{self.reprojection_error:.3f}px",
+        }
