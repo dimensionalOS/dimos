@@ -18,11 +18,9 @@ Lidar clouds are assumed to be in world frame and logged directly under
 their entity path (no parent transform). Entities written:
 
 - ``world/lidar``         — Go2 L1 per-frame point cloud
-- ``world/lidar_voxels``  — growing voxel map of the primary lidar (``--map``)
-- ``world/lidar_map``     — single static voxel map of the primary lidar (``--map-final``)
 - ``world/fastlio_lidar`` — fastlio_lidar raw cloud (if present)
-- ``world/fastlio_voxels``— growing voxel map of fastlio_lidar (``--map``)
-- ``world/fastlio_map``   — single static voxel map of fastlio_lidar (``--map-final``)
+- ``world/<stream>_voxels`` — growing voxel map, one per PointCloud2 stream (``--map``)
+- ``world/<stream>_map``    — single static voxel map, one per PointCloud2 stream (``--map-final``)
 - ``world/fastlio``       — fastlio_odometry pose axis (if present)
 - ``world/fastlio_path``  — fastlio_odometry trajectory (growing LineStrips3D)
 - ``world/odom``          — Go2 onboard odom pose axis (if present)
@@ -162,7 +160,9 @@ def main(
         None, "--duration", help="Use only N seconds from --seek (default: to the end)"
     ),
     voxel: float = typer.Option(
-        0.05, "--voxel", help="Voxel size hint for the point cloud renderer"
+        0.05,
+        "--voxel",
+        help="Voxel grid resolution (m) for --map/--map-final; rendering follows the same size",
     ),
     point_mode: str = typer.Option(
         "spheres", "--point-mode", help="Render mode: 'spheres', 'boxes', or 'points'"
@@ -182,14 +182,16 @@ def main(
         "--map-final",
         help="Log a single static accumulated map of the whole recording (independent of --map)",
     ),
+    map_source: list[str] = typer.Option(
+        [],
+        "--map-source",
+        help="PointCloud2 stream(s) to map; repeatable. Default: all PointCloud2 streams",
+    ),
     map_carve_columns: bool = typer.Option(
         False,
         "--map-carve-columns/--no-map-carve-columns",
         help="Clear the full Z column under each new voxel, keeping only the latest surface "
         "(good for forward-facing lidar like the Go2 L1); --map/--map-final only",
-    ),
-    map_voxel: float = typer.Option(
-        0.05, "--map-voxel", help="Voxel size for the accumulated map (m); --map/--map-final only"
     ),
     map_device: str = typer.Option(
         "CUDA:0", "--map-device", help="Open3D device for the VoxelGrid; --map/--map-final only"
@@ -201,6 +203,7 @@ def main(
     ),
 ) -> None:
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
+    from dimos.mapping.utils.summary import _stream_payload_types
     from dimos.mapping.voxels import VoxelMapTransformer
     from dimos.memory2.store.sqlite import SqliteStore
     from dimos.memory2.transform import throttle
@@ -215,6 +218,13 @@ def main(
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
     cam_info = _camera_info_static()
+
+    # Resolve which streams to voxelize: all PointCloud2 streams, or the
+    # explicit --map-source subset. Validate up front so typos fail fast.
+    pc_streams = [n for n, t in _stream_payload_types(db_path).items() if t is PointCloud2]
+    map_sources = list(map_source) or pc_streams
+    if (map or map_final) and (bad := [s for s in map_sources if s not in pc_streams]):
+        raise typer.BadParameter(f"--map-source: not PointCloud2 stream(s): {', '.join(bad)}")
 
     rr.init("dimos map_rrd", recording_id=db_path.stem)
     rr.save(str(out))
@@ -252,63 +262,43 @@ def main(
         if livox is not None:
             _log_clouds("fastlio_lidar", livox, "world/fastlio_lidar", voxel, point_mode)
 
-        # ---- accumulated voxel maps (--map only) ----
-        # --map-carve-columns clears the Z column under each surface voxel
-        # (good for forward-facing lidar like the Go2 L1). fastlio_lidar is
-        # spherical (Mid360) → never carve, just aggregate.
-        if map:
-            grid_kwargs = {"voxel_size": map_voxel, "device": map_device, "show_startup_log": False}
-            _log_clouds(
-                " lidar_voxels",
-                lidar.transform(
-                    VoxelMapTransformer(
-                        emit_every=map_emit_every, carve_columns=map_carve_columns, **grid_kwargs
+        # ---- accumulated voxel maps over the selected PointCloud2 streams ----
+        # --map logs a growing map per stream; --map-final logs one static map
+        # per stream. --map-carve-columns clears the Z column under each surface
+        # voxel (good for forward-facing lidar like the Go2 L1); off by default.
+        if map or map_final:
+            grid_kwargs = {"voxel_size": voxel, "device": map_device, "show_startup_log": False}
+            for name in map_sources:
+                src = clipped(name, PointCloud2)
+                if not src.exists():
+                    continue
+                if map:
+                    _log_clouds(
+                        f"{name}_voxels",
+                        src.transform(
+                            VoxelMapTransformer(
+                                emit_every=map_emit_every,
+                                carve_columns=map_carve_columns,
+                                **grid_kwargs,
+                            )
+                        ),
+                        f"world/{name}_voxels",
+                        voxel,
+                        point_mode,
+                        total=max(1, src.count() // max(map_emit_every, 1)),
                     )
-                ),
-                "world/lidar_voxels",
-                voxel,
-                point_mode,
-                total=max(1, lidar.count() // max(map_emit_every, 1)),
-            )
-            if livox is not None:
-                _log_clouds(
-                    "fastlio_voxels",
-                    livox.transform(
+                if map_final:
+                    # emit_every=0 → one accumulated obs at exhaustion
+                    final = src.transform(
                         VoxelMapTransformer(
-                            emit_every=map_emit_every, carve_columns=False, **grid_kwargs
+                            emit_every=0, carve_columns=map_carve_columns, **grid_kwargs
                         )
-                    ),
-                    "world/fastlio_voxels",
-                    voxel,
-                    point_mode,
-                    total=max(1, livox.count() // max(map_emit_every, 1)),
-                )
-
-        # ---- single static accumulated map (--map-final only) ----
-        # Guard on the raw source's exists() (cheap limit(1)) so the voxel
-        # accumulation (emit_every=0 → one obs at exhaustion) runs only once.
-        if map_final:
-            grid_kwargs = {"voxel_size": map_voxel, "device": map_device, "show_startup_log": False}
-            if lidar.exists():
-                final = lidar.transform(
-                    VoxelMapTransformer(
-                        emit_every=0, carve_columns=map_carve_columns, **grid_kwargs
+                    ).last()
+                    rr.log(
+                        f"world/{name}_map",
+                        final.data.to_rerun(voxel_size=voxel, mode=point_mode),
+                        static=True,
                     )
-                ).last()
-                rr.log(
-                    "world/lidar_map",
-                    final.data.to_rerun(voxel_size=voxel, mode=point_mode),
-                    static=True,
-                )
-            if livox is not None and livox.exists():
-                final_livox = livox.transform(
-                    VoxelMapTransformer(emit_every=0, carve_columns=False, **grid_kwargs)
-                ).last()
-                rr.log(
-                    "world/fastlio_map",
-                    final_livox.data.to_rerun(voxel_size=voxel, mode=point_mode),
-                    static=True,
-                )
 
         # ---- fastlio pose axis + path from fastlio_odometry stream ----
         if "fastlio_odometry" in store.streams:
