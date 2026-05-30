@@ -31,6 +31,20 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.introspection.blueprint.mermaid import DEFAULT_THEME, THEMES, render_mermaid
 
 
+def _levenshtein(a: str, b: str) -> int:
+    if len(a) < len(b):
+        return _levenshtein(b, a)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, char_a in enumerate(a):
+        curr = [i + 1]
+        for j, char_b in enumerate(b):
+            curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (char_a != char_b)))
+        prev = curr
+    return prev[-1]
+
+
 def _find_package_root(filepath: str) -> str | None:
     directory = os.path.dirname(filepath)
     root = None
@@ -102,6 +116,7 @@ def _build_html(
     per_bp_disconnected: list[set[str]] = []
     per_bp_node_colors: list[dict[str, str]] = []
     per_bp_conflicts: list[list[dict[str, object]]] = []
+    per_bp_typos: list[list[dict[str, object]]] = []
 
     tab_buttons = []
     tab_panels = []
@@ -133,6 +148,43 @@ def _build_html(
         ]
         per_bp_conflicts.append(conflicts)
 
+        outputs: dict[tuple[str, str], list[str]] = {}
+        inputs: dict[tuple[str, str], list[str]] = {}
+        for atom in bp.blueprints:
+            for stream in atom.streams:
+                key = (stream.name, stream.type.__name__)
+                if stream.direction == "out":
+                    outputs.setdefault(key, []).append(atom.module.__name__)
+                else:
+                    inputs.setdefault(key, []).append(atom.module.__name__)
+        dangling_outs = {k: v for k, v in outputs.items() if k not in inputs}
+        dangling_ins = {k: v for k, v in inputs.items() if k not in outputs}
+        typos: list[dict[str, object]] = []
+        for (out_name, out_type), out_modules in dangling_outs.items():
+            for (in_name, in_type), in_modules in dangling_ins.items():
+                if out_type != in_type:
+                    continue
+                distance = _levenshtein(out_name, in_name)
+                if 0 < distance <= 2:
+                    out_label = f"{out_name}:{out_type}"
+                    in_label = f"{in_name}:{in_type}"
+                    typos.append(
+                        {
+                            "outLabel": out_label,
+                            "inLabel": in_label,
+                            "outColor": label_colors.get(out_label, "#ccc"),
+                            "inColor": label_colors.get(in_label, "#ccc"),
+                            "outModules": [
+                                {"name": m, "color": node_colors.get(m, "#ccc")}
+                                for m in out_modules
+                            ],
+                            "inModules": [
+                                {"name": m, "color": node_colors.get(m, "#ccc")} for m in in_modules
+                            ],
+                        }
+                    )
+        per_bp_typos.append(typos)
+
         active_cls = " active" if idx == 0 else ""
         tab_buttons.append(f'<button class="tab-btn{active_cls}" data-idx="{idx}">{name}</button>')
         tab_panels.append(
@@ -145,6 +197,7 @@ def _build_html(
     all_label_colors_json = json.dumps(per_bp_label_colors)
     all_disconnected_json = json.dumps([sorted(d) for d in per_bp_disconnected])
     all_conflicts_json = json.dumps(per_bp_conflicts)
+    all_typos_json = json.dumps(per_bp_typos)
 
     tab_bar_html = ""
     if len(blueprints) > 1:
@@ -199,29 +252,32 @@ body {{ background: {background}; color: {text_color}; font-family: sans-serif; 
 }}
 .moduleNode .nodeLabel {{ font-size: 38px !important; font-weight: 600 !important; display: block !important; transform: scale(0.7) !important; }}
 .streamNode .nodeLabel {{ font-size: 18px !important; }}
-.conflicts-box {{
+.warnings-container {{
     position: fixed; bottom: 1.2em; left: 1.2em; z-index: 10;
-    background: {controls_bg}; border: 1px solid #e57373; border-radius: 6px;
-    padding: 0.7em 1em; max-width: 26em; font-size: 0.85em;
-    color: {text_color};
+    display: flex; flex-direction: column; gap: 0.6em; max-width: 30em;
 }}
-.conflicts-box.hidden {{ display: none; }}
-.conflicts-title {{ color: #e57373; font-weight: 600; margin-bottom: 0.3em; }}
-.conflicts-item {{ margin: 0.25em 0; padding-top: 0.4em; border-top: 1px solid {border_color}; }}
-.conflicts-item:first-of-type {{ border-top: none; padding-top: 0; }}
-.conflict-module {{
+.warnings-container:empty {{ display: none; }}
+.warning-box {{
+    background: {controls_bg}; border: 1px solid #e57373; border-radius: 6px;
+    padding: 0.7em 1em; font-size: 0.85em; color: {text_color};
+}}
+.warning-title {{ color: #e57373; font-weight: 600; margin-bottom: 0.3em; }}
+.warning-item {{ margin: 0.25em 0; padding-top: 0.4em; border-top: 1px solid {border_color}; }}
+.warning-item:first-of-type {{ border-top: none; padding-top: 0; }}
+.warning-module {{
     display: inline-block; padding: 3px 10px; border-radius: 10px;
     color: #eee; font-size: 0.92em; margin: 2px 2px;
 }}
-.conflict-stream {{
+.warning-stream {{
     display: inline-block; padding: 3px 8px; border: 1px solid;
     border-radius: 3px; font-size: 0.92em; margin: 2px 2px;
 }}
+.typo-arrow {{ color: {text_muted}; margin: 0 2px; }}
 </style>
 </head><body>
 {tab_bar_html}
 {"".join(tab_panels)}
-<div id="conflictsBox" class="conflicts-box hidden"></div>
+<div class="warnings-container" id="warningsContainer"></div>
 <div class="controls">
     <button id="zoomIn" title="Zoom in">+</button>
     <button id="zoomOut" title="Zoom out">&minus;</button>
@@ -256,23 +312,37 @@ document.querySelectorAll('marker').forEach(marker => {{
 const allLabelColors = {all_label_colors_json};
 const allDisconnected = {all_disconnected_json};
 const allConflicts = {all_conflicts_json};
+const allTypos = {all_typos_json};
 
-function renderConflicts(idx) {{
-    const box = document.getElementById('conflictsBox');
+function renderWarnings(idx) {{
+    const container = document.getElementById('warningsContainer');
+    let html = '';
     const conflicts = allConflicts[idx] || [];
-    if (conflicts.length === 0) {{
-        box.classList.add('hidden');
-        box.innerHTML = '';
-        return;
+    if (conflicts.length > 0) {{
+        html += '<div class="warning-box"><div class="warning-title">⚠ Possible Input Fighting</div>' +
+            conflicts.map(c =>
+                `<div class="warning-item">` +
+                `<span class="warning-stream" style="border-color:${{c.topicColor}};color:${{c.topicColor}}">${{c.topic}}</span> ` +
+                c.modules.map(m => `<span class="warning-module" style="background:${{m.color}}bf">${{m.name}}</span>`).join(' ') +
+                `</div>`
+            ).join('') + '</div>';
     }}
-    box.classList.remove('hidden');
-    box.innerHTML = '<div class="conflicts-title">⚠ Possible Input Fighting</div>' +
-        conflicts.map(c =>
-            `<div class="conflicts-item">` +
-            `<span class="conflict-stream" style="border-color:${{c.topicColor}};color:${{c.topicColor}}">${{c.topic}}</span> ` +
-            c.modules.map(m => `<span class="conflict-module" style="background:${{m.color}}bf">${{m.name}}</span>`).join(' ') +
-            `</div>`
-        ).join('');
+    const typos = allTypos[idx] || [];
+    if (typos.length > 0) {{
+        html += '<div class="warning-box"><div class="warning-title">⚠ Possible Typos</div>' +
+            typos.map(t =>
+                `<div class="warning-item">` +
+                `<span class="warning-stream" style="border-color:${{t.outColor}};color:${{t.outColor}}">${{t.outLabel}}</span>` +
+                `<span class="typo-arrow">≠</span>` +
+                `<span class="warning-stream" style="border-color:${{t.inColor}};color:${{t.inColor}}">${{t.inLabel}}</span>` +
+                `<div>` +
+                t.outModules.map(m => `<span class="warning-module" style="background:${{m.color}}bf">${{m.name}}</span>`).join(' ') +
+                `<span class="typo-arrow">→</span>` +
+                t.inModules.map(m => `<span class="warning-module" style="background:${{m.color}}bf">${{m.name}}</span>`).join(' ') +
+                `</div></div>`
+            ).join('') + '</div>';
+    }}
+    container.innerHTML = html;
 }}
 
 function setupViewport(vp, labelColors, disconnectedList) {{
@@ -425,7 +495,7 @@ document.getElementById('resetView').addEventListener('click', () => {{
     if (activeViewport?._fitToView) activeViewport._fitToView();
 }});
 
-renderConflicts(0);
+renderWarnings(0);
 
 document.querySelectorAll('.tab-panel:not(.active)').forEach(p => p.classList.add('hidden'));
 
@@ -446,7 +516,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {{
             activeViewport = vp;
             if (vp._fitToView) setTimeout(() => vp._fitToView(), 0);
         }}
-        renderConflicts(parseInt(idx));
+        renderWarnings(parseInt(idx));
     }});
 }});
 </script>

@@ -46,24 +46,27 @@ body { background: #1e1e1e; color: #ccc; font-family: sans-serif; overflow: hidd
 }
 .moduleNode .nodeLabel { font-size: 38px !important; font-weight: 600 !important; display: block !important; transform: scale(0.7) !important; }
 .streamNode .nodeLabel { font-size: 18px !important; }
-.conflicts-box {
+.warnings-container {
     position: fixed; bottom: 1.2em; left: 1.2em; z-index: 10;
-    background: #2a2a2a; border: 1px solid #e57373; border-radius: 6px;
-    padding: 0.7em 1em; max-width: 26em; font-size: 0.85em;
-    color: #ccc;
+    display: flex; flex-direction: column; gap: 0.6em; max-width: 30em;
 }
-.conflicts-box.hidden { display: none; }
-.conflicts-title { color: #e57373; font-weight: 600; margin-bottom: 0.3em; }
-.conflicts-item { margin: 0.25em 0; padding-top: 0.4em; border-top: 1px solid #444; }
-.conflicts-item:first-of-type { border-top: none; padding-top: 0; }
-.conflict-module {
+.warnings-container:empty { display: none; }
+.warning-box {
+    background: #2a2a2a; border: 1px solid #e57373; border-radius: 6px;
+    padding: 0.7em 1em; font-size: 0.85em; color: #ccc;
+}
+.warning-title { color: #e57373; font-weight: 600; margin-bottom: 0.3em; }
+.warning-item { margin: 0.25em 0; padding-top: 0.4em; border-top: 1px solid #444; }
+.warning-item:first-of-type { border-top: none; padding-top: 0; }
+.warning-module {
     display: inline-block; padding: 3px 10px; border-radius: 10px;
     color: #eee; font-size: 0.92em; margin: 2px 2px;
 }
-.conflict-stream {
+.warning-stream {
     display: inline-block; padding: 3px 8px; border: 1px solid;
     border-radius: 3px; font-size: 0.92em; margin: 2px 2px;
 }
+.typo-arrow { color: #888; margin: 0 2px; }
 </style>
 </head><body>
 <div class="tab-bar"><button class="tab-btn active" data-idx="0">blueprint3</button><button class="tab-btn" data-idx="1">blueprint2</button><button class="tab-btn" data-idx="2">blueprint1</button></div>
@@ -264,7 +267,7 @@ graph LR
     linkStyle 12 stroke:#22d3ee,stroke-width:2px
     linkStyle 13 stroke:#3b82f6,stroke-width:2px
 </pre></div></div></div>
-<div id="conflictsBox" class="conflicts-box hidden"></div>
+<div class="warnings-container" id="warningsContainer"></div>
 <div class="controls">
     <button id="zoomIn" title="Zoom in">+</button>
     <button id="zoomOut" title="Zoom out">&minus;</button>
@@ -299,23 +302,37 @@ document.querySelectorAll('marker').forEach(marker => {
 const allLabelColors = [{"depth_image:DepthData": "#60a5fa", "odometry:OdometryData": "#f87171", "plan:PlanData": "#4ade80", "point_cloud:PointCloudData": "#a78bfa", "cmd_vel:CmdVelData": "#fb923c", "color_image:ImageData": "#22d3ee", "color_img:ImageData": "#f472b6"}, {"plan:PlanData": "#60a5fa", "point_cloud:PointCloudData": "#f87171", "cmd_vel:CmdVelData": "#4ade80", "color_image:ImageData": "#a78bfa", "color_img:ImageData": "#fb923c", "depth_image:DepthData": "#22d3ee", "odometry:OdometryData": "#f472b6"}, {"depth_image:DepthData": "#60a5fa", "odometry:OdometryData": "#f87171", "plan:PlanData": "#4ade80", "point_cloud:PointCloudData": "#a78bfa", "cmd_vel:CmdVelData": "#fb923c", "color_image:ImageData": "#22d3ee", "color_img:ImageData": "#f472b6"}];
 const allDisconnected = [["cmd_vel:CmdVelData", "color_image:ImageData", "color_img:ImageData"], ["cmd_vel:CmdVelData", "color_image:ImageData", "color_img:ImageData", "depth_image:DepthData", "odometry:OdometryData"], ["cmd_vel:CmdVelData", "color_image:ImageData", "color_img:ImageData"]];
 const allConflicts = [[{"topic": "plan:PlanData", "topicColor": "#4ade80", "modules": [{"name": "PlannerModule", "color": "#22c55e"}, {"name": "PlannerModule2", "color": "#8b5cf6"}]}, {"topic": "cmd_vel:CmdVelData", "topicColor": "#fb923c", "modules": [{"name": "ControllerModule", "color": "#f97316"}, {"name": "ControllerModule2", "color": "#06b6d4"}]}], [], []];
+const allTypos = [[{"outLabel": "color_img:ImageData", "inLabel": "color_image:ImageData", "outColor": "#f472b6", "inColor": "#22d3ee", "outModules": [{"name": "CameraModule", "color": "#3b82f6"}], "inModules": [{"name": "PerceptionModule", "color": "#ec4899"}, {"name": "VisualizerModule", "color": "#6366f1"}]}], [{"outLabel": "color_img:ImageData", "inLabel": "color_image:ImageData", "outColor": "#fb923c", "inColor": "#a78bfa", "outModules": [{"name": "CameraModule", "color": "#ef4444"}], "inModules": [{"name": "VisualizerModule", "color": "#8b5cf6"}]}], [{"outLabel": "color_img:ImageData", "inLabel": "color_image:ImageData", "outColor": "#f472b6", "inColor": "#22d3ee", "outModules": [{"name": "CameraModule", "color": "#3b82f6"}], "inModules": [{"name": "PerceptionModule", "color": "#f97316"}, {"name": "VisualizerModule", "color": "#06b6d4"}]}]];
 
-function renderConflicts(idx) {
-    const box = document.getElementById('conflictsBox');
+function renderWarnings(idx) {
+    const container = document.getElementById('warningsContainer');
+    let html = '';
     const conflicts = allConflicts[idx] || [];
-    if (conflicts.length === 0) {
-        box.classList.add('hidden');
-        box.innerHTML = '';
-        return;
+    if (conflicts.length > 0) {
+        html += '<div class="warning-box"><div class="warning-title">⚠ Possible Input Fighting</div>' +
+            conflicts.map(c =>
+                `<div class="warning-item">` +
+                `<span class="warning-stream" style="border-color:${c.topicColor};color:${c.topicColor}">${c.topic}</span> ` +
+                c.modules.map(m => `<span class="warning-module" style="background:${m.color}bf">${m.name}</span>`).join(' ') +
+                `</div>`
+            ).join('') + '</div>';
     }
-    box.classList.remove('hidden');
-    box.innerHTML = '<div class="conflicts-title">⚠ Possible Input Fighting</div>' +
-        conflicts.map(c =>
-            `<div class="conflicts-item">` +
-            `<span class="conflict-stream" style="border-color:${c.topicColor};color:${c.topicColor}">${c.topic}</span> ` +
-            c.modules.map(m => `<span class="conflict-module" style="background:${m.color}bf">${m.name}</span>`).join(' ') +
-            `</div>`
-        ).join('');
+    const typos = allTypos[idx] || [];
+    if (typos.length > 0) {
+        html += '<div class="warning-box"><div class="warning-title">⚠ Possible Typos</div>' +
+            typos.map(t =>
+                `<div class="warning-item">` +
+                `<span class="warning-stream" style="border-color:${t.outColor};color:${t.outColor}">${t.outLabel}</span>` +
+                `<span class="typo-arrow">≠</span>` +
+                `<span class="warning-stream" style="border-color:${t.inColor};color:${t.inColor}">${t.inLabel}</span>` +
+                `<div>` +
+                t.outModules.map(m => `<span class="warning-module" style="background:${m.color}bf">${m.name}</span>`).join(' ') +
+                `<span class="typo-arrow">→</span>` +
+                t.inModules.map(m => `<span class="warning-module" style="background:${m.color}bf">${m.name}</span>`).join(' ') +
+                `</div></div>`
+            ).join('') + '</div>';
+    }
+    container.innerHTML = html;
 }
 
 function setupViewport(vp, labelColors, disconnectedList) {
@@ -468,7 +485,7 @@ document.getElementById('resetView').addEventListener('click', () => {
     if (activeViewport?._fitToView) activeViewport._fitToView();
 });
 
-renderConflicts(0);
+renderWarnings(0);
 
 document.querySelectorAll('.tab-panel:not(.active)').forEach(p => p.classList.add('hidden'));
 
@@ -489,7 +506,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
             activeViewport = vp;
             if (vp._fitToView) setTimeout(() => vp._fitToView(), 0);
         }
-        renderConflicts(parseInt(idx));
+        renderWarnings(parseInt(idx));
     });
 });
 </script>
