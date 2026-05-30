@@ -28,7 +28,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mcap.reader import make_reader
 import numpy as np
 import typer
 
@@ -37,6 +36,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.mcap import go2_cdr as cdr
 from dimos.robot.unitree.go2.mcap.extrinsics import CAM_Q, CAM_T, EXT_R, EXT_T
+from mcap.reader import make_reader
 
 CLOUD = "rt/utlidar/cloud"
 ODOM = "rt/utlidar/robot_odom"
@@ -96,9 +96,7 @@ def _pose7(tt, pos, quat, t: float) -> tuple:
 def _load_odom(mcap: Path, seconds: float | None):
     """First-cloud anchor + leg-odom trajectory (t_rel, pos, quat)."""
     with open(mcap, "rb") as f:
-        anchor = next(
-            m.publish_time for _s, _c, m in make_reader(f).iter_messages(topics=[CLOUD])
-        )
+        anchor = next(m.publish_time for _s, _c, m in make_reader(f).iter_messages(topics=[CLOUD]))
     t, pos, quat = [], [], []
     with open(mcap, "rb") as f:
         for _s, _c, m in make_reader(f).iter_messages(topics=[ODOM]):
@@ -147,18 +145,24 @@ def main(
         s_liz1 = store.stream("lidar_bestz_1s", PointCloud2)
 
         # ---- odom + odom_bestz (downsampled) ----
-        step = max(1, int(round((len(lt) / max(lt[-1], 1e-6)) / max(odom_hz, 1e-6))))
+        step = max(1, round((len(lt) / max(lt[-1], 1e-6)) / max(odom_hz, 1e-6)))
         for i in range(0, len(lt), step):
             ts = anchor / 1e9 + lt[i]
             qx, qy, qz, qw = lquat[i]
             s_od.append(
-                PoseStamped(ts=ts, frame_id="world", position=lpos[i].tolist(),
-                            orientation=[qx, qy, qz, qw]),
-                ts=ts, pose=(*lpos[i], qx, qy, qz, qw))
+                PoseStamped(
+                    ts=ts, frame_id="world", position=lpos[i].tolist(), orientation=[qx, qy, qz, qw]
+                ),
+                ts=ts,
+                pose=(*lpos[i], qx, qy, qz, qw),
+            )
             s_odz.append(
-                PoseStamped(ts=ts, frame_id="world", position=bpos[i].tolist(),
-                            orientation=[qx, qy, qz, qw]),
-                ts=ts, pose=(*bpos[i], qx, qy, qz, qw))
+                PoseStamped(
+                    ts=ts, frame_id="world", position=bpos[i].tolist(), orientation=[qx, qy, qz, qw]
+                ),
+                ts=ts,
+                pose=(*bpos[i], qx, qy, qz, qw),
+            )
         print(f"wrote {len(range(0, len(lt), step))} odom poses (x2)")
 
         # ---- lidar (world) per scan, deskewed by both trajectories + 1s bins ----
@@ -186,10 +190,14 @@ def main(
                 wz = _deskew(xyz, tpt, lt, bpos, lquat)
                 s_li.append(
                     PointCloud2.from_numpy(wl.astype(np.float32), "world", ts, inten),
-                    ts=ts, pose=_pose7(lt, lpos, lquat, tr))
+                    ts=ts,
+                    pose=_pose7(lt, lpos, lquat, tr),
+                )
                 s_liz.append(
                     PointCloud2.from_numpy(wz.astype(np.float32), "world", ts, inten),
-                    ts=ts, pose=_pose7(lt, bpos, lquat, tr))
+                    ts=ts,
+                    pose=_pose7(lt, bpos, lquat, tr),
+                )
                 acc_world(bins_l, tr, wl.astype(np.float32))
                 acc_world(bins_z, tr, wz.astype(np.float32))
                 nclouds += 1
@@ -198,11 +206,14 @@ def main(
         # ---- 1 s accumulations (voxel-downsampled), posed at bin center ----
         def flush(bins: dict, pos, stream) -> None:
             for sec, chunks in sorted(bins.items()):
-                pc = PointCloud2.from_numpy(np.concatenate(chunks), "world",
-                                            anchor / 1e9 + sec + 0.5)
+                pc = PointCloud2.from_numpy(
+                    np.concatenate(chunks), "world", anchor / 1e9 + sec + 0.5
+                )
                 pc = pc.voxel_downsample(voxel)
-                stream.append(pc, ts=anchor / 1e9 + sec + 0.5,
-                              pose=_pose7(lt, pos, lquat, sec + 0.5))
+                stream.append(
+                    pc, ts=anchor / 1e9 + sec + 0.5, pose=_pose7(lt, pos, lquat, sec + 0.5)
+                )
+
         flush(bins_l, lpos, s_li1)
         flush(bins_z, bpos, s_liz1)
         print(f"wrote {len(bins_l)} 1s accumulations (x2)")
@@ -226,11 +237,15 @@ def main(
                 cam_q = _qmul(bq[0], CAM_Q)
                 s_img.append(
                     Image.from_numpy(bgr, ImageFormat.BGR, "camera_optical", ts),
-                    ts=ts, pose=(*cam_p, *cam_q))
+                    ts=ts,
+                    pose=(*cam_p, *cam_q),
+                )
                 nimg += 1
         print(f"wrote {nimg} color_image frames")
 
-    print(f"\nwrote {out}\n  dimos map summary {out}\n  dimos map global {out} --lidar lidar --voxel 0.1")
+    print(
+        f"\nwrote {out}\n  dimos map summary {out}\n  dimos map global {out} --lidar lidar --voxel 0.1"
+    )
 
 
 if __name__ == "__main__":
