@@ -10,7 +10,12 @@ Stream("lidar"): 6025 items, 2026-05-29 23:32:55 — 2026-05-29 23:45:57 (782.3s
 Stream("odom"): 14630 items, 2026-05-29 23:32:55 — 2026-05-29 23:45:57 (782.3s)
 ```
 
-Shows which streams are in the database
+Shows which streams are in the database. You can replay messages in rerun:
+
+```sh
+dimos map replay recording_go2_mid360_2026-05-29_4-45pm-PST.db --duration 60
+```
+
 
 ```sh
 dimos map global recording_go2_mid360_2026-05-29_4-45pm-PST_corrected --voxel 0.1 --lidar lidar
