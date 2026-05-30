@@ -485,7 +485,7 @@ class TestLazyData:
         derived = obs.derive(data="transformed")
         assert derived.id == 42
         assert derived.ts == 1.5
-        assert derived.pose == (1, 2, 3)
+        assert derived.pose_tuple == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)
         assert derived.tags == {"k": "v"}
         assert derived.data == "transformed"
 

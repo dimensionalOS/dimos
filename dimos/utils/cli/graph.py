@@ -144,7 +144,10 @@ def _load_blueprints(python_file: str) -> list[tuple[str, Blueprint]]:
         raise RuntimeError("No Blueprint instances found in module globals.")
 
     blueprints.reverse()
-    print(f"Found {len(blueprints)} blueprint(s): {', '.join(n for n, _ in blueprints)}")
+    print(
+        f"Found {len(blueprints)} blueprint(s): {', '.join(n for n, _ in blueprints)}",
+        file=sys.stderr,
+    )
     return blueprints
 
 
@@ -609,6 +612,10 @@ def serve_graph(python_file: str, *, show_disconnected: bool, port: int) -> None
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            if self.path not in ("/", ""):
+                self.send_response(204)
+                self.end_headers()
+                return
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(html_bytes)))
@@ -618,7 +625,7 @@ def serve_graph(python_file: str, *, show_disconnected: bool, port: int) -> None
         def log_message(self, format: str, *args: object) -> None:
             pass
 
-    server = HTTPServer(("0.0.0.0", port), Handler)
+    server = HTTPServer(("127.0.0.1", port), Handler)
     actual_port = server.server_address[1]
     url = f"http://localhost:{actual_port}"
     print(f"Serving at {url}  (will exit after first request)")
