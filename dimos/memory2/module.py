@@ -14,13 +14,14 @@
 
 from __future__ import annotations
 
+import enum
 import inspect
 import os
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -37,6 +38,7 @@ from dimos.models.embedding.base import EmbeddingModel
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -234,11 +236,21 @@ class SemanticSearch(MemoryModule):
         def _similarity(obs: Observation[Any]) -> float:
             return cast("EmbeddedObservation[Any]", obs).similarity or 0.0
 
-        return results.transform(peaks(key=_similarity, distance=1.0)).last().pose_stamped
+        best = results.transform(peaks(key=_similarity, distance=1.0)).last()
+        if best.pose_stamped is None:
+            raise LookupError("No pose on best search result")
+        return best.pose_stamped
+
+
+class OnExisting(str, enum.Enum):
+    OVERWRITE = "overwrite"
+    ERROR = "error"
+    BACKUP = "backup"
 
 
 class RecorderConfig(MemoryModuleConfig):
-    overwrite: bool = True
+    on_existing: OnExisting = OnExisting.BACKUP
+    backup_keep_last: int = Field(default=10, ge=0)
     default_frame_id: str = "base_link"
     tf_tolerance: float = 0.5
     db_path: str | Path = "recording.db"
@@ -274,9 +286,15 @@ class Recorder(MemoryModule):
         # this module in a deployed blueprint.
         db_path = Path(self.config.db_path)
         if db_path.exists():
-            if self.config.overwrite:
+            if self.config.on_existing is OnExisting.OVERWRITE:
                 db_path.unlink()
                 logger.info("Deleted existing recording %s", db_path)
+            elif self.config.on_existing is OnExisting.BACKUP:
+                backup = backup_file(db_path, keep_last=self.config.backup_keep_last)
+                if backup is None:
+                    logger.info("Removed existing recording %s (backup_keep_last=0)", db_path)
+                else:
+                    logger.info("Backed up existing recording %s -> %s", db_path, backup)
             else:
                 raise FileExistsError(f"Recording already exists: {db_path}")
 

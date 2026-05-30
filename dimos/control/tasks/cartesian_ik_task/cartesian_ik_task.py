@@ -17,13 +17,12 @@
 Accepts streaming cartesian poses (e.g., from teleoperation, visual servoing)
 and computes inverse kinematics internally to output joint commands.
 Participates in joint-level arbitration.
-
-CRITICAL: Uses t_now from CoordinatorState, never calls time.time()
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -42,11 +41,10 @@ from dimos.manipulation.planning.kinematics.pinocchio_ik import (
     get_worst_joint_delta,
     pose_to_se3,
 )
+from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from numpy.typing import NDArray
     import pinocchio
 
@@ -330,3 +328,21 @@ __all__ = [
     "CartesianIKTask",
     "CartesianIKTaskConfig",
 ]
+
+
+class CartesianIKTaskParams(BaseConfig):
+    model_path: str | Path
+    ee_joint_id: int = 6
+
+
+def create_task(cfg: Any, hardware: Any) -> CartesianIKTask:
+    params = CartesianIKTaskParams.model_validate(cfg.params)
+    return CartesianIKTask(
+        cfg.name,
+        CartesianIKTaskConfig(
+            joint_names=cfg.joint_names,
+            model_path=params.model_path,
+            ee_joint_id=params.ee_joint_id,
+            priority=cfg.priority,
+        ),
+    )
