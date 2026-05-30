@@ -46,7 +46,7 @@ from dimos.utils.data import resolve_named_path
 
 
 def progress(total: int, label: str = "") -> Callable[[Observation[Any]], None]:
-    """Matches dimos/mapping/utils/cli/globalmap.py:progress — kept inline to avoid pulling rerun."""
+    """Matches dimos/mapping/utils/cli/map.py:progress — kept inline to avoid pulling rerun."""
     seen = 0
     wall_start: float | None = None
     last_wall: float | None = None

@@ -48,7 +48,7 @@ import typer
 
 # Heavy dimos imports (mapping/memory2 → torch, scipy, open3d) are deferred into
 # main() so that `dimos map --help` stays fast. See test_cli_startup.py and the
-# same pattern in dimos/mapping/utils/cli/globalmap.py.
+# same pattern in dimos/mapping/utils/cli/map.py.
 if TYPE_CHECKING:
     from dimos.memory2.stream import Stream
     from dimos.memory2.type.observation import Observation
@@ -58,7 +58,7 @@ TIMELINE = "ts"
 
 
 def _progress(total: int, label: str) -> Callable[[Observation[Any]], None]:
-    """Matches dimos/mapping/utils/cli/globalmap.py:progress."""
+    """Matches dimos/mapping/utils/cli/map.py:progress."""
     seen = 0
     wall_start: float | None = None
     last_wall: float | None = None

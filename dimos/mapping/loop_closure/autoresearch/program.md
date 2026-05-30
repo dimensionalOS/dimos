@@ -79,7 +79,7 @@ investigate *why* the metric moved (or didn't):
   `uv run python -m dimos.mapping.loop_closure.eval hk_village2 -v`.
   A param change that, say, *adds* loop closures but worsens spread
   tells a very different story than one that *removes* them.
-- **Use `dimos/mapping/utils/cli/globalmap.py`** as the visualization companion. It
+- **Use `dimos/mapping/utils/cli/map.py`** as the visualization companion. It
   runs the same PGO + marker pipeline as the eval and renders the
   result in rerun. Use `--no-gui` for headless inspection or run with
   GUI locally to scrub the timeline and see where markers cluster, where
