@@ -6,8 +6,9 @@ use std::collections::BinaryHeap;
 
 use ahash::AHashMap;
 
-use crate::adjacency::SurfaceLookup;
-use crate::edges::{walk_preds_to_source, PlannerGraph};
+use crate::adjacency::{CellId, SurfaceLookup};
+use crate::dijkstra::walk_preds;
+use crate::edges::PlannerGraph;
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
 /// Snap a pose to the best surface cell.
@@ -79,20 +80,23 @@ pub fn plan(
     voxel_size: f32,
     z_tolerance_m: f32,
 ) -> Option<Vec<(f32, f32, f32)>> {
-    let start_cell = snap_pose_to_cell(&plg.surface_lookup, start_pose, voxel_size, z_tolerance_m)?;
-    let goal_cell = snap_pose_to_cell(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)?;
+    let start_coord =
+        snap_pose_to_cell(&plg.surface_lookup, start_pose, voxel_size, z_tolerance_m)?;
+    let goal_coord = snap_pose_to_cell(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)?;
+    let start_cell = plg.cells.id(start_coord)?;
+    let goal_cell = plg.cells.id(goal_coord)?;
 
-    let node_cell_to_idx: AHashMap<VoxelKey, u32> = plg
+    let node_idx_by_cell: AHashMap<CellId, u32> = plg
         .nodes
         .iter()
         .enumerate()
-        .map(|(i, n)| (n.cell, i as u32))
+        .map(|(i, n)| (n.cell_id, i as u32))
         .collect();
 
-    let start_segment = walk_preds_to_source(plg, start_cell);
-    let goal_segment = walk_preds_to_source(plg, goal_cell);
-    let start_node = *node_cell_to_idx.get(start_segment.last()?)?;
-    let goal_node = *node_cell_to_idx.get(goal_segment.last()?)?;
+    let start_segment = walk_preds(&plg.cell_state, start_cell);
+    let goal_segment = walk_preds(&plg.cell_state, goal_cell);
+    let start_node = *node_idx_by_cell.get(start_segment.last()?)?;
+    let goal_node = *node_idx_by_cell.get(goal_segment.last()?)?;
 
     let node_seq = shortest_path_nodes(plg, start_node, goal_node)?;
     Some(assemble_waypoints(
@@ -153,13 +157,12 @@ fn assemble_waypoints(
     plg: &PlannerGraph,
     node_seq: &[u32],
     start_pose: (f32, f32, f32),
-    start_segment: &[VoxelKey],
+    start_segment: &[CellId],
     goal_pose: (f32, f32, f32),
-    goal_segment: &[VoxelKey],
+    goal_segment: &[CellId],
     voxel_size: f32,
 ) -> Vec<(f32, f32, f32)> {
-    let mut cells: Vec<VoxelKey> = Vec::new();
-
+    let mut cells: Vec<CellId> = Vec::new();
     cells.extend_from_slice(start_segment);
 
     for pair in node_seq.windows(2) {
@@ -173,9 +176,9 @@ fn assemble_waypoints(
             (edge.boundary_v, edge.boundary_u)
         };
 
-        let mut from_a = walk_preds_to_source(plg, start_side);
+        let mut from_a = walk_preds(&plg.cell_state, start_side);
         from_a.reverse();
-        let to_b = walk_preds_to_source(plg, end_side);
+        let to_b = walk_preds(&plg.cell_state, end_side);
 
         for c in from_a.into_iter().chain(to_b) {
             if cells.last() != Some(&c) {
@@ -192,7 +195,8 @@ fn assemble_waypoints(
 
     let mut waypoints: Vec<(f32, f32, f32)> = Vec::with_capacity(cells.len() + 2);
     waypoints.push(start_pose);
-    for (ix, iy, iz) in cells {
+    for id in cells {
+        let (ix, iy, iz) = plg.cells.coord(id);
         waypoints.push(surface_point_xyz(ix, iy, iz, voxel_size));
     }
     waypoints.push(goal_pose);
@@ -232,29 +236,35 @@ impl Ord for Scored {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adjacency::{build_surface_adjacency, build_surface_lookup};
-    use crate::edges::add_node_edges;
-    use crate::nodes::{NodeData, SurfaceGraph};
+    use crate::adjacency::{build_surface_cells, build_surface_lookup};
+    use crate::edges::build_node_edges;
+    use crate::nodes::NodeData;
 
     const VOXEL: f32 = 0.1;
     const Z_TOL: f32 = 1.5;
 
     fn graph_with_nodes(surface_cells: &[VoxelKey], node_cells: &[VoxelKey]) -> PlannerGraph {
-        let surface_lookup = build_surface_lookup(surface_cells);
-        let adj = build_surface_adjacency(&surface_lookup, VOXEL, 2);
-        let nodes: Vec<NodeData> = node_cells
+        let mut plg = PlannerGraph::new();
+        build_surface_lookup(surface_cells, &mut plg.surface_lookup);
+        build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
+        plg.nodes = node_cells
             .iter()
-            .map(|&c| NodeData {
-                cell: c,
-                pos: surface_point_xyz(c.0, c.1, c.2, VOXEL),
+            .map(|&c| {
+                let id = plg.cells.id(c).expect("node cell must be in surface");
+                NodeData {
+                    cell_id: id,
+                    pos: surface_point_xyz(c.0, c.1, c.2, VOXEL),
+                }
             })
             .collect();
-        let sg = SurfaceGraph {
-            adj,
-            surface_lookup,
-            nodes,
-        };
-        add_node_edges(sg)
+        build_node_edges(
+            &plg.cells,
+            &plg.nodes,
+            &mut plg.cell_state,
+            &mut plg.node_edges,
+            &mut plg.node_adj,
+        );
+        plg
     }
 
     fn strip(n: i32) -> Vec<VoxelKey> {
@@ -263,25 +273,26 @@ mod tests {
 
     #[test]
     fn snap_picks_in_column_cell() {
-        let lookup = build_surface_lookup(&strip(20));
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&strip(20), &mut lookup);
         let cell = snap_pose_to_cell(&lookup, (0.5, 0.0, 0.1), VOXEL, Z_TOL).unwrap();
         assert_eq!(cell, (5, 0, 0));
     }
 
     #[test]
     fn snap_falls_back_to_nearby_column() {
-        // Column ix=2 is removed; a pose in that column must snap to an adjacent one.
         let mut cells = strip(20);
         cells.retain(|c| c.0 != 2);
-        let lookup = build_surface_lookup(&cells);
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&cells, &mut lookup);
         let cell = snap_pose_to_cell(&lookup, (0.25, 0.0, 0.1), VOXEL, Z_TOL).unwrap();
         assert!(cell == (1, 0, 0) || cell == (3, 0, 0));
     }
 
     #[test]
     fn snap_rejects_outside_z_tolerance() {
-        let lookup = build_surface_lookup(&strip(20));
-        // Surface at iz=0, pose at z=2.0, tolerance=1.5 is out of tolerance in every column.
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&strip(20), &mut lookup);
         assert!(snap_pose_to_cell(&lookup, (0.5, 0.0, 2.0), VOXEL, 1.5).is_none());
     }
 
@@ -294,7 +305,6 @@ mod tests {
 
     #[test]
     fn plan_returns_none_if_disconnected() {
-        // Two strips with a gap.
         let mut cells: Vec<VoxelKey> = (0..5).map(|x| (x, 0, 0)).collect();
         cells.extend((10..15).map(|x| (x, 0, 0)));
         let plg = graph_with_nodes(&cells, &[(2, 0, 0), (12, 0, 0)]);
@@ -326,7 +336,6 @@ mod tests {
     fn plan_three_nodes_visits_them_all() {
         let plg = graph_with_nodes(&strip(20), &[(3, 0, 0), (10, 0, 0), (17, 0, 0)]);
         let wp = plan(&plg, (0.2, 0.0, 0.05), (1.9, 0.0, 0.05), VOXEL, Z_TOL).unwrap();
-        // Each node's XY position should appear in the waypoints.
         let node_xy: Vec<(f32, f32)> = plg.nodes.iter().map(|n| (n.pos.0, n.pos.1)).collect();
         for &(nx, ny) in &node_xy {
             assert!(

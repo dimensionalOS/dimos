@@ -21,9 +21,10 @@ use tracing::info;
 
 use ahash::AHashSet;
 
-use crate::edges::{add_node_edges, edges_to_segments, PlannerGraph};
+use crate::adjacency::{build_surface_cells, build_surface_lookup};
+use crate::edges::{build_node_edges, edges_to_segments, PlannerGraph};
 use crate::nodes::place_nodes;
-use crate::surfaces::extract_surfaces;
+use crate::surfaces::{extract_surfaces, ColumnIz};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey};
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +71,10 @@ struct MlsPlanner {
     step_cells: i32,
     planner_graph: Option<PlannerGraph>,
     latest_start: Option<(f32, f32, f32)>,
+
+    voxel_map_buf: AHashSet<VoxelKey>,
+    by_col_buf: ColumnIz,
+    surface_buf: Vec<VoxelKey>,
 }
 
 impl MlsPlanner {
@@ -110,63 +115,86 @@ impl MlsPlanner {
             return;
         }
 
-        let cfg = &self.config;
+        let voxel_size = self.config.voxel_size;
+        let step_cells = self.step_cells;
+        let clearance_cells = self.clearance_cells;
+        let dil = self.config.surface_dilation_passes;
+        let ero = self.config.surface_erosion_passes;
+        let spacing = self.config.node_spacing_m;
+        let wall_buf = self.config.node_wall_buffer_m;
+        let frame = self.config.world_frame.clone();
 
         let t_surface = Instant::now();
-        // convert whatever map we got in to voxels
-        let voxel_map: AHashSet<VoxelKey> = points
-            .iter()
-            .map(|&p| voxelize(p, cfg.voxel_size))
-            .collect();
-        let surface_cells = extract_surfaces(
-            &voxel_map,
-            self.clearance_cells,
-            cfg.surface_dilation_passes,
-            cfg.surface_erosion_passes,
+        self.voxel_map_buf.clear();
+        for &p in &points {
+            self.voxel_map_buf.insert(voxelize(p, voxel_size));
+        }
+        let voxels_count = self.voxel_map_buf.len();
+
+        extract_surfaces(
+            &self.voxel_map_buf,
+            clearance_cells,
+            dil,
+            ero,
+            &mut self.by_col_buf,
+            &mut self.surface_buf,
         );
+        let surface_count = self.surface_buf.len();
+
+        let plg = self.planner_graph.get_or_insert_with(PlannerGraph::new);
+        build_surface_lookup(&self.surface_buf, &mut plg.surface_lookup);
+        build_surface_cells(&mut plg.cells, &plg.surface_lookup, voxel_size, step_cells);
         let surface_ms = ms(t_surface.elapsed());
 
-        let surface_points: Vec<(f32, f32, f32)> = surface_cells
+        let surface_points: Vec<(f32, f32, f32)> = self
+            .surface_buf
             .iter()
-            .map(|&(ix, iy, iz)| surface_point_xyz(ix, iy, iz, cfg.voxel_size))
+            .map(|&(ix, iy, iz)| surface_point_xyz(ix, iy, iz, voxel_size))
             .collect();
-        publish_cloud(&self.surface_map, &surface_points, &cfg.world_frame, now()).await;
+        publish_cloud(&self.surface_map, &surface_points, &frame, now()).await;
 
         let t_nodes = Instant::now();
-        let sg = place_nodes(
-            &surface_cells,
-            cfg.voxel_size,
-            self.step_cells,
-            cfg.node_spacing_m,
-            cfg.node_wall_buffer_m,
+        let plg = self.planner_graph.as_mut().expect("just inserted");
+        place_nodes(
+            &mut plg.cells,
+            voxel_size,
+            spacing,
+            wall_buf,
+            &mut plg.cell_state,
+            &mut plg.nodes,
         );
         let nodes_ms = ms(t_nodes.elapsed());
-        let n_nodes = sg.nodes.len();
+        let nodes_count = plg.nodes.len();
 
-        let node_points: Vec<(f32, f32, f32)> = sg.nodes.iter().map(|n| n.pos).collect();
-        publish_cloud(&self.nodes, &node_points, &cfg.world_frame, now()).await;
+        let node_points: Vec<(f32, f32, f32)> = plg.nodes.iter().map(|n| n.pos).collect();
+        publish_cloud(&self.nodes, &node_points, &frame, now()).await;
 
         let t_edges = Instant::now();
-        let plg = add_node_edges(sg);
+        let plg = self.planner_graph.as_mut().expect("just inserted");
+        build_node_edges(
+            &plg.cells,
+            &plg.nodes,
+            &mut plg.cell_state,
+            &mut plg.node_edges,
+            &mut plg.node_adj,
+        );
         let edges_ms = ms(t_edges.elapsed());
-        let n_edges = plg.node_edges.len();
+        let edges_count = plg.node_edges.len();
 
-        let edges_path = build_segments_path(&plg, cfg.voxel_size, &cfg.world_frame, now());
+        let edges_path = build_segments_path(plg, voxel_size, &frame, now());
         publish_path(&self.node_edges, &edges_path).await;
 
         info!(
             global_map_points = points.len(),
-            voxels = voxel_map.len(),
-            surface_cells = surface_cells.len(),
-            nodes = n_nodes,
-            edges = n_edges,
+            voxels = voxels_count,
+            surface_cells = surface_count,
+            nodes = nodes_count,
+            edges = edges_count,
             surface_ms,
             nodes_ms,
             edges_ms,
             "global_map processed",
         );
-
-        self.planner_graph = Some(plg);
     }
 
     async fn on_start_pose(&mut self, msg: Odometry) {
@@ -186,6 +214,10 @@ impl MlsPlanner {
             tracing::warn!("MLSPlanner received goal before graph was built; skipping");
             return;
         };
+        if plg.nodes.is_empty() {
+            tracing::warn!("MLSPlanner received goal before graph had nodes; skipping");
+            return;
+        }
 
         let p = &msg.pose.pose.position;
         let goal = (p.x as f32, p.y as f32, p.z as f32);
@@ -320,7 +352,7 @@ fn build_path_from_waypoints(waypoints: &[(f32, f32, f32)], frame_id: &str, stam
 /// Emit edges as alternating PoseStamped pairs with orientation.w carrying
 /// the per-edge cost.
 fn build_segments_path(plg: &PlannerGraph, voxel_size: f32, frame_id: &str, stamp: Time) -> Path {
-    let segments = edges_to_segments(plg, voxel_size);
+    let segments = edges_to_segments(&plg.cells, &plg.cell_state, &plg.node_edges);
     let mut poses: Vec<PoseStamped> = Vec::with_capacity(segments.len() * 2);
     for (a, b, cost) in segments {
         let pa = surface_point_xyz(a.0, a.1, a.2, voxel_size);

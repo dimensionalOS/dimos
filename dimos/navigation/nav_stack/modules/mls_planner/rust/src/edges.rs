@@ -11,168 +11,189 @@
 use ahash::AHashMap;
 use rayon::prelude::*;
 
-use crate::adjacency::{SurfaceAdjacency, SurfaceLookup};
-use crate::dijkstra::{dijkstra, CellState};
-use crate::nodes::{NodeData, SurfaceGraph};
+use crate::adjacency::{CellId, Edge, SurfaceCells, SurfaceLookup, NO_CELL};
+use crate::dijkstra::{dijkstra, walk_preds, DijkstraState};
+use crate::nodes::NodeData;
 use crate::voxel::VoxelKey;
 
+#[derive(Clone, Copy, Debug)]
 pub struct NodeEdge {
     pub a: u32,
     pub b: u32,
     pub cost: f32,
     /// Cell on a's side of the cheapest Voronoi boundary crossing.
-    pub boundary_u: VoxelKey,
+    pub boundary_u: CellId,
     /// Cell on b's side.
-    pub boundary_v: VoxelKey,
+    pub boundary_v: CellId,
 }
 
+/// Long-lived planner graph. Buffers are reused across rebuilds.
+#[derive(Default)]
 pub struct PlannerGraph {
+    pub cells: SurfaceCells,
     pub surface_lookup: SurfaceLookup,
     pub nodes: Vec<NodeData>,
     pub node_edges: Vec<NodeEdge>,
     pub node_adj: Vec<Vec<u32>>,
-
-    pub cell_state: AHashMap<VoxelKey, CellState>,
+    pub cell_state: DijkstraState,
 }
 
-pub fn add_node_edges(sg: SurfaceGraph) -> PlannerGraph {
-    let SurfaceGraph {
-        adj,
-        surface_lookup,
-        nodes,
-    } = sg;
+impl PlannerGraph {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Run multi-source Dijkstra from all node cells, then derive the cheapest
+/// inter-node edge per Voronoi-region boundary pair. Reuses `state` as the
+/// scratch buffer. The state is left holding the node-source Dijkstra
+/// result so callers can walk preds for waypoint reconstruction.
+pub fn build_node_edges(
+    cells: &SurfaceCells,
+    nodes: &[NodeData],
+    state: &mut DijkstraState,
+    out_edges: &mut Vec<NodeEdge>,
+    out_adj: &mut Vec<Vec<u32>>,
+) {
+    out_edges.clear();
+    out_adj.clear();
 
     if nodes.is_empty() {
-        return PlannerGraph {
-            surface_lookup,
-            nodes,
-            node_edges: Vec::new(),
-            node_adj: Vec::new(),
-            cell_state: AHashMap::new(),
-        };
+        state.reset(cells.slot_capacity());
+        return;
     }
 
-    let source_cells: Vec<VoxelKey> = nodes.iter().map(|n| n.cell).collect();
-    let cell_state = dijkstra(&adj, &source_cells).state;
-    let node_edges = best_boundary_edges(&adj, &cell_state);
+    let source_cells: Vec<CellId> = nodes.iter().map(|n| n.cell_id).collect();
+    dijkstra(cells, &source_cells, state);
 
-    let mut node_adj: Vec<Vec<u32>> = vec![Vec::new(); nodes.len()];
-    for (edge_idx, edge) in node_edges.iter().enumerate() {
-        node_adj[edge.a as usize].push(edge_idx as u32);
-        node_adj[edge.b as usize].push(edge_idx as u32);
+    best_boundary_edges(cells, state, out_edges);
+
+    out_adj.resize_with(nodes.len(), Vec::new);
+    for v in out_adj.iter_mut() {
+        v.clear();
     }
-
-    PlannerGraph {
-        surface_lookup,
-        nodes,
-        node_edges,
-        node_adj,
-        cell_state,
+    for (edge_idx, edge) in out_edges.iter().enumerate() {
+        out_adj[edge.a as usize].push(edge_idx as u32);
+        out_adj[edge.b as usize].push(edge_idx as u32);
     }
 }
 
-/// Walk every node-graph edge and emit one segment per consecutive cell pair
-/// along the reconstructed cell path.
-pub fn edges_to_segments(plg: &PlannerGraph, _voxel_size: f32) -> Vec<(VoxelKey, VoxelKey, f32)> {
-    plg.node_edges
+fn best_boundary_edges(cells: &SurfaceCells, state: &DijkstraState, out: &mut Vec<NodeEdge>) {
+    let cell_entries: Vec<(CellId, &[Edge])> = cells.iter().collect();
+
+    let merged: AHashMap<(u32, u32), NodeEdge> = cell_entries
+        .par_iter()
+        .fold(
+            AHashMap::<(u32, u32), NodeEdge>::new,
+            |mut local, (u, edges)| {
+                let du = state.dist[*u as usize];
+                if !du.is_finite() {
+                    return local;
+                }
+                let sa = state.source[*u as usize];
+                for edge in *edges {
+                    let v = edge.dst;
+                    let dv = state.dist[v as usize];
+                    if !dv.is_finite() {
+                        continue;
+                    }
+                    let sb = state.source[v as usize];
+                    if sa == sb {
+                        continue;
+                    }
+                    let cost = du + edge.cost + dv;
+
+                    let (key_a, key_b, bu, bv) = if sa < sb {
+                        (sa, sb, *u, v)
+                    } else {
+                        (sb, sa, v, *u)
+                    };
+
+                    let entry = local.entry((key_a, key_b)).or_insert(NodeEdge {
+                        a: key_a,
+                        b: key_b,
+                        cost: f32::INFINITY,
+                        boundary_u: NO_CELL,
+                        boundary_v: NO_CELL,
+                    });
+                    if cost < entry.cost {
+                        entry.cost = cost;
+                        entry.boundary_u = bu;
+                        entry.boundary_v = bv;
+                    }
+                }
+                local
+            },
+        )
+        .reduce(AHashMap::<(u32, u32), NodeEdge>::new, |mut a, b| {
+            for (k, v_edge) in b {
+                let entry = a.entry(k).or_insert(v_edge);
+                if v_edge.cost < entry.cost {
+                    *entry = v_edge;
+                }
+            }
+            a
+        });
+
+    out.clear();
+    out.extend(merged.into_values());
+    out.par_sort_unstable_by_key(|e| (e.a, e.b));
+}
+
+/// Walk every node-graph edge and emit one segment per consecutive cell
+/// pair along the reconstructed cell path. Output coords are in VoxelKey
+/// space.
+pub fn edges_to_segments(
+    cells: &SurfaceCells,
+    state: &DijkstraState,
+    node_edges: &[NodeEdge],
+) -> Vec<(VoxelKey, VoxelKey, f32)> {
+    node_edges
         .par_iter()
         .flat_map_iter(|edge| {
-            let mut from_a = walk_preds_to_source(plg, edge.boundary_u);
+            let mut from_a = walk_preds(state, edge.boundary_u);
             from_a.reverse();
-            let to_b = walk_preds_to_source(plg, edge.boundary_v);
-            let mut path: Vec<VoxelKey> = from_a;
-            path.extend(to_b);
+            let to_b = walk_preds(state, edge.boundary_v);
+            let path: Vec<CellId> = from_a.into_iter().chain(to_b).collect();
             let cost = edge.cost;
             path.windows(2)
-                .map(|pair| (pair[0], pair[1], cost))
+                .map(|pair| (cells.coord(pair[0]), cells.coord(pair[1]), cost))
                 .collect::<Vec<_>>()
         })
         .collect()
 }
 
-pub fn walk_preds_to_source(plg: &PlannerGraph, start_cell: VoxelKey) -> Vec<VoxelKey> {
-    let mut cells = vec![start_cell];
-    let mut cur = start_cell;
-    while let Some(p) = plg.cell_state.get(&cur).and_then(|s| s.pred) {
-        cur = p;
-        cells.push(cur);
-    }
-    cells
-}
-
-fn best_boundary_edges(
-    adj: &SurfaceAdjacency,
-    state: &AHashMap<VoxelKey, CellState>,
-) -> Vec<NodeEdge> {
-    let mut best: AHashMap<(u32, u32), NodeEdge> = AHashMap::new();
-
-    for (u, edges) in adj.iter() {
-        let Some(su) = state.get(&u) else {
-            continue;
-        };
-        let sa = su.source;
-        let du = su.dist;
-        for edge in edges {
-            let v = edge.dst;
-            let Some(sv) = state.get(&v) else {
-                continue;
-            };
-            let sb = sv.source;
-            if sa == sb {
-                continue;
-            }
-            let dv = sv.dist;
-            let cost = du + edge.cost + dv;
-
-            let (key_a, key_b, bu, bv) = if sa < sb {
-                (sa, sb, u, v)
-            } else {
-                (sb, sa, v, u)
-            };
-
-            let entry = best.entry((key_a, key_b)).or_insert(NodeEdge {
-                a: key_a,
-                b: key_b,
-                cost: f32::INFINITY,
-                boundary_u: (0, 0, 0),
-                boundary_v: (0, 0, 0),
-            });
-            if cost < entry.cost {
-                entry.cost = cost;
-                entry.boundary_u = bu;
-                entry.boundary_v = bv;
-            }
-        }
-    }
-
-    let mut out: Vec<NodeEdge> = best.into_values().collect();
-    out.sort_by_key(|e| (e.a, e.b));
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adjacency::{build_surface_adjacency, build_surface_lookup};
+    use crate::adjacency::{build_surface_cells, build_surface_lookup};
+    use crate::nodes::NodeData;
     use crate::voxel::surface_point_xyz;
 
     const VOXEL: f32 = 0.1;
 
-    fn graph_with_nodes(surface_cells: &[VoxelKey], node_cells: &[VoxelKey]) -> SurfaceGraph {
-        let surface_lookup = build_surface_lookup(surface_cells);
-        let adj = build_surface_adjacency(&surface_lookup, VOXEL, 2);
-        let nodes: Vec<NodeData> = node_cells
+    fn setup(surface: &[VoxelKey], node_cells: &[VoxelKey]) -> PlannerGraph {
+        let mut plg = PlannerGraph::new();
+        build_surface_lookup(surface, &mut plg.surface_lookup);
+        build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
+        plg.nodes = node_cells
             .iter()
-            .map(|&c| NodeData {
-                cell: c,
-                pos: surface_point_xyz(c.0, c.1, c.2, VOXEL),
+            .map(|&c| {
+                let id = plg.cells.id(c).expect("node cell must be in surface");
+                NodeData {
+                    cell_id: id,
+                    pos: surface_point_xyz(c.0, c.1, c.2, VOXEL),
+                }
             })
             .collect();
-        SurfaceGraph {
-            adj,
-            surface_lookup,
-            nodes,
-        }
+        build_node_edges(
+            &plg.cells,
+            &plg.nodes,
+            &mut plg.cell_state,
+            &mut plg.node_edges,
+            &mut plg.node_adj,
+        );
+        plg
     }
 
     fn strip_cells() -> Vec<VoxelKey> {
@@ -181,8 +202,7 @@ mod tests {
 
     #[test]
     fn two_nodes_on_strip_have_one_edge() {
-        let sg = graph_with_nodes(&strip_cells(), &[(3, 0, 0), (15, 0, 0)]);
-        let pg = add_node_edges(sg);
+        let pg = setup(&strip_cells(), &[(3, 0, 0), (15, 0, 0)]);
         assert_eq!(pg.node_edges.len(), 1);
         let e = &pg.node_edges[0];
         assert_eq!((e.a, e.b), (0, 1));
@@ -192,49 +212,31 @@ mod tests {
 
     #[test]
     fn three_nodes_in_line_form_a_chain() {
-        // Nodes at 3, 10, 17 in a strip 0..20. Voronoi boundaries are
-        // around 6-7 and 13-14, so we get edges (0,1) and (1,2) but no (0,2).
-        let sg = graph_with_nodes(&strip_cells(), &[(3, 0, 0), (10, 0, 0), (17, 0, 0)]);
-        let pg = add_node_edges(sg);
+        let pg = setup(&strip_cells(), &[(3, 0, 0), (10, 0, 0), (17, 0, 0)]);
         let pairs: Vec<(u32, u32)> = pg.node_edges.iter().map(|e| (e.a, e.b)).collect();
         assert_eq!(pairs, vec![(0, 1), (1, 2)]);
     }
 
     #[test]
     fn disconnected_components_have_no_edge() {
-        // Two strips with a gap, one node in each.
         let mut cells: Vec<VoxelKey> = (0..5).map(|x| (x, 0, 0)).collect();
         cells.extend((10..15).map(|x| (x, 0, 0)));
-        let sg = graph_with_nodes(&cells, &[(2, 0, 0), (12, 0, 0)]);
-        let pg = add_node_edges(sg);
+        let pg = setup(&cells, &[(2, 0, 0), (12, 0, 0)]);
         assert!(pg.node_edges.is_empty());
     }
 
     #[test]
     fn predecessor_walk_recovers_cell_path() {
-        // Two nodes at strip ends. Walk preds from each boundary cell back to
-        // its owning node cell and verify the chain reaches the node.
-        let sg = graph_with_nodes(&strip_cells(), &[(0, 0, 0), (19, 0, 0)]);
-        let pg = add_node_edges(sg);
+        let pg = setup(&strip_cells(), &[(0, 0, 0), (19, 0, 0)]);
         assert_eq!(pg.node_edges.len(), 1);
         let e = &pg.node_edges[0];
 
-        let cell_a = pg.nodes[0].cell;
-        let cell_b = pg.nodes[1].cell;
+        let cell_a = pg.nodes[0].cell_id;
+        let cell_b = pg.nodes[1].cell_id;
 
-        let mut cur = e.boundary_u;
-        let mut hops = 0;
-        while let Some(p) = pg.cell_state.get(&cur).and_then(|s| s.pred) {
-            cur = p;
-            hops += 1;
-            assert!(hops < 1000, "predecessor walk did not terminate");
-        }
-        assert_eq!(cur, cell_a, "u-side preds must reach node a");
-
-        let mut cur = e.boundary_v;
-        while let Some(p) = pg.cell_state.get(&cur).and_then(|s| s.pred) {
-            cur = p;
-        }
-        assert_eq!(cur, cell_b, "v-side preds must reach node b");
+        let chain_u = walk_preds(&pg.cell_state, e.boundary_u);
+        let chain_v = walk_preds(&pg.cell_state, e.boundary_v);
+        assert_eq!(chain_u.last(), Some(&cell_a));
+        assert_eq!(chain_v.last(), Some(&cell_b));
     }
 }
