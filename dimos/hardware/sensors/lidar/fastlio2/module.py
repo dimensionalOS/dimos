@@ -236,6 +236,11 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
     global_map: Out[PointCloud2]
+    # Scan-to-scan ICP velocity — published as an Odometry message whose
+    # twist.linear holds the per-scan-pair velocity and pose.position holds
+    # the cumulative ICP-only integrated position. Independent of the IESKF
+    # state; useful as a cross-check against the main odometry's velocity.
+    icp_velocity: Out[Odometry]
 
     _pcap_proc: subprocess.Popen[bytes] | None = None
     _pcap_path: Path | None = None

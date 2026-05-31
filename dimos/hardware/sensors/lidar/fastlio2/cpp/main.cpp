@@ -33,6 +33,7 @@
 
 #include "cloud_filter.hpp"
 #include "dimos_native_module.hpp"
+#include "icp_velocity.hpp"
 #include "pcap_replay.hpp"
 #include "timing.hpp"
 #include "voxel_map.hpp"
@@ -138,6 +139,8 @@ static std::optional<std::chrono::steady_clock::time_point> virtual_now() {
 static std::string g_lidar_topic;
 static std::string g_odometry_topic;
 static std::string g_map_topic;
+static std::string g_icp_velocity_topic;
+static icp_velocity::Estimator g_icp_estimator;
 static std::string g_frame_id;        // required via --frame_id
 static std::string g_child_frame_id;   // required via --child_frame_id
 static float g_frequency = 10.0f;
@@ -333,6 +336,36 @@ static void publish_odometry(const custom_messages::Odometry& odom, double times
     g_lcm->publish(g_odometry_topic, &msg);
 }
 
+// Publish a scan-to-scan ICP-derived velocity on g_icp_velocity_topic as an
+// Odometry message. pose.position holds the cumulative ICP-integrated
+// position (body-frame, simple sum of per-scan translations — no
+// orientation tracking); twist.linear holds the per-scan-pair velocity.
+// Orientation is identity (we don't fuse rotation here).
+static void publish_icp_velocity(double vx, double vy, double vz,
+                                 double cum_x, double cum_y, double cum_z,
+                                 double timestamp) {
+    if (!g_lcm || g_icp_velocity_topic.empty()) return;
+    nav_msgs::Odometry msg;
+    msg.header = make_header(g_frame_id, timestamp);
+    msg.child_frame_id = g_child_frame_id;
+    msg.pose.pose.position.x = cum_x;
+    msg.pose.pose.position.y = cum_y;
+    msg.pose.pose.position.z = cum_z;
+    msg.pose.pose.orientation.x = 0;
+    msg.pose.pose.orientation.y = 0;
+    msg.pose.pose.orientation.z = 0;
+    msg.pose.pose.orientation.w = 1;
+    for (int i = 0; i < 36; ++i) msg.pose.covariance[i] = 0;
+    msg.twist.twist.linear.x = vx;
+    msg.twist.twist.linear.y = vy;
+    msg.twist.twist.linear.z = vz;
+    msg.twist.twist.angular.x = 0;
+    msg.twist.twist.angular.y = 0;
+    msg.twist.twist.angular.z = 0;
+    std::memset(msg.twist.covariance, 0, sizeof(msg.twist.covariance));
+    g_lcm->publish(g_icp_velocity_topic, &msg);
+}
+
 // ---------------------------------------------------------------------------
 // Livox SDK callbacks
 // ---------------------------------------------------------------------------
@@ -488,6 +521,7 @@ int main(int argc, char** argv) {
     g_lidar_topic = mod.has("lidar") ? mod.topic("lidar") : "";
     g_odometry_topic = mod.has("odometry") ? mod.topic("odometry") : "";
     g_map_topic = mod.has("global_map") ? mod.topic("global_map") : "";
+    g_icp_velocity_topic = mod.has("icp_velocity") ? mod.topic("icp_velocity") : "";
 
     if (g_lidar_topic.empty() && g_odometry_topic.empty()) {
         fprintf(stderr, "Error: at least one of --lidar or --odometry is required\n");
@@ -736,6 +770,34 @@ int main(int argc, char** argv) {
             }
         }
         if (!points.empty()) {
+            // Scan-to-scan ICP velocity on the raw body-frame points BEFORE
+            // we hand them off to fastlio (which moves them out below). This
+            // gives a lidar-derived velocity independent of the IESKF state.
+            if (!g_icp_velocity_topic.empty()) {
+                icp_velocity::CloudT::Ptr cloud(new icp_velocity::CloudT);
+                cloud->reserve(points.size());
+                for (const auto& p : points) {
+                    icp_velocity::PointT pt;
+                    pt.x = p.x;
+                    pt.y = p.y;
+                    pt.z = p.z;
+                    cloud->push_back(pt);
+                }
+                const double scan_ts = static_cast<double>(frame_start) / 1e9;
+                auto r = g_icp_estimator.step(cloud, scan_ts);
+                if (r.ok) {
+                    // Cumulative ICP-only position by simple sum of per-scan
+                    // translations. Not a real path (no rotation tracking),
+                    // just a quick visual integration aid.
+                    static double cum_x = 0.0, cum_y = 0.0, cum_z = 0.0;
+                    cum_x += r.vx * r.scan_dt;
+                    cum_y += r.vy * r.scan_dt;
+                    cum_z += r.vz * r.scan_dt;
+                    publish_icp_velocity(r.vx, r.vy, r.vz, cum_x, cum_y, cum_z,
+                                         get_publish_ts());
+                }
+            }
+
             // Build CustomMsg
             auto lidar_msg = boost::make_shared<custom_messages::CustomMsg>();
             lidar_msg->header.seq = 0;
