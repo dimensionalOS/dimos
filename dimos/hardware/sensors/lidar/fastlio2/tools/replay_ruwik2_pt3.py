@@ -63,7 +63,7 @@ MAX_WALL_SEC = 480.0
 # Velocity guardrail cap (m/s) passed to FastLio2Config. Bump to study how
 # the binary behaves with looser caps; set to 0 to disable. Each value bump
 # is its own commit so meta.json's commit hash maps to the run condition.
-GUARDRAIL_MAX_VEL_NORM_MS = 50.0
+GUARDRAIL_MAX_VEL_NORM_MS = 100.0
 
 
 # ---------------- attempt-dir auto-increment --------------------------------
