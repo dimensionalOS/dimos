@@ -29,10 +29,14 @@ struct ScanEntry {
 };
 
 struct Config {
-    double min_ieskf_v_ms = 5.0;      // trigger threshold: IESKF |v| must exceed this
-    double disagreement_pct = 80.0;   // ICP must be at least this % less than IESKF
-    double rollback_ms = 1000.0;      // anchor = oldest entry within this many ms
-    double max_buffer_age_s = 5.0;    // ring-buffer max age; evict older entries
+    // Only fire a correction once the IESKF's |v| exceeds this.
+    double only_correct_above_speed_ms = 5.0;
+    // Trust ICP and roll back only when its |v| is at least this much less
+    // than the IESKF's |v|, expressed as a percentage.
+    double only_correct_when_icp_slower_by_pct = 80.0;
+    // How far back in time to find the anchor pose we roll back to.
+    // Also bounds buffer retention: anything older than this is evicted.
+    double rewind_window_ms = 1000.0;
 };
 
 struct Result {
@@ -52,9 +56,11 @@ public:
 
     void push(const ScanEntry& e) {
         history.push_back(e);
-        // Evict entries older than max_buffer_age. Keep at least 2 so we
-        // can always look back one step.
-        while (history.size() > 2 && (e.ts - history.front().ts) > cfg.max_buffer_age_s) {
+        // Evict entries older than the rewind window. Keep at least 2 so we
+        // can always look back one step (for the per-step IESKF velocity
+        // estimate in check_and_compute).
+        const double window_s = cfg.rewind_window_ms / 1000.0;
+        while (history.size() > 2 && (e.ts - history.front().ts) > window_s) {
             history.pop_front();
         }
     }
@@ -80,13 +86,13 @@ public:
         r.ieskf_v = ieskf_v;
         r.icp_v = icp_v;
 
-        if (ieskf_v <= cfg.min_ieskf_v_ms) return r;
-        // Disagreement: ICP must be at least disagreement_pct% less than IESKF.
-        const double threshold = ieskf_v * (1.0 - cfg.disagreement_pct / 100.0);
+        if (ieskf_v <= cfg.only_correct_above_speed_ms) return r;
+        // ICP must be at least N% slower than IESKF for us to trust it.
+        const double threshold = ieskf_v * (1.0 - cfg.only_correct_when_icp_slower_by_pct / 100.0);
         if (icp_v >= threshold) return r;
 
-        // Find anchor: oldest entry within rollback_ms of now.
-        const double rollback_s = cfg.rollback_ms / 1000.0;
+        // Find anchor: oldest entry within the rewind window.
+        const double rollback_s = cfg.rewind_window_ms / 1000.0;
         size_t anchor_idx = history.size() - 1;
         for (size_t i = 0; i < history.size(); i++) {
             if (cur.ts - history[i].ts <= rollback_s) {

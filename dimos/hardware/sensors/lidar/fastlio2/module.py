@@ -132,17 +132,19 @@ class FastLio2Config(NativeModuleConfig):
     guardrail_max_pos_jump_m: float = 0.5
     guardrail_max_accel_norm_ms2: float = 30.0
 
-    # ICP cross-check rollback. Triggers when the IESKF state's |v| is above
-    # `correction_min_ieskf_v_ms` AND the scan-to-scan ICP-derived |v| is at
-    # least `correction_disagreement_pct` percent less. The binary then walks
-    # backward `correction_rollback_ms` milliseconds in its ring buffer,
-    # takes that anchor pose, integrates ICP body-frame velocities forward
-    # (rotating each by the captured IESKF orientation), and overwrites the
-    # IESKF state position/velocity. Disabled by default; enable explicitly.
+    # ICP cross-check rollback. The binary maintains a ring buffer of
+    # per-scan (IESKF pose, IESKF orientation, ICP body-frame velocity)
+    # entries spanning the last `rewind_window_ms` ms. On each scan, if
+    # the IESKF says it's moving faster than `only_correct_above_speed_ms`
+    # AND scan-to-scan ICP reports a speed at least
+    # `only_correct_when_icp_slower_by_pct` percent slower, we trust ICP:
+    # rewind to the oldest entry in the window, integrate ICP forward
+    # from there (rotating each step by that scan's IESKF orientation),
+    # and overwrite the IESKF state's world pos+vel.
     icp_correction_enabled: bool = False
-    correction_min_ieskf_v_ms: float = 5.0
-    correction_disagreement_pct: float = 80.0
-    correction_rollback_ms: float = 1000.0
+    only_correct_above_speed_ms: float = 5.0
+    only_correct_when_icp_slower_by_pct: float = 80.0
+    rewind_window_ms: float = 1000.0
 
     # FAST-LIO YAML config (relative to config/ dir, or absolute path)
     # C++ binary reads YAML directly via yaml-cpp

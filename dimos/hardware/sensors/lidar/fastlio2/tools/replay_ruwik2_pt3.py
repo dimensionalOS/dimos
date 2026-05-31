@@ -66,6 +66,16 @@ MAX_WALL_SEC = 480.0
 # ~30 m/s² is the Go2 default; physical 3 g.
 GUARDRAIL_MAX_ACCEL_NORM_MS2 = 35.0  # just above the ±5s-divergence p99 (~32)
 
+# ICP cross-check rollback. When ICP reports a speed slower than the
+# IESKF's by more than ONLY_CORRECT_WHEN_ICP_SLOWER_BY_PCT, and the IESKF
+# itself exceeds ONLY_CORRECT_ABOVE_SPEED_MS, rewind REWIND_WINDOW_MS into
+# the ring buffer for the anchor pose, integrate ICP forward from there,
+# and overwrite IESKF pos+vel.
+ICP_CORRECTION_ENABLED = True
+ONLY_CORRECT_ABOVE_SPEED_MS = 5.0
+ONLY_CORRECT_WHEN_ICP_SLOWER_BY_PCT = 80.0
+REWIND_WINDOW_MS = 1000.0
+
 
 # ---------------- attempt-dir auto-increment --------------------------------
 
@@ -204,6 +214,10 @@ def _worker() -> int:
             deterministic_clock=True,
             debug=False,
             guardrail_max_accel_norm_ms2=GUARDRAIL_MAX_ACCEL_NORM_MS2,
+            icp_correction_enabled=ICP_CORRECTION_ENABLED,
+            only_correct_above_speed_ms=ONLY_CORRECT_ABOVE_SPEED_MS,
+            only_correct_when_icp_slower_by_pct=ONLY_CORRECT_WHEN_ICP_SLOWER_BY_PCT,
+            rewind_window_ms=REWIND_WINDOW_MS,
         ).remappings(
             [
                 (FastLio2, "odometry", "fastlio_odometry"),

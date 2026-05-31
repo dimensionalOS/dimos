@@ -554,12 +554,12 @@ int main(int argc, char** argv) {
     // disagreement_pct% less. Anchor pose = oldest history entry within
     // rollback_ms. New pos = anchor + integrate(ICP_body × IESKF_rot_quat,
     // dt) forward. New vel = current ICP rotated to world.
-    g_icp_corrector.cfg.min_ieskf_v_ms =
-        mod.arg_float("correction_min_ieskf_v_ms", 5.0f);
-    g_icp_corrector.cfg.disagreement_pct =
-        mod.arg_float("correction_disagreement_pct", 80.0f);
-    g_icp_corrector.cfg.rollback_ms =
-        mod.arg_float("correction_rollback_ms", 1000.0f);
+    g_icp_corrector.cfg.only_correct_above_speed_ms =
+        mod.arg_float("only_correct_above_speed_ms", 5.0f);
+    g_icp_corrector.cfg.only_correct_when_icp_slower_by_pct =
+        mod.arg_float("only_correct_when_icp_slower_by_pct", 80.0f);
+    g_icp_corrector.cfg.rewind_window_ms =
+        mod.arg_float("rewind_window_ms", 1000.0f);
     g_icp_correction_enabled =
         mod.arg_bool("icp_correction_enabled", false);
 
