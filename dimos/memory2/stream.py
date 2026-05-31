@@ -196,6 +196,36 @@ class Stream(CompositeResource, Generic[T, O]):
     def offset(self, n: int) -> Stream[T, O]:
         return self._replace_query(offset_val=n)
 
+    # --- windowing (None on either bound = unbounded that side) ---
+    def from_seek(self, i: int | None) -> Stream[T, O]:
+        """Window by index: drop the first ``i`` observations."""
+        return self if i is None else self.offset(i)
+
+    def to_seek(self, i: int | None) -> Stream[T, O]:
+        """Window by index: keep the first ``i`` observations."""
+        return self if i is None else self.limit(i)
+
+    def range_seek(self, start: int | None, stop: int | None) -> Stream[T, O]:
+        """Window by index: observations ``[start, stop)``."""
+        s = self if start is None else self.offset(start)
+        return s if stop is None else s.limit(stop - (start or 0))
+
+    def from_time(self, seconds: float | None) -> Stream[T, O]:
+        """Window by time: keep from ``seconds`` after the first observation."""
+        return self if seconds is None else self.after(self.first().ts + seconds)
+
+    def to_time(self, seconds: float | None) -> Stream[T, O]:
+        """Window by time: keep the first ``seconds`` of the stream."""
+        return self if seconds is None else self.before(self.first().ts + seconds)
+
+    def range_time(self, start: float | None, stop: float | None) -> Stream[T, O]:
+        """Window by time: ``[start, stop)`` seconds from the first observation."""
+        if start is None and stop is None:
+            return self
+        t0 = self.first().ts
+        s = self if start is None else self.after(t0 + start)
+        return s if stop is None else s.before(t0 + stop)
+
     def search(self, query: Embedding, k: int | None = None) -> Stream[T, EmbeddedObservation[T]]:
         """Rank observations by cosine similarity to *query*.
 

@@ -117,3 +117,10 @@ class Imu(Timestamped):
             f"linear_acceleration={self.linear_acceleration}, "
             f"orientation={self.orientation})"
         )
+
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Orientation as a rerun Transform3D (rotation only)."""
+        import rerun as rr
+
+        o = self.orientation
+        return rr.Transform3D(rotation=rr.Quaternion(xyzw=[o.x, o.y, o.z, o.w]))

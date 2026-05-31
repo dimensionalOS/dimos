@@ -675,6 +675,10 @@ def send(
 
 main.command(name="map")(_map_main)
 
+from dimos.memory2.cli import mem_app
+
+main.add_typer(mem_app, name="mem")
+
 
 @main.command()
 def cameracalibrate(

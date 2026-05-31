@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -67,3 +68,13 @@ class SportModeState(PrettyMsg):
         ("foot_speed_body", ("array", "f32", 12)),
         ("path_point", ("array", PathPoint, 10)),
     ]
+
+    def to_rerun(self) -> Any:
+        """Sport-mode pose as a rerun Transform3D (position + body orientation)."""
+        import rerun as rr
+
+        w, x, y, z = (float(v) for v in self.imu_state.quaternion)  # Unitree order: wxyz
+        return rr.Transform3D(
+            translation=[float(v) for v in self.position],
+            rotation=rr.Quaternion(xyzw=[x, y, z, w]),
+        )
