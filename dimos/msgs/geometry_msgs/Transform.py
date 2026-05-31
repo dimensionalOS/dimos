@@ -18,6 +18,7 @@ import time
 from typing import TYPE_CHECKING, BinaryIO
 
 if TYPE_CHECKING:
+    import numpy as np
     import rerun as rr
 
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -215,6 +216,24 @@ class Transform(Timestamped):
             **kwargs,
         )
         return result
+
+    @classmethod
+    def from_matrix(
+        cls,
+        matrix: np.ndarray,
+        *,
+        ts: float = 0.0,
+        frame_id: str = "world",
+        child_frame_id: str = "unset",
+    ) -> Transform:
+        """Build a Transform from a 4x4 homogeneous transformation matrix."""
+        return cls(
+            translation=Vector3(matrix[:3, 3]),
+            rotation=Quaternion.from_rotation_matrix(matrix[:3, :3]),
+            frame_id=frame_id,
+            child_frame_id=child_frame_id,
+            ts=ts,
+        )
 
     def to_matrix(self) -> np.ndarray:  # type: ignore[name-defined]
         """Convert Transform to a 4x4 transformation matrix.
