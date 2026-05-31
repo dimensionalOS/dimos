@@ -505,11 +505,12 @@ int main(int argc, char** argv) {
     double msr_freq = mod.arg_float("msr_freq", 50.0f);
     double main_freq = mod.arg_float("main_freq", 5000.0f);
 
-    // Post-IESKF-update guardrail caps (defaults sized for Go2 envelope).
-    // The FastLio core rejects scans whose update implies a per-scan position
-    // delta or velocity above these. Set either to 0 to disable that check.
+    // Post-IESKF-update guardrail caps. pos-jump = per-update position
+    // correction in metres. accel = per-update velocity correction divided
+    // by scan_dt, in m/s² — physics gate that doesn't cap platform velocity.
+    // Set either to 0 to disable that check.
     double guardrail_max_pos_jump_m = mod.arg_float("guardrail_max_pos_jump_m", 0.5f);
-    double guardrail_max_vel_norm_ms = mod.arg_float("guardrail_max_vel_norm_ms", 3.0f);
+    double guardrail_max_accel_norm_ms2 = mod.arg_float("guardrail_max_accel_norm_ms2", 30.0f);
 
     // Livox hardware config
     std::string host_ip = mod.arg("host_ip", "192.168.1.5");
@@ -631,7 +632,7 @@ int main(int argc, char** argv) {
     // Init FAST-LIO with config
     if (debug) printf("[fastlio2] Initializing FAST-LIO...\n");
     FastLio fast_lio(config_path, msr_freq, main_freq,
-                     guardrail_max_pos_jump_m, guardrail_max_vel_norm_ms);
+                     guardrail_max_pos_jump_m, guardrail_max_accel_norm_ms2);
     g_fastlio = &fast_lio;
     if (debug) printf("[fastlio2] FAST-LIO initialized.\n");
 

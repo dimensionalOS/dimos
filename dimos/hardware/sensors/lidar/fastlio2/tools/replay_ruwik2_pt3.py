@@ -60,10 +60,11 @@ _ATTEMPT_DIR_ENV = "_REPLAY_RUWIK2_PT3_ATTEMPT_DIR"
 # 480 s gives slack against a stall.
 MAX_WALL_SEC = 480.0
 
-# Velocity guardrail cap (m/s) passed to FastLio2Config. Bump to study how
-# the binary behaves with looser caps; set to 0 to disable. Each value bump
-# is its own commit so meta.json's commit hash maps to the run condition.
-GUARDRAIL_MAX_VEL_NORM_MS = 100.0
+# Acceleration guardrail cap (m/s²) passed to FastLio2Config. The check is
+# per-update vel-correction / scan_dt > cap. Set to 0 to disable. Bump per
+# experiment and recommit so meta.json's commit hash maps to the cap.
+# ~30 m/s² is the Go2 default; physical 3 g.
+GUARDRAIL_MAX_ACCEL_NORM_MS2 = 30.0
 
 
 # ---------------- attempt-dir auto-increment --------------------------------
@@ -190,7 +191,7 @@ def _worker() -> int:
             replay_pcap=PCAP_PATH,
             deterministic_clock=True,
             debug=False,
-            guardrail_max_vel_norm_ms=GUARDRAIL_MAX_VEL_NORM_MS,
+            guardrail_max_accel_norm_ms2=GUARDRAIL_MAX_ACCEL_NORM_MS2,
         ).remappings(
             [
                 (FastLio2, "odometry", "fastlio_odometry"),

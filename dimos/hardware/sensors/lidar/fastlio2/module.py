@@ -115,16 +115,22 @@ class FastLio2Config(NativeModuleConfig):
     map_max_range: float = 100.0
 
     # Post-IESKF-update guardrail caps. The FAST-LIO core snapshots state
-    # before the lidar update, and if the update tries to apply a position
-    # jump greater than this many metres in a single scan OR drives the
-    # estimated velocity (state.vel.norm()) above this many m/s, the scan
-    # is rejected: state rolls back to the last accepted post-update
-    # snapshot with velocity zeroed, AND map_incremental() is skipped so
-    # the kdtree doesn't accumulate points at a divergent pose. Set
-    # either to 0 to disable that particular check. Defaults sized to
-    # the Go2 physical envelope; raise for a faster platform.
+    # before the lidar update; if EITHER (a) the update tried a position
+    # correction larger than `guardrail_max_pos_jump_m` metres, OR (b) the
+    # per-update velocity correction divided by scan_dt exceeds
+    # `guardrail_max_accel_norm_ms2` m/s², the scan is rejected: state
+    # rolls back to the last accepted post-update snapshot with velocity
+    # zeroed, AND map_incremental() is skipped so the kdtree doesn't
+    # accumulate at a divergent pose. Set either to 0 to disable.
+    #
+    # Accel cap is a physics gate, not a platform-velocity ceiling — a
+    # robot on a fast vehicle accelerating gradually to 200 mph generates
+    # tiny per-scan delta-v and never trips it, but a single-update vel
+    # jump of 100+ m/s (the divergence failure mode) is clearly above
+    # any realistic ground-platform's acceleration. Default 30 m/s²
+    # (~3 g) covers Go2 + most ground vehicles.
     guardrail_max_pos_jump_m: float = 0.5
-    guardrail_max_vel_norm_ms: float = 3.0
+    guardrail_max_accel_norm_ms2: float = 30.0
 
     # FAST-LIO YAML config (relative to config/ dir, or absolute path)
     # C++ binary reads YAML directly via yaml-cpp
