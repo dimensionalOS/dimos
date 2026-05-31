@@ -33,6 +33,7 @@
 
 #include "cloud_filter.hpp"
 #include "dimos_native_module.hpp"
+#include "icp_correction.hpp"
 #include "icp_velocity.hpp"
 #include "pcap_replay.hpp"
 #include "timing.hpp"
@@ -141,6 +142,8 @@ static std::string g_odometry_topic;
 static std::string g_map_topic;
 static std::string g_icp_velocity_topic;
 static icp_velocity::Estimator g_icp_estimator;
+static icp_correction::Corrector g_icp_corrector;
+static bool g_icp_correction_enabled = false;
 static std::string g_frame_id;        // required via --frame_id
 static std::string g_child_frame_id;   // required via --child_frame_id
 static float g_frequency = 10.0f;
@@ -546,6 +549,20 @@ int main(int argc, char** argv) {
     double guardrail_max_pos_jump_m = mod.arg_float("guardrail_max_pos_jump_m", 0.5f);
     double guardrail_max_accel_norm_ms2 = mod.arg_float("guardrail_max_accel_norm_ms2", 30.0f);
 
+    // ICP cross-check rollback. Disabled unless the ICP topic is also set.
+    // Trigger when IESKF |v| > min_ieskf_v_ms AND ICP |v| is at least
+    // disagreement_pct% less. Anchor pose = oldest history entry within
+    // rollback_ms. New pos = anchor + integrate(ICP_body × IESKF_rot_quat,
+    // dt) forward. New vel = current ICP rotated to world.
+    g_icp_corrector.cfg.min_ieskf_v_ms =
+        mod.arg_float("correction_min_ieskf_v_ms", 5.0f);
+    g_icp_corrector.cfg.disagreement_pct =
+        mod.arg_float("correction_disagreement_pct", 80.0f);
+    g_icp_corrector.cfg.rollback_ms =
+        mod.arg_float("correction_rollback_ms", 1000.0f);
+    g_icp_correction_enabled =
+        mod.arg_bool("icp_correction_enabled", false);
+
     // Livox hardware config
     std::string host_ip = mod.arg("host_ip", "192.168.1.5");
     std::string lidar_ip = mod.arg("lidar_ip", "192.168.1.155");
@@ -769,11 +786,16 @@ int main(int argc, char** argv) {
                 last_emit = check_now;
             }
         }
+        // Per-scan ICP result for this iter (used both for publishing AND
+        // for the optional ICP cross-check rollback after process()).
+        icp_velocity::Estimator::Result icp_result;
+        double icp_scan_ts = 0.0;
+
         if (!points.empty()) {
             // Scan-to-scan ICP velocity on the raw body-frame points BEFORE
             // we hand them off to fastlio (which moves them out below). This
             // gives a lidar-derived velocity independent of the IESKF state.
-            if (!g_icp_velocity_topic.empty()) {
+            if (!g_icp_velocity_topic.empty() || g_icp_correction_enabled) {
                 icp_velocity::CloudT::Ptr cloud(new icp_velocity::CloudT);
                 cloud->reserve(points.size());
                 for (const auto& p : points) {
@@ -783,18 +805,18 @@ int main(int argc, char** argv) {
                     pt.z = p.z;
                     cloud->push_back(pt);
                 }
-                const double scan_ts = static_cast<double>(frame_start) / 1e9;
-                auto r = g_icp_estimator.step(cloud, scan_ts);
-                if (r.ok) {
+                icp_scan_ts = static_cast<double>(frame_start) / 1e9;
+                icp_result = g_icp_estimator.step(cloud, icp_scan_ts);
+                if (icp_result.ok && !g_icp_velocity_topic.empty()) {
                     // Cumulative ICP-only position by simple sum of per-scan
                     // translations. Not a real path (no rotation tracking),
                     // just a quick visual integration aid.
                     static double cum_x = 0.0, cum_y = 0.0, cum_z = 0.0;
-                    cum_x += r.vx * r.scan_dt;
-                    cum_y += r.vy * r.scan_dt;
-                    cum_z += r.vz * r.scan_dt;
-                    publish_icp_velocity(r.vx, r.vy, r.vz, cum_x, cum_y, cum_z,
-                                         get_publish_ts());
+                    cum_x += icp_result.vx * icp_result.scan_dt;
+                    cum_y += icp_result.vy * icp_result.scan_dt;
+                    cum_z += icp_result.vz * icp_result.scan_dt;
+                    publish_icp_velocity(icp_result.vx, icp_result.vy, icp_result.vz,
+                                         cum_x, cum_y, cum_z, get_publish_ts());
                 }
             }
 
@@ -866,6 +888,31 @@ int main(int argc, char** argv) {
                 timing::Scope s(t_publish_odom);
                 publish_odometry(fast_lio.get_odometry(), ts);
                 last_odom_publish = now;
+            }
+
+            // ICP cross-check rollback. Captures the current scan's IESKF
+            // pose+orientation alongside the ICP body-frame velocity, then
+            // checks whether IESKF and ICP disagree enough to roll back.
+            if (g_icp_correction_enabled && icp_result.ok) {
+                icp_correction::ScanEntry e;
+                e.ts = icp_scan_ts;
+                e.ieskf_pos << pose[0], pose[1], pose[2];
+                e.ieskf_quat = Eigen::Quaterniond(pose[6], pose[3], pose[4], pose[5]);
+                e.icp_v_body << icp_result.vx, icp_result.vy, icp_result.vz;
+                e.icp_valid = true;
+                g_icp_corrector.push(e);
+                auto r = g_icp_corrector.check_and_compute();
+                if (r.corrected) {
+                    fprintf(stderr,
+                        "[fastlio] icp_correction: rolling back %.0fms (anchor t=%.3f) — "
+                        "IESKF v=%.2f vs ICP v=%.2f → new pos=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f)\n",
+                        r.anchor_age_ms, r.anchor_ts, r.ieskf_v, r.icp_v,
+                        r.new_pos.x(), r.new_pos.y(), r.new_pos.z(),
+                        r.new_vel.x(), r.new_vel.y(), r.new_vel.z());
+                    fast_lio.set_world_pose_vel(
+                        r.new_pos.x(), r.new_pos.y(), r.new_pos.z(),
+                        r.new_vel.x(), r.new_vel.y(), r.new_vel.z());
+                }
             }
         }
 

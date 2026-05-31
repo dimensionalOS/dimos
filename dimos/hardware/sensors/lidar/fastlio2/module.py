@@ -132,6 +132,18 @@ class FastLio2Config(NativeModuleConfig):
     guardrail_max_pos_jump_m: float = 0.5
     guardrail_max_accel_norm_ms2: float = 30.0
 
+    # ICP cross-check rollback. Triggers when the IESKF state's |v| is above
+    # `correction_min_ieskf_v_ms` AND the scan-to-scan ICP-derived |v| is at
+    # least `correction_disagreement_pct` percent less. The binary then walks
+    # backward `correction_rollback_ms` milliseconds in its ring buffer,
+    # takes that anchor pose, integrates ICP body-frame velocities forward
+    # (rotating each by the captured IESKF orientation), and overwrites the
+    # IESKF state position/velocity. Disabled by default; enable explicitly.
+    icp_correction_enabled: bool = False
+    correction_min_ieskf_v_ms: float = 5.0
+    correction_disagreement_pct: float = 80.0
+    correction_rollback_ms: float = 1000.0
+
     # FAST-LIO YAML config (relative to config/ dir, or absolute path)
     # C++ binary reads YAML directly via yaml-cpp
     config: Annotated[
