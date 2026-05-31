@@ -70,10 +70,11 @@ LINEAR_VELOCITY_GAP_THRESHOLD_MS = float(os.environ.get("LINEAR_VELOCITY_GAP_THR
 LINEAR_ACCEL_CAP_MS2 = float(os.environ.get("LINEAR_ACCEL_CAP_MS2", "30.0"))
 
 # Rollback disabled — running pure preventative-filtering experiment.
-ICP_CORRECTION_ENABLED = False
+ICP_CORRECTION_ENABLED = True
 ONLY_CORRECT_ABOVE_SPEED_MS = 5.0
 ONLY_CORRECT_WHEN_ICP_SLOWER_BY_PCT = 80.0
-REWIND_WINDOW_MS = float(os.environ.get("REWIND_WINDOW_MS", "5000.0"))
+ANGULAR_TRIGGER_GAP_DEG_S = float(os.environ.get("ANGULAR_TRIGGER_GAP_DEG_S", "30.0"))
+REWIND_WINDOW_MS = float(os.environ.get("REWIND_WINDOW_MS", "500.0"))
 
 
 # ---------------- attempt-dir auto-increment --------------------------------
@@ -219,6 +220,7 @@ def _worker() -> int:
             icp_correction_enabled=ICP_CORRECTION_ENABLED,
             only_correct_above_speed_ms=ONLY_CORRECT_ABOVE_SPEED_MS,
             only_correct_when_icp_slower_by_pct=ONLY_CORRECT_WHEN_ICP_SLOWER_BY_PCT,
+            angular_trigger_gap_deg_s=ANGULAR_TRIGGER_GAP_DEG_S,
             rewind_window_ms=REWIND_WINDOW_MS,
         ).remappings(
             [

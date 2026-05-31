@@ -566,8 +566,10 @@ int main(int argc, char** argv) {
         mod.arg_float("only_correct_above_speed_ms", 5.0f);
     g_icp_corrector.cfg.only_correct_when_icp_slower_by_pct =
         mod.arg_float("only_correct_when_icp_slower_by_pct", 80.0f);
+    g_icp_corrector.cfg.angular_trigger_gap_deg_s =
+        mod.arg_float("angular_trigger_gap_deg_s", 30.0f);
     g_icp_corrector.cfg.rewind_window_ms =
-        mod.arg_float("rewind_window_ms", 1000.0f);
+        mod.arg_float("rewind_window_ms", 500.0f);
     g_icp_correction_enabled =
         mod.arg_bool("icp_correction_enabled", false);
 
@@ -925,15 +927,36 @@ int main(int argc, char** argv) {
                 e.ts = icp_scan_ts;
                 e.ieskf_pos << pose[0], pose[1], pose[2];
                 e.ieskf_quat = Eigen::Quaterniond(pose[6], pose[3], pose[4], pose[5]);
+                // IESKF body-frame ω this scan ≈ (q_prev^-1 * q_now) axis-angle / dt.
+                // For the first entry we just store zero; the corrector's
+                // angular trigger uses the LAST entry's (cur) ω which we
+                // compute from the per-step quat delta inside `push`.
+                static Eigen::Quaterniond prev_q = Eigen::Quaterniond::Identity();
+                static double prev_t = 0.0;
+                static bool prev_q_valid = false;
+                if (prev_q_valid && icp_scan_ts > prev_t) {
+                    const double dt = icp_scan_ts - prev_t;
+                    Eigen::Quaterniond dq = prev_q.conjugate() * e.ieskf_quat;
+                    Eigen::AngleAxisd aa(dq);
+                    e.ieskf_omega_body = aa.axis() * (aa.angle() / dt);
+                } else {
+                    e.ieskf_omega_body.setZero();
+                }
+                prev_q = e.ieskf_quat;
+                prev_t = icp_scan_ts;
+                prev_q_valid = true;
                 e.icp_v_body << icp_result.vx, icp_result.vy, icp_result.vz;
+                e.icp_omega_body << icp_result.wx, icp_result.wy, icp_result.wz;
                 e.icp_valid = true;
                 g_icp_corrector.push(e);
                 auto r = g_icp_corrector.check_and_compute();
                 if (r.corrected) {
                     fprintf(stderr,
-                        "[fastlio] icp_correction: rolling back %.0fms (anchor t=%.3f) — "
-                        "IESKF v=%.2f vs ICP v=%.2f → new pos=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f)\n",
-                        r.anchor_age_ms, r.anchor_ts, r.ieskf_v, r.icp_v,
+                        "[fastlio] icp_correction (%s): rolling back %.0fms — "
+                        "IESKF v=%.2f, ICP v=%.2f, ω_gap=%.1f°/s → "
+                        "new pos=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f)\n",
+                        r.trigger, r.anchor_age_ms,
+                        r.ieskf_v, r.icp_v, r.omega_gap_deg_s,
                         r.new_pos.x(), r.new_pos.y(), r.new_pos.z(),
                         r.new_vel.x(), r.new_vel.y(), r.new_vel.z());
                     fast_lio.set_world_pose_quat_vel(

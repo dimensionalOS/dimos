@@ -157,10 +157,11 @@ class FastLio2Config(NativeModuleConfig):
     # rewind to the oldest entry in the window, integrate ICP forward
     # from there (rotating each step by that scan's IESKF orientation),
     # and overwrite the IESKF state's world pos+vel.
-    icp_correction_enabled: bool = False
+    icp_correction_enabled: bool = True
     only_correct_above_speed_ms: float = 5.0
     only_correct_when_icp_slower_by_pct: float = 80.0
-    rewind_window_ms: float = 1000.0
+    angular_trigger_gap_deg_s: float = 30.0
+    rewind_window_ms: float = 500.0
 
     # FAST-LIO YAML config (relative to config/ dir, or absolute path)
     # C++ binary reads YAML directly via yaml-cpp
