@@ -31,7 +31,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.nav_stack.evaluator.scenarios import (
+from dimos.navigation.nav_3d.evaluator.scenarios import (
     PlannerScenario,
     default_scenarios,
 )

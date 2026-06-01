@@ -21,8 +21,7 @@ from typing import Any
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -38,21 +37,25 @@ class ClickStartGoalRouter(Module):
     config: ClickStartGoalRouterConfig
 
     clicked_point: In[PointStamped]
-    start_pose: Out[Odometry]
-    goal_pose: Out[Odometry]
+    start_pose: Out[PoseStamped]
+    goal_pose: Out[PoseStamped]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._next_is_start: bool = True
 
     async def handle_clicked_point(self, msg: PointStamped) -> None:
-        pose = Pose(position=[msg.x, msg.y, msg.z], orientation=[0.0, 0.0, 0.0, 1.0])
-        odom = Odometry(ts=msg.ts, frame_id=self.config.world_frame, pose=pose)
+        pose = PoseStamped(
+            ts=msg.ts,
+            frame_id=self.config.world_frame,
+            position=[msg.x, msg.y, msg.z],
+            orientation=[0.0, 0.0, 0.0, 1.0],
+        )
         if self._next_is_start:
             self._next_is_start = False
             logger.info("Click set start; next click will set goal", x=msg.x, y=msg.y, z=msg.z)
-            self.start_pose.publish(odom)
+            self.start_pose.publish(pose)
             return
         self._next_is_start = True
         logger.info("Click set goal", x=msg.x, y=msg.y, z=msg.z)
-        self.goal_pose.publish(odom)
+        self.goal_pose.publish(pose)

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dimos_module::{error_throttled, run, warn_throttled, Input, LcmTransport, Module, Output};
 use lcm_msgs::geometry_msgs::{Point, Pose, PoseStamped, Quaternion};
-use lcm_msgs::nav_msgs::{Odometry, Path};
+use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use serde::Deserialize;
@@ -46,11 +46,11 @@ struct MlsPlanner {
     #[input(decode = PointCloud2::decode, handler = on_global_map)]
     global_map: Input<PointCloud2>,
 
-    #[input(decode = Odometry::decode, handler = on_start_pose)]
-    start_pose: Input<Odometry>,
+    #[input(decode = PoseStamped::decode, handler = on_start_pose)]
+    start_pose: Input<PoseStamped>,
 
-    #[input(decode = Odometry::decode, handler = on_goal_pose)]
-    goal_pose: Input<Odometry>,
+    #[input(decode = PoseStamped::decode, handler = on_goal_pose)]
+    goal_pose: Input<PoseStamped>,
 
     #[output(encode = PointCloud2::encode)]
     surface_map: Output<PointCloud2>,
@@ -197,15 +197,15 @@ impl MlsPlanner {
         );
     }
 
-    async fn on_start_pose(&mut self, msg: Odometry) {
-        let p = &msg.pose.pose.position;
+    async fn on_start_pose(&mut self, msg: PoseStamped) {
+        let p = &msg.pose.position;
         self.latest_start = Some((p.x as f32, p.y as f32, p.z as f32));
         // Drop any previous plan so the visualizer doesn't show a stale path
         // rooted at the old start.
         publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
     }
 
-    async fn on_goal_pose(&mut self, msg: Odometry) {
+    async fn on_goal_pose(&mut self, msg: PoseStamped) {
         let Some(start) = self.latest_start else {
             tracing::warn!("MLSPlanner received goal before start; skipping");
             return;
@@ -219,7 +219,7 @@ impl MlsPlanner {
             return;
         }
 
-        let p = &msg.pose.pose.position;
+        let p = &msg.pose.position;
         let goal = (p.x as f32, p.y as f32, p.z as f32);
 
         let t_plan = Instant::now();
