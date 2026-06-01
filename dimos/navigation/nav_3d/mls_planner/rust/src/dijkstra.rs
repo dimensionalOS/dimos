@@ -96,7 +96,7 @@ impl PartialOrd for Scored {
 }
 impl Ord for Scored {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Min-heap on f32 score with CellId tie-break for determinism.
+        // Order on score, and use cell id for tie-breaker for repeatability
         other.0.total_cmp(&self.0).then(self.1.cmp(&other.1))
     }
 }

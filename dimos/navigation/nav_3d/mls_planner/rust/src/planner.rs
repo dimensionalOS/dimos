@@ -8,7 +8,7 @@ use ahash::AHashMap;
 
 use crate::adjacency::{CellId, SurfaceLookup};
 use crate::dijkstra::walk_preds;
-use crate::edges::PlannerGraph;
+use crate::edges::{NodeEdgeIdx, NodeId, PlannerGraph, NO_NODE};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
 /// Snap a pose to the best surface cell.
@@ -86,11 +86,11 @@ pub fn plan(
     let start_cell = plg.cells.id(start_coord)?;
     let goal_cell = plg.cells.id(goal_coord)?;
 
-    let node_idx_by_cell: AHashMap<CellId, u32> = plg
+    let node_idx_by_cell: AHashMap<CellId, NodeId> = plg
         .nodes
         .iter()
         .enumerate()
-        .map(|(i, n)| (n.cell_id, i as u32))
+        .map(|(i, n)| (n.cell_id, i as NodeId))
         .collect();
 
     let start_segment = walk_preds(&plg.cell_state, start_cell);
@@ -110,13 +110,13 @@ pub fn plan(
     ))
 }
 
-pub fn shortest_path_nodes(plg: &PlannerGraph, start: u32, goal: u32) -> Option<Vec<u32>> {
+pub fn shortest_path_nodes(plg: &PlannerGraph, start: NodeId, goal: NodeId) -> Option<Vec<NodeId>> {
     if start == goal {
         return Some(vec![start]);
     }
     let n = plg.nodes.len();
     let mut dist = vec![f32::INFINITY; n];
-    let mut pred = vec![-1i32; n];
+    let mut pred = vec![NO_NODE; n];
     dist[start as usize] = 0.0;
     let mut heap: BinaryHeap<Scored> = BinaryHeap::new();
     heap.push(Scored(0.0, start));
@@ -134,7 +134,7 @@ pub fn shortest_path_nodes(plg: &PlannerGraph, start: u32, goal: u32) -> Option<
             let nd = d + edge.cost;
             if nd < dist[neighbor as usize] {
                 dist[neighbor as usize] = nd;
-                pred[neighbor as usize] = u as i32;
+                pred[neighbor as usize] = u;
                 heap.push(Scored(nd, neighbor));
             }
         }
@@ -144,10 +144,10 @@ pub fn shortest_path_nodes(plg: &PlannerGraph, start: u32, goal: u32) -> Option<
         return None;
     }
     let mut path = vec![goal];
-    let mut cur = goal as i32;
-    while pred[cur as usize] >= 0 {
+    let mut cur = goal;
+    while pred[cur as usize] != NO_NODE {
         cur = pred[cur as usize];
-        path.push(cur as u32);
+        path.push(cur);
     }
     path.reverse();
     Some(path)
@@ -155,7 +155,7 @@ pub fn shortest_path_nodes(plg: &PlannerGraph, start: u32, goal: u32) -> Option<
 
 fn assemble_waypoints(
     plg: &PlannerGraph,
-    node_seq: &[u32],
+    node_seq: &[NodeId],
     start_pose: (f32, f32, f32),
     start_segment: &[CellId],
     goal_pose: (f32, f32, f32),
@@ -203,7 +203,7 @@ fn assemble_waypoints(
     waypoints
 }
 
-fn edge_between(plg: &PlannerGraph, a: u32, b: u32) -> Option<u32> {
+fn edge_between(plg: &PlannerGraph, a: NodeId, b: NodeId) -> Option<NodeEdgeIdx> {
     for &edge_idx in &plg.node_adj[a as usize] {
         let edge = &plg.node_edges[edge_idx as usize];
         let other = if edge.a == a { edge.b } else { edge.a };
@@ -214,7 +214,7 @@ fn edge_between(plg: &PlannerGraph, a: u32, b: u32) -> Option<u32> {
     None
 }
 
-struct Scored(f32, u32);
+struct Scored(f32, NodeId);
 
 impl PartialEq for Scored {
     fn eq(&self, other: &Self) -> bool {

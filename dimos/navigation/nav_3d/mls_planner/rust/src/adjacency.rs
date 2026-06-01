@@ -1,13 +1,10 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Surface cells indexed by dense CellId. Hot-path Dijkstra / NMS / edge work
-//! operates on CellId; VoxelKey is only translated at the boundary with the
-//! voxel map and at output (publishing, waypoint emission).
+//! Surface cells indexed by dense CellId.
 //!
-//! The structure is a slot map. Inserting allocates a fresh id (or recycles
-//! a freed one). Deleting tombstones the slot and walks the cell's neighbors
-//! to drop back-edges, leaving every surviving cell's CellId unchanged.
+//! Uses a "slot map" to store cells. When inserting, either expand the map
+//! or reuse a freed location marked with a tombstone.
 
 use ahash::AHashMap;
 use rayon::prelude::*;
@@ -16,6 +13,7 @@ use crate::voxel::VoxelKey;
 
 pub type SurfaceLookup = AHashMap<(i32, i32), Vec<i32>>;
 
+/// Index of surface voxel
 pub type CellId = u32;
 pub const NO_CELL: CellId = u32::MAX;
 
@@ -42,13 +40,12 @@ impl SurfaceCells {
         self.by_coord.is_empty()
     }
 
-    /// Total slot count, including tombstoned ones. Use as the size for
-    /// CellId-indexed scratch buffers.
+    /// Total slot count, including tombstoned cells.
     pub fn slot_capacity(&self) -> usize {
         self.coord.len()
     }
 
-    /// Drop all identity and edges while keeping allocation capacity.
+    /// Clear all vecs but keeps space allocated.
     pub fn clear(&mut self) {
         self.coord.clear();
         self.by_coord.clear();

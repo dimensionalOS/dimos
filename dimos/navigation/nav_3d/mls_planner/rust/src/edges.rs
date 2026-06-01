@@ -16,10 +16,17 @@ use crate::dijkstra::{dijkstra, walk_preds, DijkstraState};
 use crate::nodes::NodeData;
 use crate::voxel::VoxelKey;
 
+/// Index into planner graph nodes
+pub type NodeId = u32;
+pub const NO_NODE: NodeId = u32::MAX;
+
+/// Index into planner graph node edges
+pub type NodeEdgeIdx = u32;
+
 #[derive(Clone, Copy, Debug)]
 pub struct NodeEdge {
-    pub a: u32,
-    pub b: u32,
+    pub a: NodeId,
+    pub b: NodeId,
     pub cost: f32,
     /// Cell on a's side of the cheapest Voronoi boundary crossing.
     pub boundary_u: CellId,
@@ -27,14 +34,13 @@ pub struct NodeEdge {
     pub boundary_v: CellId,
 }
 
-/// Long-lived planner graph. Buffers are reused across rebuilds.
 #[derive(Default)]
 pub struct PlannerGraph {
     pub cells: SurfaceCells,
     pub surface_lookup: SurfaceLookup,
     pub nodes: Vec<NodeData>,
     pub node_edges: Vec<NodeEdge>,
-    pub node_adj: Vec<Vec<u32>>,
+    pub node_adj: Vec<Vec<NodeEdgeIdx>>,
     pub cell_state: DijkstraState,
 }
 
@@ -53,7 +59,7 @@ pub fn build_node_edges(
     nodes: &[NodeData],
     state: &mut DijkstraState,
     out_edges: &mut Vec<NodeEdge>,
-    out_adj: &mut Vec<Vec<u32>>,
+    out_adj: &mut Vec<Vec<NodeEdgeIdx>>,
 ) {
     out_edges.clear();
     out_adj.clear();
@@ -73,18 +79,18 @@ pub fn build_node_edges(
         v.clear();
     }
     for (edge_idx, edge) in out_edges.iter().enumerate() {
-        out_adj[edge.a as usize].push(edge_idx as u32);
-        out_adj[edge.b as usize].push(edge_idx as u32);
+        out_adj[edge.a as usize].push(edge_idx as NodeEdgeIdx);
+        out_adj[edge.b as usize].push(edge_idx as NodeEdgeIdx);
     }
 }
 
 fn best_boundary_edges(cells: &SurfaceCells, state: &DijkstraState, out: &mut Vec<NodeEdge>) {
     let cell_entries: Vec<(CellId, &[Edge])> = cells.iter().collect();
 
-    let merged: AHashMap<(u32, u32), NodeEdge> = cell_entries
+    let merged: AHashMap<(NodeId, NodeId), NodeEdge> = cell_entries
         .par_iter()
         .fold(
-            AHashMap::<(u32, u32), NodeEdge>::new,
+            AHashMap::<(NodeId, NodeId), NodeEdge>::new,
             |mut local, (u, edges)| {
                 let du = state.dist[*u as usize];
                 if !du.is_finite() {
@@ -125,7 +131,7 @@ fn best_boundary_edges(cells: &SurfaceCells, state: &DijkstraState, out: &mut Ve
                 local
             },
         )
-        .reduce(AHashMap::<(u32, u32), NodeEdge>::new, |mut a, b| {
+        .reduce(AHashMap::<(NodeId, NodeId), NodeEdge>::new, |mut a, b| {
             for (k, v_edge) in b {
                 let entry = a.entry(k).or_insert(v_edge);
                 if v_edge.cost < entry.cost {
@@ -213,7 +219,7 @@ mod tests {
     #[test]
     fn three_nodes_in_line_form_a_chain() {
         let pg = setup(&strip_cells(), &[(3, 0, 0), (10, 0, 0), (17, 0, 0)]);
-        let pairs: Vec<(u32, u32)> = pg.node_edges.iter().map(|e| (e.a, e.b)).collect();
+        let pairs: Vec<(NodeId, NodeId)> = pg.node_edges.iter().map(|e| (e.a, e.b)).collect();
         assert_eq!(pairs, vec![(0, 1), (1, 2)]);
     }
 
