@@ -21,7 +21,7 @@ pub trait ModuleConfig: DeserializeOwned + Debug + Validate {}
 impl<T: DeserializeOwned + Debug + Validate> ModuleConfig for T {}
 
 /// Default config type used by `#[derive(Module)]` when no `#[config]` field
-/// is present. Just a stand in for modules that don't use configurations.
+/// is used. Just a stand in for modules that don't use configurations.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NoConfig;

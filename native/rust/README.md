@@ -56,12 +56,12 @@ async fn main() {
 - `#[module(setup = fn, teardown = fn)]`: on the struct. Both optional. Names methods on `Self`. `setup` runs once before the input dispatch loop starts (use it to spawn background tasks or initialize resources); `teardown` runs once after the loop exits (use it for cleanup).
 - `#[input(decode = fn, handler = fn)]`: on a field of type `Input<T>`. `decode` is required; `handler` defaults to `handle_<field_name>`.
 - `#[output(encode = fn)]`: on a field of type `Output<T>`. `encode` is required.
-- `#[config]`: on one field. The type must derive `Deserialize + Debug + Validate` (from the [`validator`](https://docs.rs/validator) crate, which the module crate must depend on directly). At most one per struct. If absent, `Config` defaults to `dimos_module::NoConfig`.
+- `#[config]`: on one field. The type must derive `Deserialize + Debug + Validate` (from the [`validator`](https://docs.rs/validator) crate). At most one per struct. If absent, `Config` defaults to `dimos_module::NoConfig`.
 - Unattributed fields are initialized via `Default::default()` and treated as module state.
 
 ## Config validation
 
-`run()` calls `config.validate()` after deserializing and bails with an `io::Error` on failure. The attributes you'll usually reach for are `range` for numbers, `length` or `regex` for strings, and `custom(function = ...)` for one-off rules. Use `#[validate(schema(function = "..."))]` on the struct for cross-field invariants.
+`run()` calls `config.validate()` after deserializing and bails with an `io::Error` on failure. Use `#[validate(schema(function = "..."))]` on the struct for cross-field invariants.
 
 ```rust
 use validator::{Validate, ValidationError};
