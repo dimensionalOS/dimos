@@ -56,9 +56,14 @@ def _push_jpeg(module: QuestTeleopModule, msg: Image, quality: int) -> None:
     Runs on the RX thread; sends are scheduled on the asyncio loop captured by
     QuestTeleopModule when the first client connected.
     """
-    # Skip the encode entirely if nobody is listening.
+    # Snapshot clients under the lock to avoid concurrent set mutation from
+    # the uvicorn thread. Skip the encode entirely if nobody is listening.
     loop = module._ws_loop
-    if loop is None or not module._connected_clients:
+    if loop is None:
+        return
+    with module._clients_lock:
+        clients = tuple(module._connected_clients)
+    if not clients:
         return
 
     try:
@@ -67,7 +72,7 @@ def _push_jpeg(module: QuestTeleopModule, msg: Image, quality: int) -> None:
         logger.exception("Failed to encode camera frame")
         return
 
-    for ws in list(module._connected_clients):
+    for ws in clients:
         asyncio.run_coroutine_threadsafe(_ws_send_jpeg(ws, jpeg), loop)
 
 

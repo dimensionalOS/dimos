@@ -127,7 +127,10 @@ class QuestTeleopModule(Module):
         }
 
         # Tracked here so subclasses can push from non-asyncio threads.
+        # _clients_lock guards add/discard/snapshot of the set across the
+        # uvicorn thread and the RX subscriber thread.
         self._connected_clients: set[WebSocket] = set()
+        self._clients_lock = threading.Lock()
         self._ws_loop: asyncio.AbstractEventLoop | None = None
 
         self._setup_routes()
@@ -149,7 +152,8 @@ class QuestTeleopModule(Module):
         async def websocket_endpoint(ws: WebSocket) -> None:
             await ws.accept()
             self._ws_loop = asyncio.get_running_loop()
-            self._connected_clients.add(ws)
+            with self._clients_lock:
+                self._connected_clients.add(ws)
             logger.info("Quest client connected")
             try:
                 while True:
@@ -165,7 +169,8 @@ class QuestTeleopModule(Module):
             except Exception:
                 logger.exception("WebSocket error")
             finally:
-                self._connected_clients.discard(ws)
+                with self._clients_lock:
+                    self._connected_clients.discard(ws)
 
     @rpc
     def start(self) -> None:
