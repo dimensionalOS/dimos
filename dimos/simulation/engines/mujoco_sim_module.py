@@ -70,7 +70,7 @@ logger = setup_logger()
 def _find_sensor_slice(model: mujoco.MjModel, *names: str, dim: int = 3) -> slice | None:
     """Return the first matching MJCF sensor's slice into sensordata, or None."""
     for n in names:
-        sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, n)
+        sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, n)  # type: ignore[attr-defined]
         if sid >= 0:
             adr = int(model.sensor_adr[sid])
             return slice(adr, adr + dim)
@@ -385,7 +385,7 @@ class MujocoSimModule(
         # Floating-base orientation is qpos[3:7] (w,x,y,z) when the root
         # joint is a free joint.  Detect by checking jnt_type[0].
         if self._engine.model.njnt > 0 and int(self._engine.model.jnt_type[0]) == int(
-            mujoco.mjtJoint.mjJNT_FREE
+            mujoco.mjtJoint.mjJNT_FREE  # type: ignore[attr-defined]
         ):
             self._imu_base_qpos_slice = slice(3, 7)
         else:
