@@ -141,6 +141,12 @@ docs/
 
 ---
 
+## For Coding Agents
+
+If you are a coding agent working on this dimos codebase, our coding agent focused docs are at `docs/coding-agents/index.md`
+
+---
+
 ## Architecture
 
 ### Modules

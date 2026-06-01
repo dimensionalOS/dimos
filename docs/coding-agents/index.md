@@ -1,5 +1,6 @@
 # For Agents
 
+├── worktrees.md (creating provisioned worktrees with `bin/worktree`)
 ├── testing.md (docs about writing tests)
 ├── docs (these are docs about writing docs)
 │   ├── codeblocks.md

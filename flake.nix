@@ -243,7 +243,11 @@
           fi
 
           [ -f "$PROJECT_ROOT/motd" ] && cat "$PROJECT_ROOT/motd"
-          [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ] && [ ! -f "$PROJECT_ROOT/.git/hooks/pre-commit" ] && pre-commit install --install-hooks
+          # Resolve the real hooks dir (shared across worktrees, where .git is a
+          # file pointing elsewhere) so we don't re-run `pre-commit install` and
+          # trip its "refusing with core.hooksPath set" error.
+          HOOKS_DIR=$(git -C "$PROJECT_ROOT" rev-parse --git-path hooks 2>/dev/null)
+          [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ] && [ -n "$HOOKS_DIR" ] && [ ! -f "$HOOKS_DIR/pre-commit" ] && pre-commit install --install-hooks
         '';
         devShells = {
           # basic shell (blends with your current environment)
