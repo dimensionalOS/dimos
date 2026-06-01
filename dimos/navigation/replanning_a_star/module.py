@@ -19,7 +19,7 @@ from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -34,7 +34,14 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+class ReplanningAStarPlannerConfig(ModuleConfig):
+    robot_width: float | None = None
+    robot_rotation_diameter: float | None = None
+
+
 class ReplanningAStarPlanner(Module, NavigationInterface):
+    config: ReplanningAStarPlannerConfig
+
     odom: In[PoseStamped]  # TODO: Use TF.
     odometry: In[Odometry]
     global_costmap: In[OccupancyGrid]
@@ -53,7 +60,18 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._planner = GlobalPlanner(self.config.g)
+        overrides = {
+            name: value
+            for name, value in (
+                ("robot_width", self.config.robot_width),
+                ("robot_rotation_diameter", self.config.robot_rotation_diameter),
+            )
+            if value is not None
+        }
+        effective_global_config = (
+            self.config.g.model_copy(update=overrides) if overrides else self.config.g
+        )
+        self._planner = GlobalPlanner(effective_global_config)
 
     @rpc
     def start(self) -> None:
