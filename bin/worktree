@@ -104,11 +104,21 @@ cmd_add() {
     cd "$DIR"
 
     # Per-worktree env (.envrc is gitignored, so each worktree needs its own).
-    [[ -e .envrc ]] || ln -s .envrc.nix .envrc
+    # Mirror whichever variant the main repo points at: .envrc.nix (nix flake)
+    # or .envrc.venv (plain venv, no nix).
+    local envrc; envrc=$(readlink "$REPO_ROOT/.envrc" 2>/dev/null || echo .envrc.nix)
+    [[ "$envrc" == .envrc.nix || "$envrc" == .envrc.venv ]] || envrc=.envrc.nix
+    [[ -e .envrc ]] || ln -s "$envrc" .envrc
 
-    # Python env: build deps need the nix shell's CFLAGS/CYCLONEDDS_HOME/etc.
-    echo ">>> uv venv + sync (inside nix develop, may take a few min on first run)"
-    nix develop --command bash -c 'uv venv --python 3.12 && uv sync --all-groups'
+    # Python env. The nix variant runs the sync inside `nix develop` so build
+    # deps see the shell's CFLAGS/CYCLONEDDS_HOME/etc.; the venv variant uses
+    # the system toolchain directly.
+    echo ">>> uv venv + sync via $envrc (may take a few min on first run)"
+    if [[ "$envrc" == .envrc.nix ]]; then
+        nix develop --command bash -c 'uv venv --python 3.12 && uv sync --all-groups'
+    else
+        uv venv --python 3.12 && uv sync --all-groups
+    fi
 
     # Let direnv auto-activate it next time you cd in.
     if command -v direnv >/dev/null 2>&1; then
