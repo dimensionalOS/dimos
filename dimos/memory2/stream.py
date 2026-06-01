@@ -200,11 +200,23 @@ class Stream(CompositeResource, Generic[T, O]):
     # to the stream's first observation; ``*_timestamp`` is absolute epoch seconds.
     def from_time(self, seconds: float | None) -> Stream[T, O]:
         """Keep observations from ``seconds`` after the first (relative)."""
-        return self if seconds is None else self.after(self.first().ts + seconds)
+        if seconds is None:
+            return self
+        try:
+            t0 = self.first().ts
+        except LookupError:
+            return self  # already empty → empty window, not a crash
+        return self.after(t0 + seconds)
 
     def to_time(self, seconds: float | None) -> Stream[T, O]:
         """Keep ``seconds`` of observations from the current start (relative duration)."""
-        return self if seconds is None else self.before(self.first().ts + seconds)
+        if seconds is None:
+            return self
+        try:
+            t0 = self.first().ts
+        except LookupError:
+            return self
+        return self.before(t0 + seconds)
 
     def from_timestamp(self, ts: float | None) -> Stream[T, O]:
         """Keep observations after absolute epoch ``ts``."""

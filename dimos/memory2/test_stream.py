@@ -829,3 +829,11 @@ class TestTimeWindowing:
         assert [o.data for o in stream.to_time(None)] == full
         assert [o.data for o in stream.from_timestamp(None)] == full
         assert [o.data for o in stream.to_timestamp(None)] == full
+
+    def test_relative_bounds_on_empty_yield_empty(self, make_stream):
+        # Relative bounds resolve an anchor from first(); an empty slice (here,
+        # seeking past all data) must yield empty, not raise LookupError.
+        stream = make_stream(10, start_ts=1000.0)
+        assert stream.from_timestamp(9999.0).to_time(30).to_list() == []
+        assert make_stream(0).from_time(5).to_list() == []
+        assert make_stream(0).to_time(5).to_list() == []
