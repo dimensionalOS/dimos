@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import rerun as rr
 
 from dimos.core.global_config import global_config
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -47,8 +48,6 @@ _COST_TO_RGBA[101] = _COLOR_LETHAL
 
 
 def _g1_global_costmap_colors(occupancy_grid: OccupancyGrid) -> Any:
-    import rerun as rr
-
     if occupancy_grid.grid.size == 0:
         return rr.Mesh3D(vertex_positions=[])
 
@@ -89,10 +88,6 @@ def _g1_global_costmap_colors(occupancy_grid: OccupancyGrid) -> Any:
 
 
 def _g1_path_colors(path: Path) -> Any:
-    # Single archetype (not multi-tuple) so the bridge auto-attaches to
-    # tf#/<path.frame_id> instead of nav_stack's hardcoded tf#/sensor.
-    import rerun as rr
-
     # Empty geometry instead of None so the stale path actually clears.
     if not path.poses:
         return rr.LineStrips3D([])
