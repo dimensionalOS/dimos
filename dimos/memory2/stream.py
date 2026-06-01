@@ -232,17 +232,6 @@ class Stream(CompositeResource, Generic[T, O]):
         t0 = self.first().ts
         return self.at(t0 + t, tolerance=tolerance)
 
-    def clip(self, seek: float = 0.0, duration: float | None = None) -> Stream[T, O]:
-        """Window to a snippet ``seek`` seconds in, ``duration`` seconds long.
-
-        Offsets are relative to the first observation; ``duration=None`` runs to
-        the end. A no-op when ``seek<=0`` and ``duration is None``.
-        """
-        if seek <= 0 and duration is None:
-            return self
-        start = self.first().ts + seek
-        return self.after(start) if duration is None else self.time_range(start, start + duration)
-
     def near(self, pose: Any, radius: float) -> Stream[T, O]:
         # Accept Pose/PoseStamped (any object with `.position`), Vector3,
         # numpy arrays, or (x, y, z) tuples — Vector3() handles the rest.
@@ -261,6 +250,24 @@ class Stream(CompositeResource, Generic[T, O]):
 
     def offset(self, n: int) -> Stream[T, O]:
         return self._replace_query(offset_val=n)
+
+    # Time windowing — None means unbounded on that side. ``*_time`` is relative
+    # to the stream's first observation; ``*_timestamp`` is absolute epoch seconds.
+    def from_time(self, seconds: float | None) -> Stream[T, O]:
+        """Keep observations from ``seconds`` after the first (relative)."""
+        return self if seconds is None else self.after(self.first().ts + seconds)
+
+    def to_time(self, seconds: float | None) -> Stream[T, O]:
+        """Keep ``seconds`` of observations from the current start (relative duration)."""
+        return self if seconds is None else self.before(self.first().ts + seconds)
+
+    def from_timestamp(self, ts: float | None) -> Stream[T, O]:
+        """Keep observations after absolute epoch ``ts``."""
+        return self if ts is None else self.after(ts)
+
+    def to_timestamp(self, ts: float | None) -> Stream[T, O]:
+        """Keep observations up to absolute epoch ``ts``."""
+        return self if ts is None else self.before(ts)
 
     def search(self, query: Embedding, k: int | None = None) -> Stream[T, EmbeddedObservation[T]]:
         """Rank observations by cosine similarity to *query*.

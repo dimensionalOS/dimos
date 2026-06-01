@@ -250,19 +250,19 @@ def main(
         print(store.summary())
 
         def clipped(name: str, ptype: type[Any]) -> Stream[Any]:
-            return store.stream(name, ptype).clip(seek, duration)
+            return store.stream(name, ptype).from_time(seek or None).to_time(duration)
 
         lidar = clipped("lidar", PointCloud2)
         color_image = clipped("color_image", Image)
         has_livox = "fastlio_lidar" in store.streams
         livox = clipped("fastlio_lidar", PointCloud2) if has_livox else None
 
-        # ---- per-frame raw clouds ----
+        # Per-frame raw clouds.
         _log_clouds("       lidar", lidar, "world/lidar", voxel, point_mode)
         if livox is not None:
             _log_clouds("fastlio_lidar", livox, "world/fastlio_lidar", voxel, point_mode)
 
-        # ---- accumulated voxel maps over the selected PointCloud2 streams ----
+        # Accumulated voxel maps over the selected PointCloud2 streams.
         # --map logs a growing map per stream; --map-final logs one static map
         # per stream. --map-carve-columns clears the Z column under each surface
         # voxel (good for forward-facing lidar like the Go2 L1); off by default.
@@ -300,7 +300,7 @@ def main(
                         static=True,
                     )
 
-        # ---- fastlio pose axis + path from fastlio_odometry stream ----
+        # fastlio pose axis + path from fastlio_odometry stream.
         if "fastlio_odometry" in store.streams:
             odometry = clipped("fastlio_odometry", Odometry)
             cb = _progress(odometry.count(), "fastlio_odometry")
@@ -324,7 +324,7 @@ def main(
                 color=(255, 165, 0),  # orange
             )
 
-        # ---- Go2 native odom pose axis + path ----
+        # Go2 native odom pose axis + path.
         if "odom" in store.streams:
             odom = clipped("odom", PoseStamped)
             cb = _progress(odom.count(), "        odom")
@@ -348,7 +348,7 @@ def main(
                 color=(0, 200, 100),  # green
             )
 
-        # ---- pass 2: camera pose + image per color_image ----
+        # Pass 2: camera pose + image per color_image.
         cam_pipeline = (
             color_image.transform(throttle(1.0 / camera_hz)) if camera_hz > 0 else color_image
         )

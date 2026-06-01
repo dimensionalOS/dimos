@@ -164,7 +164,9 @@ def main(
         with dst:
             for src_name, dst_name in kept.items():
                 ptype = payload_types[src_name]
-                src_s: Stream[Any] = src.stream(src_name, ptype).clip(seek, duration)
+                src_s: Stream[Any] = (
+                    src.stream(src_name, ptype).from_time(seek or None).to_time(duration)
+                )
                 dst_s: Stream[Any] = dst.stream(dst_name, ptype)
                 total = src_s.count()
                 cb = progress(total, f"{dst_name:>16s}")

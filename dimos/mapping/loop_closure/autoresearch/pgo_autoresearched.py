@@ -180,17 +180,13 @@ def pgo_keyframes(
     for obs in stream:
         if on_frame is not None:
             on_frame(obs)
-        if obs.pose is None:
+        pose = obs.pose_tuple
+        if pose is None:
             continue
-        # Skip placeholder poses (origin position OR zero quaternion).
-        if obs.pose[0] == 0 and obs.pose[1] == 0 and obs.pose[2] == 0:
+        # Skip placeholder poses (origin position OR zero/identity quaternion).
+        if pose[0] == 0 and pose[1] == 0 and pose[2] == 0:
             continue
-        if (
-            obs.pose[3] == 0
-            and obs.pose[4] == 0
-            and obs.pose[5] == 0
-            and (obs.pose[6] == 0 or obs.pose[6] == 1)
-        ):
+        if pose[3] == 0 and pose[4] == 0 and pose[5] == 0 and (pose[6] == 0 or pose[6] == 1):
             continue
         local_pose = _obs_to_pose3(obs)
         pgo.process(local_pose, obs.ts, obs.data)
@@ -310,9 +306,9 @@ def _obs_to_pose3(obs: Observation[Any]) -> gtsam.Pose3:
     """Convert an observation's stored pose tuple directly to a `gtsam.Pose3`."""
     import gtsam  # type: ignore[import-not-found,import-untyped]
 
-    if obs.pose is None:
+    if obs.pose_tuple is None:
         raise LookupError("No pose set on this observation")
-    x, y, z, qx, qy, qz, qw = obs.pose
+    x, y, z, qx, qy, qz, qw = obs.pose_tuple
     return gtsam.Pose3(
         gtsam.Rot3.Quaternion(float(qw), float(qx), float(qy), float(qz)),
         gtsam.Point3(float(x), float(y), float(z)),

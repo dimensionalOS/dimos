@@ -381,7 +381,7 @@ def main(
         pgo = True
 
     store = SqliteStore(path=db_path)
-    lidar = store.stream(lidar_stream, PointCloud2).clip(seek, duration)
+    lidar = store.stream(lidar_stream, PointCloud2).from_time(seek or None).to_time(duration)
 
     print(lidar.summary())
 
@@ -476,12 +476,14 @@ def main(
         # (verified: matches lidar_base_pose + BASE_TO_OPTICAL to ~1mm). With
         # --image-pose, swap that stored pose for a different source (e.g.
         # fastlio_odometry), composing the base→optical mount onto it first.
-        color_image = store.stream("color_image", Image).clip(seek, duration)
+        color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
         n_images = color_image.count()
         if image_pose is not None:
             from dimos.mapping.utils.cli.pose_fill import pose_fill
 
-            src_pose: Stream[Any] = store.stream(image_pose).clip(seek, duration)
+            src_pose: Stream[Any] = (
+                store.stream(image_pose).from_time(seek or None).to_time(duration)
+            )
             print(f"re-posing color_image from {image_pose!r} + camera optical mount")
             color_image = pose_fill(color_image, src_pose, tolerance=0.1, mount=BASE_TO_OPTICAL)
         cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else _camera_info_static()
