@@ -27,7 +27,6 @@ from typing import Any
 import cv2
 from fastapi import WebSocket
 from pydantic import Field
-from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
@@ -220,14 +219,8 @@ class VideoArmTeleopModule(ArmTeleopModule):
 
     color_image: In[Image]
 
-    def _on_image(self, msg: Image) -> None:
+    async def handle_color_image(self, msg: Image) -> None:
         _push_jpeg(self, msg, self.config.video_jpeg_quality)
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        self.register_disposable(Disposable(self.color_image.subscribe(self._on_image)))
-        logger.info("Quest teleop: camera feed subscribed → /ws push")
 
 
 class Go2TeleopConfig(QuestTeleopConfig):
@@ -277,14 +270,8 @@ class Go2TeleopModule(QuestTeleopModule):
             twist.angular.z = -self._deadzone(right.thumbstick.x) * self.config.angular_speed
         self.cmd_vel.publish(twist)
 
-    def _on_image(self, msg: Image) -> None:
+    async def handle_color_image(self, msg: Image) -> None:
         _push_jpeg(self, msg, self.config.video_jpeg_quality)
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        self.register_disposable(Disposable(self.color_image.subscribe(self._on_image)))
-        logger.info("Quest teleop: Go2 camera subscribed → /ws push")
 
     @rpc
     def stop(self) -> None:
