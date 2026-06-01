@@ -54,7 +54,7 @@ stays cheap and gtsam-free for consumers that only need `Keyframe` /
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, Unpack
 
@@ -163,7 +163,7 @@ class LoopClosure:
 
 
 def pgo_keyframes(
-    stream: Stream[PointCloud2],
+    stream: Iterable[Observation[PointCloud2]],
     *,
     on_frame: Callable[[Any], None] | None = None,
     loop_closures_out: list[LoopClosure] | None = None,

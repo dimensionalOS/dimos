@@ -962,6 +962,42 @@ class TestAlignLargeInput:
         assert max(abs(p.data[0].ts - p.data[1].ts) for p in pairs) < 1e-9
 
 
+class TestWithPose:
+    """``Observation.with_pose`` attaches/clears a pose without touching the payload."""
+
+    def test_attaches_pose_and_keeps_payload_lazy(self):
+        """Pose is set, but the payload loader stays untouched until accessed."""
+        loads = 0
+
+        def loader() -> str:
+            nonlocal loads
+            loads += 1
+            return "payload"
+
+        obs: Observation[str] = Observation(id=1, ts=5.0, data_type=str, _loader=loader)
+        posed = obs.with_pose((1.0, 2.0, 3.0))
+
+        # 3-tuple padded with the identity quaternion; payload not materialized.
+        assert posed.pose_tuple == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)
+        assert posed.ts == 5.0
+        assert loads == 0
+        # The payload still resolves lazily on first access.
+        assert posed.data == "payload"
+        assert loads == 1
+
+    def test_pose_none_clears(self):
+        obs: Observation[str] = Observation(id=1, ts=0.0, data_type=str, pose=(1, 2, 3), _data="x")
+        cleared = obs.with_pose(None)
+        assert cleared.pose_tuple is None
+        assert cleared.data == "x"
+
+    def test_overwrites_existing_pose(self):
+        obs: Observation[str] = Observation(id=1, ts=0.0, data_type=str, pose=(1, 2, 3), _data="x")
+        moved = obs.with_pose((7, 8, 9))
+        assert moved.pose_tuple is not None
+        assert moved.pose_tuple[:3] == (7.0, 8.0, 9.0)
+
+
 class TestTimeWindowing:
     """``*_time`` is relative to the first observation, ``*_timestamp`` is absolute.
 

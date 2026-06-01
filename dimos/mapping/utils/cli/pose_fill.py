@@ -129,8 +129,8 @@ def pose_fill_db(
         # the source blob still resolves); plain metadata for everything else.
         if name == target:
             rows: Iterable[Observation[Any]] = pose_fill(
-                src.stream(name).from_time(seek or None).to_time(duration),
-                src.stream(pose_source).from_time(seek or None).to_time(duration),
+                src.stream(name).from_time(seek or None).to_time(duration).order_by("ts"),
+                src.stream(pose_source).from_time(seek or None).to_time(duration).order_by("ts"),
                 tolerance=tolerance,
             )
         else:
