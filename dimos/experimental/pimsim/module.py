@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 import math
 from pathlib import Path
 import struct
@@ -90,6 +90,13 @@ _WS_MSG_POINTCLOUD = 0x02
 _WS_MSG_ROBOT_POSE = 0x03
 _WS_POINTCLOUD_HEADER_BYTES = 8
 _WS_ROBOT_POSE_HEADER_BYTES = 16
+# Per-message WS send timeout. The browser tab momentarily failing to drain
+# TCP (Chrome backgrounding, GC pause, App Nap) shouldn't permanently wedge
+# the in-flight gate: time out, drop the client, let the JS reconnect.
+_WS_SEND_TIMEOUT_S = 1.0
+# Best-effort close after a timed-out send. If the kernel buffer is full the
+# close frame may not flush either; uvicorn's keepalive will then reap.
+_WS_CLOSE_TIMEOUT_S = 0.5
 _NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
@@ -713,13 +720,18 @@ class BabylonSceneViewerModule(Module):
         for websocket in tuple(self._clients):
             try:
                 if robot_pose_payload is not None:
-                    await websocket.send_bytes(robot_pose_payload)
+                    await asyncio.wait_for(
+                        websocket.send_bytes(robot_pose_payload),
+                        timeout=_WS_SEND_TIMEOUT_S,
+                    )
                 if state_payload is not None:
-                    await websocket.send_json(state_payload)
+                    await asyncio.wait_for(
+                        websocket.send_json(state_payload),
+                        timeout=_WS_SEND_TIMEOUT_S,
+                    )
             except Exception:
                 dead.append(websocket)
-        for websocket in dead:
-            self._clients.discard(websocket)
+        await self._drop_clients(dead)
 
     def _make_metadata_payload_if_due(self) -> dict[str, Any] | None:
         now = time.monotonic()
@@ -936,11 +948,13 @@ class BabylonSceneViewerModule(Module):
         dead: list[WebSocket] = []
         for websocket in tuple(self._clients):
             try:
-                await websocket.send_bytes(payload)
+                await asyncio.wait_for(
+                    websocket.send_bytes(payload),
+                    timeout=_WS_SEND_TIMEOUT_S,
+                )
             except Exception:
                 dead.append(websocket)
-        for websocket in dead:
-            self._clients.discard(websocket)
+        await self._drop_clients(dead)
 
     def _make_pointcloud_payload(self, msg: PointCloud2) -> bytes | None:
         points = msg.points_f32()
@@ -1182,8 +1196,23 @@ class BabylonSceneViewerModule(Module):
         dead: list[WebSocket] = []
         for websocket in tuple(self._clients):
             try:
-                await websocket.send_json(payload)
+                await asyncio.wait_for(
+                    websocket.send_json(payload),
+                    timeout=_WS_SEND_TIMEOUT_S,
+                )
             except Exception:
                 dead.append(websocket)
+        await self._drop_clients(dead)
+
+    async def _drop_clients(self, dead: list[WebSocket]) -> None:
+        """Discard dead clients and best-effort close them so JS reconnects.
+
+        Called on send timeout or exception. Without the close(), the JS
+        ``onclose`` doesn't fire and the auto-reconnect loop in
+        stream_worker.js never runs until uvicorn's WS keepalive eventually
+        reaps the connection ~40s later.
+        """
         for websocket in dead:
             self._clients.discard(websocket)
+            with suppress(Exception):
+                await asyncio.wait_for(websocket.close(), timeout=_WS_CLOSE_TIMEOUT_S)
