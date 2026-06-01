@@ -21,7 +21,6 @@ from functools import reduce
 import threading
 import time
 
-from dimos.memory.timeseries.inmemory import InMemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -30,6 +29,7 @@ from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.types.timestamped import to_human_readable
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.timeseries.inmemory import InMemoryStore
 
 logger = setup_logger()
 
