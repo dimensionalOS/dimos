@@ -90,19 +90,19 @@
           { vals.pkg=pkgs.libGLU;             flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
           { vals.pkg=pkgs.mesa;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
           { vals.pkg=pkgs.glfw;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libX11;        flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libXi;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libXext;       flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libXrandr;     flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libXinerama;   flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libXcursor;    flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libXfixes;     flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libXrender;    flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libXdamage;    flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libXcomposite; flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libxcb;        flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libXScrnSaver; flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          { vals.pkg=pkgs.xorg.libXxf86vm;    flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libx11;             flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxi;              flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxext;            flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxrandr;          flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxinerama;        flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxcursor;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxfixes;          flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxrender;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxdamage;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxcomposite;      flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxcb;             flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxscrnsaver;      flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          { vals.pkg=pkgs.libxxf86vm;         flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
           { vals.pkg=pkgs.udev;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
           { vals.pkg=pkgs.SDL2;               flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
           { vals.pkg=pkgs.SDL2.dev;           flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
