@@ -144,11 +144,57 @@ fn parse_config_json<C: DeserializeOwned>(line: &str) -> io::Result<(HashMap<Str
     Ok((topics, config))
 }
 
+fn format_validation_errors(errors: &validator::ValidationErrors) -> String {
+    use validator::ValidationErrorsKind;
+    let mut messages = Vec::new();
+    for (field, kind) in errors.errors() {
+        match kind {
+            ValidationErrorsKind::Field(field_errs) => {
+                for err in field_errs {
+                    let mut bounds: Vec<String> = err
+                        .params
+                        .iter()
+                        .filter(|(k, _)| k.as_ref() != "value")
+                        .map(|(k, v)| format!("{k}={v}"))
+                        .collect();
+                    bounds.sort();
+                    let bounds_str = if bounds.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", bounds.join(", "))
+                    };
+                    let got = err
+                        .params
+                        .get("value")
+                        .map(|v| format!(" got {v}"))
+                        .unwrap_or_default();
+                    messages.push(format!("{field}: {}{bounds_str}{got}", err.code));
+                }
+            }
+            ValidationErrorsKind::Struct(nested) => {
+                messages.push(format!("{field}: {}", format_validation_errors(nested)));
+            }
+            ValidationErrorsKind::List(list) => {
+                for (idx, errs) in list {
+                    messages.push(format!(
+                        "{field}[{idx}]: {}",
+                        format_validation_errors(errs)
+                    ));
+                }
+            }
+        }
+    }
+    messages.join("; ")
+}
+
 fn validate_config<C: Validate>(config: &C) -> io::Result<()> {
     config.validate().map_err(|errs| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("config validation failed: {errs}"),
+            format!(
+                "config validation failed: {}",
+                format_validation_errors(&errs)
+            ),
         )
     })
 }
@@ -271,7 +317,18 @@ fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
     }
 }
 
-pub async fn run<M, T>(transport: T) -> io::Result<()>
+pub async fn run<M, T>(transport: T)
+where
+    M: Module,
+    T: Transport,
+{
+    if let Err(e) = run_fallible::<M, T>(transport).await {
+        error!("{e}");
+        std::process::exit(1);
+    }
+}
+
+async fn run_fallible<M, T>(transport: T) -> io::Result<()>
 where
     M: Module,
     T: Transport,

@@ -46,7 +46,7 @@ impl MyModule {
 #[tokio::main]
 async fn main() {
     let transport = LcmTransport::new().await.unwrap();
-    run::<MyModule, _>(transport).await.unwrap();
+    run::<MyModule, _>(transport).await;
 }
 ```
 

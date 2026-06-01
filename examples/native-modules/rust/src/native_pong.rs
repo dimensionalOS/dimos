@@ -41,5 +41,5 @@ async fn main() {
     let transport = LcmTransport::new()
         .await
         .expect("Failed to create transport");
-    run::<Pong, _>(transport).await.expect("pong run failed");
+    run::<Pong, _>(transport).await;
 }

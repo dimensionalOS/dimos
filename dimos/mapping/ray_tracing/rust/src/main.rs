@@ -540,9 +540,7 @@ async fn main() {
     let transport = LcmTransport::new()
         .await
         .expect("failed to create LCM transport");
-    run::<RayTracingVoxelMap, _>(transport)
-        .await
-        .expect("voxel_ray_tracing run failed");
+    run::<RayTracingVoxelMap, _>(transport).await;
 }
 
 #[cfg(test)]
