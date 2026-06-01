@@ -148,6 +148,61 @@ jobs:
         working-directory: docs
         run: npm run validate
 
+  test:
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+    timeout-minutes: 90
+    runs-on: [self-hosted, Linux, large]
+    permissions:
+      contents: read  # For checkout
+      packages: read  # For pulling the ros-dev container from ghcr.io
+    container:
+      image: ghcr.io/dimensionalos/ros-dev:dev
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          clean: false
+          persist-credentials: false
+      - name: Fix permissions
+        run: |
+          git config --global --add safe.directory '*'
+          git clean -ffdx
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --group tests-self-hosted --frozen
+      - name: Build C++ extensions in-place
+        run: uv run python setup.py build_ext --inplace
+      - name: Source ROS environment
+        # The uv venv is sealed (include-system-site-packages = false), so
+        # `import rclpy` / `ament_index_python` would fail. Sourcing the ROS
+        # setup script and exporting PYTHONPATH/AMENT_PREFIX_PATH/etc into
+        # GITHUB_ENV makes them importable from `uv run`.
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          {
+            echo "PYTHONPATH=$PYTHONPATH"
+            echo "AMENT_PREFIX_PATH=$AMENT_PREFIX_PATH"
+            echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
+            echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+            echo "ROS_DISTRO=$ROS_DISTRO"
+            echo "ROS_VERSION=$ROS_VERSION"
+            echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
+          } >> "$GITHUB_ENV"
+      - name: Run full test suite
+        # --error-for-skips ensures a misconfigured runner (missing env var /
+        # dep) fails the release rather than silently passing on a smaller
+        # subset. The marker excludes only `tool` (dev tooling).
+        run: uv run pytest -m 'not tool' --error-for-skips
+      - name: Check disk space
+        if: failure()
+        run: df -h
+
   tests:
     timeout-minutes: 20
     strategy:
