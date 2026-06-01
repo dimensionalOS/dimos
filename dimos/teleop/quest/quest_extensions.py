@@ -24,7 +24,6 @@ Available subclasses:
 import asyncio
 from typing import Any
 
-import cv2
 from fastapi import WebSocket
 from pydantic import Field
 
@@ -57,19 +56,17 @@ def _push_jpeg(module: QuestTeleopModule, msg: Image, quality: int) -> None:
     Runs on the RX thread; sends are scheduled on the asyncio loop captured by
     QuestTeleopModule when the first client connected.
     """
+    # Skip the encode entirely if nobody is listening.
+    loop = module._ws_loop
+    if loop is None or not module._connected_clients:
+        return
+
     try:
-        bgr = msg.to_opencv()
-        ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-        if not ok:
-            return
-        jpeg = buf.tobytes()
+        jpeg = msg.to_jpeg_bytes(quality=quality)
     except Exception:
         logger.exception("Failed to encode camera frame")
         return
 
-    loop = module._ws_loop
-    if loop is None or not module._connected_clients:
-        return
     for ws in list(module._connected_clients):
         asyncio.run_coroutine_threadsafe(_ws_send_jpeg(ws, jpeg), loop)
 
