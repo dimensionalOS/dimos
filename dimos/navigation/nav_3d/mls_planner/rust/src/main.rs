@@ -295,7 +295,7 @@ fn now() -> Time {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     Time {
-        sec: dur.as_secs() as i32,
+        sec: dur.as_secs().min(i32::MAX as u64) as i32,
         nsec: dur.subsec_nanos() as i32,
     }
 }

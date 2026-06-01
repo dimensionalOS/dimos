@@ -149,10 +149,10 @@ fn close_at_z(
     }
 
     if dilation_passes > 0 {
-        img = dilate(&img, Norm::L1, dilation_passes as u8);
+        img = dilate(&img, Norm::L1, dilation_passes.min(u8::MAX as u32) as u8);
     }
     if erosion_passes > 0 {
-        img = erode(&img, Norm::L1, erosion_passes as u8);
+        img = erode(&img, Norm::L1, erosion_passes.min(u8::MAX as u32) as u8);
     }
 
     let mut out = Vec::new();
