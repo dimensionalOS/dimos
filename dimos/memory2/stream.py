@@ -197,6 +197,8 @@ class Stream(CompositeResource, Generic[T, O]):
         return self._replace_query(offset_val=n)
 
     # Windowing helpers — None on either bound means unbounded on that side.
+    # Index helpers (``*_seek``) count observations; time helpers (``*_time``)
+    # are relative to the first observation; ``*_timestamp`` is absolute epoch.
     def from_seek(self, i: int | None) -> Stream[T, O]:
         """Window by index: drop the first ``i`` observations."""
         return self if i is None else self.offset(i)
@@ -211,20 +213,43 @@ class Stream(CompositeResource, Generic[T, O]):
         return s if stop is None else s.limit(stop - (start or 0))
 
     def from_time(self, seconds: float | None) -> Stream[T, O]:
-        """Window by time: keep from ``seconds`` after the first observation."""
-        return self if seconds is None else self.after(self.first().ts + seconds)
+        """Keep observations from ``seconds`` after the first (relative)."""
+        if seconds is None:
+            return self
+        try:
+            t0 = self.first().ts
+        except LookupError:
+            return self  # already empty → empty window, not a crash
+        return self.after(t0 + seconds)
 
     def to_time(self, seconds: float | None) -> Stream[T, O]:
-        """Window by time: keep the first ``seconds`` of the stream."""
-        return self if seconds is None else self.before(self.first().ts + seconds)
+        """Keep ``seconds`` of observations from the current start (relative duration)."""
+        if seconds is None:
+            return self
+        try:
+            t0 = self.first().ts
+        except LookupError:
+            return self
+        return self.before(t0 + seconds)
 
     def range_time(self, start: float | None, stop: float | None) -> Stream[T, O]:
         """Window by time: ``[start, stop)`` seconds from the first observation."""
         if start is None and stop is None:
             return self
-        t0 = self.first().ts
+        try:
+            t0 = self.first().ts
+        except LookupError:
+            return self
         s = self if start is None else self.after(t0 + start)
         return s if stop is None else s.before(t0 + stop)
+
+    def from_timestamp(self, ts: float | None) -> Stream[T, O]:
+        """Keep observations after absolute epoch ``ts``."""
+        return self if ts is None else self.after(ts)
+
+    def to_timestamp(self, ts: float | None) -> Stream[T, O]:
+        """Keep observations up to absolute epoch ``ts``."""
+        return self if ts is None else self.before(ts)
 
     def search(self, query: Embedding, k: int | None = None) -> Stream[T, EmbeddedObservation[T]]:
         """Rank observations by cosine similarity to *query*.
