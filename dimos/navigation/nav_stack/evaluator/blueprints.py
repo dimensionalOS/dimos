@@ -22,11 +22,12 @@ Run with::
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.nav_stack.evaluator.evaluator import Evaluator
 from dimos.navigation.nav_stack.modules.click_start_goal_router.click_start_goal_router import (
     ClickStartGoalRouter,
@@ -36,6 +37,9 @@ from dimos.navigation.nav_stack.modules.mls_planner.mls_planner_native import (
 )
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
+
+if TYPE_CHECKING:
+    from rerun._baseclasses import Archetype
 
 _POSE_MARKER_RADIUS = 0.4
 # Small lift so graph artifacts render visibly above the surface points instead of z-fighting.
@@ -52,7 +56,7 @@ def _render_start_pose(msg: Any) -> Any:
     )
 
 
-def _render_goal_pose(msg: Any) -> Any:
+def _render_goal_pose(msg: Odometry) -> Archetype:
     import rerun as rr
 
     return rr.Points3D(
