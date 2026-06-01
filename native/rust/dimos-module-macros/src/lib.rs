@@ -181,11 +181,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
             #teardown_impl
         }
-
-        const _: fn() = || {
-            fn assert_module_config<C: ::dimos_module::ModuleConfig>() {}
-            assert_module_config::<#config_type>();
-        };
     })
 }
 
