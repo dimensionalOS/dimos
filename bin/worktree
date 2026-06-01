@@ -85,7 +85,8 @@ cmd_add() {
     [[ -n "$BRANCH" ]] || { usage >&2; exit 1; }
 
     [[ -n "$DIR" ]] || DIR=$(default_dir "$BRANCH")
-    DIR=$(realpath -m "$DIR")
+    # realpath -m (resolve non-existent paths) is GNU-only; fall back for BSD/macOS realpath.
+    DIR=$(realpath -m "$DIR" 2>/dev/null) || DIR=$(cd "$(dirname "$DIR")" && echo "$PWD/$(basename "$DIR")")
 
     echo ">>> worktree: $DIR  (branch: $BRANCH)"
 
