@@ -68,11 +68,12 @@ class SqliteVectorStore(VectorStore):
             return
         validate_identifier(stream_name)
         with self._lock:
-            self._conn.execute(
-                f'CREATE VIRTUAL TABLE IF NOT EXISTS "{stream_name}_vec" '
-                f"USING vec0(embedding float[{dim}] distance_metric=cosine)"
-            )
-        self._tables[stream_name] = dim
+            if stream_name not in self._tables:
+                self._conn.execute(
+                    f'CREATE VIRTUAL TABLE IF NOT EXISTS "{stream_name}_vec" '
+                    f"USING vec0(embedding float[{dim}] distance_metric=cosine)"
+                )
+                self._tables[stream_name] = dim
 
     def start(self) -> None:
         if self._conn is None:

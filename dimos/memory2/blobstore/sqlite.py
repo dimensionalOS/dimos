@@ -70,11 +70,12 @@ class SqliteBlobStore(BlobStore):
             return
         validate_identifier(stream_name)
         with self._lock:
-            self._conn.execute(
-                f'CREATE TABLE IF NOT EXISTS "{stream_name}_blob" '
-                "(id INTEGER PRIMARY KEY, data BLOB NOT NULL)"
-            )
-        self._tables.add(stream_name)
+            if stream_name not in self._tables:
+                self._conn.execute(
+                    f'CREATE TABLE IF NOT EXISTS "{stream_name}_blob" '
+                    "(id INTEGER PRIMARY KEY, data BLOB NOT NULL)"
+                )
+                self._tables.add(stream_name)
 
     def start(self) -> None:
         if self._conn is None:

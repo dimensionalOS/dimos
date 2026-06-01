@@ -60,6 +60,7 @@ class SqliteStore(Store):
             )
         self._registry_conn = self._open_connection()
         self._registry = RegistryStore(conn=self._registry_conn)
+        self._stopped = False
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open a new WAL-mode connection with sqlite-vec loaded."""
@@ -213,6 +214,8 @@ class SqliteStore(Store):
     def delete_stream(self, name: str) -> None:
         super().delete_stream(name)
         with conn_lock(self._registry_conn):
+            if self._stopped:
+                return
             self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}"')
             self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_blob"')
             self._registry_conn.execute(f'DROP TABLE IF EXISTS "{name}_vec"')
@@ -222,4 +225,7 @@ class SqliteStore(Store):
     def stop(self) -> None:
         super().stop()
         with conn_lock(self._registry_conn):
+            if self._stopped:
+                return
+            self._stopped = True
             close_sqlite_connection(self._registry_conn)
