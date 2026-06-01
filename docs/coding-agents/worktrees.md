@@ -4,7 +4,7 @@
 --all-groups`, `.envrc` symlink, direnv allow) so `mypy`/`pytest`/hooks work
 immediately — handy for forking off parallel work.
 
-```sh
+```sh skip
 bin/worktree feat/ivan/foo              # new branch off current HEAD -> ../dimos-foo
 bin/worktree feat/ivan/foo origin/main  # fork from main instead
 bin/worktree existing-branch            # check out a branch that already exists
@@ -16,7 +16,7 @@ bin/worktree rm feat/ivan/foo -b        # remove worktree AND delete the branch
 Run commands in a worktree from outside it (direnv isn't auto-loaded in a
 non-interactive shell):
 
-```sh
+```sh skip
 direnv exec ../dimos-foo python -m pytest dimos
 direnv exec ../dimos-foo python -m mypy dimos
 ```
