@@ -18,10 +18,10 @@ pub struct NodeData {
     pub pos: (f32, f32, f32),
 }
 
-/// Run wall-distance Dijkstra, NMS-pick node cells, write them into
-/// `out_nodes`, and apply wall-safe edge-cost scaling to `cells`. The
-/// DijkstraState is left holding the wall-distance result so callers can
-/// reuse it before the next Dijkstra overwrites it.
+/// Distribute nodes on the surfaces.
+///
+/// Runs multi source dijkstra using edges as sources, then distribute nodes
+/// using a grid based NMS.
 pub fn place_nodes(
     cells: &mut SurfaceCells,
     voxel_size: f32,
@@ -70,9 +70,11 @@ fn collect_wall_adjacent_cells(cells: &SurfaceCells, out: &mut Vec<CellId>) {
     out.clear();
     for (id, edges) in cells.iter() {
         let (cx, cy, _) = cells.coord(id);
+
+        // Check if all 4 neighbors are present
         let mut mask: u8 = 0;
         for e in edges {
-            let (nx, ny, _) = cells.coord(e.dst);
+            let (nx, ny, _) = cells.coord(e.dest);
             mask |= match (nx - cx, ny - cy) {
                 (-1, 0) => 1,
                 (1, 0) => 2,
@@ -150,7 +152,7 @@ fn apply_wall_safe_penalty(cells: &mut SurfaceCells, dist: &[f32], buffer_m: f32
     edge_lists.par_iter_mut().for_each(|(src, edges)| {
         let pu = penalty_of(dist[*src as usize], buffer_m);
         for edge in edges.iter_mut() {
-            let pv = penalty_of(dist[edge.dst as usize], buffer_m);
+            let pv = penalty_of(dist[edge.dest as usize], buffer_m);
             edge.cost *= (pu + pv) / 2.0;
         }
     });

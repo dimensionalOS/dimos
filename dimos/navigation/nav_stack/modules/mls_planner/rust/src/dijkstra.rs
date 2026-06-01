@@ -18,8 +18,7 @@ pub struct DijkstraState {
 }
 
 impl DijkstraState {
-    /// Resize parallel vecs to `n` slots and reset their contents to the
-    /// "unreached" sentinels. Capacity is preserved across calls.
+    /// Reset all vecs to the specified capacity.
     pub fn reset(&mut self, n: usize) {
         self.dist.clear();
         self.dist.resize(n, f32::INFINITY);
@@ -31,6 +30,9 @@ impl DijkstraState {
     }
 }
 
+/// Multi-source dijkstra.
+///
+/// Labels each node with distance to nearest source, the source id, and the path.
 pub fn dijkstra(cells: &SurfaceCells, sources: &[CellId], state: &mut DijkstraState) {
     state.reset(cells.slot_capacity());
 
@@ -51,20 +53,20 @@ pub fn dijkstra(cells: &SurfaceCells, sources: &[CellId], state: &mut DijkstraSt
         let su = state.source[u as usize];
         for edge in cells.neighbors(u) {
             let nd = d + edge.cost;
-            let v = edge.dst as usize;
+            let v = edge.dest as usize;
             if nd < state.dist[v] {
                 state.dist[v] = nd;
                 state.pred[v] = u;
                 state.source[v] = su;
-                state.heap.push(Scored(nd, edge.dst));
+                state.heap.push(Scored(nd, edge.dest));
             }
         }
     }
 }
 
-/// Walk predecessors from `start` back to its source, returning the chain
-/// inclusive of both ends. Returns just [start] for source cells and for
-/// unreached cells.
+/// Reconstruct the path back to the nearest source.
+///
+/// Returns the start if the cell has not been reached by any dijkstra calls.
 pub fn walk_preds(state: &DijkstraState, start: CellId) -> Vec<CellId> {
     let mut cells = vec![start];
     let mut cur = start;
@@ -106,7 +108,7 @@ mod tests {
 
     fn chain(n: i32) -> (SurfaceCells, Vec<CellId>) {
         let mut sc = SurfaceCells::default();
-        let ids: Vec<CellId> = (0..n).map(|i| sc.alloc((i, 0, 0))).collect();
+        let ids: Vec<CellId> = (0..n).map(|i| sc.insert((i, 0, 0))).collect();
         for i in 0..n - 1 {
             sc.add_edge(ids[i as usize], ids[(i + 1) as usize], 1.0);
             sc.add_edge(ids[(i + 1) as usize], ids[i as usize], 1.0);
@@ -155,10 +157,10 @@ mod tests {
     #[test]
     fn disconnected_cells_stay_unreachable() {
         let mut sc = SurfaceCells::default();
-        let a = sc.alloc((0, 0, 0));
-        let b = sc.alloc((1, 0, 0));
-        let c = sc.alloc((2, 0, 0));
-        let d = sc.alloc((3, 0, 0));
+        let a = sc.insert((0, 0, 0));
+        let b = sc.insert((1, 0, 0));
+        let c = sc.insert((2, 0, 0));
+        let d = sc.insert((3, 0, 0));
         sc.add_edge(a, b, 1.0);
         sc.add_edge(b, a, 1.0);
         sc.add_edge(c, d, 1.0);
@@ -174,9 +176,9 @@ mod tests {
     #[test]
     fn shorter_path_overrides_longer() {
         let mut sc = SurfaceCells::default();
-        let a = sc.alloc((0, 0, 0));
-        let b = sc.alloc((1, 0, 0));
-        let c = sc.alloc((2, 0, 0));
+        let a = sc.insert((0, 0, 0));
+        let b = sc.insert((1, 0, 0));
+        let c = sc.insert((2, 0, 0));
         sc.add_edge(a, b, 10.0);
         sc.add_edge(b, a, 10.0);
         sc.add_edge(a, c, 1.0);

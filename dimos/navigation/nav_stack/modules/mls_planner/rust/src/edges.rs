@@ -44,10 +44,10 @@ impl PlannerGraph {
     }
 }
 
-/// Run multi-source Dijkstra from all node cells, then derive the cheapest
-/// inter-node edge per Voronoi-region boundary pair. Reuses `state` as the
-/// scratch buffer. The state is left holding the node-source Dijkstra
-/// result so callers can walk preds for waypoint reconstruction.
+/// Assemble the cheapest paths between neighboring source nodes.
+///
+/// Runs multi-source dijkstra from the sources, then adds the cheapest edges
+/// between Voronoi region boundaries.
 pub fn build_node_edges(
     cells: &SurfaceCells,
     nodes: &[NodeData],
@@ -92,7 +92,7 @@ fn best_boundary_edges(cells: &SurfaceCells, state: &DijkstraState, out: &mut Ve
                 }
                 let sa = state.source[*u as usize];
                 for edge in *edges {
-                    let v = edge.dst;
+                    let v = edge.dest;
                     let dv = state.dist[v as usize];
                     if !dv.is_finite() {
                         continue;

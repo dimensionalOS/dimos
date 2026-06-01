@@ -32,8 +32,7 @@ fn is_standable(ix: i32, iy: i32, iz: i32, by_col: &ColumnIz, clearance_cells: i
 }
 
 /// Extract standable cells from the voxelized global map, then close small
-/// holes. `by_col` is a scratch buffer cleared on entry; its capacity is
-/// reused across calls. Results land in `out` (cleared first).
+/// holes.
 pub fn extract_surfaces(
     voxel_map: &AHashSet<VoxelKey>,
     clearance_cells: i32,
