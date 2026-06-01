@@ -277,10 +277,7 @@ class Go2TeleopModule(QuestTeleopModule):
     def stop(self) -> None:
         # Send one zero Twist so the base halts if teleop dies mid-motion.
         try:
-            zero = Twist()
-            zero.linear = Vector3(0.0, 0.0, 0.0)
-            zero.angular = Vector3(0.0, 0.0, 0.0)
-            self.cmd_vel.publish(zero)
+            self.cmd_vel.publish(Twist.zero())
         except Exception:
             logger.exception("Failed to publish stop Twist")
         super().stop()
