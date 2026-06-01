@@ -355,7 +355,18 @@ jobs:
       - name: Install apt dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libgl1 libturbojpeg portaudio19-dev
+          sudo apt-get install -y \
+            `# Compiler toolchain for the in-tree pybind11 C++ extension.` \
+            build-essential \
+            `# Runtime lib for opencv-python (cv2 loads libGL.so.1 on import).` \
+            libgl1 \
+            `# Runtime lib for PyTurboJPEG (fast JPEG encode/decode).` \
+            libturbojpeg \
+            `# Dev package for PyAudio (built from source against PortAudio).` \
+            portaudio19-dev \
+            `# Chromium runtime libs required by Playwright (used by dimsim browser tests).` \
+            libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
+            libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
