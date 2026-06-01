@@ -233,7 +233,7 @@ def main(
     from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
-    from dimos.robot.unitree.go2.connection import _camera_info_static
+    from dimos.robot.unitree.go2.config import camera_info_static
     from dimos.utils.data import resolve_named_path
     from dimos.visualization.rerun.init import rerun_init
 
@@ -326,7 +326,7 @@ def main(
         # (verified: matches lidar_base_pose + BASE_TO_OPTICAL to ~1mm).
         # No mount composition needed.
         color_image = store.stream("color_image", Image)
-        cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else _camera_info_static()
+        cam_info = CameraInfo.from_yaml(str(camera_info)) if camera_info else camera_info_static()
         xf = DetectMarkers(
             camera_info=cam_info,
             marker_length_m=marker_size,

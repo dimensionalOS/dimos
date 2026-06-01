@@ -18,8 +18,10 @@ import math
 import threading
 import time
 
+from pydantic import Field
 import pytest
 
+from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -805,3 +807,156 @@ class TestMultiTBuffer:
 
         assert result.frame_id == "world"
         assert result.child_frame_id == "hand"
+
+
+class TestStaticTransforms:
+    LCM_PROPAGATION_DELAY = 2
+    MODULE_START_DELAY = 2
+    STRICT_TOLERANCE = 0.001
+    STALE_AGE = 1000
+    FAR_FUTURE_OFFSET = 9999
+
+    def test_static_survives_time_tolerance(self) -> None:
+        """Static transforms should be retrievable regardless of time tolerance."""
+        buffer = MultiTBuffer(buffer_size=10.0)
+        old_time = time.time() - self.STALE_AGE
+
+        camera_link = Transform(
+            translation=Vector3(0.3, 0.0, 0.1),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+            ts=old_time,
+        )
+        buffer.receive_static_transform(camera_link)
+
+        result = buffer.get_transform(
+            "base_link",
+            "camera_link",
+            time_point=time.time(),
+            time_tolerance=self.STRICT_TOLERANCE,
+        )
+        assert result is not None
+        assert abs(result.translation.x - 0.3) < 1e-6
+
+    def test_static_not_pruned_by_dynamic(self) -> None:
+        """Adding dynamic transforms to a different pair shouldn't prune statics from buffers."""
+        buffer = MultiTBuffer(buffer_size=2.0)
+
+        camera_link = Transform(
+            translation=Vector3(0.3, 0.0, 0.1),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+            ts=time.time() - self.STALE_AGE,
+        )
+        buffer.receive_static_transform(camera_link)
+
+        for i in range(20):
+            buffer.receive_transform(
+                Transform(
+                    translation=Vector3(float(i), 0.0, 0.0),
+                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    frame_id="world",
+                    child_frame_id="base_link",
+                    ts=time.time(),
+                )
+            )
+
+        assert ("base_link", "camera_link") in buffer.buffers
+        assert len(buffer.buffers[("base_link", "camera_link")]) > 0
+
+    def test_static_in_bfs_chain(self) -> None:
+        """BFS should find paths through static frames."""
+        buffer = MultiTBuffer(buffer_size=10.0)
+        now = time.time()
+
+        buffer.receive_transform(
+            Transform(
+                translation=Vector3(1.0, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="world",
+                child_frame_id="base_link",
+                ts=now,
+            )
+        )
+        buffer.receive_static_transform(
+            Transform(
+                translation=Vector3(0.3, 0.0, 0.1),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="base_link",
+                child_frame_id="camera_link",
+                ts=now,
+            )
+        )
+
+        result = buffer.get("world", "camera_link")
+        assert result is not None
+        assert abs(result.translation.x - 1.3) < 1e-6
+        assert abs(result.translation.z - 0.1) < 1e-6
+
+    def test_static_publish_over_lcm(self) -> None:
+        """Static transforms published on /tf_static should be received as statics."""
+        broadcaster = TF()
+        receiver = TF()
+
+        camera_link = Transform(
+            translation=Vector3(0.3, 0.0, 0.1),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+            ts=time.time(),
+        )
+        broadcaster.publish_static(camera_link)
+        time.sleep(self.LCM_PROPAGATION_DELAY)
+
+        assert ("base_link", "camera_link") in receiver._statics
+
+        result = receiver.get(
+            "base_link",
+            "camera_link",
+            time_point=time.time() + self.FAR_FUTURE_OFFSET,
+            time_tolerance=self.STRICT_TOLERANCE,
+        )
+        assert result is not None
+        assert abs(result.translation.x - 0.3) < 1e-6
+
+        broadcaster.stop()
+        receiver.stop()
+
+    def test_module_publishes_static_transforms(self) -> None:
+        """A Module with static_transforms config should publish them via tf."""
+
+        class TestConfig(ModuleConfig):
+            frame_mapping: dict[str, str] = Field(
+                default_factory=lambda: dict(
+                    body="base_link",
+                    parent="world",
+                    camera_link="camera_link",
+                )
+            )
+            static_transforms: dict[str, Transform] = Field(
+                default_factory=lambda: {
+                    "camera_link": Transform(
+                        translation=Vector3(0.3, 0.0, 0.1),
+                        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                        frame_id="base_link",
+                        child_frame_id="camera_link",
+                    ),
+                }
+            )
+
+        class TestModule(Module):
+            config: TestConfig
+
+        module = TestModule()
+        module.start()
+        time.sleep(self.MODULE_START_DELAY)
+
+        result = module.tf.get("base_link", "camera_link", time_tolerance=self.STRICT_TOLERANCE)
+        assert result is not None
+        assert abs(result.translation.x - 0.3) < 1e-6
+        assert abs(result.translation.z - 0.1) < 1e-6
+
+        module.stop()
+        module._close_module()

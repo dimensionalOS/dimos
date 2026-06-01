@@ -25,7 +25,7 @@ from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import DEFAULT_WORLD_FRAME, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.memory2.embed import EmbedImages
@@ -253,6 +253,7 @@ class RecorderConfig(MemoryModuleConfig):
     backup_keep_last: int = Field(default=10, ge=0)
     default_frame_id: str = "base_link"
     tf_tolerance: float = 0.5
+    tf_warning_interval: float = 5.0
     db_path: str | Path = "recording.db"
 
 
@@ -320,21 +321,25 @@ class Recorder(MemoryModule):
 
         default_frame_id = self.config.default_frame_id
         tf_tolerance = self.config.tf_tolerance
+        tf_warning_interval = self.config.tf_warning_interval
+        last_warn_times: dict[str, float] = {}
 
         def on_msg(msg: Any) -> None:
             ts = getattr(msg, "ts", None) or time.time()
             frame_id = getattr(msg, "frame_id", None) or default_frame_id
-            transform = self.tf.get("world", frame_id, time_point=ts, time_tolerance=tf_tolerance)
+            transform = self.tf.get(
+                DEFAULT_WORLD_FRAME, frame_id, time_point=ts, time_tolerance=tf_tolerance
+            )
             pose = transform.to_pose() if transform is not None else None
 
             if not pose:
-                logger.warning(
-                    "[%s] No tf available for frame '%s' at time %s (msg ts: %s), storing without pose",
-                    name,
-                    frame_id,
-                    ts,
-                    getattr(msg, "ts", None),
-                )
+                now = time.monotonic()
+                # throtle is per-frame so we don't miss anything important
+                if now - last_warn_times.get(frame_id, 0.0) > tf_warning_interval:
+                    last_warn_times[frame_id] = now
+                    logger.warning(
+                        f"""[{name}] No tf available for frame {frame_id!r} at time {ts} (msg ts: {getattr(msg, "ts", None)}), storing without pose\n{self.tf.tree_str}"""
+                    )
             stream.append(msg, ts=ts, pose=pose)
 
         self.register_disposable(Disposable(input_topic.subscribe(on_msg)))
