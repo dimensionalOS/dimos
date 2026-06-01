@@ -2,17 +2,18 @@
 # Manage ready-to-work git worktrees for parallel/agent development.
 #
 # Usage:
-#   bin/worktree <branch> [base-ref]      # create/checkout <branch>, fork base-ref if new
-#   bin/worktree --dir ../path <branch>   # override the worktree directory
+#   bin/worktree new <branch> [base-ref]  # create/checkout <branch>, fork base-ref if new
+#   bin/worktree new --dir ../path <branch>   # override the worktree directory
+#   bin/worktree ls                       # list worktrees (branch = value for rm)
 #   bin/worktree rm <branch|dir> [-b]     # remove a worktree (-b also deletes the branch)
 #
-# Create provisions the worktree so mypy/pytest/pre-commit work out of the box
-# (uv venv + `uv sync --all-groups`, `.envrc` symlink, direnv allow).
+# `new` (aka create/add) provisions the worktree so mypy/pytest/pre-commit work
+# out of the box (uv venv + `uv sync --all-groups`, `.envrc` symlink, direnv allow).
 #
 # Examples:
-#   bin/worktree feat/ivan/foo            # new branch off current HEAD -> ../dimos-foo
-#   bin/worktree feat/ivan/foo origin/main
-#   bin/worktree existing-branch          # check out a branch that already exists
+#   bin/worktree new feat/ivan/foo        # new branch off current HEAD -> ../dimos-foo
+#   bin/worktree new feat/ivan/foo origin/main
+#   bin/worktree new existing-branch      # check out a branch that already exists
 #   bin/worktree rm feat/ivan/foo         # remove that worktree (keep the branch)
 #   bin/worktree rm feat/ivan/foo -b      # remove worktree and delete the branch
 set -euo pipefail
@@ -20,13 +21,29 @@ set -euo pipefail
 REPO_ROOT=$(git rev-parse --path-format=absolute --git-common-dir)
 REPO_ROOT=$(cd "$(dirname "$REPO_ROOT")" && pwd)   # main worktree root
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # Default worktree dir for a branch: ../dimos-<last path component>, sanitized.
 default_dir() {
     local slug
     slug=$(printf '%s' "${1##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's#[^a-z0-9_.-]+#-#g; s#^-+|-+$##g')
     printf '%s' "$(dirname "$REPO_ROOT")/$(basename "$REPO_ROOT")-$slug"
+}
+
+cmd_ls() {
+    # List worktrees with the branch name to pass to `rm` and the dir.
+    # The main worktree is marked (main) and can't be removed.
+    printf '%-40s %s\n' "BRANCH (rm target)" "DIRECTORY"
+    git worktree list --porcelain | awk -v root="$REPO_ROOT" '
+        function flush() {
+            if (w=="") return
+            printf "%-40s %s%s\n", (det ? "(detached)" : b), w, (w==root ? "  (main)" : "")
+            w=""
+        }
+        /^worktree /{flush(); w=$2; b=""; det=0}
+        /^branch /{b=$2; sub(/^refs\/heads\//, "", b)}
+        /^detached/{det=1}
+        END{flush()}'
 }
 
 cmd_rm() {
@@ -73,7 +90,7 @@ cmd_rm() {
 }
 
 cmd_add() {
-    local DIR="" BRANCH="" BASE=""
+    local DIR="" BRANCH="" BASE="" resolved=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -d|--dir) DIR="$2"; shift 2 ;;
@@ -85,8 +102,14 @@ cmd_add() {
     [[ -n "$BRANCH" ]] || { usage >&2; exit 1; }
 
     [[ -n "$DIR" ]] || DIR=$(default_dir "$BRANCH")
-    # realpath -m (resolve non-existent paths) is GNU-only; fall back for BSD/macOS realpath.
-    DIR=$(realpath -m "$DIR" 2>/dev/null) || DIR=$(cd "$(dirname "$DIR")" && echo "$PWD/$(basename "$DIR")")
+    # realpath -m (resolve non-existent paths) is GNU-only; fall back for BSD/macOS
+    # realpath. Resolve into a temp first: `DIR=$(...)` clobbers DIR to "" on failure,
+    # which would break the fallback's dirname/basename of the original path.
+    if resolved=$(realpath -m "$DIR" 2>/dev/null); then
+        DIR=$resolved
+    else
+        DIR=$(cd "$(dirname "$DIR")" && echo "$PWD/$(basename "$DIR")")
+    fi
 
     echo ">>> worktree: $DIR  (branch: $BRANCH)"
 
@@ -135,6 +158,8 @@ cmd_add() {
 
 case "${1:-}" in
     -h|--help|"") usage; [[ -n "${1:-}" ]] && exit 0 || exit 1 ;;
+    ls|list) shift; cmd_ls "$@" ;;
     rm|remove) shift; cmd_rm "$@" ;;
-    *) cmd_add "$@" ;;
+    new|create|add) shift; cmd_add "$@" ;;
+    *) echo "unknown command: $1 (did you mean 'new'?)" >&2; echo >&2; usage >&2; exit 1 ;;
 esac

@@ -5,12 +5,14 @@
 immediately — handy for forking off parallel work.
 
 ```sh skip
-bin/worktree feat/ivan/foo              # new branch off current HEAD -> ../dimos-foo
-bin/worktree feat/ivan/foo origin/main  # fork from main instead
-bin/worktree existing-branch            # check out a branch that already exists
+bin/worktree new feat/ivan/foo              # new branch off current HEAD -> ../dimos-foo
+bin/worktree new feat/ivan/foo origin/main  # fork from main instead
+bin/worktree new existing-branch            # check out a branch that already exists
 
-bin/worktree rm feat/ivan/foo           # remove the worktree (keep the branch)
-bin/worktree rm feat/ivan/foo -b        # remove worktree AND delete the branch
+bin/worktree ls                             # list worktrees (branch column = rm target)
+
+bin/worktree rm feat/ivan/foo               # remove the worktree (keep the branch)
+bin/worktree rm feat/ivan/foo -b            # remove worktree AND delete the branch
 ```
 
 Run commands in a worktree from outside it (direnv isn't auto-loaded in a
