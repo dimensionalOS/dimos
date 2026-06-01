@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from io import BytesIO
+import math
 import struct
 from typing import TYPE_CHECKING, BinaryIO, TypeAlias
 
@@ -163,6 +164,14 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
         quat = rotation.as_quat()  # Returns [x, y, z, w]
         return cls(quat[0], quat[1], quat[2], quat[3])
 
+    def to_rotation_matrix(self) -> np.ndarray:
+        """Convert quaternion to a 3x3 rotation matrix."""
+        from scipy.spatial.transform import (
+            Rotation,  # ~330ms: deferred to avoid startup cost
+        )
+
+        return np.asarray(Rotation.from_quat([self.x, self.y, self.z, self.w]).as_matrix())
+
     def to_euler(self) -> Vector3:
         """Convert quaternion to Euler angles (roll, pitch, yaw) in radians.
 
@@ -204,6 +213,10 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
             return False
         return self.x == other.x and self.y == other.y and self.z == other.z and self.w == other.w
 
+    def is_zero(self) -> bool:
+        """All components are zero — i.e. an uninitialized placeholder, not a valid rotation."""
+        return self.x == 0.0 and self.y == 0.0 and self.z == 0.0 and self.w == 0.0
+
     def __mul__(self, other: Quaternion) -> Quaternion:
         """Multiply two quaternions (Hamilton product).
 
@@ -220,6 +233,17 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
         z = self.w * other.z + self.x * other.y - self.y * other.x + self.z * other.w
 
         return Quaternion(x, y, z, w)
+
+    def dot(self, other: Quaternion) -> float:
+        return float(self.x * other.x + self.y * other.y + self.z * other.z + self.w * other.w)
+
+    def angle_to(self, other: Quaternion) -> float:
+        """Smallest rotation angle (radians) between two unit quaternions.
+
+        ``abs(self.dot(other))`` collapses the double-cover sign ambiguity;
+        the ``min(1.0, ...)`` clamps against numerical drift past 1.
+        """
+        return 2.0 * math.acos(min(1.0, abs(self.dot(other))))
 
     def conjugate(self) -> Quaternion:
         """Return the conjugate of the quaternion.

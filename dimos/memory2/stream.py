@@ -38,6 +38,7 @@ from dimos.memory2.type.filter import (
     TimeRangeFilter,
 )
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -177,7 +178,11 @@ class Stream(CompositeResource, Generic[T, O]):
         return self.at(t0 + t, tolerance=tolerance)
 
     def near(self, pose: Any, radius: float) -> Stream[T, O]:
-        return self._with_filter(NearFilter(pose, radius))
+        # Accept Pose/PoseStamped (any object with `.position`), Vector3,
+        # numpy arrays, or (x, y, z) tuples — Vector3() handles the rest.
+        if hasattr(pose, "position"):
+            pose = pose.position
+        return self._with_filter(NearFilter(Vector3(pose), radius))
 
     def tags(self, **tags: Any) -> Stream[T, O]:
         return self._with_filter(TagsFilter(tags))

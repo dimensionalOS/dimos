@@ -18,13 +18,12 @@ import cv2
 import numpy as np
 import pytest
 
-pytest.importorskip("cv2.aruco")
-
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.fiducial.fixture_verification import (
     BoardLayout,
     apparent_scale_bin,
@@ -36,7 +35,10 @@ from dimos.perception.fiducial.fixture_verification import (
     visible_board_layout_area_percent,
     visible_image_hull_area_percent,
 )
+from dimos.perception.fiducial.marker_detect import detect_markers_in_image
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
+
+pytest.importorskip("cv2.aruco")
 
 
 @pytest.fixture(scope="module")
@@ -169,31 +171,27 @@ def test_marker_tf_replay_synthetic_packed_board_publishes_twelve_markers(
     )
     cam_info.ts = ts
 
-    mod = MarkerTfModule(
-        marker_length_m=0.05,
-        marker_namespace_prefix="fixture",
-        max_freq=60.0,
+    image = Image.from_opencv(bgr, frame_id="camera_optical", ts=ts)
+    world_T_optical = Transform(
+        translation=Vector3(0.0, 0.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        frame_id="world",
+        child_frame_id="camera_optical",
+        ts=ts,
     )
+    detections = detect_markers_in_image(
+        image,
+        camera_info=cam_info,
+        world_T_optical=world_T_optical,
+        marker_length_m=0.05,
+        aruco_dictionary="DICT_APRILTAG_36h11",
+        world_frame="world",
+    )
+    msg = ImageDetections3D(image, detections).to_ros_detection3d_array(frame_id="world")
+
+    mod = MarkerTfModule(marker_namespace_prefix="fixture")
     try:
-        mod.tf.publish(
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="world",
-                child_frame_id="base_link",
-                ts=ts,
-            ),
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="base_link",
-                child_frame_id="camera_optical",
-                ts=ts,
-            ),
-        )
-        mod._latest_camera_info = cam_info
-        image = Image.from_opencv(bgr, frame_id="camera_optical", ts=ts)
-        mod._process_color_image(image)
+        mod._process_detections(msg)
 
         marker_parent = "fixture/markers"
         assert mod.tf.get("world", marker_parent, ts, 0.1) is not None

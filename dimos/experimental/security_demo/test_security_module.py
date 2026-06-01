@@ -43,7 +43,6 @@ def test_find_best_person_returns_none_for_empty_scene(security_module, yolo_det
     assert result is None
 
 
-@pytest.mark.self_hosted
 def test_patrol_step_transitions_to_following_on_detection(
     security_module, person_image, make_detection, mocker
 ):
@@ -91,7 +90,6 @@ def test_patrol_step_requests_goal_when_no_active_goal(security_module):
     assert module._has_active_goal is True
 
 
-@pytest.mark.self_hosted
 def test_follow_step_publishes_twist_when_tracking(
     security_module, person_image, make_detection, mocker
 ):
@@ -117,7 +115,6 @@ def test_follow_step_publishes_twist_when_tracking(
     assert module._state == "FOLLOWING"
 
 
-@pytest.mark.self_hosted
 def test_follow_step_transitions_to_patrolling_on_person_lost(security_module, person_image):
     module = security_module
     module._state = "FOLLOWING"
