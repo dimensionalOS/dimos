@@ -529,6 +529,22 @@ class Image(Timestamped):
             ),
         )
 
+    def to_jpeg_bytes(self, quality: int = 75) -> bytes:
+        """Encode this image as JPEG bytes using TurboJPEG.
+
+        Args:
+            quality: JPEG compression quality (0-100, default 75).
+
+        Returns:
+            Raw JPEG bytes.
+        """
+        from turbojpeg import TJPF_RGB, TurboJPEG
+
+        jpeg = TurboJPEG()
+        # Canonicalize to RGB so JPEG bytes are deterministic regardless of input format.
+        rgb_array = self.to_rgb().data
+        return jpeg.encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)  # type: ignore[no-any-return]
+
     def lcm_jpeg_encode(self, quality: int = 75, frame_id: str | None = None) -> bytes:
         """Convert to LCM Image message with JPEG-compressed data.
 
@@ -539,9 +555,6 @@ class Image(Timestamped):
         Returns:
             LCM-encoded bytes with JPEG-compressed image data
         """
-        from turbojpeg import TJPF_RGB, TurboJPEG
-
-        jpeg = TurboJPEG()
         msg = LCMImage()
 
         # Header
@@ -558,9 +571,7 @@ class Image(Timestamped):
             msg.header.stamp.sec = int(now)
             msg.header.stamp.nsec = int((now - int(now)) * 1e9)
 
-        # Canonicalize to RGB so JPEG bytes are deterministic regardless of input format.
-        rgb_array = self.to_rgb().data
-        jpeg_data = jpeg.encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)
+        jpeg_data = self.to_jpeg_bytes(quality=quality)
 
         # Store JPEG data and metadata
         msg.height = self.height
