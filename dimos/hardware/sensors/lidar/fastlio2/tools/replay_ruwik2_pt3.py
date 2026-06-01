@@ -60,35 +60,10 @@ _ATTEMPT_DIR_ENV = "_REPLAY_RUWIK2_PT3_ATTEMPT_DIR"
 # 480 s gives slack against a stall.
 MAX_WALL_SEC = 480.0
 
-# Rotational-velocity-gap preventative map-skip. Replaces the old linear
-# accel/vel guardrail. The binary computes |ω_ieskf − ω_icp| each scan and
-# skips map_incremental when the gap exceeds this threshold (deg/s). The
-# default value can be overridden with the same-named env var for sweeps.
-ROTATION_GAP_THRESHOLD_DEG_S = float(os.environ.get("ROTATION_GAP_THRESHOLD_DEG_S", "10.0"))
-ANGULAR_ACCEL_CAP_DEG_S2 = float(os.environ.get("ANGULAR_ACCEL_CAP_DEG_S2", "100.0"))
-# Linear gates disabled by default — iterating without them on the
-# 030/031-style config.
-LINEAR_VELOCITY_GAP_THRESHOLD_MS = float(os.environ.get("LINEAR_VELOCITY_GAP_THRESHOLD_MS", "0.0"))
-LINEAR_ACCEL_CAP_MS2 = float(os.environ.get("LINEAR_ACCEL_CAP_MS2", "0.0"))
-
-# Rollback corrector. Angular trigger off by default for the 030/031 baseline.
-ICP_CORRECTION_ENABLED = True
-ONLY_CORRECT_ABOVE_SPEED_MS = 5.0
-ONLY_CORRECT_WHEN_ICP_SLOWER_BY_PCT = 80.0
-ANGULAR_TRIGGER_GAP_DEG_S = float(os.environ.get("ANGULAR_TRIGGER_GAP_DEG_S", "0.0"))
-REWIND_WINDOW_MS = float(os.environ.get("REWIND_WINDOW_MS", "5000.0"))
-
-# Per-metric preventative caps. Zero disables. Tune per-experiment via env.
-POS_CORRECTION_CAP_M = float(os.environ.get("POS_CORRECTION_CAP_M", "0.0"))
-ROT_CORRECTION_CAP_DEG = float(os.environ.get("ROT_CORRECTION_CAP_DEG", "0.0"))
-RES_MEAN_CAP_M = float(os.environ.get("RES_MEAN_CAP_M", "0.0"))
-EFFCT_RATIO_FLOOR = float(os.environ.get("EFFCT_RATIO_FLOOR", "0.0"))
-
-# IMU sample clamps. Applied in main.cpp's on_imu_data BEFORE feed_imu.
-# Zero disables. Defaults sized for Go2 envelope when enabled.
-IMU_GYRO_MAX_RAD_S = float(os.environ.get("IMU_GYRO_MAX_RAD_S", "0.0"))
-IMU_ACCEL_MAX_MS2 = float(os.environ.get("IMU_ACCEL_MAX_MS2", "0.0"))
-VELOCITY_CAP_MS = float(os.environ.get("VELOCITY_CAP_MS", "0.0"))
+# Post-IESKF-update velocity cap. When |v| exceeds this, the EKF state
+# is restored to the last accepted scan with vel=0 and map_incremental
+# is skipped for that scan. Sized for Go2 envelope.
+MAX_VELOCITY_NORM_MS = float(os.environ.get("MAX_VELOCITY_NORM_MS", "3.1"))
 
 # How much sensor time of replay to capture. Zero = run the whole pcap.
 # Default 60 s — the divergence window is within the first 60 s of the
@@ -136,23 +111,17 @@ _EPS = 1e-9
 
 
 class Rec(Module):
-    """Mirror replay FastLio2 odometry + icp_velocity + metrics into a SqliteStore."""
+    """Mirror replay FastLio2 odometry into a SqliteStore."""
 
     config: RecConfig
     fastlio_odometry: In[Odometry]
-    icp_velocity: In[Odometry]
-    fastlio_metrics: In[Odometry]
     _last_o: float = 0.0
-    _last_i: float = 0.0
-    _last_m: float = 0.0
 
     async def main(self) -> AsyncIterator[None]:
         from dimos.memory2.store.sqlite import SqliteStore
 
         self._store = SqliteStore(path=self.config.db_path)
         self._os = self._store.stream("fastlio_odometry", Odometry)
-        self._is = self._store.stream("icp_velocity", Odometry)
-        self._ms = self._store.stream("fastlio_metrics", Odometry)
         yield
         self._store.stop()
 
@@ -162,18 +131,6 @@ class Rec(Module):
         pose = getattr(v, "pose", None)
         pose_inner = getattr(pose, "pose", None) if pose is not None else None
         self._os.append(v, ts=ts, pose=pose_inner)
-
-    async def handle_icp_velocity(self, v: Odometry) -> None:
-        ts = max(getattr(v, "ts", None) or time.time(), self._last_i + _EPS)
-        self._last_i = ts
-        pose = getattr(v, "pose", None)
-        pose_inner = getattr(pose, "pose", None) if pose is not None else None
-        self._is.append(v, ts=ts, pose=pose_inner)
-
-    async def handle_fastlio_metrics(self, v: Odometry) -> None:
-        ts = max(getattr(v, "ts", None) or time.time(), self._last_m + _EPS)
-        self._last_m = ts
-        self._ms.append(v, ts=ts)
 
 
 # ---------------- orchestrator (parent) -------------------------------------
@@ -238,27 +195,10 @@ def _worker() -> int:
             replay_pcap=PCAP_PATH,
             deterministic_clock=True,
             debug=False,
-            rotation_gap_threshold_deg_s=ROTATION_GAP_THRESHOLD_DEG_S,
-            angular_accel_cap_deg_s2=ANGULAR_ACCEL_CAP_DEG_S2,
-            linear_velocity_gap_threshold_ms=LINEAR_VELOCITY_GAP_THRESHOLD_MS,
-            linear_accel_cap_ms2=LINEAR_ACCEL_CAP_MS2,
-            icp_correction_enabled=ICP_CORRECTION_ENABLED,
-            only_correct_above_speed_ms=ONLY_CORRECT_ABOVE_SPEED_MS,
-            only_correct_when_icp_slower_by_pct=ONLY_CORRECT_WHEN_ICP_SLOWER_BY_PCT,
-            angular_trigger_gap_deg_s=ANGULAR_TRIGGER_GAP_DEG_S,
-            rewind_window_ms=REWIND_WINDOW_MS,
-            pos_correction_cap_m=POS_CORRECTION_CAP_M,
-            rot_correction_cap_deg=ROT_CORRECTION_CAP_DEG,
-            res_mean_cap_m=RES_MEAN_CAP_M,
-            effct_ratio_floor=EFFCT_RATIO_FLOOR,
-            imu_gyro_max_rad_s=IMU_GYRO_MAX_RAD_S,
-            imu_accel_max_ms2=IMU_ACCEL_MAX_MS2,
-            velocity_cap_ms=VELOCITY_CAP_MS,
+            max_velocity_norm_ms=MAX_VELOCITY_NORM_MS,
         ).remappings(
             [
                 (FastLio2, "odometry", "fastlio_odometry"),
-                (FastLio2, "icp_velocity", "icp_velocity"),
-                (FastLio2, "fastlio_metrics", "fastlio_metrics"),
             ]
         ),
         Rec.blueprint(db_path=db_path_str),

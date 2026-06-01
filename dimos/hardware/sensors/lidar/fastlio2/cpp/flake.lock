@@ -37,17 +37,17 @@
     "fast-lio": {
       "flake": false,
       "locked": {
-        "lastModified": 1780282413,
-        "narHash": "sha256-puJGdGPTiymJ5Q24hFFzltEudrhnA/CKTy7cVxkZj8Q=",
-        "ref": "jeff/fix/logs",
-        "rev": "327c50d99611688ea1629d59ab32be235049eec0",
-        "revCount": 58,
+        "lastModified": 1780301437,
+        "narHash": "sha256-VqW+40GFH8D2qhB2piWPs98dJNdPkklGd/DDaqw5DXA=",
+        "ref": "jeff/feat/velocity-cap",
+        "rev": "600812240b7d1d855e9313d64d233642898da9c7",
+        "revCount": 44,
         "type": "git",
         "url": "file:///home/dimos/repos/dimos-module-fastlio2"
       },
       "original": {
-        "ref": "jeff/fix/logs",
-        "rev": "327c50d99611688ea1629d59ab32be235049eec0",
+        "ref": "jeff/feat/velocity-cap",
+        "rev": "600812240b7d1d855e9313d64d233642898da9c7",
         "type": "git",
         "url": "file:///home/dimos/repos/dimos-module-fastlio2"
       }

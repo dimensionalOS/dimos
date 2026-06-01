@@ -33,8 +33,6 @@
 
 #include "cloud_filter.hpp"
 #include "dimos_native_module.hpp"
-#include "icp_correction.hpp"
-#include "icp_velocity.hpp"
 #include "pcap_replay.hpp"
 #include "timing.hpp"
 #include "voxel_map.hpp"
@@ -140,15 +138,6 @@ static std::optional<std::chrono::steady_clock::time_point> virtual_now() {
 static std::string g_lidar_topic;
 static std::string g_odometry_topic;
 static std::string g_map_topic;
-static std::string g_icp_velocity_topic;
-static std::string g_fastlio_metrics_topic;
-// IMU sample-magnitude clamps. Atomic so the SDK callback can read them
-// without a lock. Zero = disabled.
-static std::atomic<double> g_imu_gyro_max_rad_s{0.0};
-static std::atomic<double> g_imu_accel_max_ms2{0.0};
-static icp_velocity::Estimator g_icp_estimator;
-static icp_correction::Corrector g_icp_corrector;
-static bool g_icp_correction_enabled = false;
 static std::string g_frame_id;        // required via --frame_id
 static std::string g_child_frame_id;   // required via --child_frame_id
 static float g_frequency = 10.0f;
@@ -344,67 +333,6 @@ static void publish_odometry(const custom_messages::Odometry& odom, double times
     g_lcm->publish(g_odometry_topic, &msg);
 }
 
-// Publish a scan-to-scan ICP-derived velocity on g_icp_velocity_topic as an
-// Odometry message. pose.position holds the cumulative ICP-integrated
-// position (body-frame, simple sum of per-scan translations — no
-// orientation tracking); twist.linear holds the per-scan-pair velocity.
-// Orientation is identity (we don't fuse rotation here).
-// Publish per-scan EKF diagnostic metrics on g_fastlio_metrics_topic, packed
-// into an Odometry message. Layout:
-//   pose.position.x   = state-correction position magnitude (m)
-//   pose.position.y   = state-correction rotation magnitude (deg)
-//   pose.position.z   = res_mean_last (avg point-to-plane distance)
-//   twist.linear.x    = effct_feat_num / feats_down_size (0..1)
-static void publish_fastlio_metrics(double pos_corr, double rot_corr_deg,
-                                    double res_mean, double effct_ratio,
-                                    double timestamp) {
-    if (!g_lcm || g_fastlio_metrics_topic.empty()) return;
-    nav_msgs::Odometry msg;
-    msg.header = make_header(g_frame_id, timestamp);
-    msg.child_frame_id = g_child_frame_id;
-    msg.pose.pose.position.x = pos_corr;
-    msg.pose.pose.position.y = rot_corr_deg;
-    msg.pose.pose.position.z = res_mean;
-    msg.pose.pose.orientation.x = 0;
-    msg.pose.pose.orientation.y = 0;
-    msg.pose.pose.orientation.z = 0;
-    msg.pose.pose.orientation.w = 1;
-    for (int i = 0; i < 36; ++i) msg.pose.covariance[i] = 0;
-    msg.twist.twist.linear.x = effct_ratio;
-    msg.twist.twist.linear.y = 0;
-    msg.twist.twist.linear.z = 0;
-    msg.twist.twist.angular.x = 0;
-    msg.twist.twist.angular.y = 0;
-    msg.twist.twist.angular.z = 0;
-    std::memset(msg.twist.covariance, 0, sizeof(msg.twist.covariance));
-    g_lcm->publish(g_fastlio_metrics_topic, &msg);
-}
-
-static void publish_icp_velocity(double vx, double vy, double vz,
-                                 double wx, double wy, double wz,
-                                 double cum_x, double cum_y, double cum_z,
-                                 double timestamp) {
-    if (!g_lcm || g_icp_velocity_topic.empty()) return;
-    nav_msgs::Odometry msg;
-    msg.header = make_header(g_frame_id, timestamp);
-    msg.child_frame_id = g_child_frame_id;
-    msg.pose.pose.position.x = cum_x;
-    msg.pose.pose.position.y = cum_y;
-    msg.pose.pose.position.z = cum_z;
-    msg.pose.pose.orientation.x = 0;
-    msg.pose.pose.orientation.y = 0;
-    msg.pose.pose.orientation.z = 0;
-    msg.pose.pose.orientation.w = 1;
-    for (int i = 0; i < 36; ++i) msg.pose.covariance[i] = 0;
-    msg.twist.twist.linear.x = vx;
-    msg.twist.twist.linear.y = vy;
-    msg.twist.twist.linear.z = vz;
-    msg.twist.twist.angular.x = wx;
-    msg.twist.twist.angular.y = wy;
-    msg.twist.twist.angular.z = wz;
-    std::memset(msg.twist.covariance, 0, sizeof(msg.twist.covariance));
-    g_lcm->publish(g_icp_velocity_topic, &msg);
-}
 
 // ---------------------------------------------------------------------------
 // Livox SDK callbacks
@@ -508,44 +436,6 @@ static void on_imu_data(const uint32_t /*handle*/, const uint8_t /*dev_type*/,
         for (int j = 0; j < 9; ++j)
             imu_msg->linear_acceleration_covariance[j] = 0.0;
 
-        // Clamp sample-magnitude outliers BEFORE handing to the EKF. Direction
-        // preserved; magnitude scaled down to the cap. The gravity-leak
-        // divergence is seeded by a single extreme IMU sample (~6.4 rad/s +
-        // 6.15g at t=39.7s on the ruwik2_pt3 pcap); flooring those at the
-        // input prevents that seeding.
-        const double gyro_max = g_imu_gyro_max_rad_s.load();
-        if (gyro_max > 0) {
-            const double gx = imu_msg->angular_velocity.x;
-            const double gy = imu_msg->angular_velocity.y;
-            const double gz = imu_msg->angular_velocity.z;
-            const double gnorm = std::sqrt(gx*gx + gy*gy + gz*gz);
-            if (gnorm > gyro_max) {
-                const double s = gyro_max / gnorm;
-                imu_msg->angular_velocity.x = gx * s;
-                imu_msg->angular_velocity.y = gy * s;
-                imu_msg->angular_velocity.z = gz * s;
-                fprintf(stderr,
-                    "[fastlio] imu_gyro: clamped %.2f → %.2f rad/s\n",
-                    gnorm, gyro_max);
-            }
-        }
-        const double accel_max = g_imu_accel_max_ms2.load();
-        if (accel_max > 0) {
-            const double ax = imu_msg->linear_acceleration.x;
-            const double ay = imu_msg->linear_acceleration.y;
-            const double az = imu_msg->linear_acceleration.z;
-            const double anorm = std::sqrt(ax*ax + ay*ay + az*az);
-            if (anorm > accel_max) {
-                const double s = accel_max / anorm;
-                imu_msg->linear_acceleration.x = ax * s;
-                imu_msg->linear_acceleration.y = ay * s;
-                imu_msg->linear_acceleration.z = az * s;
-                fprintf(stderr,
-                    "[fastlio] imu_accel: clamped %.2f → %.2f m/s²\n",
-                    anorm, accel_max);
-            }
-        }
-
         g_fastlio->feed_imu(imu_msg);
     }
 
@@ -599,8 +489,6 @@ int main(int argc, char** argv) {
     g_lidar_topic = mod.has("lidar") ? mod.topic("lidar") : "";
     g_odometry_topic = mod.has("odometry") ? mod.topic("odometry") : "";
     g_map_topic = mod.has("global_map") ? mod.topic("global_map") : "";
-    g_icp_velocity_topic = mod.has("icp_velocity") ? mod.topic("icp_velocity") : "";
-    g_fastlio_metrics_topic = mod.has("fastlio_metrics") ? mod.topic("fastlio_metrics") : "";
 
     if (g_lidar_topic.empty() && g_odometry_topic.empty()) {
         fprintf(stderr, "Error: at least one of --lidar or --odometry is required\n");
@@ -618,48 +506,13 @@ int main(int argc, char** argv) {
     double msr_freq = mod.arg_float("msr_freq", 50.0f);
     double main_freq = mod.arg_float("main_freq", 5000.0f);
 
-    // Rotational-gap preventative map-skip. After each IESKF update we
-    // compute the IESKF's own body-frame angular velocity, compare its
-    // magnitude difference against ICP's body-frame ω (passed in via
-    // set_icp_omega_body per scan), and skip map_incremental if the gap
-    // exceeds this threshold. Zero disables. Default 10°/s.
-    double rotation_gap_threshold_deg_s = mod.arg_float("rotation_gap_threshold_deg_s", 10.0f);
-    // Angular-acceleration cap: ||Δω||/scan_dt across consecutive IESKF ω.
-    // Catches the sudden rotation-rate jumps the EKF makes when pulled by
-    // a bad neighbor in the map. Zero disables. Default 100°/s².
-    double angular_accel_cap_deg_s2 = mod.arg_float("angular_accel_cap_deg_s2", 100.0f);
-    // Linear analogues. Zero disables.
-    double linear_velocity_gap_threshold_ms = mod.arg_float("linear_velocity_gap_threshold_ms", 3.0f);
-    double linear_accel_cap_ms2 = mod.arg_float("linear_accel_cap_ms2", 30.0f);
-    // Per-metric preventative map-skip thresholds. Zero/negative disables.
-    double pos_correction_cap_m = mod.arg_float("pos_correction_cap_m", 0.0f);
-    double rot_correction_cap_deg = mod.arg_float("rot_correction_cap_deg", 0.0f);
-    double res_mean_cap_m = mod.arg_float("res_mean_cap_m", 0.0f);
-    double effct_ratio_floor = mod.arg_float("effct_ratio_floor", 0.0f);
-    // Hard velocity cap (OlympicGrouse-style).
-    double velocity_cap_ms = mod.arg_float("velocity_cap_ms", 0.0f);
-    // IMU sample-magnitude clamps applied BEFORE feed_imu. Catches sensor
-    // outliers and physically-extreme samples that knock the EKF's
-    // orientation off in a single step. Zero disables. Defaults sized for
-    // Go2 physical envelope.
-    g_imu_gyro_max_rad_s.store(mod.arg_float("imu_gyro_max_rad_s", 0.0f));
-    g_imu_accel_max_ms2.store(mod.arg_float("imu_accel_max_ms2", 0.0f));
-
-    // ICP cross-check rollback. Disabled unless the ICP topic is also set.
-    // Trigger when IESKF |v| > min_ieskf_v_ms AND ICP |v| is at least
-    // disagreement_pct% less. Anchor pose = oldest history entry within
-    // rollback_ms. New pos = anchor + integrate(ICP_body × IESKF_rot_quat,
-    // dt) forward. New vel = current ICP rotated to world.
-    g_icp_corrector.cfg.only_correct_above_speed_ms =
-        mod.arg_float("only_correct_above_speed_ms", 5.0f);
-    g_icp_corrector.cfg.only_correct_when_icp_slower_by_pct =
-        mod.arg_float("only_correct_when_icp_slower_by_pct", 80.0f);
-    g_icp_corrector.cfg.angular_trigger_gap_deg_s =
-        mod.arg_float("angular_trigger_gap_deg_s", 30.0f);
-    g_icp_corrector.cfg.rewind_window_ms =
-        mod.arg_float("rewind_window_ms", 500.0f);
-    g_icp_correction_enabled =
-        mod.arg_bool("icp_correction_enabled", false);
+    // Post-IESKF-update velocity cap. When |v_world| exceeds this value
+    // the EKF state is restored to the last accepted scan with vel=0 and
+    // map_incremental is skipped. Breaks the reinforcing-loop divergence
+    // that gives FAST-LIO multi-km/s velocity runaway on aggressive
+    // motion or large IMU gaps. Zero disables. Defaults sized to the
+    // Go2 quadruped envelope (~3.1 m/s); raise for faster platforms.
+    double max_velocity_norm_ms = mod.arg_float("max_velocity_norm_ms", 0.0f);
 
     // Livox hardware config
     std::string host_ip = mod.arg("host_ip", "192.168.1.5");
@@ -780,15 +633,8 @@ int main(int argc, char** argv) {
 
     // Init FAST-LIO with config
     if (debug) printf("[fastlio2] Initializing FAST-LIO...\n");
-    FastLio fast_lio(config_path, msr_freq, main_freq, rotation_gap_threshold_deg_s);
-    fast_lio.set_angular_accel_cap_deg_s2(angular_accel_cap_deg_s2);
-    fast_lio.set_linear_velocity_gap_threshold_ms(linear_velocity_gap_threshold_ms);
-    fast_lio.set_linear_accel_cap_ms2(linear_accel_cap_ms2);
-    fast_lio.set_pos_correction_cap_m(pos_correction_cap_m);
-    fast_lio.set_rot_correction_cap_deg(rot_correction_cap_deg);
-    fast_lio.set_res_mean_cap_m(res_mean_cap_m);
-    fast_lio.set_effct_ratio_floor(effct_ratio_floor);
-    fast_lio.set_velocity_cap_ms(velocity_cap_ms);
+    FastLio fast_lio(config_path, msr_freq, main_freq);
+    fast_lio.set_max_velocity_norm_ms(max_velocity_norm_ms);
     g_fastlio = &fast_lio;
     if (debug) printf("[fastlio2] FAST-LIO initialized.\n");
 
@@ -891,44 +737,7 @@ int main(int argc, char** argv) {
                 last_emit = check_now;
             }
         }
-        // Per-scan ICP result for this iter (used both for publishing AND
-        // for the optional ICP cross-check rollback after process()).
-        icp_velocity::Estimator::Result icp_result;
-        double icp_scan_ts = 0.0;
-
         if (!points.empty()) {
-            // Scan-to-scan ICP velocity on the raw body-frame points BEFORE
-            // we hand them off to fastlio (which moves them out below). This
-            // gives a lidar-derived velocity independent of the IESKF state.
-            // Always run ICP when rotation-gap is configured — it needs the
-            // body-frame ω BEFORE fast_lio.process() can gate map_incremental.
-            if (!g_icp_velocity_topic.empty() || g_icp_correction_enabled
-                || rotation_gap_threshold_deg_s > 0) {
-                icp_velocity::CloudT::Ptr cloud(new icp_velocity::CloudT);
-                cloud->reserve(points.size());
-                for (const auto& p : points) {
-                    icp_velocity::PointT pt;
-                    pt.x = p.x;
-                    pt.y = p.y;
-                    pt.z = p.z;
-                    cloud->push_back(pt);
-                }
-                icp_scan_ts = static_cast<double>(frame_start) / 1e9;
-                icp_result = g_icp_estimator.step(cloud, icp_scan_ts);
-                if (icp_result.ok && !g_icp_velocity_topic.empty()) {
-                    // Cumulative ICP-only position by simple sum of per-scan
-                    // translations. Not a real path (no rotation tracking),
-                    // just a quick visual integration aid.
-                    static double cum_x = 0.0, cum_y = 0.0, cum_z = 0.0;
-                    cum_x += icp_result.vx * icp_result.scan_dt;
-                    cum_y += icp_result.vy * icp_result.scan_dt;
-                    cum_z += icp_result.vz * icp_result.scan_dt;
-                    publish_icp_velocity(icp_result.vx, icp_result.vy, icp_result.vz,
-                                         icp_result.wx, icp_result.wy, icp_result.wz,
-                                         cum_x, cum_y, cum_z, get_publish_ts());
-                }
-            }
-
             // Build CustomMsg
             auto lidar_msg = boost::make_shared<custom_messages::CustomMsg>();
             lidar_msg->header.seq = 0;
@@ -942,19 +751,6 @@ int main(int argc, char** argv) {
             lidar_msg->points = std::move(points);
             timing::Scope s(t_feed_lidar);
             fast_lio.feed_lidar(lidar_msg);
-        }
-
-        // Hand the ICP body-frame ω and v to FastLio so its preventative
-        // gates can use them this scan.
-        if (icp_result.ok && rotation_gap_threshold_deg_s > 0) {
-            fast_lio.set_icp_omega_body(icp_result.wx, icp_result.wy, icp_result.wz);
-        } else {
-            fast_lio.clear_icp_omega();
-        }
-        if (icp_result.ok && linear_velocity_gap_threshold_ms > 0) {
-            fast_lio.set_icp_velocity_body(icp_result.vx, icp_result.vy, icp_result.vz);
-        } else {
-            fast_lio.clear_icp_velocity();
         }
 
         // Run one FAST-LIO IESKF step. Cheap when the IMU/lidar queues
@@ -1010,63 +806,6 @@ int main(int argc, char** argv) {
                 timing::Scope s(t_publish_odom);
                 publish_odometry(fast_lio.get_odometry(), ts);
                 last_odom_publish = now;
-            }
-
-            // Per-scan EKF diagnostic metrics (no rate limit — once per scan).
-            if (!g_fastlio_metrics_topic.empty()) {
-                publish_fastlio_metrics(
-                    fast_lio.get_metric_pos_correction_m(),
-                    fast_lio.get_metric_rot_correction_deg(),
-                    fast_lio.get_metric_res_mean(),
-                    fast_lio.get_metric_effct_ratio(),
-                    ts);
-            }
-
-            // ICP cross-check rollback. Captures the current scan's IESKF
-            // pose+orientation alongside the ICP body-frame velocity, then
-            // checks whether IESKF and ICP disagree enough to roll back.
-            if (g_icp_correction_enabled && icp_result.ok) {
-                icp_correction::ScanEntry e;
-                e.ts = icp_scan_ts;
-                e.ieskf_pos << pose[0], pose[1], pose[2];
-                e.ieskf_quat = Eigen::Quaterniond(pose[6], pose[3], pose[4], pose[5]);
-                // IESKF body-frame ω this scan ≈ (q_prev^-1 * q_now) axis-angle / dt.
-                // For the first entry we just store zero; the corrector's
-                // angular trigger uses the LAST entry's (cur) ω which we
-                // compute from the per-step quat delta inside `push`.
-                static Eigen::Quaterniond prev_q = Eigen::Quaterniond::Identity();
-                static double prev_t = 0.0;
-                static bool prev_q_valid = false;
-                if (prev_q_valid && icp_scan_ts > prev_t) {
-                    const double dt = icp_scan_ts - prev_t;
-                    Eigen::Quaterniond dq = prev_q.conjugate() * e.ieskf_quat;
-                    Eigen::AngleAxisd aa(dq);
-                    e.ieskf_omega_body = aa.axis() * (aa.angle() / dt);
-                } else {
-                    e.ieskf_omega_body.setZero();
-                }
-                prev_q = e.ieskf_quat;
-                prev_t = icp_scan_ts;
-                prev_q_valid = true;
-                e.icp_v_body << icp_result.vx, icp_result.vy, icp_result.vz;
-                e.icp_omega_body << icp_result.wx, icp_result.wy, icp_result.wz;
-                e.icp_valid = true;
-                g_icp_corrector.push(e);
-                auto r = g_icp_corrector.check_and_compute();
-                if (r.corrected) {
-                    fprintf(stderr,
-                        "[fastlio] icp_correction (%s): rolling back %.0fms — "
-                        "IESKF v=%.2f, ICP v=%.2f, ω_gap=%.1f°/s → "
-                        "new pos=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f)\n",
-                        r.trigger, r.anchor_age_ms,
-                        r.ieskf_v, r.icp_v, r.omega_gap_deg_s,
-                        r.new_pos.x(), r.new_pos.y(), r.new_pos.z(),
-                        r.new_vel.x(), r.new_vel.y(), r.new_vel.z());
-                    fast_lio.set_world_pose_quat_vel(
-                        r.new_pos.x(), r.new_pos.y(), r.new_pos.z(),
-                        r.new_quat.x(), r.new_quat.y(), r.new_quat.z(), r.new_quat.w(),
-                        r.new_vel.x(), r.new_vel.y(), r.new_vel.z());
-                }
             }
         }
 

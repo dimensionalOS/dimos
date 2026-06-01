@@ -114,71 +114,14 @@ class FastLio2Config(NativeModuleConfig):
     map_voxel_size: float = 0.1
     map_max_range: float = 100.0
 
-    # Post-IESKF-update guardrail caps. The FAST-LIO core snapshots state
-    # before the lidar update; if EITHER (a) the update tried a position
-    # correction larger than `guardrail_max_pos_jump_m` metres, OR (b) the
-    # per-update velocity correction divided by scan_dt exceeds
-    # `guardrail_max_accel_norm_ms2` m/s², the scan is rejected: state
-    # rolls back to the last accepted post-update snapshot with velocity
-    # zeroed, AND map_incremental() is skipped so the kdtree doesn't
-    # accumulate at a divergent pose. Set either to 0 to disable.
-    #
-    # Accel cap is a physics gate, not a platform-velocity ceiling — a
-    # robot on a fast vehicle accelerating gradually to 200 mph generates
-    # tiny per-scan delta-v and never trips it, but a single-update vel
-    # jump of 100+ m/s (the divergence failure mode) is clearly above
-    # any realistic ground-platform's acceleration. Default 30 m/s²
-    # (~3 g) covers Go2 + most ground vehicles.
-    # Rotational-gap preventative map-skip. After each IESKF update the
-    # binary computes the IESKF's own body-frame angular velocity, compares
-    # its magnitude difference against the ICP scan-to-scan body-frame ω
-    # supplied internally, and skips map_incremental if the gap exceeds
-    # this threshold (deg/s). Zero disables. Replaces the previous linear
-    # vel/accel guardrail — see commit notes for why orientation
-    # disagreement is the seed cause of the gravity-leak divergence loop.
-    rotation_gap_threshold_deg_s: float = 10.0
-    # Angular-acceleration cap (deg/s²). The binary computes ||Δω_ieskf||
-    # / scan_dt across consecutive scans and skips map_incremental when it
-    # exceeds this cap. Zero disables.
-    angular_accel_cap_deg_s2: float = 100.0
-    # Linear gates — DISABLED by default. We found they don't actually
-    # help: the rotation+accel preventatives plus the rollback corrector
-    # already constrain things, and the linear-velocity-gap gate was
-    # confusing (Jeff: "we don't want a constant velocity preventative
-    # gate"). Set non-zero to re-enable for experiments.
-    linear_velocity_gap_threshold_ms: float = 0.0
-    linear_accel_cap_ms2: float = 0.0
-    # Per-metric preventative caps. Zero disables each gate.
-    # See fastlio_metrics LCM topic above for what each metric measures.
-    pos_correction_cap_m: float = 0.0
-    rot_correction_cap_deg: float = 0.0
-    res_mean_cap_m: float = 0.0
-    effct_ratio_floor: float = 0.0
-    # Hard velocity cap (OlympicGrouse-style). Reset to last accepted
-    # state with vel=0 when |v| exceeds the cap. Zero disables.
-    velocity_cap_ms: float = 0.0
-    # IMU sample-magnitude clamps applied BEFORE feed_imu (in the SDK
-    # callback). Zero disables. Direction preserved; magnitude floored.
-    imu_gyro_max_rad_s: float = 0.0
-    imu_accel_max_ms2: float = 0.0
-
-    # ICP cross-check rollback. The binary maintains a ring buffer of
-    # per-scan (IESKF pose, IESKF orientation, ICP body-frame velocity)
-    # entries spanning the last `rewind_window_ms` ms. On each scan, if
-    # the IESKF says it's moving faster than `only_correct_above_speed_ms`
-    # AND scan-to-scan ICP reports a speed at least
-    # `only_correct_when_icp_slower_by_pct` percent slower, we trust ICP:
-    # rewind to the oldest entry in the window, integrate ICP forward
-    # from there (rotating each step by that scan's IESKF orientation),
-    # and overwrite the IESKF state's world pos+vel.
-    icp_correction_enabled: bool = True
-    only_correct_above_speed_ms: float = 5.0
-    only_correct_when_icp_slower_by_pct: float = 80.0
-    # Disabled — angular trigger added too much rollback churn (each fire
-    # snaps orientation to a stale anchor → boxy |ω| plateaus). Iterating
-    # without it. Set non-zero to re-enable.
-    angular_trigger_gap_deg_s: float = 0.0
-    rewind_window_ms: float = 5000.0
+    # Post-IESKF-update velocity cap. When |v_world| from the lidar update
+    # exceeds this value, the EKF state is restored to the last accepted
+    # scan with vel=0 and map_incremental() is skipped for that scan. This
+    # breaks the reinforcing-loop divergence pattern that produces
+    # multi-km/s velocity runaway on aggressive-motion or large-IMU-gap
+    # events. Zero disables. Defaults sized for the Go2 quadruped
+    # envelope (~3.1 m/s); raise for UAV / vehicle platforms.
+    max_velocity_norm_ms: float = 3.1
 
     # FAST-LIO YAML config (relative to config/ dir, or absolute path)
     # C++ binary reads YAML directly via yaml-cpp
@@ -284,18 +227,6 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
     global_map: Out[PointCloud2]
-    # Scan-to-scan ICP velocity — published as an Odometry message whose
-    # twist.linear holds the per-scan-pair velocity and pose.position holds
-    # the cumulative ICP-only integrated position. Independent of the IESKF
-    # state; useful as a cross-check against the main odometry's velocity.
-    icp_velocity: Out[Odometry]
-    # Per-scan EKF diagnostic metrics, packed into an Odometry message.
-    # Layout:
-    #   pose.position.x   = state-correction position magnitude (m)
-    #   pose.position.y   = state-correction rotation magnitude (deg)
-    #   pose.position.z   = res_mean_last (avg point-to-plane distance)
-    #   twist.linear.x    = effct_feat_num / feats_down_size (0..1)
-    fastlio_metrics: Out[Odometry]
 
     _pcap_proc: subprocess.Popen[bytes] | None = None
     _pcap_path: Path | None = None
