@@ -10,8 +10,27 @@ use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
+use validator::Validate;
 
 use crate::transport::Transport;
+
+/// Trait required by `Module::Config`s to ensure that configurations are
+/// validated correctly.
+pub trait ModuleConfig: DeserializeOwned + Debug + Validate {}
+impl<T: DeserializeOwned + Debug + Validate> ModuleConfig for T {}
+
+/// Default config type used by `#[derive(Module)]` when no `#[config]` field
+/// is present. Just a stand in for modules that don't use configurations.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NoConfig;
+
+impl Validate for NoConfig {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
+        Ok(())
+    }
+}
 
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -125,8 +144,17 @@ fn parse_config_json<C: DeserializeOwned>(line: &str) -> io::Result<(HashMap<Str
     Ok((topics, config))
 }
 
+fn validate_config<C: Validate>(config: &C) -> io::Result<()> {
+    config.validate().map_err(|errs| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("config validation failed: {errs}"),
+        )
+    })
+}
+
 pub trait Module: Sized + Send + 'static {
-    type Config: DeserializeOwned + Debug;
+    type Config: ModuleConfig;
 
     fn build(builder: &mut Builder, config: Self::Config) -> Self;
 
@@ -255,6 +283,7 @@ where
         .read_line(&mut line)
         .await?;
     let (topics, config) = parse_config_json::<M::Config>(&line)?;
+    validate_config(&config)?;
 
     let exe = std::env::current_exe()
         .ok()
@@ -445,6 +474,38 @@ mod tests {
         let json = r#"{"topics": {}, "config": {"value": 1, "name": "x", "unexpected": true}}"#;
         let result = parse_config_json::<TestConfig>(json);
         assert!(result.is_err());
+    }
+
+    // validate_config
+
+    #[derive(Debug, Deserialize, Validate)]
+    struct RangedConfig {
+        #[validate(range(min = 1, max = 10))]
+        value: i64,
+    }
+
+    #[test]
+    fn validate_config_passes_when_in_range() {
+        let cfg = RangedConfig { value: 5 };
+        assert!(validate_config(&cfg).is_ok());
+    }
+
+    #[test]
+    fn validate_config_returns_invalid_data_when_out_of_range() {
+        let cfg = RangedConfig { value: 0 };
+        let err = validate_config(&cfg).expect_err("expected validation failure");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let msg = err.to_string();
+        assert!(msg.contains("value"), "error should name the field: {msg}");
+        assert!(
+            msg.contains("config validation failed"),
+            "error should be framed: {msg}",
+        );
+    }
+
+    #[test]
+    fn empty_config_validates() {
+        assert!(validate_config(&crate::module::NoConfig).is_ok());
     }
 
     // topic_for fallback
