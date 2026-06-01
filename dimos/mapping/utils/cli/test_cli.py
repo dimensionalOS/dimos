@@ -47,6 +47,25 @@ FULL_LIDAR_COUNT = 461
 _runner = CliRunner()
 
 
+def _turbojpeg_available() -> bool:
+    """True if the native libturbojpeg can be loaded (decodes the color_image stream)."""
+    try:
+        from turbojpeg import TurboJPEG
+
+        TurboJPEG()
+    except Exception:
+        return False
+    return True
+
+
+# The color_image stream is JPEG; decoding it needs the native libturbojpeg, which
+# is missing from stale CI images. Skip the verbs that touch images when it's absent.
+requires_turbojpeg = pytest.mark.skipif(
+    not _turbojpeg_available(),
+    reason="native libturbojpeg unavailable; cannot decode the JPEG color_image stream",
+)
+
+
 def _run(*args: str, timeout: float = 300.0) -> SimpleNamespace:
     """Invoke `dimos map <args>` in-process and capture its result.
 
@@ -90,6 +109,7 @@ def test_summary(dataset: str) -> None:
     assert "odom" in res.stdout
 
 
+@requires_turbojpeg
 def test_rename_snippet(dataset: str, tmp_path: Path) -> None:
     out = tmp_path / "renamed.db"
     res = _run(
@@ -142,6 +162,7 @@ def test_pose_fill_snippet(dataset: str, tmp_path: Path) -> None:
         store.stop()
 
 
+@requires_turbojpeg
 def test_replay_snippet(dataset: str, tmp_path: Path) -> None:
     out = tmp_path / "replay.rrd"
     res = _run("replay", dataset, "--out", str(out), "--no-gui", "--duration", str(DURATION))
@@ -149,6 +170,7 @@ def test_replay_snippet(dataset: str, tmp_path: Path) -> None:
     assert out.exists() and out.stat().st_size > 0
 
 
+@requires_turbojpeg
 def test_replay_marker_snippet(dataset: str, tmp_path: Path) -> None:
     out = tmp_path / "markers.rrd"
     res = _run("replay-marker", dataset, "--out", str(out), "--no-gui", "--duration", str(DURATION))
@@ -156,6 +178,7 @@ def test_replay_marker_snippet(dataset: str, tmp_path: Path) -> None:
     assert out.exists() and out.stat().st_size > 0
 
 
+@requires_turbojpeg
 def test_replay_map_final_snippet(dataset: str, tmp_path: Path) -> None:
     out = tmp_path / "replay_map.rrd"
     # CPU device keeps the voxel accumulation runnable without a GPU.
