@@ -93,7 +93,7 @@ cmd_add() {
     local DIR="" BRANCH="" BASE="" resolved=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -d|--dir) DIR="$2"; shift 2 ;;
+            -d|--dir) [[ $# -ge 2 ]] || { echo "$1 requires a value" >&2; usage >&2; exit 1; }; DIR="$2"; shift 2 ;;
             -*) echo "unknown flag: $1" >&2; exit 1 ;;
             *) if [[ -z "$BRANCH" ]]; then BRANCH="$1"; elif [[ -z "$BASE" ]]; then BASE="$1"; else
                    echo "unexpected arg: $1" >&2; exit 1; fi; shift ;;
