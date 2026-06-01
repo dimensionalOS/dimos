@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hand-crafted synthetic scenarios for black-box planner evaluation.
-
-Each scenario is a self-contained (map, start, goal, expectation) bundle.
-Maps are PointCloud2 obstacle clouds, start/goal are Odometry poses, and
-``expect_path`` records whether a planner should be able to find a path
-(used by the evaluator to score pass/fail).
-"""
+"""Sample point clouds for path planning."""
 
 from __future__ import annotations
 
@@ -28,8 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_stack.evaluator.mesh_loader import load_voxelized_mesh
 from dimos.utils.logging_config import setup_logger
@@ -37,8 +30,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 WORLD_FRAME = "map"
-# Walls must reach above the planner's robot_height (default 1.5m) to block surface above.
 _WALL_HEIGHT_M = 2.0
+_WALL_THICKNESS_M = 0.5
 
 MESH_PATH = os.environ.get("MESH_PATH")
 
@@ -47,23 +40,17 @@ MESH_PATH = os.environ.get("MESH_PATH")
 class PlannerScenario:
     name: str
     global_map: PointCloud2
-    start_pose: Odometry
-    goal_pose: Odometry
+    start_pose: PoseStamped
+    goal_pose: PoseStamped
     expect_path: bool
 
 
-def _odom(x: float, y: float, z: float = 0.0, frame: str = WORLD_FRAME) -> Odometry:
-    pose = Pose(position=[x, y, z], orientation=[0.0, 0.0, 0.0, 1.0])
-    return Odometry(frame_id=frame, child_frame_id="body", pose=pose)
-
-
-def _cloud(points: np.ndarray, frame: str = WORLD_FRAME) -> PointCloud2:
-    if points.size == 0:
-        points = np.zeros((0, 3), dtype=np.float32)
-    return PointCloud2.from_numpy(points.astype(np.float32), frame_id=frame)
-
-
-_WALL_THICKNESS_M = 0.5
+def _pose(x: float, y: float, z: float = 0.0, frame: str = WORLD_FRAME) -> PoseStamped:
+    return PoseStamped(
+        frame_id=frame,
+        position=[x, y, z],
+        orientation=[0.0, 0.0, 0.0, 1.0],
+    )
 
 
 def _wall(
@@ -75,7 +62,8 @@ def _wall(
     spacing: float = 0.1,
     height: float = _WALL_HEIGHT_M,
     thickness: float = _WALL_THICKNESS_M,
-) -> np.ndarray:
+    frame: str = WORLD_FRAME,
+) -> PointCloud2:
     """Sample a vertical wall as a 3D box from (x0,y0) to (x1,y1).
 
     Thickness extends perpendicular to the wall line in the XY plane.
@@ -83,7 +71,9 @@ def _wall(
     dx, dy = x1 - x0, y1 - y0
     length = float(np.hypot(dx, dy))
     if length == 0:
-        return np.zeros((0, 3), dtype=np.float32)
+        return PointCloud2.from_numpy(
+            np.zeros((0, 3), dtype=np.float32), frame_id=frame, timestamp=0.0
+        )
     perp_x, perp_y = -dy / length, dx / length
     along = np.linspace(0.0, 1.0, max(2, int(np.ceil(length / spacing))))
     perp = np.linspace(-thickness / 2, thickness / 2, max(1, int(np.ceil(thickness / spacing)) + 1))
@@ -91,7 +81,8 @@ def _wall(
     a, p, z = np.meshgrid(along, perp, zs, indexing="ij")
     x = x0 + a.ravel() * dx + p.ravel() * perp_x
     y = y0 + a.ravel() * dy + p.ravel() * perp_y
-    return np.column_stack([x, y, z.ravel()])
+    pts = np.column_stack([x, y, z.ravel()]).astype(np.float32)
+    return PointCloud2.from_numpy(pts, frame_id=frame, timestamp=0.0)
 
 
 def _floor(
@@ -100,27 +91,28 @@ def _floor(
     y_min: float = -3.0,
     y_max: float = 3.0,
     spacing: float = 0.25,
-) -> np.ndarray:
+    frame: str = WORLD_FRAME,
+) -> PointCloud2:
     """Flat ground plane sampled as points at z=0."""
     xs = np.arange(x_min, x_max + spacing, spacing)
     ys = np.arange(y_min, y_max + spacing, spacing)
     grid_xs, grid_ys = np.meshgrid(xs, ys)
-    return np.column_stack([grid_xs.ravel(), grid_ys.ravel(), np.zeros(grid_xs.size)])
+    pts = np.column_stack([grid_xs.ravel(), grid_ys.ravel(), np.zeros(grid_xs.size)]).astype(
+        np.float32
+    )
+    return PointCloud2.from_numpy(pts, frame_id=frame, timestamp=0.0)
 
 
-def _map_with_walls(*walls: np.ndarray) -> PointCloud2:
-    return _cloud(np.vstack([_floor(), *walls]))
-
-
-_GROUND_SURFACE_Z = 0.1
+def _map_with_walls(*walls: PointCloud2) -> PointCloud2:
+    return sum(walls, _floor())
 
 
 def empty_floor() -> PlannerScenario:
     return PlannerScenario(
         name="empty_floor",
-        global_map=_cloud(_floor()),
-        start_pose=_odom(-1.0, 0.0, _GROUND_SURFACE_Z),
-        goal_pose=_odom(7.0, 0.0, _GROUND_SURFACE_Z),
+        global_map=_floor(),
+        start_pose=_pose(-1.0, 0.0, 0.2),
+        goal_pose=_pose(7.0, 0.0, 0.2),
         expect_path=True,
     )
 
@@ -129,8 +121,8 @@ def blocked_wall() -> PlannerScenario:
     return PlannerScenario(
         name="blocked_wall",
         global_map=_map_with_walls(_wall(3.0, -3.0, 3.0, 3.0)),
-        start_pose=_odom(-1.0, 0.0, _GROUND_SURFACE_Z),
-        goal_pose=_odom(6.0, 0.0, _GROUND_SURFACE_Z),
+        start_pose=_pose(-1.0, 0.0, 0.2),
+        goal_pose=_pose(6.0, 0.0, 0.2),
         expect_path=False,
     )
 
@@ -142,8 +134,8 @@ def two_rooms_one_door() -> PlannerScenario:
             _wall(3.0, -3.0, 3.0, -0.75),
             _wall(3.0, 0.75, 3.0, 3.0),
         ),
-        start_pose=_odom(-1.0, 0.0, _GROUND_SURFACE_Z),
-        goal_pose=_odom(6.0, 0.0, _GROUND_SURFACE_Z),
+        start_pose=_pose(-1.0, 0.0, 0.2),
+        goal_pose=_pose(6.0, 0.0, 0.2),
         expect_path=True,
     )
 
@@ -156,20 +148,20 @@ def _mesh_scenarios() -> list[PlannerScenario]:
     if not Path(MESH_PATH).is_file():
         logger.warning("Mesh file not found, skipping mesh scenarios", path=MESH_PATH)
         return []
-    points = load_voxelized_mesh(MESH_PATH)
+    points = load_voxelized_mesh(MESH_PATH).astype(np.float32)
     return [
         PlannerScenario(
             name="mesh_outside",
-            global_map=_cloud(points),
-            start_pose=_odom(-20.45, -19.85, 1.75),
-            goal_pose=_odom(21.95, -4.25, 1.75),
+            global_map=PointCloud2.from_numpy(points, frame_id=WORLD_FRAME, timestamp=0.0),
+            start_pose=_pose(-20.45, -19.85, 1.75),
+            goal_pose=_pose(21.95, -4.25, 1.75),
             expect_path=True,
         ),
         PlannerScenario(
             name="mesh_up_the_stairs",
-            global_map=_cloud(points),
-            start_pose=_odom(7.15, -3.55, 2.05),
-            goal_pose=_odom(5.55, -2.05, 5.65),
+            global_map=PointCloud2.from_numpy(points, frame_id=WORLD_FRAME, timestamp=0.0),
+            start_pose=_pose(7.15, -3.55, 2.05),
+            goal_pose=_pose(5.55, -2.05, 5.65),
             expect_path=True,
         ),
     ]
