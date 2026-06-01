@@ -330,7 +330,7 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
     timeout-minutes: 30
-    runs-on: [self-hosted-large, Linux, large]
+    runs-on: [self-hosted, Linux, large]
     permissions:
       contents: read  # For checkout
       packages: read  # For pulling the ros-dev container from ghcr.io
