@@ -15,7 +15,7 @@
 
 import pytest
 
-from dimos.memory.timeseries.legacy import LegacyPickleStore
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 
 class TestLegacyPickleStoreRealData:
