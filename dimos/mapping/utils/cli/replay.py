@@ -27,12 +27,6 @@ their entity path (no parent transform). Entities written:
 - ``world/odom_path``     — Go2 onboard odom trajectory (growing LineStrips3D)
 - ``world/camera``        — color_image camera pose (static pinhole + Transform3D)
 - ``world/camera/image``  — color_image frames
-
-Usage:
-    uv run dimos map replay mid360 --out map.rrd
-    uv run dimos map replay mid360 --out map.rrd --map
-    uv run dimos map replay mid360 --out map.rrd --map-final
-    rerun map.rrd
 """
 
 from __future__ import annotations

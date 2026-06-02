@@ -19,10 +19,6 @@ Walks a recorded SQLite dataset and writes an rrd containing:
 - per-lidar:  base_link pose (a moving axis)
 - per detection: marker box in world frame, at the detection timestamp
 
-Usage:
-    uv run dimos map replay-marker hk_village1 --out hk.rrd
-    rerun hk.rrd
-
 Throwaway script next to ``map.py``; remove once the apriltag reliability work
 lands.
 """

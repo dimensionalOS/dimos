@@ -18,13 +18,6 @@ Iterates each source stream and re-appends every observation under its new
 name in a fresh destination db. Slower than in-place ``ALTER TABLE`` but
 forces a full re-read of every row, so any pre-existing corruption surfaces
 immediately. Streams not mentioned in ``--rename`` are copied verbatim.
-
-Usage:
-    uv run dimos map rename mid360 \\
-        --out mid360_renamed.db \\
-        --rename go2_lidar=lidar \\
-        --rename lidar=fastlio_lidar \\
-        --rename odometry=fastlio_odometry
 """
 
 from __future__ import annotations
