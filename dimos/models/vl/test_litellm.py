@@ -76,9 +76,9 @@ class TestCoreDispatch:
         with patch(_COMPLETION_PATH, return_value=_resp()) as mock:
             model.query(_img(), "hi")
 
-        img_part = [
+        img_part = next(
             p for p in mock.call_args.kwargs["messages"][0]["content"] if p["type"] == "image_url"
-        ][0]
+        )
         assert img_part["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
     def test_response_format_forwarded(self) -> None:
