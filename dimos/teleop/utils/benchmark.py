@@ -13,15 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hosted teleop benchmarking module (Phase 1).
+"""Hosted teleop benchmarking module.
 
 Sibling of ``HostedTeleopRecorder`` — same ``In`` ports, but instead of writing
-a SQLite recording it accumulates transport statistics, prints a live console
-summary while running, and writes ``report.md`` + latency/jitter PNGs on stop.
-
-Phase 1 scope (see ``data/notes/hosted_teleop_benchmarking_plan.md``):
-clock-independent metrics — rate, inter-arrival jitter, loss, reorder, stalls —
-plus best-effort *uncalibrated* end-to-end latency.
+a SQLite recording it accumulates transport statistics and writes ``report.md``
++ latency/jitter PNGs on stop. Live operator feedback is shown by the in-page
+HUD; this module produces the persisted post-hoc artifact.
 
 Compose at the CLI::
 
@@ -136,12 +133,11 @@ class _Record(NamedTuple):
 
 
 class StreamStats:
-    """Rolling-window + whole-run statistics for a single teleop stream.
+    """Whole-run statistics for a single teleop stream.
 
-    One instance per ``In`` port. ``record()`` is called from the port's
-    subscribe callback (transport thread); ``live_summary()`` is read by the
-    printer thread and ``final_summary()`` by ``stop()`` — so access to the
-    shared buffers is guarded by an internal lock.
+    One instance per ``In`` port. ``record()`` runs on the port's subscribe
+    callback (transport thread); ``final_summary()`` / ``series()`` are read
+    at report-write time. Access guarded by an internal lock.
     """
 
     def __init__(self, stall_factor: float = 3.0) -> None:
@@ -201,17 +197,6 @@ class StreamStats:
             "e2e_ms": pcts(e2e_ms),
         }
 
-    def live_summary(self, window_s: float) -> dict[str, Any]:
-        """Windowed stats over roughly the last *window_s* seconds.
-
-        Returns the same shape as :meth:`final_summary` but computed only over
-        recent records — enough for the one-line console summary.
-        """
-        cutoff = time.perf_counter() - window_s
-        with self._lock:
-            window = [r for r in self._records if r.perf >= cutoff]
-        return self._summary(window)
-
     def final_summary(self) -> dict[str, Any]:
         """Whole-run aggregate stats for the report."""
         with self._lock:
@@ -232,12 +217,6 @@ class StreamStats:
 class TeleopBenchmarkConfig(ModuleConfig):
     """Config for :class:`TeleopBenchmarkModule`."""
 
-    print_hz: float = 1.0
-    """Cadence of the live console summary line."""
-
-    window_s: float = 5.0
-    """Rolling window the live line is computed over."""
-
     stall_factor: float = 3.0
     """Arrival gap > factor x median interval counts as a stall."""
 
@@ -246,12 +225,15 @@ class TeleopBenchmarkConfig(ModuleConfig):
 
 
 class TeleopBenchmarkModule(Module):
-    """Benchmarks hosted teleop streams — live console summary + on-stop report.
+    """Benchmarks hosted teleop streams — writes a `report.md` + PNGs on stop.
 
     Subscribes to whatever ``In`` ports the connected blueprint feeds (VR
     controller poses + buttons for xarm7 sim, ``cmd_vel_stamped`` for Go2);
     unconnected ports simply stay empty. Mirrors ``HostedTeleopRecorder``'s
     port set so the two are interchangeable at the CLI.
+
+    Live operator feedback (fps/RTT/cmd-plane health) is shown by the in-page
+    HUD; this module's job is the persisted post-hoc artifact.
     """
 
     config: TeleopBenchmarkConfig
@@ -262,11 +244,8 @@ class TeleopBenchmarkModule(Module):
     cmd_vel_stamped: In[TwistStamped]
 
     def __init__(self, **kwargs: Any) -> None:
-        """Initialise per-stream stats holders and threading primitives."""
         super().__init__(**kwargs)
         self._stats: dict[str, StreamStats] = {}
-        self._stop_event = threading.Event()
-        self._printer_thread: threading.Thread | None = None
         self._start_perf: float | None = None
         self._start_timestamp: str | None = None
         self._report_lock = threading.Lock()
@@ -274,7 +253,6 @@ class TeleopBenchmarkModule(Module):
 
     @rpc
     def start(self) -> None:
-        """Subscribe to every connected ``In`` port and start the printer thread."""
         super().start()
 
         if not self.inputs:
@@ -298,24 +276,14 @@ class TeleopBenchmarkModule(Module):
         self._start_perf = time.perf_counter()
         self._start_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._report_written = False
-        self._stop_event.clear()
-        self._printer_thread = threading.Thread(
-            target=self._printer_loop, daemon=True, name="TeleopBenchmarkPrinter"
-        )
-        self._printer_thread.start()
 
     @rpc
     def stop(self) -> None:
-        """Stop the printer thread, compute final stats, write the report.
+        """Compute final stats and write the report.
 
         Guarded against double-invocation — teardown can fire ``stop()`` more
-        than once (e.g. Ctrl-C + module-coordinator shutdown), and we don't
-        want a second report folder one second after the first.
+        than once (e.g. Ctrl-C + module-coordinator shutdown).
         """
-        self._stop_event.set()
-        if self._printer_thread is not None:
-            self._printer_thread.join(timeout=2.0)
-            self._printer_thread = None
         with self._report_lock:
             if self._report_written:
                 super().stop()
@@ -328,36 +296,7 @@ class TeleopBenchmarkModule(Module):
         super().stop()
 
     def _on_message(self, name: str, msg: Any) -> None:
-        """Port subscribe callback — route *msg* into the stream's stats."""
         self._stats[name].record(msg)
-
-    def _printer_loop(self) -> None:
-        """Print a one-line live summary per active stream every ``1/print_hz`` s."""
-        interval = 1.0 / max(self.config.print_hz, 0.1)
-        while not self._stop_event.is_set():
-            for name, stats in self._stats.items():
-                s = stats.live_summary(self.config.window_s)
-                if not s.get("rate_hz"):
-                    continue
-                jitter = s["jitter_ms"]
-                loss = s["loss_pct"]
-                loss_str = f"{loss:.1f}%" if loss is not None else "n/a"
-                # Uncalibrated E2E (wall - sender ts): only present on stamped
-                # streams (cmd_vel_stamped, poses), and reads noisy / can go
-                # negative without clock-offset correction — hence the "~"
-                # prefix. Omitted entirely when there's no ts (e.g. buttons).
-                e2e = s["e2e_ms"]
-                e2e_str = f" | ~e2e p50 {e2e['p50']:.1f}ms" if e2e else ""
-                logger.info(
-                    "[benchmark] %s: %.1fHz | jitter p95 %.1fms | loss %s%s | n=%d",
-                    name,
-                    s["rate_hz"],
-                    jitter["p95"],
-                    loss_str,
-                    e2e_str,
-                    s["count"],
-                )
-            self._stop_event.wait(interval)
 
     def _write_report(self) -> None:
         """Write the run's ``report.md`` plus latency/jitter PNGs alongside it.
