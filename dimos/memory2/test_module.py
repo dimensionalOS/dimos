@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import threading
+import time
 
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
@@ -25,12 +26,14 @@ from reactivex.scheduler import ThreadPoolScheduler
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import pLCMTransport
+from dimos.memory2.fanio import Bundle, scatter_to_ports
 from dimos.memory2.module import StreamModule
+from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import Transformer
 from dimos.memory2.type.observation import Observation
 
-# -- Shared transformer ---------------------------------------------------
+# Shared transformer
 
 
 class Double(Transformer[int, int]):
@@ -42,7 +45,7 @@ class Double(Transformer[int, int]):
             yield obs.derive(data=obs.data * self.factor)
 
 
-# -- Pipeline styles -------------------------------------------------------
+# Pipeline styles
 
 
 class StaticStreamModule(StreamModule[int, int]):
@@ -77,7 +80,7 @@ class MethodPipelineModule(StreamModule[int, int]):
     doubled: Out[int]
 
 
-# -- Grid ------------------------------------------------------------------
+# Grid
 
 module_cases = [
     pytest.param(StaticStreamModule, id="static-stream"),
@@ -129,3 +132,332 @@ def test_e2e_runtime_wiring(module_cls: type[StreamModule]) -> None:
         module.stop()
         _reset_thread_pool()
         _reset_thread_pool()
+
+
+# Fan-in: many In ports reachable as siblings via self.streams
+
+
+class TwoInputFusion(StreamModule):
+    """Primary lidar aligned against a sibling pose reached via ``self.streams``."""
+
+    lidar: In[int]
+    pose: In[int]
+    fused: Out[object]
+
+    def pipeline(self, lidar: Stream[int]) -> Stream[object]:
+        return lidar.align(self.streams.pose, tolerance=0.5)
+
+
+class ChainedFusion(StreamModule):
+    """Three In ports fused by chaining ``.align()`` once per sibling edge."""
+
+    image: In[int]
+    pose: In[int]
+    cloud: In[int]
+    fused: Out[object]
+
+    def pipeline(self, image: Stream[int]) -> Stream[object]:
+        return image.align(self.streams.pose, tolerance=0.5).align(
+            self.streams.cloud, tolerance=0.5
+        )
+
+
+def _wire_inputs(module: StreamModule, store: MemoryStore, **points: list) -> dict[str, Stream]:
+    """Populate ``module._in_streams`` from ``name=[(ts, value), ...]`` point lists.
+
+    Mirrors what ``StreamModule.start()`` assembles, so ``pipeline()`` can reach
+    siblings through ``self.streams.<port>`` without standing up the live
+    transport machinery. Each secondary's last ts must reach the primary's last
+    ts so the two-pointer merge never blocks waiting on a (never-arriving) later
+    live sample.
+    """
+    streams: dict[str, Stream] = {}
+    for name, pts in points.items():
+        s = store.stream(name, int)
+        for ts, value in pts:
+            s.append(value, ts=ts)
+        streams[name] = s
+    module._in_streams = streams
+    return streams
+
+
+class TestFanInAlign:
+    """Authors reach sibling In ports through ``self.streams.<port>`` and fuse
+    them with PR #2306 ``.align()`` inside ``pipeline()`` (test plan 10.2)."""
+
+    def test_two_input_align_pairs_sibling_and_names_fields_after_ports(self) -> None:
+        """The primary aligns against ``self.streams.pose``; each emitted pair is
+        named after the two ports and carries the full per-side Observation, and
+        the output keeps the primary (scan) timestamp - not the pose's."""
+        module = TwoInputFusion()
+        with MemoryStore() as store:
+            streams = _wire_inputs(
+                module,
+                store,
+                lidar=[(1.0, 11), (2.0, 22)],
+                pose=[(1.05, 100), (2.0, 200)],
+            )
+            try:
+                out = module.pipeline(streams["lidar"]).to_list()
+            finally:
+                module.stop()
+
+        assert [o.data._fields for o in out] == [("lidar", "pose"), ("lidar", "pose")]
+        assert [o.data.lidar.data for o in out] == [11, 22]
+        assert [o.data.pose.data for o in out] == [100, 200]
+        # Emitted observation carries the primary ts, not the matched pose ts.
+        assert [o.ts for o in out] == [1.0, 2.0]
+
+    def test_chained_align_fuses_three_inputs(self) -> None:
+        """Chaining ``.align()`` twice fuses three siblings; the outer pair is
+        named (image, cloud) and nests the inner (image, pose) pair, so every
+        sibling's value is reachable from one pipeline run."""
+        module = ChainedFusion()
+        with MemoryStore() as store:
+            streams = _wire_inputs(
+                module,
+                store,
+                image=[(1.0, 11), (2.0, 22)],
+                pose=[(1.0, 100), (2.0, 200)],
+                cloud=[(1.0, 1000), (2.0, 2000)],
+            )
+            try:
+                out = module.pipeline(streams["image"]).to_list()
+            finally:
+                module.stop()
+
+        assert [o.data._fields for o in out] == [("image", "cloud"), ("image", "cloud")]
+        assert [o.data.cloud.data for o in out] == [1000, 2000]
+        inner = [o.data.image.data for o in out]
+        assert [p._fields for p in inner] == [("image", "pose"), ("image", "pose")]
+        assert [p.image.data for p in inner] == [11, 22]
+        assert [p.pose.data for p in inner] == [100, 200]
+
+    def test_align_skips_secondary_beyond_tolerance(self) -> None:
+        """A sibling within tolerance pairs; the same sibling moved 3x tolerance
+        away pairs with nothing - so the tolerance keyword actually gates."""
+        within = TwoInputFusion()  # tolerance is 0.5
+        with MemoryStore() as store:
+            streams = _wire_inputs(
+                within, store, lidar=[(1.0, 11)], pose=[(1.4, 100)]
+            )  # 0.4 < 0.5
+            try:
+                matched = within.pipeline(streams["lidar"]).to_list()
+            finally:
+                within.stop()
+        assert [o.data.pose.data for o in matched] == [100]
+
+        beyond = TwoInputFusion()
+        with MemoryStore() as store:
+            streams = _wire_inputs(
+                beyond, store, lidar=[(1.0, 11)], pose=[(2.5, 100)]
+            )  # 1.5 == 3x tol
+            try:
+                assert beyond.pipeline(streams["lidar"]).to_list() == []
+            finally:
+                beyond.stop()
+
+    def test_streams_accessor_exposes_ports_and_rejects_typos(self) -> None:
+        """``self.streams.<port>`` returns a stream named after the port; an
+        unknown port raises AttributeError listing the available names, so a
+        mistyped sibling fails loudly rather than silently dropping data."""
+        module = TwoInputFusion()
+        with MemoryStore() as store:
+            _wire_inputs(module, store, lidar=[(1.0, 11)], pose=[(1.0, 100)])
+            try:
+                assert module.streams.lidar.name == "lidar"
+                assert module.streams.pose.name == "pose"
+                with pytest.raises(AttributeError) as excinfo:
+                    _ = module.streams.poze
+            finally:
+                module.stop()
+        message = str(excinfo.value)
+        assert "poze" in message
+        assert "lidar" in message and "pose" in message
+
+
+# Ingest seam: enrich/drop messages without copying start()
+
+
+class _FakePort:
+    """Minimal In-port stand-in: records subscribers, lets the test push messages."""
+
+    def __init__(self, name: str, type_: type) -> None:
+        self.name = name
+        self.type = type_
+        self._subscribers: list = []
+
+    def subscribe(self, cb):  # type: ignore[no-untyped-def]
+        self._subscribers.append(cb)
+        return lambda: self._subscribers.remove(cb)
+
+    def emit(self, msg) -> None:  # type: ignore[no-untyped-def]
+        for cb in list(self._subscribers):
+            cb(msg)
+
+
+class _Stamped:
+    """Payload that carries its own capture time, like a real sensor message."""
+
+    def __init__(self, ts: float) -> None:
+        self.ts = ts
+
+
+class SkippingIngestModule(StreamModule[int, int]):
+    """Drops negative readings at ingest, so the pipeline never sees them."""
+
+    pipeline = Double()
+    numbers: In[int]
+    doubled: Out[int]
+
+    def ingest(self, name: str, stream: Stream[int], msg: int) -> None:
+        if msg >= 0:
+            stream.append(msg, ts=float(msg))
+
+
+class TestIngestSeam:
+    """``ingest()`` is the seam that lets a module enrich or drop messages
+    before they enter the pipeline, without copying ``start()`` (test plan 10.3)."""
+
+    def test_default_ingest_stamps_with_message_time(self) -> None:
+        """Default ingest carries each message's own ts (so cross-port ``.align()``
+        lines up on capture time), falling back to arrival time only for
+        unstamped payloads. Ignoring ``msg.ts`` would silently misalign sensors."""
+        module = StaticTransformerModule()
+        try:
+            with MemoryStore() as store:
+                stamped_stream = store.stream("stamped", object)
+                module.ingest("stamped", stamped_stream, _Stamped(ts=42.0))
+                stamped = list(stamped_stream)
+
+                bare_stream = store.stream("bare", int)
+                before = time.time()
+                module.ingest("bare", bare_stream, 7)
+                after = time.time()
+                bare = list(bare_stream)
+        finally:
+            module.stop()
+
+        assert stamped[0].ts == 42.0  # message capture time, not arrival
+        assert bare[0].data == 7
+        assert before <= bare[0].ts <= after  # arrival-time fallback for unstamped
+
+    def test_ingest_override_can_drop_messages_before_the_pipeline(self) -> None:
+        """A port wired through ``_wire_input`` routes every message through
+        ``ingest()``; an override that skips negative readings keeps them out of
+        the backing stream entirely."""
+        module = SkippingIngestModule()
+        with MemoryStore() as store:
+            port = _FakePort("numbers", int)
+            backing = module._wire_input("numbers", port, store)
+            try:
+                for value in (5, -1, 7, -3, 9):
+                    port.emit(value)
+                assert [o.data for o in backing] == [5, 7, 9]
+            finally:
+                module.stop()
+
+
+# Fan-out: one pipeline run, many Out ports (Bundle scatter)
+
+
+class _RecordingOut:
+    """Out-port stand-in that records every published payload."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.published: list = []
+
+    def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
+        self.published.append(msg)
+
+
+def _wait_until(predicate, timeout: float = 5.0) -> bool:  # type: ignore[no-untyped-def]
+    """Poll *predicate* until true or *timeout* elapses (scatter runs on the pool)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
+
+class TestFanOutScatter:
+    """A multi-output pipeline yields a :class:`Bundle` per tick and
+    :func:`scatter_to_ports` fans it to the matching ports in one subscribe
+    (test plan 10.4, 10.5)."""
+
+    @pytest.mark.tool
+    def test_multi_output_scatter_runs_pipeline_once_per_tick(self) -> None:
+        """Two Out ports fed from one fused pipeline must compute once per
+        observation, not once per port: scatter subscribes a single time, so a
+        detector inside the pipeline runs N times for N ticks - not 2N (C3)."""
+        n = 5
+        detector_calls: list[int] = []
+
+        class CountingDetector(Transformer[int, Bundle]):
+            def __call__(
+                self, upstream: Iterator[Observation[int]]
+            ) -> Iterator[Observation[Bundle]]:
+                for obs in upstream:
+                    detector_calls.append(obs.data)
+                    yield obs.derive(data=Bundle({"low": obs.data, "high": obs.data * 10}))
+
+        low, high = _RecordingOut("low"), _RecordingOut("high")
+        with MemoryStore() as store:
+            src = store.stream("src", int)
+            for i in range(n):
+                src.append(i, ts=float(i))
+            produced = src.transform(CountingDetector())
+            disposable = scatter_to_ports(produced, {"low": low, "high": high})
+            try:
+                assert _wait_until(
+                    lambda: len(low.published) >= n and len(high.published) >= n
+                ), f"timed out: low={low.published} high={high.published}"
+            finally:
+                disposable.dispose()
+                _reset_thread_pool()
+                _reset_thread_pool()
+
+        assert len(detector_calls) == n  # once per tick, not 2 * n
+        assert low.published == [0, 1, 2, 3, 4]
+        assert high.published == [0, 10, 20, 30, 40]
+
+    @pytest.mark.tool
+    def test_scatter_skips_none_valued_keys(self) -> None:
+        """A bundle key mapped to None publishes nothing on that port for the
+        tick, while a sibling key with a real payload still publishes."""
+        present, absent = _RecordingOut("present"), _RecordingOut("absent")
+        with MemoryStore() as store:
+            src = store.stream("src", object)
+            src.append(Bundle({"present": "x", "absent": None}), ts=0.0)
+            disposable = scatter_to_ports(src, {"present": present, "absent": absent})
+            try:
+                assert _wait_until(lambda: len(present.published) >= 1)
+            finally:
+                disposable.dispose()
+                _reset_thread_pool()
+                _reset_thread_pool()
+
+        assert present.published == ["x"]
+        assert absent.published == []  # None is a skip, not a publish
+
+    @pytest.mark.tool
+    def test_scatter_publishes_empty_but_present_payloads(self) -> None:
+        """An empty-but-present payload (e.g. an empty detection array) still
+        publishes - 'nothing detected this frame' differs from 'port idle' - so
+        only None is treated as absent."""
+        empty_out, value_out = _RecordingOut("empty"), _RecordingOut("value")
+        with MemoryStore() as store:
+            src = store.stream("src", object)
+            src.append(Bundle({"empty": [], "value": "v"}), ts=0.0)
+            disposable = scatter_to_ports(src, {"empty": empty_out, "value": value_out})
+            try:
+                assert _wait_until(lambda: len(value_out.published) >= 1)
+            finally:
+                disposable.dispose()
+                _reset_thread_pool()
+                _reset_thread_pool()
+
+        assert empty_out.published == [[]]  # the empty list was published, not skipped
+        assert value_out.published == ["v"]
