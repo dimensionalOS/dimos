@@ -18,7 +18,6 @@ import pytest
 @pytest.mark.self_hosted_large
 def test_walk_forward(lcm_spy, start_blueprint, human_input, dim_sim) -> None:
     start_blueprint(
-        "--dimsim-scene=empty",
         "run",
         "--disable",
         "spatial-memory",

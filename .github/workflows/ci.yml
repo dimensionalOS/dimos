@@ -329,6 +329,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+      DIMSIM_RENDER: gpu
     timeout-minutes: 30
     runs-on: [self-hosted, Linux, large]
     permissions:
