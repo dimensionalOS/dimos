@@ -367,7 +367,9 @@ jobs:
             portaudio19-dev \
             `# Chromium runtime libs required by Playwright (used by dimsim browser tests).` \
             libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
-            libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2
+            libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
+            `# Rerun viewer pulls in X11 keyboard bindings when DISPLAY is set.` \
+            libxkbcommon-x11-0
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
