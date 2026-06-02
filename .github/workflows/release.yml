@@ -74,6 +74,9 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+      # Override skipif_in_ci so the release-tests job actually runs the
+      # heavier tests the normal CI matrix opts out of.
+      DIMOS_FULL_TEST_RUN: "1"
     timeout-minutes: 90
     runs-on: [self-hosted, Linux, large]
     permissions:
