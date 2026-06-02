@@ -14,4 +14,4 @@
 
 from typing import Literal
 
-VlModelName = Literal["qwen", "moondream"]
+VlModelName = Literal["qwen", "moondream", "litellm"]
