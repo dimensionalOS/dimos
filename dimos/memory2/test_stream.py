@@ -1084,3 +1084,102 @@ class TestTimeWindowing:
         assert stream.from_timestamp(9999.0).to_time(30).to_list() == []
         assert make_stream(0).from_time(5).to_list() == []
         assert make_stream(0).to_time(5).to_list() == []
+
+
+def _two_streams(session, primary_pts, secondary_pts, *, primary="lidar", secondary="pose"):
+    """Build two named streams from (ts, value) point lists for align tests."""
+    a = session.stream(primary, int)
+    for ts, value in primary_pts:
+        a.append(value, ts=ts)
+    b = session.stream(secondary, int)
+    for ts, value in secondary_pts:
+        b.append(value, ts=ts)
+    return a, b
+
+
+class TestAlign:
+    """`.align(other, tolerance=)` pairs each primary observation with the
+    nearest-in-time secondary within tolerance (PR #2306 nearest-neighbor)."""
+
+    def test_pairs_closer_of_the_two_bracketing_secondaries(self, session):
+        """Each primary takes the nearer of the secondaries bracketing it -
+        including when the *later* one is closer. A flipped comparison would
+        silently pick the earlier secondary instead."""
+        lidar, pose = _two_streams(
+            session,
+            [(0.0, 10), (1.0, 20), (2.0, 30)],
+            [(0.1, 100), (0.9, 200), (2.2, 300)],
+        )
+        out = lidar.align(pose, tolerance=0.5).to_list()
+        # ts=2.0 sits between 0.9 (Δ1.1) and 2.2 (Δ0.2): the later one wins.
+        assert [o.data.pose.data for o in out] == [100, 200, 300]
+        assert [o.data.lidar.data for o in out] == [10, 20, 30]
+
+    def test_exact_timestamp_match_wins_over_nearer_neighbours(self, session):
+        """A secondary at the exact primary ts (distance 0) is selected over
+        in-tolerance neighbours on either side - the global optimum always wins."""
+        lidar, pose = _two_streams(
+            session,
+            [(1.0, 10)],
+            [(0.6, 1), (1.0, 2), (1.4, 3)],
+        )
+        out = lidar.align(pose, tolerance=0.5).to_list()
+        assert [o.data.pose.data for o in out] == [2]
+
+    def test_pair_fields_named_after_streams(self, session):
+        """obs.data is an AlignedPair whose fields are the two stream names,
+        each holding the full Observation; index access mirrors them."""
+        lidar, pose = _two_streams(session, [(1.0, 10)], [(1.05, 100)])
+        pair = lidar.align(pose, tolerance=0.1).to_list()[0].data
+        assert pair._fields == ("lidar", "pose")
+        assert pair.lidar.data == 10 and pair.pose.data == 100
+        assert pair.lidar.ts == 1.0 and pair.pose.ts == 1.05
+        assert pair[0] is pair.lidar and pair[1] is pair.pose
+
+    def test_shared_name_falls_back_to_primary_secondary(self, session):
+        """Aligning a stream with itself (identical name) names the fields
+        primary/secondary rather than colliding on one name."""
+        a = session.stream("lidar", int)
+        a.append(10, ts=1.0)
+        pair = a.align(a, tolerance=0.1).to_list()[0].data
+        assert pair._fields == ("primary", "secondary")
+        assert pair.primary.data == 10 and pair.secondary.data == 10
+
+    def test_output_carries_primary_timestamp_and_metadata(self, memory_session):
+        """The emitted observation keeps the primary's ts/pose/tags, not the
+        secondary's - downstream time logic must see the primary (scan) time."""
+        lidar = memory_session.stream("lidar", int)
+        lidar.append(10, ts=1.0, pose=(1, 2, 3), tags={"k": "v"})
+        pose = memory_session.stream("pose", int)
+        pose.append(100, ts=1.4)  # secondary ts differs from primary
+        out = lidar.align(pose, tolerance=0.5).to_list()[0]
+        assert out.ts == 1.0  # primary ts, not the secondary's 1.4
+        assert out.pose_tuple == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)
+        assert out.tags == {"k": "v"}
+
+    def test_secondaries_beyond_tolerance_match_nothing(self, session):
+        """A secondary 3x tolerance away pairs with no primary; widening the
+        tolerance past the gap recovers every pair."""
+        lidar, pose = _two_streams(
+            session,
+            [(0.0, 10), (1.0, 20), (2.0, 30)],
+            [(0.3, 100), (1.3, 200), (2.3, 300)],
+        )
+        assert lidar.align(pose, tolerance=0.1).to_list() == []
+        assert len(lidar.align(pose, tolerance=0.4).to_list()) == 3
+
+    def test_only_far_primaries_are_skipped(self, session):
+        """With one secondary near the first primary, the in-tolerance primary
+        pairs and the rest drop - not all-or-nothing."""
+        lidar, pose = _two_streams(
+            session,
+            [(0.0, 10), (1.0, 20), (2.0, 30)],
+            [(0.05, 100)],
+        )
+        out = lidar.align(pose, tolerance=0.1).to_list()
+        assert [o.data.lidar.data for o in out] == [10]
+
+    def test_empty_secondary_yields_no_pairs(self, session):
+        """No secondary observations means nothing to pair, at any tolerance."""
+        lidar, pose = _two_streams(session, [(0.0, 10), (1.0, 20)], [])
+        assert lidar.align(pose, tolerance=10.0).to_list() == []
