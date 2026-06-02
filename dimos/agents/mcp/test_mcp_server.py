@@ -88,6 +88,7 @@ def test_mcp_module_serializes_same_lane_calls() -> None:
         SkillInfo(class_name="TestSkills", func_name="drive", args_schema=schema, lane="motion")
     ]
     rpc_calls = _make_rpc_calls(skills, {})
+    lane_locks: dict[str, asyncio.Lock] = {}
     active = 0
     max_active = 0
     lock = threading.Lock()
@@ -110,11 +111,13 @@ def test_mcp_module_serializes_same_lane_calls() -> None:
                 {"method": "tools/call", "id": 1, "params": {"name": "drive", "arguments": {}}},
                 skills,
                 rpc_calls,
+                lane_locks,
             ),
             handle_request(
                 {"method": "tools/call", "id": 2, "params": {"name": "drive", "arguments": {}}},
                 skills,
                 rpc_calls,
+                lane_locks,
             ),
         )
 
@@ -122,6 +125,29 @@ def test_mcp_module_serializes_same_lane_calls() -> None:
 
     assert rpc_calls["drive"].call_count == 2
     assert max_active == 1
+
+
+def test_mcp_module_lane_locks_can_be_isolated_between_event_loops() -> None:
+    schema = json.dumps({"type": "object", "properties": {}})
+    skills = [
+        SkillInfo(class_name="TestSkills", func_name="drive", args_schema=schema, lane="motion")
+    ]
+    rpc_calls = _make_rpc_calls(skills, {"drive": "ok"})
+
+    async def run_call(lane_locks: dict[str, asyncio.Lock]) -> None:
+        response = await handle_request(
+            {"method": "tools/call", "id": 1, "params": {"name": "drive", "arguments": {}}},
+            skills,
+            rpc_calls,
+            lane_locks,
+        )
+
+        assert response["result"]["content"][0]["text"] == "ok"
+
+    asyncio.run(run_call({}))
+    asyncio.run(run_call({}))
+
+    assert rpc_calls["drive"].call_count == 2
 
 
 def test_mcp_module_injects_progress_token_as_mcp_context() -> None:

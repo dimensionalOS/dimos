@@ -154,6 +154,7 @@ async def handle_request(
     request: dict[str, Any],
     skills: list[SkillInfo],
     rpc_calls: dict[str, Any],
+    lane_locks: dict[str, asyncio.Lock] | None = None,
 ) -> dict[str, Any] | None:
     """Handle a single MCP JSON-RPC request.
 
@@ -178,7 +179,7 @@ async def handle_request(
             params,
             skills,
             rpc_calls,
-            app.state.lane_locks,
+            app.state.lane_locks if lane_locks is None else lane_locks,
         )
     return _jsonrpc_error(req_id, -32601, f"Unknown: {method}")
 
