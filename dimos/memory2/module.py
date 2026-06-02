@@ -29,6 +29,8 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.memory2.embed import EmbedImages
+from dimos.memory2.fanio import scatter_to_ports
+from dimos.memory2.store.base import StreamAccessor
 from dimos.memory2.store.null import NullStore
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.stream import Stream
@@ -56,16 +58,29 @@ TOut = TypeVar("TOut")
 def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
     """Forward each observation's ``data`` from *stream* to a Module ``Out`` port.
 
-    Iteration runs on the dimos thread pool via :meth:`Stream.observable`.
+    Thin back-compat alias over :func:`scatter_to_ports` with a single-port
+    mapping, kept so existing imports keep working. Iteration runs on the dimos
+    thread pool via :meth:`Stream.observable`.
+    """
+    return scatter_to_ports(stream, {out.name: out})
+
+
+class _LiveInputs:
+    """Adapts the In-port stream dict to the :class:`StreamAccessor` protocol.
+
+    ``stream(name)`` returns a fresh ``.live()`` view each call so a sibling
+    reached via ``self.streams.<port>`` tails new data rather than replaying an
+    already-consumed iterator.
     """
 
-    def _on_error(e: Exception) -> None:
-        logger.error("stream_to_port() pipeline error: %s", e, exc_info=True)
+    def __init__(self, streams: dict[str, Stream[Any]]) -> None:
+        self._streams = streams
 
-    return stream.observable().subscribe(
-        on_next=lambda obs: out.publish(obs.data),
-        on_error=_on_error,
-    )
+    def list_streams(self) -> list[str]:
+        return list(self._streams)
+
+    def stream(self, name: str) -> Stream[Any]:
+        return self._streams[name].live()
 
 
 class StreamModule(Module, Generic[TIn, TOut]):
@@ -90,42 +105,100 @@ class StreamModule(Module, Generic[TIn, TOut]):
             lidar: In[PointCloud2]
             global_map: Out[PointCloud2]
 
-    On start, the single ``In`` port feeds a MemoryStore, and the pipeline
-    is applied to the live stream, publishing results to the single ``Out`` port.
+    **Fan-I/O (N inputs / M outputs)**
+
+    Port count is data, not control flow: declare any number of ``In`` and
+    ``Out`` ports. On start, *every* ``In`` port feeds a MemoryStore and is
+    exposed as a live ``Stream`` via ``self.streams.<port>``; the pipeline runs
+    over the first declared ``In`` (the primary) and reaches siblings inside
+    ``pipeline()`` to align them::
+
+        class MyFusion(StreamModule):
+            lidar: In[PointCloud2]
+            pose:  In[PoseStamped]
+            map:   Out[PointCloud2]
+
+            def pipeline(self, lidar: Stream[PointCloud2]) -> Stream[PointCloud2]:
+                return lidar.align(self.streams.pose, tolerance=0.1).transform(...)
+
+    With several ``Out`` ports the pipeline ends in a :class:`Bundle` keyed by
+    port name and :func:`scatter_to_ports` fans it out in one subscribe, so a
+    fused pipeline computes once per tick regardless of output count.
 
     The MemoryStore acts as a bridge between the push-based Module In port
     and the pull-based memory2 stream pipeline — it also enables replay and
     persistence if the store is swapped for a persistent backend later.
     """
 
+    _in_streams: dict[str, Stream[Any]]
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+
+    @property
+    def streams(self) -> StreamAccessor[Stream[Any]]:
+        """Live ``Stream`` view of every In port, by name (mirrors ``store.streams``).
+
+        Use inside ``pipeline()`` to reach sibling inputs for alignment::
+
+            image.align(self.streams.pose, tolerance=0.1)
+
+        Each access returns a fresh ``.live()`` view, so reference a sibling
+        once; use ``.materialize()`` to fan one secondary into two aligns. Do
+        not re-read the primary through this accessor (it would open a second
+        live subscription). A missing port name raises ``AttributeError``
+        listing the available streams.
+        """
+        return StreamAccessor(_LiveInputs(self._in_streams))
+
+    def ingest(self, name: str, stream: Stream[Any], msg: Any) -> None:
+        """Append an incoming *msg* from In port *name* to its backing *stream*.
+
+        Override to enrich (e.g. anchor a robot pose), tag, or drop messages
+        before they enter the pipeline. This is the seam that replaces copying
+        ``start()``. The default stamps each observation with the message's own
+        ``.ts`` when present (so cross-port ``.align()`` is meaningful), falling
+        back to arrival time for unstamped payloads such as bare ints.
+        """
+        stream.append(msg, ts=getattr(msg, "ts", None) or time.time())
+
+    def _wire_input(self, name: str, port: In[Any], store: NullStore) -> Stream[Any]:
+        """Create the backing stream for an In *port* and route the port into it.
+
+        Subscribing through :meth:`ingest` (rather than ``stream.append``
+        directly) is what lets subclasses customize ingestion without copying
+        ``start()``.
+        """
+        stream: Stream[Any] = store.stream(name, port.type)
+        unsub = port.subscribe(lambda m: self.ingest(name, stream, m))
+        self.register_disposable(Disposable(unsub) if callable(unsub) else unsub)
+        return stream
 
     @rpc
     def start(self) -> None:
         super().start()
 
-        if len(self.inputs) != 1 or len(self.outputs) != 1:
+        if not self.inputs or not self.outputs:
             raise TypeError(
-                f"{self.__class__.__name__} must have exactly one In and one Out port, "
+                f"{self.__class__.__name__} needs at least one In and one Out port, "
                 f"found {len(self.inputs)} In and {len(self.outputs)} Out"
             )
-
-        ((in_name, in_port_raw),) = self.inputs.items()
-        ((_, out_port_raw),) = self.outputs.items()
-        in_port = cast("In[TIn]", in_port_raw)
-        out_port = cast("Out[TOut]", out_port_raw)
 
         store = self.register_disposable(NullStore())
         store.start()
 
-        stream: Stream[TIn] = store.stream(in_name, in_port.type)
+        # Every In port becomes a live-capable stream; ingest() bridges push -> pull.
+        self._in_streams = {
+            name: self._wire_input(name, port, store) for name, port in self.inputs.items()
+        }
 
-        # we push input into the stream
-        self.register_disposable(Disposable(in_port.subscribe(stream.append)))
+        # First declared In is the primary the pipeline runs over (C1); siblings
+        # are reached inside pipeline() via self.streams.<port> for .align().
+        primary_name = next(iter(self.inputs))
+        produced = self._apply_pipeline(self._in_streams[primary_name].live())
 
-        # and we push stream output to the output port
-        self.register_disposable(stream_to_port(self._apply_pipeline(stream.live()), out_port))
+        # One subscribe regardless of port count -> the pipeline runs once per tick.
+        self.register_disposable(scatter_to_ports(produced, self.outputs))
 
     def _apply_pipeline(self, stream: Stream[TIn]) -> Stream[TOut]:
         """Apply the pipeline to a live stream.
