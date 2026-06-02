@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live marker detection as a memory2 StreamModule.
+"""Live marker detection as a memory2 fan-I/O StreamModule.
 
 The module keeps the same transform chain used by offline marker tooling:
 quality-gated images, optional motion gating, marker fan-out, then one
-``Detection3DArray`` per processed frame for LCM consumers.
+``Detection3DArray`` (world poses for LCM / TF) and one ``Detection2DArray``
+(image-plane overlay) per processed frame, both produced from a single marker
+detection pass and scattered to their ports in one subscribe.
 """
 
 from __future__ import annotations
@@ -25,21 +27,20 @@ import time
 from typing import Any, cast
 
 from pydantic import Field
-from reactivex.disposable import Disposable
 
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.memory2.module import StreamModule, stream_to_port
-from dimos.memory2.store.null import NullStore
+from dimos.memory2.fanio import Bundle
+from dimos.memory2.module import StreamModule
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import QualityWindow, SpeedLimit
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import camera_optical_frame_id, is_fisheye_model
-from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame
+from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersToBundle
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -62,19 +63,40 @@ class MarkerDetectionStreamModuleConfig(ModuleConfig):
     camera_info: CameraInfo | None = None
 
 
-class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
-    """Publish fiducial marker detections as ``Detection3DArray`` messages."""
+class MarkerModule(StreamModule):
+    """Publish fiducial marker detections as both ``Detection3DArray`` (world
+    poses for LCM / TF consumers) and ``Detection2DArray`` (image-plane overlays).
+
+    A single detection pass feeds both outputs: ``pipeline()`` ends in a
+    :class:`Bundle` keyed by Out port name, and the fan-I/O base scatters it in
+    one subscribe (so :class:`DetectMarkers` runs once per frame regardless of
+    output count). Per-frame world->camera_optical pose anchoring happens in the
+    :meth:`ingest` seam, which replaces the copied ``start()`` the old 1:1 base
+    required.
+    """
 
     config: MarkerDetectionStreamModuleConfig
 
     color_image: In[Image]
     detections: Out[Detection3DArray]
+    detections_2d: Out[Detection2DArray]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._warned_distortion_model = False
+        if self.config.camera_info is not None:
+            self._maybe_warn_distortion(self.config.camera_info)
 
-    def pipeline(self, stream: Stream[Image]) -> Stream[Detection3DArray]:
+    def ingest(self, name: str, stream: Stream[Image], image: Image) -> None:
+        """Anchor each frame with its world->camera_optical pose before the pipeline.
+
+        Overrides the default append so marker detection has a camera-in-world
+        pose at the image timestamp; frames without CameraInfo or TF are dropped
+        (the base ``start()`` wiring stays untouched).
+        """
+        self._append_image_with_pose(stream, image)
+
+    def pipeline(self, stream: Stream[Image]) -> Stream[Bundle]:
         result: Stream[Any] = stream.transform(
             QualityWindow(lambda img: img.sharpness, window=self.config.quality_window_s)
         )
@@ -99,7 +121,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
                 )
             ),
         )
-        return markers.transform(MarkersPerFrame(frame_id=self.config.world_frame))
+        return markers.transform(MarkersToBundle(frame_id=self.config.world_frame))
 
     def _maybe_warn_distortion(self, camera_info: CameraInfo) -> None:
         model = (camera_info.distortion_model or "").strip().lower()
@@ -150,31 +172,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             ),
         )
 
-    @rpc
-    def start(self) -> None:
-        Module.start(self)
 
-        if len(self.inputs) != 1 or len(self.outputs) != 1:
-            raise TypeError(
-                f"{self.__class__.__name__} must have exactly one In and one Out port, "
-                f"found {len(self.inputs)} In and {len(self.outputs)} Out"
-            )
-
-        store = self.register_disposable(NullStore())
-        store.start()
-        stream: Stream[Image] = store.stream("color_image", Image)
-
-        if self.config.camera_info is not None:
-            self._maybe_warn_distortion(self.config.camera_info)
-
-        unsub_image = self.color_image.subscribe(
-            lambda image: self._append_image_with_pose(stream, image)
-        )
-        self.register_disposable(Disposable(unsub_image) if callable(unsub_image) else unsub_image)
-        self.register_disposable(
-            stream_to_port(self._apply_pipeline(stream.live()), self.detections)
-        )
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()
+# Back-compat: the module gained a 2D output and dropped its hand-written
+# start(), but blueprints and imports still reference the old name.
+MarkerDetectionStreamModule = MarkerModule

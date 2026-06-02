@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from dimos.memory2.fanio import Bundle
 from dimos.memory2.transform import Transformer
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -43,6 +44,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_detect import (
@@ -302,6 +304,96 @@ class DetectMarkers(Transformer[Image, Detection3DMarker]):
                 )
 
 
+def _group_markers_per_frame(
+    upstream: Iterator[Observation[Detection3DMarker | None]],
+) -> Iterator[tuple[Observation[Detection3DMarker | None], list[Detection3DMarker]]]:
+    """Collapse per-marker fan-out into one (frame observation, markers) pair per image.
+
+    ``DetectMarkers`` emits one observation per decoded marker, plus a ``None``
+    sentinel per empty frame (``emit_empty_frames=True``), tagging each with the
+    source image and that frame's marker count. This regroups them by source
+    frame so a downstream transform can build a single array - 3D, 2D, or both -
+    per processed image without waiting for a later timestamp. Empty frames yield
+    ``(obs, [])`` so consumers still emit an empty array for them.
+    """
+    pending: list[Detection3DMarker] = []
+    pending_obs: Observation[Detection3DMarker | None] | None = None
+    pending_ts: float | None = None
+
+    def take() -> tuple[Observation[Detection3DMarker | None], list[Detection3DMarker]] | None:
+        nonlocal pending, pending_obs, pending_ts
+        if pending_obs is None:
+            return None
+        grouped = (pending_obs, pending)
+        pending = []
+        pending_obs = None
+        pending_ts = None
+        return grouped
+
+    for obs in upstream:
+        det = obs.data
+        if det is None:
+            grouped = take()
+            if grouped is not None:
+                yield grouped
+            yield (obs, [])
+            continue
+
+        if pending_ts is not None and obs.ts != pending_ts:
+            grouped = take()
+            if grouped is not None:
+                yield grouped
+
+        if pending_obs is None:
+            pending_obs = obs
+            pending_ts = obs.ts
+        pending.append(det)
+
+        expected_count = obs.tags.get("marker_frame_count")
+        if (
+            isinstance(expected_count, int)
+            and expected_count > 0
+            and len(pending) >= expected_count
+        ):
+            grouped = take()
+            if grouped is not None:
+                yield grouped
+
+    grouped = take()
+    if grouped is not None:
+        yield grouped
+
+
+def _frame_image(
+    obs: Observation[Detection3DMarker | None],
+    detections: list[Detection3DMarker],
+) -> Image:
+    if detections:
+        return detections[0].image
+    image = obs.tags.get("marker_frame_image")
+    if isinstance(image, Image):
+        return image
+    raise ValueError("marker frame grouping requires marker_frame_image for empty frames")
+
+
+def _frame_pose(
+    obs: Observation[Detection3DMarker | None],
+    detections: list[Detection3DMarker],
+) -> Any | None:
+    if detections and detections[0].transform is not None:
+        transform = detections[0].transform
+        return (
+            transform.translation.x,
+            transform.translation.y,
+            transform.translation.z,
+            transform.rotation.x,
+            transform.rotation.y,
+            transform.rotation.z,
+            transform.rotation.w,
+        )
+    return obs.pose
+
+
 class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
     """Collapse marker fan-out back into one Detection3DArray per image frame.
 
@@ -320,89 +412,40 @@ class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
     def __call__(
         self, upstream: Iterator[Observation[Detection3DMarker | None]]
     ) -> Iterator[Observation[Detection3DArray]]:
-        pending: list[Detection3DMarker] = []
-        pending_obs: Observation[Detection3DMarker | None] | None = None
-        pending_ts: float | None = None
-
-        def flush() -> Observation[Detection3DArray] | None:
-            nonlocal pending, pending_obs, pending_ts
-            if pending_obs is None:
-                return None
-            result = self._to_array_observation(pending_obs, pending)
-            pending = []
-            pending_obs = None
-            pending_ts = None
-            return result
-
-        for obs in upstream:
-            det = obs.data
-            if det is None:
-                flushed = flush()
-                if flushed is not None:
-                    yield flushed
-                yield self._to_array_observation(obs, [])
-                continue
-
-            if pending_ts is not None and obs.ts != pending_ts:
-                flushed = flush()
-                if flushed is not None:
-                    yield flushed
-
-            if pending_obs is None:
-                pending_obs = obs
-                pending_ts = obs.ts
-            pending.append(det)
-
-            expected_count = obs.tags.get("marker_frame_count")
-            if (
-                isinstance(expected_count, int)
-                and expected_count > 0
-                and len(pending) >= expected_count
-            ):
-                flushed = flush()
-                if flushed is not None:
-                    yield flushed
-
-        flushed = flush()
-        if flushed is not None:
-            yield flushed
-
-    def _to_array_observation(
-        self,
-        obs: Observation[Detection3DMarker | None],
-        detections: list[Detection3DMarker],
-    ) -> Observation[Detection3DArray]:
-        image = self._source_image(obs, detections)
-        msg = ImageDetections3D(image, detections).to_ros_detection3d_array(frame_id=self.frame_id)
-        pose = self._source_pose(obs, detections)
-        return obs.derive(data=msg, pose=pose).tag(detections_length=len(detections))
-
-    @staticmethod
-    def _source_image(
-        obs: Observation[Detection3DMarker | None],
-        detections: list[Detection3DMarker],
-    ) -> Image:
-        if detections:
-            return detections[0].image
-        image = obs.tags.get("marker_frame_image")
-        if isinstance(image, Image):
-            return image
-        raise ValueError("MarkersPerFrame requires marker_frame_image for empty frames")
-
-    @staticmethod
-    def _source_pose(
-        obs: Observation[Detection3DMarker | None],
-        detections: list[Detection3DMarker],
-    ) -> Any | None:
-        if detections and detections[0].transform is not None:
-            transform = detections[0].transform
-            return (
-                transform.translation.x,
-                transform.translation.y,
-                transform.translation.z,
-                transform.rotation.x,
-                transform.rotation.y,
-                transform.rotation.z,
-                transform.rotation.w,
+        for obs, detections in _group_markers_per_frame(upstream):
+            image = _frame_image(obs, detections)
+            msg = ImageDetections3D(image, detections).to_ros_detection3d_array(
+                frame_id=self.frame_id
             )
-        return obs.pose
+            yield obs.derive(data=msg, pose=_frame_pose(obs, detections)).tag(
+                detections_length=len(detections)
+            )
+
+
+class MarkersToBundle(Transformer[Detection3DMarker | None, Bundle]):
+    """Emit one ``Bundle`` per frame carrying both the 3D and 2D marker arrays.
+
+    Builds a ``Detection3DArray`` (LCM / TF consumers) and a ``Detection2DArray``
+    (image-plane overlays) from the *same* marker detection pass, so adding the
+    2D output costs no extra detector work. The bundle keys match the
+    ``MarkerModule`` Out port names; ``scatter_to_ports`` fans them out in one
+    subscribe. Empty frames still emit two empty-but-present arrays so "no
+    markers this frame" stays distinct from "idle port".
+    """
+
+    def __init__(self, frame_id: str = "world") -> None:
+        self.frame_id = frame_id
+
+    def __call__(
+        self, upstream: Iterator[Observation[Detection3DMarker | None]]
+    ) -> Iterator[Observation[Bundle]]:
+        for obs, detections in _group_markers_per_frame(upstream):
+            image = _frame_image(obs, detections)
+            d3d = ImageDetections3D(image, detections).to_ros_detection3d_array(
+                frame_id=self.frame_id
+            )
+            d2d = ImageDetections2D(image, detections).to_ros_detection2d_array()
+            yield obs.derive(
+                data=Bundle({"detections": d3d, "detections_2d": d2d}),
+                pose=_frame_pose(obs, detections),
+            ).tag(detections_length=len(detections))

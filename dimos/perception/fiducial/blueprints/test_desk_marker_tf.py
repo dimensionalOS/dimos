@@ -50,6 +50,10 @@ def test_desk_marker_tf_blueprint_declares_static_tf_module() -> None:
         desk_marker_tf.transport_map[("detections", MarkerDetectionStreamModule)].topic.topic
         == "/marker_detection/detections"
     )
+    assert (
+        desk_marker_tf.transport_map[("detections_2d", MarkerDetectionStreamModule)].topic.topic
+        == "/marker_detection/detections_2d"
+    )
 
 
 def test_create_desk_webcam_loads_camera_info_yaml(tmp_path: Path) -> None:

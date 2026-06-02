@@ -25,6 +25,7 @@ from dimos.memory2.module import Recorder, RecorderConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
@@ -73,6 +74,10 @@ unitree_go2_markers = (
             ("detections", MarkerDetectionStreamModule): LCMTransport(
                 "/marker_detection/detections",
                 Detection3DArray,
+            ),
+            ("detections_2d", MarkerDetectionStreamModule): LCMTransport(
+                "/marker_detection/detections_2d",
+                Detection2DArray,
             ),
         }
     )

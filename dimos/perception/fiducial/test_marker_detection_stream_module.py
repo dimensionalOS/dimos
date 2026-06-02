@@ -21,6 +21,7 @@ import pytest
 
 pytest.importorskip("cv2.aruco")
 
+from dimos.memory2.fanio import Bundle
 from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -30,7 +31,8 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
-from dimos.perception.fiducial.marker_transformer import MarkersPerFrame
+from dimos.perception.fiducial.marker_transformer import MarkersPerFrame, MarkersToBundle
+from dimos.types.timestamped import to_timestamp
 from dimos.perception.fiducial.test_helpers import (
     blank_image,
     camera_info,
@@ -92,13 +94,52 @@ def _marker_obs(
     )
 
 
-def test_marker_detection_stream_module_exposes_single_stream_input() -> None:
+def test_marker_module_exposes_image_input_and_2d_3d_outputs() -> None:
     module = MarkerDetectionStreamModule(marker_length_m=0.18, camera_info=camera_info())
     try:
         assert set(module.inputs) == {"color_image"}
-        assert set(module.outputs) == {"detections"}
+        assert set(module.outputs) == {"detections", "detections_2d"}
     finally:
         module.stop()
+
+
+def test_markers_to_bundle_emits_parallel_2d_and_3d_arrays() -> None:
+    image = blank_image(ts=10.0)
+    empty_image = blank_image(ts=11.0)
+    marker_a = _marker(image, 7)
+    marker_b = _marker(image, 42)
+
+    outputs = list(
+        MarkersToBundle(frame_id="world")(
+            iter(
+                [
+                    _marker_obs(image, marker_a, obs_id=1, marker_count=2, marker_index=0),
+                    _marker_obs(image, marker_b, obs_id=2, marker_count=2, marker_index=1),
+                    _marker_obs(empty_image, None, obs_id=3, marker_count=0),
+                ]
+            )
+        )
+    )
+
+    assert len(outputs) == 2
+    assert all(isinstance(obs.data, Bundle) for obs in outputs)
+
+    frame = outputs[0].data
+    d3d = frame["detections"]
+    d2d = frame["detections_2d"]
+    # One detection pass feeds both arrays: equal count and frame timestamp.
+    assert d3d.detections_length == 2
+    assert d2d.detections_length == 2
+    assert d3d.ts == pytest.approx(image.ts)
+    assert to_timestamp(d2d.header.stamp) == pytest.approx(image.ts)
+    assert [det.id for det in d3d.detections] == ["7", "42"]
+
+    empty = outputs[1].data
+    # Empty frame still publishes both arrays (empty-but-present, not idle).
+    assert empty["detections"].detections_length == 0
+    assert empty["detections_2d"].detections_length == 0
+    assert empty["detections"].ts == pytest.approx(empty_image.ts)
+    assert to_timestamp(empty["detections_2d"].header.stamp) == pytest.approx(empty_image.ts)
 
 
 def test_markers_per_frame_groups_markers_and_preserves_empty_frames() -> None:
@@ -159,21 +200,29 @@ def test_marker_detection_stream_pipeline_outputs_arrays_for_marker_and_empty_fr
                 pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
             )
 
-            outputs = [obs.data for obs in module.pipeline(stream).to_list()]
+            bundles = [obs.data for obs in module.pipeline(stream).to_list()]
     finally:
         module.stop()
 
-    assert len(outputs) == 2
-    assert outputs[0].detections_length == 1
-    assert outputs[0].detections[0].id == str(marker_id)
-    assert outputs[0].detections[0].results[0].hypothesis.class_id == (
+    assert len(bundles) == 2
+    d3d = [bundle["detections"] for bundle in bundles]
+    d2d = [bundle["detections_2d"] for bundle in bundles]
+
+    assert d3d[0].detections_length == 1
+    assert d3d[0].detections[0].id == str(marker_id)
+    assert d3d[0].detections[0].results[0].hypothesis.class_id == (
         f"DICT_APRILTAG_36h11:{marker_id}"
     )
-    assert outputs[0].detections[0].bbox.size.x == pytest.approx(marker_length_m)
+    assert d3d[0].detections[0].bbox.size.x == pytest.approx(marker_length_m)
 
-    assert outputs[1].ts == pytest.approx(empty_image.ts)
-    assert outputs[1].detections_length == 0
-    assert outputs[1].detections == []
+    # 2D output is the same detection pass repackaged for image-plane overlays.
+    assert d2d[0].detections_length == d3d[0].detections_length
+    assert to_timestamp(d2d[0].header.stamp) == pytest.approx(d3d[0].ts)
+
+    assert d3d[1].ts == pytest.approx(empty_image.ts)
+    assert d3d[1].detections_length == 0
+    assert d3d[1].detections == []
+    assert d2d[1].detections_length == 0
 
 
 def test_marker_detection_stream_pipeline_speed_limit_is_config_gated() -> None:
@@ -202,7 +251,7 @@ def test_marker_detection_stream_pipeline_speed_limit_is_config_gated() -> None:
                 stream = store.stream("color_image", Image)
                 for image, pose in zip(images, poses, strict=True):
                     stream.append(image, ts=image.ts, pose=pose)
-                return [obs.data for obs in module.pipeline(stream).to_list()]
+                return [obs.data["detections"] for obs in module.pipeline(stream).to_list()]
         finally:
             module.stop()
 

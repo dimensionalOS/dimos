@@ -30,6 +30,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
@@ -162,6 +163,10 @@ desk_marker_tf = autoconnect(
         ("detections", MarkerDetectionStreamModule): LCMTransport(
             "/marker_detection/detections",
             Detection3DArray,
+        ),
+        ("detections_2d", MarkerDetectionStreamModule): LCMTransport(
+            "/marker_detection/detections_2d",
+            Detection2DArray,
         ),
     }
 )
