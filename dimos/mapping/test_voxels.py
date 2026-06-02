@@ -20,9 +20,9 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.mapping.voxels import VoxelGrid
-from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment
 
