@@ -38,6 +38,7 @@ from dimos.memory2.type.filter import (
     TimeRangeFilter,
 )
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -177,7 +178,11 @@ class Stream(CompositeResource, Generic[T, O]):
         return self.at(t0 + t, tolerance=tolerance)
 
     def near(self, pose: Any, radius: float) -> Stream[T, O]:
-        return self._with_filter(NearFilter(pose, radius))
+        # Accept Pose/PoseStamped (any object with `.position`), Vector3,
+        # numpy arrays, or (x, y, z) tuples — Vector3() handles the rest.
+        if hasattr(pose, "position"):
+            pose = pose.position
+        return self._with_filter(NearFilter(Vector3(pose), radius))
 
     def tags(self, **tags: Any) -> Stream[T, O]:
         return self._with_filter(TagsFilter(tags))
@@ -190,6 +195,36 @@ class Stream(CompositeResource, Generic[T, O]):
 
     def offset(self, n: int) -> Stream[T, O]:
         return self._replace_query(offset_val=n)
+
+    # Time windowing — None means unbounded on that side. ``*_time`` is relative
+    # to the stream's first observation; ``*_timestamp`` is absolute epoch seconds.
+    def from_time(self, seconds: float | None) -> Stream[T, O]:
+        """Keep observations from ``seconds`` after the first (relative)."""
+        if seconds is None:
+            return self
+        try:
+            t0 = self.first().ts
+        except LookupError:
+            return self  # already empty → empty window, not a crash
+        return self.after(t0 + seconds)
+
+    def to_time(self, seconds: float | None) -> Stream[T, O]:
+        """Keep ``seconds`` of observations from the current start (relative duration)."""
+        if seconds is None:
+            return self
+        try:
+            t0 = self.first().ts
+        except LookupError:
+            return self
+        return self.before(t0 + seconds)
+
+    def from_timestamp(self, ts: float | None) -> Stream[T, O]:
+        """Keep observations after absolute epoch ``ts``."""
+        return self if ts is None else self.after(ts)
+
+    def to_timestamp(self, ts: float | None) -> Stream[T, O]:
+        """Keep observations up to absolute epoch ``ts``."""
+        return self if ts is None else self.before(ts)
 
     def search(self, query: Embedding, k: int | None = None) -> Stream[T, EmbeddedObservation[T]]:
         """Rank observations by cosine similarity to *query*.

@@ -18,17 +18,21 @@ Every test launches the real native_echo.py subprocess via ModuleCoordinator.bui
 The echo script writes received CLI args to a temp file for assertions.
 """
 
+from io import BytesIO
 import json
 from pathlib import Path
 import time
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
+from dimos.core import native_module as native_module_mod
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -193,3 +197,104 @@ def test_autoconnect(args_file: str) -> None:
         "output_file": args_file,
         "some_param": "2.5",
     }
+
+
+def _capture_logs(
+    log_format: LogFormat,
+    payload: bytes,
+    default_level: str = "info",
+) -> list[tuple[str, str, dict]]:
+    calls: list[tuple[str, str, dict]] = []
+
+    class FakeLogger:
+        def __getattr__(self, name: str):
+            def _record(message: str, **kwargs: object) -> None:
+                calls.append((name, message, kwargs))
+
+            return _record
+
+    fixture = SimpleNamespace(
+        config=SimpleNamespace(log_format=log_format),
+        _module_label="test",
+    )
+    with patch.object(native_module_mod, "logger", FakeLogger()):
+        NativeModule._read_log_stream(
+            fixture,  # type: ignore[arg-type]
+            BytesIO(payload),
+            default_level,
+            pid=123,
+        )
+    return calls
+
+
+def test_text_mode_uses_stream_default_level() -> None:
+    calls = _capture_logs(LogFormat.TEXT, b"hello\n", "info")
+    assert calls == [("info", "hello", {"module": "test", "pid": 123})]
+
+
+def test_empty_lines_skipped() -> None:
+    calls = _capture_logs(LogFormat.TEXT, b"\n\nhello\n\n", "info")
+    assert len(calls) == 1
+    assert calls[0][1] == "hello"
+
+
+def test_json_mode_honors_level_field() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b'{"level": "error", "message": "boom"}\n',
+        "info",
+    )
+    assert len(calls) == 1
+    assert calls[0][0] == "error"
+    assert calls[0][1] == "boom"
+
+
+def test_json_mode_level_alias_is_case_insensitive() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b'{"level": "WARN", "message": "watch out"}\n',
+        "info",
+    )
+    assert calls[0][0] == "warning"
+
+
+def test_json_mode_reads_tracing_subscriber_fields_message() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b'{"level": "INFO", "fields": {"message": "started", "device": "/dev/foo"}}\n',
+        "info",
+    )
+    assert len(calls) == 1
+    method, message, kwargs = calls[0]
+    assert method == "info"
+    assert message == "started"
+    assert kwargs["device"] == "/dev/foo"
+
+
+def test_json_mode_unrecognized_level_falls_back_to_stream_default() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b'{"level": "weird", "message": "hi"}\n',
+        "warning",
+    )
+    assert calls[0][0] == "warning"
+
+
+def test_json_mode_missing_level_falls_back_to_stream_default() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b'{"message": "no level here"}\n',
+        "warning",
+    )
+    assert calls[0][0] == "warning"
+    assert calls[0][1] == "no level here"
+
+
+def test_json_mode_malformed_falls_back_to_plain_text() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b"not json at all\n",
+        "info",
+    )
+    assert calls[0][0] == "info"
+    assert calls[0][1] == "not json at all"

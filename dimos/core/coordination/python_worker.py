@@ -21,20 +21,15 @@ import os
 import signal
 import sys
 import threading
-import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
-from rpyc.utils.server import ThreadedServer
-
-from dimos.core.coordination.rpyc_services import WorkerRpycService
 from dimos.core.coordination.worker_messages import (
     CallMethodRequest,
     DeployModuleRequest,
     GetAttrRequest,
     SetRefRequest,
     ShutdownRequest,
-    StartRpycRequest,
     SuppressConsoleRequest,
     UndeployModuleRequest,
     WorkerRequest,
@@ -134,10 +129,6 @@ class Actor:
         """Set the actor reference on the remote module."""
         result = self._send_request_to_worker(SetRefRequest(module_id=self._module_id, ref=ref))
         return ActorFuture(result)
-
-    def start_rpyc(self) -> int:
-        port: int = self._send_request_to_worker(StartRpycRequest())
-        return port
 
     def __getattr__(self, name: str) -> Any:
         """Proxy attribute access to the worker process."""
@@ -333,8 +324,6 @@ def _suppress_console_output() -> None:
 class _WorkerState:
     instances: dict[int, Any]
     worker_id: int
-    rpyc_server: ThreadedServer | None = None
-    rpyc_thread: threading.Thread | None = None
     should_stop: bool = False
 
 
@@ -406,40 +395,7 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             _suppress_console_output()
             return WorkerResponse(result=True)
 
-        case StartRpycRequest():
-            if state.rpyc_server is not None:
-                return WorkerResponse(result=state.rpyc_server.port)
-            WorkerRpycService._instances = state.instances
-            state.rpyc_server = ThreadedServer(
-                WorkerRpycService,
-                port=0,
-                hostname=global_config.listen_host,
-                protocol_config={
-                    "allow_all_attrs": True,
-                    "allow_public_attrs": True,
-                    "allow_pickle": True,
-                },
-            )
-            # `ThreadedServer.__init__` binds the socket but `listen()` only
-            # runs once `start()` executes on the thread, which sets
-            # `active=True` immediately after. Wait on that flag so callers
-            # never see a Connection refused before the accept loop is live.
-            state.rpyc_thread = threading.Thread(target=state.rpyc_server.start, daemon=True)
-            state.rpyc_thread.start()
-            deadline = time.monotonic() + 5.0
-            while not state.rpyc_server.active:
-                if not state.rpyc_thread.is_alive():
-                    raise RuntimeError("rpyc server thread died before listening")
-                if time.monotonic() > deadline:
-                    raise RuntimeError("rpyc server failed to start listening within 5s")
-                time.sleep(0.001)
-            return WorkerResponse(result=state.rpyc_server.port)
-
         case ShutdownRequest():
-            if state.rpyc_server is not None:
-                state.rpyc_server.close()
-                if state.rpyc_thread is not None:
-                    state.rpyc_thread.join(timeout=5)
             state.should_stop = True
             return WorkerResponse(result=True)
 

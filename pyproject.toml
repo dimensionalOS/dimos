@@ -126,7 +126,6 @@ dependencies = [
     "psutil>=7.0.0",
     "sqlite-vec>=0.1.6",
     "lz4>=4.4.5",
-    "rpyc>=6.0.0",
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
 ]
@@ -249,8 +248,9 @@ manipulation = [
 
     # Hardware SDKs
     "piper-sdk",
-    "pyrealsense2; sys_platform != 'darwin'",
+    "pyrealsense2-extended; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
+    "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -402,7 +402,7 @@ tests = [
 
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
-    "dimos[apriltag,psql,drone,cpu]",
+    "dimos[apriltag,mapping,psql,drone,cpu]",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -453,7 +453,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { md-babel-py = "2026-05-16", dimos-viewer = "2026-05-22" }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false }
 override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
@@ -526,6 +526,8 @@ exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/c
 [[tool.mypy.overrides]]
 module = [
     "annotation_protocol",
+    "a750_control",
+    "a750_control.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
@@ -543,8 +545,6 @@ module = [
     "plum.*",
     "portal",
     "psutil",
-    "rpyc",
-    "rpyc.*",
     "pycuda",
     "pycuda.*",
     "pydrake",
