@@ -76,30 +76,34 @@ def _nearest_align_iter(
 ) -> Iterator[Observation[Any]]:
     """Streaming two-pointer nearest-ts merge over ts-ascending iterators.
 
-    The secondary cursor catches up to each primary; the nearest secondary is
-    whichever of the two bracketing it (the last one at/before ``p`` or the
-    first one after) is closer. O(1) state — only those two are held, never a
-    window — so it streams over arbitrarily long (including live) inputs.
+    For each primary ``p`` the cursor brackets it with ``prev`` (the last
+    secondary strictly before ``p``) and ``nxt`` (the first at or after ``p``);
+    the nearer of the two within ``tolerance`` is paired, and an exact ts match
+    (distance 0) always wins. O(1) state - only those two are held, never a
+    window - so it streams over arbitrarily long (including live) inputs.
     """
     secondary = iter(secondary_iter)
-    prev: Observation[Any] | None = None  # last secondary with ts <= p.ts
-    nxt: Observation[Any] | None = next(secondary, None)  # first secondary after prev
+    prev: Observation[Any] | None = None  # last secondary with ts < p.ts
+    nxt: Observation[Any] | None = next(secondary, None)  # first secondary at/after prev
 
     for p in primary_iter:
-        # Advance the cursor until `nxt` sits past `p`; `prev` trails just behind.
+        # Advance until `nxt` reaches or passes `p`; `prev` trails strictly
+        # behind. Stopping at `nxt.ts == p.ts` keeps an exact match as a
+        # zero-distance candidate rather than sliding past it.
         while nxt is not None and nxt.ts < p.ts:
             prev = nxt
             nxt = next(secondary, None)
 
-        # Nearest is the closer of the two bracketing secondaries.
-        if prev is None:
-            best = nxt
-        elif nxt is None:
-            best = prev
-        else:
-            best = prev if (p.ts - prev.ts) <= (nxt.ts - p.ts) else nxt
-
-        if best is not None and abs(best.ts - p.ts) <= tolerance:
+        # Pair with the closest bracketing secondary within tolerance. Either
+        # bracket may be absent at the ends of the secondary stream; ties go to
+        # `prev` (visited first) and an exact match - distance 0 - wins outright.
+        best: Observation[Any] | None = None
+        for cand in (prev, nxt):
+            if cand is None or abs(cand.ts - p.ts) > tolerance:
+                continue
+            if best is None or abs(cand.ts - p.ts) < abs(best.ts - p.ts):
+                best = cand
+        if best is not None:
             yield p.derive(data=pair_class(p, best))
 
 
@@ -397,7 +401,7 @@ class Stream(CompositeResource, Generic[T, O]):
         The primary (``self``) drives; for each primary the nearest secondary
         within ``|Δts| <= tolerance`` is paired, others are skipped. The merge
         is a single forward pass that assumes **both streams iterate in
-        ascending ts** — true for live streams (arrival order) and for stored
+        ascending ts** - true for live streams (arrival order) and for stored
         streams in insertion order; prepend ``.order_by("ts")`` on a side whose
         iteration order isn't chronological. Source-agnostic: stored,
         transformed, and live streams all work (a live side simply never ends).
