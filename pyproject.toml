@@ -241,12 +241,6 @@ unitree-dds = [
     "cyclonedds>=0.10.5",
 ]
 
-unitree-dds = [
-    "dimos[unitree]",
-    "unitree-sdk2py-dimos>=1.0.2",
-    "cyclonedds>=0.10.5",
-]
-
 manipulation = [
     # Planning (Drake)
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
