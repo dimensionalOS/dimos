@@ -19,7 +19,7 @@
 to be ``"<dataset>/<stream>"``.
 
 Callers that still need to read from legacy pickle dirs should import
-``LegacyPickleStore`` directly from ``dimos.memory.timeseries.legacy``. The
+``LegacyPickleStore`` directly from ``dimos.utils.testing.legacy_pickle``. The
 write-side (``TimedSensorStorage``/``SensorStorage``) still points at
 ``LegacyPickleStore`` — out of scope for the memory2 migration.
 """
@@ -37,9 +37,9 @@ from reactivex.disposable import Disposable, SerialDisposable
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
-from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.utils.data import get_data
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 T = TypeVar("T")
 
