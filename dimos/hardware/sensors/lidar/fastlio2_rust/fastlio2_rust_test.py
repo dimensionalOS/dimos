@@ -81,7 +81,7 @@ def _read_positions(path: Path) -> np.ndarray:
 
 
 @pytest.mark.tool
-@pytest.mark.slow
+@pytest.mark.heavy
 def test_fastlio_rust_replay_trajectory_is_bounded(tmp_path: Path) -> None:
     output_file = tmp_path / "trajectory.txt"
     output_file.touch()

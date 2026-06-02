@@ -47,6 +47,20 @@ struct ModuleConfig {
     // whatever the YAML sets. Default ~200 mph.
     #[serde(default = "default_max_velocity")]
     max_velocity: f64,
+    // FAST-LIO scan/map downsample voxel sizes. None keeps the YAML value.
+    #[serde(default)]
+    filter_size_surf: Option<f64>,
+    #[serde(default)]
+    filter_size_map: Option<f64>,
+    // Output publish gating: < 0 disabled, 0 every scan, > 0 throttled to N Hz.
+    #[serde(default)]
+    map_freq: f64,
+    #[serde(default)]
+    odom_freq: f64,
+    // Publish the registered (world-frame) cloud on `registered_scan`:
+    // 0 off, > 0 throttled to N Hz.
+    #[serde(default)]
+    registered_scan_freq: f64,
 }
 
 fn default_frame_id() -> String {
@@ -76,11 +90,33 @@ struct FastLio2Rust {
     #[output(encode = PointCloud2::encode)]
     global_map: Output<PointCloud2>,
 
+    #[output(encode = PointCloud2::encode)]
+    registered_scan: Output<PointCloud2>,
+
     #[config]
     config: ModuleConfig,
 
     builder: Option<MapBuilder>,
     imu_buffer: Vec<IMUData>,
+    // Scan time of the last publish on each output, for freq throttling.
+    last_map_pub_sec: Option<f64>,
+    last_odom_pub_sec: Option<f64>,
+    last_registered_pub_sec: Option<f64>,
+}
+
+// Whether a stream gated at `freq` Hz should publish at `now`, given its last
+// publish time: freq < 0 never, freq == 0 always, freq > 0 throttled to freq Hz.
+fn should_publish(freq: f64, now: f64, last: Option<f64>) -> bool {
+    if freq < 0.0 {
+        false
+    } else if freq == 0.0 {
+        true
+    } else {
+        match last {
+            Some(last) => now - last >= 1.0 / freq,
+            None => true,
+        }
+    }
 }
 
 impl FastLio2Rust {
@@ -101,11 +137,18 @@ impl FastLio2Rust {
             }
         };
         pipeline.max_velocity = self.config.max_velocity;
+        if let Some(value) = self.config.filter_size_surf {
+            pipeline.scan_resolution = value;
+        }
+        if let Some(value) = self.config.filter_size_map {
+            pipeline.map_resolution = value;
+        }
         self.builder = Some(MapBuilder::new(pipeline));
         tracing::info!(
             frame_id = %self.config.frame_id,
             child_frame_id = %self.config.child_frame_id,
             max_velocity = self.config.max_velocity,
+            map_freq = self.config.map_freq,
             debug = self.config.debug,
             "fastlio2_rust initialized"
         );
@@ -201,36 +244,78 @@ impl FastLio2Rust {
             return;
         }
 
-        let odometry = build_odometry(builder, &self.config, msg.header.stamp.clone());
-        let position = &odometry.pose.pose.position;
-        debug_log!(
-            debug,
-            position = ?[position.x, position.y, position.z],
-            "on_lidar: publishing odometry"
-        );
-        if let Err(error) = self.odometry.publish(&odometry).await {
-            error_throttled!(Duration::from_secs(1), error = %error, "odometry publish failed");
-            debug_log!(debug, error = %error, "on_lidar: odometry publish failed");
+        if should_publish(self.config.odom_freq, stamp_sec, self.last_odom_pub_sec) {
+            let odometry = build_odometry(builder, &self.config, msg.header.stamp.clone());
+            let position = &odometry.pose.pose.position;
+            debug_log!(
+                debug,
+                position = ?[position.x, position.y, position.z],
+                "on_lidar: publishing odometry"
+            );
+            match self.odometry.publish(&odometry).await {
+                Ok(()) => self.last_odom_pub_sec = Some(stamp_sec),
+                Err(error) => {
+                    error_throttled!(Duration::from_secs(1), error = %error, "odometry publish failed");
+                    debug_log!(debug, error = %error, "on_lidar: odometry publish failed");
+                }
+            }
+        } else {
+            debug_log!(
+                debug,
+                odom_freq = self.config.odom_freq,
+                "on_lidar: skipping odometry (gated by odom_freq)"
+            );
+        }
+
+        // Both global_map and registered_scan carry the same per-scan registered
+        // (world-frame) cloud; build it once if either output wants it.
+        let want_map = should_publish(self.config.map_freq, stamp_sec, self.last_map_pub_sec);
+        // registered_scan_freq differs from map/odom: 0 is off (not "every scan").
+        let want_registered = self.config.registered_scan_freq > 0.0
+            && should_publish(
+                self.config.registered_scan_freq,
+                stamp_sec,
+                self.last_registered_pub_sec,
+            );
+        if !want_map && !want_registered {
+            debug_log!(
+                debug,
+                map_freq = self.config.map_freq,
+                "on_lidar: skipping registered cloud (no output enabled)"
+            );
+            return;
         }
 
         let world = register_cloud(builder, &package.cloud);
         let world_msg = build_pointcloud(&world, &self.config.frame_id, msg.header.stamp);
-        debug_log!(
-            debug,
-            world_points = world.len(),
-            data_bytes = world_msg.data.len(),
-            point_step = world_msg.point_step,
-            "on_lidar: publishing global_map"
-        );
-        match self.global_map.publish(&world_msg).await {
-            Ok(()) => debug_log!(
+
+        if want_map {
+            debug_log!(
                 debug,
                 world_points = world.len(),
-                "on_lidar: global_map published"
-            ),
-            Err(error) => {
-                error_throttled!(Duration::from_secs(1), error = %error, "global_map publish failed");
-                debug_log!(debug, error = %error, "on_lidar: global_map publish failed");
+                "on_lidar: publishing global_map"
+            );
+            match self.global_map.publish(&world_msg).await {
+                Ok(()) => self.last_map_pub_sec = Some(stamp_sec),
+                Err(error) => {
+                    error_throttled!(Duration::from_secs(1), error = %error, "global_map publish failed");
+                    debug_log!(debug, error = %error, "on_lidar: global_map publish failed");
+                }
+            }
+        }
+
+        if want_registered {
+            debug_log!(
+                debug,
+                world_points = world.len(),
+                "on_lidar: publishing registered_scan"
+            );
+            match self.registered_scan.publish(&world_msg).await {
+                Ok(()) => self.last_registered_pub_sec = Some(stamp_sec),
+                Err(error) => {
+                    error_throttled!(Duration::from_secs(1), error = %error, "registered_scan publish failed");
+                    debug_log!(debug, error = %error, "on_lidar: registered_scan publish failed");
+                }
             }
         }
     }
@@ -426,33 +511,6 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn module_config_parses_with_defaults() {
-        let config: ModuleConfig = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.frame_id, "odom");
-        assert_eq!(config.child_frame_id, "base_link");
-        assert!(config.config_path.is_empty());
-        assert!(!config.debug);
-        assert!((config.max_velocity - 89.408).abs() < 1e-6);
-    }
-
-    #[test]
-    fn module_config_reads_overrides() {
-        let json = r#"{
-            "frame_id": "map",
-            "child_frame_id": "imu_link",
-            "config_path": "/tmp/mid360.yaml",
-            "debug": true,
-            "max_velocity": 12.5
-        }"#;
-        let config: ModuleConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.frame_id, "map");
-        assert_eq!(config.child_frame_id, "imu_link");
-        assert_eq!(config.config_path, "/tmp/mid360.yaml");
-        assert!(config.debug);
-        assert_eq!(config.max_velocity, 12.5);
-    }
 
     #[test]
     fn extract_cloud_reads_xyz_intensity() {

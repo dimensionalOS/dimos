@@ -12,14 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Python NativeModule wrapper for the native Rust FAST-LIO2 pipeline.
-
-Unlike the C++ ``FastLio2`` module, this one does not talk to the LiDAR
-hardware directly.  It consumes ``lidar`` (PointCloud2) and ``imu`` (Imu)
-streams over LCM — wire it to the Livox ``Mid360`` module via autoconnect —
-runs the FAST-LIO2 LiDAR-inertial pipeline, and publishes ``odometry`` plus
-the registered world-frame scan.
-
+"""
 Usage::
 
     from dimos.hardware.sensors.lidar.fastlio2_rust.module import FastLio2Rust
@@ -36,12 +29,18 @@ Usage::
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic.experimental.pipeline import validate_as
+from reactivex.disposable import Disposable
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -51,9 +50,6 @@ from dimos.spec import perception
 # Reuse the shared FAST-LIO YAML configs that the C++ FastLio2 module reads.
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "fastlio2" / "config"
 
-# 200 mph in m/s — the default speed gate for rejecting implausible pose jumps.
-_DEFAULT_MAX_VELOCITY_MPS = 100
-
 
 class FastLio2RustConfig(NativeModuleConfig):
     cwd: str | None = "rust"
@@ -61,7 +57,6 @@ class FastLio2RustConfig(NativeModuleConfig):
     build_command: str | None = "nix build .#fastlio2_rust_native"
     stdin_config: bool = True
 
-    # Verbose per-scan/per-imu pipeline tracing in the Rust binary.
     debug: bool = False
 
     # Output message frames.
@@ -74,6 +69,19 @@ class FastLio2RustConfig(NativeModuleConfig):
     # it needs some buffer room (dog can't actually move that fast)
     # but other than that buffer room, tigher=less chance of catestrophic divergence
     max_velocity: float = 100  # ~200 mph
+
+    # FAST-LIO downsample voxel sizes (the Rust analog of the C++ FastLio2
+    # voxel_size / map_voxel_size). None keeps whatever the YAML sets.
+    filter_size_surf: float | None = None
+    filter_size_map: float | None = None
+
+    # Output publish gating (like the C++ map_freq / odom_freq):
+    # < 0 disabled, 0 every scan (default), > 0 throttled to N Hz.
+    map_freq: float = 0.0
+    odom_freq: float = 0.0
+
+    # publish odom-frame lidar points
+    registered_scan_freq: float = 0.0
 
     # Standard FAST-LIO YAML config (shared with the C++ FastLio2 module).
     # Relative paths resolve against fastlio2/config/. The fastlio_rs crate
@@ -98,21 +106,40 @@ class FastLio2RustConfig(NativeModuleConfig):
 
 
 class FastLio2Rust(NativeModule, perception.Odometry):
-    """Native Rust FAST-LIO2 LiDAR-inertial odometry.
-
-    Ports:
-        lidar (In[PointCloud2]): Livox point cloud frames.
-        imu (In[Imu]): IMU samples (m/s^2 linear accel, rad/s angular vel).
-        odometry (Out[Odometry]): Estimated body pose + twist in ``frame_id``.
-        global_map (Out[PointCloud2]): Registered (world-frame) scan.
-    """
-
     config: FastLio2RustConfig
 
     lidar: In[PointCloud2]
     imu: In[Imu]
     odometry: Out[Odometry]
     global_map: Out[PointCloud2]
+    registered_scan: Out[PointCloud2]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(
+            Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
+        )
+
+    def _on_odom_for_tf(self, msg: Odometry) -> None:
+        self.tf.publish(
+            Transform(
+                frame_id=self.config.frame_id,
+                child_frame_id=self.config.child_frame_id,
+                translation=Vector3(
+                    msg.pose.position.x,
+                    msg.pose.position.y,
+                    msg.pose.position.z,
+                ),
+                rotation=Quaternion(
+                    msg.pose.orientation.x,
+                    msg.pose.orientation.y,
+                    msg.pose.orientation.z,
+                    msg.pose.orientation.w,
+                ),
+                ts=msg.ts or time.time(),
+            )
+        )
 
 
 # Verify protocol port compliance (mypy will flag missing ports)
