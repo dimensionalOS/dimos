@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import numpy as np
@@ -60,13 +59,11 @@ class LiteLLMVlModel(VlModel):
                 "Install it with: pip install 'dimos[litellm]'"
             ) from e
 
-        api_key = self.config.api_key or os.getenv("LITELLM_API_KEY")
-        if api_key:
-            kwargs["api_key"] = api_key
+        if self.config.api_key:
+            kwargs["api_key"] = self.config.api_key
 
-        api_base = self.config.api_base or os.getenv("LITELLM_API_BASE")
-        if api_base:
-            kwargs["api_base"] = api_base
+        if self.config.api_base:
+            kwargs["api_base"] = self.config.api_base
 
         return litellm.completion(drop_params=True, **kwargs)
 
@@ -110,7 +107,7 @@ class LiteLLMVlModel(VlModel):
             api_kwargs["response_format"] = response_format
 
         response = self._completion(**api_kwargs)
-        return response.choices[0].message.content  # type: ignore[no-any-return]
+        return response.choices[0].message.content or ""
 
     def query_batch(
         self,
