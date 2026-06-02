@@ -144,6 +144,14 @@ fn parse_config_json<C: DeserializeOwned>(line: &str) -> io::Result<(HashMap<Str
     Ok((topics, config))
 }
 
+fn with_field(field: &str, message: String) -> String {
+    if field == "__all__" {
+        message
+    } else {
+        format!("{field}: {message}")
+    }
+}
+
 fn format_validation_errors(errors: &validator::ValidationErrors) -> String {
     use validator::ValidationErrorsKind;
     let mut messages = Vec::new();
@@ -151,6 +159,7 @@ fn format_validation_errors(errors: &validator::ValidationErrors) -> String {
         match kind {
             ValidationErrorsKind::Field(field_errs) => {
                 for err in field_errs {
+                    let label = err.message.as_deref().unwrap_or(err.code.as_ref());
                     let mut bounds: Vec<String> = err
                         .params
                         .iter()
@@ -168,11 +177,11 @@ fn format_validation_errors(errors: &validator::ValidationErrors) -> String {
                         .get("value")
                         .map(|v| format!(" got {v}"))
                         .unwrap_or_default();
-                    messages.push(format!("{field}: {}{bounds_str}{got}", err.code));
+                    messages.push(with_field(field, format!("{label}{bounds_str}{got}")));
                 }
             }
             ValidationErrorsKind::Struct(nested) => {
-                messages.push(format!("{field}: {}", format_validation_errors(nested)));
+                messages.push(with_field(field, format_validation_errors(nested)));
             }
             ValidationErrorsKind::List(list) => {
                 for (idx, errs) in list {
