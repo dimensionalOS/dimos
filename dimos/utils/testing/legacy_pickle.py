@@ -26,8 +26,8 @@ from typing import Any, cast
 
 from reactivex.observable import Observable
 
-from dimos.memory.timeseries.base import T, TimeSeriesStore
 from dimos.utils.data import get_data, get_data_dir
+from dimos.utils.timeseries.base import T, TimeSeriesStore
 
 
 class LegacyPickleStore(TimeSeriesStore[T]):

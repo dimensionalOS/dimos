@@ -142,7 +142,6 @@ all_modules = {
     "drone-camera-module": "dimos.robot.drone.camera_module.DroneCameraModule",
     "drone-connection-module": "dimos.robot.drone.connection_module.DroneConnectionModule",
     "drone-tracking-module": "dimos.robot.drone.drone_tracking_module.DroneTrackingModule",
-    "embedding-memory": "dimos.memory.embedding.EmbeddingMemory",
     "emitter-module": "dimos.utils.demo_image_encoding.EmitterModule",
     "evaluator": "dimos.navigation.nav_stack.evaluator.evaluator.Evaluator",
     "far-planner": "dimos.navigation.nav_stack.modules.far_planner.far_planner.FarPlanner",
