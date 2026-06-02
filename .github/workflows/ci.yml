@@ -367,21 +367,25 @@ jobs:
             portaudio19-dev \
             `# Chromium runtime libs required by Playwright (used by dimsim browser tests).` \
             libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
-            libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
-            `# Virtual X server so headless Chromium can init EGL with --render gpu.` \
-            xvfb
+            libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Run tests
-        run: xvfb-run -a uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
+        # The runner must have an Xorg server with NVIDIA GPU access running
+        # on DISPLAY=:0 — dimsim's headless Chromium needs real WebGL for the
+        # heavier scenes (`apt`). Software X via xvfb is not enough.
+        env:
+          DISPLAY: ":0"
+        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
+          DISPLAY: ":0"
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          xvfb-run -a uv run pytest --no-cov -vvvvv --lf -m self_hosted_large && exit 1
+          uv run pytest --no-cov -vvvvv --lf -m self_hosted_large && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
