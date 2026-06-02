@@ -20,7 +20,7 @@ Walks a recorded SQLite dataset and writes an rrd containing:
 - per detection: marker box in world frame, at the detection timestamp
 
 Usage:
-    uv run python -m dimos.mapping.utils.cli.replay_marker hk_village1 --out hk.rrd
+    uv run dimos map replay-marker hk_village1 --out hk.rrd
     rerun hk.rrd
 
 Throwaway script next to ``map.py``; remove once the apriltag reliability work

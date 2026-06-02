@@ -172,6 +172,7 @@ def _log_reconstruction(
     graph: PoseGraph | None,
     marker_dets: list[Observation[Any]],
     marker_size: float,
+    bottom_cutoff: float | None = None,
 ) -> None:
     """Log maps, paths, the PGO graph, and markers to the active rerun recording."""
     from dimos.memory2.vis.color import Color
@@ -179,7 +180,11 @@ def _log_reconstruction(
 
     rr.send_blueprint(rrb.Blueprint(rrb.Spatial3DView(origin="world")))
     if global_map is not None:
-        rr.log("world/raw_map/pointcloud", global_map.to_rerun(voxel_size=voxel / 2), static=True)
+        rr.log(
+            "world/raw_map/pointcloud",
+            global_map.to_rerun(voxel_size=voxel / 2, bottom_cutoff=bottom_cutoff),
+            static=True,
+        )
     if path:
         rr.log(
             "world/raw_map/path",
@@ -187,11 +192,15 @@ def _log_reconstruction(
             static=True,
         )
     if pgo_map is not None:
-        rr.log("world/pgo_map/pointcloud", pgo_map.to_rerun(voxel_size=voxel / 2), static=True)
+        rr.log(
+            "world/pgo_map/pointcloud",
+            pgo_map.to_rerun(voxel_size=voxel / 2, bottom_cutoff=bottom_cutoff),
+            static=True,
+        )
     if full_pgo_map is not None:
         rr.log(
             "world/full_pgo_map/pointcloud",
-            full_pgo_map.to_rerun(voxel_size=voxel / 2),
+            full_pgo_map.to_rerun(voxel_size=voxel / 2, bottom_cutoff=bottom_cutoff),
             static=True,
         )
     if pgo_path:
@@ -360,6 +369,11 @@ def main(
         7.5,
         "--marker-smoothing",
         help="Sliding-window track buffer for marker pose averaging (s); 0 disables (one box per raw detection)",
+    ),
+    bottom_cutoff: float | None = typer.Option(
+        None,
+        "--bottom-cutoff",
+        help="Drop global-map points below this Z (m) when rendering; e.g. 0 strips the floor",
     ),
 ) -> None:
     """Rebuild a voxel map from a recorded SQLite dataset, write a .rrd, and open it in rerun."""
@@ -533,6 +547,7 @@ def main(
         graph=graph,
         marker_dets=marker_dets,
         marker_size=marker_size,
+        bottom_cutoff=bottom_cutoff,
     )
     print(f"wrote {out}")
     if no_gui:

@@ -20,7 +20,7 @@ forces a full re-read of every row, so any pre-existing corruption surfaces
 immediately. Streams not mentioned in ``--rename`` are copied verbatim.
 
 Usage:
-    uv run python -m dimos.mapping.utils.cli.rename mid360 \\
+    uv run dimos map rename mid360 \\
         --out mid360_renamed.db \\
         --rename go2_lidar=lidar \\
         --rename lidar=fastlio_lidar \\

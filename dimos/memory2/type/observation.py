@@ -198,7 +198,7 @@ class Observation(Generic[T]):
         )
         kwargs: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
         kwargs.update(overrides)
-        kwargs.update(data_type=type(data), _data=data, _loader=None, _data_lock=threading.Lock())
+        kwargs.update(data_type=type(data), _data=data, _loader=None)
         return cast("Observation[R]", cls(**kwargs))
 
     def tag(self, **tags: Any) -> Self:
@@ -208,7 +208,6 @@ class Observation(Generic[T]):
             tags={**self.tags, **tags},
             _data=_UNLOADED,
             _loader=lambda: self.data,
-            _data_lock=threading.Lock(),
         )
         return type(self)(**kwargs)
 
@@ -224,7 +223,6 @@ class Observation(Generic[T]):
             pose=pose,
             _data=_UNLOADED,
             _loader=lambda: self.data,
-            _data_lock=threading.Lock(),
         )
         return type(self)(**kwargs)
 

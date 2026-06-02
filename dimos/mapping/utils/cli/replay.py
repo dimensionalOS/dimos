@@ -29,9 +29,9 @@ their entity path (no parent transform). Entities written:
 - ``world/camera/image``  — color_image frames
 
 Usage:
-    uv run python -m dimos.mapping.utils.cli.replay mid360 --out map.rrd
-    uv run python -m dimos.mapping.utils.cli.replay mid360 --out map.rrd --map
-    uv run python -m dimos.mapping.utils.cli.replay mid360 --out map.rrd --map-final
+    uv run dimos map replay mid360 --out map.rrd
+    uv run dimos map replay mid360 --out map.rrd --map
+    uv run dimos map replay mid360 --out map.rrd --map-final
     rerun map.rrd
 """
 
@@ -96,6 +96,7 @@ def _log_clouds(
     point_mode: str,
     *,
     total: int | None = None,
+    bottom_cutoff: float | None = None,
 ) -> None:
     """Iterate a PointCloud2 stream and log each obs to ``entity``.
 
@@ -108,7 +109,10 @@ def _log_clouds(
     for obs in stream:
         cb(obs)
         rr.set_time(TIMELINE, timestamp=obs.ts)
-        rr.log(entity, obs.data.to_rerun(voxel_size=voxel, mode=point_mode))
+        rr.log(
+            entity,
+            obs.data.to_rerun(voxel_size=voxel, mode=point_mode, bottom_cutoff=bottom_cutoff),
+        )
 
 
 def _log_path(
@@ -201,6 +205,11 @@ def main(
         "--map-emit-every",
         help="Emit accumulated map every N frames (0 = only at end); --map only",
     ),
+    bottom_cutoff: float | None = typer.Option(
+        None,
+        "--bottom-cutoff",
+        help="Drop accumulated-map points below this Z (m) when rendering; e.g. 0 strips the floor; --map/--map-final only",
+    ),
 ) -> None:
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
     from dimos.mapping.utils.cli.summary import _stream_payload_types
@@ -286,6 +295,7 @@ def main(
                         voxel / 4,  # render smaller than the grid → gaps read as transparency
                         point_mode,
                         total=max(1, src.count() // max(map_emit_every, 1)),
+                        bottom_cutoff=bottom_cutoff,
                     )
                 if map_final:
                     # emit_every=0 → one accumulated obs at exhaustion
@@ -296,7 +306,9 @@ def main(
                     ).last()
                     rr.log(
                         f"world/{name}_map",
-                        final.data.to_rerun(voxel_size=voxel / 4, mode=point_mode),
+                        final.data.to_rerun(
+                            voxel_size=voxel / 4, mode=point_mode, bottom_cutoff=bottom_cutoff
+                        ),
                         static=True,
                     )
 
