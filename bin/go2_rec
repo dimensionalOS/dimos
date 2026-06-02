@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+# sudo ifconfig en7 inet 192.168.1.5 netmask 255.255.255.0
+source .venv/bin/activate
+kd
+
+log_path="./go2_recordings/log.txt"
+mkdir -p "$(dirname "$log_path")"
+echo "NEW RECORDING: $(date)" >> "$log_path"
+dimos --no-obstacle-avoidance --robot-ip 192.168.124.177 run unitree-go2-record | tee -a "$log_path"
