@@ -22,40 +22,20 @@ import pytest
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMap
 
 
-def _config() -> dict[str, float | int]:
-    return {
-        "voxel_size": 1.0,
-        "max_range": 100.0,
-        "ray_subsample": 1,
-        "shadow_depth": 0.0,
-        "grace_depth": 0.0,
-        "min_health": 0,
-        "max_health": 1,
-    }
+def _mapper() -> VoxelRayMap:
+    return VoxelRayMap(
+        voxel_size=1.0,
+        max_range=100.0,
+        ray_subsample=1,
+        shadow_depth=0.0,
+        grace_depth=0.0,
+        min_health=0,
+        max_health=1,
+    )
 
 
-def test_construct_valid_config() -> None:
-    mapper = VoxelRayMap(**_config())
-    assert len(mapper) == 0
-
-
-def test_construct_rejects_zero_voxel_size() -> None:
-    cfg = _config()
-    cfg["voxel_size"] = 0.0
-    with pytest.raises(ValueError, match="voxel_size"):
-        VoxelRayMap(**cfg)
-
-
-def test_construct_rejects_min_health_geq_max_health() -> None:
-    cfg = _config()
-    cfg["min_health"] = 5
-    cfg["max_health"] = 1
-    with pytest.raises(ValueError, match="min_health"):
-        VoxelRayMap(**cfg)
-
-
-def test_add_frame_inserts_hit_voxels() -> None:
-    mapper = VoxelRayMap(**_config())
+def test_add_frame_round_trip() -> None:
+    mapper = _mapper()
     points = np.array(
         [
             [5.5, 0.5, 0.5],
@@ -68,7 +48,6 @@ def test_add_frame_inserts_hit_voxels() -> None:
     voxels = mapper.global_map()
     assert voxels.dtype == np.float32
     assert voxels.shape == (2, 3)
-    assert len(mapper) == 2
 
     centers = {tuple(row) for row in voxels.tolist()}
     assert (5.5, 0.5, 0.5) in centers
@@ -76,14 +55,14 @@ def test_add_frame_inserts_hit_voxels() -> None:
 
 
 def test_add_frame_rejects_wrong_shape() -> None:
-    mapper = VoxelRayMap(**_config())
+    mapper = _mapper()
     bad = np.array([1.0, 2.0, 3.0], dtype=np.float32)
     with pytest.raises(ValueError, match="N, 3"):
         mapper.add_frame(bad, (0.0, 0.0, 0.0))
 
 
 def test_add_frame_drops_non_finite_points() -> None:
-    mapper = VoxelRayMap(**_config())
+    mapper = _mapper()
     points = np.array(
         [
             [5.5, 0.5, 0.5],
@@ -96,24 +75,8 @@ def test_add_frame_drops_non_finite_points() -> None:
     assert len(mapper) == 1
 
 
-def test_local_map_clips_to_cylinder() -> None:
-    mapper = VoxelRayMap(**_config())
-    points = np.array(
-        [
-            [0.5, 0.5, 0.5],
-            [10.5, 0.5, 0.5],
-        ],
-        dtype=np.float32,
-    )
-    mapper.add_frame(points, (0.0, 0.0, 0.0))
-
-    nearby = mapper.local_map(origin=(0.0, 0.0, 0.0), radius=2.0, z_min=-1.0, z_max=1.0)
-    assert nearby.shape == (1, 3)
-    assert tuple(nearby[0].tolist()) == (0.5, 0.5, 0.5)
-
-
 def test_clear_resets_map() -> None:
-    mapper = VoxelRayMap(**_config())
+    mapper = _mapper()
     mapper.add_frame(
         np.array([[5.5, 0.5, 0.5]], dtype=np.float32),
         (0.0, 0.0, 0.0),

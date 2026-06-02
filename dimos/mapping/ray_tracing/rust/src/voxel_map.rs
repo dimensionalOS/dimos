@@ -63,6 +63,12 @@ pub struct VoxelMap {
     pub voxels: AHashMap<VoxelKey, i32>,
 }
 
+impl VoxelMap {
+    pub fn healthy_count(&self) -> usize {
+        self.voxels.values().filter(|h| **h > 0).count()
+    }
+}
+
 pub struct LocalBounds {
     pub origin_x: f32,
     pub origin_y: f32,

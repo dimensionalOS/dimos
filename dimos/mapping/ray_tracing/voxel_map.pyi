@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.typing import NDArray
 
 class VoxelRayMap:
     """Voxel map with raycast clearing of dynamic objects."""
@@ -16,13 +17,13 @@ class VoxelRayMap:
     ) -> None: ...
     def add_frame(
         self,
-        points: np.ndarray,
+        points: NDArray[np.float32],
         origin: tuple[float, float, float],
     ) -> None:
-        """Update the map with a frame of lidar points."""
+        """Update the map with a frame of lidar points. Shape (N, 3) float32."""
         ...
 
-    def global_map(self) -> np.ndarray:
+    def global_map(self) -> NDArray[np.float32]:
         """Return the centers of all healthy voxels as (M, 3) float32."""
         ...
 
@@ -32,8 +33,8 @@ class VoxelRayMap:
         radius: float,
         z_min: float,
         z_max: float,
-    ) -> np.ndarray:
-        """Return healthy voxels inside the cylinder around origin."""
+    ) -> NDArray[np.float32]:
+        """Return healthy voxels inside the cylinder around origin as (M, 3) float32."""
         ...
 
     def voxel_count(self) -> int:

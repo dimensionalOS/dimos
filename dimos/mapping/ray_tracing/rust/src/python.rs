@@ -89,12 +89,16 @@ impl VoxelRayMap {
 
     fn global_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         let voxel_size = self.config.voxel_size;
-        let mut positions: Vec<f32> = Vec::with_capacity(self.map.voxels.len() * 3);
-        for (x, y, z) in iter_global_points(&self.map, voxel_size) {
-            positions.push(x);
-            positions.push(y);
-            positions.push(z);
-        }
+        let map = &self.map;
+        let positions: Vec<f32> = py.allow_threads(|| {
+            let mut out: Vec<f32> = Vec::with_capacity(map.voxels.len() * 3);
+            for (x, y, z) in iter_global_points(map, voxel_size) {
+                out.push(x);
+                out.push(y);
+                out.push(z);
+            }
+            out
+        });
         let n = positions.len() / 3;
         Array2::from_shape_vec((n, 3), positions)
             .expect("3 elements pushed per voxel")
@@ -117,15 +121,19 @@ impl VoxelRayMap {
             z_max,
         };
         let voxel_size = self.config.voxel_size;
-        let mut positions: Vec<f32> = Vec::new();
-        for (x, y, z) in iter_global_points(&self.map, voxel_size) {
-            if !bounds.contains(x, y, z) {
-                continue;
+        let map = &self.map;
+        let positions: Vec<f32> = py.allow_threads(|| {
+            let mut out: Vec<f32> = Vec::new();
+            for (x, y, z) in iter_global_points(map, voxel_size) {
+                if !bounds.contains(x, y, z) {
+                    continue;
+                }
+                out.push(x);
+                out.push(y);
+                out.push(z);
             }
-            positions.push(x);
-            positions.push(y);
-            positions.push(z);
-        }
+            out
+        });
         let n = positions.len() / 3;
         Array2::from_shape_vec((n, 3), positions)
             .expect("3 elements pushed per voxel")
@@ -133,7 +141,7 @@ impl VoxelRayMap {
     }
 
     fn voxel_count(&self) -> usize {
-        self.map.voxels.values().filter(|h| **h > 0).count()
+        self.map.healthy_count()
     }
 
     fn clear(&mut self) {
