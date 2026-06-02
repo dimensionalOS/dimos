@@ -21,7 +21,6 @@ from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -38,6 +37,7 @@ from dimos.protocol.tf.tf import TF
 from dimos.robot.unitree.go2 import connection
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 
 class Moment(TypedDict, total=False):
