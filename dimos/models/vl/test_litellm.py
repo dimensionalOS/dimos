@@ -79,7 +79,7 @@ class TestCoreDispatch:
         img_part = [
             p for p in mock.call_args.kwargs["messages"][0]["content"] if p["type"] == "image_url"
         ][0]
-        assert img_part["image_url"]["url"].startswith("data:image/png;base64,")
+        assert img_part["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
     def test_response_format_forwarded(self) -> None:
         model = LiteLLMVlModel(model_name="gpt-4o-mini")
