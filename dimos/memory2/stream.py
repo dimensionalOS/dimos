@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections import namedtuple
+from collections.abc import Callable
 from functools import cache
 import sys
 import time
@@ -44,7 +45,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Iterator
 
     import reactivex
     from reactivex.abc import DisposableBase, ObserverBase
@@ -57,6 +58,17 @@ R = TypeVar("R")
 O = TypeVar("O", bound=Observation[Any], default=Observation[T])
 logger = setup_logger()
 
+AlignInterpolator = Callable[[Observation[Any], Observation[Any], float], Any]
+"""Synthesize the secondary payload at the primary timestamp from its brackets.
+
+``interpolator(prev, nxt, alpha)`` receives the two secondary observations
+bracketing the primary (``prev.ts < p.ts < nxt.ts``) and
+``alpha = (p.ts - prev.ts) / (nxt.ts - prev.ts)`` in the open interval
+``(0, 1)`` - exact ts matches are paired directly and never interpolated. It
+returns the interpolated payload (the raw value, not an :class:`Observation`);
+``align`` wraps it as an observation stamped at the primary ts.
+"""
+
 
 @cache
 def _pair_class(field_a: str, field_b: str) -> type:
@@ -68,19 +80,73 @@ def _pair_class(field_a: str, field_b: str) -> type:
     return namedtuple("AlignedPair", [field_a, field_b], rename=True)  # type: ignore[misc]
 
 
+def _nearest_secondary(
+    p: Observation[Any],
+    prev: Observation[Any] | None,
+    nxt: Observation[Any] | None,
+    tolerance: float,
+) -> Observation[Any] | None:
+    """Closest bracketing secondary within ``tolerance``, or ``None``.
+
+    Either bracket may be absent at the ends of the secondary stream; ties go
+    to ``prev`` (visited first) and an exact ts match - distance 0 - wins
+    outright. The returned observation is the secondary verbatim.
+    """
+    best: Observation[Any] | None = None
+    for cand in (prev, nxt):
+        if cand is None or abs(cand.ts - p.ts) > tolerance:
+            continue
+        if best is None or abs(cand.ts - p.ts) < abs(best.ts - p.ts):
+            best = cand
+    return best
+
+
+def _interpolated_secondary(
+    p: Observation[Any],
+    prev: Observation[Any] | None,
+    nxt: Observation[Any] | None,
+    tolerance: float,
+    interpolator: AlignInterpolator,
+) -> Observation[Any] | None:
+    """Secondary observation synthesized at ``p.ts`` from its brackets, or ``None``.
+
+    An exact ts match short-circuits to the exact secondary and never calls the
+    interpolator. Otherwise ``p`` must be bracketed on both sides with both
+    samples inside ``tolerance``; the interpolated payload is wrapped via
+    ``prev.derive`` so the secondary side reports the primary (query) time.
+    """
+    # `prev` is strictly before `p`, so only `nxt` can land exactly on p.ts.
+    if nxt is not None and nxt.ts == p.ts:
+        return nxt
+    # Interpolation needs a sample on each side, both within tolerance.
+    if prev is None or nxt is None:
+        return None
+    if abs(prev.ts - p.ts) > tolerance or abs(nxt.ts - p.ts) > tolerance:
+        return None
+    # nxt.ts > p.ts > prev.ts here (exact match handled above), so the span is
+    # strictly positive - no zero division.
+    alpha = (p.ts - prev.ts) / (nxt.ts - prev.ts)
+    return prev.derive(data=interpolator(prev, nxt, alpha), ts=p.ts)
+
+
 def _nearest_align_iter(
     primary_iter: Iterator[Observation[Any]],
     secondary_iter: Iterator[Observation[Any]],
     tolerance: float,
     pair_class: type,
+    interpolator: AlignInterpolator | None = None,
 ) -> Iterator[Observation[Any]]:
-    """Streaming two-pointer nearest-ts merge over ts-ascending iterators.
+    """Streaming two-pointer ts merge over ts-ascending iterators.
 
     For each primary ``p`` the cursor brackets it with ``prev`` (the last
-    secondary strictly before ``p``) and ``nxt`` (the first at or after ``p``);
-    the nearer of the two within ``tolerance`` is paired, and an exact ts match
-    (distance 0) always wins. O(1) state - only those two are held, never a
-    window - so it streams over arbitrarily long (including live) inputs.
+    secondary strictly before ``p``) and ``nxt`` (the first at or after ``p``).
+    Without an ``interpolator`` the nearer bracket within ``tolerance`` is
+    paired (an exact ts match always wins). With an ``interpolator`` the
+    secondary value is synthesized at ``p.ts`` from both brackets, paired only
+    when ``p`` is bracketed on both sides and both samples lie within
+    ``tolerance`` - except an exact ts match still pairs the exact secondary.
+    O(1) state - only ``prev`` and ``nxt`` are held, never a window - so it
+    streams over arbitrarily long (including live) inputs.
     """
     secondary = iter(secondary_iter)
     prev: Observation[Any] | None = None  # last secondary with ts < p.ts
@@ -94,17 +160,13 @@ def _nearest_align_iter(
             prev = nxt
             nxt = next(secondary, None)
 
-        # Pair with the closest bracketing secondary within tolerance. Either
-        # bracket may be absent at the ends of the secondary stream; ties go to
-        # `prev` (visited first) and an exact match - distance 0 - wins outright.
-        best: Observation[Any] | None = None
-        for cand in (prev, nxt):
-            if cand is None or abs(cand.ts - p.ts) > tolerance:
-                continue
-            if best is None or abs(cand.ts - p.ts) < abs(best.ts - p.ts):
-                best = cand
-        if best is not None:
-            yield p.derive(data=pair_class(p, best))
+        secondary_obs = (
+            _nearest_secondary(p, prev, nxt, tolerance)
+            if interpolator is None
+            else _interpolated_secondary(p, prev, nxt, tolerance, interpolator)
+        )
+        if secondary_obs is not None:
+            yield p.derive(data=pair_class(p, secondary_obs))
 
 
 class Stream(CompositeResource, Generic[T, O]):
@@ -395,8 +457,14 @@ class Stream(CompositeResource, Generic[T, O]):
             xf = FnIterTransformer(xf)
         return Stream(source=self, transform=xf, query=StreamQuery())
 
-    def align(self, other: Stream[Any, Any], *, tolerance: float) -> Stream[Any]:
-        """Pair each observation with the nearest-in-time one from *other*.
+    def align(
+        self,
+        other: Stream[Any, Any],
+        *,
+        tolerance: float,
+        interpolator: AlignInterpolator | None = None,
+    ) -> Stream[Any]:
+        """Pair each observation with the time-aligned one from *other*.
 
         The primary (``self``) drives; for each primary the nearest secondary
         within ``|Δts| <= tolerance`` is paired, others are skipped. The merge
@@ -405,6 +473,15 @@ class Stream(CompositeResource, Generic[T, O]):
         streams in insertion order; prepend ``.order_by("ts")`` on a side whose
         iteration order isn't chronological. Source-agnostic: stored,
         transformed, and live streams all work (a live side simply never ends).
+
+        With ``interpolator`` (see :data:`AlignInterpolator`), the secondary
+        value is synthesized at the primary timestamp instead of snapped to the
+        nearest sample: a primary is paired only when bracketed by secondaries
+        on both sides and both lie within ``tolerance``, while an exact ts match
+        still pairs the exact secondary and skips the interpolator. The
+        synthesized value is wrapped as a full :class:`Observation` stamped at
+        the primary ts. ``interpolator=None`` keeps plain nearest-neighbor
+        pairing.
 
         The output ``Observation`` carries the primary's ``ts``, ``pose``,
         ``tags``. ``obs.data`` is an ``AlignedPair`` namedtuple whose fields are
@@ -420,7 +497,7 @@ class Stream(CompositeResource, Generic[T, O]):
         pair_class = _pair_class(field_a, field_b)
 
         def _align(upstream: Iterator[Observation[Any]]) -> Iterator[Observation[Any]]:
-            return _nearest_align_iter(upstream, iter(other), tolerance, pair_class)
+            return _nearest_align_iter(upstream, iter(other), tolerance, pair_class, interpolator)
 
         return self.transform(FnIterTransformer(_align))
 

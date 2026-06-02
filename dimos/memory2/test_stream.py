@@ -1086,12 +1086,19 @@ class TestTimeWindowing:
         assert make_stream(0).to_time(5).to_list() == []
 
 
-def _two_streams(session, primary_pts, secondary_pts, *, primary="lidar", secondary="pose"):
-    """Build two named streams from (ts, value) point lists for align tests."""
-    a = session.stream(primary, int)
+def _two_streams(
+    session, primary_pts, secondary_pts, *, primary="lidar", secondary="pose", dtype=int
+):
+    """Build two named streams from (ts, value) point lists for align tests.
+
+    ``dtype`` is the declared payload type; pass ``object`` to mix payload types
+    (e.g. int primaries with float interpolation values) without tripping the
+    backend's type check.
+    """
+    a = session.stream(primary, dtype)
     for ts, value in primary_pts:
         a.append(value, ts=ts)
-    b = session.stream(secondary, int)
+    b = session.stream(secondary, dtype)
     for ts, value in secondary_pts:
         b.append(value, ts=ts)
     return a, b
@@ -1183,3 +1190,87 @@ class TestAlign:
         """No secondary observations means nothing to pair, at any tolerance."""
         lidar, pose = _two_streams(session, [(0.0, 10), (1.0, 20)], [])
         assert lidar.align(pose, tolerance=10.0).to_list() == []
+
+
+def _lerp(prev, nxt, alpha):
+    """Linear interpolation of the secondary's scalar payload at the primary ts."""
+    return prev.data + alpha * (nxt.data - prev.data)
+
+
+class TestAlignInterpolation:
+    """`.align(..., interpolator=)` synthesizes the secondary value at the
+    primary timestamp from its two bracketing samples instead of snapping to the
+    nearest one (§5.6)."""
+
+    def test_value_is_interpolated_at_the_primary_timestamp(self, session):
+        """The paired secondary is the bracket interpolation evaluated at the
+        primary ts, and alpha tracks the true fraction of the gap - a quarter of
+        the way in gives a quarter, halfway gives the midpoint - so a hard-coded
+        0.5 would fail the first sample."""
+        lidar, pose = _two_streams(
+            session,
+            [(1.25, 20), (1.5, 10)],
+            [(1.0, 0.0), (2.0, 90.0)],
+            dtype=object,
+        )
+        out = lidar.align(pose, tolerance=1.0, interpolator=_lerp).to_list()
+        # alpha = 0.25 -> 22.5, alpha = 0.5 -> 45.0 (≈45° between the poses).
+        assert [round(o.data.pose.data, 6) for o in out] == [22.5, 45.0]
+        # The secondary side is a full Observation stamped at the primary ts,
+        # not at either real sample's ts.
+        assert [o.data.pose.ts for o in out] == [1.25, 1.5]
+        # Primary side and the emitted observation's ts are untouched.
+        assert [o.data.lidar.data for o in out] == [20, 10]
+        assert [o.ts for o in out] == [1.25, 1.5]
+
+    def test_exact_match_uses_exact_secondary_and_skips_interpolator(self, session):
+        """A secondary at the exact primary ts is paired verbatim and the
+        interpolator is never consulted - a raising interpolator stays harmless,
+        and the pair carries the real sample's value and ts."""
+
+        def _boom(prev, nxt, alpha):
+            raise AssertionError("interpolator called on an exact ts match")
+
+        lidar, pose = _two_streams(
+            session,
+            [(1.0, 10)],
+            [(0.0, 0.0), (1.0, 50.0), (2.0, 90.0)],
+            dtype=object,
+        )
+        out = lidar.align(pose, tolerance=1.5, interpolator=_boom).to_list()
+        assert [o.data.pose.data for o in out] == [50.0]
+        assert [o.data.pose.ts for o in out] == [1.0]
+
+    def test_one_sided_bracket_is_dropped_even_within_tolerance(self, session):
+        """Interpolation needs a secondary on both sides. A primary before the
+        first secondary (no left bracket) or after the last (no right bracket) is
+        dropped even though a one-sided neighbour sits within tolerance; only the
+        two-sided primary survives. Nearest-neighbour would have paired all three."""
+        lidar, pose = _two_streams(
+            session,
+            [(0.5, 1), (1.5, 2), (2.5, 3)],
+            [(1.0, 0.0), (2.0, 90.0)],
+            dtype=object,
+        )
+        out = lidar.align(pose, tolerance=1.0, interpolator=_lerp).to_list()
+        # 0.5: nxt(1.0) in tol but no prev -> skip. 1.5: bracketed -> 45.0.
+        # 2.5: prev(2.0) in tol but no nxt -> skip.
+        assert [o.data.lidar.data for o in out] == [2]
+        assert [round(o.data.pose.data, 6) for o in out] == [45.0]
+
+    def test_out_of_tolerance_bracket_skips_then_widening_recovers(self, session):
+        """Both brackets must lie within tolerance: a far right bracket drops the
+        primary even though the left bracket is close. Widening the tolerance past
+        the far side recovers the interpolated pair (alpha still measured across
+        the full bracket span)."""
+        lidar, pose = _two_streams(
+            session,
+            [(1.1, 10)],
+            [(1.0, 0.0), (2.0, 100.0)],
+            dtype=object,
+        )
+        # prev(1.0) is 0.1 away, nxt(2.0) is 0.9 away: tol 0.5 excludes nxt.
+        assert lidar.align(pose, tolerance=0.5, interpolator=_lerp).to_list() == []
+        # tol 1.0 admits both -> interpolate at alpha = 0.1 / 1.0 = 0.1.
+        out = lidar.align(pose, tolerance=1.0, interpolator=_lerp).to_list()
+        assert [round(o.data.pose.data, 6) for o in out] == [10.0]
