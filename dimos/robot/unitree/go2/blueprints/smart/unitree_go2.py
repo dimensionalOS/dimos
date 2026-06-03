@@ -85,6 +85,6 @@ unitree_go2_relocalization = autoconnect(
 ).global_config(n_workers=11)
 
 unitree_go2_memory = autoconnect(
-    unitree_go2_markers,
+    unitree_go2,
     Go2Memory.blueprint(),
 ).global_config(n_workers=12)
