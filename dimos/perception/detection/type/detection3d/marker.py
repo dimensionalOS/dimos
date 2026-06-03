@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D
 import numpy as np
 
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
@@ -50,6 +51,21 @@ class Detection3DMarker(Detection3DBBox):
     def to_detection3d_msg(self) -> Detection3D:
         """Convert to a ROS Detection3D message, preserving marker identity."""
         msg = super().to_detection3d_msg()
+        msg.id = str(self.marker_id)
+        if msg.results:
+            msg.results[0].hypothesis.class_id = self.marker_label
+        msg.results_length = len(msg.results)
+        return msg
+
+    def to_ros_detection2d(self) -> ROSDetection2D:
+        """Convert to a ROS Detection2D message, preserving marker identity.
+
+        The 2D mirror of :meth:`to_detection3d_msg`. Markers carry no temporal
+        track (``track_id`` is -1), so the base ``id=str(track_id)`` would label
+        every overlay ``id=-1``; instead stamp the marker id and dictionary-
+        qualified label so image-plane overlays read identically to the 3D boxes.
+        """
+        msg = super().to_ros_detection2d()
         msg.id = str(self.marker_id)
         if msg.results:
             msg.results[0].hypothesis.class_id = self.marker_label

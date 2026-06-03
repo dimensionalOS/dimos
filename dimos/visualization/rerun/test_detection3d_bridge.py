@@ -15,13 +15,22 @@
 from dataclasses import dataclass
 from unittest.mock import patch
 
-from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from dimos_lcm.vision_msgs import (
+    BoundingBox2D,
+    BoundingBox3D,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+    Point2D,
+    Pose2D,
+)
 import rerun as rr
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection2D import Detection2D
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -59,6 +68,31 @@ def _detection_array() -> Detection3DArray:
     )
 
 
+def _detection2d_array() -> Detection2DArray:
+    det = Detection2D()
+    det.header = Header(10.0, "camera_optical")
+    det.id = "4"
+    det.results = [
+        ObjectHypothesisWithPose(
+            hypothesis=ObjectHypothesis(
+                class_id="DICT_APRILTAG_36h11:4",
+                score=1.0,
+            )
+        )
+    ]
+    det.results_length = len(det.results)
+    det.bbox = BoundingBox2D(
+        center=Pose2D(position=Point2D(x=100.0, y=200.0), theta=0.0),
+        size_x=30.0,
+        size_y=40.0,
+    )
+    return Detection2DArray(
+        header=Header(10.0, "camera_optical"),
+        detections=[det],
+        detections_length=1,
+    )
+
+
 def test_detection3darray_bridge_attaches_topic_entity_to_message_frame() -> None:
     bridge = RerunBridgeModule()
     bridge._min_intervals = {}
@@ -77,3 +111,23 @@ def test_detection3darray_bridge_attaches_topic_entity_to_message_frame() -> Non
     transform = mock_log.call_args_list[1].args[1]
     assert isinstance(transform, rr.Transform3D)
     assert transform.parent_frame.as_arrow_array().to_pylist() == ["tf#/world"]
+
+
+def test_detection2darray_bridge_attaches_camera_optical_frame() -> None:
+    bridge = RerunBridgeModule()
+    bridge._min_intervals = {}
+
+    try:
+        with patch("dimos.visualization.rerun.bridge.rr.log") as mock_log:
+            bridge._on_message(_detection2d_array(), Topic("/marker_detection/detections_2d"))
+    finally:
+        bridge.stop()
+
+    assert mock_log.call_count == 2
+    assert mock_log.call_args_list[0].args[0] == "world/marker_detection/detections_2d"
+    assert isinstance(mock_log.call_args_list[0].args[1], rr.Boxes2D)
+    assert mock_log.call_args_list[1].args[0] == "world/marker_detection/detections_2d"
+
+    transform = mock_log.call_args_list[1].args[1]
+    assert isinstance(transform, rr.Transform3D)
+    assert transform.parent_frame.as_arrow_array().to_pylist() == ["tf#/camera_optical"]

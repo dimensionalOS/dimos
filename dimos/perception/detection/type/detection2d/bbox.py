@@ -321,16 +321,21 @@ class Detection2DBBox(Detection2D):
         )
 
     def to_ros_detection2d(self) -> ROSDetection2D:
+        results = [
+            ObjectHypothesisWithPose(
+                ObjectHypothesis(
+                    class_id=self.class_id,
+                    score=self.confidence,
+                )
+            )
+        ]
+        # results_length governs how many hypotheses LCM encodes; leaving it 0
+        # silently drops the hypothesis on the wire (and from results-length-
+        # bounded readers like Detection*Array._label_for_detection).
         return ROSDetection2D(
             header=Header(self.ts, "camera_link"),
             bbox=self.to_ros_bbox(),
-            results=[
-                ObjectHypothesisWithPose(
-                    ObjectHypothesis(
-                        class_id=self.class_id,
-                        score=self.confidence,
-                    )
-                )
-            ],
+            results=results,
+            results_length=len(results),
             id=str(self.track_id),
         )

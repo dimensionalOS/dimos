@@ -22,9 +22,8 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
-from dimos_lcm.vision_msgs import Detection2DArray
-
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.type.utils import TableStr
 
 if TYPE_CHECKING:

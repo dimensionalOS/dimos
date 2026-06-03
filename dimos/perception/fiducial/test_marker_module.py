@@ -134,6 +134,21 @@ def test_markers_to_bundle_emits_parallel_2d_and_3d_arrays() -> None:
     assert to_timestamp(d2d.header.stamp) == pytest.approx(image.ts)
     assert [det.id for det in d3d.detections] == ["7", "42"]
 
+    # 2D overlays must carry the same marker identity as 3D. Markers have
+    # track_id=-1, so without a 2D identity override every overlay labelled
+    # "id=-1" with the hypothesis dropped (results_length stayed 0).
+    assert [det.id for det in d2d.detections] == ["7", "42"]
+    assert [det.results_length for det in d2d.detections] == [1, 1]
+    assert [det.results[0].hypothesis.class_id for det in d2d.detections] == [
+        "DICT_APRILTAG_36h11:7",
+        "DICT_APRILTAG_36h11:42",
+    ]
+    # The image-plane overlay labels read identically to the 3D boxes.
+    assert d2d.to_rerun().labels.as_arrow_array().to_pylist() == [
+        "DICT_APRILTAG_36h11:7 id=7",
+        "DICT_APRILTAG_36h11:42 id=42",
+    ]
+
     empty = outputs[1].data
     # Empty frame still publishes both arrays (empty-but-present, not idle).
     assert empty["detections_3d"].detections_length == 0
@@ -182,9 +197,21 @@ def test_marker_module_pipeline_outputs_arrays_for_marker_and_empty_frame() -> N
     )
     assert d3d[0].detections[0].bbox.size.x == pytest.approx(marker_length_m)
 
-    # 2D output is the same detection pass repackaged for image-plane overlays.
+    # 2D output is the same detection pass repackaged for image-plane overlays,
+    # so its identity and overlay label match the 3D box (not the track_id=-1
+    # default that the inherited Detection2DBBox.to_ros_detection2d would emit).
     assert d2d[0].detections_length == d3d[0].detections_length
     assert to_timestamp(d2d[0].header.stamp) == pytest.approx(d3d[0].ts)
+    assert d2d[0].detections[0].id == str(marker_id)
+    assert d2d[0].detections[0].results_length == 1
+    assert d2d[0].detections[0].results[0].hypothesis.class_id == (
+        f"DICT_APRILTAG_36h11:{marker_id}"
+    )
+    assert d2d[0].to_rerun().labels.as_arrow_array().to_pylist() == [
+        f"DICT_APRILTAG_36h11:{marker_id} id={marker_id}"
+    ]
+    # Empty frame clears the overlay (empty Boxes2D), not a stale box.
+    assert d2d[1].to_rerun().labels.as_arrow_array().to_pylist() == []
 
     assert d3d[1].ts == pytest.approx(empty_image.ts)
     assert d3d[1].detections_length == 0

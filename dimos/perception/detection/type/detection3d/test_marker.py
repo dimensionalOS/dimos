@@ -19,6 +19,7 @@ import pytest
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.vision_msgs.Detection2D import Detection2D
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import marker_reprojection_error
@@ -114,6 +115,52 @@ def test_marker_detection3d_msg_preserves_marker_identity_on_wire() -> None:
     assert msg.bbox.size.z == pytest.approx(size.z)
 
     decoded = Detection3D.lcm_decode(msg.lcm_encode())
+    assert decoded.id == "42"
+    assert decoded.results_length == 1
+    assert decoded.results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:42"
+
+
+def test_marker_detection2d_msg_preserves_marker_identity_on_wire() -> None:
+    image = Image(
+        data=np.zeros((100, 120, 3), dtype=np.uint8),
+        frame_id="camera_optical",
+        ts=123.456,
+    )
+    det = Detection3DMarker(
+        bbox=(10.0, 20.0, 50.0, 80.0),
+        # Markers carry no temporal track; this is the production value and the
+        # whole reason a 2D identity override exists (id=str(track_id) -> "-1").
+        track_id=-1,
+        class_id=999,
+        confidence=1.0,
+        name="marker_42",
+        ts=image.ts,
+        image=image,
+        center=Vector3(1.0, 2.0, 3.0),
+        size=Vector3(0.16, 0.16, 0.0),
+        frame_id="world",
+        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        marker_id=42,
+        corners_px=np.zeros((4, 2), dtype=np.float32),
+        dictionary="DICT_APRILTAG_36h11",
+        reprojection_error=0.0,
+    )
+
+    msg = det.to_ros_detection2d()
+
+    # Identity comes from the marker, not track_id, and matches the 3D message.
+    assert msg.id == "42"
+    assert msg.results_length == 1
+    assert msg.results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:42"
+    # Pixel-space bbox center/size from corner bbox (10,20,50,80).
+    assert msg.bbox.center.position.x == pytest.approx(30.0)
+    assert msg.bbox.center.position.y == pytest.approx(50.0)
+    assert msg.bbox.size_x == pytest.approx(40.0)
+    assert msg.bbox.size_y == pytest.approx(60.0)
+
+    # results_length=1 is what keeps the hypothesis (class label) alive across
+    # the wire; leaving it 0 would silently drop it on decode.
+    decoded = Detection2D.lcm_decode(msg.lcm_encode())
     assert decoded.id == "42"
     assert decoded.results_length == 1
     assert decoded.results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:42"
