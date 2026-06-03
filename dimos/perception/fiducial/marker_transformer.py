@@ -17,10 +17,10 @@
 Wraps :func:`dimos.perception.fiducial.marker_detect.detect_markers_in_image`
 and emits one :class:`Detection3DMarker` observation per detected marker, with
 ``.pose`` composed into world frame from the upstream observation's camera pose.
-This module also keeps marker smoothing helpers and ``MarkersPerFrame``, which
-collapses marker fan-out back into one ``Detection3DArray`` per source image.
-The companion module :class:`MarkerTfModule` remains the right choice for live
-TF publication.
+This module also keeps marker smoothing helpers and ``MarkersToBundle``, which
+collapses marker fan-out into one ``Bundle`` (parallel 3D / 2D arrays) per source
+image. The companion module :class:`MarkerTfModule` remains the right choice for
+live TF publication.
 
 Skips frames where the upstream observation has no ``.pose`` (debug log):
 without a camera-in-world pose, we can't honor the "always world-frame"
@@ -43,7 +43,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
@@ -394,34 +393,6 @@ def _frame_pose(
     return obs.pose
 
 
-class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
-    """Collapse marker fan-out back into one Detection3DArray per image frame.
-
-    ``DetectMarkers`` normally emits one observation per decoded marker. For
-    live LCM semantics, downstream consumers need a single array for each
-    processed image, including empty arrays for frames where no marker decoded.
-    ``DetectMarkers(emit_empty_frames=True)`` supplies a ``None`` sentinel for
-    those empty frames and tags every marker observation with the source image
-    and frame marker count so this transformer can emit without waiting for a
-    later timestamp.
-    """
-
-    def __init__(self, frame_id: str = "world") -> None:
-        self.frame_id = frame_id
-
-    def __call__(
-        self, upstream: Iterator[Observation[Detection3DMarker | None]]
-    ) -> Iterator[Observation[Detection3DArray]]:
-        for obs, detections in _group_markers_per_frame(upstream):
-            image = _frame_image(obs, detections)
-            msg = ImageDetections3D(image, detections).to_ros_detection3d_array(
-                frame_id=self.frame_id
-            )
-            yield obs.derive(data=msg, pose=_frame_pose(obs, detections)).tag(
-                detections_length=len(detections)
-            )
-
-
 class MarkersToBundle(Transformer[Detection3DMarker | None, Bundle]):
     """Emit one ``Bundle`` per frame carrying both the 3D and 2D marker arrays.
 
@@ -446,6 +417,6 @@ class MarkersToBundle(Transformer[Detection3DMarker | None, Bundle]):
             )
             d2d = ImageDetections2D(image, detections).to_ros_detection2d_array()
             yield obs.derive(
-                data=Bundle({"detections": d3d, "detections_2d": d2d}),
+                data=Bundle({"detections_3d": d3d, "detections_2d": d2d}),
                 pose=_frame_pose(obs, detections),
             ).tag(detections_length=len(detections))

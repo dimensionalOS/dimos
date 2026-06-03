@@ -33,7 +33,7 @@ from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector impo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
+from dimos.perception.fiducial.marker_module import MarkerModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.robot.unitree.go2.connection import GO2Connection
@@ -63,7 +63,7 @@ class Go2Memory(Recorder):
 unitree_go2_markers = (
     autoconnect(
         unitree_go2,
-        MarkerDetectionStreamModule.blueprint(
+        MarkerModule.blueprint(
             marker_length_m=0.1,
             camera_info=GO2Connection.camera_info_static,
         ),
@@ -71,11 +71,11 @@ unitree_go2_markers = (
     )
     .transports(
         {
-            ("detections", MarkerDetectionStreamModule): LCMTransport(
-                "/marker_detection/detections",
+            ("detections_3d", Detection3DArray): LCMTransport(
+                "/marker_detection/detections_3d",
                 Detection3DArray,
             ),
-            ("detections_2d", MarkerDetectionStreamModule): LCMTransport(
+            ("detections_2d", Detection2DArray): LCMTransport(
                 "/marker_detection/detections_2d",
                 Detection2DArray,
             ),

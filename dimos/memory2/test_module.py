@@ -516,12 +516,12 @@ class TestFanOutScatter:
         field named after the port, not the whole bundle, and silently drops
         keys with no matching port. This is the M-agnostic rule: one ``Out``
         reads its key exactly as two would - port count never selects the path."""
-        detections = _RecordingOut("detections")
+        detections = _RecordingOut("detections_3d")
         with MemoryStore() as store:
             src = store.stream("src", object)
             # Marker-style 1->1: routed key plus an unrouted sibling key.
-            src.append(Bundle({"detections": "d3d", "detections_2d": "d2d"}), ts=0.0)
-            ports = {"detections": detections}
+            src.append(Bundle({"detections_3d": "d3d", "detections_2d": "d2d"}), ts=0.0)
+            ports = {"detections_3d": detections}
             produced = normalize_to_bundle(src, ports)
             disposable = scatter_to_ports(produced, ports)
             try:
@@ -531,7 +531,7 @@ class TestFanOutScatter:
                 _reset_thread_pool()
                 _reset_thread_pool()
 
-        # bundle["detections"] only; the unrouted detections_2d field is dropped.
+        # bundle["detections_3d"] only; the unrouted detections_2d field is dropped.
         assert detections.published == ["d3d"]
 
     @pytest.mark.tool

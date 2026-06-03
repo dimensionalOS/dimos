@@ -27,7 +27,9 @@ from dimos.perception.fiducial.blueprints.desk_marker_tf import (
     create_desk_webcam,
     desk_marker_tf,
 )
-from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.fiducial.marker_module import MarkerModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 
 
@@ -37,7 +39,7 @@ def test_desk_marker_tf_blueprint_declares_static_tf_module() -> None:
     assert desk_marker_tf.blueprints[1].module is CameraModule
     assert desk_marker_tf.blueprints[1].kwargs["hardware"] is create_desk_webcam
     assert desk_marker_tf.blueprints[1].kwargs["transform"] is None
-    assert desk_marker_tf.blueprints[2].module is MarkerDetectionStreamModule
+    assert desk_marker_tf.blueprints[2].module is MarkerModule
     assert desk_marker_tf.blueprints[2].kwargs["marker_length_m"] == DESK_MARKER_LENGTH_M
     assert desk_marker_tf.blueprints[2].kwargs["aruco_dictionary"] == DESK_MARKER_ARUCO_DICTIONARY
     assert desk_marker_tf.blueprints[2].kwargs["camera_info"].frame_id == DESK_CAMERA_FRAME_ID
@@ -47,11 +49,11 @@ def test_desk_marker_tf_blueprint_declares_static_tf_module() -> None:
         == DESK_MARKER_NAMESPACE_PREFIX
     )
     assert (
-        desk_marker_tf.transport_map[("detections", MarkerDetectionStreamModule)].topic.topic
-        == "/marker_detection/detections"
+        desk_marker_tf.transport_map[("detections_3d", Detection3DArray)].topic.topic
+        == "/marker_detection/detections_3d"
     )
     assert (
-        desk_marker_tf.transport_map[("detections_2d", MarkerDetectionStreamModule)].topic.topic
+        desk_marker_tf.transport_map[("detections_2d", Detection2DArray)].topic.topic
         == "/marker_detection/detections_2d"
     )
 

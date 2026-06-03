@@ -32,7 +32,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
+from dimos.perception.fiducial.marker_module import MarkerModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 
 DESK_CAMERA_FRAME_ID = "camera_optical"
@@ -150,7 +150,7 @@ desk_marker_tf = autoconnect(
         hardware=create_desk_webcam,
         transform=None,
     ),
-    MarkerDetectionStreamModule.blueprint(
+    MarkerModule.blueprint(
         marker_length_m=DESK_MARKER_LENGTH_M,
         aruco_dictionary=DESK_MARKER_ARUCO_DICTIONARY,
         camera_info=create_desk_camera_info(),
@@ -160,11 +160,11 @@ desk_marker_tf = autoconnect(
     ),
 ).transports(
     {
-        ("detections", MarkerDetectionStreamModule): LCMTransport(
-            "/marker_detection/detections",
+        ("detections_3d", Detection3DArray): LCMTransport(
+            "/marker_detection/detections_3d",
             Detection3DArray,
         ),
-        ("detections_2d", MarkerDetectionStreamModule): LCMTransport(
+        ("detections_2d", Detection2DArray): LCMTransport(
             "/marker_detection/detections_2d",
             Detection2DArray,
         ),

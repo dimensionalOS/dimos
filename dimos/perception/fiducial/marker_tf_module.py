@@ -18,19 +18,17 @@ Publishes ``world -> markers`` (identity) and ``markers -> marker_{id}`` from
 incoming ``Detection3DArray`` messages. Marker pose estimation is owned by the
 marker detector; this module only mirrors detection bbox poses into TF.
 
-Compose with a marker detector via matching ``detections`` streams::
+Compose with a marker detector via matching ``detections_3d`` streams::
 
     from dimos.core.coordination.blueprints import autoconnect
-    from dimos.perception.fiducial.marker_detection_stream_module import (
-        MarkerDetectionStreamModule,
-    )
+    from dimos.perception.fiducial.marker_module import MarkerModule
     from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
     from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
     from dimos.robot.unitree.go2.connection import GO2Connection
 
     unitree_go2_with_markers = autoconnect(
         unitree_go2_basic,
-        MarkerDetectionStreamModule.blueprint(
+        MarkerModule.blueprint(
             marker_length_m=0.18,
             camera_info=GO2Connection.camera_info_static,
         ),
@@ -68,7 +66,7 @@ class MarkerTfModule(Module):
 
     config: MarkerTfModuleConfig
 
-    detections: In[Detection3DArray]
+    detections_3d: In[Detection3DArray]
 
     def _markers_parent_frame(self) -> str:
         p = self.config.marker_namespace_prefix
@@ -141,7 +139,7 @@ class MarkerTfModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        unsub = self.detections.subscribe(self._process_detections)
+        unsub = self.detections_3d.subscribe(self._process_detections)
         self.register_disposable(Disposable(unsub) if callable(unsub) else unsub)
 
     @rpc

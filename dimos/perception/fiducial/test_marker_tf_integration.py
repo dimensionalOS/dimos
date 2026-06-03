@@ -67,7 +67,7 @@ def test_marker_tf_consumes_detection_array_over_lcm() -> None:
         f"/mtf/{uuid.uuid4().hex[:8]}",
         Detection3DArray,
     )
-    module.detections.transport = detections_transport
+    module.detections_3d.transport = detections_transport
     host_tf = LCMTF()
 
     try:

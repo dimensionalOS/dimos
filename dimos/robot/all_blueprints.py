@@ -172,7 +172,7 @@ all_modules = {
     "local-planner": "dimos.navigation.nav_stack.modules.local_planner.local_planner.LocalPlanner",
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
     "map": "dimos.robot.unitree.type.map.Map",
-    "marker-module": "dimos.perception.fiducial.marker_detection_stream_module.MarkerModule",
+    "marker-module": "dimos.perception.fiducial.marker_module.MarkerModule",
     "marker-tf-module": "dimos.perception.fiducial.marker_tf_module.MarkerTfModule",
     "mcp-client": "dimos.agents.mcp.mcp_client.McpClient",
     "mcp-server": "dimos.agents.mcp.mcp_server.McpServer",

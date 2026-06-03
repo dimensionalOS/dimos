@@ -30,8 +30,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
-from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
-from dimos.perception.fiducial.marker_transformer import MarkersPerFrame, MarkersToBundle
+from dimos.perception.fiducial.marker_module import MarkerModule
+from dimos.perception.fiducial.marker_transformer import MarkersToBundle
 from dimos.types.timestamped import to_timestamp
 from dimos.perception.fiducial.test_helpers import (
     blank_image,
@@ -95,10 +95,10 @@ def _marker_obs(
 
 
 def test_marker_module_exposes_image_input_and_2d_3d_outputs() -> None:
-    module = MarkerDetectionStreamModule(marker_length_m=0.18, camera_info=camera_info())
+    module = MarkerModule(marker_length_m=0.18, camera_info=camera_info())
     try:
         assert set(module.inputs) == {"color_image"}
-        assert set(module.outputs) == {"detections", "detections_2d"}
+        assert set(module.outputs) == {"detections_3d", "detections_2d"}
     finally:
         module.stop()
 
@@ -125,7 +125,7 @@ def test_markers_to_bundle_emits_parallel_2d_and_3d_arrays() -> None:
     assert all(isinstance(obs.data, Bundle) for obs in outputs)
 
     frame = outputs[0].data
-    d3d = frame["detections"]
+    d3d = frame["detections_3d"]
     d2d = frame["detections_2d"]
     # One detection pass feeds both arrays: equal count and frame timestamp.
     assert d3d.detections_length == 2
@@ -136,52 +136,19 @@ def test_markers_to_bundle_emits_parallel_2d_and_3d_arrays() -> None:
 
     empty = outputs[1].data
     # Empty frame still publishes both arrays (empty-but-present, not idle).
-    assert empty["detections"].detections_length == 0
+    assert empty["detections_3d"].detections_length == 0
     assert empty["detections_2d"].detections_length == 0
-    assert empty["detections"].ts == pytest.approx(empty_image.ts)
+    assert empty["detections_3d"].ts == pytest.approx(empty_image.ts)
     assert to_timestamp(empty["detections_2d"].header.stamp) == pytest.approx(empty_image.ts)
 
 
-def test_markers_per_frame_groups_markers_and_preserves_empty_frames() -> None:
-    image = blank_image(ts=10.0)
-    empty_image = blank_image(ts=11.0)
-    marker_a = _marker(image, 7)
-    marker_b = _marker(image, 42)
-
-    outputs = list(
-        MarkersPerFrame(frame_id="world")(
-            iter(
-                [
-                    _marker_obs(image, marker_a, obs_id=1, marker_count=2, marker_index=0),
-                    _marker_obs(image, marker_b, obs_id=2, marker_count=2, marker_index=1),
-                    _marker_obs(empty_image, None, obs_id=3, marker_count=0),
-                ]
-            )
-        )
-    )
-
-    assert len(outputs) == 2
-    first = outputs[0].data
-    assert first.header.frame_id == "world"
-    assert first.ts == pytest.approx(image.ts)
-    assert first.detections_length == 2
-    assert [det.id for det in first.detections] == ["7", "42"]
-    assert outputs[0].pose_tuple == pytest.approx((1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0))
-
-    empty = outputs[1].data
-    assert empty.header.frame_id == "world"
-    assert empty.ts == pytest.approx(empty_image.ts)
-    assert empty.detections_length == 0
-    assert empty.detections == []
-
-
-def test_marker_detection_stream_pipeline_outputs_arrays_for_marker_and_empty_frame() -> None:
+def test_marker_module_pipeline_outputs_arrays_for_marker_and_empty_frame() -> None:
     marker_id = 7
     marker_length_m = 0.18
     marker_image = synthetic_marker_image(marker_id, ts=10.0)
     empty_image = blank_image(ts=11.0)
 
-    module = MarkerDetectionStreamModule(
+    module = MarkerModule(
         marker_length_m=marker_length_m,
         camera_info=camera_info(marker_image.ts),
         quality_window_s=0.01,
@@ -205,7 +172,7 @@ def test_marker_detection_stream_pipeline_outputs_arrays_for_marker_and_empty_fr
         module.stop()
 
     assert len(bundles) == 2
-    d3d = [bundle["detections"] for bundle in bundles]
+    d3d = [bundle["detections_3d"] for bundle in bundles]
     d2d = [bundle["detections_2d"] for bundle in bundles]
 
     assert d3d[0].detections_length == 1
@@ -225,7 +192,7 @@ def test_marker_detection_stream_pipeline_outputs_arrays_for_marker_and_empty_fr
     assert d2d[1].detections_length == 0
 
 
-def test_marker_detection_stream_pipeline_speed_limit_is_config_gated() -> None:
+def test_marker_module_pipeline_speed_limit_is_config_gated() -> None:
     info = camera_info()
     images = [
         blank_image(ts=10.0),
@@ -239,7 +206,7 @@ def test_marker_detection_stream_pipeline_speed_limit_is_config_gated() -> None:
     ]
 
     def run_pipeline(*, speed_limit_enabled: bool) -> list[Detection3DArray]:
-        module = MarkerDetectionStreamModule(
+        module = MarkerModule(
             marker_length_m=0.18,
             camera_info=info,
             quality_window_s=0.01,
@@ -251,7 +218,7 @@ def test_marker_detection_stream_pipeline_speed_limit_is_config_gated() -> None:
                 stream = store.stream("color_image", Image)
                 for image, pose in zip(images, poses, strict=True):
                     stream.append(image, ts=image.ts, pose=pose)
-                return [obs.data["detections"] for obs in module.pipeline(stream).to_list()]
+                return [obs.data["detections_3d"] for obs in module.pipeline(stream).to_list()]
         finally:
             module.stop()
 
@@ -292,7 +259,7 @@ def test_append_image_with_pose_uses_camera_optical_tf_without_recomputing_pose(
         def stop(self) -> None:
             pass
 
-    module = MarkerDetectionStreamModule(
+    module = MarkerModule(
         marker_length_m=0.18,
         camera_info=info,
         tf_lookup_tolerance=0.25,
@@ -319,7 +286,7 @@ def test_append_image_with_pose_uses_camera_optical_tf_without_recomputing_pose(
 def test_append_image_with_pose_skips_withoutcamera_info_or_tf() -> None:
     image = blank_image(ts=13.0)
 
-    module = MarkerDetectionStreamModule(marker_length_m=0.18)
+    module = MarkerModule(marker_length_m=0.18)
     try:
         with MemoryStore() as store:
             stream = store.stream("color_image", Image)
@@ -340,7 +307,7 @@ def test_append_image_with_pose_skips_withoutcamera_info_or_tf() -> None:
             pass
 
     missing_tf = MissingTf()
-    module = MarkerDetectionStreamModule(marker_length_m=0.18, camera_info=camera_info(image.ts))
+    module = MarkerModule(marker_length_m=0.18, camera_info=camera_info(image.ts))
     module._tf = missing_tf
     try:
         with MemoryStore() as store:

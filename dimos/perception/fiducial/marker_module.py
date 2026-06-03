@@ -46,8 +46,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class MarkerDetectionStreamModuleConfig(ModuleConfig):
-    """Configuration for :class:`MarkerDetectionStreamModule`."""
+class MarkerModuleConfig(ModuleConfig):
+    """Configuration for :class:`MarkerModule`."""
 
     world_frame: str = "world"
     aruco_dictionary: str = "DICT_APRILTAG_36h11"
@@ -75,10 +75,10 @@ class MarkerModule(StreamModule):
     required.
     """
 
-    config: MarkerDetectionStreamModuleConfig
+    config: MarkerModuleConfig
 
     color_image: In[Image]
-    detections: Out[Detection3DArray]
+    detections_3d: Out[Detection3DArray]
     detections_2d: Out[Detection2DArray]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -129,8 +129,7 @@ class MarkerModule(StreamModule):
             return
         if not self._warned_distortion_model:
             logger.warning(
-                "MarkerDetectionStreamModule: distortion_model=%r may be unsupported; "
-                "using D as-is.",
+                "MarkerModule: distortion_model=%r may be unsupported; using D as-is.",
                 camera_info.distortion_model,
             )
             self._warned_distortion_model = True
@@ -138,7 +137,7 @@ class MarkerModule(StreamModule):
     def _append_image_with_pose(self, stream: Stream[Image], image: Image) -> None:
         info = self.config.camera_info
         if info is None:
-            logger.debug("MarkerDetectionStreamModule: no CameraInfo yet; skipping frame")
+            logger.debug("MarkerModule: no CameraInfo yet; skipping frame")
             return
 
         ts = getattr(image, "ts", None) or time.time()
@@ -151,7 +150,7 @@ class MarkerModule(StreamModule):
         )
         if t_world_optical is None:
             logger.debug(
-                "MarkerDetectionStreamModule: no TF %s -> %s at ts=%s",
+                "MarkerModule: no TF %s -> %s at ts=%s",
                 self.config.world_frame,
                 optical,
                 ts,
@@ -171,8 +170,3 @@ class MarkerModule(StreamModule):
                 t_world_optical.rotation.w,
             ),
         )
-
-
-# Back-compat: the module gained a 2D output and dropped its hand-written
-# start(), but blueprints and imports still reference the old name.
-MarkerDetectionStreamModule = MarkerModule
