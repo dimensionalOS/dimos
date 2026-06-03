@@ -200,6 +200,10 @@ class Store(Configurable, CompositeResource):
         """Return names of all streams in this store."""
         return list(self._streams.keys())
 
+    def summary(self) -> str:
+        """One line per stream — name, count, ts range. See :meth:`Stream.summary`."""
+        return "\n".join(self.stream(name).summary() for name in self.list_streams())
+
     def delete_stream(self, name: str) -> None:
         """Delete a stream by name (from cache and underlying storage)."""
         stream = self._streams.pop(name, None)

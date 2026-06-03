@@ -196,8 +196,22 @@ class Stream(CompositeResource, Generic[T, O]):
     def offset(self, n: int) -> Stream[T, O]:
         return self._replace_query(offset_val=n)
 
-    # Time windowing — None means unbounded on that side. ``*_time`` is relative
-    # to the stream's first observation; ``*_timestamp`` is absolute epoch seconds.
+    # Windowing helpers — None on either bound means unbounded on that side.
+    # Index helpers (``*_seek``) count observations; time helpers (``*_time``)
+    # are relative to the first observation; ``*_timestamp`` is absolute epoch.
+    def from_seek(self, i: int | None) -> Stream[T, O]:
+        """Window by index: drop the first ``i`` observations."""
+        return self if i is None else self.offset(i)
+
+    def to_seek(self, i: int | None) -> Stream[T, O]:
+        """Window by index: keep the first ``i`` observations."""
+        return self if i is None else self.limit(i)
+
+    def range_seek(self, start: int | None, stop: int | None) -> Stream[T, O]:
+        """Window by index: observations ``[start, stop)``."""
+        s = self if start is None else self.offset(start)
+        return s if stop is None else s.limit(stop - (start or 0))
+
     def from_time(self, seconds: float | None) -> Stream[T, O]:
         """Keep observations from ``seconds`` after the first (relative)."""
         if seconds is None:
@@ -217,6 +231,17 @@ class Stream(CompositeResource, Generic[T, O]):
         except LookupError:
             return self
         return self.before(t0 + seconds)
+
+    def range_time(self, start: float | None, stop: float | None) -> Stream[T, O]:
+        """Window by time: ``[start, stop)`` seconds from the first observation."""
+        if start is None and stop is None:
+            return self
+        try:
+            t0 = self.first().ts
+        except LookupError:
+            return self
+        s = self if start is None else self.after(t0 + start)
+        return s if stop is None else s.before(t0 + stop)
 
     def from_timestamp(self, ts: float | None) -> Stream[T, O]:
         """Keep observations after absolute epoch ``ts``."""
@@ -388,20 +413,25 @@ class Stream(CompositeResource, Generic[T, O]):
         return (first.ts, last.ts)
 
     def summary(self) -> str:
-        """Return a short human-readable summary: count, time range, duration."""
+        """Return a short human-readable summary: count, time range, avg frequency.
+
+        Relies on ``count()`` and ``get_time_range()`` (``first()`` + ``last()``),
+        all of which backends are expected to serve cheaply — SQL via ORDER BY,
+        the mcap store via forward/reverse iteration.
+        """
         from datetime import datetime, timezone
 
         n = self.count()
         if n == 0:
             return f"{self}: empty"
 
-        (t0, t1) = self.get_time_range()
-
+        t0, t1 = self.get_time_range()
+        dur = t1 - t0
+        hz = (n - 1) / dur if n > 1 and dur > 0 else 0.0
         fmt = "%Y-%m-%d %H:%M:%S"
         dt0 = datetime.fromtimestamp(t0, tz=timezone.utc).strftime(fmt)
         dt1 = datetime.fromtimestamp(t1, tz=timezone.utc).strftime(fmt)
-        dur = t1 - t0
-        return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s)"
+        return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s, {hz:.1f} Hz)"
 
     def materialize(self) -> Stream[T, O]:
         """Materialize into memory and return a replayable stream.
@@ -415,6 +445,9 @@ class Stream(CompositeResource, Generic[T, O]):
         target = cast("Stream[T, O]", mem.stream("materialize"))
         self.save(target).drain()
         return target
+
+    def run(self) -> int:
+        return self.drain()
 
     def drain(self) -> int:
         """Consume all observations, discarding results. Returns count consumed.

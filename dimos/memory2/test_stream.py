@@ -783,6 +783,38 @@ class TestLiveMode:
         assert results == ["b", "d"]
 
 
+class TestWindowing:
+    """Index (*_seek) and time (*_time) windowing; None = unbounded that side."""
+
+    def test_to_seek_keeps_first_i(self, make_stream):
+        assert [o.data for o in make_stream(10).to_seek(3)] == [0, 10, 20]
+
+    def test_from_seek_drops_first_i(self, make_stream):
+        assert [o.data for o in make_stream(10).from_seek(7)] == [70, 80, 90]
+
+    def test_range_seek(self, make_stream):
+        assert [o.data for o in make_stream(10).range_seek(2, 5)] == [20, 30, 40]
+
+    def test_to_time_keeps_first_seconds(self, make_stream):
+        # ts == index here; to_time(s) keeps ts < first_ts + s
+        assert [o.data for o in make_stream(10).to_time(2.0)] == [0, 10]
+
+    def test_from_time(self, make_stream):
+        assert [o.data for o in make_stream(10).from_time(7.0)] == [80, 90]
+
+    def test_range_time_uses_one_anchor(self, make_stream):
+        # anchor is the first observation, not the post-filter first
+        assert [o.data for o in make_stream(10, start_ts=100.0).range_time(2.0, 5.0)] == [30, 40]
+
+    def test_none_is_noop(self, make_stream):
+        s = make_stream(10)
+        assert s.to_seek(None).count() == 10
+        assert s.from_seek(None).count() == 10
+        assert s.range_seek(None, None).count() == 10
+        assert s.to_time(None).count() == 10
+        assert s.range_time(None, None).count() == 10
+
+
 class TestTimeWindowing:
     """``*_time`` is relative to the first observation, ``*_timestamp`` is absolute.
 
