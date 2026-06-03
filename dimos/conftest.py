@@ -19,6 +19,7 @@ import os
 import platform
 import tempfile
 import threading
+import uuid
 
 # With pytest-xdist, pick a per-worker bucket and pin env vars *before*
 # any dimos module is imported, so parallel workers don't share LCM bus,
@@ -42,6 +43,11 @@ if _worker:
     os.environ["MCP_PORT"] = str(20000 + _BUCKET)
     os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
 
+# Tag every pytest descendant so a sidecar watchdog can sweep strays (dimsim, rerun, etc).
+DIMOS_PYTEST_RUN_ID_ENV = "DIMOS_PYTEST_RUN_ID"
+if not _worker:
+    os.environ[DIMOS_PYTEST_RUN_ID_ENV] = f"pytest-{uuid.uuid4().hex[:16]}"
+
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
 # the macOS default soft cap (~256) gets exhausted and tests fail with
@@ -61,6 +67,7 @@ from dotenv import load_dotenv
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.process_lifecycle import spawn_watchdog
 
 load_dotenv()
 
@@ -95,6 +102,13 @@ def pytest_configure(config):
 
     if config.pluginmanager.hasplugin("_cov"):
         os.environ["COVERAGE_PROCESS_START"] = str(config.rootpath / "pyproject.toml")
+
+    # Only spawn on the controller, without doing it on xdist workers.
+    if not hasattr(config, "workerinput"):
+        spawn_watchdog(
+            os.environ[DIMOS_PYTEST_RUN_ID_ENV],
+            env_var=DIMOS_PYTEST_RUN_ID_ENV,
+        )
 
 
 @pytest.fixture(scope="session")
