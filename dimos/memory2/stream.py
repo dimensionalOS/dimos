@@ -87,7 +87,7 @@ def _nearest_align_iter(
 
     for p in primary_iter:
         # Advance the cursor until `nxt` sits past `p`; `prev` trails just behind.
-        while nxt is not None and nxt.ts <= p.ts:
+        while nxt is not None and nxt.ts < p.ts:
             prev = nxt
             nxt = next(secondary, None)
 
