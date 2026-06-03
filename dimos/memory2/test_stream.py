@@ -783,6 +783,221 @@ class TestLiveMode:
         assert results == ["b", "d"]
 
 
+class TestAlign:
+    """Pairwise nearest-ts alignment between two streams."""
+
+    def test_basic_pairing(self, session):
+        """Each primary pairs with the closest in-tolerance secondary."""
+        lidar = session.stream("lidar", str)
+        image = session.stream("image", str)
+        # primary at 0.0, 0.1, 0.2; secondary slightly offset
+        for i, v in enumerate(["L0", "L1", "L2"]):
+            lidar.append(v, ts=i * 0.1)
+        for ts, v in [(0.02, "I0"), (0.11, "I1"), (0.19, "I2")]:
+            image.append(v, ts=ts)
+
+        pairs = lidar.align(image, tolerance=0.05).to_list()
+        assert [p.data.lidar.data for p in pairs] == ["L0", "L1", "L2"]
+        assert [p.data.image.data for p in pairs] == ["I0", "I1", "I2"]
+
+    def test_named_and_index_access(self, session):
+        """Pair fields are accessible by source-stream name and by index."""
+        a = session.stream("alpha", str)
+        b = session.stream("beta", str)
+        a.append("a0", ts=0.0)
+        b.append("b0", ts=0.001)
+
+        pair = a.align(b, tolerance=0.01).to_list()[0].data
+        assert pair.alpha.data == "a0"
+        assert pair.beta.data == "b0"
+        assert pair[0].data == "a0"
+        assert pair[1].data == "b0"
+
+    def test_same_name_falls_back_to_primary_secondary(self, session):
+        """Aligning streams that share a name names fields primary/secondary."""
+        a = session.stream("dup", str)
+        a.append("x", ts=0.0)
+
+        pair = a.align(a, tolerance=0.01).to_list()[0].data
+        assert pair.primary.data == "x"
+        assert pair.secondary.data == "x"
+        assert pair[0].data == "x"
+
+    def test_outer_obs_carries_primary_metadata(self, session):
+        """The yielded outer Observation keeps the primary's ts/pose/tags."""
+        a = session.stream("primary", str)
+        b = session.stream("secondary", str)
+        a.append("pa", ts=10.0, pose=(1, 2, 3), tags={"src": "p"})
+        b.append("sb", ts=10.005, pose=(9, 9, 9), tags={"src": "s"})
+
+        out = a.align(b, tolerance=0.05).to_list()[0]
+        assert out.ts == 10.0
+        assert out.pose_tuple[:3] == (1, 2, 3)
+        assert out.tags == {"src": "p"}
+        # Secondary's pose still reachable via the pair.
+        assert out.data.secondary.pose_tuple[:3] == (9, 9, 9)
+
+    def test_skip_when_no_match_in_tolerance(self, session):
+        """Primary frames with no secondary within tolerance are dropped."""
+        a = session.stream("a", str)
+        b = session.stream("b", str)
+        a.append("a0", ts=0.0)
+        a.append("a1", ts=1.0)
+        a.append("a2", ts=2.0)
+        # Only a match near a1.
+        b.append("b1", ts=1.02)
+
+        pairs = a.align(b, tolerance=0.05).to_list()
+        assert [p.data.a.data for p in pairs] == ["a1"]
+        assert [p.data.b.data for p in pairs] == ["b1"]
+
+    def test_one_secondary_matches_many_primaries(self, session):
+        """Same secondary can pair with multiple primaries — no early eviction."""
+        a = session.stream("a", str)
+        b = session.stream("b", str)
+        for ts in (1.000, 1.005, 1.010):
+            a.append(f"a{ts}", ts=ts)
+        b.append("b", ts=1.004)
+
+        pairs = a.align(b, tolerance=0.05).to_list()
+        assert len(pairs) == 3
+        assert all(p.data.b.data == "b" for p in pairs)
+
+    def test_primary_before_first_secondary(self, session):
+        """Early primaries without any in-window secondary are skipped, later ones pair."""
+        a = session.stream("a", str)
+        b = session.stream("b", str)
+        for ts in (0.0, 0.1, 0.2, 0.3):
+            a.append(f"a{ts}", ts=ts)
+        b.append("b", ts=0.3)
+
+        pairs = a.align(b, tolerance=0.05).to_list()
+        assert [p.ts for p in pairs] == [0.3]
+
+    def test_empty_secondary(self, session):
+        """Empty secondary stream → empty alignment, no error."""
+        a = session.stream("a", str)
+        b = session.stream("b", str)  # leave empty
+        a.append("a0", ts=0.0)
+        pairs = a.align(b, tolerance=1.0).to_list()
+        assert pairs == []
+
+    def test_filter_on_either_side_respected(self, session):
+        """Filters applied before .align() restrict the iterated set on that side."""
+        a = session.stream("a", str)
+        b = session.stream("b", str)
+        for ts in (0.0, 1.0, 2.0):
+            a.append(f"a{ts}", ts=ts)
+            b.append(f"b{ts}", ts=ts + 0.01)
+
+        pairs = a.after(0.5).align(b.before(1.5), tolerance=0.05).to_list()
+        assert [p.data.a.data for p in pairs] == ["a1.0"]
+        assert [p.data.b.data for p in pairs] == ["b1.0"]
+
+    def test_transform_source_allowed(self, session):
+        """A transform-sourced stream on either side aligns fine (source-agnostic)."""
+        a = session.stream("a", int)
+        b = session.stream("b", int)
+        for ts in (0.0, 1.0):
+            a.append(int(ts), ts=ts)
+            b.append(int(ts) + 100, ts=ts + 0.01)
+
+        # Primary transformed (+1), secondary transformed (+1) — both still ts-ordered.
+        primary = a.map(lambda obs: obs.derive(data=obs.data + 1))
+        secondary = b.map(lambda obs: obs.derive(data=obs.data + 1))
+        pairs = primary.align(secondary, tolerance=0.05).to_list()
+        # Field names inherit through the transform from the backing streams.
+        assert [p.data.a.data for p in pairs] == [1, 2]
+        assert [p.data.b.data for p in pairs] == [101, 102]
+
+    def test_live_alignment(self, memory_session):
+        """align() streams over live inputs — a pair emits once its bracket closes."""
+        p = memory_session.stream("lp")
+        s = memory_session.stream("ls")
+        # Backfilled matched pair so the first result is immediate.
+        p.append("P0", ts=1.0)
+        s.append("S0", ts=1.002)
+
+        aligned = p.live(buffer=Unbounded()).align(s.live(buffer=Unbounded()), tolerance=0.1)
+
+        results: list[tuple[str, str]] = []
+        consumed = threading.Event()
+
+        def consumer():
+            for obs in aligned:
+                results.append((obs.data.lp.data, obs.data.ls.data))
+                if len(results) >= 2:
+                    consumed.set()
+                    return
+
+        t = threading.Thread(target=consumer, daemon=True)
+        t.start()
+
+        time.sleep(0.05)
+        # Live primary, then a secondary just past it so P1's bracket closes.
+        p.append("P1", ts=2.0)
+        s.append("S1", ts=2.003)
+
+        consumed.wait(timeout=2.0)
+        t.join(timeout=2.0)
+        assert results == [("P0", "S0"), ("P1", "S1")]
+
+
+class TestAlignLargeInput:
+    """The two-pointer merge scales to dense streams in a single forward pass."""
+
+    def test_dense_secondary_pairs_correctly(self, memory_session):
+        """5k primaries against 50k secondaries — every primary gets its exact match."""
+        primary = memory_session.stream("p")
+        secondary = memory_session.stream("s")
+        # secondary at 500 Hz, primary at 50 Hz — each primary lands on a secondary.
+        for i in range(5_000):
+            primary.append(i, ts=i * 0.02)
+        for i in range(50_000):
+            secondary.append(i, ts=i * 0.002)
+
+        pairs = primary.align(secondary, tolerance=0.005).to_list()
+        assert len(pairs) == 5_000
+        # Each primary's nearest secondary is the coincident one (Δts ≈ 0).
+        assert max(abs(p.data[0].ts - p.data[1].ts) for p in pairs) < 1e-9
+
+
+class TestWithPose:
+    """``Observation.with_pose`` attaches/clears a pose without touching the payload."""
+
+    def test_attaches_pose_and_keeps_payload_lazy(self):
+        """Pose is set, but the payload loader stays untouched until accessed."""
+        loads = 0
+
+        def loader() -> str:
+            nonlocal loads
+            loads += 1
+            return "payload"
+
+        obs: Observation[str] = Observation(id=1, ts=5.0, data_type=str, _loader=loader)
+        posed = obs.with_pose((1.0, 2.0, 3.0))
+
+        # 3-tuple padded with the identity quaternion; payload not materialized.
+        assert posed.pose_tuple == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)
+        assert posed.ts == 5.0
+        assert loads == 0
+        # The payload still resolves lazily on first access.
+        assert posed.data == "payload"
+        assert loads == 1
+
+    def test_pose_none_clears(self):
+        obs: Observation[str] = Observation(id=1, ts=0.0, data_type=str, pose=(1, 2, 3), _data="x")
+        cleared = obs.with_pose(None)
+        assert cleared.pose_tuple is None
+        assert cleared.data == "x"
+
+    def test_overwrites_existing_pose(self):
+        obs: Observation[str] = Observation(id=1, ts=0.0, data_type=str, pose=(1, 2, 3), _data="x")
+        moved = obs.with_pose((7, 8, 9))
+        assert moved.pose_tuple is not None
+        assert moved.pose_tuple[:3] == (7.0, 8.0, 9.0)
+
+
 class TestWindowing:
     """Index (*_seek) and time (*_time) windowing; None = unbounded that side."""
 

@@ -87,7 +87,7 @@ classifiers = [
 
 dependencies = [
     # Transport Protocols
-    "dimos-lcm",
+    "dimos-lcm>=0.1.3",
     "PyTurboJPEG==1.8.2",
     # Core
     "numpy>=1.26.4",
@@ -317,27 +317,6 @@ dds = [
     "cyclonedds>=0.10.5",
 ]
 
-# Minimal dependencies for Docker modules that communicate with the DimOS host
-docker = [
-    "dimos-lcm",
-    "numpy>=1.26.4",
-    "scipy>=1.15.1",
-    "reactivex",
-    "plum-dispatch==2.5.7",
-    "structlog>=25.5.0,<26",
-    "pydantic",
-    "pydantic-settings>=2.11.0,<3",
-    "typer>=0.19.2,<1",
-    "requests>=2.28",
-    "opencv-python-headless",
-    "lcm",
-    "sortedcontainers",
-    "PyTurboJPEG",
-    "rerun-sdk",
-    "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
-    "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
-]
-
 base = [
     "dimos[agents,web,perception,visualization]",
 ]
@@ -349,7 +328,7 @@ apriltag = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,docker,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
 ]
 
 [dependency-groups]
@@ -458,7 +437,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false }
 override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
