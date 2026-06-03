@@ -15,6 +15,7 @@
 
 import math
 import os
+from pathlib import Path
 import time
 from typing import Any
 
@@ -24,15 +25,20 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
+from dimos.hardware.sensors.lidar.fastlio2 import module as _fastlio2_module
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.hardware.sensors.lidar.fastlio2.recorder import FastLio2Recorder, _default_recording_dir
 from dimos.hardware.sensors.lidar.fastlio2.speed_warner import SpeedWarner
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.memory2.stream import Stream
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
@@ -86,6 +92,21 @@ class Go2TfHackRecorder(FastLio2Recorder):
     - everything else (odom streams included) -> no pose
     """
 
+    fastlio_lidar: In[PointCloud2]
+    fastlio_odometry: In[Odometry]
+    go2_lidar: In[PointCloud2]
+    go2_odom: In[PoseStamped]
+    color_image: In[Image]
+    livox_lidar: In[PointCloud2]
+    livox_imu: In[Imu]
+    # Shadow the parent's generic companion ports so they're not recorded as
+    # empty `lidar`/`odom` streams; the go2-prefixed ports above take their place.
+    lidar: None = None  # type: ignore[assignment]
+    odom: None = None  # type: ignore[assignment]
+    # sanity check
+    fastlio_lidar_no_cap: In[PointCloud2]
+    fastlio_odometry_no_cap: In[Odometry]
+
     _latest_fastlio_odom: Odometry | None = None
     _warning_names: set[str] = set()
 
@@ -129,6 +150,14 @@ class Go2TfHackRecorder(FastLio2Recorder):
         return world_to_mid360 + MID360_TO_BASE
 
 
+class FastLio2NoCap(FastLio2):
+    pass
+
+
+# Absolute path to FastLio2's cpp build dir; passed to FastLio2NoCap so the
+# trivial subclass doesn't try to resolve `cpp` next to this file.
+_FASTLIO2_CPP = str(Path(_fastlio2_module.__file__).resolve().parent / "cpp")
+
 unitree_go2_record = autoconnect(
     KeyboardTeleop.blueprint(),
     MovementManager.blueprint(),
@@ -150,29 +179,41 @@ unitree_go2_record = autoconnect(
         frame_id="world",
         map_freq=-1,
         lidar_ip=_LIDAR_IP,
-        max_velocity_norm_ms=3.1,
+        max_velocity_norm_ms=3.1,  # meters/sec, 3.1 => 7mph, 5=>12mph. We want some padding
     ).remappings(
         [
             (FastLio2, "lidar", "fastlio_lidar"),
             (FastLio2, "odometry", "fastlio_odometry"),
         ]
     ),
-    Go2TfHackRecorder.blueprint(lidar_ip=_LIDAR_IP, record_pcap=True).remappings(
+    FastLio2NoCap.blueprint(
+        frame_id="world",
+        map_freq=-1,
+        lidar_ip=_LIDAR_IP,
+        max_velocity_norm_ms=100,
+        cwd=_FASTLIO2_CPP,
+    ).remappings(
         [
-            (Go2TfHackRecorder, "lidar", "go2_lidar"),
-            (Go2TfHackRecorder, "odom", "go2_odom"),
+            (FastLio2, "lidar", "fastlio_lidar_no_cap"),
+            (FastLio2, "odometry", "fastlio_odometry_no_cap"),
         ]
     ),
-    SpeedWarner.blueprint(),
+    Go2TfHackRecorder.blueprint(lidar_ip=_LIDAR_IP, record_pcap=True),
+    SpeedWarner.blueprint().remappings(
+        [
+            (SpeedWarner, "odometry", "fastlio_odometry_no_cap"),
+        ]
+    ),
 ).global_config(n_workers=10, robot_model="unitree_go2")
 
 
 if __name__ == "__main__":
-    recording_dir = _default_recording_dir()
+    recording_dir = _default_recording_dir().resolve()
+    recording_dir.mkdir(parents=True, exist_ok=True)
     set_run_log_dir(recording_dir)
     global_config.obstacle_avoidance = False
     coordinator = ModuleCoordinator.build(
         unitree_go2_record,
-        {FastLio2Recorder.name: {"recording_dir": recording_dir}},
+        {Go2TfHackRecorder.name: {"recording_dir": recording_dir}},
     )
     coordinator.loop()

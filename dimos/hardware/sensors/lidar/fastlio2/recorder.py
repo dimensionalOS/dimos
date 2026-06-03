@@ -21,19 +21,13 @@ import signal
 import subprocess
 import textwrap
 import time
-from typing import Any
 
 from pydantic import Field
-from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.memory2.module import Recorder, RecorderConfig
-from dimos.memory2.stream import Stream
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
@@ -112,13 +106,8 @@ class FastLio2Recorder(Recorder):
 
     config: FastLio2RecorderConfig
 
-    livox_lidar: In[PointCloud2]
-    livox_imu: In[Imu]
-    fastlio_lidar: In[PointCloud2]
-    fastlio_odometry: In[Odometry]
-    color_image: In[Image]
     lidar: In[PointCloud2]
-    odom: In[PoseStamped]
+    odometry: In[Odometry]
 
     # tcpdump fails fast (EPERM, bad iface) within a few ms; pause briefly so poll() catches that.
     _TCPDUMP_STARTUP_PROBE_SEC: float = 0.3
@@ -136,35 +125,6 @@ class FastLio2Recorder(Recorder):
     def stop(self) -> None:
         super().stop()
         self._stop_pcap()
-
-    def _port_to_stream(self, name: str, input_topic: In[Any], stream: Stream[Any]) -> None:
-        """Append each message from *input_topic* to *stream*, attaching world pose via tf.
-
-        Stamped messages use their own ``.frame_id`` and ``.ts``; unstamped
-        messages (or ones whose frame isn't in the tf graph, e.g. a payload
-        already in world coords) fall back to ``config.default_frame_id`` —
-        so every observation gets a robot-pose anchor when tf is publishing.
-
-        Registers the subscription as a disposable on this module.
-        """
-
-        default_frame_id = self.config.default_frame_id
-        tf_tolerance = self.config.tf_tolerance
-
-        def on_msg(msg: Any) -> None:
-            # Force system time for all messages
-            ts = time.time()
-            frame_id = (
-                getattr(msg, "child_frame_id", None)
-                or getattr(msg, "frame_id", None)
-                or default_frame_id
-            )
-            transform = self.tf.get("world", frame_id, time_point=ts, time_tolerance=tf_tolerance)
-            pose = transform.to_pose() if transform is not None else None
-
-            stream.append(msg, ts=ts, pose=pose)
-
-        self.register_disposable(Disposable(input_topic.subscribe(on_msg)))
 
     def _start_pcap(self) -> None:
         cfg = self.config
