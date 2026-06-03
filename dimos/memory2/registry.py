@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import Field
 
+from dimos.memory2.utils.sqlite import conn_lock
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 
@@ -51,31 +52,39 @@ class RegistryStore(Configurable):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._conn: sqlite3.Connection = self.config.conn
-        self._conn.execute(
-            "CREATE TABLE IF NOT EXISTS _streams ("
-            "    name   TEXT PRIMARY KEY,"
-            "    config TEXT NOT NULL"
-            ")"
-        )
-        self._conn.commit()
+        self._lock = conn_lock(self._conn)
+        with self._lock:
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS _streams ("
+                "    name   TEXT PRIMARY KEY,"
+                "    config TEXT NOT NULL"
+                ")"
+            )
+            self._conn.commit()
 
     def get(self, name: str) -> dict[str, Any] | None:
-        row = self._conn.execute("SELECT config FROM _streams WHERE name = ?", (name,)).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT config FROM _streams WHERE name = ?", (name,)
+            ).fetchone()
         if row is None:
             return None
         return json.loads(row[0])  # type: ignore[no-any-return]
 
     def put(self, name: str, config: dict[str, Any]) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO _streams (name, config) VALUES (?, ?)",
-            (name, json.dumps(config)),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO _streams (name, config) VALUES (?, ?)",
+                (name, json.dumps(config)),
+            )
+            self._conn.commit()
 
     def delete(self, name: str) -> None:
-        self._conn.execute("DELETE FROM _streams WHERE name = ?", (name,))
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("DELETE FROM _streams WHERE name = ?", (name,))
+            self._conn.commit()
 
     def list_streams(self) -> list[str]:
-        rows = self._conn.execute("SELECT name FROM _streams").fetchall()
+        with self._lock:
+            rows = self._conn.execute("SELECT name FROM _streams").fetchall()
         return [r[0] for r in rows]

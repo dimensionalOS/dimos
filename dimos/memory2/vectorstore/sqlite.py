@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, model_validator
 
-from dimos.memory2.utils.sqlite import open_disposable_sqlite_connection
+from dimos.memory2.utils.sqlite import conn_lock, open_disposable_sqlite_connection
 from dimos.memory2.utils.validation import validate_identifier
 from dimos.memory2.vectorstore.base import VectorStore, VectorStoreConfig
 
@@ -60,30 +61,35 @@ class SqliteVectorStore(VectorStore):
         self._conn: sqlite3.Connection = self.config.conn  # type: ignore[assignment]  # set in start() if None
         self._path = self.config.path
         self._tables: dict[str, int] = {}  # stream_name -> dimensionality
+        self._lock = conn_lock(self._conn) if self._conn is not None else threading.RLock()
 
     def _ensure_table(self, stream_name: str, dim: int) -> None:
         if stream_name in self._tables:
             return
         validate_identifier(stream_name)
-        self._conn.execute(
-            f'CREATE VIRTUAL TABLE IF NOT EXISTS "{stream_name}_vec" '
-            f"USING vec0(embedding float[{dim}] distance_metric=cosine)"
-        )
-        self._tables[stream_name] = dim
+        with self._lock:
+            if stream_name not in self._tables:
+                self._conn.execute(
+                    f'CREATE VIRTUAL TABLE IF NOT EXISTS "{stream_name}_vec" '
+                    f"USING vec0(embedding float[{dim}] distance_metric=cosine)"
+                )
+                self._tables[stream_name] = dim
 
     def start(self) -> None:
         if self._conn is None:
             assert self._path is not None
             disposable, self._conn = open_disposable_sqlite_connection(self._path)
             self.register_disposable(disposable)
+            self._lock = conn_lock(self._conn)
 
     def put(self, stream_name: str, key: int, embedding: Embedding) -> None:
         vec = embedding.to_numpy().tolist()
         self._ensure_table(stream_name, len(vec))
-        self._conn.execute(
-            f'INSERT OR REPLACE INTO "{stream_name}_vec" (rowid, embedding) VALUES (?, ?)',
-            (key, json.dumps(vec)),
-        )
+        with self._lock:
+            self._conn.execute(
+                f'INSERT OR REPLACE INTO "{stream_name}_vec" (rowid, embedding) VALUES (?, ?)',
+                (key, json.dumps(vec)),
+            )
 
     # vec0 virtual tables require an explicit k in the MATCH clause; apply a
     # default cap when the caller did not specify one.
@@ -93,10 +99,11 @@ class SqliteVectorStore(VectorStore):
         validate_identifier(stream_name)
         vec = query.to_numpy().tolist()
         try:
-            rows = self._conn.execute(
-                f'SELECT rowid, distance FROM "{stream_name}_vec" WHERE embedding MATCH ? AND k = ?',
-                (json.dumps(vec), k if k is not None else self._DEFAULT_K),
-            ).fetchall()
+            with self._lock:
+                rows = self._conn.execute(
+                    f'SELECT rowid, distance FROM "{stream_name}_vec" WHERE embedding MATCH ? AND k = ?',
+                    (json.dumps(vec), k if k is not None else self._DEFAULT_K),
+                ).fetchall()
         except sqlite3.OperationalError as e:
             if "no such table" in str(e):
                 return []
@@ -107,7 +114,8 @@ class SqliteVectorStore(VectorStore):
     def delete(self, stream_name: str, key: int) -> None:
         validate_identifier(stream_name)
         try:
-            self._conn.execute(f'DELETE FROM "{stream_name}_vec" WHERE rowid = ?', (key,))
+            with self._lock:
+                self._conn.execute(f'DELETE FROM "{stream_name}_vec" WHERE rowid = ?', (key,))
         except sqlite3.OperationalError as e:
             if "no such table" not in str(e):
                 raise

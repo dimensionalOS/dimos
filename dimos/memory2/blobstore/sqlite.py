@@ -15,12 +15,13 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from typing import Any
 
 from pydantic import Field, model_validator
 
 from dimos.memory2.blobstore.base import BlobStore, BlobStoreConfig
-from dimos.memory2.utils.sqlite import open_disposable_sqlite_connection
+from dimos.memory2.utils.sqlite import conn_lock, open_disposable_sqlite_connection
 from dimos.memory2.utils.validation import validate_identifier
 
 
@@ -62,35 +63,41 @@ class SqliteBlobStore(BlobStore):
         self._conn: sqlite3.Connection = self.config.conn  # type: ignore[assignment]  # set in start() if None
         self._path = self.config.path
         self._tables: set[str] = set()
+        self._lock = conn_lock(self._conn) if self._conn is not None else threading.RLock()
 
     def _ensure_table(self, stream_name: str) -> None:
         if stream_name in self._tables:
             return
         validate_identifier(stream_name)
-        self._conn.execute(
-            f'CREATE TABLE IF NOT EXISTS "{stream_name}_blob" '
-            "(id INTEGER PRIMARY KEY, data BLOB NOT NULL)"
-        )
-        self._tables.add(stream_name)
+        with self._lock:
+            if stream_name not in self._tables:
+                self._conn.execute(
+                    f'CREATE TABLE IF NOT EXISTS "{stream_name}_blob" '
+                    "(id INTEGER PRIMARY KEY, data BLOB NOT NULL)"
+                )
+                self._tables.add(stream_name)
 
     def start(self) -> None:
         if self._conn is None:
             assert self._path is not None
             disposable, self._conn = open_disposable_sqlite_connection(self._path)
             self.register_disposable(disposable)
+            self._lock = conn_lock(self._conn)
 
     def put(self, stream_name: str, key: int, data: bytes) -> None:
         self._ensure_table(stream_name)
-        self._conn.execute(
-            f'INSERT OR REPLACE INTO "{stream_name}_blob" (id, data) VALUES (?, ?)',
-            (key, data),
-        )
+        with self._lock:
+            self._conn.execute(
+                f'INSERT OR REPLACE INTO "{stream_name}_blob" (id, data) VALUES (?, ?)',
+                (key, data),
+            )
 
     def get(self, stream_name: str, key: int) -> bytes:
         try:
-            row = self._conn.execute(
-                f'SELECT data FROM "{stream_name}_blob" WHERE id = ?', (key,)
-            ).fetchone()
+            with self._lock:
+                row = self._conn.execute(
+                    f'SELECT data FROM "{stream_name}_blob" WHERE id = ?', (key,)
+                ).fetchone()
         except Exception:
             raise KeyError(f"No blob for stream={stream_name!r}, key={key}")
         if row is None:
@@ -100,8 +107,10 @@ class SqliteBlobStore(BlobStore):
 
     def delete(self, stream_name: str, key: int) -> None:
         try:
-            cur = self._conn.execute(f'DELETE FROM "{stream_name}_blob" WHERE id = ?', (key,))
+            with self._lock:
+                cur = self._conn.execute(f'DELETE FROM "{stream_name}_blob" WHERE id = ?', (key,))
+                rowcount = cur.rowcount
         except Exception:
             raise KeyError(f"No blob for stream={stream_name!r}, key={key}") from None
-        if cur.rowcount == 0:
+        if rowcount == 0:
             raise KeyError(f"No blob for stream={stream_name!r}, key={key}")
