@@ -34,7 +34,7 @@ class OsmSkill(Module):
 
     gps_location: In[LatLon]
 
-    def __init__(self, **kwargs:Any) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._latest_location = None
         self._current_location_map = CurrentLocationMap(QwenVlModel())
