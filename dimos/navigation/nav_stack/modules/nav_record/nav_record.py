@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from dimos_lcm.std_msgs import Bool as LcmBool  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
@@ -31,7 +33,7 @@ from dimos.msgs.std_msgs.Int8 import Int8
 
 
 class NavRecordConfig(RecorderConfig):
-    db_path: str = "nav_recording.db"
+    db_path: str | Path = "nav_recording.db"
 
 
 class NavRecord(Recorder):

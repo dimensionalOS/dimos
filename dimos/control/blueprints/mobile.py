@@ -182,6 +182,12 @@ coordinator_flowbase_nav = (
         ),
         create_nav_stack(
             planner="simple",
+            record=True,
+            nav_record={
+                "db_path": os.path.join(
+                    os.environ.get("DIMOS_RUN_LOG_DIR", "."), "nav_recording.db"
+                )
+            },
             vehicle_height=0.5,  # FlowBase platform clearance — tune if needed
             max_speed=0.8,  # conservative starting point
             terrain_analysis={
