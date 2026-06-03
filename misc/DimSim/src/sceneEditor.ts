@@ -353,7 +353,7 @@ export class SceneEditor {
         if (scaleFactor !== 1.0) {
           obj.scale.multiplyScalar(scaleFactor);
           obj.updateMatrixWorld(true);
-          console.log(`[sceneEditor] autoScale: ${maxDim.toFixed(1)}m → ${(maxDim * scaleFactor).toFixed(1)}m (×${scaleFactor.toFixed(4)})`);
+          console.log("[sceneEditor] autoScale: %sm → %sm (×%s)", maxDim.toFixed(1), (maxDim * scaleFactor).toFixed(1), scaleFactor.toFixed(4));
         }
         return scaleFactor;
       };
