@@ -519,11 +519,25 @@ def _babylon_blueprint(viewer_mjcf_path: str | Path, cmd_vel_topic: str) -> Blue
                 browser_collision_path=browser_collision_path,
                 initial_entities=scene_package.entities,
             )
-        kwargs.update(
-            pointcloud_hz=_env_float("DIMOS_BABYLON_POINTCLOUD_HZ", 2.0),
-            pointcloud_max_points=_env_int("DIMOS_BABYLON_POINTCLOUD_MAX_POINTS", 70000),
-        )
+            # Optional gaussian splat sitting next to the package, served as
+            # a static asset; browser loads it on demand via the Splat toggle.
+            splat_dir = Path(scene_package.package_dir) / "splat"
+            splat_ply = splat_dir / "scene.ply"
+            if splat_ply.exists():
+                import yaml as _yaml
 
+                splat_alignment: dict[str, Any] = {}
+                alignment_yaml_path = splat_dir / "alignment.yaml"
+                if alignment_yaml_path.exists():
+                    splat_alignment = _yaml.safe_load(alignment_yaml_path.read_text()) or {}
+                kwargs.update(
+                    splat_path=str(splat_ply),
+                    splat_alignment=splat_alignment,
+                )
+    kwargs.update(
+        pointcloud_hz=_env_float("DIMOS_BABYLON_POINTCLOUD_HZ", 2.0),
+        pointcloud_max_points=_env_int("DIMOS_BABYLON_POINTCLOUD_MAX_POINTS", 70000),
+    )
     # Babylon-as-physics mode: integrate cmd_vel locally, publish sim_odom,
     # let the rust scene_lidar consume it.  No MuJoCo at runtime.
     # "pimsim" is the preferred alias going forward; "babylon" stays accepted.
@@ -580,6 +594,123 @@ def _arm_teleop_blueprint() -> Blueprint | None:
         {
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
             ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
+        }
+    )
+
+
+def _compose_scene_splat_alignment_yaml(
+    scene_package: Any, splat_alignment_yaml: Path | None
+) -> Path:
+    """Bake scene-package alignment into a source-frame splat alignment yaml.
+
+    The browser path applies the scene package transform at the scene root and
+    therefore expects ``alignment.yaml`` to remain source-frame relative. The
+    splat camera renders directly in dimos world coordinates, so it needs the
+    scene-package transform composed into the splat alignment once up front.
+    """
+    import numpy as np
+    from scipy.spatial.transform import Rotation as R
+    import yaml
+
+    from dimos.visualization.viser.splat import SplatAlignment
+
+    raw_alignment = (
+        SplatAlignment.from_yaml(splat_alignment_yaml)
+        if splat_alignment_yaml is not None and splat_alignment_yaml.exists()
+        else SplatAlignment(y_up=False)
+    )
+
+    def _scene_rotation_matrix() -> np.ndarray:
+        alignment = scene_package.alignment
+        rz, ry, rx = (np.deg2rad(angle) for angle in alignment.rotation_zyx_deg)
+        cz, sz = np.cos(rz), np.sin(rz)
+        cy, sy = np.cos(ry), np.sin(ry)
+        cx, sx = np.cos(rx), np.sin(rx)
+        rotate_z = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]], dtype=np.float64)
+        rotate_y = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]], dtype=np.float64)
+        rotate_x = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]], dtype=np.float64)
+        matrix = rotate_z @ rotate_y @ rotate_x
+        if scene_package.alignment.y_up:
+            matrix = matrix @ np.array(
+                [[1, 0, 0], [0, 0, -1], [0, 1, 0]],
+                dtype=np.float64,
+            )
+        return matrix
+
+    scene_rotation = _scene_rotation_matrix()
+    raw_rotation = raw_alignment.world_from_splat().astype(np.float64)
+    merged_rotation = scene_rotation @ raw_rotation
+    merged_scale = float(scene_package.alignment.scale) * float(raw_alignment.scale)
+    raw_translation = np.asarray(raw_alignment.translation, dtype=np.float64)
+    scene_translation = np.asarray(scene_package.alignment.translation, dtype=np.float64)
+    merged_translation = (
+        float(scene_package.alignment.scale) * (scene_rotation @ raw_translation)
+        + scene_translation
+    )
+
+    rz, ry, rx = R.from_matrix(merged_rotation).as_euler("ZYX", degrees=True)
+    runtime_alignment_yaml = Path("/tmp") / (
+        f"dimos_runtime_splat_alignment_{Path(scene_package.package_dir).name}.yaml"
+    )
+    runtime_alignment_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "scale": merged_scale,
+                "translation": [float(v) for v in merged_translation],
+                "rotation_zyx": [float(rz), float(ry), float(rx)],
+                "y_up": False,
+            },
+            sort_keys=False,
+        )
+    )
+    return runtime_alignment_yaml
+
+
+def _splat_camera_blueprint() -> Blueprint | None:
+    """Render a Gaussian splat from the robot's camera pose into /camera_image.
+
+    Off by default; opt-in with ``DIMOS_ENABLE_SPLAT_CAMERA=1``. Only fires
+    when the active scene package has ``splat/scene.ply`` next to its
+    metadata (e.g. ``--scene office-splat``). The macOS MLX backend lives
+    in ``dimos/visualization/viser/splat_camera.py``.
+    """
+    if not _env_bool("DIMOS_ENABLE_SPLAT_CAMERA", False):
+        return None
+    scene_package = _scene_package_config()
+    if scene_package is None or scene_package.package_dir is None:
+        return None
+    splat_ply = Path(scene_package.package_dir) / "splat" / "scene.ply"
+    if not splat_ply.exists():
+        logger.info(
+            "Splat camera enabled but %s missing; cook the scene with splat first.",
+            splat_ply,
+        )
+        return None
+    alignment_yaml = Path(scene_package.package_dir) / "splat" / "alignment.yaml"
+    runtime_alignment_yaml = _compose_scene_splat_alignment_yaml(scene_package, alignment_yaml)
+
+    from dimos.visualization.viser.camera import g1_d435_default, g1_d435_forward
+    from dimos.visualization.viser.splat_camera import SplatCameraModule
+
+    # Use the C++ Metal kernel by default (~2x perf, monkey-patched to drop
+    # training-divergence fog blobs that otherwise blur the foreground).
+    # Set DIMOS_MLX_RASTERIZER=python to fall back to the pure-python path.
+    os.environ.setdefault("DIMOS_MLX_RASTERIZER", "cpp")
+
+    camera_spec = (
+        g1_d435_forward() if _env_bool("DIMOS_SPLAT_CAMERA_FORWARD", True) else g1_d435_default()
+    )
+    return SplatCameraModule.blueprint(
+        splat_path=str(splat_ply),
+        mjcf_path=str(_MJCF_PATH),
+        alignment_yaml=str(runtime_alignment_yaml),
+        camera_spec=camera_spec,
+        render_hz=_env_float("DIMOS_SPLAT_RENDER_HZ", 10.0),
+    ).transports(
+        {
+            ("color_image", Image): LCMTransport("/camera_image", Image),
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+            ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
         }
     )
 
@@ -675,10 +806,13 @@ if global_config.simulation in ("babylon", "pimsim"):
             f"--simulation {global_config.simulation} requested but Babylon viewer "
             "is disabled (DIMOS_ENABLE_BABYLON=0?)"
         )
+    _splat_camera = _splat_camera_blueprint()
+    _optional_pimsim = tuple(bp for bp in (_splat_camera,) if bp is not None)
     g1_groot_wbc = autoconnect(
         _babylon,
         _websocket_blueprint(_cmd_vel_topic),
         *_sim_support_blueprints(),
+        *_optional_pimsim,
     ).transports(
         {
             ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
@@ -702,9 +836,10 @@ else:
     _quest = _quest_teleop_blueprint(_cmd_vel_topic)
     _camera_bridge = _camera_bridge_blueprint()
     _workspace_camera = _workspace_camera_bridge_blueprint()
+    _splat_camera = _splat_camera_blueprint()
     _optional = tuple(
         bp
-        for bp in (_babylon, _teleop, _quest, _camera_bridge, _workspace_camera)
+        for bp in (_babylon, _teleop, _quest, _camera_bridge, _workspace_camera, _splat_camera)
         if bp is not None
     )
 

@@ -112,6 +112,9 @@ let sceneLoadStarted = false;
 let sceneVisible = true;
 let pathMesh = null;
 let lidarMesh = null;
+let splatMesh = null;
+let splatLoadStarted = false;
+let splatVisible = false;
 let lidarMaterial = null;
 let lidarPointCount = 0;
 let lidarVisible = true;
@@ -319,6 +322,74 @@ function setLidarVisibility(visible) {
   lidarVisible = visible;
   if (lidarMesh) lidarMesh.setEnabled(visible);
   setButtonActive("toggleLidar", visible);
+}
+
+function setSplatVisibility(visible) {
+  splatVisible = visible;
+  setButtonActive("toggleSplat", visible);
+  if (visible && !splatMesh && !splatLoadStarted && sceneConfig) {
+    loadSplat(sceneConfig);
+    return;
+  }
+  if (splatMesh) splatMesh.setEnabled(visible);
+}
+
+async function loadSplat(config) {
+  if (splatLoadStarted || !config || !config.splatFile) return;
+  splatLoadStarted = true;
+  setStatus("loading splat");
+  try {
+    // splat is parented to the same scene root the mesh uses, so the package's
+    // scene alignment (scale / translation / rotation) is applied exactly once
+    // in the browser and the per-splat alignment stays source-frame relative.
+    const root = new BABYLON.TransformNode("splatRoot", scene);
+    root.position = vec3(config.scenePosition);
+    root.scaling = new BABYLON.Vector3(config.sceneScale, config.sceneScale, config.sceneScale);
+    root.rotationQuaternion = quatWxyz(config.sceneWxyz);
+
+    const ply = "/assets/" + config.splatFile;
+    const GS = BABYLON.GaussianSplattingMesh;
+    if (!GS) {
+      console.error("BABYLON.GaussianSplattingMesh not available — Babylon too old?");
+      setStatus("splat unsupported");
+      return;
+    }
+    const gs = new GS("splat", null, scene);
+    await gs.loadFileAsync(ply);
+    gs.parent = root;
+
+    const a = config.splatAlignment || {};
+    const s = Number(a.scale ?? 1.0);
+    gs.scaling = new BABYLON.Vector3(s, s, s);
+    const t = a.translation || [0, 0, 0];
+    gs.position = new BABYLON.Vector3(t[0], t[1], t[2]);
+    // SplatAlignment.rotation_zyx is intrinsic ZYX in degrees: R = Rz @ Ry @ Rx.
+    const [rzDeg, ryDeg, rxDeg] = a.rotation_zyx || [0, 0, 0];
+    const rz = (rzDeg * Math.PI) / 180;
+    const ry = (ryDeg * Math.PI) / 180;
+    const rx = (rxDeg * Math.PI) / 180;
+    const qx = BABYLON.Quaternion.RotationAxis(new BABYLON.Vector3(1, 0, 0), rx);
+    const qy = BABYLON.Quaternion.RotationAxis(new BABYLON.Vector3(0, 1, 0), ry);
+    const qz = BABYLON.Quaternion.RotationAxis(new BABYLON.Vector3(0, 0, 1), rz);
+    gs.rotationQuaternion = qz.multiply(qy).multiply(qx);
+    if (a.y_up) {
+      // Compose an extra Y-up -> Z-up rotation (-90° around X) on splat-local
+      // before the ZYX above. Equivalent to inserting Rx(-90°) on the right.
+      const qYupToZup = BABYLON.Quaternion.RotationAxis(
+        new BABYLON.Vector3(1, 0, 0),
+        -Math.PI / 2,
+      );
+      gs.rotationQuaternion = gs.rotationQuaternion.multiply(qYupToZup);
+    }
+
+    splatMesh = gs;
+    splatMesh.setEnabled(splatVisible);
+    setStatus("splat loaded");
+  } catch (err) {
+    console.error("splat load failed", err);
+    setStatus("splat load failed");
+    splatLoadStarted = false;
+  }
 }
 
 function createCollisionMaterial() {
@@ -2198,6 +2269,8 @@ document.getElementById("respawnRobot").onclick = () => {
   setStatus("respawn requested");
 };
 document.getElementById("toggleLidar").onclick = () => setLidarVisibility(!lidarVisible);
+const _toggleSplat = document.getElementById("toggleSplat");
+if (_toggleSplat) _toggleSplat.onclick = () => setSplatVisibility(!splatVisible);
 document.getElementById("toggleCamera").onclick = () => {
   const btn = document.getElementById("toggleCamera");
   const active = btn.dataset.active !== "true";

@@ -145,6 +145,8 @@ class BabylonSceneViewerModule(Module):
         assets: dict[str, bytes] | None = None,
         scene_path: str | Path | None = None,
         browser_collision_path: str | Path | None = None,
+        splat_path: str | Path | None = None,
+        splat_alignment: dict[str, Any] | None = None,
         scene_scale: float = 1.0,
         scene_translation: tuple[float, float, float] = (0.0, 0.0, 0.0),
         scene_rotation_zyx_deg: tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -180,6 +182,8 @@ class BabylonSceneViewerModule(Module):
         self._browser_collision_path = (
             Path(browser_collision_path) if browser_collision_path else None
         )
+        self._splat_path = Path(splat_path) if splat_path else None
+        self._splat_alignment = splat_alignment or {}
         self._scene_scale = scene_scale
         self._scene_translation = scene_translation
         self._scene_rotation_zyx_deg = scene_rotation_zyx_deg
@@ -386,12 +390,20 @@ class BabylonSceneViewerModule(Module):
         if self._browser_collision_path is not None and self._browser_collision_path.exists():
             collision_file = _versioned_asset_name("collision", self._browser_collision_path)
             collision_bytes = self._browser_collision_path.stat().st_size
+        splat_file = None
+        splat_bytes = 0
+        if self._splat_path is not None and self._splat_path.exists():
+            splat_file = _versioned_asset_name("splat", self._splat_path)
+            splat_bytes = self._splat_path.stat().st_size
         return JSONResponse(
             {
                 "sceneFile": scene_file,
                 "sceneBytes": scene_bytes,
                 "collisionSceneFile": collision_file,
                 "collisionSceneBytes": collision_bytes,
+                "splatFile": splat_file,
+                "splatBytes": splat_bytes,
+                "splatAlignment": self._splat_alignment,
                 "sceneScale": self._scene_scale,
                 "scenePosition": list(self._scene_translation),
                 "sceneWxyz": list(scene_wxyz),
@@ -435,7 +447,13 @@ class BabylonSceneViewerModule(Module):
         has_collision_asset = (
             self._browser_collision_path is not None and self._browser_collision_path.exists()
         )
-        if not has_scene_asset and not has_collision_asset and not self._entity_asset_paths:
+        has_splat_asset = self._splat_path is not None and self._splat_path.exists()
+        if (
+            not has_scene_asset
+            and not has_collision_asset
+            and not has_splat_asset
+            and not self._entity_asset_paths
+        ):
             return Response("scene asset not configured", status_code=404)
 
         asset_name = request.path_params["asset_name"]
@@ -444,6 +462,15 @@ class BabylonSceneViewerModule(Module):
             return FileResponse(
                 entity_asset,
                 media_type=media_type(entity_asset),
+                headers=_NO_CACHE_HEADERS,
+            )
+
+        if self._splat_path is not None and _matches_asset_name(
+            asset_name, "splat", self._splat_path
+        ):
+            return FileResponse(
+                self._splat_path,
+                media_type="application/octet-stream",
                 headers=_NO_CACHE_HEADERS,
             )
 

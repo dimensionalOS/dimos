@@ -30,6 +30,9 @@ _ALIASES = {
     "office": DEFAULT_SCENE,
     "dimos-office": DEFAULT_SCENE,
     "dimos_office": DEFAULT_SCENE,
+    "office-splat": "dimos-office-splat",
+    "dimos-office-splat": "dimos-office-splat",
+    "dimos_office_splat": "dimos-office-splat",
     "street": "street-lite",
     "street-lite": "street-lite",
     "street_lite": "street-lite",
@@ -45,6 +48,7 @@ _ALIASES = {
 }
 _PACKAGE_DIRS = {
     DEFAULT_SCENE: "dimos_office",
+    "dimos-office-splat": "dimos_office_splat",
     "street-lite": "street_lite",
     "mall-babylon-nolights": "mall_babylon_nolights",
     "mall-proxy": "mall_proxy",
