@@ -22,6 +22,13 @@ from dimos.navigation.cmd_vel_mux import CmdVelMux
 
 
 class TestCmdVelMux:
+    def test_module_accepts_watchdog_config_override(self) -> None:
+        mux = CmdVelMux(max_nav_command_duration_sec=1.0)
+        try:
+            assert mux.config.max_nav_command_duration_sec == 1.0
+        finally:
+            mux.stop()
+
     def test_teleop_initially_inactive(self) -> None:
         mux = CmdVelMux.__new__(CmdVelMux)
         mux.__dict__["_teleop_active"] = False

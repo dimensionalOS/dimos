@@ -68,6 +68,7 @@ class CmdVelMux(Module):
     """
 
     default_config = CmdVelMuxConfig
+    config: CmdVelMuxConfig
 
     nav_cmd_vel: In[Twist]
     tele_cmd_vel: In[Twist]
