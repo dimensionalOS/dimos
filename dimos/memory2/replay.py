@@ -36,7 +36,7 @@ from reactivex.scheduler import TimeoutScheduler
 
 from dimos.memory2.store.base import Store, StreamAccessor
 from dimos.protocol.service.spec import BaseConfig, Configurable
-from dimos.utils.data import get_data
+from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -50,15 +50,8 @@ _LATE_TOLERANCE = 0.05  # don't skip frames within this many seconds of "now"
 
 
 def resolve_db_path(dataset: str | Path) -> Path:
-    """Map a dataset name to an on-disk .db path (LFS-downloading on miss).
-
-    Absolute or existing relative paths are used as-is; bare names resolve
-    via :func:`dimos.utils.data.get_data`.
-    """
-    p = Path(dataset)
-    if p.is_absolute() or p.exists():
-        return p
-    return get_data(f"{dataset}.db")
+    """Map a dataset name to an on-disk .db path (LFS-downloading on miss)."""
+    return resolve_named_path(dataset, ".db")
 
 
 class ReplayConfig(BaseConfig):

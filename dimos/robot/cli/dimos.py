@@ -38,6 +38,12 @@ from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.mapping.utils.cli.map import main as _map_main
+from dimos.mapping.utils.cli.pose_fill import main as _map_pose_fill_main
+from dimos.mapping.utils.cli.rename import main as _map_rename_main
+from dimos.mapping.utils.cli.replay import main as _map_replay_main
+from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_main
+from dimos.mapping.utils.cli.summary import main as _map_summary_main
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
@@ -672,47 +678,18 @@ def send(
     topic_send(topic, message_expr)
 
 
-@main.command(name="export-premap")
-def export_premap_cmd(
-    dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
-    output: Path | None = typer.Option(None, "-o", "--output", help="Output .pc2.lcm path"),
-    voxel_size: float = typer.Option(0.05, "--voxel-size", help="Voxel size for the rebuild"),
-    duration: float | None = typer.Option(
-        None, "--duration", help="Limit to first N seconds (default: full log)"
-    ),
-    device: str = typer.Option(
-        "CUDA:0",
-        "--device",
-        help="Open3D compute device (e.g. CUDA:0, CPU:0); fallback to CPU if unavailable",
-    ),
-    block_count: int = typer.Option(
-        2_000_000,
-        "--block-count",
-        help="VoxelBlockGrid capacity",
-    ),
-) -> None:
-    """Export a twopass relocalization premap (.pc2.lcm) from a recorded SQLite dataset."""
-    from dimos.mapping.relocalization.pgo import pgo_then_voxels
-    from dimos.memory2.store.sqlite import SqliteStore
-    from dimos.utils.data import get_data_dir, resolve_named_path
+map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
+main.add_typer(map_app, name="map")
+map_app.command("global")(_map_main)
+map_app.command("summary")(_map_summary_main)
+map_app.command("rename")(_map_rename_main)
+map_app.command("pose-fill")(_map_pose_fill_main)
+map_app.command("replay")(_map_replay_main)
+map_app.command("replay-marker")(_map_replay_marker_main)
 
-    db_path = resolve_named_path(dataset, ".db")
+from dimos.memory2.cli.app import mem_app
 
-    store = SqliteStore(path=db_path)
-    lidar = store.streams.lidar
-    if duration is not None:
-        lidar = lidar.before(lidar.first().ts + duration)
-
-    typer.echo(f"computing twopass map from {db_path} (voxel_size={voxel_size})...")
-    twopass_map = pgo_then_voxels(
-        lidar, voxel_size=voxel_size, block_count=block_count, device=device
-    )
-
-    if output is None:
-        output = get_data_dir() / f"{db_path.stem}_twopass_map.pc2.lcm"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(twopass_map.lcm_encode())
-    typer.echo(f"wrote {output}")
+main.add_typer(mem_app, name="mem")
 
 
 @main.command()

@@ -9,19 +9,34 @@ use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use serde::Deserialize;
+use validator::{Validate, ValidationError};
 
 type VoxelKey = (i32, i32, i32);
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
+#[validate(schema(function = "validate_health_range"))]
 struct Config {
+    #[validate(range(exclusive_min = 0.0))]
     voxel_size: f32,
+    #[validate(range(min = 0.0))]
     max_range: f32,
+    #[validate(range(min = 1))]
     ray_subsample: u32,
+    #[validate(range(min = 0.0))]
     shadow_depth: f32,
+    #[validate(range(min = 0.0))]
     grace_depth: f32,
     min_health: i32,
+    #[validate(range(min = 1))]
     max_health: i32,
+}
+
+fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
+    if cfg.min_health >= cfg.max_health {
+        return Err(ValidationError::new("min_health_lt_max_health"));
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -39,7 +54,6 @@ struct LocalBounds {
 }
 
 #[derive(Module)]
-#[module(setup = validate_config)]
 struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
@@ -61,50 +75,6 @@ struct RayTracingVoxelMap {
 }
 
 impl RayTracingVoxelMap {
-    /// Make sure all the configs are valid on setup
-    async fn validate_config(&self) {
-        let cfg = &self.config;
-        if !cfg.voxel_size.is_finite() || cfg.voxel_size <= 0.0 {
-            panic!(
-                "voxel_ray_tracing: voxel_size must be > 0, got {}",
-                cfg.voxel_size
-            );
-        }
-        if !cfg.max_range.is_finite() || cfg.max_range < 0.0 {
-            panic!(
-                "voxel_ray_tracing: max_range must be >= 0, got {}",
-                cfg.max_range
-            );
-        }
-        if !cfg.shadow_depth.is_finite() || cfg.shadow_depth < 0.0 {
-            panic!(
-                "voxel_ray_tracing: shadow_depth must be >= 0, got {}",
-                cfg.shadow_depth
-            );
-        }
-        if !cfg.grace_depth.is_finite() || cfg.grace_depth < 0.0 {
-            panic!(
-                "voxel_ray_tracing: grace_depth must be >= 0, got {}",
-                cfg.grace_depth
-            );
-        }
-        if cfg.ray_subsample == 0 {
-            panic!("voxel_ray_tracing: ray_subsample must be >= 1, got 0");
-        }
-        if cfg.max_health <= 0 {
-            panic!(
-                "voxel_ray_tracing: max_health must be > 0 or voxels can never become visible, got {}",
-                cfg.max_health
-            );
-        }
-        if cfg.min_health >= cfg.max_health {
-            panic!(
-                "voxel_ray_tracing: min_health ({}) must be < max_health ({})",
-                cfg.min_health, cfg.max_health
-            );
-        }
-    }
-
     async fn on_odometry(&mut self, msg: Odometry) {
         self.last_origin = Some((
             msg.pose.pose.position.x as f32,
@@ -330,8 +300,19 @@ fn find_misses_along_ray(
     let shadow_sq = shadow_depth.powi(2);
     let grace_sq = grace_depth.powi(2);
 
+    let ray_len = (dx * dx + dy * dy + dz * dz).sqrt();
+    let t_max = 1.0 + shadow_depth / ray_len.max(f32::EPSILON);
+
     let mut past_endpoint = false;
     loop {
+        let t_enter = tx.min(ty).min(tz);
+        if t_enter > t_max {
+            return;
+        }
+        if t_enter >= 1.0 {
+            past_endpoint = true;
+        }
+
         if tx < ty {
             if tx < tz {
                 x += step_x;
@@ -350,6 +331,12 @@ fn find_misses_along_ray(
 
         if (x, y, z) == endpoint {
             past_endpoint = true;
+            continue;
+        }
+
+        // don't remove points in the same xy plane as the hit, unless the plane only walks that plane
+        // we do this to preserve floors, which is more important than some missed points
+        if origin_voxel.2 != endpoint.2 && z == endpoint.2 {
             continue;
         }
 
@@ -553,9 +540,7 @@ async fn main() {
     let transport = LcmTransport::new()
         .await
         .expect("failed to create LCM transport");
-    run::<RayTracingVoxelMap, _>(transport)
-        .await
-        .expect("voxel_ray_tracing run failed");
+    run::<RayTracingVoxelMap, _>(transport).await;
 }
 
 #[cfg(test)]
@@ -625,7 +610,7 @@ mod tests {
         let origin_voxel = world_to_voxel(origin.0, origin.1, origin.2, inv);
         let endpoint = world_to_voxel(end.0, end.1, end.2, inv);
 
-        let expected: AHashSet<VoxelKey> = [
+        let walked: AHashSet<VoxelKey> = [
             (1, 0, 0),
             (1, 1, 0),
             (1, 1, 1),
@@ -638,7 +623,7 @@ mod tests {
         .into_iter()
         .collect();
         let mut map_voxels: AHashMap<VoxelKey, i32> = AHashMap::new();
-        for v in &expected {
+        for v in &walked {
             map_voxels.insert(*v, 1);
         }
 
@@ -655,6 +640,13 @@ mod tests {
             endpoint,
         );
 
+        // z-slab protection skips voxels in the endpoint's z-slab (z=1) when the
+        // ray crosses z-slabs.
+        let expected: AHashSet<VoxelKey> = walked
+            .iter()
+            .filter(|v| v.2 != endpoint.2)
+            .copied()
+            .collect();
         assert_eq!(misses, expected);
     }
 
@@ -848,6 +840,68 @@ mod tests {
             build_pointclouds(&map, &live, 1.0, &cylinder, "world", Time::default());
         assert!(cloud_points(&global).contains(&voxel_center(10, 10, 10)));
         assert!(cloud_points(&local).contains(&voxel_center(10, 10, 10)));
+    }
+
+    /// Test how bad the planar ray clipping is.
+    /// For example, points on floors can be counted as misses because they are close to the same ray as the hit.
+    #[test]
+    fn ground_clipping_single_ray() {
+        let voxel_size = 0.1_f32;
+        let lidar_height = 1.0_f32;
+        let cfg = Config {
+            voxel_size,
+            max_range: 50.0,
+            ray_subsample: 1,
+            shadow_depth: 0.2,
+            grace_depth: 0.2,
+            min_health: 0,
+            max_health: 1,
+        };
+        let inv = 1.0 / voxel_size;
+
+        // Cover the full range we will probe, plus a little for shadow.
+        let max_x = 25.0_f32;
+        let n_ground = (max_x / voxel_size).ceil() as i32;
+
+        let ranges: Vec<f32> = (1..=20).map(|i| i as f32).collect();
+        let mut table = format!(
+            "voxel_size={voxel_size} lidar_height={lidar_height} grace={} shadow={}\n\
+             range_m  ground_voxels_in_row  clipped  clipped_pct\n",
+            cfg.grace_depth, cfg.shadow_depth
+        );
+        let mut total_clipped = 0usize;
+        for &range in &ranges {
+            let mut map = VoxelMap::default();
+            for i in 0..n_ground {
+                let x = (i as f32) * voxel_size + voxel_size * 0.5;
+                let key = world_to_voxel(x, 0.0, 0.0, inv);
+                map.voxels.insert(key, cfg.max_health);
+            }
+            let n_before = map.voxels.len();
+
+            let origin = (0.0_f32, 0.0_f32, lidar_height);
+            let hits = vec![(range, 0.0_f32, 0.0_f32)];
+            update_map(&mut map, origin, &hits, &cfg);
+
+            let n_after_ground: usize = (0..n_ground)
+                .filter(|i| {
+                    let x = (*i as f32) * voxel_size + voxel_size * 0.5;
+                    let key = world_to_voxel(x, 0.0, 0.0, inv);
+                    map.voxels.contains_key(&key)
+                })
+                .count();
+            let clipped = n_before - n_after_ground;
+            let pct = 100.0 * clipped as f32 / n_before as f32;
+            table.push_str(&format!(
+                "{range:>6.1}  {n_before:>20}  {clipped:>7}  {pct:>10.1}\n"
+            ));
+            total_clipped += clipped;
+        }
+        eprint!("{table}");
+        assert!(
+            total_clipped == 0,
+            "planar grace regressed, ground voxels clipped:\n{table}"
+        );
     }
 
     #[test]

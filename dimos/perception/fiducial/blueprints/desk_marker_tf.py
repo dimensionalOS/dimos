@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Desk webcam stack that emits marker detections and mirrors them into TF."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,12 +23,15 @@ import time
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 
 DESK_CAMERA_FRAME_ID = "camera_optical"
@@ -41,8 +46,7 @@ def create_desk_webcam(
     camera_index: int = 0,
     fps: float = 15.0,
 ) -> Webcam:
-    camera_info = CameraInfo.from_yaml(str(camera_info_yaml))
-    camera_info.frame_id = DESK_CAMERA_FRAME_ID
+    camera_info = create_desk_camera_info(camera_info_yaml)
     return Webcam(
         camera_index=camera_index,
         width=camera_info.width,
@@ -50,6 +54,14 @@ def create_desk_webcam(
         fps=fps,
         camera_info=camera_info,
     )
+
+
+def create_desk_camera_info(
+    camera_info_yaml: str | Path = DEFAULT_DESK_CAMERA_INFO_YAML,
+) -> CameraInfo:
+    camera_info = CameraInfo.from_yaml(str(camera_info_yaml))
+    camera_info.frame_id = DESK_CAMERA_FRAME_ID
+    return camera_info
 
 
 class DeskStaticTfModuleConfig(ModuleConfig):
@@ -62,8 +74,8 @@ class DeskStaticTfModuleConfig(ModuleConfig):
         0.15,
     )
     camera_rotation_rpy_rad: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    #: Republish fixed transforms at this rate so TF lookups at image timestamps stay
-    #: within MarkerTfModule tf_lookup_tolerance (single-shot stamps fall out of tolerance).
+    #: Republish fixed transforms so marker detection can resolve camera poses
+    #: at image timestamps (single-shot stamps fall out of tolerance).
     static_tf_republish_hz: float = 10.0
 
 
@@ -137,9 +149,19 @@ desk_marker_tf = autoconnect(
         hardware=create_desk_webcam,
         transform=None,
     ),
-    MarkerTfModule.blueprint(
+    MarkerDetectionStreamModule.blueprint(
         marker_length_m=DESK_MARKER_LENGTH_M,
         aruco_dictionary=DESK_MARKER_ARUCO_DICTIONARY,
+        camera_info=create_desk_camera_info(),
+    ),
+    MarkerTfModule.blueprint(
         marker_namespace_prefix=DESK_MARKER_NAMESPACE_PREFIX,
     ),
+).transports(
+    {
+        ("detections", MarkerDetectionStreamModule): LCMTransport(
+            "/marker_detection/detections",
+            Detection3DArray,
+        ),
+    }
 )

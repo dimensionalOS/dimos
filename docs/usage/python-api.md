@@ -37,6 +37,18 @@ app.run("keyboard-teleop")  # This will say `KeyboardTeleop is already deployed`
 app.stop()
 ```
 
+## RPC calls
+
+Modules can define `@rpc` methods which you can call. Here's an example:
+
+```python skip
+from dimos.msgs.geometry_msgs.Twist import Twist
+# Rotate right.
+app.GO2Connection.move(Twist(linear=(0, 0, 0), angular=(0, 0, -1)), duration=0.05)
+# Move forward.
+app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05)
+```
+
 ## Peeking streams
 
 `peek_stream(name, timeout)` pulls the next message from any running
@@ -105,3 +117,21 @@ from dimos.agents.mcp.mcp_server import McpServer
 
 app.restart(McpServer)
 ```
+
+You can use this in development. You can write a module, load it, gather feedback from running it, change the code, and restart the module to see if it has improved.
+
+### What needs a daemon restart
+
+Hot-restart (`app.restart(MyModule)`) reloads the module's source, so the body of `start()`, handlers, and `@rpc` methods all pick up changes. But the following require a full daemon restart (`dimos stop` then `dimos run ...`):
+
+- Adding or removing `In[T]` / `Out[T]` stream declarations on any module (autoconnect wiring is computed at coordinator build time).
+- Adding or removing module-ref / Spec declarations (`_thing: SomeSpec`).
+- Changing the blueprint's set of modules.
+
+If you find yourself needing data from an existing module that isn't on its `Out` streams, the canonical fix is to add an `Out[T]` to that module and restart the daemon — don't spin up a parallel connection to the underlying hardware.
+
+### Operational gotchas
+
+- `--daemon` does not detach right away. Background it with `&` or `nohup` if you want the terminal back.
+- `dimos stop` reads its target from a registry under `$XDG_STATE_HOME/dimos/runs`. If the registry file is removed but the process is alive, `dimos stop` won't see it — kill the PID directly (find it with `ps aux | grep "dimos.*--daemon"`).
+- `load_blueprint` over LCM has a 120s RPC timeout. If it raises `TimeoutError` after that long, the module may still have been deployed and started — check the daemon log for the `Deployed module` entry before assuming failure.
