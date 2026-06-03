@@ -21,6 +21,7 @@ from reactivex import combine_latest, operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.pointclouds.occupancy import (
     OCCUPANCY_ALGOS,
     HeightCostConfig,
@@ -36,6 +37,7 @@ logger = setup_logger()
 class Config(ModuleConfig):
     algo: str = "height_cost"
     config: OccupancyConfig = Field(default_factory=HeightCostConfig)
+    inflation_radius_m: float = 0.0
 
 
 class CostMapper(Module):
@@ -83,4 +85,7 @@ class CostMapper(Module):
     # @timed()  # TODO: fix thread leak in timed decorator
     def _calculate_costmap(self, msg: PointCloud2) -> OccupancyGrid:
         fn = OCCUPANCY_ALGOS[self.config.algo]
-        return fn(msg, **asdict(self.config.config))
+        grid = fn(msg, **asdict(self.config.config))
+        if self.config.inflation_radius_m > 0.0:
+            grid = simple_inflate(grid, self.config.inflation_radius_m)
+        return grid
