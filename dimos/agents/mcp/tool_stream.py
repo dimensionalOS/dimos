@@ -46,6 +46,7 @@ logger = setup_logger()
 TOOL_STREAM_TOPIC = "/tool_streams"
 NOTIFICATIONS_MESSAGE_METHOD = "notifications/message"
 NOTIFICATIONS_PROGRESS_METHOD = "notifications/progress"
+TOOL_STREAM_STOPPED_METHOD = "dimos/tool_stopped"
 
 ToolStreamCallback = Callable[[dict[str, Any]], Any]
 
@@ -79,6 +80,17 @@ def make_progress_notification(
     if tool_name is not None:
         params["_meta"] = {"tool_name": tool_name}
     return {"jsonrpc": "2.0", "method": NOTIFICATIONS_PROGRESS_METHOD, "params": params}
+
+
+def make_stopped_notification(tool_name: str, token: str | None = None) -> dict[str, Any]:
+    params: dict[str, Any] = {"tool_name": tool_name}
+    if token is not None:
+        params["token"] = token
+    return {
+        "jsonrpc": "2.0",
+        "method": TOOL_STREAM_STOPPED_METHOD,
+        "params": params,
+    }
 
 
 def subscribe(callback: ToolStreamCallback) -> Callable[[], None]:
@@ -137,7 +149,27 @@ class ToolStream:
                 f"detached background thread."
             )
         self._progress_token: str | int | None = context.get("progress_token")
+        # Capability hold token (set by the MCP server for capability-using
+        # skills); stamped on the stop frame so release is invocation-scoped.
+        self._acquire_token: str | None = context.get("acquire_token")
         self._progress: int = 0
+
+    def rebind_acquire_token(self) -> None:
+        """Re-stamp this live stream with the current invocation's acquire token.
+
+        Called when `start_tool` reopens an already-active stream -- a same-tool
+        capability takeover. The newer invocation's hold token must be the one
+        carried on the eventual stop frame, otherwise the registry would release
+        a stale token and leak the capability. No-op if there is no skill context
+        or the stream is already closed.
+        """
+        context = current_skill_context()
+        if context is None:
+            return
+        with self._lock:
+            if self._closed.is_set():
+                return
+            self._acquire_token = context.get("acquire_token")
 
     def send(self, message: str) -> None:
         with self._lock:
@@ -166,11 +198,21 @@ class ToolStream:
             self._closed.set()
             transport = self._transport
             self._transport = None
-        if transport is not None:
-            try:
-                transport.stop()
-            except Exception:
-                logger.exception("tool-stream transport stop failed", stream_id=self.id)
+        # Publish a final "stopped" frame so subscribers (e.g. McpServer's
+        # capability registry) know the background skill released its hold.
+        # If no `send()` ever happened we spin up a transport here so the
+        # lifecycle signal isn't lost.
+        if transport is None:
+            transport = pLCMTransport(TOOL_STREAM_TOPIC)
+            transport.start()
+        try:
+            transport.publish(make_stopped_notification(self.tool_name, self._acquire_token))
+        except Exception:
+            logger.exception("tool-stream stopped publish failed", stream_id=self.id)
+        try:
+            transport.stop()
+        except Exception:
+            logger.exception("tool-stream transport stop failed", stream_id=self.id)
 
     @property
     def is_closed(self) -> bool:

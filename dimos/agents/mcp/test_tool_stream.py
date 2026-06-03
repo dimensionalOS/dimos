@@ -22,14 +22,17 @@ import pytest
 
 from dimos.agents import annotation as annotation_module
 from dimos.agents.annotation import skill
+from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.mcp.tool_stream import (
     NOTIFICATIONS_MESSAGE_METHOD,
     NOTIFICATIONS_PROGRESS_METHOD,
+    TOOL_STREAM_STOPPED_METHOD,
     ToolStream,
     make_notification,
     make_progress_notification,
+    make_stopped_notification,
 )
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.coordination.blueprints import autoconnect
@@ -292,6 +295,7 @@ def test_send_publishes_notification(stream_with_transport_mock) -> None:
 def test_send_after_stop_does_not_raise(stream_with_transport_mock) -> None:
     stream, mock_transport = stream_with_transport_mock
     stream.stop()
+    mock_transport.reset_mock()
     stream.send("should be ignored")
     mock_transport.publish.assert_not_called()
 
@@ -303,11 +307,33 @@ def test_stop_tears_down_transport(stream_with_transport_mock) -> None:
     mock_transport.stop.assert_called_once()
 
 
-def test_stop_without_send_does_nothing(stream_with_transport_mock) -> None:
+def test_stop_emits_stopped_frame(stream_with_transport_mock) -> None:
+    """`stop()` publishes a `dimos/tool_stopped` frame so subscribers (e.g.
+    McpServer's capability registry) know the background skill released."""
+    stream, mock_transport = stream_with_transport_mock
+    stream.send("kick off transport")
+    mock_transport.reset_mock()
+    stream.stop()
+    publish_calls = mock_transport.publish.call_args_list
+    assert len(publish_calls) == 1
+    frame = publish_calls[0].args[0]
+    assert frame["method"] == TOOL_STREAM_STOPPED_METHOD
+    assert frame["params"]["tool_name"] == "test_tool"
+
+
+def test_stop_without_send_still_emits_stopped_frame(stream_with_transport_mock) -> None:
+    """The stopped frame must go out even when no `send()` ever happened, so
+    `start_tool`/`stop_tool` pairs that emit no progress updates (e.g.
+    `start_patrol`) still release their capability hold."""
     stream, mock_transport = stream_with_transport_mock
     stream.stop()
-    mock_transport.start.assert_not_called()
-    mock_transport.stop.assert_not_called()
+    mock_transport.start.assert_called_once()
+    publish_calls = mock_transport.publish.call_args_list
+    assert len(publish_calls) == 1
+    frame = publish_calls[0].args[0]
+    assert frame["method"] == TOOL_STREAM_STOPPED_METHOD
+    assert frame["params"]["tool_name"] == "test_tool"
+    mock_transport.stop.assert_called_once()
 
 
 def test_double_stop_is_safe(stream_with_transport_mock) -> None:
@@ -325,6 +351,35 @@ def test_make_notification_shape() -> None:
         "method": NOTIFICATIONS_MESSAGE_METHOD,
         "params": {"level": "info", "logger": "greet", "data": "hi"},
     }
+
+
+def test_make_stopped_notification_shape() -> None:
+    assert make_stopped_notification("patrol") == {
+        "jsonrpc": "2.0",
+        "method": TOOL_STREAM_STOPPED_METHOD,
+        "params": {"tool_name": "patrol"},
+    }
+
+
+def test_make_stopped_notification_includes_token() -> None:
+    assert make_stopped_notification("patrol", "tok-1") == {
+        "jsonrpc": "2.0",
+        "method": TOOL_STREAM_STOPPED_METHOD,
+        "params": {"tool_name": "patrol", "token": "tok-1"},
+    }
+
+
+def test_stop_frame_carries_acquire_token(mocker, skill_context) -> None:
+    """A capability-using skill's stop frame carries its acquire token so the
+    McpServer can release the hold for that specific invocation."""
+    skill_context({"acquire_token": "tok-1"})
+    mock_transport = mocker.MagicMock()
+    mocker.patch("dimos.agents.mcp.tool_stream.pLCMTransport", return_value=mock_transport)
+    stream = ToolStream("follow_person")
+    stream.stop()
+    frame = mock_transport.publish.call_args.args[0]
+    assert frame["method"] == TOOL_STREAM_STOPPED_METHOD
+    assert frame["params"] == {"tool_name": "follow_person", "token": "tok-1"}
 
 
 def test_make_progress_notification_shape() -> None:
@@ -447,9 +502,11 @@ class _ToolHelperTestModule(Module):
 
     @skill
     def double_start(self, name: str) -> str:
+        # The second call is a same-tool re-invoke (capability takeover): it
+        # re-stamps the live stream rather than raising or opening a second one.
         self.start_tool(name)
-        self.start_tool(name)  # should raise
-        return "unreachable"
+        self.start_tool(name)
+        return "ok"
 
 
 @pytest.fixture()
@@ -471,12 +528,100 @@ def tool_helper_module(mocker):
     module._close_all_tools()
 
 
-def test_start_tool_duplicate_raises(tool_helper_module, skill_context) -> None:
+def test_start_tool_duplicate_restamps(tool_helper_module, skill_context) -> None:
+    """A same-tool re-invoke re-stamps the live stream's acquire token instead
+    of raising or opening a second stream (capability takeover). This lets
+    background skills call `start_tool` unconditionally before any early return.
+    """
     module, _ = tool_helper_module
+    skill_context({"acquire_token": "T1"})
     module.start_tool("job")
-    with pytest.raises(RuntimeError, match="already active"):
-        module.start_tool("job")
+    assert module._tools["job"]._acquire_token == "T1"
+
+    skill_context({"acquire_token": "T2"})
+    module.start_tool("job")  # re-invoke: no raise, no second stream
+    assert list(module._tools) == ["job"]
+    assert module._tools["job"]._acquire_token == "T2"
+
     module.stop_tool("job")
+
+
+def test_start_tool_restamp_updates_stop_frame_token(tool_helper_module, skill_context) -> None:
+    """After a takeover re-invoke, the single live stream's stop frame carries
+    the new token, so the registry releases *this* hold. Regression for the leak
+    where the stop frame carried the superseded token and released nothing.
+    """
+    module, mock_transport = tool_helper_module
+    skill_context({"acquire_token": "T1"})
+    module.start_tool("job")
+    skill_context({"acquire_token": "T2"})
+    module.start_tool("job")
+    module.stop_tool("job")
+
+    stop_frames = [
+        c.args[0]
+        for c in mock_transport.publish.call_args_list
+        if c.args[0].get("method") == TOOL_STREAM_STOPPED_METHOD
+    ]
+    assert len(stop_frames) == 1
+    assert stop_frames[0]["params"] == {"tool_name": "job", "token": "T2"}
+
+
+def test_rebind_acquire_token_noops_when_closed_or_no_context(mocker, skill_context) -> None:
+    """`rebind_acquire_token` updates the live token, but is a no-op outside a
+    skill context or once the stream is closed."""
+    mock_transport = mocker.MagicMock()
+    mocker.patch("dimos.agents.mcp.tool_stream.pLCMTransport", return_value=mock_transport)
+
+    skill_context({"acquire_token": "T1"})
+    stream = ToolStream("job")
+    assert stream._acquire_token == "T1"
+
+    skill_context({"acquire_token": "T2"})
+    stream.rebind_acquire_token()
+    assert stream._acquire_token == "T2"
+
+    skill_context(None)  # outside any skill -> no-op
+    stream.rebind_acquire_token()
+    assert stream._acquire_token == "T2"
+
+    skill_context({"acquire_token": "T3"})
+    stream.stop()  # closed -> no-op
+    stream.rebind_acquire_token()
+    assert stream._acquire_token == "T2"
+
+
+def test_takeover_then_stop_releases_capability(tool_helper_module, skill_context) -> None:
+    """End-to-end of the leak the review found: a same-tool re-invoke takes over
+    the hold (new token), `start_tool` re-stamps the one live stream, and its
+    single stop frame carries the new token -- so `release_by_token` frees
+    movement. Before the fix the stop frame carried the superseded token and the
+    hold leaked permanently.
+    """
+    module, mock_transport = tool_helper_module
+    registry = CapabilityRegistry()
+
+    # Invocation #1 acquires the hold and opens the stream.
+    assert registry.acquire(["movement"], tool_name="start_patrol", token="T1") is None
+    skill_context({"acquire_token": "T1"})
+    module.start_tool("start_patrol")
+
+    # Invocation #2 (loop still alive) takes over and re-invokes start_tool.
+    assert registry.acquire(["movement"], tool_name="start_patrol", token="T2") is None
+    assert registry.snapshot() == {"movement": "start_patrol"}
+    skill_context({"acquire_token": "T2"})
+    module.start_tool("start_patrol")
+
+    # The running loop eventually closes the single stream.
+    module.stop_tool("start_patrol")
+    stop_frames = [
+        c.args[0]
+        for c in mock_transport.publish.call_args_list
+        if c.args[0].get("method") == TOOL_STREAM_STOPPED_METHOD
+    ]
+    assert len(stop_frames) == 1
+    assert registry.release_by_token(stop_frames[0]["params"]["token"]) == ["movement"]
+    assert registry.snapshot() == {}
 
 
 def test_tool_update_without_start_is_lenient(tool_helper_module) -> None:
@@ -499,7 +644,13 @@ def test_tool_update_routes_to_registered_stream(tool_helper_module, skill_conte
     module.tool_update("job", "progress 2")
     module.stop_tool("job")
 
-    texts = [c.args[0]["params"]["data"] for c in mock_transport.publish.call_args_list]
+    # publish() also receives the final `dimos/tool_stopped` frame from stop_tool;
+    # filter to only the `notifications/message` (data) frames.
+    texts = [
+        c.args[0]["params"]["data"]
+        for c in mock_transport.publish.call_args_list
+        if c.args[0].get("method") == NOTIFICATIONS_MESSAGE_METHOD
+    ]
     assert texts == ["progress 1", "progress 2"]
 
 
