@@ -28,9 +28,13 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_coordinator import (
 )
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
+# publish_only_when_active: teleop stays silent while no movement key is
+# held (one zero Twist on release, then nothing) so it does not flood
+# /cmd_vel and can coexist with a co-publisher such as the Go2
+# characterization / benchmark tools.
 unitree_go2_webrtc_keyboard_teleop = autoconnect(
     unitree_go2_coordinator,
-    KeyboardTeleop.blueprint(),
+    KeyboardTeleop.blueprint(publish_only_when_active=True),
 )
 
 __all__ = ["unitree_go2_webrtc_keyboard_teleop"]

@@ -17,6 +17,7 @@ from __future__ import annotations  # noqa: I001
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Literal
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 
 import cv2
 import numpy as np
@@ -122,7 +123,7 @@ def _create_visual_servo(
 
         camera_info = MujocoConnection.camera_info_static
 
-    return VisualServoing2D(camera_info, global_config.simulation)
+    return VisualServoing2D(camera_info, bool(global_config.simulation))
 
 
 class SecurityModule(Module):
@@ -167,6 +168,7 @@ class SecurityModule(Module):
         self._latest_pose: PoseStamped | None = None
         self._latest_image: Image | None = None
         self._has_active_goal = False
+        self._depth_started = False
 
     @rpc
     def start(self) -> None:
@@ -177,8 +179,6 @@ class SecurityModule(Module):
         )
         self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
-
-        self._depth_estimator.start()
 
     @rpc
     def stop(self) -> None:
@@ -197,6 +197,10 @@ class SecurityModule(Module):
         with self._lock:
             if self._main_thread is not None and self._main_thread.is_alive():
                 return "Security patrol is already running. Use `stop_security_patrol` to stop."
+
+        if not self._depth_started:
+            self._depth_estimator.start()
+            self._depth_started = True
 
         self._router.reset()
 
@@ -393,6 +397,6 @@ class SecurityModule(Module):
         with self._lock:
             thread = self._main_thread
         if thread is not None:
-            thread.join(timeout=2.0)
+            thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             with self._lock:
                 self._main_thread = None

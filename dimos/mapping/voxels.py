@@ -52,6 +52,7 @@ class VoxelGrid:
         device: str = "CUDA:0",
         carve_columns: bool = True,
         frame_id: str = "world",
+        show_startup_log: bool = True,
     ) -> None:
         self._voxel_size = voxel_size
         self._carve_columns = carve_columns
@@ -63,7 +64,8 @@ class VoxelGrid:
             else o3c.Device("CPU:0")
         )
 
-        logger.info(f"VoxelGrid using device: {dev}")
+        if show_startup_log:
+            logger.info(f"VoxelGrid using device: {dev}")
 
         self.vbg: o3d.t.geometry.VoxelBlockGrid | None = o3d.t.geometry.VoxelBlockGrid(
             attr_names=("dummy",),
@@ -106,6 +108,14 @@ class VoxelGrid:
 
         self.get_global_pointcloud.invalidate_cache(self)
         self.get_global_pointcloud2.invalidate_cache(self)
+
+        # Return Open3D's CUDA caching pool to the driver. The ops above
+        # (HashMap construction in carving, key_tensor()[idx], find(),
+        # activate()) allocate per-call device buffers; Open3D's caching
+        # allocator holds them in pool indefinitely once the Python wrappers
+        # are released. Without this call, VRAM grows ~0.8 MB/call until OOM.
+        if str(self._dev).startswith("CUDA"):
+            o3c.cuda.release_cache()
 
     def _carve_and_insert(self, new_keys: o3c.Tensor) -> None:
         """Column carving: remove all existing voxels sharing (X,Y) with new_keys, then insert."""
@@ -240,6 +250,7 @@ class VoxelGridMapperConfig(ModuleConfig):
     device: str = "CUDA:0"
     carve_columns: bool = True
     frame_id: str = "world"
+    emit_every: int = 1
 
 
 class VoxelGridMapper(StreamModule[PointCloud2, PointCloud2]):

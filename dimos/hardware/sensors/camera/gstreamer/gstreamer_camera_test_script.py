@@ -23,9 +23,9 @@ from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.gstreamer.gstreamer_camera import GstreamerCameraModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl import lcmpubsub as _lcm
+from dimos.utils.logging_config import setup_logger
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 def main() -> None:

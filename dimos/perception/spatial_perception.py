@@ -27,15 +27,15 @@ import numpy as np
 from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
 
-from dimos.agents_deprecated.memory.image_embedding import ImageEmbeddingProvider
-from dimos.agents_deprecated.memory.spatial_vector_db import SpatialVectorDB
-from dimos.agents_deprecated.memory.visual_memory import VisualMemory
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.image_embedding import ImageEmbeddingProvider
+from dimos.perception.spatial_vector_db import SpatialVectorDB
+from dimos.perception.visual_memory import VisualMemory
 from dimos.spec.perception import Camera
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
@@ -79,6 +79,7 @@ class SpatialMemory(Module):
     """
 
     config: SpatialConfig
+    dedicated_worker = True
 
     # LCM inputs
     color_image: In[Image]
@@ -155,7 +156,7 @@ class SpatialMemory(Module):
                     logger.error(f"Error loading visual memory: {e}")
                     self._visual_memory = VisualMemory(output_dir=self.config.output_dir)
 
-        self.embedding_provider: ImageEmbeddingProvider = ImageEmbeddingProvider(
+        self.embedding_provider = ImageEmbeddingProvider(
             model_name=self.embedding_model, dimensions=self.embedding_dimensions
         )
 

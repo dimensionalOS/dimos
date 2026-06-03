@@ -18,12 +18,16 @@ Every test launches the real native_echo.py subprocess via ModuleCoordinator.bui
 The echo script writes received CLI args to a temp file for assertions.
 """
 
+from io import BytesIO
 import json
 from pathlib import Path
 import time
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
+from dimos.core import native_module as native_module_mod
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
@@ -60,7 +64,6 @@ def read_json_file(path: str) -> dict[str, str]:
 
 class StubNativeConfig(NativeModuleConfig):
     executable: str = _ECHO
-    log_format: LogFormat = LogFormat.TEXT
     output_file: str | None = None
     die_after: float | None = None
     some_param: float = 1.5
@@ -79,7 +82,7 @@ class StubConsumer(Module):
 
     @rpc
     def start(self) -> None:
-        pass
+        super().start()
 
 
 class StubProducer(Module):
@@ -87,35 +90,44 @@ class StubProducer(Module):
 
     @rpc
     def start(self) -> None:
-        pass
+        super().start()
+
+
+_WATCHDOG_POLL_INTERVAL = 0.1
+_WATCHDOG_MAX_POLLS = 30
+_THREAD_DRAIN_DELAY = 0.5
 
 
 def test_process_crash_triggers_stop() -> None:
     """When the native process dies unexpectedly, the watchdog calls stop()."""
-    mod = StubNativeModule(die_after=0.2)
-    mod.pointcloud.transport = LCMTransport("/pc", PointCloud2)
-    mod.start()
+    module = StubNativeModule(die_after=0.2)
+    transport = LCMTransport("/pc", PointCloud2)
+    module.pointcloud.transport = transport
+    try:
+        module.start()
 
-    assert mod._process is not None
-    pid = mod._process.pid
+        assert module._process is not None
+        pid = module._process.pid
 
-    # Wait for the process to die and the watchdog to call stop()
-    for _ in range(30):
-        time.sleep(0.1)
-        if mod._process is None:
-            break
+        # Wait for the process to die and the watchdog to call stop()
+        for _ in range(_WATCHDOG_MAX_POLLS):
+            time.sleep(_WATCHDOG_POLL_INTERVAL)
+            if module._process is None:
+                break
 
-    assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
+        assert module._process is None, f"Watchdog did not clean up after process {pid} died"
 
-    # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
-    # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
-    time.sleep(0.5)
+        # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
+        # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
+        time.sleep(_THREAD_DRAIN_DELAY)
+    finally:
+        module.stop()
+        try:
+            transport.stop()
+        except Exception:
+            pass
 
-    # Ensure all threads (LCM transport, event loop) are cleaned up
-    mod.stop()
 
-
-@pytest.mark.slow
 def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
     native_module = dimos_cluster.deploy(
         StubNativeModule,
@@ -137,7 +149,6 @@ def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
     }
 
 
-@pytest.mark.slow
 def test_autoconnect(args_file: str) -> None:
     """autoconnect passes correct topic args to the native subprocess."""
     blueprint = autoconnect(
@@ -156,7 +167,7 @@ def test_autoconnect(args_file: str) -> None:
     coordinator = ModuleCoordinator.build(blueprint.global_config(viewer="none"))
     try:
         # Validate blueprint wiring: all modules deployed
-        native = coordinator.get_instance(StubNativeModule)  # type: ignore[arg-type]
+        native = coordinator.get_instance(StubNativeModule)
         consumer = coordinator.get_instance(StubConsumer)
         producer = coordinator.get_instance(StubProducer)
         assert native is not None
@@ -175,7 +186,7 @@ def test_autoconnect(args_file: str) -> None:
         for _ in range(50):
             if Path(args_file).exists():
                 break
-            time.sleep(0.1)
+            time.sleep(_WATCHDOG_POLL_INTERVAL)
     finally:
         coordinator.stop()
 
@@ -186,3 +197,104 @@ def test_autoconnect(args_file: str) -> None:
         "output_file": args_file,
         "some_param": "2.5",
     }
+
+
+def _capture_logs(
+    log_format: LogFormat,
+    payload: bytes,
+    default_level: str = "info",
+) -> list[tuple[str, str, dict]]:
+    calls: list[tuple[str, str, dict]] = []
+
+    class FakeLogger:
+        def __getattr__(self, name: str):
+            def _record(message: str, **kwargs: object) -> None:
+                calls.append((name, message, kwargs))
+
+            return _record
+
+    fixture = SimpleNamespace(
+        config=SimpleNamespace(log_format=log_format),
+        _module_label="test",
+    )
+    with patch.object(native_module_mod, "logger", FakeLogger()):
+        NativeModule._read_log_stream(
+            fixture,  # type: ignore[arg-type]
+            BytesIO(payload),
+            default_level,
+            pid=123,
+        )
+    return calls
+
+
+def test_text_mode_uses_stream_default_level() -> None:
+    calls = _capture_logs(LogFormat.TEXT, b"hello\n", "info")
+    assert calls == [("info", "hello", {"module": "test", "pid": 123})]
+
+
+def test_empty_lines_skipped() -> None:
+    calls = _capture_logs(LogFormat.TEXT, b"\n\nhello\n\n", "info")
+    assert len(calls) == 1
+    assert calls[0][1] == "hello"
+
+
+def test_json_mode_honors_level_field() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b'{"level": "error", "message": "boom"}\n',
+        "info",
+    )
+    assert len(calls) == 1
+    assert calls[0][0] == "error"
+    assert calls[0][1] == "boom"
+
+
+def test_json_mode_level_alias_is_case_insensitive() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b'{"level": "WARN", "message": "watch out"}\n',
+        "info",
+    )
+    assert calls[0][0] == "warning"
+
+
+def test_json_mode_reads_tracing_subscriber_fields_message() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b'{"level": "INFO", "fields": {"message": "started", "device": "/dev/foo"}}\n',
+        "info",
+    )
+    assert len(calls) == 1
+    method, message, kwargs = calls[0]
+    assert method == "info"
+    assert message == "started"
+    assert kwargs["device"] == "/dev/foo"
+
+
+def test_json_mode_unrecognized_level_falls_back_to_stream_default() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b'{"level": "weird", "message": "hi"}\n',
+        "warning",
+    )
+    assert calls[0][0] == "warning"
+
+
+def test_json_mode_missing_level_falls_back_to_stream_default() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b'{"message": "no level here"}\n',
+        "warning",
+    )
+    assert calls[0][0] == "warning"
+    assert calls[0][1] == "no level here"
+
+
+def test_json_mode_malformed_falls_back_to_plain_text() -> None:
+    calls = _capture_logs(
+        LogFormat.JSON,
+        b"not json at all\n",
+        "info",
+    )
+    assert calls[0][0] == "info"
+    assert calls[0][1] == "not json at all"

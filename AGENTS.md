@@ -10,7 +10,7 @@ The agentic operating system for generalist robotics. `Modules` communicate via 
 
 ```bash
 # Install
-uv sync --all-extras --no-extra dds
+uv sync --extra all
 
 # List all runnable blueprints
 dimos list
@@ -141,6 +141,12 @@ docs/
 
 ---
 
+## For Coding Agents
+
+If you are a coding agent working on this dimos codebase, our coding agent focused docs are at `docs/coding-agents/index.md`
+
+---
+
 ## Architecture
 
 ### Modules
@@ -204,7 +210,7 @@ Singleton config. Values cascade: defaults → `.env` → env vars → blueprint
 
 ### Global flags
 
-Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simulation`, `--replay/--no-replay`, `--viewer {rerun|rerun-web|foxglove|none}`, `--mcp-port`, `--n-workers`, etc. Flags override `.env` and env vars.
+Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simulation`, `--replay/--no-replay`, `--viewer {rerun|rerun-web|rerun-connect|none}`, `--mcp-port`, `--n-workers`, etc. Flags override `.env` and env vars.
 
 ### Core commands
 
@@ -339,7 +345,7 @@ uv run pytest dimos/core/test_blueprints.py -v
 uv run mypy dimos/
 ```
 
-`uv run pytest` excludes `slow`, `tool`, and `mujoco` markers. CI (`./bin/pytest-slow`) includes slow, excludes tool and mujoco. See `docs/development/testing.md`.
+`uv run pytest` excludes `self_hosted`, `tool`, and `mujoco` markers. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs/development/testing.md`.
 
 ---
 
@@ -373,7 +379,7 @@ CI asserts the file is current — if it's stale, CI fails.
 ## Git Workflow
 
 - Branch prefixes: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`, `perf/`
-- **PRs target `dev`** — never push to `main` or `dev` directly
+- **PRs target `main`** — `main` is the unstable development branch. Work and PR off of `main`. Never push to `main` directly.
 - **Don't force-push** unless after a rebase with conflicts
 - **Minimize pushes** — every push triggers CI (~1 hour on self-hosted runners). Batch commits locally, push once.
 
@@ -388,4 +394,4 @@ CI asserts the file is current — if it's stale, CI fails.
 - Testing: `docs/development/testing.md`
 - CLI / dimos run: `docs/development/dimos_run.md`
 - LFS data: `docs/development/large_file_management.md`
-- Agent system: `docs/agents/`
+- Agent system: `docs/coding-agents/`

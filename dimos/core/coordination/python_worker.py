@@ -18,21 +18,18 @@ import logging
 import multiprocessing
 from multiprocessing.connection import Connection
 import os
+import signal
 import sys
 import threading
 import traceback
 from typing import TYPE_CHECKING, Any
 
-from rpyc.utils.server import ThreadedServer
-
-from dimos.core.coordination.rpyc_services import WorkerRpycService
 from dimos.core.coordination.worker_messages import (
     CallMethodRequest,
     DeployModuleRequest,
     GetAttrRequest,
     SetRefRequest,
     ShutdownRequest,
-    StartRpycRequest,
     SuppressConsoleRequest,
     UndeployModuleRequest,
     WorkerRequest,
@@ -133,10 +130,6 @@ class Actor:
         result = self._send_request_to_worker(SetRefRequest(module_id=self._module_id, ref=ref))
         return ActorFuture(result)
 
-    def start_rpyc(self) -> int:
-        port: int = self._send_request_to_worker(StartRpycRequest())
-        return port
-
     def __getattr__(self, name: str) -> Any:
         """Proxy attribute access to the worker process."""
         if name.startswith("_"):
@@ -175,6 +168,7 @@ class PythonWorker:
         self._process: Any = None
         self._conn: Connection | None = None
         self._worker_id: int = _worker_ids.next()
+        self.dedicated: bool = False
 
     @property
     def module_count(self) -> int:
@@ -330,21 +324,30 @@ def _suppress_console_output() -> None:
 class _WorkerState:
     instances: dict[int, Any]
     worker_id: int
-    rpyc_server: ThreadedServer | None = None
-    rpyc_thread: threading.Thread | None = None
     should_stop: bool = False
 
 
 def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
     apply_library_config()
+    signal.signal(signal.SIGINT, signal.SIG_IGN)  # coordinator handles shutdown
     state = _WorkerState(instances={}, worker_id=worker_id)
 
     try:
         _worker_loop(conn, state)
-    except KeyboardInterrupt:
-        logger.info("Worker got KeyboardInterrupt.", worker_id=worker_id)
     except Exception as e:
-        logger.error(f"Worker process error: {e}", exc_info=True)
+        # `f"... {e}"` is often empty (some exceptions stringify to "")
+        # and structlog's `exc_info` rendering may be elided in captured
+        # CI logs. Always emit the full traceback to stderr so the cause
+        # is visible regardless of the structured-log handler config.
+        traceback.print_exception(e, file=sys.stderr)
+        sys.stderr.flush()
+        logger.error(
+            "Worker process error",
+            worker_id=worker_id,
+            error_type=type(e).__name__,
+            error_repr=repr(e),
+            exc_info=True,
+        )
     finally:
         for module_id, instance in reversed(list(state.instances.items())):
             try:
@@ -360,12 +363,6 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
                     module=type(instance).__name__,
                     worker_id=worker_id,
                     module_id=module_id,
-                )
-            except KeyboardInterrupt:
-                logger.warning(
-                    "KeyboardInterrupt during worker stop",
-                    module=type(instance).__name__,
-                    worker_id=worker_id,
                 )
             except Exception:
                 logger.error("Error during worker shutdown", exc_info=True)
@@ -398,28 +395,7 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             _suppress_console_output()
             return WorkerResponse(result=True)
 
-        case StartRpycRequest():
-            if state.rpyc_server is not None:
-                return WorkerResponse(result=state.rpyc_server.port)
-            WorkerRpycService._instances = state.instances
-            state.rpyc_server = ThreadedServer(
-                WorkerRpycService,
-                port=0,
-                hostname=global_config.listen_host,
-                protocol_config={
-                    "allow_all_attrs": True,
-                    "allow_public_attrs": True,
-                },
-            )
-            state.rpyc_thread = threading.Thread(target=state.rpyc_server.start, daemon=True)
-            state.rpyc_thread.start()
-            return WorkerResponse(result=state.rpyc_server.port)
-
         case ShutdownRequest():
-            if state.rpyc_server is not None:
-                state.rpyc_server.close()
-                if state.rpyc_thread is not None:
-                    state.rpyc_thread.join(timeout=5)
             state.should_stop = True
             return WorkerResponse(result=True)
 
@@ -433,7 +409,7 @@ def _worker_loop(conn: Connection, state: _WorkerState) -> None:
             if not conn.poll(timeout=0.1):
                 continue
             request = conn.recv()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             break
 
         try:

@@ -1,6 +1,6 @@
 # Go2 Non-ROS Navigation
 
-<img src="assets/noros_nav.gif" width="100%">
+![output](assets/noros_nav.gif)
 
 The Go2 navigation stack runs entirely without ROS. It uses a **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations.
 
@@ -37,8 +37,8 @@ text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 
 </details>
 
-<!--Result:-->
 ![output](assets/go2nav_dataflow.svg)
+
 ## Pipeline Steps
 
 ### 1. LiDAR Frame — [`GO2Connection`](/dimos/robot/unitree/go2/connection.py)
@@ -156,25 +156,25 @@ Goal candidates are filtered through a **safe mask** — the free-space region e
 
 The navigation stack is composed in the [`unitree_go2`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py) blueprint:
 
-```python fold output=assets/go2_blueprint.svg
+```python skip fold output=assets/go2_blueprint.svg
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.introspection import to_svg
-from dimos.mapping.costmapper import cost_mapper
-from dimos.mapping.voxels import voxel_mapper
-from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
-from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
+from dimos.core.introspection.svg import to_svg
+from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.voxels import VoxelGridMapper
+from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+    WavefrontFrontierExplorer,
+)
+from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
 unitree_go2 = autoconnect(
-    unitree_go2_basic,                    # robot connection + visualization
-    voxel_mapper(voxel_size=0.05),        # 3D voxel mapping
-    cost_mapper(),                        # 2D costmap generation
-    replanning_a_star_planner(),          # path planning
-    wavefront_frontier_explorer(),        # exploration
+    unitree_go2_basic,
+    VoxelGridMapper.blueprint(),
+    CostMapper.blueprint(),
+    ReplanningAStarPlanner.blueprint(),
+    WavefrontFrontierExplorer.blueprint(),
 ).global_config(n_workers=6, robot_model="unitree_go2")
 
 to_svg(unitree_go2, "assets/go2_blueprint.svg")
 ```
-
-<!--Result:-->
 ![output](assets/go2_blueprint.svg)

@@ -44,6 +44,7 @@
 
 // FAST-LIO (header-only core, compiled sources linked via CMake)
 #include "fast_lio.hpp"
+#include "fast_lio_debug.hpp"
 
 using livox_common::GRAVITY_MS2;
 using livox_common::DATA_TYPE_IMU;
@@ -61,9 +62,50 @@ static FastLio* g_fastlio = nullptr;
 static std::string g_lidar_topic;
 static std::string g_odometry_topic;
 static std::string g_map_topic;
-static std::string g_frame_id = "map";
-static std::string g_child_frame_id = "body";
+static std::string g_frame_id;        // required via --frame_id
+static std::string g_child_frame_id;   // required via --child_frame_id
 static float g_frequency = 10.0f;
+
+// Initial pose offset (applied to all SLAM outputs)
+// Position offset
+static double g_init_x = 0.0;
+static double g_init_y = 0.0;
+static double g_init_z = 0.0;
+// Orientation offset as quaternion (identity = no rotation)
+static double g_init_qx = 0.0;
+static double g_init_qy = 0.0;
+static double g_init_qz = 0.0;
+static double g_init_qw = 1.0;
+
+// Helper: quaternion multiply (Hamilton product)  q_out = q1 * q2
+static void quat_mul(double ax, double ay, double az, double aw,
+                     double bx, double by, double bz, double bw,
+                     double& ox, double& oy, double& oz, double& ow) {
+    ow = aw*bw - ax*bx - ay*by - az*bz;
+    ox = aw*bx + ax*bw + ay*bz - az*by;
+    oy = aw*by - ax*bz + ay*bw + az*bx;
+    oz = aw*bz + ax*by - ay*bx + az*bw;
+}
+
+// Helper: rotate a vector by a quaternion  v_out = q * v * q_inv
+static void quat_rotate(double qx, double qy, double qz, double qw,
+                        double vx, double vy, double vz,
+                        double& ox, double& oy, double& oz) {
+    // t = 2 * cross(q_xyz, v)
+    double tx = 2.0 * (qy*vz - qz*vy);
+    double ty = 2.0 * (qz*vx - qx*vz);
+    double tz = 2.0 * (qx*vy - qy*vx);
+    // v_out = v + qw*t + cross(q_xyz, t)
+    ox = vx + qw*tx + (qy*tz - qz*ty);
+    oy = vy + qw*ty + (qz*tx - qx*tz);
+    oz = vz + qw*tz + (qx*ty - qy*tx);
+}
+
+// Check if initial pose is non-identity
+static bool has_init_pose() {
+    return g_init_x != 0.0 || g_init_y != 0.0 || g_init_z != 0.0 ||
+           g_init_qx != 0.0 || g_init_qy != 0.0 || g_init_qz != 0.0 || g_init_qw != 1.0;
+}
 
 // Frame accumulator (Livox SDK raw → CustomMsg)
 static std::mutex g_pc_mutex;
@@ -126,11 +168,28 @@ static void publish_lidar(PointCloudXYZI::Ptr cloud, double timestamp,
     pc.data_length = pc.row_step;
     pc.data.resize(pc.data_length);
 
+    // Apply the full init_pose transform (rotation + translation) to point clouds.
+    // FAST-LIO's map origin is at the sensor's initial position.  The rotation
+    // corrects axis direction (e.g. 180° X for upside-down mount) and the
+    // translation shifts the origin so that ground sits at z≈0 (e.g. z=1.2
+    // for a sensor mounted 1.2m above ground).  This matches the odometry
+    // frame, which also gets the full init_pose applied.
+    const bool apply_init_pose = has_init_pose();
     for (int i = 0; i < num_points; ++i) {
         float* dst = reinterpret_cast<float*>(pc.data.data() + i * 16);
-        dst[0] = cloud->points[i].x;
-        dst[1] = cloud->points[i].y;
-        dst[2] = cloud->points[i].z;
+        if (apply_init_pose) {
+            double rx, ry, rz;
+            quat_rotate(g_init_qx, g_init_qy, g_init_qz, g_init_qw,
+                        cloud->points[i].x, cloud->points[i].y, cloud->points[i].z,
+                        rx, ry, rz);
+            dst[0] = static_cast<float>(rx + g_init_x);
+            dst[1] = static_cast<float>(ry + g_init_y);
+            dst[2] = static_cast<float>(rz + g_init_z);
+        } else {
+            dst[0] = cloud->points[i].x;
+            dst[1] = cloud->points[i].y;
+            dst[2] = cloud->points[i].z;
+        }
         dst[3] = cloud->points[i].intensity;
     }
 
@@ -148,14 +207,38 @@ static void publish_odometry(const custom_messages::Odometry& odom, double times
     msg.header = make_header(g_frame_id, timestamp);
     msg.child_frame_id = g_child_frame_id;
 
-    // Pose
-    msg.pose.pose.position.x = odom.pose.pose.position.x;
-    msg.pose.pose.position.y = odom.pose.pose.position.y;
-    msg.pose.pose.position.z = odom.pose.pose.position.z;
-    msg.pose.pose.orientation.x = odom.pose.pose.orientation.x;
-    msg.pose.pose.orientation.y = odom.pose.pose.orientation.y;
-    msg.pose.pose.orientation.z = odom.pose.pose.orientation.z;
-    msg.pose.pose.orientation.w = odom.pose.pose.orientation.w;
+    // Pose (apply initial pose offset: p_out = R_init * p_slam + t_init)
+    if (has_init_pose()) {
+        double rx, ry, rz;
+        quat_rotate(g_init_qx, g_init_qy, g_init_qz, g_init_qw,
+                    odom.pose.pose.position.x,
+                    odom.pose.pose.position.y,
+                    odom.pose.pose.position.z,
+                    rx, ry, rz);
+        msg.pose.pose.position.x = rx + g_init_x;
+        msg.pose.pose.position.y = ry + g_init_y;
+        msg.pose.pose.position.z = rz + g_init_z;
+
+        double ox, oy, oz, ow;
+        quat_mul(g_init_qx, g_init_qy, g_init_qz, g_init_qw,
+                 odom.pose.pose.orientation.x,
+                 odom.pose.pose.orientation.y,
+                 odom.pose.pose.orientation.z,
+                 odom.pose.pose.orientation.w,
+                 ox, oy, oz, ow);
+        msg.pose.pose.orientation.x = ox;
+        msg.pose.pose.orientation.y = oy;
+        msg.pose.pose.orientation.z = oz;
+        msg.pose.pose.orientation.w = ow;
+    } else {
+        msg.pose.pose.position.x = odom.pose.pose.position.x;
+        msg.pose.pose.position.y = odom.pose.pose.position.y;
+        msg.pose.pose.position.z = odom.pose.pose.position.z;
+        msg.pose.pose.orientation.x = odom.pose.pose.orientation.x;
+        msg.pose.pose.orientation.y = odom.pose.pose.orientation.y;
+        msg.pose.pose.orientation.z = odom.pose.pose.orientation.z;
+        msg.pose.pose.orientation.w = odom.pose.pose.orientation.w;
+    }
 
     // Covariance (fixed-size double[36])
     for (int i = 0; i < 36; ++i) {
@@ -267,8 +350,10 @@ static void on_info_change(const uint32_t handle, const LivoxLidarInfo* info,
     char ip[17] = {};
     std::memcpy(ip, info->lidar_ip, 16);
 
-    printf("[fastlio2] Device connected: handle=%u type=%u sn=%s ip=%s\n",
-           handle, info->dev_type, sn, ip);
+    if (fastlio_debug) {
+        printf("[fastlio2] Device connected: handle=%u type=%u sn=%s ip=%s\n",
+               handle, info->dev_type, sn, ip);
+    }
 
     SetLivoxLidarWorkMode(handle, kLivoxLidarNormal, nullptr, nullptr);
     EnableLivoxLidarImuData(handle, nullptr, nullptr);
@@ -314,8 +399,8 @@ int main(int argc, char** argv) {
     std::string host_ip = mod.arg("host_ip", "192.168.1.5");
     std::string lidar_ip = mod.arg("lidar_ip", "192.168.1.155");
     g_frequency = mod.arg_float("frequency", 10.0f);
-    g_frame_id = mod.arg("frame_id", "map");
-    g_child_frame_id = mod.arg("child_frame_id", "body");
+    g_frame_id = mod.arg_required("frame_id");
+    g_child_frame_id = mod.arg_required("child_frame_id");
     float pointcloud_freq = mod.arg_float("pointcloud_freq", 5.0f);
     float odom_freq = mod.arg_float("odom_freq", 50.0f);
     CloudFilterConfig filter_cfg;
@@ -325,6 +410,11 @@ int main(int argc, char** argv) {
     float map_voxel_size = mod.arg_float("map_voxel_size", 0.1f);
     float map_max_range = mod.arg_float("map_max_range", 100.0f);
     float map_freq = mod.arg_float("map_freq", 0.0f);
+
+    // Verbose logging — propagates to the FAST-LIO C++ core via the
+    // `fastlio_debug` global. Default false → only real errors print.
+    bool debug = mod.arg_bool("debug", false);
+    fastlio_debug = debug;
 
     // SDK network ports (defaults from SdkPorts struct in livox_sdk_config.hpp)
     livox_common::SdkPorts ports;
@@ -340,23 +430,47 @@ int main(int argc, char** argv) {
     ports.host_imu_data   = mod.arg_int("host_imu_data_port", port_defaults.host_imu_data);
     ports.host_log_data   = mod.arg_int("host_log_data_port", port_defaults.host_log_data);
 
-    printf("[fastlio2] Starting FAST-LIO2 + Livox Mid-360 native module\n");
-    printf("[fastlio2] lidar topic: %s\n",
-           g_lidar_topic.empty() ? "(disabled)" : g_lidar_topic.c_str());
-    printf("[fastlio2] odometry topic: %s\n",
-           g_odometry_topic.empty() ? "(disabled)" : g_odometry_topic.c_str());
-    printf("[fastlio2] global_map topic: %s\n",
-           g_map_topic.empty() ? "(disabled)" : g_map_topic.c_str());
-    printf("[fastlio2] config: %s\n", config_path.c_str());
-    printf("[fastlio2] host_ip: %s  lidar_ip: %s  frequency: %.1f Hz\n",
-           host_ip.c_str(), lidar_ip.c_str(), g_frequency);
-    printf("[fastlio2] pointcloud_freq: %.1f Hz  odom_freq: %.1f Hz\n",
-           pointcloud_freq, odom_freq);
-    printf("[fastlio2] voxel_size: %.3f  sor_mean_k: %d  sor_stddev: %.1f\n",
-           filter_cfg.voxel_size, filter_cfg.sor_mean_k, filter_cfg.sor_stddev);
-    if (!g_map_topic.empty())
-        printf("[fastlio2] map_voxel_size: %.3f  map_max_range: %.1f  map_freq: %.1f Hz\n",
-               map_voxel_size, map_max_range, map_freq);
+    // Initial pose offset [x, y, z, qx, qy, qz, qw]
+    {
+        std::string init_str = mod.arg("init_pose", "");
+        if (!init_str.empty()) {
+            double vals[7] = {0, 0, 0, 0, 0, 0, 1};
+            int n = 0;
+            size_t pos = 0;
+            while (pos < init_str.size() && n < 7) {
+                size_t comma = init_str.find(',', pos);
+                if (comma == std::string::npos) comma = init_str.size();
+                vals[n++] = std::stod(init_str.substr(pos, comma - pos));
+                pos = comma + 1;
+            }
+            g_init_x = vals[0]; g_init_y = vals[1]; g_init_z = vals[2];
+            g_init_qx = vals[3]; g_init_qy = vals[4]; g_init_qz = vals[5]; g_init_qw = vals[6];
+        }
+    }
+
+    if (debug) {
+        printf("[fastlio2] Starting FAST-LIO2 + Livox Mid-360 native module\n");
+        if (has_init_pose()) {
+            printf("[fastlio2] init_pose: xyz=(%.3f, %.3f, %.3f) quat=(%.4f, %.4f, %.4f, %.4f)\n",
+                   g_init_x, g_init_y, g_init_z, g_init_qx, g_init_qy, g_init_qz, g_init_qw);
+        }
+        printf("[fastlio2] lidar topic: %s\n",
+               g_lidar_topic.empty() ? "(disabled)" : g_lidar_topic.c_str());
+        printf("[fastlio2] odometry topic: %s\n",
+               g_odometry_topic.empty() ? "(disabled)" : g_odometry_topic.c_str());
+        printf("[fastlio2] global_map topic: %s\n",
+               g_map_topic.empty() ? "(disabled)" : g_map_topic.c_str());
+        printf("[fastlio2] config: %s\n", config_path.c_str());
+        printf("[fastlio2] host_ip: %s  lidar_ip: %s  frequency: %.1f Hz\n",
+               host_ip.c_str(), lidar_ip.c_str(), g_frequency);
+        printf("[fastlio2] pointcloud_freq: %.1f Hz  odom_freq: %.1f Hz\n",
+               pointcloud_freq, odom_freq);
+        printf("[fastlio2] voxel_size: %.3f  sor_mean_k: %d  sor_stddev: %.1f\n",
+               filter_cfg.voxel_size, filter_cfg.sor_mean_k, filter_cfg.sor_stddev);
+        if (!g_map_topic.empty())
+            printf("[fastlio2] map_voxel_size: %.3f  map_max_range: %.1f  map_freq: %.1f Hz\n",
+                   map_voxel_size, map_max_range, map_freq);
+    }
 
     // Signal handlers
     signal(SIGTERM, signal_handler);
@@ -371,13 +485,14 @@ int main(int argc, char** argv) {
     g_lcm = &lcm;
 
     // Init FAST-LIO with config
-    printf("[fastlio2] Initializing FAST-LIO...\n");
+    if (debug) printf("[fastlio2] Initializing FAST-LIO...\n");
     FastLio fast_lio(config_path, msr_freq, main_freq);
     g_fastlio = &fast_lio;
-    printf("[fastlio2] FAST-LIO initialized.\n");
+    if (debug) printf("[fastlio2] FAST-LIO initialized.\n");
 
-    // Init Livox SDK (in-memory config, no temp files)
-    if (!livox_common::init_livox_sdk(host_ip, lidar_ip, ports)) {
+    // Init Livox SDK (in-memory config, no temp files).
+    // Pass `debug` so the SDK's spdlog console sink is disabled when off.
+    if (!livox_common::init_livox_sdk(host_ip, lidar_ip, ports, debug)) {
         return 1;
     }
 
@@ -393,7 +508,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    printf("[fastlio2] SDK started, waiting for device...\n");
+    if (debug) printf("[fastlio2] SDK started, waiting for device...\n");
 
     // Main loop
     auto frame_interval = std::chrono::microseconds(
@@ -512,11 +627,11 @@ int main(int argc, char** argv) {
     }
 
     // Cleanup
-    printf("[fastlio2] Shutting down...\n");
+    if (debug) printf("[fastlio2] Shutting down...\n");
     g_fastlio = nullptr;
     LivoxLidarSdkUninit();
     g_lcm = nullptr;
 
-    printf("[fastlio2] Done.\n");
+    if (debug) printf("[fastlio2] Done.\n");
     return 0;
 }

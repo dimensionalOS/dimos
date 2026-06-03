@@ -42,9 +42,7 @@ text "target here" small italic at (GR.s.x, GR.s.y - 0.25in)
 
 </details>
 
-<!--Result:-->
 ![output](assets/transforms_tree.svg)
-
 
 Each arrow in this tree is a transform. To get the mug's position in gripper coordinates, you chain transforms through their common parent: camera → robot_base → arm → gripper.
 
@@ -78,7 +76,9 @@ The `Transform` class at [`geometry_msgs/Transform.py`](/dimos/msgs/geometry_msg
 - `ts` - Timestamp for temporal lookups
 
 ```python
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Camera 0.5m forward and 0.3m up from base, no rotation
 camera_transform = Transform(
@@ -90,20 +90,20 @@ camera_transform = Transform(
 print(camera_transform)
 ```
 
-<!--Result:-->
-```
+```results
 base_link -> camera_link
   Translation: → Vector Vector([0.5 0.  0.3])
   Rotation: Quaternion(0.000000, 0.000000, 0.000000, 1.000000)
 ```
-
 
 ### Transform Operations
 
 Transforms can be composed and inverted:
 
 ```python
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Create two transforms
 t1 = Transform(
@@ -129,20 +129,20 @@ t_inverse = -t1
 print(f"Inverse: {t_inverse.frame_id} -> {t_inverse.child_frame_id}")
 ```
 
-<!--Result:-->
-```
+```results
 Composed: base_link -> end_effector
 Translation: (1.0, 0.5, 0.0)
 Inverse: camera_link -> base_link
 ```
-
 
 ### Converting to Matrix Form
 
 For integration with libraries like NumPy or OpenCV:
 
 ```python
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 t = Transform(
     translation=Vector3(1.0, 2.0, 3.0),
@@ -153,16 +153,13 @@ print("4x4 transformation matrix:")
 print(matrix)
 ```
 
-<!--Result:-->
-```
+```results
 4x4 transformation matrix:
 [[1. 0. 0. 1.]
  [0. 1. 0. 2.]
  [0. 0. 1. 3.]
  [0. 0. 0. 1.]]
 ```
-
-
 
 ## Frame IDs in Modules
 
@@ -190,12 +187,10 @@ sensor2 = MySensorModule(frame_id_prefix="robot1")
 print(f"With prefix: {sensor2.frame_id}")
 ```
 
-<!--Result:-->
-```
+```results
 Default frame_id: sensor_link
 With prefix: robot1/sensor_link
 ```
-
 
 ## The TF Service
 
@@ -215,14 +210,16 @@ This example demonstrates how multiple modules publish and receive transforms. T
 2. **CameraModule** - Publishes `base_link -> camera_link` (camera mounting position) and `camera_link -> camera_optical` (optical frame convention)
 3. **PerceptionModule** - Looks up transforms between any frames
 
-```python ansi=false
+```python skip ansi=false
 import time
 import reactivex as rx
 from reactivex import operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 class RobotBaseModule(Module):
     """Publishes the robot's position in the world frame at 10Hz."""
@@ -241,7 +238,7 @@ class RobotBaseModule(Module):
             )
             self.tf.publish(robot_pose)
 
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(0.1).subscribe(publish_pose)
         )
 
@@ -268,15 +265,16 @@ class CameraModule(Module):
             )
             self.tf.publish(camera_mount, optical_frame)
 
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(0.1).subscribe(publish_transforms)
         )
-
 
 class PerceptionModule(Module):
     """Receives transforms and performs lookups."""
 
+    @rpc
     def start(self) -> None:
+        super().start()
         # This is just to init the transforms system.
         # Touching the property for the first time enables the system for this module.
         # Transform lookups normally happen in fast loops in IRL modules.
@@ -302,7 +300,6 @@ class PerceptionModule(Module):
         print("Transform tree:")
         print(self.tf.graph())
 
-
 if __name__ == "__main__":
     dimos = ModuleCoordinator()
     dimos.start()
@@ -313,7 +310,8 @@ if __name__ == "__main__":
 
     dimos.start_all_modules()
 
-    time.sleep(1.0)
+    # Give worker TF publishers a moment to populate the buffer before querying.
+    time.sleep(2.5)
 
     perception.lookup()
 
@@ -321,16 +319,24 @@ if __name__ == "__main__":
 
 ```
 
-<!--Result:-->
-```
-Initialized dimos local cluster with 3 workers, memory limit: auto
-2025-12-29T12:47:01.433394Z [info     ] Deployed module.                                             [dimos/core/__init__.py] module=RobotBaseModule worker_id=1
-2025-12-29T12:47:01.603269Z [info     ] Deployed module.                                             [dimos/core/__init__.py] module=CameraModule worker_id=0
-2025-12-29T12:47:01.698970Z [info     ] Deployed module.                                             [dimos/core/__init__.py] module=PerceptionModule worker_id=2
+```results
+16:21:45.203 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
+16:21:45.445 [inf][/coordination/python_worker.py] Deployed module. module=RobotBaseModule module_id=0 worker_id=0
+16:21:45.451 [inf][/coordination/python_worker.py] Deployed module. module=CameraModule module_id=1 worker_id=1
+16:21:45.452 [inf][/coordination/python_worker.py] Deployed module. module=PerceptionModule module_id=2 worker_id=0
+16:21:47.968 [inf][dination/module_coordinator.py] Stopping module... module=PerceptionModule
+16:21:48.022 [inf][dination/module_coordinator.py] Module stopped. module=PerceptionModule
+16:21:48.022 [inf][dination/module_coordinator.py] Stopping module... module=CameraModule
+16:21:48.041 [inf][dination/module_coordinator.py] Module stopped. module=CameraModule
+16:21:48.041 [inf][dination/module_coordinator.py] Stopping module... module=RobotBaseModule
+16:21:48.062 [inf][dination/module_coordinator.py] Module stopped. module=RobotBaseModule
+16:21:48.062 [inf][ation/worker_manager_python.py] Shutting down all workers...
+16:21:48.062 [inf][/coordination/python_worker.py] Worker stopping module... module=CameraModule module_id=1 worker_id=1
+16:21:48.063 [inf][/coordination/python_worker.py] Worker module stopped. module=CameraModule module_id=1 worker_id=1
 LCMTF(3 buffers):
-  TBuffer(world -> base_link, 10 msgs, 0.90s [2025-12-29 20:47:01 - 2025-12-29 20:47:02])
-  TBuffer(base_link -> camera_link, 9 msgs, 0.80s [2025-12-29 20:47:01 - 2025-12-29 20:47:02])
-  TBuffer(camera_link -> camera_optical, 9 msgs, 0.80s [2025-12-29 20:47:01 - 2025-12-29 20:47:02])
+  TBuffer(base_link -> camera_link, 24 msgs, 2.37s [2026-04-21 01:21:45 - 2026-04-21 01:21:47])
+  TBuffer(camera_link -> camera_optical, 24 msgs, 2.37s [2026-04-21 01:21:45 - 2026-04-21 01:21:47])
+  TBuffer(world -> base_link, 24 msgs, 2.37s [2026-04-21 01:21:45 - 2026-04-21 01:21:47])
 Direct: robot is at (2.5, 3.0)m in world
 
 Chained: world -> camera_optical
@@ -357,7 +363,7 @@ Transform tree:
 ```
 
 
-You can also run `foxglove-studio-bridge` in the next terminal (binary provided by DimOS and should be in your Python env) and `foxglove-studio` to view these transforms in 3D. (TODO we need to update this for rerun)
+You can view these transforms in 3D using the Rerun viewer (see [Visualization](/docs/usage/visualization.md)).
 
 ![transforms](assets/transforms.png)
 
@@ -399,12 +405,9 @@ box width (CO.e.x - BL.e.x + 0.1in) height 0.7in \
 text "CameraModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
 ```
 
-
 </details>
 
-<!--Result:-->
 ![output](assets/transforms_modules.svg)
-
 
 # Internals
 
@@ -413,11 +416,14 @@ text "CameraModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
 `self.tf` on module is a transform buffer. This is a standalone class that maintains a temporal buffer of transforms (default 10 seconds) allowing queries at past timestamps, you can use it directly:
 
 ```python
-from dimos.protocol.tf import TF
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
 import time
 
-tf = TF(autostart=False)
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.tf.tf import MultiTBuffer
+
+tf = MultiTBuffer()
 
 # Simulate transforms at different times
 for i in range(5):
@@ -437,17 +443,14 @@ print(f"Buffer has {len(tf.buffers)} transform pair(s)")
 print(tf)
 ```
 
-<!--Result:-->
-```
+```results
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
-LCMTF(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2025-12-29 18:19:18 - 2025-12-29 18:19:18])
+MultiTBuffer(1 buffers):
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-05-15 21:11:37 - 2026-05-15 21:11:37])
 ```
 
-
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.
-
 
 ## Further Reading
 

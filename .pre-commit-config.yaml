@@ -1,12 +1,11 @@
 default_stages: [pre-commit]
 default_install_hook_types: [pre-commit, commit-msg]
+exclude: (dimos/models/.*)|(deprecated)
 repos:
 
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: v1.5.5
     hooks:
-      - id: forbid-crlf
-      - id: remove-crlf
       - id: insert-license
         files: \.py$
         exclude: (__init__\.py$)|(dimos/rxpy_backpressure/)
@@ -33,9 +32,12 @@ repos:
       - id: trailing-whitespace
         language: python
         types: [text]
+        exclude: \.patch$  # patch files contain intentional trailing whitespace
       - id: end-of-file-fixer
+        exclude: \.patch$  # keep patch files byte-identical to upstream diffs
       - id: mixed-line-ending
         args: [--fix=lf]
+        exclude: \.patch$  # keep patch files byte-identical to upstream diffs
       - id: check-json
       - id: check-toml
       - id: check-yaml
@@ -92,6 +94,7 @@ repos:
         entry: python -m dimos.utils.docs.doclinks docs/
         language: system
         files: ^docs/.*\.md$
+        exclude: ^docs/node_modules/
 
       - id: filter-commit-message
         name: Filter generated signatures from commit message
@@ -106,3 +109,33 @@ repos:
         entry: python bin/hooks/filter_commit_message.py --check
         language: python
         stages: [pre-commit]
+
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: |
+          bash -c '
+            set -euo pipefail
+            git ls-files "*Cargo.toml" | while read -r m; do
+              cargo locate-project --manifest-path "$m" --workspace --message-format plain
+            done | sort -u | while read -r root; do
+              cargo fmt --manifest-path "$root" --all
+            done
+          '
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: |
+          bash -c '
+            set -euo pipefail
+            git ls-files "*Cargo.toml" | while read -r m; do
+              cargo locate-project --manifest-path "$m" --workspace --message-format plain
+            done | sort -u | while read -r root; do
+              cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
+            done
+          '
+        language: system
+        types: [rust]
+        pass_filenames: false

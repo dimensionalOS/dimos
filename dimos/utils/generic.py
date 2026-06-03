@@ -16,9 +16,26 @@ from collections.abc import Callable
 import hashlib
 import json
 import os
+import socket
 import string
 from typing import Any, Generic, TypeVar, overload
 import uuid
+
+import psutil
+
+
+def get_local_ips() -> list[tuple[str, str]]:
+    """Return ``(ip, interface_name)`` for every non-loopback IPv4 address.
+
+    Picks up physical, virtual, and VPN interfaces (including Tailscale).
+    """
+    results: list[tuple[str, str]] = []
+    for iface, addrs in psutil.net_if_addrs().items():
+        for addr in addrs:
+            if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                results.append((addr.address, iface))
+    return results
+
 
 _T = TypeVar("_T")
 

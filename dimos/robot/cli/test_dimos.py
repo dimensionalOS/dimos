@@ -14,9 +14,35 @@
 
 from typing import Literal
 
+import pytest
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
-from dimos.robot.cli.dimos import arg_help
+from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        # Bare `--simulation` (legacy flag form) followed by the subcommand:
+        # the default backend is injected so click doesn't eat `run`.
+        (
+            ["dimos", "--simulation", "run", "go2"],
+            ["dimos", "--simulation", "mujoco", "run", "go2"],
+        ),
+        # Bare `--simulation` followed by another option, or nothing.
+        (["dimos", "--simulation", "-d", "run"], ["dimos", "--simulation", "mujoco", "-d", "run"]),
+        (["dimos", "--simulation"], ["dimos", "--simulation", "mujoco"]),
+        # Explicit simulator — left untouched.
+        (["dimos", "--simulation", "mujoco", "run"], ["dimos", "--simulation", "mujoco", "run"]),
+        (["dimos", "--simulation", "dimsim", "run"], ["dimos", "--simulation", "dimsim", "run"]),
+        (["dimos", "--simulation=dimsim", "run"], ["dimos", "--simulation=dimsim", "run"]),
+        # No `--simulation` at all — left untouched.
+        (["dimos", "run", "go2"], ["dimos", "run", "go2"]),
+    ],
+)
+def test_normalize_simulation_argv(argv: list[str], expected: list[str]):
+    assert _normalize_simulation_argv(argv) == expected
 
 
 def test_blueprint_arg_help():

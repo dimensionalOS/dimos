@@ -16,17 +16,35 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import os
 from pathlib import Path
+from typing import TypeVar
 
 import pytest
 
 from dimos.utils import ament_prefix
 from dimos.utils.ament_prefix import ensure_ament_packages, process_xacro
 
-_needs_ament = pytest.mark.skipif(
-    not ament_prefix._has_ament, reason="ament_index_python not installed"
-)
+_F = TypeVar("_F", bound=Callable[..., object])
+
+
+def _needs_ament(f: _F) -> _F:
+    """Marker for tests that need ament_index_python (ROS-only)."""
+    f = pytest.mark.skipif(not ament_prefix._has_ament, reason="ament_index_python not installed")(
+        f
+    )
+    return pytest.mark.self_hosted(f)
+
+
+try:
+    import xacro as _xacro_module  # noqa: F401
+
+    _has_xacro = True
+except ModuleNotFoundError:
+    _has_xacro = False
+
+_needs_xacro = pytest.mark.skipif(not _has_xacro, reason="xacro not installed")
 
 
 @pytest.fixture(autouse=True)
@@ -129,6 +147,7 @@ def test_ament_index_resolves(tmp_path: Path) -> None:
     assert Path(resolved).resolve() == pkg_dir.resolve()
 
 
+@_needs_xacro
 def test_process_xacro_with_simple_file(tmp_path: Path) -> None:
     """Test process_xacro works with a minimal xacro file (no $(find))."""
     xacro_file = tmp_path / "test.urdf.xacro"

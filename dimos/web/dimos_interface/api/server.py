@@ -254,10 +254,11 @@ class FastAPIServer(EdgeIO):
         async def index(request: Request):  # type: ignore[no-untyped-def]
             stream_keys = list(self.streams.keys())
             text_stream_keys = list(self.text_streams.keys())
+            # Starlette 0.38+: request is 1st positional arg, not in context dict.
             return self.templates.TemplateResponse(
+                request,
                 "index_fastapi.html",
                 {
-                    "request": request,
                     "stream_keys": stream_keys,
                     "text_stream_keys": text_stream_keys,
                     "has_voice": self.audio_subject is not None,

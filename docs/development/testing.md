@@ -1,9 +1,12 @@
 # Testing
 
-For development, you should install all dependencies so that tests have access to them.
+`uv run` syncs the project deps + `tests` group on demand, so the default test suite needs no upfront install — just `uv run pytest --numprocesses=auto dimos` (xdist parallelizes across cores).
+
+Self-hosted tests need the heavy optional extras (LFS data, perception models, simulation, hardware SDKs, …). Sync them explicitly before running:
 
 ```bash
-uv sync --all-extras --no-extra dds
+uv sync --all-groups              # all dependency groups (tests-self-hosted, lint, …)
+uv sync --group tests-self-hosted # just what CI installs on the self-hosted runner
 ```
 
 ## Types of tests
@@ -23,18 +26,16 @@ Rather than waste time on classifying tests, it's better to separate tests by ho
 
 | Test Group | When to run | Typical usage |
 |------------|-------------|---------------|
-| **fast tests** | after each code change | often run with filesystem watchers so tests rerun whenever a file is saved |
-| **slow tests** | every once in a while to make sure you haven't broken anything | maybe every commit, but definitely before publishing a PR |
+| **default** | after each code change | often run with filesystem watchers so tests rerun whenever a file is saved |
+| **self-hosted** | every once in a while to make sure you haven't broken anything | maybe every commit, but definitely before publishing a PR |
 
 The purpose of running tests in a loop is to get immediate feedback. The faster the loop, the easier it is to identify a problem since the source is the tiny bit of code you changed.
 
-For the purposes of DimOS, slow tests are marked with `@pytest.mark.slow` and fast tests are all the remaining ones.
+Self-hosted tests are marked with `@pytest.mark.self_hosted` (they need LFS, ROS, CUDA, or other heavy deps); the default suite is everything else.
 
 ## Usage
 
-### Fast tests
-
-Run the fast tests:
+### Default suite
 
 ```bash
 ./bin/pytest-fast
@@ -43,25 +44,44 @@ Run the fast tests:
 This is the same as:
 
 ```bash
-pytest dimos
+pytest --numprocesses=auto dimos
 ```
 
-The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes the `slow`/`mujoco`/`tool`. So plain `pytest dimos` only runs fast tests.
+The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `self_hosted`/`mujoco`/`tool`, so plain `pytest dimos` runs only the default suite; `--numprocesses=auto` parallelizes across cores via pytest-xdist.
 
-### Slow tests
-
-Run the slow tests:
+### Self-hosted tests
 
 ```bash
 ./bin/pytest-slow
 ```
 
-(This is just a shortcut for `pytest -m 'not (tool or mujoco)' dimos`. I.e., run both fast tests and slow tests, but not `tool` or `mujoco`.)
+(Shortcut for `pytest -m 'not (tool or mujoco)' dimos` — runs the default suite *and* self-hosted tests, but not `tool` or `mujoco`.)
 
-When writing or debugging a specific slow test, override `-m` yourself to run it:
+When writing or debugging a specific self-hosted test, override `-m` yourself to run it:
 
 ```bash
-pytest -m slow dimos/path/to/test_something.py
+pytest -m self_hosted dimos/path/to/test_something.py
+```
+
+## Testing on a fresh Ubuntu install
+
+CI tests dimos with pre-built images and cached deps, so it can't catch gaps
+between what [`installation/ubuntu.md`](/docs/installation/ubuntu.md) tells a new user to
+do and what a clean machine actually needs (e.g. a system package we require but
+forgot to document).
+
+The [misc/fresh-ubuntu-tests/](/misc/fresh-ubuntu-tests/) harness closes that
+gap. It replays the documented install + test flow inside a fresh, official,
+**unmodified** Ubuntu Desktop 24.04 VM (VirtualBox).
+
+It's intended to be executed locally.
+
+```sh skip
+cd misc/fresh-ubuntu-tests
+
+./vmtest.sh build   # download + verify the official ISO, install, snapshot "golden" (once, ~15-30 min)
+./vmtest.sh run     # clone golden, run the doc flow, report PASS/FAIL
+./vmtest.sh clean   # delete leftover run clones and logs (keeps the ISO + golden VM)
 ```
 
 ## Writing tests
@@ -83,6 +103,26 @@ Whenever you have something that needs to be cleaned up when the test is over (d
 Simple example code:
 
 ```python
+import pytest
+
+class RobotArm:
+    def __init__(self, device: str) -> None:
+        self.device = device
+        self._position = (0.0, 0.0, 0.0)
+
+    def connect(self) -> None:
+        return None
+
+    def disconnect(self) -> None:
+        return None
+
+    def move_to(self, x: float, y: float, z: float) -> None:
+        self._position = (x, y, z)
+
+    @property
+    def position(self) -> tuple[float, float, float]:
+        return self._position
+
 @pytest.fixture
 def arm():
     arm = RobotArm(device="/dev/ttyUSB0")
@@ -129,7 +169,7 @@ There are other useful things in `mocker`, like `mocker.MagicMock()` for creatin
 
 We have a few markers in use now.
 
-* `slow`: used to mark tests that take more than 1 second to finish.
+* `self_hosted`: used to mark tests that need the self-hosted runner (LFS, ROS, CUDA, heavy deps).
 * `tool`: tests which require human interaction. I don't like this. Please don't use them.
 * `mujoco`: tests which use `MuJoCo`. These are very slow and don't work in CI currently.
 

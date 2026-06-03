@@ -32,6 +32,8 @@ from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment
 
+pytestmark = pytest.mark.self_hosted
+
 
 @pytest.fixture
 def apartment() -> PointCloud:

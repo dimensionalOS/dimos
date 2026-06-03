@@ -135,8 +135,7 @@ plot.add(plantness_similarity,
 plot.to_svg("assets/plot_plantness.svg")
 ```
 
-<!--Result:-->
-```
+```results
 Stream("color_image_embedded") | vector_search() | order_by(ts)
 Stream("materialize")
 Stream("materialize"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
@@ -199,7 +198,7 @@ Looks better, these are some very obvious peaks, I'm curious let's see what was 
 
 Let's auto-detect the peaks, extract images from those moments, and run a 2D detector
 
-```python session=robotdata
+```python skip session=robotdata
 from dimos.mapping.voxels import VoxelMapTransformer
 from dimos.memory2.vis.space.space import Space
 from dimos.memory2.transform import peaks
@@ -241,8 +240,7 @@ m = mosaic(semantic_peaks.map_data(lambda obs: moondream.query_detections(obs.da
 m.data.save("assets/plants_auto.png")
 ```
 
-<!--Result:-->
-```
+```results
 14:59:33.042 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
 t=  14.1s score=0.224 prominence=0.031
 t=  26.3s score=0.225 prominence=0.033
@@ -261,7 +259,6 @@ t= 245.6s score=0.224 prominence=0.028
 t= 279.6s score=0.230 prominence=0.030
 ```
 
-
 ![output](assets/plot_plantness_autopeaks.svg)
 
 ![output](assets/plants_auto.png)
@@ -276,7 +273,7 @@ We got 15 peaks back, we ran a detector on all of them so we can start projectin
 
 Once we put the surviving peaks on the timeline we get two very obvious plants.
 
-```python session=robotdata
+```python skip session=robotdata
 from dimos.memory2.transform import significant
 
 plot = Plot()
@@ -296,7 +293,6 @@ m.data.save("assets/plants_meaningful.png")
 plot.to_svg("assets/plot_plantness_significant.svg")
 ```
 
-
 ![output](assets/plot_plantness_significant.svg)
 
 ![output](assets/plants_meaningful.png)
@@ -310,7 +306,7 @@ Let's focus on those two peaks. load all images in the vicinity of a detection,
 
 We'll also pull all lidar frames in their vicinity and reconstruct global maps for those areas.
 
-```python session=robotdata
+```python skip session=robotdata
 
 from dimos.memory2.vis.space.elements import Point
 from dimos.memory2.transform import QualityWindow
@@ -357,7 +353,7 @@ m.data.save("assets/plants_peak_detections.png")
 
 ## 3D Projection
 
-```python session=robotdata output=none
+```python skip session=robotdata output=none
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import (
     ImageDetections3DPC,
 )

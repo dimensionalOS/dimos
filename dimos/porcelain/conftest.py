@@ -14,10 +14,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from dimos.core.tests.stress_test_module import StressTestModule
 from dimos.porcelain.dimos import Dimos
+from dimos.porcelain.remote_module_source import RemoteModuleSource
+
+
+def _connect_in_process() -> Dimos:
+    """Connect over LCM without consulting the run registry.
+
+    For tests where the coordinator and the client live in the same
+    process and there is no `RunEntry` on disk.
+    """
+    instance = Dimos()
+    instance._source = RemoteModuleSource()
+    return instance
 
 
 @pytest.fixture
@@ -30,7 +44,14 @@ def app():
 
 
 @pytest.fixture
-def running_app():
+def running_app() -> Iterator[Dimos]:
+    """Function-scoped: a Dimos with `StressTestModule` running.
+
+    Function-scoped (not session) because every Dimos instance in this
+    process shares the LCM bus, so a peer test that calls `.stop()` on
+    its own `StressTestModule` would broadcast a stop RPC that closed
+    *this* instance's module too.
+    """
     instance = Dimos(n_workers=1)
     instance.run(StressTestModule)
     try:
@@ -40,10 +61,12 @@ def running_app():
 
 
 @pytest.fixture
-def client(running_app):
-    port = running_app._coordinator.start_rpyc_service()
-    instance = Dimos.connect(host="localhost", port=port)
+def client(running_app: Dimos) -> Iterator[Dimos]:
+    """LCM @rpc client paired with the per-test `running_app`."""
+    running_app._coordinator.start_rpc_service()
+    instance = _connect_in_process()
     try:
         yield instance
     finally:
-        instance.stop()
+        if instance.is_running:
+            instance.stop()

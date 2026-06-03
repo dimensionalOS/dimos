@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.memory2.embed import EmbedImages
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.transform import QualityWindow
@@ -30,11 +29,12 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data_dir
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-DB_PATH = get_data_dir() / "go2_bigoffice.db"
+DB_PATH = get_data_dir() / "go2_short.db"
 
 
 @pytest.fixture(scope="module")
@@ -74,17 +74,17 @@ class PoseIndex:
 
 @pytest.fixture(scope="module")
 def video_replay() -> LegacyPickleStore[Image]:
-    return LegacyPickleStore("unitree_go2_bigoffice/video")
+    return LegacyPickleStore("go2_short/video")
 
 
 @pytest.fixture(scope="module")
 def odom_index() -> PoseIndex:
-    return PoseIndex(LegacyPickleStore("unitree_go2_bigoffice/odom"))
+    return PoseIndex(LegacyPickleStore("go2_short/odom"))
 
 
 @pytest.fixture(scope="module")
 def lidar_replay() -> LegacyPickleStore[PointCloud2]:
-    return LegacyPickleStore("unitree_go2_bigoffice/lidar")
+    return LegacyPickleStore("go2_short/lidar")
 
 
 @pytest.mark.tool

@@ -1,7 +1,7 @@
 name: docker-build
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - 'docker/**'
       - '.github/workflows/docker-build.yml'
@@ -70,7 +70,6 @@ jobs:
         run: |
           case "${GITHUB_REF_NAME}" in
             main) branch_tag="latest" ;;
-            dev)    branch_tag="dev"    ;;
             *)
               branch_tag=$(echo "${GITHUB_REF_NAME}" \
                   | tr '[:upper:]' '[:lower:]' \
@@ -102,7 +101,7 @@ jobs:
         needs.ros.result != 'error'
         }}
 
-      from-image: ghcr.io/dimensionalos/ros:${{ needs.ros.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      from-image: ghcr.io/dimensionalos/ros:${{ needs.ros.result == 'success' && needs.check-changes.outputs.branch-tag || 'latest' }}
       to-image: ghcr.io/dimensionalos/ros-python:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile:  python
 
@@ -127,7 +126,7 @@ jobs:
         ((needs.python.result == 'success') ||
         (needs.python.result == 'skipped' &&
         needs.check-changes.outputs.dev == 'true')) }}
-      from-image: ghcr.io/dimensionalos/python:${{ needs.python.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      from-image: ghcr.io/dimensionalos/python:${{ needs.python.result == 'success' && needs.check-changes.outputs.branch-tag || 'latest' }}
       to-image: ghcr.io/dimensionalos/dev:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile: dev
 
@@ -192,7 +191,7 @@ jobs:
         (needs.check-changes.outputs.dev == 'true' ||
          (needs.ros-python.result == 'success' && (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.ros == 'true')))
         }}
-      from-image: ghcr.io/dimensionalos/ros-python:${{ needs.ros-python.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      from-image: ghcr.io/dimensionalos/ros-python:${{ needs.ros-python.result == 'success' && needs.check-changes.outputs.branch-tag || 'latest' }}
       to-image: ghcr.io/dimensionalos/ros-dev:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile: dev
 

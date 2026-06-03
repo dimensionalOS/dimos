@@ -1,0 +1,845 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+import heapq
+import math
+import threading
+import time
+from typing import Any
+
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+import numpy as np
+import open3d as o3d  # type: ignore[import-untyped]
+import open3d.core as o3c  # type: ignore[import-untyped]
+from reactivex.disposable import Disposable
+
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_MAP, FRAME_SENSOR
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+
+class Costmap:
+    def __init__(self, cell_size: float, obstacle_height: float, inflation_radius: float) -> None:
+        if cell_size <= 0.0:
+            raise ValueError(f"cell_size must be positive, got {cell_size}")
+        if inflation_radius < 0.0:
+            raise ValueError(f"inflation_radius must be non-negative, got {inflation_radius}")
+        self.cell_size = float(cell_size)
+        self.obstacle_height = float(obstacle_height)
+        self.inflation_radius = float(inflation_radius)
+        self._heights: dict[tuple[int, int], float] = {}
+        self._blocked: set[tuple[int, int]] = set()
+        self._blocked_dirty = True
+
+    def world_to_cell(self, x: float, y: float) -> tuple[int, int]:
+        return (math.floor(x / self.cell_size), math.floor(y / self.cell_size))
+
+    def cell_to_world(self, ix: int, iy: int) -> tuple[float, float]:
+        # Return cell center.
+        return ((ix + 0.5) * self.cell_size, (iy + 0.5) * self.cell_size)
+
+    def update(self, x: float, y: float, height: float) -> None:
+        """Record an obstacle-candidate point. Height is elevation above ground."""
+        key = self.world_to_cell(x, y)
+        prev = self._heights.get(key, float("-inf"))
+        if height > prev:
+            self._heights[key] = height
+            self._blocked_dirty = True
+
+    def clear(self) -> None:
+        self._heights.clear()
+        self._blocked.clear()
+        self._blocked_dirty = False
+
+    def is_blocked(self, ix: int, iy: int) -> bool:
+        if self._blocked_dirty:
+            self._rebuild_blocked()
+        return (ix, iy) in self._blocked
+
+    def _rebuild_blocked(self) -> None:
+        """Build the inflated obstacle set from the raw height map."""
+        self._blocked = _inflate_obstacles(
+            self._heights, self.obstacle_height, self.inflation_radius, self.cell_size
+        )
+        self._blocked_dirty = False
+
+    @property
+    def heights(self) -> dict[tuple[int, int], float]:
+        return self._heights
+
+    def mark_dirty(self) -> None:
+        self._blocked_dirty = True
+
+    def blocked_cells(self) -> set[tuple[int, int]]:
+        if self._blocked_dirty:
+            self._rebuild_blocked()
+        return self._blocked
+
+
+# 8-connected grid neighbourhood: every cell in the 3×3 block around the
+# current cell except the cell itself. Diagonals are included (and carry a
+# √2 step cost) so that A* can produce near-Euclidean paths through
+# doorways and along angled walls — a 4-connected search would force
+# staircase paths that don't fit through ~1-cell-wide doorways.
+_NEIGHBOURS: tuple[tuple[int, int, float], ...] = tuple(
+    (dx, dy, math.hypot(dx, dy)) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0)
+)
+
+_COSTMAP_PUBLISH_PERIOD = 0.5  # s (~2 Hz, plenty for rerun visualization)
+_COSTMAP_VIS_Z_LIFT = 0.1  # m above ground plane so costmap floats above terrain
+_TF_WARN_THROTTLE = 5.0  # s between repeated TF-missing warnings
+_COLOR_OBSTACLE = (1.0, 40.0 / 255.0, 40.0 / 255.0)  # red
+_COLOR_INFLATION = (1.0, 165.0 / 255.0, 0.0)  # orange
+
+
+@dataclass
+class StuckState:
+    ref_goal_dist: float
+    last_progress_time: float
+    effective_inflation: float
+
+
+def progress_tick(
+    state: StuckState,
+    goal_dist: float,
+    mono_now: float,
+    progress_epsilon: float,
+    stuck_seconds: float,
+    stuck_shrink_factor: float,
+    stuck_min_inflation: float,
+) -> tuple[StuckState, bool]:
+    if goal_dist < state.ref_goal_dist - progress_epsilon:
+        return (
+            StuckState(
+                ref_goal_dist=goal_dist,
+                last_progress_time=mono_now,
+                effective_inflation=state.effective_inflation,
+            ),
+            False,
+        )
+    if (
+        mono_now - state.last_progress_time >= stuck_seconds
+        and state.effective_inflation > stuck_min_inflation
+    ):
+        prev = state.effective_inflation
+        new_inflation = max(stuck_min_inflation, prev * stuck_shrink_factor)
+        if new_inflation < prev:
+            return (
+                StuckState(
+                    ref_goal_dist=goal_dist,
+                    last_progress_time=mono_now,
+                    effective_inflation=new_inflation,
+                ),
+                True,
+            )
+    return (state, False)
+
+
+def resolve_tf_chain(tf_buffer: Any, queries: list[tuple[str, str]]) -> Any:
+    for parent, child in queries:
+        tf = tf_buffer.get(parent, child)
+        if tf is not None:
+            return tf
+    return None
+
+
+def plan_on_costmap(
+    costmap: Costmap,
+    rx: float,
+    ry: float,
+    gx: float,
+    gy: float,
+    max_expansions: int,
+    inflation_override: float | None = None,
+) -> list[tuple[float, float]] | None:
+    cm = costmap
+    if inflation_override is not None and inflation_override != cm.inflation_radius:
+        blocked = _blocked_at_inflation(cm, inflation_override)
+    else:
+        blocked = cm.blocked_cells()
+
+    start = cm.world_to_cell(rx, ry)
+    goal = cm.world_to_cell(gx, gy)
+
+    # Ignore start/goal cell obstructions so we can plan even if the
+    # robot or the goal clip an inflated cell.
+    def is_blocked(ix: int, iy: int) -> bool:
+        if (ix, iy) == start or (ix, iy) == goal:
+            return False
+        return (ix, iy) in blocked
+
+    path_cells = astar(start, goal, is_blocked, max_expansions=max_expansions)
+    if path_cells is None:
+        return None
+    return [cm.cell_to_world(ix, iy) for (ix, iy) in path_cells]
+
+
+def _inflate_obstacles(
+    heights: dict[tuple[int, int], float],
+    obstacle_height: float,
+    inflation_radius: float,
+    cell_size: float,
+) -> set[tuple[int, int]]:
+    """Build the set of blocked cells by inflating obstacle cells within a radius."""
+    r_cells = math.ceil(inflation_radius / cell_size)
+    max_sq = (inflation_radius / cell_size) ** 2 if r_cells else 0.0
+    blocked: set[tuple[int, int]] = set()
+    for (ix, iy), h in list(heights.items()):
+        if h < obstacle_height:
+            continue
+        if r_cells == 0:
+            blocked.add((ix, iy))
+            continue
+        for dx in range(-r_cells, r_cells + 1):
+            for dy in range(-r_cells, r_cells + 1):
+                if dx * dx + dy * dy <= max_sq:
+                    blocked.add((ix + dx, iy + dy))
+    return blocked
+
+
+def _blocked_at_inflation(cm: Costmap, inflation_radius: float) -> set[tuple[int, int]]:
+    if inflation_radius < 0.0:
+        raise ValueError(f"inflation_radius must be non-negative, got {inflation_radius}")
+    return _inflate_obstacles(cm.heights, cm.obstacle_height, inflation_radius, cm.cell_size)
+
+
+def astar(
+    start: tuple[int, int],
+    goal: tuple[int, int],
+    is_blocked: Callable[[int, int], bool],
+    max_expansions: int = 200_000,
+) -> list[tuple[int, int]] | None:
+    if start == goal:
+        return [start]
+
+    def heuristic(c: tuple[int, int]) -> float:
+        dx = abs(c[0] - goal[0])
+        dy = abs(c[1] - goal[1])
+        # Octile distance
+        return (dx + dy) + (math.sqrt(2.0) - 2.0) * min(dx, dy)
+
+    # If start or goal is blocked, try to step off — policy: we let the
+    # caller handle that by pre-unblocking those cells.
+    open_heap: list[tuple[float, int, tuple[int, int]]] = []
+    counter = 0
+    heapq.heappush(open_heap, (heuristic(start), counter, start))
+    g_score: dict[tuple[int, int], float] = {start: 0.0}
+    came_from: dict[tuple[int, int], tuple[int, int]] = {}
+
+    expansions = 0
+    while open_heap:
+        expansions += 1
+        if expansions > max_expansions:
+            return None
+        _, _, current = heapq.heappop(open_heap)
+        if current == goal:
+            # Reconstruct
+            path = [current]
+            while current in came_from:
+                current = came_from[current]
+                path.append(current)
+            path.reverse()
+            return path
+
+        cur_g = g_score[current]
+        cx, cy = current
+        for dx, dy, step in _NEIGHBOURS:
+            nb = (cx + dx, cy + dy)
+            if is_blocked(nb[0], nb[1]):
+                continue
+            tentative = cur_g + step
+            if tentative < g_score.get(nb, float("inf")):
+                came_from[nb] = current
+                g_score[nb] = tentative
+                counter += 1
+                f = tentative + heuristic(nb)
+                heapq.heappush(open_heap, (f, counter, nb))
+
+    return None
+
+
+class SimplePlannerConfig(ModuleConfig):
+    world_frame: str = FRAME_MAP
+    body_frame: str = FRAME_BODY
+    sensor_frame: str = FRAME_SENSOR
+
+    cell_size: float = 0.3  # m per cell
+    obstacle_height_threshold: float = 0.15  # m above ground
+    inflation_radius: float = 0.2  # m, shrunk by stuck-detection
+    # How far ahead along the A* path to place the waypoint sent to LocalPlanner.
+    # Larger values produce smoother, more anticipatory motion but can cut corners
+    # smaller values track the planned path more tightly but may cause stop-and-go behavior as the robot catches its own waypoint.
+    lookahead_distance: float = 1.0  # m
+    replan_rate: float = 5.0  # Hz
+    # Rate at which the leading waypoint slides along the cached path,
+    # independent of the (slower) A* replan loop. Higher values give
+    # smoother pursuit of the path between replans.
+    waypoint_rate: float = 30.0  # Hz
+    # A* only re-runs after this cooldown; waypoints republish from cache.
+    replan_cooldown: float = 2.0  # s
+    max_expansions: int = 200_000
+    # Points below robot_z minus this offset are floor; above are obstacles.
+    ground_offset_below_robot: float = 1.3  # m
+
+    # Stuck detection: if goal-distance doesn't improve by progress_epsilon
+    # within stuck_seconds, progressively shrink inflation_radius.
+    stuck_seconds: float = 5.0  # s
+    progress_epsilon: float = 0.25  # m
+    stuck_shrink_factor: float = 0.5
+    stuck_min_inflation: float = 0.05  # m
+    # Cancel navigation when within this distance of the goal. Should be
+    # slightly larger than LocalPlanner/PathFollower thresholds so
+    # SimplePlanner stops before they do (avoiding stale waypoints).
+    goal_reached_threshold: float = 0.39  # m
+
+
+class SimplePlanner(Module):
+    """Grid-A* global route planner"""
+
+    config: SimplePlannerConfig
+
+    terrain_map_ext: In[PointCloud2]
+    terrain_map: In[PointCloud2]
+    goal: In[PointStamped]
+    stop_movement: In[Bool]
+    way_point: Out[PointStamped]
+    goal_path: Out[Path]
+    costmap_cloud: Out[PointCloud2]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._waypoint_thread: threading.Thread | None = None
+        self._robot_x = 0.0
+        self._robot_y = 0.0
+        self._robot_z = 0.0
+        self._has_odom = False
+        self._goal_x: float | None = None
+        self._goal_y: float | None = None
+        self._goal_z = 0.0
+        self._last_diag_print = 0.0
+        # Progress tracker. ``_ref_goal_dist`` is the distance-to-goal we
+        # last clocked as progress; any subsequent drop of at least
+        # ``progress_epsilon`` counts as "still making headway" and
+        # refreshes ``_last_progress_time``.
+        self._ref_goal_dist = float("inf")
+        self._last_progress_time = 0.0
+        # Current inflation in use — shrunk on stuck escalation, reset
+        # to config.inflation_radius on new goal.
+        self._effective_inflation = self.config.inflation_radius
+        # Cached path so waypoints can be republished between replans.
+        self._cached_path: list[tuple[float, float]] | None = None
+        self._last_plan_time = 0.0
+        # Costmap_cloud publish throttle — 2 Hz is plenty for rerun.
+        self._last_costmap_pub = 0.0
+        # Currently published waypoint — tracked so the odom callback can
+        # detect when the robot is about to reach it and advance early.
+        self._current_wp: tuple[float, float] | None = None
+        self._current_wp_is_goal = False
+        self._last_tf_warn = 0.0
+        self._lock = threading.Lock()
+        self._costmap_lock = threading.Lock()
+        self._costmap = Costmap(
+            cell_size=self.config.cell_size,
+            obstacle_height=self.config.obstacle_height_threshold,
+            inflation_radius=self.config.inflation_radius,
+        )
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(Disposable(self.goal.subscribe(self._on_goal)))
+        self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop_movement)))
+        self.register_disposable(
+            Disposable(self.terrain_map_ext.subscribe(self._on_terrain_map_ext))
+        )
+        self.register_disposable(Disposable(self.terrain_map.subscribe(self._on_terrain_map)))
+        self._running = True
+        self._thread = threading.Thread(target=self._planning_loop, daemon=True)
+        self._thread.start()
+        self._waypoint_thread = threading.Thread(target=self._waypoint_loop, daemon=True)
+        self._waypoint_thread.start()
+        logger.info("SimplePlanner started")
+
+    @rpc
+    def stop(self) -> None:
+        self._running = False
+        if self._waypoint_thread is not None:
+            self._waypoint_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._waypoint_thread = None
+        if self._thread is not None:
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._thread = None
+        super().stop()
+
+    @property
+    def _tf_pose_queries(self) -> list[tuple[str, str]]:
+        """Ordered (parent, child) TF lookups for the robot pose.
+        The first successful lookup wins. ``sensor`` is used by the Unity sim bridge."""
+        return [
+            (self.config.world_frame, self.config.body_frame),
+            (self.config.world_frame, self.config.sensor_frame),
+        ]
+
+    def _query_pose(self) -> bool:
+        """Update cached robot position from the TF tree.
+
+        Tries several ``(parent, child)`` pairs in priority order so the
+        planner works both on real hardware (``map → body`` via PGO +
+        FastLio2) and in simulation (``map → sensor`` from the Unity
+        bridge).
+
+        Returns True if a pose was obtained from any chain.
+        """
+        tf = resolve_tf_chain(self.tf, list(self._tf_pose_queries))
+        if tf is None:
+            now = time.monotonic()
+            if now - self._last_tf_warn > _TF_WARN_THROTTLE:
+                self._last_tf_warn = now
+                buffers = list(self.tf.buffers.keys()) if hasattr(self.tf, "buffers") else []
+                logger.warning(
+                    "TF lookup failed — no robot pose available",
+                    tried=[(p, c) for p, c in self._tf_pose_queries],
+                    available_frames=buffers,
+                )
+            return False
+        with self._lock:
+            self._robot_x = float(tf.translation.x)
+            self._robot_y = float(tf.translation.y)
+            self._robot_z = float(tf.translation.z)
+            self._has_odom = True
+        return True
+
+    def _cancel_navigation(self, source: str) -> None:
+        """Clear the active goal and tell LocalPlanner to hold position.
+
+        Refresh the pose from TF first — the cached value can be up to
+        one planner tick (~200 ms) stale, and during teleop the robot is
+        being pushed, so a stale "stop here" waypoint becomes a real
+        target the local planner drives back to.
+        """
+        self._query_pose()
+        with self._lock:
+            already_idle = self._goal_x is None and self._goal_y is None
+            self._goal_x = None
+            self._goal_y = None
+            self._cached_path = None
+            self._current_wp = None
+            self._current_wp_is_goal = False
+            rx, ry, rz = self._robot_x, self._robot_y, self._robot_z
+        now = time.time()
+        self.way_point.publish(
+            PointStamped(ts=now, frame_id=self.config.world_frame, x=rx, y=ry, z=rz)
+        )
+        # Single-pose path at the robot — explicitly distinguishes "cancelled,
+        # holding position" from "no goal_path message yet" in the viewer.
+        self.goal_path.publish(
+            Path(
+                ts=now,
+                frame_id=self.config.world_frame,
+                poses=[
+                    PoseStamped(
+                        ts=now,
+                        frame_id=self.config.world_frame,
+                        position=[rx, ry, rz],
+                        orientation=[0.0, 0.0, 0.0, 1.0],
+                    )
+                ],
+            )
+        )
+        if not already_idle:
+            logger.info("Goal cleared — idle until new goal", source=source)
+
+    def _on_stop_movement(self, msg: Bool) -> None:
+        if msg.data:
+            self._cancel_navigation(source="stop_movement")
+
+    def _on_goal(self, msg: PointStamped) -> None:
+        # NaN sentinel = cancel navigation (e.g. teleop took over).
+        if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
+            self._cancel_navigation(source="nan_goal")
+            return
+        with self._lock:
+            self._goal_x = float(msg.x)
+            self._goal_y = float(msg.y)
+            self._goal_z = float(msg.z)
+            # Fresh goal: reset progress tracker, restore default inflation,
+            # drop cached path so the next tick plans without cooldown.
+            self._ref_goal_dist = float("inf")
+            self._last_progress_time = time.monotonic()
+            self._effective_inflation = self.config.inflation_radius
+            self._cached_path = None
+            self._last_plan_time = 0.0
+        logger.info("Goal received", x=round(msg.x, 2), y=round(msg.y, 2), z=round(msg.z, 2))
+
+    # Sensor height assumed for the G1 (m). Points below robot_z minus
+    # this offset are interpreted as floor; anything higher is obstacle.
+
+    def _classify_points(self, points: np.ndarray, cm: Costmap) -> None:
+        """Add points (Nx3) to ``cm`` using z-relative-to-ground as height.
+
+        The dimos PointCloud2 wrapper drops the intensity field, so we
+        can't read elevation-above-ground directly. Instead we classify
+        by the point's absolute z relative to the robot's standing
+        ground (rz - ``_GROUND_OFFSET_BELOW_ROBOT``). TerrainAnalysis
+        only publishes ground/low-height obstacle voxels, so
+        z-relative-to-ground is a good elevation proxy.
+        """
+        if len(points) == 0:
+            return
+        with self._lock:
+            rz = self._robot_z if self._has_odom else 0.0
+        ground_z = rz - self.config.ground_offset_below_robot
+        heights = points[:, 2] - ground_z
+        mask = heights > 0.0
+        if not np.any(mask):
+            return
+        xs = points[mask, 0]
+        ys = points[mask, 1]
+        hs = heights[mask]
+        cell_size = cm.cell_size
+        ixs = np.floor(xs / cell_size).astype(np.int64)
+        iys = np.floor(ys / cell_size).astype(np.int64)
+        keys = np.column_stack((ixs, iys))
+        unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
+        max_h = np.full(len(unique_keys), float("-inf"))
+        np.maximum.at(max_h, inverse, hs)
+        # Single tolist() per array beats per-element int()/float() casts.
+        heights_dict = cm.heights
+        dirty = False
+        for (ix, iy), h in zip(unique_keys.tolist(), max_h.tolist(), strict=True):
+            key = (ix, iy)
+            if h > heights_dict.get(key, float("-inf")):
+                heights_dict[key] = h
+                dirty = True
+        if dirty:
+            cm.mark_dirty()
+
+    def _fresh_costmap(self) -> Costmap:
+        return Costmap(
+            cell_size=self.config.cell_size,
+            obstacle_height=self.config.obstacle_height_threshold,
+            inflation_radius=self.config.inflation_radius,
+        )
+
+    def _on_terrain_map_ext(self, msg: PointCloud2) -> None:
+        """Rebuild the costmap from scratch using the persistent world view.
+
+        ``terrain_map_ext`` applies a decay window (8 s by default) on
+        the producer side, so each message represents the current world
+        state. Resetting here prevents stale obstacles from piling up
+        forever.
+        """
+        points, _ = msg.as_numpy()
+        if points is None or len(points) == 0:
+            return
+        new_cm = self._fresh_costmap()
+        self._classify_points(points, new_cm)
+        with self._costmap_lock:
+            self._costmap = new_cm
+
+    def _on_terrain_map(self, msg: PointCloud2) -> None:
+        """Layer fresh local terrain on top of the current costmap.
+
+        ``terrain_map`` is faster than ``terrain_map_ext`` so dynamic obstacles
+        appear here first; additions are wiped on the next ``terrain_map_ext`` rebuild.
+        """
+        points, _ = msg.as_numpy()
+        if points is None or len(points) == 0:
+            return
+        with self._costmap_lock:
+            self._classify_points(points, self._costmap)
+
+    def _planning_loop(self) -> None:
+        rate = self.config.replan_rate
+        period = 1.0 / rate if rate > 0 else 0.2
+        while self._running:
+            t0 = time.monotonic()
+            try:
+                self._replan_once()
+            except Exception as exc:  # don't let the planning thread die
+                logger.error("Replan error", exc_info=exc)
+            dt = time.monotonic() - t0
+            sleep = period - dt
+            if sleep > 0:
+                time.sleep(sleep)
+
+    def _waypoint_loop(self) -> None:
+        """Slide the leading waypoint along the cached path at waypoint_rate Hz."""
+        rate = self.config.waypoint_rate
+        period = 1.0 / rate if rate > 0 else 0.05
+        while self._running:
+            t0 = time.monotonic()
+            try:
+                self._update_waypoint()
+            except Exception as exc:
+                logger.error("Waypoint update error", exc_info=exc)
+            dt = time.monotonic() - t0
+            sleep = period - dt
+            if sleep > 0:
+                time.sleep(sleep)
+
+    def _update_waypoint(self) -> None:
+        """Recompute and publish the leading waypoint from the current pose and cached path."""
+        self._query_pose()
+        with self._lock:
+            if not self._has_odom or self._goal_x is None:
+                return
+            rx, ry = self._robot_x, self._robot_y
+            gz = self._goal_z
+            cached = self._cached_path
+        if not cached:
+            return
+        wx, wy = self._lookahead(cached, rx, ry, self.config.lookahead_distance)
+        last = cached[-1]
+        is_goal = (wx, wy) == last
+        with self._lock:
+            self._current_wp = (wx, wy)
+            self._current_wp_is_goal = is_goal
+        now = time.time()
+        self.way_point.publish(
+            PointStamped(ts=now, frame_id=self.config.world_frame, x=wx, y=wy, z=gz)
+        )
+
+    def _publish_costmap_cloud(self, rz: float, now: float) -> None:
+        """Publish blocked-cell centers as a colored PointCloud2 for rerun (throttled to ~2 Hz).
+
+        Per-point colors: red for true obstacles (cells whose recorded height
+        clears ``obstacle_height``), orange for inflation padding around them.
+        """
+        if now - self._last_costmap_pub < _COSTMAP_PUBLISH_PERIOD:
+            return
+        self._last_costmap_pub = now
+        with self._costmap_lock:
+            cm = self._costmap
+            heights = dict(cm.heights)
+            blocked = list(cm.blocked_cells())
+            obstacle_height = cm.obstacle_height
+        if not blocked:
+            pts = np.zeros((0, 3), dtype=np.float32)
+            colors = np.zeros((0, 3), dtype=np.float32)
+        else:
+            pts = np.empty((len(blocked), 3), dtype=np.float32)
+            colors = np.empty((len(blocked), 3), dtype=np.float32)
+            z = rz - self.config.ground_offset_below_robot + _COSTMAP_VIS_Z_LIFT
+            for i, cell in enumerate(blocked):
+                ix, iy = cell
+                wx, wy = cm.cell_to_world(ix, iy)
+                pts[i, 0] = wx
+                pts[i, 1] = wy
+                pts[i, 2] = z
+                colors[i] = (
+                    _COLOR_OBSTACLE
+                    if heights.get(cell, float("-inf")) >= obstacle_height
+                    else _COLOR_INFLATION
+                )
+        pcd_t = o3d.t.geometry.PointCloud()
+        pcd_t.point["positions"] = o3c.Tensor(pts, dtype=o3c.float32)
+        pcd_t.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
+        self.costmap_cloud.publish(
+            PointCloud2(pointcloud=pcd_t, ts=now, frame_id=self.config.world_frame)
+        )
+
+    def _replan_once(self) -> None:
+        self._query_pose()
+
+        with self._lock:
+            if not self._has_odom or self._goal_x is None or self._goal_y is None:
+                return
+            rx, ry, rz = self._robot_x, self._robot_y, self._robot_z
+            gx, gy, gz = self._goal_x, self._goal_y, self._goal_z
+
+        mono_now = time.monotonic()
+        goal_dist = math.hypot(gx - rx, gy - ry)
+
+        if goal_dist <= self.config.goal_reached_threshold:
+            self._cancel_navigation(source="goal_reached")
+            return
+        now = time.time()
+
+        # If it's too soon for a fresh A*, skip — the waypoint loop
+        # handles sliding the leading point along the cached path.
+        with self._lock:
+            cooldown_active = (
+                self._cached_path is not None
+                and mono_now - self._last_plan_time < self.config.replan_cooldown
+            )
+        self._publish_costmap_cloud(rz, now)
+
+        if cooldown_active:
+            return
+
+        # Don't bump inflation back up on progress: if we shrank it to clear
+        # a tight spot, keep it shrunk until the next goal. Oscillating
+        # between wide/narrow inflation was wasting time per cycle on the
+        # way through a single doorway.
+        with self._lock:
+            prev_state = StuckState(
+                ref_goal_dist=self._ref_goal_dist,
+                last_progress_time=self._last_progress_time,
+                effective_inflation=self._effective_inflation,
+            )
+            new_state, escalated = progress_tick(
+                prev_state,
+                goal_dist,
+                mono_now,
+                progress_epsilon=self.config.progress_epsilon,
+                stuck_seconds=self.config.stuck_seconds,
+                stuck_shrink_factor=self.config.stuck_shrink_factor,
+                stuck_min_inflation=self.config.stuck_min_inflation,
+            )
+            self._ref_goal_dist = new_state.ref_goal_dist
+            self._last_progress_time = new_state.last_progress_time
+            self._effective_inflation = new_state.effective_inflation
+            effective_inflation = new_state.effective_inflation
+        if escalated:
+            logger.warning(
+                "Stuck — shrinking inflation",
+                stuck_seconds=self.config.stuck_seconds,
+                goal_dist=round(goal_dist, 2),
+                ref_dist=round(new_state.ref_goal_dist, 2),
+                inflation_from=round(prev_state.effective_inflation, 2),
+                inflation_to=round(new_state.effective_inflation, 2),
+            )
+
+        path_world = self.plan(rx, ry, gx, gy, inflation_override=effective_inflation)
+        with self._lock:
+            self._last_plan_time = mono_now  # start cooldown now, success or not
+        if path_world is None:
+            # A* failed (goal unreachable through the current costmap).
+            # Don't drive the robot into a wall: publish the robot's
+            # current position so the local planner stops, and wait
+            # for the costmap to refresh before the next attempt.
+            logger.warning(
+                "A* failed; holding position",
+                robot=f"({rx:.2f},{ry:.2f})",
+                goal=f"({gx:.2f},{gy:.2f})",
+            )
+            with self._lock:
+                self._current_wp = None
+                self._current_wp_is_goal = False
+            self.way_point.publish(
+                PointStamped(ts=now, frame_id=self.config.world_frame, x=rx, y=ry, z=rz)
+            )
+            self.goal_path.publish(
+                Path(
+                    ts=now,
+                    frame_id=self.config.world_frame,
+                    poses=[
+                        PoseStamped(
+                            ts=now,
+                            frame_id=self.config.world_frame,
+                            position=[rx, ry, rz],
+                            orientation=[0.0, 0.0, 0.0, 1.0],
+                        ),
+                        PoseStamped(
+                            ts=now,
+                            frame_id=self.config.world_frame,
+                            position=[gx, gy, gz],
+                            orientation=[0.0, 0.0, 0.0, 1.0],
+                        ),
+                    ],
+                )
+            )
+            return
+
+        # Cache the fresh path for use during the cooldown.
+        with self._lock:
+            self._cached_path = path_world
+
+        # Publish goal_path
+        poses: list[PoseStamped] = []
+        for wx, wy in path_world:
+            poses.append(
+                PoseStamped(
+                    ts=now,
+                    frame_id=self.config.world_frame,
+                    position=[wx, wy, rz],
+                    orientation=[0.0, 0.0, 0.0, 1.0],
+                )
+            )
+        self.goal_path.publish(Path(ts=now, frame_id=self.config.world_frame, poses=poses))
+
+        # 1 Hz diagnostic: cells in costmap, path length
+        if now - self._last_diag_print >= 1.0:
+            self._last_diag_print = now
+            with self._costmap_lock:
+                cm = self._costmap
+            blocked = len(cm.blocked_cells())
+            logger.info(
+                "Replan",
+                path_cells=len(path_world),
+                blocked_cells=blocked,
+                robot=f"({rx:.2f},{ry:.2f})",
+                goal=f"({gx:.2f},{gy:.2f})",
+                inflation=round(effective_inflation, 2),
+            )
+
+    def plan(
+        self,
+        rx: float,
+        ry: float,
+        gx: float,
+        gy: float,
+        inflation_override: float | None = None,
+    ) -> list[tuple[float, float]] | None:
+        """Run A* in world coordinates. Returns [(x, y), ...] or None."""
+        with self._costmap_lock:
+            costmap = self._costmap
+        return plan_on_costmap(
+            costmap,
+            rx,
+            ry,
+            gx,
+            gy,
+            self.config.max_expansions,
+            inflation_override=inflation_override,
+        )
+
+    @staticmethod
+    def _lookahead(
+        path: list[tuple[float, float]], rx: float, ry: float, distance: float
+    ) -> tuple[float, float]:
+        """Pick a look-ahead point at least ``distance`` metres ahead of the robot along ``path``."""
+        if not path:
+            return (rx, ry)
+        # Closest path index to the robot
+        best_idx = 0
+        best_d2 = float("inf")
+        for i, (wx, wy) in enumerate(path):
+            d2 = (wx - rx) ** 2 + (wy - ry) ** 2
+            if d2 < best_d2:
+                best_d2 = d2
+                best_idx = i
+        # Walk forward from there until we've covered `distance`
+        d2_target = distance * distance
+        for i in range(best_idx, len(path)):
+            wx, wy = path[i]
+            if (wx - rx) ** 2 + (wy - ry) ** 2 >= d2_target:
+                return (wx, wy)
+        return path[-1]

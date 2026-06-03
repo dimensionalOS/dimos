@@ -19,7 +19,7 @@
 to be ``"<dataset>/<stream>"``.
 
 Callers that still need to read from legacy pickle dirs should import
-``LegacyPickleStore`` directly from ``dimos.memory.timeseries.legacy``. The
+``LegacyPickleStore`` directly from ``dimos.utils.testing.legacy_pickle``. The
 write-side (``TimedSensorStorage``/``SensorStorage``) still points at
 ``LegacyPickleStore`` — out of scope for the memory2 migration.
 """
@@ -33,13 +33,13 @@ from typing import Any, Generic, TypeVar, cast
 
 import reactivex as rx
 from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
-from reactivex.disposable import CompositeDisposable, Disposable
+from reactivex.disposable import Disposable, SerialDisposable
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
-from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.utils.data import get_data
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 T = TypeVar("T")
 
@@ -67,7 +67,7 @@ def _get_store(dataset: str) -> SqliteStore:
     key = str(db_path)
     store = _stores.get(key)
     if store is None:
-        store = SqliteStore(path=key)
+        store = SqliteStore(path=key, must_exist=True)
         store.start()
         _stores[key] = store
     return store
@@ -95,8 +95,10 @@ def timed_playback(
     ``source`` is a factory: called fresh on each subscription so the same
     Observable can be re-subscribed without iterator collisions.
 
-    Pending timers are tracked on a CompositeDisposable and cancelled on
-    subscription dispose.
+    Only one emission is ever pending at a time, so a SerialDisposable holds
+    the current timer — assigning a new one disposes the previous and prevents
+    cancelled/fired timers from accumulating along with their captured frame
+    data.
     """
 
     def subscribe(
@@ -104,7 +106,7 @@ def timed_playback(
         scheduler: SchedulerBase | None = None,
     ) -> DisposableBase:
         sched = scheduler or TimeoutScheduler()
-        disp = CompositeDisposable()
+        disp = SerialDisposable()
         is_disposed = False
         iterator = source()
 
@@ -158,7 +160,7 @@ def timed_playback(
                     observer.on_completed()
                 return None
 
-            disp.add(sched.schedule_relative(delay, emit))
+            disp.disposable = sched.schedule_relative(delay, emit)
 
         if next_message is not None:
             schedule_emission(next_message)

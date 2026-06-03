@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 import collections
 import inspect
 import math
+import time
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from dimos.memory2.utils.formatting import FilterRepr
@@ -25,6 +26,7 @@ from dimos.memory2.utils.formatting import FilterRepr
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
+    from dimos.memory2.stream import Stream
     from dimos.memory2.type.observation import Observation
 
 T = TypeVar("T")
@@ -135,22 +137,107 @@ def throttle(interval: float) -> FnIterTransformer[T, T]:
     return FnIterTransformer(_throttle)
 
 
+def measure_time(out: Stream[float]) -> FnIterTransformer[T, T]:
+    """Returns a transformer that records per-frame downstream cost (ms) into *out*."""
+
+    def _xf(upstream: Iterator[Observation[T]]) -> Iterator[Observation[T]]:
+        for obs in upstream:
+            start = time.perf_counter()
+            yield obs
+            out.append((time.perf_counter() - start) * 1000, ts=obs.ts)
+
+    return FnIterTransformer(_xf)
+
+
+def measure_gpu_mem(out: Stream[float], device: int = 0) -> FnIterTransformer[T, T]:
+    """Returns a transformer that records device-level GPU VRAM used (MB) per frame into *out*.
+
+    Reads ``torch.cuda.mem_get_info`` *after* each yield (and ``synchronize()``
+    so async kernels submitted by the downstream consumer have completed),
+    capturing memory used by every allocator on the device — Open3D, torch,
+    other processes — not just the current process.
+    """
+    import open3d.core as o3c  # type: ignore[import-untyped]
+    import torch
+
+    if not o3c.cuda.is_available():
+        raise RuntimeError("measure_gpu_mem requires a CUDA-capable GPU")
+
+    def _xf(upstream: Iterator[Observation[T]]) -> Iterator[Observation[T]]:
+        for obs in upstream:
+            yield obs
+            torch.cuda.synchronize(device)
+            free, total = torch.cuda.mem_get_info(device)
+            out.append((total - free) / 1_000_000, ts=obs.ts)
+
+    return FnIterTransformer(_xf)
+
+
 def speed() -> FnIterTransformer[Any, float]:
     """Compute speed (m/s) between consecutive observations from their poses."""
 
     def _speed(upstream: Iterator[Observation[Any]]) -> Iterator[Observation[float]]:
         prev: Observation[Any] | None = None
         for obs in upstream:
-            if prev is not None and obs.pose is not None and prev.pose is not None:
-                dx = obs.pose[0] - prev.pose[0]
-                dy = obs.pose[1] - prev.pose[1]
-                dz = obs.pose[2] - prev.pose[2]
+            p = obs.pose
+            pp = prev.pose if prev is not None else None
+            if prev is not None and p is not None and pp is not None:
                 dt = obs.ts - prev.ts
-                v = math.sqrt(dx * dx + dy * dy + dz * dz) / dt if dt > 0 else 0.0
+                v = (p.position - pp.position).length() / dt if dt > 0 else 0.0
                 yield obs.derive(data=v)
             prev = obs
 
     return FnIterTransformer(_speed)
+
+
+class SpeedLimit(Transformer[T, T]):
+    """Pass through observations whose linear (and optionally angular) speed is low.
+
+    Linear: ``||Δtranslation|| / Δt`` in m/s, must be ≤ ``max_mps``.
+    Angular: rotation-angle-between-quaternions / Δt in deg/s, must be
+    ≤ ``max_dps`` when set.
+
+    Both metrics are computed between consecutive observations in stream
+    order. Use to drop motion-blurry frames from fiducial / OCR /
+    SLAM-frontend pipelines.
+
+    First observation is dropped (no reference). Observations with no
+    ``.pose`` are skipped. ``Δt ≤ 0`` (duplicate / non-monotonic
+    timestamps) is treated as unknown and dropped.
+
+    Note: the effective sampling interval is whatever upstream provides.
+    Chain after ``QualityWindow(window=Δt)`` to measure motion over a
+    fixed time window instead of per-frame.
+    """
+
+    def __init__(self, max_mps: float, max_dps: float | None = None) -> None:
+        if max_mps <= 0:
+            raise ValueError(f"max_mps must be > 0, got {max_mps}")
+        if max_dps is not None and max_dps <= 0:
+            raise ValueError(f"max_dps must be > 0 when set, got {max_dps}")
+        self.max_mps = max_mps
+        self.max_dps = max_dps
+
+    def __call__(self, upstream: Iterator[Observation[T]]) -> Iterator[Observation[T]]:
+        prev: Observation[T] | None = None
+        max_mps = self.max_mps
+        max_dps = self.max_dps
+        max_rps = math.radians(max_dps) if max_dps is not None else None
+        for obs in upstream:
+            p = obs.pose
+            if p is None:
+                continue
+            pp = prev.pose if prev is not None else None
+            if prev is not None and pp is not None:
+                dt = obs.ts - prev.ts
+                if dt > 0:
+                    v = (p.position - pp.position).length() / dt
+                    ok = v <= max_mps
+                    if ok and max_rps is not None:
+                        ok = (p.orientation.angle_to(pp.orientation) / dt) <= max_rps
+                    if ok:
+                        yield obs
+            prev = obs
 
 
 def smooth(window: int) -> FnIterTransformer[float, float]:

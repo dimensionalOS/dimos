@@ -20,10 +20,87 @@ import subprocess
 import pytest
 
 from dimos.utils import data
-from dimos.utils.data import LfsPath
+from dimos.utils.data import LfsPath, backup_file
 
 
-@pytest.mark.slow
+def _make_backups(dir_path: Path, stem: str, suffix: str, timestamps: list[str]) -> None:
+    for ts in timestamps:
+        (dir_path / f"{stem}.{ts}{suffix}").write_text(ts)
+
+
+def test_backup_file_missing_is_noop(tmp_path: Path) -> None:
+    assert backup_file(tmp_path / "nope.db") is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_backup_file_renames_with_timestamp(tmp_path: Path) -> None:
+    db = tmp_path / "recording_go2.db"
+    db.write_text("live")
+
+    backup = backup_file(db)
+
+    assert backup is not None
+    assert not db.exists()
+    assert backup.exists()
+    assert backup.read_text() == "live"
+    # name is "<stem>.<14-digit timestamp><suffix>"
+    assert backup.parent == tmp_path
+    assert backup.suffix == ".db"
+    middle = backup.name[len("recording_go2.") : -len(".db")]
+    assert len(middle) == 14 and middle.isdigit()
+
+
+def test_backup_file_prunes_to_keep_last(tmp_path: Path) -> None:
+    db = tmp_path / "recording_go2.db"
+    # four pre-existing backups, oldest first
+    _make_backups(
+        tmp_path,
+        "recording_go2",
+        ".db",
+        ["20260101010101", "20260101010102", "20260101010103", "20260101010104"],
+    )
+    db.write_text("live")
+
+    backup_file(db, keep_last=3)
+
+    remaining = sorted(p.name for p in tmp_path.glob("recording_go2.*.db"))
+    # two oldest pruned; two newest pre-existing + the just-created one == 3
+    assert len(remaining) == 3
+    assert "recording_go2.20260101010101.db" not in remaining
+    assert "recording_go2.20260101010102.db" not in remaining
+    assert "recording_go2.20260101010103.db" in remaining
+    assert "recording_go2.20260101010104.db" in remaining
+
+
+def test_backup_file_ignores_non_timestamp_siblings(tmp_path: Path) -> None:
+    db = tmp_path / "recording_go2.db"
+    decoy = tmp_path / "recording_go2.notes.db"  # not a 14-digit timestamp
+    other = tmp_path / "other.db"
+    decoy.write_text("keep me")
+    other.write_text("unrelated")
+    _make_backups(tmp_path, "recording_go2", ".db", ["20260101010101", "20260101010102"])
+    db.write_text("live")
+
+    backup_file(db, keep_last=1)
+
+    # only real backups are pruned; decoy and unrelated files survive
+    assert decoy.exists()
+    assert other.exists()
+    ts_backups = sorted(p.name for p in tmp_path.glob("recording_go2.*.db") if p.name != decoy.name)
+    assert len(ts_backups) == 1
+
+
+def test_backup_file_keep_last_zero_removes_all(tmp_path: Path) -> None:
+    db = tmp_path / "recording_go2.db"
+    _make_backups(tmp_path, "recording_go2", ".db", ["20260101010101"])
+    db.write_text("live")
+
+    assert backup_file(db, keep_last=0) is None
+
+    assert list(tmp_path.glob("recording_go2.*.db")) == []
+
+
+@pytest.mark.self_hosted
 def test_pull_file() -> None:
     repo_root = data.get_project_root()
     test_file_name = "cafe.jpg"
@@ -79,7 +156,7 @@ def test_pull_file() -> None:
         )
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_pull_dir() -> None:
     repo_root = data.get_project_root()
     test_dir_name = "ab_lidar_frames"
@@ -182,7 +259,6 @@ def test_lfs_path_no_download_on_creation() -> None:
     assert cache is None
 
 
-@pytest.mark.slow
 def test_lfs_path_with_real_file() -> None:
     """Test LfsPath with a real small LFS file."""
     # Use a small existing LFS file
@@ -216,7 +292,7 @@ def test_lfs_path_with_real_file() -> None:
     assert content.startswith(b"\x89PNG")
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_lfs_path_unload_and_reload() -> None:
     """Test unloading and reloading an LFS file."""
     filename = "three_paths.png"
@@ -261,7 +337,6 @@ def test_lfs_path_unload_and_reload() -> None:
     assert content_first == content_second
 
 
-@pytest.mark.slow
 def test_lfs_path_operations() -> None:
     """Test various Path operations with LfsPath."""
     filename = "three_paths.png"
@@ -290,7 +365,6 @@ def test_lfs_path_operations() -> None:
     assert filename in fspath_result
 
 
-@pytest.mark.slow
 def test_lfs_path_division_operator() -> None:
     """Test path division operator with LfsPath."""
     # Use a directory for testing
@@ -304,7 +378,6 @@ def test_lfs_path_division_operator() -> None:
     assert "three_paths.png" in str(result)
 
 
-@pytest.mark.slow
 def test_lfs_path_multiple_instances() -> None:
     """Test that multiple LfsPath instances for same file work correctly."""
     filename = "three_paths.png"

@@ -16,7 +16,10 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
+
+from dimos.hardware.whole_body.spec import WholeBodyConfig
 
 HardwareId = str
 JointName = str
@@ -37,6 +40,7 @@ def split_joint_name(joint_name: str) -> tuple[str, str]:
 class HardwareType(Enum):
     MANIPULATOR = "manipulator"
     BASE = "base"
+    WHOLE_BODY = "whole_body"
 
 
 @dataclass(frozen=True)
@@ -60,16 +64,28 @@ class HardwareComponent:
         address: Connection address - IP for TCP, port for CAN
         auto_enable: Whether to auto-enable servos
         gripper_joints: Joints that use adapter gripper methods (separate from joints).
+        domain_id: DDS domain ID for adapters that use DDS transport
+            (e.g. Unitree G1). Real robot uses 0; unitree_mujoco sim
+            defaults to 1. Ignored by non-DDS adapters.
+        adapter_kwargs: Generic untyped kwargs forwarded to the adapter
+            constructor — use for adapter-specific knobs that don't
+            belong in the spec.
+        wb_config: Whole-body-specific config (PD gains etc.).  Populate
+            on hardware_type=WHOLE_BODY components.  Keeps WB-only knobs
+            off the generic HardwareComponent shared by manipulators,
+            bases, and grippers.
     """
 
     hardware_id: HardwareId
     hardware_type: HardwareType
     joints: list[JointName] = field(default_factory=list)
     adapter_type: str = "mock"
-    address: str | None = None
+    address: str | Path | None = None
     auto_enable: bool = True
     gripper_joints: list[JointName] = field(default_factory=list)
+    domain_id: int = 0
     adapter_kwargs: dict[str, Any] = field(default_factory=dict)
+    wb_config: WholeBodyConfig | None = None
 
     @property
     def all_joints(self) -> list[JointName]:
@@ -135,6 +151,58 @@ def make_twist_base_joints(
     return [f"{hardware_id}/{s}" for s in suffixes]
 
 
+_HUMANOID_29DOF_JOINTS = [
+    # Left leg (0-5)
+    "left_hip_pitch",
+    "left_hip_roll",
+    "left_hip_yaw",
+    "left_knee",
+    "left_ankle_pitch",
+    "left_ankle_roll",
+    # Right leg (6-11)
+    "right_hip_pitch",
+    "right_hip_roll",
+    "right_hip_yaw",
+    "right_knee",
+    "right_ankle_pitch",
+    "right_ankle_roll",
+    # Waist (12-14)
+    "waist_yaw",
+    "waist_roll",
+    "waist_pitch",
+    # Left arm (15-21)
+    "left_shoulder_pitch",
+    "left_shoulder_roll",
+    "left_shoulder_yaw",
+    "left_elbow",
+    "left_wrist_roll",
+    "left_wrist_pitch",
+    "left_wrist_yaw",
+    # Right arm (22-28)
+    "right_shoulder_pitch",
+    "right_shoulder_roll",
+    "right_shoulder_yaw",
+    "right_elbow",
+    "right_wrist_roll",
+    "right_wrist_pitch",
+    "right_wrist_yaw",
+]
+
+
+def make_humanoid_joints(hardware_id: HardwareId) -> list[JointName]:
+    """Create joint names for a 29-DOF humanoid.
+
+    Covers 6-DOF legs, 3-DOF waist, and 7-DOF arms.
+
+    Args:
+        hardware_id: The hardware identifier (e.g., "g1")
+
+    Returns:
+        List of 29 joint names like ["g1/left_hip_pitch", ..., "g1/right_wrist_yaw"]
+    """
+    return [f"{hardware_id}/{j}" for j in _HUMANOID_29DOF_JOINTS]
+
+
 __all__ = [
     "TWIST_SUFFIX_MAP",
     "HardwareComponent",
@@ -144,6 +212,7 @@ __all__ = [
     "JointState",
     "TaskName",
     "make_gripper_joints",
+    "make_humanoid_joints",
     "make_joints",
     "make_twist_base_joints",
     "split_joint_name",

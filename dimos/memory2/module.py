@@ -14,13 +14,14 @@
 
 from __future__ import annotations
 
+import enum
 import inspect
-import logging
 import os
 from pathlib import Path
+import time
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -37,13 +38,15 @@ from dimos.models.embedding.base import EmbeddingModel
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.utils.data import backup_file
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
     from dimos.core.stream import In, Out
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 T = TypeVar("T")
 TIn = TypeVar("TIn")
@@ -63,11 +66,6 @@ def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
         on_next=lambda obs: out.publish(obs.data),
         on_error=_on_error,
     )
-
-
-def port_to_stream(in_: In[T], stream: Stream[T]) -> DisposableBase:
-    """Append each message received on a Module ``In`` port to *stream*."""
-    return Disposable(in_.subscribe(stream.append))
 
 
 class StreamModule(Module, Generic[TIn, TOut]):
@@ -124,7 +122,7 @@ class StreamModule(Module, Generic[TIn, TOut]):
         stream: Stream[TIn] = store.stream(in_name, in_port.type)
 
         # we push input into the stream
-        self.register_disposable(port_to_stream(in_port, stream))
+        self.register_disposable(Disposable(in_port.subscribe(stream.append)))
 
         # and we push stream output to the output port
         self.register_disposable(stream_to_port(self._apply_pipeline(stream.live()), out_port))
@@ -169,10 +167,6 @@ class MemoryModuleConfig(ModuleConfig):
         if not p.is_absolute():
             p = DIMOS_PROJECT_ROOT / p
         return p
-
-
-class RecorderConfig(MemoryModuleConfig):
-    overwrite: bool = True
 
 
 class MemoryModule(Module):
@@ -242,7 +236,24 @@ class SemanticSearch(MemoryModule):
         def _similarity(obs: Observation[Any]) -> float:
             return cast("EmbeddedObservation[Any]", obs).similarity or 0.0
 
-        return results.transform(peaks(key=_similarity, distance=1.0)).last().pose_stamped
+        best = results.transform(peaks(key=_similarity, distance=1.0)).last()
+        if best.pose_stamped is None:
+            raise LookupError("No pose on best search result")
+        return best.pose_stamped
+
+
+class OnExisting(str, enum.Enum):
+    OVERWRITE = "overwrite"
+    ERROR = "error"
+    BACKUP = "backup"
+
+
+class RecorderConfig(MemoryModuleConfig):
+    on_existing: OnExisting = OnExisting.BACKUP
+    backup_keep_last: int = Field(default=10, ge=0)
+    default_frame_id: str = "base_link"
+    tf_tolerance: float = 0.5
+    db_path: str | Path = "recording.db"
 
 
 class Recorder(MemoryModule):
@@ -263,15 +274,27 @@ class Recorder(MemoryModule):
     def start(self) -> None:
         super().start()
 
+        if self.config.g.replay:
+            logger.info(
+                "Replay mode active — Recorder disabled, leaving %s untouched", self.config.db_path
+            )
+            return
+
         # TODO: store reset API/logic is not implemented yet. This module
         # shouldn't need to know about files (SqliteStore specific), and
         # .live() subs need to know how to re-sub in case of a restart of
         # this module in a deployed blueprint.
         db_path = Path(self.config.db_path)
         if db_path.exists():
-            if self.config.overwrite:
+            if self.config.on_existing is OnExisting.OVERWRITE:
                 db_path.unlink()
                 logger.info("Deleted existing recording %s", db_path)
+            elif self.config.on_existing is OnExisting.BACKUP:
+                backup = backup_file(db_path, keep_last=self.config.backup_keep_last)
+                if backup is None:
+                    logger.info("Removed existing recording %s (backup_keep_last=0)", db_path)
+                else:
+                    logger.info("Backed up existing recording %s -> %s", db_path, backup)
             else:
                 raise FileExistsError(f"Recording already exists: {db_path}")
 
@@ -281,6 +304,37 @@ class Recorder(MemoryModule):
 
         for name, port in self.inputs.items():
             stream: Stream[Any] = self.store.stream(name, port.type)
-            self.register_disposable(port_to_stream(port, stream))
+            self._port_to_stream(name, port, stream)
             logger.info("Recording %s (%s)", name, port.type.__name__)
-            logger.info("Recording %s (%s)", name, port.type.__name__)
+
+    def _port_to_stream(self, name: str, input_topic: In[Any], stream: Stream[Any]) -> None:
+        """Append each message from *input_topic* to *stream*, attaching world pose via tf.
+
+        Stamped messages use their own ``.frame_id`` and ``.ts``; unstamped
+        messages (or ones whose frame isn't in the tf graph, e.g. a payload
+        already in world coords) fall back to ``config.default_frame_id`` —
+        so every observation gets a robot-pose anchor when tf is publishing.
+
+        Registers the subscription as a disposable on this module.
+        """
+
+        default_frame_id = self.config.default_frame_id
+        tf_tolerance = self.config.tf_tolerance
+
+        def on_msg(msg: Any) -> None:
+            ts = getattr(msg, "ts", None) or time.time()
+            frame_id = getattr(msg, "frame_id", None) or default_frame_id
+            transform = self.tf.get("world", frame_id, time_point=ts, time_tolerance=tf_tolerance)
+            pose = transform.to_pose() if transform is not None else None
+
+            if not pose:
+                logger.warning(
+                    "[%s] No tf available for frame '%s' at time %s (msg ts: %s), storing without pose",
+                    name,
+                    frame_id,
+                    ts,
+                    getattr(msg, "ts", None),
+                )
+            stream.append(msg, ts=ts, pose=pose)
+
+        self.register_disposable(Disposable(input_topic.subscribe(on_msg)))

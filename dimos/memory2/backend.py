@@ -89,20 +89,25 @@ class Backend(CompositeResource, Generic[T]):
         return loader
 
     def append(self, obs: Observation[T]) -> Observation[T]:
+        # Materialize lazy payloads (e.g. from with_pose()/tag()/derived
+        # streams) in place — validation and encoding below read obs._data,
+        # and we must encode it to store anyway.
+        payload = obs.data
+
         # Validate payload type matches stream type
-        if self.data_type is not object and not isinstance(obs._data, self.data_type):
+        if self.data_type is not object and not isinstance(payload, self.data_type):
             raise TypeError(
-                f"Stream expects {self.data_type.__qualname__}, got {type(obs._data).__qualname__}"
+                f"Stream expects {self.data_type.__qualname__}, got {type(payload).__qualname__}"
             )
         obs.data_type = self.data_type
 
         # Scalars are stored inline in the metadata value column — skip blob
-        is_scalar = isinstance(obs._data, (int, float))
+        is_scalar = isinstance(payload, (int, float))
 
         # Encode payload before any locking (avoids holding locks during IO)
         encoded: bytes | None = None
         if self.blob_store is not None and not is_scalar:
-            encoded = self.codec.encode(obs._data)
+            encoded = self.codec.encode(payload)
 
         try:
             # Insert metadata, get assigned id

@@ -234,6 +234,8 @@ def render(plot: Plot, width: float = 10, height: float = 3.5) -> str:
                 facecolor="#1a1a2e",
                 edgecolor="#2a2a4a",
                 framealpha=0.9,
+                loc="center left",
+                bbox_to_anchor=(1.02, 0.5),
             )
 
         ax.set_xlabel("time (s)")
@@ -252,7 +254,7 @@ def render(plot: Plot, width: float = 10, height: float = 3.5) -> str:
             fig.tight_layout()
 
         buf = io.StringIO()
-        fig.savefig(buf, format="svg")
+        fig.savefig(buf, format="svg", bbox_inches="tight")
         plt.close(fig)
 
         return buf.getvalue()

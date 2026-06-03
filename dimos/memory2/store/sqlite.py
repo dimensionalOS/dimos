@@ -40,6 +40,7 @@ class SqliteStoreConfig(StoreConfig):
         str, BeforeValidator(lambda v: os.fspath(v) if isinstance(v, os.PathLike) else v)
     ] = "memory.db"
     page_size: int = 256
+    must_exist: bool = False
 
 
 class SqliteStore(Store):
@@ -49,6 +50,10 @@ class SqliteStore(Store):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        if self.config.must_exist and not os.path.exists(self.config.path):
+            raise FileNotFoundError(
+                f"SQLite database not found: {os.path.abspath(self.config.path)}"
+            )
         self._registry_conn = self._open_connection()
         self._registry = RegistryStore(conn=self._registry_conn)
 

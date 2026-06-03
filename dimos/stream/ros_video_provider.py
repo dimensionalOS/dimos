@@ -18,7 +18,6 @@ This module provides a video frame provider that receives frames from ROS (Robot
 and makes them available as an Observable stream.
 """
 
-import logging
 import time
 
 import numpy as np
@@ -26,8 +25,9 @@ from reactivex import Observable, Subject, operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.stream.video_provider import AbstractVideoProvider
+from dimos.utils.logging_config import setup_logger
 
-logging.basicConfig(level=logging.INFO)
+logger = setup_logger()
 
 
 class ROSVideoProvider(AbstractVideoProvider):
@@ -37,7 +37,6 @@ class ROSVideoProvider(AbstractVideoProvider):
     available as an Observable stream. It uses ReactiveX's Subject to broadcast frames.
 
     Attributes:
-        logger: Logger instance for this provider.
         _subject: ReactiveX Subject that broadcasts frames.
         _last_frame_time: Timestamp of the last received frame.
     """
@@ -52,10 +51,9 @@ class ROSVideoProvider(AbstractVideoProvider):
             pool_scheduler: Optional ThreadPoolScheduler for multithreading.
         """
         super().__init__(dev_name, pool_scheduler)
-        self.logger = logging.getLogger(dev_name)
         self._subject = Subject()  # type: ignore[var-annotated]
         self._last_frame_time = None
-        self.logger.info("ROSVideoProvider initialized")
+        logger.info("ROSVideoProvider initialized", device=dev_name)
 
     def push_data(self, frame: np.ndarray) -> None:
         """Push a new frame into the provider.
@@ -71,16 +69,16 @@ class ROSVideoProvider(AbstractVideoProvider):
             current_time = time.time()
             if self._last_frame_time:
                 frame_interval = current_time - self._last_frame_time
-                self.logger.debug(
+                logger.debug(
                     f"Frame interval: {frame_interval:.3f}s ({1 / frame_interval:.1f} FPS)"
                 )
             self._last_frame_time = current_time  # type: ignore[assignment]
 
-            self.logger.debug(f"Pushing frame type: {type(frame)}")
+            logger.debug(f"Pushing frame type: {type(frame)}")
             self._subject.on_next(frame)
-            self.logger.debug("Frame pushed")
+            logger.debug("Frame pushed")
         except Exception as e:
-            self.logger.error(f"Push error: {e}")
+            logger.error(f"Push error: {e}")
             raise
 
     def capture_video_as_observable(self, fps: int = 30) -> Observable:  # type: ignore[type-arg]
@@ -97,7 +95,7 @@ class ROSVideoProvider(AbstractVideoProvider):
         Note:
             The fps parameter is currently not enforced. See implementation note below.
         """
-        self.logger.info(f"Creating observable with {fps} FPS rate limiting")
+        logger.info(f"Creating observable with {fps} FPS rate limiting")
         # TODO: Implement rate limiting using ops.throttle_with_timeout() or
         # ops.sample() to restrict emissions to one frame per (1/fps) seconds.
         # Example: ops.sample(1.0/fps)

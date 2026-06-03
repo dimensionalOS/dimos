@@ -34,11 +34,9 @@ class MyLidar(NativeModule):
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
 
-
 ```
 
 That's it. `MyLidar` is a full DimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
-
 
 ## How it works
 
@@ -52,7 +50,7 @@ When `start()` is called, NativeModule:
 
 For the example above, the launched command would look like:
 
-```sh
+```sh skip
 ./build/my_lidar \
     --pointcloud '/pointcloud#sensor_msgs.PointCloud2' \
     --imu '/imu#sensor_msgs.Imu' \
@@ -67,8 +65,7 @@ mylidar.imu.transport = LCMTransport("/imu", Imu)
 mylidar.start()
 ```
 
-<!--Result:-->
-```
+```results
 2026-02-14T11:22:12.123963Z [info     ] Starting native process   [dimos/core/native_module.py] cmd='./build/my_lidar --pointcloud /lidar#sensor_msgs.PointCloud2 --imu /imu#sensor_msgs.Imu --host_ip 192.168.1.5 --frequency 10.0' cwd=/home/lesh/coding/dimos/docs/usage/build
 ```
 

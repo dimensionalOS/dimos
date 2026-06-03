@@ -44,6 +44,17 @@ public:
         return it != args_.end() ? it->second : default_val;
     }
 
+    /// Get a required string arg value; throws if not present.
+    /// Use this for values that must come from the Python config rather than
+    /// silently falling back to a C++ default that can drift out of sync.
+    std::string arg_required(const std::string& key) const {
+        auto it = args_.find(key);
+        if (it == args_.end()) {
+            throw std::runtime_error("NativeModule: missing required arg '--" + key + "'");
+        }
+        return it->second;
+    }
+
     /// Get a float arg value, or a default if not present.
     float arg_float(const std::string& key, float default_val = 0.0f) const {
         auto it = args_.find(key);
@@ -54,6 +65,21 @@ public:
     int arg_int(const std::string& key, int default_val = 0) const {
         auto it = args_.find(key);
         return it != args_.end() ? std::stoi(it->second) : default_val;
+    }
+
+    /// Get a bool arg value, or a default if not present.
+    /// Present-but-unparseable values throw, matching arg_int/arg_float's
+    /// std::stoi/std::stof behaviour — a typo'd value or empty string is a
+    /// misconfiguration we want to surface immediately, not silently coerce
+    /// to false.
+    bool arg_bool(const std::string& key, bool default_val = false) const {
+        auto it = args_.find(key);
+        if (it == args_.end()) return default_val;
+        if (it->second == "true" || it->second == "1") return true;
+        if (it->second == "false" || it->second == "0") return false;
+        throw std::runtime_error(
+            "NativeModule: arg '--" + key + "' has unparseable bool value '"
+            + it->second + "' (expected true/false or 1/0)");
     }
 
     /// Check if a port/arg was provided.

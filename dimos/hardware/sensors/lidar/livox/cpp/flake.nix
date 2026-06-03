@@ -8,12 +8,18 @@
       url = "github:dimensionalOS/dimos-lcm/main";
       flake = false;
     };
+    lcm-extended = {
+      url = "github:jeff-hykin/lcm_extended";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, dimos-lcm, ... }:
+  outputs = { self, nixpkgs, flake-utils, dimos-lcm, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        lcm = lcm-extended.packages.${system}.lcm;
 
         livox-sdk2 = pkgs.stdenv.mkDerivation rec {
           pname = "livox-sdk2";
@@ -25,6 +31,9 @@
             rev = "v${version}";
             hash = "sha256-NGscO/vLiQ17yQJtdPyFzhhMGE89AJ9kTL5cSun/bpU=";
           };
+
+          # macOS socket fixes (SO_RCVBUF too large, broadcast bind fails).
+          patches = [ ./livox-sdk2-darwin.patch ];
 
           nativeBuildInputs = [ pkgs.cmake ];
 
@@ -38,6 +47,13 @@
               --replace-fail "add_subdirectory(samples)" ""
             sed -i '1i #include <cstdint>' sdk_core/comm/define.h
             sed -i '1i #include <cstdint>' sdk_core/logger_handler/file_manager.h
+            # Livox-SDK2 bundles an old rapidjson whose RAPIDJSON_DIAG_OFF(foo-bar)
+            # macros stringify with spaces under newer clang, producing invalid
+            # warning-group names.  It also has an unused FastCRC field.  Both
+            # explode under -Werror, and passing -DCMAKE_CXX_FLAGS=-Wno-error is
+            # overridden by add_compile_options(-Werror) deeper in the sdk_core
+            # CMakeLists.  Strip -Werror in-place instead.
+            find . -name CMakeLists.txt -exec sed -i 's/-Werror//g' {} +
           '';
         };
 
@@ -50,7 +66,7 @@
           src = ./.;
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
-          buildInputs = [ livox-sdk2 pkgs.lcm pkgs.glib ];
+          buildInputs = [ livox-sdk2 lcm pkgs.glib ];
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"

@@ -1,0 +1,129 @@
+---
+title: "Quickstart"
+description: "Install DimOS, run a replay or simulation, then explore CLI and MCP. No hardware required."
+---
+
+In this quickstart, you will be able to replay a Unitree Go2 office navigation session with no hardware, switch to simulation or a live robot.
+
+If you use coding agents (OpenClaw, Claude Code or similar), point them at [`AGENTS.md`](https://github.com/dimensionalOS/dimos/blob/main/AGENTS.md).
+
+## System requirements
+
+| Component | Minimum | Recommended |
+| --- | --- | --- |
+| OS | Ubuntu 22.04, macOS 12.6+ | Ubuntu 24.04 |
+| Python | 3.12 | Latest |
+| RAM | 16 GB | 32 GB+ |
+| Disk | 10 GB SSD | 25 GB+ SSD |
+| CPU | 8-core Intel / AMD | 12+ cores |
+| GPU (optional) | NVIDIA RTX 3000+ (8 GB VRAM) | RTX 4070+ (12 GB+ VRAM) |
+
+> GPU is required only for perception, VLMs, and AI features. Optional for basic robot control.
+
+## Interactive install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
+```
+
+## Manual system install
+
+If you prefer to install system dependencies yourself, follow the guide for your OS:
+
+| OS Guide | Notes |
+| --- | --- |
+| <Icon icon="ubuntu" iconType="brands" size={18} />  [Ubuntu](https://github.com/dimensionalOS/dimos/blob/main/docs/installation/ubuntu.md) | Primary tested path |
+| <Icon icon="snowflake" iconType="solid" size={18} /> [Nix](https://github.com/dimensionalOS/dimos/blob/main/docs/installation/nix.md) | Flakes and dev shell |
+| <Icon icon="apple" iconType="brands" size={18} /> [macOS](https://github.com/dimensionalOS/dimos/blob/main/docs/installation/osx.md) | Homebrew-based; less mature than Linux |
+
+## Python environment
+
+DimOS targets Python 3.12. The examples use [`uv`](https://docs.astral.sh/uv/); plain `python -m venv` and `pip` work too.
+
+```bash
+uv venv --python "3.12"
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+```
+
+## Install DimOS
+
+```bash
+uv pip install 'dimos[base,unitree]'
+```
+
+Extras keep installs lean: `base` is runtime, modules, transports, and CLI; `unitree` adds WebRTC and skills for Go2 / G1 (real or replayed).
+
+### Replay a recorded session (no hardware)
+
+On first run, the Rerun window may stay black briefly while roughly **75 MB** of data downloads from LFS.
+
+```bash
+dimos --replay run unitree-go2
+```
+
+### Simulation (MuJoCo)
+
+```bash
+uv pip install 'dimos[base,unitree,sim]'
+dimos --simulation run unitree-go2
+dimos --simulation run unitree-g1-sim   # humanoid
+```
+
+### Real robot (example: Unitree Go2 over WebRTC)
+
+```bash
+export ROBOT_IP=<YOUR_ROBOT_IP>
+dimos run unitree-go2
+```
+
+Do not skip the platform guide - latency, time sync, and safety habits matter: [Unitree Go2](https://github.com/dimensionalOS/dimos/blob/main/docs/platforms/quadruped/go2/index.md).
+
+
+## Featured runfiles
+
+| Command | What it does |
+| --- | --- |
+| `dimos --replay run unitree-go2` | Quadruped navigation replay - SLAM, costmap, A-star planning |
+| `dimos --replay --replay-db go2_bigoffice run unitree-go2-memory` | Quadruped temporal memory replay |
+| `dimos --simulation run unitree-go2-agentic` | Quadruped agentic + MCP server in simulation |
+| `dimos --simulation run unitree-g1-sim` | Humanoid in MuJoCo simulation |
+| `dimos --replay run drone-basic` | Drone video + telemetry replay |
+| `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay) |
+| `dimos run demo-camera` | Webcam demo - no hardware needed |
+| `dimos run keyboard-teleop-xarm7` | Keyboard teleop with mock xArm7 (`dimos[manipulation]` extra) |
+| `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agentic with local LLM (Ollama running, `ollama serve`) |
+
+Blueprint reference: [Blueprints](https://github.com/dimensionalOS/dimos/blob/main/docs/usage/blueprints.md).
+
+## Agent CLI and MCP
+
+The `dimos` CLI runs blueprints, inspects state, talks to agents, and invokes skills via MCP.
+
+```bash
+dimos run unitree-go2-agentic --daemon   # background
+dimos status
+dimos log -f
+dimos agent-send "explore the room"
+dimos mcp list-tools
+dimos mcp call relative_move --arg forward=0.5
+dimos stop
+```
+
+Full reference: [CLI](https://github.com/dimensionalOS/dimos/blob/main/docs/usage/cli.md).
+
+## What next?
+
+<CardGroup cols={2}>
+  <Card title="Add an LLM agent" icon="robot">
+    Natural language control and MCP-exposed skills.
+  </Card>
+  <Card title="Pick your platform" icon="microchip">
+    Hardware support matrix and bring-up guides.
+  </Card>
+  <Card title="Core concepts" icon="diagram-project">
+    Modules, streams, and blueprints behind every workflow.
+  </Card>
+  <Card title="Capabilities" icon="bolt">
+    Navigation, perception, spatial memory, and manipulation.
+  </Card>
+</CardGroup>

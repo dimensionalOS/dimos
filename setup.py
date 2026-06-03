@@ -61,7 +61,8 @@ extra_compile_args = [
 # when the python exe is a universal binary, this option fails because the compiler
 # call tries to build a matching (e.g. universal) binary, clang doesn't support this option for universal binaries
 # if the user is using an arm64 specific binary (ex: nix build) then the optimization exists and is useful
-if not python_is_macos_universal_binary():
+# CIBUILDWHEEL=1 marks the release-wheel build; drop -march=native there so wheels are portable across customer CPUs
+if not python_is_macos_universal_binary() and os.environ.get("CIBUILDWHEEL") != "1":
     extra_compile_args.append("-march=native")
 
 # C++ extensions

@@ -70,7 +70,7 @@ def test_basic_conversion(publisher, subscriber):
 
 
 @pytest.mark.skipif_no_ros
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_pointcloud2_pubsub(publisher, subscriber):
     """Test PointCloud2 publish/subscribe through ROS.
 
