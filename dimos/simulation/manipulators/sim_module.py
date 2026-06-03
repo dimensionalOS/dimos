@@ -38,7 +38,7 @@ class SimulationModuleConfig(ModuleConfig):
     headless: bool = False
 
 
-class SimulationModule(Module[SimulationModuleConfig]):
+class SimulationModule(Module):
     """Module wrapper for manipulator simulation across engines."""
 
     default_config = SimulationModuleConfig

@@ -48,7 +48,7 @@ class TerrainMapExtConfig(ModuleConfig):
     robot_exclusion_radius: float = 0.0  # ignore self/near-footprint points in the global map
 
 
-class TerrainMapExt(Module[TerrainMapExtConfig]):
+class TerrainMapExt(Module):
     """Extended terrain map with time-decayed voxel accumulation.
 
     Subscribes to terrain_map (local) and accumulates into a persistent
@@ -60,6 +60,7 @@ class TerrainMapExt(Module[TerrainMapExtConfig]):
         terrain_map_ext (Out[PointCloud2]): Extended accumulated terrain.
     """
 
+    config: TerrainMapExtConfig
     default_config = TerrainMapExtConfig
 
     terrain_map: In[PointCloud2]

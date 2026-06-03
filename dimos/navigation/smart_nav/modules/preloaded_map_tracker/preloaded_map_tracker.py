@@ -68,7 +68,7 @@ class PreloadedMapTrackerConfig(ModuleConfig):
     height_max: float = 4.0
 
 
-class PreloadedMapTracker(Module[PreloadedMapTrackerConfig]):
+class PreloadedMapTracker(Module):
     """Static pre-loaded reference map + unbounded explored_areas accumulator.
 
     Ports:
@@ -79,6 +79,7 @@ class PreloadedMapTracker(Module[PreloadedMapTrackerConfig]):
         trajectory (Out[PointCloud2]): Robot path breadcrumb with cumulative distance.
     """
 
+    config: PreloadedMapTrackerConfig
     default_config = PreloadedMapTrackerConfig
 
     registered_scan: In[PointCloud2]

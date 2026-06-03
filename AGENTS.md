@@ -2,7 +2,7 @@
 
 ## What is DimOS
 
-The agentic operating system for generalist robotics. `Modules` communicate via typed streams over LCM, ROS2, DDS, or other transports. `Blueprints` compose modules into runnable robot stacks. `Skills` give agents the ability to execute physical on-hardware function like `grab()`, `follow_object()`, or `jump()`
+The agentic operating system for generalist robotics. `Modules` communicate via typed streams over LCM, ROS2, DDS, or other transports. `Blueprints` compose modules into runnable robot stacks. `Skills` give agents the ability to execute physical on-hardware functions like `grab()`, `follow_object()`, or `jump()`.
 
 ---
 
@@ -10,7 +10,7 @@ The agentic operating system for generalist robotics. `Modules` communicate via 
 
 ```bash
 # Install
-uv sync --all-extras --no-extra dds
+uv sync --extra all
 
 # List all runnable blueprints
 dimos list
@@ -41,7 +41,8 @@ dimos restart          # stop + re-run with same original args
 | `unitree-go2-agentic` | Go2 | real | via McpClient | ✓ | McpServer live |
 | `unitree-g1-agentic-sim` | G1 | sim | GPT-4o (G1 prompt) | — | Full agentic sim, no real robot needed |
 | `xarm-perception-agent` | xArm | real | GPT-4o | — | Manipulation + perception + agent |
-| `xarm7-trajectory-sim` | xArm7 | sim | — | — | Trajectory planning sim |
+| `xarm-perception-sim-agent` | xArm | sim | GPT-4o | — | Manipulation + perception + agent, sim |
+| `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
 | `teleop-quest-xarm7` | xArm7 | real | — | — | Quest VR teleop |
 | `dual-xarm6-planner` | xArm6×2 | real | — | — | Dual-arm motion planner |
 
@@ -95,8 +96,15 @@ Reference: `dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_agentic.py`
 ```
 dimos/
 ├── core/                    # Module system, blueprints, workers, transports
-│   ├── module.py            # Module base class, In/Out streams, @rpc, @skill
-│   ├── blueprints.py        # Blueprint composition (autoconnect)
+│   ├── module.py            # Module base class, In/Out streams
+│   ├── core.py              # @rpc decorator
+│   ├── stream.py            # In[T], Out[T], Transport[T]
+│   ├── transport.py         # LCM/SHM/ROS/DDS/Jpeg transports
+│   ├── coordination/
+│   │   ├── blueprints.py           # Blueprint, autoconnect()
+│   │   ├── module_coordinator.py   # Deploy + lifecycle orchestration
+│   │   ├── python_worker.py        # Forkserver workers + Actor IPC
+│   │   └── worker_manager_*.py     # Python / docker worker pools
 │   ├── global_config.py     # GlobalConfig (env vars, CLI flags, .env)
 │   └── run_registry.py      # Per-run tracking + log paths
 ├── robot/
@@ -133,6 +141,12 @@ docs/
 
 ---
 
+## For Coding Agents
+
+If you are a coding agent working on this dimos codebase, our coding agent focused docs are at `docs/coding-agents/index.md`
+
+---
+
 ## Architecture
 
 ### Modules
@@ -163,7 +177,7 @@ class MyModule(Module):
 Compose modules with `autoconnect()`. Streams auto-connect by `(name, type)` matching.
 
 ```python
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 
 my_blueprint = autoconnect(module_a(), module_b(), module_c())
 ```
@@ -196,7 +210,7 @@ Singleton config. Values cascade: defaults → `.env` → env vars → blueprint
 
 ### Global flags
 
-Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simulation`, `--replay/--no-replay`, `--viewer {rerun|rerun-web|foxglove|none}`, `--mcp-port`, `--n-workers`, etc. Flags override `.env` and env vars.
+Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation/--no-simulation`, `--replay/--no-replay`, `--viewer {rerun|rerun-web|rerun-connect|none}`, `--mcp-port`, `--n-workers`, etc. Flags override `.env` and env vars.
 
 ### Core commands
 
@@ -267,6 +281,7 @@ class MySkillContainer(Module):
         return f"Moving at {x} m/s for {duration}s"
 
 my_skill_container = MySkillContainer.blueprint
+```
 
 ### System Prompts
 
@@ -301,7 +316,7 @@ class MySkillContainer(Module):
         return "Navigating"
 ```
 
-If multiple modules match the spec, use `.remappings()` to resolve. Source: `dimos/spec/utils.py`, `dimos/core/blueprints.py`.
+If multiple modules match the spec, use `.remappings()` to resolve. Source: `dimos/spec/utils.py`, `dimos/core/coordination/blueprints.py`.
 
 ### Adding a New Skill
 
@@ -330,7 +345,7 @@ uv run pytest dimos/core/test_blueprints.py -v
 uv run mypy dimos/
 ```
 
-`uv run pytest` excludes `slow`, `tool`, and `mujoco` markers. CI (`./bin/pytest-slow`) includes slow, excludes tool and mujoco. See `docs/development/testing.md`.
+`uv run pytest` excludes `self_hosted`, `tool`, and `mujoco` markers. CI runs `self_hosted`-marked tests on the self-hosted runner only. See `docs/development/testing.md`.
 
 ---
 
@@ -364,7 +379,7 @@ CI asserts the file is current — if it's stale, CI fails.
 ## Git Workflow
 
 - Branch prefixes: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`, `perf/`
-- **PRs target `dev`** — never push to `main` or `dev` directly
+- **PRs target `main`** — `main` is the unstable development branch. Work and PR off of `main`. Never push to `main` directly.
 - **Don't force-push** unless after a rebase with conflicts
 - **Minimize pushes** — every push triggers CI (~1 hour on self-hosted runners). Batch commits locally, push once.
 
@@ -379,51 +394,4 @@ CI asserts the file is current — if it's stale, CI fails.
 - Testing: `docs/development/testing.md`
 - CLI / dimos run: `docs/development/dimos_run.md`
 - LFS data: `docs/development/large_file_management.md`
-- Agent system: `docs/agents/`
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
-## Session Completion
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
+- Agent system: `docs/coding-agents/`

@@ -118,6 +118,7 @@ class AriseSLAM(NativeModule):
         local_map (Out[PointCloud2]): Local map visualization (optional).
     """
 
+    config: AriseSLAMConfig
     default_config: type[AriseSLAMConfig] = AriseSLAMConfig  # type: ignore[assignment]
 
     raw_points: In[PointCloud2]

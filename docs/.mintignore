@@ -1,0 +1,2 @@
+# Ignore dependency trees under the docs workspace (would otherwise be scanned as pages).
+node_modules/

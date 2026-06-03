@@ -83,7 +83,7 @@ class SimVehicleConfig(ModuleConfig):
     sim_rate: float = 50.0
 
 
-class SimVehicle(Module[SimVehicleConfig]):
+class SimVehicle(Module):
     """Kinematic vehicle sim: publishes lidar + odom, integrates cmd_vel."""
 
     default_config = SimVehicleConfig

@@ -67,7 +67,7 @@ def test_spec_structural_compliance_matches_by_structure() -> None:
 
 def test_spec_structural_compliance_rejects_non_spec() -> None:
     with pytest.raises(TypeError):
-        spec_structural_compliance(StructurallyCompliant(), NormalProtocol)  # type: ignore[arg-type]
+        spec_structural_compliance(StructurallyCompliant(), NormalProtocol)
 
 
 def test_spec_annotation_compliance_requires_matching_annotations() -> None:
@@ -77,4 +77,4 @@ def test_spec_annotation_compliance_requires_matching_annotations() -> None:
 
 def test_spec_annotation_compliance_rejects_non_spec() -> None:
     with pytest.raises(TypeError):
-        spec_annotation_compliance(StructurallyCompliant(), NormalProtocol)  # type: ignore[arg-type]
+        spec_annotation_compliance(StructurallyCompliant(), NormalProtocol)

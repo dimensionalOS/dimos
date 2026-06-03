@@ -17,6 +17,7 @@
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1 import unitree_g1
@@ -30,9 +31,7 @@ unitree_g1_shm = autoconnect(
             ),
         }
     ),
-    vis_module(
-        foxglove_config={"shm_channels": ["/color_image#sensor_msgs.Image"]},
-    ),
+    vis_module(viewer_backend=global_config.viewer),
 )
 
 __all__ = ["unitree_g1_shm"]

@@ -29,8 +29,7 @@ from dimos.memory2.codecs.jpeg import JpegCodec
 from dimos.memory2.codecs.lcm import LcmCodec
 from dimos.memory2.codecs.pickle import PickleCodec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.utils.testing.replay import TimedSensorReplay
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -107,14 +106,21 @@ def _lz4_lcm_case() -> Case:
 
 
 def _jpeg_eq(original: Any, decoded: Any) -> bool:
-    """JPEG is lossy — check shape, frame_id, and pixel closeness."""
+    """JPEG is lossy and normalizes to RGB — check shape, frame_id, RGB tag, and color closeness.
+
+    Compares against ``original.to_rgb()`` because the codec normalizes everything to RGB on
+    the wire (so a BGR-tagged input comes back RGB-tagged with channels swapped accordingly).
+    """
     import numpy as np
 
     if decoded.data.shape != original.data.shape:
         return False
     if decoded.frame_id != original.frame_id:
         return False
-    return bool(np.mean(np.abs(decoded.data.astype(float) - original.data.astype(float))) < 5)
+    if decoded.format != ImageFormat.RGB:
+        return False
+    expected = original.to_rgb().data
+    return bool(np.mean(np.abs(decoded.data.astype(float) - expected.astype(float))) < 5)
 
 
 def _jpeg_case() -> Case | None:
@@ -122,16 +128,24 @@ def _jpeg_case() -> Case | None:
         from turbojpeg import TurboJPEG
 
         TurboJPEG()  # fail fast if native lib is missing
-
-        replay = TimedSensorReplay("unitree_go2_bigoffice/video")
-        frames = [replay.find_closest_seek(float(i)) for i in range(1, 4)]
-        codec = JpegCodec(quality=95)
     except (ImportError, RuntimeError):
+        return None
+
+    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.utils.data import get_data
+
+    db_path = get_data("go2_short.db")
+
+    with SqliteStore(path=str(db_path)) as store:
+        video = store.stream("color_image", Image)
+        frames = [obs.data for obs in video.limit(3).to_list()]
+
+    if not frames:
         return None
 
     return Case(
         name="jpeg",
-        codec=codec,
+        codec=JpegCodec(quality=95),
         values=frames,
         eq=_jpeg_eq,
     )

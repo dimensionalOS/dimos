@@ -85,7 +85,7 @@ class ObjectData(TypedDict, total=False):
     class_id: int  # Class ID from the detector
     label: str  # Semantic label (e.g., 'cup', 'table')
     movement_tolerance: float  # (0.0 = immovable, 1.0 = freely movable)
-    segmentation_mask: np.ndarray  # type: ignore[type-arg]  # Binary mask of the object's pixels
+    segmentation_mask: np.ndarray  # Binary mask of the object's pixels
 
     # 3D pose and dimensions
     position: dict[str, float] | Vector  # 3D position {x, y, z} or Vector
@@ -94,8 +94,8 @@ class ObjectData(TypedDict, total=False):
 
     # Point cloud data
     point_cloud: "o3d.geometry.PointCloud"  # Open3D point cloud object
-    point_cloud_numpy: np.ndarray  # type: ignore[type-arg]  # Nx6 array of XYZRGB points
-    color: np.ndarray  # type: ignore[type-arg]  # RGB color for visualization [R, G, B]
+    point_cloud_numpy: np.ndarray  # Nx6 array of XYZRGB points
+    color: np.ndarray  # RGB color for visualization [R, G, B]
 
 
 class ManipulationMetadata(TypedDict, total=False):

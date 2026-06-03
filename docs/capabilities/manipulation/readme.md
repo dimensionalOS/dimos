@@ -4,11 +4,18 @@ Motion planning and teleoperation for robotic manipulators. Uses Drake for physi
 
 ## Quick Start
 
+Recent addition: the A-750 keyboard teleop blueprint is now available via:
+
+```bash
+dimos run keyboard-teleop-a750
+```
+
 ### Keyboard Teleop (single command)
 
 Each blueprint launches the full stack — keyboard UI, mock controller, IK solver, and Drake visualization:
 
 ```bash
+dimos run keyboard-teleop-a750    # A-750 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
@@ -45,7 +52,7 @@ Then use the IPython client:
 python -m dimos.manipulation.planning.examples.manipulation_client
 ```
 
-```python
+```python skip
 joints()                # Get current joints
 plan([0.1] * 7)         # Plan to target
 preview()               # Preview in Meshcat
@@ -79,6 +86,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 
 | Blueprint | Description |
 |-----------|-------------|
+| `keyboard-teleop-a750` | A750 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
@@ -92,6 +100,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 
 | Robot | DOF | Teleop | Planning | Perception |
 |-------|-----|--------|----------|------------|
+| [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | — |
 | Piper | 6 | Y | Y | — |
 | XArm6 | 6 | Y | Y | — |
 | XArm7 | 7 | Y | Y | Y |
@@ -106,6 +115,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 |------|-------------|
 | [`manipulation_module.py`](/dimos/manipulation/manipulation_module.py) | Main module (RPC interface, state machine) |
 | [`manipulation/blueprints.py`](/dimos/manipulation/blueprints.py) | Planner and perception blueprints |
+| [`robot/manipulators/a750/blueprints.py`](/dimos/robot/manipulators/a750/blueprints.py) | A-750 keyboard teleop blueprint |
 | [`robot/manipulators/piper/blueprints.py`](/dimos/robot/manipulators/piper/blueprints.py) | Piper keyboard teleop blueprint |
 | [`robot/manipulators/xarm/blueprints.py`](/dimos/robot/manipulators/xarm/blueprints.py) | XArm keyboard teleop blueprints |
 | [`teleop/keyboard/keyboard_teleop_module.py`](/dimos/teleop/keyboard/keyboard_teleop_module.py) | Keyboard teleop module |

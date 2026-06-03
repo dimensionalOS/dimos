@@ -69,7 +69,7 @@ class WorldObstacleMonitor:
         lock: threading.RLock,
         detection_timeout: float = 2.0,
         use_mesh_obstacles: bool = False,
-    ):
+    ) -> None:
         """Create a world obstacle monitor.
 
         Args:

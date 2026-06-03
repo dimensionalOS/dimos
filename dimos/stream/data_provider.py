@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from abc import ABC
-import logging
 import multiprocessing
 
 import reactivex as rx
@@ -21,7 +20,9 @@ from reactivex import Observable, Subject, operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 from reactivex.subject import Subject
 
-logging.basicConfig(level=logging.INFO)
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # Create a thread pool scheduler for concurrent processing
 pool_scheduler = ThreadPoolScheduler(multiprocessing.cpu_count())
@@ -53,7 +54,6 @@ class ROSDataProvider(AbstractDataProvider):
 
     def __init__(self, dev_name: str = "ros_provider") -> None:
         super().__init__(dev_name)
-        self.logger = logging.getLogger(dev_name)
 
     def push_data(self, data) -> None:  # type: ignore[no-untyped-def]
         """Push new data to the stream."""
@@ -111,7 +111,6 @@ class QueryDataProvider(AbstractDataProvider):
 
     Attributes:
         dev_name (str): The name of the data provider.
-        logger (logging.Logger): Logger instance for logging messages.
     """
 
     def __init__(self, dev_name: str = "query_provider") -> None:
@@ -122,7 +121,6 @@ class QueryDataProvider(AbstractDataProvider):
             dev_name (str): The name of the data provider. Defaults to "query_provider".
         """
         super().__init__(dev_name)
-        self.logger = logging.getLogger(dev_name)
 
     def start_query_stream(
         self,

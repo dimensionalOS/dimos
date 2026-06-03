@@ -54,7 +54,7 @@ class CmdVelMuxConfig(ModuleConfig):
     max_nav_command_duration_sec: float | None = None
 
 
-class CmdVelMux(Module[CmdVelMuxConfig]):
+class CmdVelMux(Module):
     """Multiplexes nav_cmd_vel and tele_cmd_vel into a single cmd_vel output.
 
     When teleop input arrives, stop_movement is published so downstream

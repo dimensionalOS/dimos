@@ -20,7 +20,7 @@ from typing import Any
 
 import mujoco
 import numpy as np
-import onnxruntime as ort  # type: ignore[import-untyped,import-not-found]
+import onnxruntime as ort  # type: ignore[import-untyped]
 
 from dimos.simulation.mujoco.input_controller import InputController
 from dimos.utils.logging_config import setup_logger

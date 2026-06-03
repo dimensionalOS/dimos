@@ -13,33 +13,15 @@
 # limitations under the License.
 
 from collections.abc import Callable
-import functools
 import hashlib
 import json
 import os
-from pathlib import Path
-import platform
+import socket
 import string
-import sys
 from typing import Any, Generic, TypeVar, overload
 import uuid
 
-
-@functools.lru_cache(maxsize=1)
-def is_jetson() -> bool:
-    """Check if running on an NVIDIA Jetson device."""
-    if sys.platform != "linux":
-        return False
-    # Check kernel release for Tegra (most lightweight)
-    if "tegra" in platform.release().lower():
-        return True
-    # Check device tree (works in containers with proper mounts)
-    try:
-        return "nvidia,tegra" in Path("/proc/device-tree/compatible").read_text()
-    except (FileNotFoundError, PermissionError):
-        pass
-    # Check for L4T release file
-    return Path("/etc/nv_tegra_release").exists()
+import psutil
 
 
 def get_local_ips() -> list[tuple[str, str]]:
@@ -47,10 +29,6 @@ def get_local_ips() -> list[tuple[str, str]]:
 
     Picks up physical, virtual, and VPN interfaces (including Tailscale).
     """
-    import socket
-
-    import psutil
-
     results: list[tuple[str, str]] = []
     for iface, addrs in psutil.net_if_addrs().items():
         for addr in addrs:

@@ -30,7 +30,7 @@ runs:
         sudo rm -rf /usr/local/lib/android
         echo -e "post cleanup space:\n $(df -h)"
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - uses: docker/login-action@v3
       with:

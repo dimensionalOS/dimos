@@ -67,7 +67,9 @@ coordinator_dual_xarm = ControlCoordinator.blueprint(
 _xarm6_dual = _catalog_xarm6(
     name="xarm_arm", adapter_type="xarm", address=global_config.xarm6_ip, add_gripper=False
 )
-_piper_dual = _catalog_piper(name="piper_arm", adapter_type="piper", address=global_config.can_port)
+_piper_dual = _catalog_piper(
+    name="piper_arm", adapter_type="piper", address=global_config.can_port or "can0"
+)
 
 coordinator_piper_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm6_dual.to_hardware_component(), _piper_dual.to_hardware_component()],

@@ -135,6 +135,7 @@ class LocalPlanner(NativeModule):
             treating as obstacles.
     """
 
+    config: LocalPlannerConfig
     default_config: type[LocalPlannerConfig] = LocalPlannerConfig  # type: ignore[assignment]
 
     registered_scan: In[PointCloud2]

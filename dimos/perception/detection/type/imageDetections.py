@@ -14,13 +14,16 @@
 
 from __future__ import annotations
 
-from functools import reduce
-from operator import add
+import sys
 from typing import TYPE_CHECKING, Generic, TypeVar
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from dimos_lcm.vision_msgs import Detection2DArray
 
-from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.detection.type.utils import TableStr
 
@@ -61,7 +64,7 @@ class ImageDetections(Generic[T], TableStr):
     def __getitem__(self, index):  # type: ignore[no-untyped-def]
         return self.detections[index]
 
-    def filter(self, *predicates: Callable[[T], bool]) -> ImageDetections[T]:
+    def filter(self, *predicates: Callable[[T], bool]) -> Self:
         """Filter detections using one or more predicate functions.
 
         Multiple predicates are applied in cascade (all must return True).
@@ -70,12 +73,10 @@ class ImageDetections(Generic[T], TableStr):
             *predicates: Functions that take a detection and return True to keep it
 
         Returns:
-            A new ImageDetections instance with filtered detections
+            A new instance of the same class with filtered detections
         """
-        filtered_detections = self.detections
-        for predicate in predicates:
-            filtered_detections = [det for det in filtered_detections if predicate(det)]
-        return ImageDetections(self.image, filtered_detections)
+        filtered_detections = [det for det in self.detections if all(p(det) for p in predicates)]
+        return type(self)(self.image, filtered_detections)
 
     def to_ros_detection2d_array(self) -> Detection2DArray:
         return Detection2DArray(
@@ -84,9 +85,13 @@ class ImageDetections(Generic[T], TableStr):
             detections=[det.to_ros_detection2d() for det in self.detections],
         )
 
-    def to_foxglove_annotations(self) -> ImageAnnotations:
-        if not self.detections:
-            return ImageAnnotations(
-                texts=[], texts_length=0, points=[], points_length=0, circles=[], circles_length=0
-            )
-        return reduce(add, (det.to_image_annotations() for det in self.detections))
+    def annotated_image(self, scale: float = 1.0) -> Image:
+        """Return the image with all detection bboxes and labels drawn on it."""
+        img = self.image.to_opencv().copy()
+        for det in self.detections:
+            if hasattr(det, "draw_on"):
+                det.draw_on(img, scale=scale)
+
+        from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
+
+        return ImageMsg.from_opencv(img, ts=self.image.ts)

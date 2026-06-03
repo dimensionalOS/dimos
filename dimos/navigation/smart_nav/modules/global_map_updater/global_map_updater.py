@@ -55,7 +55,7 @@ class GlobalMapUpdaterConfig(ModuleConfig):
     height_max: float = 4.0  # clip ceiling
 
 
-class GlobalMapUpdater(Module[GlobalMapUpdaterConfig]):
+class GlobalMapUpdater(Module):
     """Bounded-memory accumulated global point cloud from registered_scan.
 
     Voxelizes incoming scans and maintains a persistent map with
@@ -68,6 +68,7 @@ class GlobalMapUpdater(Module[GlobalMapUpdaterConfig]):
         global_map (Out[PointCloud2]): Accumulated voxelized cloud.
     """
 
+    config: GlobalMapUpdaterConfig
     default_config = GlobalMapUpdaterConfig
 
     registered_scan: In[PointCloud2]

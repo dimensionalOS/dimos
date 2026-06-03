@@ -25,7 +25,7 @@ class DemoRobot(Module):
 
     def start(self) -> None:
         super().start()
-        self._disposables.add(interval(1.0).subscribe(lambda _: self._publish_gps_location()))
+        self.register_disposable(interval(1.0).subscribe(lambda _: self._publish_gps_location()))
 
     def stop(self) -> None:
         super().stop()

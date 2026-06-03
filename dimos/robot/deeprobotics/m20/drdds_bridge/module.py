@@ -63,7 +63,7 @@ class DrddsLidarBridgeConfig(NativeModuleConfig):
     lidar_source: str = "front"
 
 
-class DrddsLidarBridge(NativeModule[DrddsLidarBridgeConfig], perception.Lidar, perception.IMU):
+class DrddsLidarBridge(NativeModule, perception.Lidar, perception.IMU):
     """M20 lidar + IMU bridge from drdds POSIX SHM to LCM.
 
     Reads from shared memory segments created by drdds_recv on the NOS host:
@@ -114,7 +114,7 @@ class AiryImuBridgeConfig(NativeModuleConfig):
     lever_arm_base_m: str | None = None
 
 
-class AiryImuBridge(NativeModule[AiryImuBridgeConfig], perception.IMU):
+class AiryImuBridge(NativeModule, perception.IMU):
     """Taps the RoboSense Airy integrated IMU (front or rear) from its UDP
     multicast stream and publishes a base_link-frame LCM sensor_msgs/Imu.
 
@@ -145,7 +145,7 @@ class NavCmdPubConfig(NativeModuleConfig):
     build_command: str | None = None
 
 
-class NavCmdPub(NativeModule[NavCmdPubConfig]):
+class NavCmdPub(NativeModule):
     """Publishes velocity commands to /NAV_CMD via raw FastDDS.
 
     Subscribes to cmd_vel on LCM and publishes to DDS topic rt/NAV_CMD

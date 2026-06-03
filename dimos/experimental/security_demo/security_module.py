@@ -17,6 +17,7 @@ from __future__ import annotations  # noqa: I001
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Literal
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 
 import cv2
 import numpy as np
@@ -51,7 +52,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-
 # COCO skeleton connections for drawing
 _SKELETON_CONNECTIONS = [
     (0, 1),
@@ -77,7 +77,7 @@ _ANTI_BUSY_LOOP_TIMEOUT = 0.01
 
 
 def _draw_skeleton(
-    image: np.ndarray,  # type: ignore[type-arg]
+    image: np.ndarray,
     person: Detection2DPerson,
     joint_color: tuple[int, int, int] = (0, 255, 0),
     bone_color: tuple[int, int, int] = (255, 255, 0),
@@ -123,17 +123,17 @@ def _create_visual_servo(
 
         camera_info = MujocoConnection.camera_info_static
 
-    return VisualServoing2D(camera_info, global_config.simulation)
+    return VisualServoing2D(camera_info, bool(global_config.simulation))
 
 
-class SecurityModule(Module[SecurityModuleConfig]):
+class SecurityModule(Module):
     """Integrated security patrol module.
 
     Manages the full patrol-detect-follow state machine internally,
     eliminating agent round-trips between separate modules.
     """
 
-    default_config = SecurityModuleConfig
+    config: SecurityModuleConfig
 
     odom: In[PoseStamped]
     global_costmap: In[OccupancyGrid]
@@ -168,18 +168,17 @@ class SecurityModule(Module[SecurityModuleConfig]):
         self._latest_pose: PoseStamped | None = None
         self._latest_image: Image | None = None
         self._has_active_goal = False
+        self._depth_started = False
 
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
-        self._disposables.add(
+        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        self.register_disposable(
             Disposable(self.global_costmap.subscribe(self._router.handle_occupancy_grid))
         )
-        self._disposables.add(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
-        self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
-
-        self._depth_estimator.start()
+        self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
+        self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
 
     @rpc
     def stop(self) -> None:
@@ -198,6 +197,10 @@ class SecurityModule(Module[SecurityModuleConfig]):
         with self._lock:
             if self._main_thread is not None and self._main_thread.is_alive():
                 return "Security patrol is already running. Use `stop_security_patrol` to stop."
+
+        if not self._depth_started:
+            self._depth_estimator.start()
+            self._depth_started = True
 
         self._router.reset()
 
@@ -394,6 +397,6 @@ class SecurityModule(Module[SecurityModuleConfig]):
         with self._lock:
             thread = self._main_thread
         if thread is not None:
-            thread.join(timeout=2.0)
+            thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             with self._lock:
                 self._main_thread = None

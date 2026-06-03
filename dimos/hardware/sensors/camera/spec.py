@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import TypeVar
 
 from reactivex.observable import Observable
 
@@ -33,10 +32,9 @@ class CameraConfig(BaseConfig):
     fps: int | float
 
 
-CameraConfigT = TypeVar("CameraConfigT", bound=CameraConfig)
+class CameraHardware(ABC, Configurable):
+    config: CameraConfig
 
-
-class CameraHardware(ABC, Configurable[CameraConfigT]):
     @abstractmethod
     def image_stream(self) -> Observable[Image]:
         pass

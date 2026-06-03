@@ -128,7 +128,7 @@ class FastLio2Config(NativeModuleConfig):
         ]
 
 
-class FastLio2(NativeModule[FastLio2Config]):
+class FastLio2(NativeModule):
     """FAST-LIO2 SLAM module consuming external PointCloud2 + Imu streams.
 
     Wraps the `fastlio2_native` binary in LCM-input mode. Processes raw
@@ -143,6 +143,7 @@ class FastLio2(NativeModule[FastLio2Config]):
         global_map (Out[PointCloud2]): Global voxel map (optional, enable via map_freq > 0).
     """
 
+    config: FastLio2Config
     default_config: type[FastLio2Config] = FastLio2Config  # type: ignore[assignment]
 
     raw_points: In[PointCloud2]

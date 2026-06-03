@@ -19,7 +19,7 @@ import numpy as np
 from reactivex import Observable, create, disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.stream.audio.abstract import (  # type: ignore[import-not-found, import-untyped]
+from dimos.stream.audio.abstract import (  # type: ignore[import-untyped]
     AbstractAudioEmitter,
     AudioEvent,
 )
@@ -36,7 +36,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):  # type: ignore[misc]
         sample_rate: int = 16000,
         frame_length: int = 1024,
         channels: int = 1,
-        dtype: np.dtype = np.float32,  # type: ignore[assignment, type-arg]
+        dtype: np.dtype = np.float32,  # type: ignore[assignment]
         frequency: float = 440.0,  # A4 note
         waveform: str = "sine",  # Type of waveform
         modulation_rate: float = 0.5,  # Modulation rate in Hz
@@ -72,7 +72,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):  # type: ignore[misc]
         self._running = False
         self._thread = None
 
-    def _generate_sine_wave(self, time_points: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
+    def _generate_sine_wave(self, time_points: np.ndarray) -> np.ndarray:
         """Generate a waveform based on selected type."""
         # Generate base time points with phase
         t = time_points + self.phase
@@ -132,7 +132,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):  # type: ignore[misc]
         if self.dtype == np.int16:
             wave = (wave * 32767).astype(np.int16)
 
-        return wave  # type: ignore[no-any-return]
+        return wave
 
     def _audio_thread(self, observer, interval: float) -> None:  # type: ignore[no-untyped-def]
         """Thread function for simulated audio generation."""

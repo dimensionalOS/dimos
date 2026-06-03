@@ -18,8 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.core.global_config import global_config
-from dimos.robot.config import RobotConfig
+from dimos.robot.config import GripperConfig, RobotConfig
 from dimos.utils.data import LfsPath
 
 # Pre-built MJCF for Pinocchio FK (xacro not supported by Pinocchio)
@@ -75,11 +74,14 @@ def piper(
         "xacro_args": {},
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": PIPER_GRIPPER_COLLISION_EXCLUSIONS,
+        "gripper": GripperConfig(
+            type="piper",
+            joints=["gripper"],
+            collision_exclusions=PIPER_GRIPPER_COLLISION_EXCLUSIONS,
+            open_position=0.08,
+            close_position=0.0,
+        ),
     }
-    if global_config.simulation and adapter_type == "mock":
-        defaults.update(adapter_type="sim_mujoco", address=str(PIPER_SIM_PATH))
-        defaults.setdefault("adapter_kwargs", {})["headless"] = False
-
     defaults.update(overrides)
     return RobotConfig(**defaults)
 

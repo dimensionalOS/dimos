@@ -528,14 +528,23 @@ def process_markdown(
     return new_content, changes, errors
 
 
+_SKIPPED_DIR_NAMES = frozenset({"node_modules", ".git", "__pycache__", ".venv", "venv"})
+
+
+def _is_under_skipped_dir(path: Path) -> bool:
+    return any(part in _SKIPPED_DIR_NAMES for part in path.parts)
+
+
 def collect_markdown_files(paths: list[str]) -> list[Path]:
     """Collect markdown files from paths, expanding directories recursively."""
     result: list[Path] = []
     for p in paths:
         path = Path(p)
         if path.is_dir():
-            result.extend(path.rglob("*.md"))
-        elif path.exists():
+            for md_path in path.rglob("*.md"):
+                if not _is_under_skipped_dir(md_path):
+                    result.append(md_path)
+        elif path.exists() and not _is_under_skipped_dir(path):
             result.append(path)
     return sorted(set(result))
 
@@ -652,9 +661,7 @@ def main() -> None:
     def process_file(md_path: Path, quiet: bool = False) -> tuple[bool, list[str]]:
         """Process a single markdown file. Returns (changed, errors)."""
         md_path = md_path.resolve()
-        if not quiet:
-            rel = md_path.relative_to(root) if md_path.is_relative_to(root) else md_path
-            print(f"\nProcessing {rel}...")
+        rel = md_path.relative_to(root) if md_path.is_relative_to(root) else md_path
 
         content = md_path.read_text()
         new_content, changes, errors = process_markdown(
@@ -667,6 +674,10 @@ def main() -> None:
             args.github_ref,
             doc_index=doc_index,
         )
+
+        # Only announce the file when there's something to report.
+        if not quiet and (changes or errors):
+            print(f"\nProcessing {rel}...")
 
         if errors:
             for err in errors:
@@ -682,10 +693,8 @@ def main() -> None:
                 if not quiet:
                     print("  Updated")
             return True, errors
-        else:
-            if not quiet:
-                print("  No changes needed")
-            return False, errors
+
+        return False, errors
 
     # Watch mode
     if args.watch:

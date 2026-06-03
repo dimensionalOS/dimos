@@ -65,6 +65,56 @@ def test_mcp_module_request_flow() -> None:
         )
     )
     assert response["result"]["content"][0]["text"] == "5"
+    rpc_calls["add"].assert_called_once_with(x=2, y=3)
+
+
+def test_mcp_module_injects_progress_token_as_mcp_context() -> None:
+    """When the client sends `_meta.progressToken`, the RPC call receives it as
+    an `_mcp_context` kwarg so the `@skill` wrapper can stash it in the
+    thread-local that `ToolStream` reads on construction."""
+    schema = json.dumps({"type": "object", "properties": {"x": {"type": "integer"}}})
+    skills = [SkillInfo(class_name="TestSkills", func_name="echo", args_schema=schema)]
+    rpc_calls = _make_rpc_calls(skills, {"echo": "ok"})
+
+    asyncio.run(
+        handle_request(
+            {
+                "method": "tools/call",
+                "id": 7,
+                "params": {
+                    "name": "echo",
+                    "arguments": {"x": 42},
+                    "_meta": {"progressToken": "pt-srv-test"},
+                },
+            },
+            skills,
+            rpc_calls,
+        )
+    )
+
+    rpc_calls["echo"].assert_called_once_with(x=42, _mcp_context={"progress_token": "pt-srv-test"})
+
+
+def test_mcp_module_without_progress_token_does_not_inject_context() -> None:
+    """Absence of `progressToken` preserves the legacy call shape. The skill
+    sees only the arguments it declared."""
+    schema = json.dumps({"type": "object", "properties": {}})
+    skills = [SkillInfo(class_name="TestSkills", func_name="ping", args_schema=schema)]
+    rpc_calls = _make_rpc_calls(skills, {"ping": "pong"})
+
+    asyncio.run(
+        handle_request(
+            {
+                "method": "tools/call",
+                "id": 8,
+                "params": {"name": "ping", "arguments": {}},
+            },
+            skills,
+            rpc_calls,
+        )
+    )
+
+    rpc_calls["ping"].assert_called_once_with()
 
 
 def test_mcp_module_handles_errors() -> None:

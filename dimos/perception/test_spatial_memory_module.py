@@ -31,7 +31,7 @@ from dimos.perception.spatial_perception import SpatialMemory
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.testing.replay import TimedSensorReplay
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 logger = setup_logger()
 
@@ -40,18 +40,19 @@ class VideoReplayConfig(ModuleConfig):
     video_path: str
 
 
-class VideoReplayModule(Module[VideoReplayConfig]):
-    """Module that replays video data from TimedSensorReplay."""
+class VideoReplayModule(Module):
+    """Module that replays video data from LegacyPickleStore."""
 
-    default_config = VideoReplayConfig
+    config: VideoReplayConfig
+
     video_out: Out[Image]
     _subscription = None
 
     @rpc
     def start(self) -> None:
         """Start replaying video data."""
-        # Use TimedSensorReplay to replay video frames
-        video_replay = TimedSensorReplay(self.config.video_path, autocast=Image.from_numpy)
+        # Use LegacyPickleStore to replay video frames
+        video_replay = LegacyPickleStore(self.config.video_path, autocast=Image.from_numpy)
 
         # Subscribe to the replay stream and publish to LCM
         self._subscription = (
@@ -89,8 +90,8 @@ class OdometryReplayModule(Module):
     @rpc
     def start(self) -> None:
         """Start replaying odometry data."""
-        # Use TimedSensorReplay to replay odometry
-        odom_replay = TimedSensorReplay(self.odom_path, autocast=Odometry.from_msg)
+        # Use LegacyPickleStore to replay odometry
+        odom_replay = LegacyPickleStore(self.odom_path, autocast=Odometry.from_msg)
 
         # Subscribe to the replay stream and publish to tf
         self._subscription = (
@@ -123,11 +124,11 @@ def dimos():
         dimos.stop()
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 @pytest.mark.asyncio
 async def test_spatial_memory_module_with_replay(dimos, tmp_path):
-    """Test SpatialMemory module with TimedSensorReplay inputs."""
+    """Test SpatialMemory module with LegacyPickleStore inputs."""
     # Get test data paths
     data_path = get_data("unitree_office_walk")
     video_path = os.path.join(data_path, "video")

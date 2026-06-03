@@ -69,6 +69,7 @@ class FarPlanner(NativeModule):
         way_point (Out[PointStamped]): Intermediate waypoint for local planner.
     """
 
+    config: FarPlannerConfig
     default_config: type[FarPlannerConfig] = FarPlannerConfig  # type: ignore[assignment]
 
     terrain_map_ext: In[PointCloud2]

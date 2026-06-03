@@ -55,7 +55,6 @@ class SqliteBlobStore(BlobStore):
     Does NOT commit; the caller (typically Backend) is responsible for commits.
     """
 
-    default_config = SqliteBlobStoreConfig
     config: SqliteBlobStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
@@ -78,7 +77,7 @@ class SqliteBlobStore(BlobStore):
         if self._conn is None:
             assert self._path is not None
             disposable, self._conn = open_disposable_sqlite_connection(self._path)
-            self.register_disposables(disposable)
+            self.register_disposable(disposable)
 
     def put(self, stream_name: str, key: int, data: bytes) -> None:
         self._ensure_table(stream_name)

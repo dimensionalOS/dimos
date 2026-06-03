@@ -74,15 +74,13 @@ class WindowAnalyzer:
     Stateless — caller provides frames, state snapshots, and config.
     """
 
-    def __init__(
-        self, vlm: VlModel[Any], *, max_tokens: int = 900, temperature: float = 0.2
-    ) -> None:
+    def __init__(self, vlm: VlModel, *, max_tokens: int = 900, temperature: float = 0.2) -> None:
         self._vlm = vlm
         self.max_tokens = max_tokens
         self.temperature = temperature
 
     @property
-    def vlm(self) -> VlModel[Any]:
+    def vlm(self) -> VlModel:
         return self._vlm
 
     def analyze_window(

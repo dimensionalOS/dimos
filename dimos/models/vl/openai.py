@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from functools import cached_property
 import os
 from typing import Any
@@ -17,8 +31,8 @@ class OpenAIVlModelConfig(VlModelConfig):
     api_key: str | None = None
 
 
-class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
-    default_config = OpenAIVlModelConfig
+class OpenAIVlModel(VlModel):
+    config: OpenAIVlModelConfig
 
     @cached_property
     def _client(self) -> OpenAI:
@@ -31,8 +45,12 @@ class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
         return OpenAI(api_key=api_key)
 
     def query(
-        self, image: Image | np.ndarray, query: str, response_format: dict | None = None, **kwargs
-    ) -> str:  # type: ignore[override, type-arg, no-untyped-def]
+        self,
+        image: Image | np.ndarray,
+        query: str,
+        response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> str:
         if isinstance(image, np.ndarray):
             import warnings
 
@@ -70,7 +88,7 @@ class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
 
         response = self._client.chat.completions.create(**api_kwargs)
 
-        return response.choices[0].message.content  # type: ignore[return-value,no-any-return]
+        return response.choices[0].message.content  # type: ignore[no-any-return]
 
     def query_batch(
         self,
@@ -78,7 +96,7 @@ class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
         query: str,
         response_format: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> list[str]:  # type: ignore[override]
+    ) -> list[str]:
         """Query VLM with multiple images using a single API call."""
         if not images:
             return []

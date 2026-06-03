@@ -18,8 +18,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import field
-from functools import lru_cache
+import signal
+import socket
 import subprocess
+import sys
 import time
 from typing import (
     Any,
@@ -30,6 +32,7 @@ from typing import (
     get_args,
     runtime_checkable,
 )
+from urllib.parse import urlparse
 
 from reactivex.disposable import Disposable
 import rerun as rr
@@ -40,17 +43,20 @@ from toolz import pipe  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
+from dimos.protocol.service.lcmservice import autoconf
+from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
-from dimos.visualization.constants import (
+from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
     RERUN_GRPC_PORT,
     RERUN_OPEN_DEFAULT,
+    RERUN_WEB_VIEWER_PORT,
     RerunOpenOption,
 )
+from dimos.visualization.rerun.init import rerun_init
 
 # TODO OUT visual annotations
 #
@@ -69,7 +75,6 @@ from dimos.visualization.constants import (
 # to define custom visualizations for specific topics
 #
 # as well as pubsubs={} to specify which protocols to listen to.
-
 
 # TODO better TF processing
 #
@@ -94,12 +99,10 @@ from dimos.visualization.constants import (
 # In order to solve this, bridge needs to own it's own tf service
 # and render it's tf tree into correct rerun entity paths
 
-
 logger = setup_logger()
 
 BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
 
-# to_rerun() can return a single archetype or a list of (entity_path, archetype) tuples
 RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
 RerunData: TypeAlias = "Archetype | RerunMulti"
 
@@ -148,6 +151,7 @@ def _with_graph_tab(bp: Blueprint) -> Blueprint:
 
 def _default_blueprint() -> Blueprint:
     """Default blueprint with black background and raised grid."""
+
     return rrb.Blueprint(
         rrb.Spatial3DView(
             origin="world",
@@ -160,32 +164,28 @@ def _default_blueprint() -> Blueprint:
 
 
 class Config(ModuleConfig):
-    """Configuration for RerunBridgeModule."""
-
     pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
-    visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
-
-    # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
+    visual_override: dict[Glob | str, Callable[[Any], Archetype] | None] = field(
+        default_factory=dict
+    )
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
-
-    # Per-entity max update rate (Hz). Entities not listed are unthrottled.
-    # Use for heavy entities to prevent viewer backpressure.
     max_hz: dict[str, float] = field(default_factory=dict)
 
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
-    connect_url: str = "rerun+http://127.0.0.1:9877/proxy"
+    connect_url: str | None = None
     memory_limit: str = "25%"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
-
-    # Blueprint factory: callable(rrb) -> Blueprint for viewer layout configuration
-    # Set to None to disable default blueprint
+    web_port: int = RERUN_WEB_VIEWER_PORT
     blueprint: BlueprintFactory | None = _default_blueprint
 
 
-class RerunBridgeModule(Module[Config]):
+Config.model_rebuild(_types_namespace={"Archetype": Archetype, "Blueprint": Blueprint})
+
+
+class RerunBridgeModule(Module):
     """Bridge that logs messages from pubsubs to Rerun.
 
     Spawns its own Rerun viewer and subscribes to all topics on each provided
@@ -201,24 +201,38 @@ class RerunBridgeModule(Module[Config]):
         bridge.stop()
     """
 
-    default_config = Config
-    _last_log: dict[str, float] = {}
+    config: Config
+    dedicated_worker = True
+    _last_log: dict[str, float]
 
-    # Graphviz layout scale and node radii for blueprint graph
-    GV_SCALE = 100.0
+    # TODO this doesn't belong here, either hardcode it or put it to rerun bridge config
+    GRAPH_VIZ_SCALE = 100.0
     MODULE_RADIUS = 20.0
     CHANNEL_RADIUS = 12.0
 
-    @lru_cache(maxsize=256)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._last_log = {}
+        self._override_cache: dict[str, Callable[[Any], RerunData | None]] = {}
+        self._frame_attached: dict[str, str] = {}
+
+    @property
+    def host(self) -> str:
+        return self.config.g.rerun_host or self.config.g.listen_host
+
     def _visual_override_for_entity_path(
         self, entity_path: str
     ) -> Callable[[Any], RerunData | None]:
         """Return a composed visual override for the entity path.
 
         Chains matching overrides from config, ending with final_convert
-        which handles .to_rerun() or passes through Archetypes.
+        which handles .to_rerun() or passes through Archetypes. Cached per
+        instance (not via ``lru_cache`` on a method, which would leak ``self``).
         """
-        # find all matching converters for this entity path
+        cached = self._override_cache.get(entity_path)
+        if cached is not None:
+            return cached
+
         matches = [
             fn
             for pattern, fn in self.config.visual_override.items()
@@ -227,9 +241,13 @@ class RerunBridgeModule(Module[Config]):
 
         # None means "suppress this topic entirely"
         if any(fn is None for fn in matches):
-            return lambda msg: None
 
-        # final step (ensures we return Archetype or None)
+            def suppressed(msg: Any) -> RerunData | None:
+                return None
+
+            self._override_cache[entity_path] = suppressed
+            return suppressed
+
         def final_convert(msg: Any) -> RerunData | None:
             if isinstance(msg, Archetype):
                 return msg
@@ -240,17 +258,18 @@ class RerunBridgeModule(Module[Config]):
             return None
 
         # compose all converters
-        return lambda msg: pipe(msg, *matches, final_convert)
+        def composed(msg: Any) -> RerunData | None:
+            return cast("RerunData | None", pipe(msg, *matches, final_convert))
+
+        self._override_cache[entity_path] = composed
+        return composed
 
     def _get_entity_path(self, topic: Any) -> str:
-        """Convert a topic to a Rerun entity path."""
         if self.config.topic_to_entity:
             return self.config.topic_to_entity(topic)
 
-        # Default: use topic.name if available (LCM Topic), else str
         topic_str = getattr(topic, "name", None) or str(topic)
-        # Strip everything after # (LCM topic suffix)
-        topic_str = topic_str.split("#")[0]
+        topic_str = topic_str.split("#")[0]  # strip LCM topic suffix
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:
@@ -265,7 +284,6 @@ class RerunBridgeModule(Module[Config]):
                 return
             self._last_log[entity_path] = now
 
-        # apply visual overrides (including final_convert which handles .to_rerun())
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
         if not rerun_data:
@@ -277,55 +295,50 @@ class RerunBridgeModule(Module[Config]):
                 rr.log(path, archetype)
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
+            # if source msg carries a frame_id, attach the entity to that TF frame
+            # should skip if archetype is a Transform3D
+            if not isinstance(rerun_data, rr.Transform3D):
+                frame_id = getattr(msg, "frame_id", None)
+                if frame_id and self._frame_attached.get(entity_path) != frame_id:
+                    rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
+                    self._frame_attached[entity_path] = frame_id
 
     @rpc
     def start(self) -> None:
-        import socket
-        from urllib.parse import urlparse
-
         super().start()
 
-        self._last_log: dict[str, float] = {}
+        logger.info("Rerun bridge starting")
+
+        self._last_log = {}
+        self._frame_attached = {}
         self._min_intervals: dict[str, float] = {
             entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
         }
 
-        logger.info("Rerun bridge starting")
+        connect_url = self.config.connect_url
+        if connect_url is None:
+            connect_url = f"rerun+http://{self.host}:{RERUN_GRPC_PORT}/proxy"
 
-        # Initialize and spawn Rerun viewer
-        rr.init("dimos")
+        server_uri = rerun_init(
+            start_grpc=True,
+            grpc_config={
+                "connect_url": connect_url,
+                "server_memory_limit": self.config.memory_limit,
+            },
+        )
+        assert server_uri is not None  # start_grpc=True guarantees a URI
 
-        # start grpc if needed
-        # If the port is already in use (another instance running), connect
-
-        parsed = urlparse(self.config.connect_url.replace("rerun+", "", 1))
+        parsed = urlparse(connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
 
-        port_in_use = False
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            port_in_use = sock.connect_ex(("127.0.0.1", grpc_port)) == 0
-
-        if port_in_use:
-            logger.info(f"gRPC port {grpc_port} already in use, connecting to existing server")
-            rr.connect_grpc(url=self.config.connect_url)
-            server_uri = self.config.connect_url
-        else:
-            server_uri = rr.serve_grpc(
-                grpc_port=grpc_port,
-                server_memory_limit=self.config.memory_limit,
-            )
-            logger.info(f"Rerun gRPC server ready at {server_uri}")
-
-        # Check open arg
         if self.config.rerun_open not in get_args(RerunOpenOption):
             logger.warning(
-                f"rerun_open was {self.config.rerun_open} which is not one of {get_args(RerunOpenOption)}",
-                exc_info=True,
+                f"rerun_open was {self.config.rerun_open} which is not one of "
+                f"{get_args(RerunOpenOption)}"
             )
 
-        # launch native viewer if desired
         spawned = False
-        if self.config.rerun_open == "native" or self.config.rerun_open == "both":
+        if self.config.rerun_open in ("native", "both"):
             try:
                 import rerun_bindings
 
@@ -354,64 +367,65 @@ class RerunBridgeModule(Module[Config]):
                     logger.warning(
                         "Rerun native viewer not available (headless?). "
                         "Bridge will continue without a viewer — data is still "
-                        "accessible via rerun-connect or rerun-web.",
+                        "accessible via --rerun-open web or by connecting a viewer to the gRPC server.",
                         exc_info=True,
                     )
 
-        # web
         open_web = self.config.rerun_open == "web" or self.config.rerun_open == "both"
         if open_web or self.config.rerun_web:
-            rr.serve_web_viewer(connect_to=server_uri, open_browser=open_web)
+            rr.serve_web_viewer(
+                connect_to=server_uri,
+                open_browser=open_web,
+                web_port=self.config.web_port,
+            )
 
-        # printout
-        if self.config.rerun_open == "none" or (self.config.rerun_open == "native" and not spawned):
+        # TODO: `spawned` is supposed to be false when run on the G1 (because viewer doesn't have a display) somehow it returns true
+        if (
+            self.config.rerun_open == "none"
+            or (self.config.rerun_open == "native" and not spawned)
+            or self.host == "0.0.0.0"
+        ):
             self._log_connect_hints(grpc_port)
 
-        # setup blueprint
         if self.config.blueprint:
             rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
 
-        # Register colormap for viewer-side color resolution (PointCloud2 class_ids)
-        register_colormap_annotation("turbo")
-
-        # Start pubsubs and subscribe to all messages
         for pubsub in self.config.pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
-                pubsub.start()  # type: ignore[union-attr]
+                pubsub.start()
             unsub = pubsub.subscribe_all(self._on_message)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
-        # Add pubsub stop as disposable
         for pubsub in self.config.pubsubs:
             if hasattr(pubsub, "stop"):
-                self._disposables.add(Disposable(pubsub.stop))  # type: ignore[union-attr]
+                self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
 
     def _log_connect_hints(self, grpc_port: int) -> None:
         """Log CLI commands for connecting a viewer to this bridge."""
-        import socket
-
-        from dimos.utils.generic import get_local_ips
-
         local_ips = get_local_ips()
+        local_grpc = f"rerun+http://{self.host}:{grpc_port}/proxy"
+        local_ws = f"ws://{self.host}:{self.config.g.rerun_websocket_server_port}/ws"
         hostname = socket.gethostname()
-        connect_url = f"rerun+http://127.0.0.1:{grpc_port}/proxy"
 
+        columns = 60
         lines = [
             "",
-            "=" * 60,
+            "=" * columns,
             "Rerun gRPC server running (no viewer opened)",
             "",
             "Connect a viewer:",
-            f"  dimos-viewer --connect {connect_url}",
+            f"  dimos-viewer --connect {local_grpc} --ws-url {local_ws}",
         ]
         for ip, iface in local_ips:
-            lines.append(f"  dimos-viewer --connect rerun+http://{ip}:{grpc_port}/proxy  # {iface}")
+            remote_grpc = f"rerun+http://{ip}:{grpc_port}/proxy"
+            remote_ws = f"ws://{ip}:{self.config.g.rerun_websocket_server_port}/ws"
+            lines.append(f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws}  # {iface}")
         lines.append("")
         lines.append(f"  hostname: {hostname}")
-        lines.append("=" * 60)
+        lines.append("=" * columns)
         lines.append("")
 
         logger.info("\n".join(lines))
@@ -458,8 +472,8 @@ class RerunBridgeModule(Module[Config]):
             if line.startswith("node "):
                 parts = line.split()
                 node_id = parts[1].strip('"')
-                x = float(parts[2]) * self.GV_SCALE
-                y = -float(parts[3]) * self.GV_SCALE
+                x = float(parts[2]) * self.GRAPH_VIZ_SCALE
+                y = -float(parts[3]) * self.GRAPH_VIZ_SCALE
                 label = parts[6].strip('"')
                 color = parts[9].strip('"')
 
@@ -492,5 +506,30 @@ class RerunBridgeModule(Module[Config]):
 
     @rpc
     def stop(self) -> None:
-        self._visual_override_for_entity_path.cache_clear()
+        self._override_cache.clear()
+        self._frame_attached.clear()
         super().stop()
+
+
+def run_bridge(
+    memory_limit: str = "25%",
+    rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT,
+    rerun_web: bool = RERUN_ENABLE_WEB,
+) -> None:
+    """Start a RerunBridgeModule with default LCM config and block until interrupted."""
+    autoconf(check_only=True)
+
+    bridge = RerunBridgeModule(
+        memory_limit=memory_limit,
+        rerun_open=rerun_open,
+        rerun_web=rerun_web,
+        pubsubs=[LCM()],
+    )
+    bridge.start()
+
+    def _shutdown(*_: object) -> None:
+        bridge.stop()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.pause()

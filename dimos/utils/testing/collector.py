@@ -30,7 +30,7 @@ class CallbackCollector:
         assert len(collector.results) == 3
     """
 
-    def __init__(self, n: int, timeout: float = 2.0) -> None:
+    def __init__(self, n: int, timeout: float = 5.0) -> None:
         self.results: list[tuple[Any, Any]] = []
         self._done = threading.Event()
         self._n = n

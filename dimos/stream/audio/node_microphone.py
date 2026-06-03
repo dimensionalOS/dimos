@@ -38,7 +38,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
         sample_rate: int = 16000,
         channels: int = 1,
         block_size: int = 1024,
-        dtype: np.dtype = np.float32,  # type: ignore[assignment, type-arg]
+        dtype: np.dtype = np.float32,  # type: ignore[assignment]
     ) -> None:
         """
         Initialize SounddeviceAudioSource.

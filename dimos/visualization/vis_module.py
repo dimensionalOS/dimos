@@ -15,25 +15,25 @@
 
 """Shared visualization module factory for all robot blueprints."""
 
-from typing import Any
+from typing import Any, get_args
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.visualization.constants import ViewerBackend
+from dimos.visualization.rerun.constants import ViewerBackend
+from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 
 def vis_module(
     viewer_backend: ViewerBackend,
     rerun_config: dict[str, Any] | None = None,
-    foxglove_config: dict[str, Any] | None = None,
 ) -> Blueprint:
     """Create a visualization blueprint based on the selected viewer backend.
 
-    Bundles the appropriate viewer module (Rerun or Foxglove) together with
+    Bundles the Rerun viewer module together with
     the ``WebsocketVisModule`` and ``RerunWebSocketServer`` so that the web
     dashboard and remote viewer connections work out of the box.
 
     Example usage::
-
 
         from dimos.core.global_config import global_config
         viz = vis_module(
@@ -48,23 +48,10 @@ def vis_module(
             },
         )
     """
-    from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
-    from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-
-    if foxglove_config is None:
-        foxglove_config = {}
     if rerun_config is None:
         rerun_config = {}
 
     match viewer_backend:
-        case "foxglove":
-            from dimos.robot.foxglove_bridge import FoxgloveBridge
-
-            return autoconnect(
-                FoxgloveBridge.blueprint(**foxglove_config),
-                RerunWebSocketServer.blueprint(),
-                WebsocketVisModule.blueprint(),
-            )
         case "rerun":
             from dimos.core.global_config import global_config
             from dimos.protocol.pubsub.impl.lcmpubsub import LCM
@@ -84,7 +71,5 @@ def vis_module(
         case "none":
             return autoconnect(WebsocketVisModule.blueprint())
         case _:
-            raise ValueError(
-                f"Unknown viewer_backend {viewer_backend!r}. "
-                f"Expected one of: rerun, rerun-web, rerun-connect, foxglove, none"
-            )
+            valid = ", ".join(get_args(ViewerBackend))
+            raise ValueError(f"Unknown viewer_backend {viewer_backend!r}. Expected one of: {valid}")

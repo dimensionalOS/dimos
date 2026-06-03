@@ -25,7 +25,7 @@ import time
 
 from pydantic import Field
 
-from dimos.perception.visual_servoing import (  # type: ignore[import-not-found, import-untyped]
+from dimos.perception.visual_servoing import (  # type: ignore[import-untyped]
     VisualServoing,
 )
 from dimos.skills.skills import AbstractRobotSkill
@@ -108,7 +108,7 @@ class FollowHuman(AbstractRobotSkill):
                 x_vel = output.get("linear_vel")
                 z_vel = output.get("angular_vel")
                 logger.debug(f"Following human: x_vel: {x_vel}, z_vel: {z_vel}")
-                self._robot.move(Vector(x_vel, 0, z_vel))  # type: ignore[arg-type, attr-defined]
+                self._robot.move(Vector(x_vel, 0, z_vel))  # type: ignore[attr-defined]
                 time.sleep(0.05)
 
             # If we completed the full timeout duration, consider it success

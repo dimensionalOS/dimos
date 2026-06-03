@@ -15,7 +15,7 @@
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 import numpy as np
-from scipy import ndimage  # type: ignore[import-untyped]
+from scipy import ndimage
 
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 
@@ -61,7 +61,7 @@ def gradient(
     distance_cells = cast("NDArray[np.float64]", ndimage.distance_transform_edt(1 - obstacle_map))
 
     # Convert to meters and clip to max distance
-    distance_meters = np.clip(distance_cells * occupancy_grid.resolution, 0, max_distance)  # type: ignore[operator]
+    distance_meters = np.clip(distance_cells * occupancy_grid.resolution, 0, max_distance)
 
     # Invert and scale to 0-100 range
     # Far from obstacles (max_distance) -> 0

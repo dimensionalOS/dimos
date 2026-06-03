@@ -4,7 +4,8 @@ Dimos uses parallel Docker image hierarchies for ROS and non-ROS builds, allowin
 
 ## Image Hierarchy
 
-<details><summary>Pikchr</summary>
+<details>
+<summary>Pikchr</summary>
 
 ```pikchr fold output=assets/docker-hierarchy.svg
 color = white
@@ -40,31 +41,33 @@ text "same dockerfiles" at (D.e.x + 1.2in, D.e.y + 0.4in)
 
 </details>
 
-<!--Result:-->
 ![output](assets/docker-hierarchy.svg)
-
 
 ## Images
 
 All images are published to `ghcr.io/dimensionalos/`.
 
-| Image        | Base                        | Purpose                                            |
-|--------------|-----------------------------|----------------------------------------------------|
-| `python`     | ubuntu:22.04                | Core dimos with Python dependencies, no ROS        |
-| `dev`        | python                      | Development environment (editors, git, pre-commit) |
-| `ros`        | ubuntu:22.04                | ROS2 Humble with navigation packages               |
-| `ros-python` | ros                         | ROS + dimos Python dependencies                    |
-| `ros-dev`    | ros-python                  | Full ROS development environment                   |
+
+| Image        | Base         | Purpose                                            |
+| ------------ | ------------ | -------------------------------------------------- |
+| `python`     | ubuntu:22.04 | Core dimos with Python dependencies, no ROS        |
+| `dev`        | python       | Development environment (editors, git, pre-commit) |
+| `ros`        | ubuntu:22.04 | ROS2 Humble with navigation packages               |
+| `ros-python` | ros          | ROS + dimos Python dependencies                    |
+| `ros-dev`    | ros-python   | Full ROS development environment                   |
+
 
 ## Tags
 
 Images are tagged based on the git branch:
 
+
 | Branch           | Tag                                             |
-|------------------|-------------------------------------------------|
+| ---------------- | ----------------------------------------------- |
 | `main`           | `latest`                                        |
 | `dev`            | `dev`                                           |
 | feature branches | sanitized branch name (e.g., `feature_foo_bar`) |
+
 
 ## When to Use Each Image
 
@@ -77,6 +80,7 @@ docker run -it ghcr.io/dimensionalos/dev:latest bash
 ### ROS Track (`ros` → `ros-python` → `ros-dev`)
 
 Use when you need ROS2 integration:
+
 - Robot hardware control via ROS topics
 - Navigation stack integration
 - ROS message passing between components
@@ -100,33 +104,19 @@ Use the helper script:
 
 ## CI/CD Pipeline
 
-The workflow in [`.github/workflows/docker.yml`](/.github/workflows/docker.yml) handles:
+Images are built by [`.github/workflows/docker-build.yml`](/.github/workflows/docker-build.yml#L4) on merges to `main`/`dev` (when Docker files change) and weekly for base image security patches.
 
-1. **Change detection** - Only rebuilds images when relevant files change
-2. **Parallel builds** - ROS and non-ROS tracks build independently
-3. **Cascade rebuilds** - Changes to base images trigger downstream rebuilds
-4. **Test execution** - Tests run in the freshly built images
+Tests and type checking run in [`.github/workflows/ci.yml`](/.github/workflows/ci.yml) using pre-built images.
 
-### Trigger Paths
+### Build Trigger Paths
 
-| Image    | Triggers on changes to                               |
-|----------|------------------------------------------------------|
-| `ros`    | `docker/ros/**`, workflow files                      |
-| `python` | `docker/python/**`, `pyproject.toml`, workflow files |
-| `dev`    | `docker/dev/**`                                      |
 
-### Test Jobs
+| Image    | Triggers on changes to             |
+| -------- | ---------------------------------- |
+| `ros`    | `docker/ros/**`, workflow files    |
+| `python` | `docker/python/**`, workflow files |
+| `dev`    | `docker/dev/**`                    |
 
-After images build, tests run in parallel:
-
-| Job                     | Image   | Command                   |
-|-------------------------|---------|---------------------------|
-| `run-tests`             | dev     | `pytest`                  |
-| `run-ros-tests`         | ros-dev | `pytest && pytest -m ros` |
-| `run-heavy-tests`       | dev     | `pytest -m heavy`         |
-| `run-lcm-tests`         | dev     | `pytest -m lcm`           |
-| `run-integration-tests` | dev     | `pytest -m integration`   |
-| `run-mypy`              | ros-dev | `mypy dimos`              |
 
 ## Dockerfile Structure
 
@@ -154,6 +144,7 @@ RUN uv pip install '.[misc,cpu,sim,drone,unitree,web,perception,visualization]'
 ### Dev Image Features
 
 The dev image ([`docker/dev/Dockerfile`](/docker/dev/Dockerfile)) adds:
+
 - Git, git-lfs, pre-commit
 - Editors (nano, vim)
 - tmux with custom config

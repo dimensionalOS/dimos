@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 import json
 import os
 from pathlib import Path
@@ -24,21 +24,13 @@ import re
 import signal
 import time
 
+from dimos.constants import STATE_DIR
+from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-
-def _get_state_dir() -> Path:
-    """XDG_STATE_HOME compliant state directory for dimos."""
-    xdg = os.environ.get("XDG_STATE_HOME")
-    if xdg:
-        return Path(xdg) / "dimos"
-    return Path.home() / ".local" / "state" / "dimos"
-
-
-REGISTRY_DIR = _get_state_dir() / "runs"
-LOG_BASE_DIR = _get_state_dir() / "logs"
+REGISTRY_DIR = STATE_DIR / "runs"
 
 
 @dataclass
@@ -52,7 +44,6 @@ class RunEntry:
     log_dir: str
     cli_args: list[str] = field(default_factory=list)
     config_overrides: dict[str, object] = field(default_factory=dict)
-    grpc_port: int = 9877
     original_argv: list[str] = field(default_factory=list)
 
     @property
@@ -70,9 +61,12 @@ class RunEntry:
 
     @classmethod
     def load(cls, path: Path) -> RunEntry:
-        """Load a RunEntry from a JSON file."""
+        """Load a RunEntry from a JSON file. Unknown keys are dropped so
+        registry files written by older dimos versions still load.
+        """
         data = json.loads(path.read_text())
-        return cls(**data)
+        valid = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in valid})
 
 
 def generate_run_id(blueprint: str) -> str:
@@ -115,27 +109,37 @@ def list_runs(alive_only: bool = True) -> list[RunEntry]:
 
 
 def cleanup_stale() -> int:
-    """Remove registry entries for dead processes. Returns count removed."""
+    """Remove registry entries for dead processes. Returns count removed.
+
+    Before removing each stale entry, sweeps any descendants that outlived their
+    main process (e.g., because main was SIGKILL'd and the watchdog also died).
+    Sweep runs strictly on entries whose main PID is dead. A live run is never
+    swept, so concurrent `dimos run` invocations are safe.
+    """
+
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
     removed = 0
     for f in list(REGISTRY_DIR.glob("*.json")):
         try:
             entry = RunEntry.load(f)
             if not is_pid_alive(entry.pid):
+                try:
+                    killed = kill_run_processes(entry.run_id)
+                    if killed:
+                        logger.info(
+                            "Swept descendants of stale run",
+                            run_id=entry.run_id,
+                            pid=entry.pid,
+                            killed=killed,
+                        )
+                except Exception:
+                    logger.error("Error sweeping stale run", run_id=entry.run_id, exc_info=True)
                 entry.remove()
                 removed += 1
         except Exception:
             f.unlink()
             removed += 1
     return removed
-
-
-def check_port_conflicts(grpc_port: int = 9877) -> RunEntry | None:
-    """Check if any alive run is using the gRPC port. Returns conflicting entry or None."""
-    for entry in list_runs(alive_only=True):
-        if entry.grpc_port == grpc_port:
-            return entry
-    return None
 
 
 def get_most_recent(alive_only: bool = True) -> RunEntry | None:

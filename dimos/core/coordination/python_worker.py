@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import multiprocessing
 from multiprocessing.connection import Connection
@@ -23,6 +24,17 @@ import threading
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from dimos.core.coordination.worker_messages import (
+    CallMethodRequest,
+    DeployModuleRequest,
+    GetAttrRequest,
+    SetRefRequest,
+    ShutdownRequest,
+    SuppressConsoleRequest,
+    UndeployModuleRequest,
+    WorkerRequest,
+    WorkerResponse,
+)
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.library_config import apply_library_config
 from dimos.utils.logging_config import setup_logger
@@ -64,7 +76,12 @@ class MethodCallProxy:
 
         def _call(*args: Any, **kwargs: Any) -> ActorFuture:
             result = self._actor._send_request_to_worker(
-                {"type": "call_method", "name": name, "args": args, "kwargs": kwargs}
+                CallMethodRequest(
+                    module_id=self._actor._module_id,
+                    name=name,
+                    args=args,
+                    kwargs=kwargs,
+                )
             )
             return ActorFuture(result)
 
@@ -92,26 +109,25 @@ class Actor:
         """Exclude the connection and lock when pickling."""
         return (Actor, (None, self._cls, self._worker_id, self._module_id, None))
 
-    def _send_request_to_worker(self, request: dict[str, Any]) -> Any:
+    def _send_request_to_worker(self, request: WorkerRequest) -> Any:
         if self._conn is None:
             raise RuntimeError("Actor connection not available - cannot send requests")
-        request["module_id"] = self._module_id
         if self._lock is not None:
             with self._lock:
                 self._conn.send(request)
-                response = self._conn.recv()
+                response: WorkerResponse = self._conn.recv()
         else:
             self._conn.send(request)
             response = self._conn.recv()
-        if response.get("error"):
-            if "AttributeError" in response["error"]:  # TODO: better error handling
-                raise AttributeError(response["error"])
-            raise RuntimeError(f"Worker error: {response['error']}")
-        return response.get("result")
+        if response.error:
+            if "AttributeError" in response.error:  # TODO: better error handling
+                raise AttributeError(response.error)
+            raise RuntimeError(f"Worker error: {response.error}")
+        return response.result
 
     def set_ref(self, ref: Any) -> ActorFuture:
         """Set the actor reference on the remote module."""
-        result = self._send_request_to_worker({"type": "set_ref", "ref": ref})
+        result = self._send_request_to_worker(SetRefRequest(module_id=self._module_id, ref=ref))
         return ActorFuture(result)
 
     def __getattr__(self, name: str) -> Any:
@@ -119,7 +135,7 @@ class Actor:
         if name.startswith("_"):
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
-        return self._send_request_to_worker({"type": "getattr", "name": name})
+        return self._send_request_to_worker(GetAttrRequest(module_id=self._module_id, name=name))
 
 
 # Global forkserver context. Using `forkserver` instead of `fork` because it
@@ -152,6 +168,7 @@ class PythonWorker:
         self._process: Any = None
         self._conn: Connection | None = None
         self._worker_id: int = _worker_ids.next()
+        self.dedicated: bool = False
 
     @property
     def module_count(self) -> int:
@@ -209,20 +226,14 @@ class PythonWorker:
         kwargs["g"] = global_config
         module_id = _module_ids.next()
 
-        # Send deploy_module request to the worker process
-        request = {
-            "type": "deploy_module",
-            "module_id": module_id,
-            "module_class": module_class,
-            "kwargs": kwargs,
-        }
+        request = DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs)
         try:
             with self._lock:
                 self._conn.send(request)
-                response = self._conn.recv()
+                response: WorkerResponse = self._conn.recv()
 
-            if response.get("error"):
-                raise RuntimeError(f"Failed to deploy module: {response['error']}")
+            if response.error:
+                raise RuntimeError(f"Failed to deploy module: {response.error}")
 
             actor = Actor(self._conn, module_class, self._worker_id, module_id, self._lock)
             actor.set_ref(actor).result()
@@ -238,12 +249,26 @@ class PythonWorker:
         finally:
             self._reserved = max(0, self._reserved - 1)
 
+    def undeploy_module(self, module_id: int) -> None:
+        """Stop and remove a single module from the worker process."""
+        if self._conn is None:
+            raise RuntimeError("Worker process not started")
+
+        with self._lock:
+            self._conn.send(UndeployModuleRequest(module_id=module_id))
+            response: WorkerResponse = self._conn.recv()
+
+        if response.error:
+            raise RuntimeError(f"Failed to undeploy module: {response.error}")
+
+        self._modules.pop(module_id, None)
+
     def suppress_console(self) -> None:
         if self._conn is None:
             return
         try:
             with self._lock:
-                self._conn.send({"type": "suppress_console"})
+                self._conn.send(SuppressConsoleRequest())
                 self._conn.recv()
         except (BrokenPipeError, EOFError, ConnectionResetError):
             pass
@@ -252,7 +277,7 @@ class PythonWorker:
         if self._conn is not None:
             try:
                 with self._lock:
-                    self._conn.send({"type": "shutdown"})
+                    self._conn.send(ShutdownRequest())
                     if self._conn.poll(timeout=5):
                         self._conn.recv()
                     else:
@@ -295,21 +320,36 @@ def _suppress_console_output() -> None:
         ]
 
 
+@dataclass
+class _WorkerState:
+    instances: dict[int, Any]
+    worker_id: int
+    should_stop: bool = False
+
+
 def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
     apply_library_config()
-    # Ignore SIGINT so the coordinator can orchestrate shutdown via the pipe.
-    # Without this, workers race with the coordinator: they start tearing down
-    # modules locally while the coordinator tries to send stop() RPCs, causing
-    # BrokenPipeErrors.
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    instances: dict[int, Any] = {}
+    signal.signal(signal.SIGINT, signal.SIG_IGN)  # coordinator handles shutdown
+    state = _WorkerState(instances={}, worker_id=worker_id)
 
     try:
-        _worker_loop(conn, instances, worker_id)
+        _worker_loop(conn, state)
     except Exception as e:
-        logger.error(f"Worker process error: {e}", exc_info=True)
+        # `f"... {e}"` is often empty (some exceptions stringify to "")
+        # and structlog's `exc_info` rendering may be elided in captured
+        # CI logs. Always emit the full traceback to stderr so the cause
+        # is visible regardless of the structured-log handler config.
+        traceback.print_exception(e, file=sys.stderr)
+        sys.stderr.flush()
+        logger.error(
+            "Worker process error",
+            worker_id=worker_id,
+            error_type=type(e).__name__,
+            error_repr=repr(e),
+            exc_info=True,
+        )
     finally:
-        for module_id, instance in reversed(list(instances.items())):
+        for module_id, instance in reversed(list(state.instances.items())):
             try:
                 logger.info(
                     "Worker stopping module...",
@@ -328,7 +368,42 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
                 logger.error("Error during worker shutdown", exc_info=True)
 
 
-def _worker_loop(conn: Connection, instances: dict[int, Any], worker_id: int) -> None:
+def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
+    match request:
+        case DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs):
+            state.instances[module_id] = module_class(**kwargs)
+            return WorkerResponse(result=module_id)
+
+        case SetRefRequest(module_id=module_id, ref=ref):
+            state.instances[module_id].ref = ref
+            return WorkerResponse(result=state.worker_id)
+
+        case GetAttrRequest(module_id=module_id, name=name):
+            return WorkerResponse(result=getattr(state.instances[module_id], name))
+
+        case CallMethodRequest(module_id=module_id, name=name, args=args, kwargs=kwargs):
+            method = getattr(state.instances[module_id], name)
+            return WorkerResponse(result=method(*args, **kwargs))
+
+        case UndeployModuleRequest(module_id=module_id):
+            instance = state.instances.pop(module_id, None)
+            if instance is not None:
+                instance.stop()
+            return WorkerResponse(result=True)
+
+        case SuppressConsoleRequest():
+            _suppress_console_output()
+            return WorkerResponse(result=True)
+
+        case ShutdownRequest():
+            state.should_stop = True
+            return WorkerResponse(result=True)
+
+        case _:
+            return WorkerResponse(error=f"Unknown request type: {type(request)}")
+
+
+def _worker_loop(conn: Connection, state: _WorkerState) -> None:
     while True:
         try:
             if not conn.poll(timeout=0.1):
@@ -337,49 +412,17 @@ def _worker_loop(conn: Connection, instances: dict[int, Any], worker_id: int) ->
         except EOFError:
             break
 
-        response: dict[str, Any] = {}
         try:
-            req_type = request.get("type")
-
-            if req_type == "deploy_module":
-                module_class = request["module_class"]
-                kwargs = request["kwargs"]
-                module_id = request["module_id"]
-                instance = module_class(**kwargs)
-                instances[module_id] = instance
-                response["result"] = module_id
-
-            elif req_type == "set_ref":
-                module_id = request["module_id"]
-                instances[module_id].ref = request.get("ref")
-                response["result"] = worker_id
-
-            elif req_type == "getattr":
-                module_id = request["module_id"]
-                response["result"] = getattr(instances[module_id], request["name"])
-
-            elif req_type == "call_method":
-                module_id = request["module_id"]
-                method = getattr(instances[module_id], request["name"])
-                result = method(*request.get("args", ()), **request.get("kwargs", {}))
-                response["result"] = result
-
-            elif req_type == "suppress_console":
-                _suppress_console_output()
-                response["result"] = True
-
-            elif req_type == "shutdown":
-                response["result"] = True
-                conn.send(response)
-                break
-
-            else:
-                response["error"] = f"Unknown request type: {req_type}"
-
+            response = _handle_request(request, state)
         except Exception as e:
-            response["error"] = f"{e.__class__.__name__}: {e}\n{traceback.format_exc()}"
+            response = WorkerResponse(
+                error=f"{e.__class__.__name__}: {e}\n{traceback.format_exc()}"
+            )
 
         try:
             conn.send(response)
         except (BrokenPipeError, EOFError):
+            break
+
+        if state.should_stop:
             break

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from dimos.core.resource import Resource
 from dimos.types.timestamped import Timestamped
-from dimos.utils.testing.replay import TimedSensorReplay
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 if TYPE_CHECKING:
     from dimos.core.stream import Transport
@@ -30,7 +30,7 @@ class SensorMoment(Generic[T], Resource):
     value: T | None = None
 
     def __init__(self, name: str, transport: Transport[T]) -> None:
-        self.replay: TimedSensorReplay[T] = TimedSensorReplay(name)
+        self.replay: LegacyPickleStore[T] = LegacyPickleStore(name)
         self.transport = transport
 
     def seek(self, timestamp: float) -> None:
@@ -52,7 +52,7 @@ class OutputMoment(Generic[T], Resource):
     value: T | None = None
     transport: Transport[T]
 
-    def __init__(self, transport: Transport[T]):
+    def __init__(self, transport: Transport[T]) -> None:
         self.transport = transport
 
     def set(self, value: T) -> None:

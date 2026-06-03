@@ -66,7 +66,7 @@ Below is a complete annotated adapter. Implement each method by wrapping your ve
 | Position         | meters   |
 | Force            | Newtons  |
 
-```python
+```python skip
 """YourArm adapter — implements ManipulatorAdapter protocol.
 
 SDK Units: <describe your SDK's native units here>
@@ -350,7 +350,8 @@ __all__ = ["YourArmAdapter"]
 - **Unsupported features** — Return `None` for reads and `False` for writes. Never raise exceptions for optional features.
 - **Velocity/effort feedback** — If your SDK doesn't provide these, return zeros. The coordinator handles this gracefully.
 - **Lazy SDK import** — If the vendor SDK is an optional dependency, you can import it inside `connect()` instead of at module level (see Piper adapter for this pattern):
-  ```python
+
+  ```py
   def connect(self) -> bool:
       try:
           from yourarm_sdk import YourArmSDK
@@ -365,7 +366,7 @@ __all__ = ["YourArmAdapter"]
 
 ### \_\_init\_\_.py
 
-```python
+```python skip
 """YourArm manipulator hardware adapter.
 
 Usage:
@@ -392,7 +393,7 @@ This means **no manual registration is needed** — just having the `register()`
 
 You can verify discovery works:
 
-```python
+```python skip
 from dimos.hardware.manipulators.registry import adapter_registry
 print(adapter_registry.available())  # Should include "yourarm"
 ```
@@ -419,7 +420,7 @@ dimos/robot/
 
 Create `dimos/robot/yourarm/blueprints.py` with your coordinator and (optionally) planning blueprints:
 
-```python
+```python skip
 """Blueprints for YourArm robot.
 
 Usage:
@@ -496,11 +497,13 @@ If you want motion planning (collision-free trajectories via Drake), you need a 
 
 Place your URDF/xacro files under LFS data so they can be resolved via `LfsPath`. `LfsPath` is a `Path` subclass that lazily downloads LFS data on first access — this avoids downloading at import time when the blueprint module is loaded.
 
-```python
+```python skip
 from dimos.utils.data import LfsPath
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # LfsPath defers download until the path is actually accessed
 _YOURARM_URDF_PATH = LfsPath("yourarm_description/urdf/yourarm.urdf")
@@ -509,6 +512,7 @@ _YOURARM_PACKAGE_PATH = LfsPath("yourarm_description")
 
 def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
     return PoseStamped(
+        frame_id="map",
         position=Vector3(x=x, y=y, z=z),
         orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
     )
@@ -516,7 +520,7 @@ def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
 
 ### 4b. Create a robot model config helper
 
-```python
+```python skip
 def _make_yourarm_config(
     name: str = "arm",
     y_offset: float = 0.0,
@@ -557,7 +561,7 @@ def _make_yourarm_config(
 
 Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator blueprint:
 
-```python
+```python skip
 
 yourarm_planner = manipulation_module(
     robots=[_make_yourarm_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
@@ -601,7 +605,7 @@ The blueprint registry in `dimos/robot/all_blueprints.py` is **auto-generated** 
 
 ### Verify adapter registration
 
-```python
+```python skip
 from dimos.hardware.manipulators.registry import adapter_registry
 
 # Check your adapter shows up
@@ -615,7 +619,7 @@ adapter = adapter_registry.create("yourarm", address="192.168.1.100", dof=6)
 
 You can test coordinator logic without hardware by using `unittest.mock`:
 
-```python
+```python skip
 import pytest
 from unittest.mock import MagicMock
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
@@ -642,20 +646,23 @@ def test_write_positions(mock_adapter):
 
 ### Integration test with coordinator
 
-```python
-from dimos.control.blueprints import coordinator_mock
+```python skip
+from dimos.control.blueprints.basic import coordinator_mock
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 # Build and start coordinator with mock hardware
-coordinator = coordinator_mock.build()
+coordinator = ModuleCoordinator.build(coordinator_mock)
 coordinator.start()
 
 # Your adapter is tested through the same coordinator interface
 # Just swap adapter_type="mock" to adapter_type="yourarm" in a blueprint
+
+coordinator.stop()
 ```
 
 ### Test the real adapter standalone
 
-```python
+```python skip
 from dimos.hardware.manipulators.yourarm import YourArmAdapter
 
 adapter = YourArmAdapter(address="192.168.1.100", dof=6)

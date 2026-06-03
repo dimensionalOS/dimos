@@ -4,7 +4,7 @@ The `dimos` CLI manages the full lifecycle of a DimOS robot stack — start, sto
 
 ## Global Options
 
-Every [`GlobalConfig`](/docs/usage/configuration.md) field is available as a CLI flag. Flags override environment variables, `.env`, and blueprint defaults.
+Every [`GlobalConfig`](/usage/configuration) field is available as a CLI flag. Flags override environment variables, `.env`, and blueprint defaults.
 
 ```bash
 dimos [GLOBAL OPTIONS] COMMAND [ARGS]
@@ -16,9 +16,11 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
 | `--simulation` / `--no-simulation` | bool | `False` | Enable MuJoCo simulation |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
-| `--replay-dir` | TEXT | `go2_sf_office` | Replay dataset directory name |
+| `--replay-db` | TEXT | `go2_bigoffice` | Replay memory2 SQLite database name |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
-| `--viewer` | `rerun\|rerun-web\|rerun-connect\|foxglove\|none` | `rerun` | Visualization backend |
+| `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
+| `--rerun-open` | `native\|web\|both\|none` | `native` | How to open the Rerun viewer |
+| `--rerun-web` / `--no-rerun-web` | bool | `False` | Serve the Rerun web viewer |
 | `--n-workers` | INT | `2` | Number of forkserver workers |
 | `--memory-limit` | TEXT | `auto` | Rerun viewer memory limit |
 | `--mcp-port` | INT | `9990` | MCP server port |
@@ -65,8 +67,11 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
 
 | Option | Description |
 |--------|-------------|
+| `--config` `-c` | Path to read JSON config file from (options can be overriden with `-o` |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
+| `--option`, `-o` | Provide an configuration option to the blueprint (e.g. `-o voxelgridmapper.voxel_size=1` |
+| `--help` | Display the available configuration options that can be changed with `-o` or the config file |
 
 ```bash
 # Foreground (Ctrl-C to stop)
@@ -211,12 +216,14 @@ To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tool
 ```python
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.core.coordination.blueprints import autoconnect
 
+# Example wiring (replace # -ed with your stack and skill):
 my_mcp_blueprint = autoconnect(
-    my_robot_stack,
+    # my_robot_stack,
     McpServer.blueprint(),
     McpClient.blueprint(),
-    my_skill_containers,
+    # my_skill_containers,
 )
 ```
 

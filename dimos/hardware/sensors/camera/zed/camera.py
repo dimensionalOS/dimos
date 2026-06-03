@@ -40,7 +40,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.spec import perception
 from dimos.utils.reactive import backpressure
 
@@ -78,14 +77,13 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
     world_frame: str = "world"
 
 
-class ZEDCamera(DepthCameraHardware, Module[ZEDCameraConfig], perception.DepthCamera):
+class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
+    config: ZEDCameraConfig
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
-
-    default_config = ZEDCameraConfig
 
     @property
     def _camera_link(self) -> str:
@@ -181,7 +179,7 @@ class ZEDCamera(DepthCameraHardware, Module[ZEDCameraConfig], perception.DepthCa
             self._enable_tracking()
 
         interval_sec = 1.0 / self.config.camera_info_fps
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(interval_sec).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
                 on_error=lambda e: print(f"CameraInfo error: {e}"),
@@ -194,7 +192,7 @@ class ZEDCamera(DepthCameraHardware, Module[ZEDCameraConfig], perception.DepthCa
 
         if self.config.enable_pointcloud and self.config.enable_depth:
             interval_sec = 1.0 / self.config.pointcloud_fps
-            self._disposables.add(
+            self.register_disposable(
                 backpressure(rx.interval(interval_sec)).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
                     on_error=lambda e: print(f"Pointcloud error: {e}"),
@@ -495,10 +493,7 @@ def main() -> None:
     dimos = ModuleCoordinator()
     dimos.start()
 
-    camera = dimos.deploy(ZEDCamera, enable_pointcloud=True, pointcloud_fps=5.0)  # type: ignore[type-var]
-    foxglove_bridge = FoxgloveBridge()
-    foxglove_bridge.start()
-
+    camera = dimos.deploy(ZEDCamera, enable_pointcloud=True, pointcloud_fps=5.0)
     camera.color_image.transport = LCMTransport("/camera/color", Image)
     camera.depth_image.transport = LCMTransport("/camera/depth", Image)
     camera.pointcloud.transport = LCMTransport("/camera/pointcloud", PointCloud2)
@@ -526,6 +521,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 
 ZEDModule = ZEDCamera

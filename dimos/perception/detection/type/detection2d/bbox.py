@@ -20,15 +20,10 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from typing_extensions import Self
-    from ultralytics.engine.results import Results  # type: ignore[import-not-found]
+    from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs.Image import Image
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    PointsAnnotation,
-    TextAnnotation,
-)
-from dimos_lcm.foxglove_msgs.Point2 import Point2
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
@@ -40,11 +35,9 @@ from dimos_lcm.vision_msgs import (
 from rich.console import Console
 from rich.text import Text
 
-from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.detection.type.detection2d.base import Detection2D
-from dimos.types.timestamped import to_ros_stamp, to_timestamp
+from dimos.types.timestamped import to_timestamp
 from dimos.utils.decorators.decorators import simple_mcache
 
 Bbox = tuple[float, float, float, float]
@@ -98,32 +91,47 @@ class Detection2DBBox(Detection2D):
             "bbox": f"[{x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}]",
         }
 
-    def center_to_3d(
-        self,
-        pixel: tuple[int, int],
-        camera_info: CameraInfo,  # type: ignore[name-defined]
-        assumed_depth: float = 1.0,
-    ) -> PoseStamped:  # type: ignore[name-defined]
-        """Unproject 2D pixel coordinates to 3D position in camera optical frame.
+    def draw_on(self, img: Any, scale: float = 1.0) -> None:
+        """Draw this detection's bbox and label onto a BGR numpy array (in-place)."""
+        import cv2
+        import numpy as np
 
-        Args:
-            camera_info: Camera calibration information
-            assumed_depth: Assumed depth in meters (default 1.0m from camera)
+        x1, y1, x2, y2 = map(int, self.bbox)
 
-        Returns:
-            Vector3 position in camera optical frame coordinates
-        """
-        # Extract camera intrinsics
-        fx, fy = camera_info.K[0], camera_info.K[4]
-        cx, cy = camera_info.K[2], camera_info.K[5]
+        h = hashlib.md5(self.name.encode()).digest()[0]
+        bgr = [
+            int(c)
+            for c in cv2.applyColorMap(np.array([[h]], dtype=np.uint8), cv2.COLORMAP_HSV)[0][0]
+        ]
 
-        # Unproject pixel to normalized camera coordinates
-        x_norm = (pixel[0] - cx) / fx
-        y_norm = (pixel[1] - cy) / fy
+        thickness = max(1, int(2 * scale))
+        cv2.rectangle(img, (x1, y1), (x2, y2), bgr, thickness)
 
-        # Create 3D point at assumed depth in camera optical frame
-        # Camera optical frame: X right, Y down, Z forward
-        return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)  # type: ignore[name-defined]
+        label = self.name
+        if self.confidence < 1.0:
+            label = f"{self.name} {self.confidence:.2f}"
+        font_scale = 0.5 * scale
+        font_thickness = max(1, int(scale))
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
+        cv2.rectangle(img, (x1, y1 - th - 6), (x1 + tw + 4, y1), (0, 0, 0), -1)
+        cv2.rectangle(img, (x1, y1 - th - 6), (x1 + tw + 4, y1), bgr, max(1, int(scale)))
+        cv2.putText(
+            img,
+            label,
+            (x1 + 2, y1 - 4),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (255, 255, 255),
+            font_thickness,
+        )
+
+    def annotated_image(self, scale: float = 1.0) -> Image:
+        """Return the full image with this detection's bbox and label drawn on it."""
+        img = self.image.to_opencv().copy()
+        self.draw_on(img, scale=scale)
+        from dimos.msgs.sensor_msgs.Image import Image
+
+        return Image.from_opencv(img, ts=self.ts)
 
     # return focused image, only on the bbox
     def cropped_image(self, padding: int = 20) -> Image:
@@ -268,85 +276,6 @@ class Detection2DBBox(Detection2D):
             ),
             size_x=width,
             size_y=height,
-        )
-
-    def lcm_encode(self):  # type: ignore[no-untyped-def]
-        return self.to_image_annotations().lcm_encode()
-
-    def to_text_annotation(self) -> list[TextAnnotation]:
-        x1, y1, _x2, y2 = self.bbox
-
-        font_size = self.image.width / 80
-
-        # Build label text - exclude class_id if it's -1 (VLM detection)
-        if self.class_id == -1:
-            label_text = f"{self.name}_{self.track_id}"
-        else:
-            label_text = f"{self.name}_{self.class_id}_{self.track_id}"
-
-        annotations = [
-            TextAnnotation(
-                timestamp=to_ros_stamp(self.ts),
-                position=Point2(x=x1, y=y1),
-                text=label_text,
-                font_size=font_size,
-                text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
-                background_color=Color(r=0, g=0, b=0, a=1),
-            ),
-        ]
-
-        # Only show confidence if it's not 1.0
-        if self.confidence != 1.0:
-            annotations.append(
-                TextAnnotation(
-                    timestamp=to_ros_stamp(self.ts),
-                    position=Point2(x=x1, y=y2 + font_size),
-                    text=f"confidence: {self.confidence:.3f}",
-                    font_size=font_size,
-                    text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
-                    background_color=Color(r=0, g=0, b=0, a=1),
-                )
-            )
-
-        return annotations
-
-    def to_points_annotation(self) -> list[PointsAnnotation]:
-        x1, y1, x2, y2 = self.bbox
-
-        thickness = 1
-
-        # Use consistent color based on object name, brighter for outline
-        outline_color = Color.from_string(self.name, alpha=1.0, brightness=1.25)
-
-        return [
-            PointsAnnotation(
-                timestamp=to_ros_stamp(self.ts),
-                outline_color=outline_color,
-                fill_color=Color.from_string(self.name, alpha=0.2),
-                thickness=thickness,
-                points_length=4,
-                points=[
-                    Point2(x1, y1),
-                    Point2(x1, y2),
-                    Point2(x2, y2),
-                    Point2(x2, y1),
-                ],
-                type=PointsAnnotation.LINE_LOOP,
-            )
-        ]
-
-    # this is almost never called directly since this is a single detection
-    # and ImageAnnotations message normally contains multiple detections annotations
-    # so ImageDetections2D and ImageDetections3D normally implements this for whole image
-    def to_image_annotations(self) -> ImageAnnotations:
-        points = self.to_points_annotation()
-        texts = self.to_text_annotation()
-
-        return ImageAnnotations(
-            texts=texts,
-            texts_length=len(texts),
-            points=points,
-            points_length=len(points),
         )
 
     @classmethod

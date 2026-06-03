@@ -116,6 +116,7 @@ class PathFollower(NativeModule):
         cmd_vel (Out[Twist]): Velocity commands for the vehicle.
     """
 
+    config: PathFollowerConfig
     default_config: type[PathFollowerConfig] = PathFollowerConfig  # type: ignore[assignment]
 
     path: In[NavPath]

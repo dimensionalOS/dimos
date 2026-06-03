@@ -14,11 +14,12 @@
 
 from __future__ import annotations
 
+import math
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from dimos.visualization.rerun.bridge import RerunData, RerunMulti
+    from dimos.visualization.rerun.bridge import RerunData
 
 # Import LCM types
 from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo
@@ -90,6 +91,73 @@ class CameraInfo(Timestamped):
         self.roi_width = 0
         self.roi_do_rectify = False
 
+    @classmethod
+    def from_intrinsics(
+        cls,
+        fx: float,
+        fy: float,
+        cx: float,
+        cy: float,
+        width: int,
+        height: int,
+        frame_id: str = "",
+    ) -> CameraInfo:
+        """Create CameraInfo from pinhole intrinsics (no distortion).
+
+        Args:
+            fx: Focal length x (pixels)
+            fy: Focal length y (pixels)
+            cx: Principal point x (pixels)
+            cy: Principal point y (pixels)
+            width: Image width
+            height: Image height
+            frame_id: Frame ID
+        """
+        return cls(
+            height=height,
+            width=width,
+            distortion_model="plumb_bob",
+            D=[0.0, 0.0, 0.0, 0.0, 0.0],
+            K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
+            P=[fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
+            frame_id=frame_id,
+        )
+
+    @classmethod
+    def from_fov(
+        cls,
+        fov_deg: float,
+        width: int,
+        height: int,
+        axis: str = "vertical",
+        frame_id: str = "",
+    ) -> CameraInfo:
+        """Create CameraInfo from field of view and image dimensions.
+
+        Args:
+            fov_deg: Field of view in degrees along ``axis``
+            width: Image width (pixels)
+            height: Image height (pixels)
+            axis: Which image axis ``fov_deg`` refers to ("vertical" or "horizontal")
+            frame_id: Frame ID
+        """
+        fov_rad = math.radians(fov_deg)
+        if axis == "vertical":
+            f = (height / 2) / math.tan(fov_rad / 2)
+        elif axis == "horizontal":
+            f = (width / 2) / math.tan(fov_rad / 2)
+        else:
+            raise ValueError(f"axis must be 'vertical' or 'horizontal', got {axis!r}")
+        return cls.from_intrinsics(
+            fx=f,
+            fy=f,
+            cx=width / 2.0,
+            cy=height / 2.0,
+            width=width,
+            height=height,
+            frame_id=frame_id,
+        )
+
     def with_ts(self, ts: float) -> CameraInfo:
         """Return a copy of this CameraInfo with the given timestamp.
 
@@ -123,7 +191,7 @@ class CameraInfo(Timestamped):
         Returns:
             CameraInfo instance with loaded calibration data
         """
-        import yaml  # type: ignore[import-untyped]
+        import yaml
 
         with open(yaml_file) as f:
             data = yaml.safe_load(f)
@@ -158,41 +226,41 @@ class CameraInfo(Timestamped):
             frame_id="camera_optical",
         )
 
-    def get_K_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
+    def get_K_matrix(self) -> np.ndarray:
         """Get intrinsic matrix as numpy array."""
         return np.array(self.K, dtype=np.float64).reshape(3, 3)
 
-    def get_P_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
+    def get_P_matrix(self) -> np.ndarray:
         """Get projection matrix as numpy array."""
         return np.array(self.P, dtype=np.float64).reshape(3, 4)
 
-    def get_R_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
+    def get_R_matrix(self) -> np.ndarray:
         """Get rectification matrix as numpy array."""
         return np.array(self.R, dtype=np.float64).reshape(3, 3)
 
-    def get_D_coeffs(self) -> np.ndarray:  # type: ignore[type-arg]
+    def get_D_coeffs(self) -> np.ndarray:
         """Get distortion coefficients as numpy array."""
         return np.array(self.D, dtype=np.float64)
 
-    def set_K_matrix(self, K: np.ndarray):  # type: ignore[no-untyped-def, type-arg]
+    def set_K_matrix(self, K: np.ndarray):  # type: ignore[no-untyped-def]
         """Set intrinsic matrix from numpy array."""
         if K.shape != (3, 3):
             raise ValueError(f"K matrix must be 3x3, got {K.shape}")
         self.K = K.flatten().tolist()
 
-    def set_P_matrix(self, P: np.ndarray):  # type: ignore[no-untyped-def, type-arg]
+    def set_P_matrix(self, P: np.ndarray):  # type: ignore[no-untyped-def]
         """Set projection matrix from numpy array."""
         if P.shape != (3, 4):
             raise ValueError(f"P matrix must be 3x4, got {P.shape}")
         self.P = P.flatten().tolist()
 
-    def set_R_matrix(self, R: np.ndarray):  # type: ignore[no-untyped-def, type-arg]
+    def set_R_matrix(self, R: np.ndarray):  # type: ignore[no-untyped-def]
         """Set rectification matrix from numpy array."""
         if R.shape != (3, 3):
             raise ValueError(f"R matrix must be 3x3, got {R.shape}")
         self.R = R.flatten().tolist()
 
-    def set_D_coeffs(self, D: np.ndarray) -> None:  # type: ignore[type-arg]
+    def set_D_coeffs(self, D: np.ndarray) -> None:
         """Set distortion coefficients from numpy array."""
         self.D = D.flatten().tolist()
 
@@ -333,7 +401,7 @@ class CameraInfo(Timestamped):
         fx, fy = self.K[0], self.K[4]
         cx, cy = self.K[2], self.K[5]
 
-        pinhole = rr.Pinhole(
+        pinhole_kwargs: dict[str, Any] = dict(
             focal_length=[fx, fy],
             principal_point=[cx, cy],
             width=self.width,
@@ -344,39 +412,15 @@ class CameraInfo(Timestamped):
         # If no image topic is specified, We don't know which Image this CameraInfo refers to
         # return just the pinhole
         if not image_topic:
-            return pinhole
+            return rr.Pinhole(**pinhole_kwargs)
 
-        ret: RerunMulti = []
+        if optical_frame:
+            # Re-parent the camera entity to the optical tf frame. Logging a
+            # separate Transform3D for the same entity would create a second
+            # parent and Rerun rejects that.
+            pinhole_kwargs["parent_frame"] = f"tf#/{optical_frame}"
 
-        # Add pinhole under world/image_topic (we know which Image this CameraInfo refers to)
-        # Note: parent_frame is supposed to work according to:
-        # https://rerun.io/docs/reference/types/archetypes/pinhole
-        # But it doesn't, so we add the transform separately below
-        ret.append(
-            (
-                image_topic,
-                rr.Pinhole(
-                    focal_length=[fx, fy],
-                    principal_point=[cx, cy],
-                    width=self.width,
-                    height=self.height,
-                    image_plane_distance=image_plane_distance,
-                ),
-            )
-        )
-
-        if not optical_frame:
-            return ret
-
-        # Add 3d transform from optical frame to world/image_topic (We know where the camera is)
-        ret.append(
-            (
-                image_topic,
-                rr.Transform3D(parent_frame=f"tf#/{optical_frame}"),
-            )
-        )
-
-        return ret
+        return [(image_topic, rr.Pinhole(**pinhole_kwargs))]
 
 
 class CalibrationProvider:

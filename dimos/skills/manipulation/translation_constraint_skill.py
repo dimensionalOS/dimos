@@ -66,22 +66,22 @@ class TranslationConstraintSkill(AbstractManipulationSkill):
         # Create reference point vector if provided (convert 2D point to 3D vector with z=0)
         reference_point = None
         if self.reference_point:
-            reference_point = Vector(self.reference_point[0], self.reference_point[1], 0.0)  # type: ignore[arg-type]
+            reference_point = Vector(self.reference_point[0], self.reference_point[1], 0.0)
 
         # Create bounds minimum vector if provided
         bounds_min = None
         if self.bounds_min:
-            bounds_min = Vector(self.bounds_min[0], self.bounds_min[1], 0.0)  # type: ignore[arg-type]
+            bounds_min = Vector(self.bounds_min[0], self.bounds_min[1], 0.0)
 
         # Create bounds maximum vector if provided
         bounds_max = None
         if self.bounds_max:
-            bounds_max = Vector(self.bounds_max[0], self.bounds_max[1], 0.0)  # type: ignore[arg-type]
+            bounds_max = Vector(self.bounds_max[0], self.bounds_max[1], 0.0)
 
         # Create relative target vector if provided
         target_point = None
         if self.target_point:
-            target_point = Vector(self.target_point[0], self.target_point[1], 0.0)  # type: ignore[arg-type]
+            target_point = Vector(self.target_point[0], self.target_point[1], 0.0)
 
         constraint = TranslationConstraint(
             translation_axis=self.translation_axis,

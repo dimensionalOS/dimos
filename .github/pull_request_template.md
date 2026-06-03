@@ -11,19 +11,10 @@ Closes DIM-XXX
 <!-- Key design decisions / tradeoffs -->
 <!-- Keep it high-signal; deep planning belongs in the issue. -->
 
-## Breaking Changes
-
-<!-- Write "None" if not applicable -->
-
-<!-- If applicable:
-- what breaks
-- who is affected
-- migration steps
--->
-
 ## How to Test
 
-<!-- MUST be reproducible. If this section is weak, reviewers can't approve confidently. -->
+<!-- oneliner required to run the actual feature -->
+<!-- blueprint for robot changes, benchmarks for transport changes etc -->
 
 ## Contributor License Agreement
 

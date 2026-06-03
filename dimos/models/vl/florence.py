@@ -17,7 +17,7 @@ from functools import cached_property
 
 from PIL import Image as PILImage
 import torch
-from transformers import AutoModelForCausalLM, AutoProcessor  # type: ignore[import-untyped]
+from transformers import AutoModelForCausalLM, AutoProcessor
 
 from dimos.models.base import HuggingFaceModel
 from dimos.models.vl.base import Captioner

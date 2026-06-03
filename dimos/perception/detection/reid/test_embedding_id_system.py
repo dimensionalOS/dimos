@@ -46,7 +46,7 @@ def test_image():
     return Image.from_file(get_data("cafe.jpg")).to_rgb()
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_update_embedding_single(track_associator, mobileclip_model, test_image) -> None:
     """Test updating embedding for a single track."""
@@ -65,7 +65,7 @@ def test_update_embedding_single(track_associator, mobileclip_model, test_image)
     assert abs(norm - 1.0) < 0.01, "Embedding should be normalized"
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_update_embedding_multiple(track_associator, mobileclip_model, test_image) -> None:
     """Test storing multiple embeddings per track."""
@@ -93,7 +93,7 @@ def test_update_embedding_multiple(track_associator, mobileclip_model, test_imag
     assert similarity > 0.99, "Same image should produce very similar embeddings"
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_negative_constraints(track_associator) -> None:
     """Test negative constraint recording."""
@@ -110,7 +110,7 @@ def test_negative_constraints(track_associator) -> None:
     assert 2 in track_associator.negative_pairs[3]
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_associate_new_track(track_associator, mobileclip_model, test_image) -> None:
     """Test associating a new track creates new long_term_id."""
@@ -125,7 +125,7 @@ def test_associate_new_track(track_associator, mobileclip_model, test_image) -> 
     assert track_associator.long_term_counter == 1
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_associate_similar_tracks(track_associator, mobileclip_model, test_image) -> None:
     """Test associating similar tracks to same long_term_id."""
@@ -146,7 +146,7 @@ def test_associate_similar_tracks(track_associator, mobileclip_model, test_image
     assert track_associator.long_term_counter == 1, "Only one long_term_id should be created"
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_associate_with_negative_constraint(track_associator, mobileclip_model, test_image) -> None:
     """Test that negative constraints prevent association."""
@@ -172,7 +172,7 @@ def test_associate_with_negative_constraint(track_associator, mobileclip_model, 
     assert track_associator.long_term_counter == 2, "Two long_term_ids should be created"
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_associate_different_objects(track_associator, mobileclip_model, test_image) -> None:
     """Test that dissimilar embeddings get different long_term_ids."""
@@ -193,7 +193,7 @@ def test_associate_different_objects(track_associator, mobileclip_model, test_im
     assert track_associator.long_term_counter == 2
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_associate_returns_cached(track_associator, mobileclip_model, test_image) -> None:
     """Test that repeated calls return same long_term_id."""
@@ -210,7 +210,7 @@ def test_associate_returns_cached(track_associator, mobileclip_model, test_image
     assert track_associator.long_term_counter == 1, "Should not create new ID"
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_associate_no_embedding(track_associator) -> None:
     """Test that associate creates new ID for track without embedding."""
@@ -220,7 +220,7 @@ def test_associate_no_embedding(track_associator) -> None:
     assert track_associator.long_term_counter == 1
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_embeddings_stored_as_numpy(track_associator, mobileclip_model, test_image) -> None:
     """Test that embeddings are stored as numpy arrays for efficient CPU comparisons."""
@@ -242,7 +242,7 @@ def test_embeddings_stored_as_numpy(track_associator, mobileclip_model, test_ima
         assert isinstance(emb, np.ndarray)
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_similarity_threshold_configurable(mobileclip_model) -> None:
     """Test that similarity threshold is configurable."""
@@ -253,7 +253,7 @@ def test_similarity_threshold_configurable(mobileclip_model) -> None:
     assert associator_loose.similarity_threshold == 0.50
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_multi_track_scenario(track_associator, mobileclip_model, test_image) -> None:
     """Test realistic scenario with multiple tracks across frames."""

@@ -46,7 +46,7 @@ class AgentConfig(ModuleConfig):
     model_fixture: str | None = None
 
 
-class Agent(Module[AgentConfig]):
+class Agent(Module):
     default_config = AgentConfig
 
     # on_system_modules imports langchain, creates the agent graph, and calls

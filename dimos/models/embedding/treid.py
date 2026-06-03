@@ -39,7 +39,6 @@ class TorchReIDModelConfig(EmbeddingModelConfig):
 class TorchReIDModel(EmbeddingModel, LocalModel):
     """TorchReID embedding model for person re-identification."""
 
-    default_config = TorchReIDModelConfig
     config: TorchReIDModelConfig
 
     @cached_property

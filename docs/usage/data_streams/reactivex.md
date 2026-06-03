@@ -19,8 +19,7 @@ source.subscribe(lambda x: received.append(x))
 print("received:", received)
 ```
 
-<!--Result:-->
-```
+```results
 received: [0, 1, 2, 3, 4]
 ```
 
@@ -43,8 +42,7 @@ observable.subscribe(lambda x: result.append(x))
 print("transformed:", result)
 ```
 
-<!--Result:-->
-```
+```results
 transformed: [6, 8]
 ```
 
@@ -58,12 +56,11 @@ rx.of(1, 2, 3).pipe(
 ).subscribe(print)
 ```
 
-<!--Result:-->
-```
+```results
 item_1
 item_2
 item_3
-<reactivex.disposable.disposable.Disposable object at 0x7fcedec40b90>
+<reactivex.disposable.disposable.Disposable object at 0x7f5fa44d0d10>
 ```
 
 ### Filter: `filter`
@@ -74,11 +71,10 @@ rx.of(1, 2, 3, 4, 5).pipe(
 ).subscribe(print)
 ```
 
-<!--Result:-->
-```
+```results
 2
 4
-<reactivex.disposable.disposable.Disposable object at 0x7fcedec40c50>
+<reactivex.disposable.disposable.Disposable object at 0x7f5fa44d0c20>
 ```
 
 ### Limit emissions: `take`
@@ -89,12 +85,11 @@ rx.of(1, 2, 3, 4, 5).pipe(
 ).subscribe(print)
 ```
 
-<!--Result:-->
-```
+```results
 1
 2
 3
-<reactivex.disposable.disposable.Disposable object at 0x7fcedec40a40>
+<reactivex.disposable.disposable.Disposable object at 0x7f5fa44d0e60>
 ```
 
 ### Flatten nested observables: `flat_map`
@@ -106,15 +101,14 @@ rx.of(1, 2).pipe(
 ).subscribe(print)
 ```
 
-<!--Result:-->
-```
+```results
 1
 10
 100
 2
 20
 200
-<reactivex.disposable.disposable.Disposable object at 0x7fcedec41a60>
+<reactivex.disposable.disposable.Disposable object at 0x7f5fa44d1b80>
 ```
 
 ## Rate Limiting
@@ -133,8 +127,7 @@ results = rx.interval(0.05).pipe(
 print("sample() got:", results)
 ```
 
-<!--Result:-->
-```
+```results
 sample() got: [2, 6, 9]
 ```
 
@@ -151,8 +144,7 @@ results = rx.interval(0.05).pipe(
 print("throttle_first() got:", results)
 ```
 
-<!--Result:-->
-```
+```results
 throttle_first() got: [0, 3, 6, 9]
 ```
 
@@ -169,12 +161,10 @@ print("sample: latest value at each tick")
 print("throttle_first: first value, then block")
 ```
 
-<!--Result:-->
-```
+```results
 sample: latest value at each tick
 throttle_first: first value, then block
 ```
-
 
 ## What is an Observable?
 
@@ -228,9 +218,7 @@ Handler: box "callback" rad 5px fit wid 170% ht 170%
 
 </details>
 
-<!--Result:-->
 ![output](assets/observable_flow.svg)
-
 
 **Key property: Observables are lazy.** Nothing happens until you call `.subscribe()`. This means you can build up complex pipelines without any work being done, then start the flow when ready.
 
@@ -244,13 +232,12 @@ rx.of(1, 2, 3).subscribe(
 )
 ```
 
-<!--Result:-->
-```
+```results
 value: 1
 value: 2
 value: 3
 done
-<reactivex.disposable.disposable.Disposable object at 0x7fcedec42d20>
+<reactivex.disposable.disposable.Disposable object at 0x7f5fa44d33b0>
 ```
 
 ## Disposables: Cancelling Subscriptions
@@ -268,8 +255,7 @@ subscription.dispose()  # Stop receiving values, clean up resources
 print("disposed")
 ```
 
-<!--Result:-->
-```
+```results
 disposed
 ```
 
@@ -285,12 +271,15 @@ disposed
 
 ```python session=rx
 import time
+
+import reactivex as rx
 from dimos.core.module import Module
 
 class MyModule(Module):
-    def start(self):
+    def start(self) -> None:
+        super().start()
         source = rx.interval(0.05)
-        self._disposables.add(source.subscribe(lambda x: print(f"got {x}")))
+        self.register_disposable(source.subscribe(lambda x: print(f"got {x}")))
 
 module = MyModule()
 module.start()
@@ -300,13 +289,11 @@ time.sleep(0.25)
 module.stop()
 ```
 
-<!--Result:-->
-```
+```results
 got 0
 got 1
 got 2
 got 3
-got 4
 ```
 
 ## Creating Observables
@@ -356,8 +343,7 @@ sub.dispose()
 print("callbacks after dispose:", len(sensor._callbacks))
 ```
 
-<!--Result:-->
-```
+```results
 received: ['reading_1', 'reading_2']
 callbacks after dispose: 0
 ```
@@ -394,8 +380,7 @@ sub.dispose()
 print("callbacks after dispose:", len(pubsub._callbacks))
 ```
 
-<!--Result:-->
-```
+```results
 received: ['msg_1', 'msg_2']
 callbacks after dispose: 0
 ```
@@ -421,8 +406,7 @@ obs.subscribe(
 print("results:", results)
 ```
 
-<!--Result:-->
-```
+```results
 cleaned up
 results: ['first', 'second', 'DONE']
 ```
@@ -447,8 +431,7 @@ time.sleep(0.2)
 print(f"received {len(received)} items before dispose")
 ```
 
-<!--Result:-->
-```
+```results
 received 2 items before dispose
 ```
 
@@ -470,8 +453,7 @@ disposables.dispose()
 print("after dispose:", disposables.is_disposed)
 ```
 
-<!--Result:-->
-```
+```results
 subscriptions: 2
 after dispose: True
 ```

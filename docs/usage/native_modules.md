@@ -29,16 +29,14 @@ class MyLidarConfig(NativeModuleConfig):
     host_ip: str = "192.168.1.5"
     frequency: float = 10.0
 
-class MyLidar(NativeModule[MyLidarConfig]):
-    default_config = MyLidarConfig
+class MyLidar(NativeModule):
+    config: MyLidarConfig
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
-
 
 ```
 
 That's it. `MyLidar` is a full DimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
-
 
 ## How it works
 
@@ -52,7 +50,7 @@ When `start()` is called, NativeModule:
 
 For the example above, the launched command would look like:
 
-```sh
+```sh skip
 ./build/my_lidar \
     --pointcloud '/pointcloud#sensor_msgs.PointCloud2' \
     --imu '/imu#sensor_msgs.Imu' \
@@ -67,8 +65,7 @@ mylidar.imu.transport = LCMTransport("/imu", Imu)
 mylidar.start()
 ```
 
-<!--Result:-->
-```
+```results
 2026-02-14T11:22:12.123963Z [info     ] Starting native process   [dimos/core/native_module.py] cmd='./build/my_lidar --pointcloud /lidar#sensor_msgs.PointCloud2 --imu /imu#sensor_msgs.Imu --host_ip 192.168.1.5 --frequency 10.0' cwd=/home/lesh/coding/dimos/docs/usage/build
 ```
 
@@ -131,7 +128,7 @@ class FastLio2Config(NativeModuleConfig):
 Native modules work with `autoconnect` exactly like Python modules:
 
 ```python skip
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 
 class PointCloudConsumer(Module):
     pointcloud: In[PointCloud2]
@@ -239,8 +236,8 @@ class Mid360Config(NativeModuleConfig):
     frame_id: str = "lidar_link"
     # ... SDK port configuration
 
-class Mid360(NativeModule[Mid360Config], perception.Lidar, perception.IMU):
-    default_config = Mid360Config
+class Mid360(NativeModule, perception.Lidar, perception.IMU):
+    config: Mid360Config
     lidar: Out[PointCloud2]
     imu: Out[Imu]
 ```

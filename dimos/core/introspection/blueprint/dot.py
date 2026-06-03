@@ -48,7 +48,6 @@ DEFAULT_IGNORED_CONNECTIONS = {("odom", "PoseStamped")}
 
 DEFAULT_IGNORED_MODULES = {
     "WebsocketVisModule",
-    # "FoxgloveBridge",
 }
 
 # Modules only ignored when show_disconnected is False (compact view)

@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING, Any
 from dimos_lcm.sensor_msgs.PointCloud2 import (
     PointCloud2 as LCMPointCloud2,
 )
-from dimos_lcm.sensor_msgs.PointField import PointField  # type: ignore[import-untyped]
-from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs.PointField import PointField
+from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
@@ -74,20 +74,6 @@ def register_colormap_annotation(name: str = "turbo") -> None:
     )
 
 
-def _extract_float32_field(
-    raw_data: bytes,
-    num_points: int,
-    point_step: int,
-    offset: int,
-) -> np.ndarray:
-    """Extract one float32 PointCloud2 field from interleaved point bytes."""
-    if offset < 0 or offset + 4 > point_step:
-        raise ValueError(f"Invalid float32 field offset {offset} for point_step {point_step}")
-    raw = np.frombuffer(raw_data, dtype=np.uint8, count=num_points * point_step)
-    field_bytes = raw.reshape(num_points, point_step)[:, offset : offset + 4]
-    return np.ascontiguousarray(field_bytes).view("<f4").reshape(num_points)
-
-
 # TODO: encode/decode need to be updated to work with full spectrum of pointcloud2 fields
 class PointCloud2(Timestamped):
     msg_name = "sensor_msgs.PointCloud2"
@@ -106,8 +92,10 @@ class PointCloud2(Timestamped):
             self._pcd_tensor: o3d.t.geometry.PointCloud = o3d.t.geometry.PointCloud()
         elif isinstance(pointcloud, o3d.t.geometry.PointCloud):
             self._pcd_tensor = pointcloud
+        elif len(pointcloud.points) == 0:
+            # from_legacy() warns on empty legacy clouds; build an empty tensor instead
+            self._pcd_tensor = o3d.t.geometry.PointCloud()
         else:
-            # Convert legacy to tensor
             self._pcd_tensor = o3d.t.geometry.PointCloud.from_legacy(pointcloud)
         self._pcd_legacy_cache: o3d.geometry.PointCloud | None = None
 
@@ -138,20 +126,23 @@ class PointCloud2(Timestamped):
             state["_pcd_numpy"] = self._pcd_tensor.point["positions"].numpy()
         else:
             state["_pcd_numpy"] = np.zeros((0, 3), dtype=np.float32)
-        if "intensity" in self._pcd_tensor.point:
-            state["_pcd_intensity_numpy"] = self._pcd_tensor.point["intensity"].numpy()
+        for intensity_key in ("intensities", "intensity"):
+            if intensity_key in self._pcd_tensor.point:
+                state["_pcd_intensities_numpy"] = self._pcd_tensor.point[intensity_key].numpy()
+                break
         # Remove non-picklable objects
         del state["_pcd_tensor"]
         state["_pcd_legacy_cache"] = None
-        # Remove cached_property entries that hold unpicklable Open3D types
-        state.pop("oriented_bounding_box", None)
-        state.pop("axis_aligned_bounding_box", None)
+        # Remove all cached_property entries
+        for key in list(state):
+            if isinstance(getattr(type(self), key, None), functools.cached_property):
+                del state[key]
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:
         """Restore from pickled state."""
         points_obj = state.pop("_pcd_numpy", None)
-        intensity_obj = state.pop("_pcd_intensity_numpy", None)
+        intensities_obj = state.pop("_pcd_intensities_numpy", state.pop("_pcd_intensity_numpy", None))
         points: np.ndarray[tuple[int, int], np.dtype[np.float32]] = (
             points_obj if isinstance(points_obj, np.ndarray) else np.zeros((0, 3), dtype=np.float32)
         )
@@ -160,11 +151,11 @@ class PointCloud2(Timestamped):
         self._pcd_tensor = o3d.t.geometry.PointCloud()
         if len(points) > 0:
             self._pcd_tensor.point["positions"] = o3c.Tensor(points, dtype=o3c.float32)
-            if isinstance(intensity_obj, np.ndarray):
-                intensity = intensity_obj.astype(np.float32, copy=False).reshape(-1)
-                if len(intensity) == len(points):
-                    self._pcd_tensor.point["intensity"] = o3c.Tensor(
-                        intensity.reshape(-1, 1),
+            if isinstance(intensities_obj, np.ndarray):
+                intensities = intensities_obj.astype(np.float32, copy=False).reshape(-1)
+                if len(intensities) == len(points):
+                    self._pcd_tensor.point["intensities"] = o3c.Tensor(
+                        intensities.reshape(-1, 1),
                         dtype=o3c.float32,
                     )
 
@@ -180,6 +171,8 @@ class PointCloud2(Timestamped):
     def pointcloud(self, value: o3d.geometry.PointCloud | o3d.t.geometry.PointCloud) -> None:
         if isinstance(value, o3d.t.geometry.PointCloud):
             self._pcd_tensor = value
+        elif len(value.points) == 0:
+            self._pcd_tensor = o3d.t.geometry.PointCloud()
         else:
             self._pcd_tensor = o3d.t.geometry.PointCloud.from_legacy(value)
         self._pcd_legacy_cache = None
@@ -193,10 +186,11 @@ class PointCloud2(Timestamped):
     @classmethod
     def from_numpy(
         cls,
-        points: np.ndarray,  # type: ignore[type-arg]
+        points: np.ndarray,
         frame_id: str = "world",
         timestamp: float | None = None,
-        intensity: np.ndarray | None = None,  # type: ignore[type-arg]
+        intensities: np.ndarray | None = None,
+        intensity: np.ndarray | None = None,
     ) -> PointCloud2:
         """Create PointCloud2 from numpy array of shape (N, 3).
 
@@ -204,21 +198,28 @@ class PointCloud2(Timestamped):
             points: Nx3 numpy array of 3D points
             frame_id: Frame ID for the point cloud
             timestamp: Timestamp for the point cloud (defaults to current time)
-            intensity: Optional N-vector of float32 point intensities.
+            intensities: Optional Nx1 or (N,) float array of per-point intensity values
+            intensity: Backwards-compatible alias for intensities.
 
         Returns:
             PointCloud2 instance
         """
+        if intensities is not None and intensity is not None:
+            raise ValueError("Pass only one of intensities or intensity")
+        if intensities is None:
+            intensities = intensity
         points_arr = np.asarray(points, dtype=np.float32).reshape((-1, 3))
         pcd_t = o3d.t.geometry.PointCloud()
         pcd_t.point["positions"] = o3c.Tensor(points_arr, dtype=o3c.float32)
-        if intensity is not None:
-            intensity_arr = np.asarray(intensity, dtype=np.float32).reshape(-1)
-            if len(intensity_arr) != len(points_arr):
+        if intensities is not None:
+            arr = np.asarray(intensities, dtype=np.float32)
+            if arr.ndim == 1:
+                arr = arr.reshape(-1, 1)
+            if arr.shape[0] != points_arr.shape[0]:
                 raise ValueError(
-                    f"intensity length {len(intensity_arr)} does not match point count {len(points_arr)}"
+                    f"intensity length {arr.shape[0]} does not match point count {points_arr.shape[0]}"
                 )
-            pcd_t.point["intensity"] = o3c.Tensor(intensity_arr.reshape(-1, 1), dtype=o3c.float32)
+            pcd_t.point["intensities"] = o3c.Tensor(arr, dtype=o3c.float32)
         return cls(pointcloud=pcd_t, ts=timestamp, frame_id=frame_id)
 
     @classmethod
@@ -395,7 +396,7 @@ class PointCloud2(Timestamped):
         new_pcd = o3d.geometry.PointCloud()
         new_pcd.points = o3d.utility.Vector3dVector(transformed_xyz)
 
-        # Copy colors if available
+        # Colors are frame-independent, carry them through.
         if self.pointcloud.has_colors():
             new_pcd.colors = self.pointcloud.colors
 
@@ -436,13 +437,18 @@ class PointCloud2(Timestamped):
             return arr.astype(np.float32) if arr.dtype != np.float32 else arr  # type: ignore[no-any-return]
         return np.zeros((0, 3), dtype=np.float32)
 
-    def intensity_f32(self) -> np.ndarray | None:
-        """Get point intensities as float32 if the cloud carries an intensity field."""
+    def intensities_f32(self) -> np.ndarray | None:
+        """Get per-point intensity values as a flat float32 array, or None if absent."""
         self._ensure_tensor_initialized()
-        if "intensity" not in self._pcd_tensor.point:
-            return None
-        arr = self._pcd_tensor.point["intensity"].numpy().reshape(-1)
-        return arr.astype(np.float32) if arr.dtype != np.float32 else arr  # type: ignore[no-any-return]
+        for intensity_key in ("intensities", "intensity"):
+            if intensity_key in self._pcd_tensor.point:
+                arr = self._pcd_tensor.point[intensity_key].numpy().flatten()
+                return arr.astype(np.float32) if arr.dtype != np.float32 else arr  # type: ignore[no-any-return]
+        return None
+
+    def intensity_f32(self) -> np.ndarray | None:
+        """Backwards-compatible alias for intensities_f32."""
+        return self.intensities_f32()
 
     @functools.cached_property
     def axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
@@ -500,8 +506,6 @@ class PointCloud2(Timestamped):
         # Check if pointcloud has colors
         self._ensure_tensor_initialized()
         has_colors = "colors" in self._pcd_tensor.point
-        intensity = self.intensity_f32()
-        has_intensity = intensity is not None and len(intensity) == len(points)
 
         if len(points) == 0:
             msg.height = 0
@@ -546,15 +550,11 @@ class PointCloud2(Timestamped):
             msg.fields_length = 4
             msg.point_step = 16  # x, y, z, intensity
 
-            intensity_values = (
-                intensity if has_intensity else np.zeros(len(points), dtype=np.float32)
-            )
-            point_data = np.column_stack(
-                [
-                    points,
-                    intensity_values,
-                ]
-            ).astype(np.float32)
+            intensities = self.intensities_f32()
+            if intensities is None or len(intensities) != len(points):
+                intensities = np.zeros(len(points), dtype=np.float32)
+
+            point_data = np.column_stack([points, intensities]).astype(np.float32)
 
         msg.row_step = msg.point_step * msg.width
         data_bytes = point_data.tobytes()
@@ -629,20 +629,38 @@ class PointCloud2(Timestamped):
         pcd_t = o3d.t.geometry.PointCloud()
         pcd_t.point["positions"] = o3c.Tensor(points, dtype=o3c.float32)
 
+        # Extract intensity if present
+        if intensity_offset is not None and rgb_offset is None:
+            dt_i = np.dtype(
+                [
+                    ("_pre", f"V{intensity_offset}"),
+                    ("intensity", "<f4"),
+                    ("_post", f"V{point_step - intensity_offset - 4}"),
+                ]
+            )
+            structured_i = np.frombuffer(raw_data, dtype=dt_i, count=num_points)
+            intensities = structured_i["intensity"].astype(np.float32)
+            if np.any(intensities != 0):
+                pcd_t.point["intensities"] = o3c.Tensor(
+                    intensities.reshape(-1, 1), dtype=o3c.float32
+                )
+
         # Extract RGB colors if present
         if rgb_offset is not None:
-            rgb_packed = _extract_float32_field(raw_data, num_points, point_step, rgb_offset).view(
-                np.uint32
+            dt = np.dtype(
+                [
+                    ("_pre", f"V{rgb_offset}"),
+                    ("rgb", "<f4"),
+                    ("_post", f"V{point_step - rgb_offset - 4}"),
+                ]
             )
+            structured = np.frombuffer(raw_data, dtype=dt, count=num_points)
+            rgb_packed = structured["rgb"].view(np.uint32)
             r = ((rgb_packed >> 16) & 0xFF).astype(np.float32) / 255.0
             g = ((rgb_packed >> 8) & 0xFF).astype(np.float32) / 255.0
             b = (rgb_packed & 0xFF).astype(np.float32) / 255.0
             colors = np.column_stack([r, g, b])
             pcd_t.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
-
-        if intensity_offset is not None:
-            intensity = _extract_float32_field(raw_data, num_points, point_step, intensity_offset)
-            pcd_t.point["intensity"] = o3c.Tensor(intensity.reshape(-1, 1), dtype=o3c.float32)
 
         return cls(
             pointcloud=pcd_t,
@@ -696,9 +714,9 @@ class PointCloud2(Timestamped):
         self,
         voxel_size: float = 0.05,
         colors: list[int] | None = None,
-        mode: str = "points",
-        size: float | None = None,
+        mode: str = "spheres",
         fill_mode: str = "solid",
+        bottom_cutoff: float | None = None,
         **kwargs: object,
     ) -> Archetype:
         """Convert to Rerun archetype for visualization.
@@ -709,7 +727,6 @@ class PointCloud2(Timestamped):
                 If None, uses height-based turbo colormap via class_ids
                 (requires register_colormap_annotation() called once).
             mode: "points" for raw points, "boxes" for cubes (default), or "spheres" for sized spheres
-            size: Box size for mode="boxes" (e.g., voxel_size). Defaults to radii*2.
             fill_mode: Fill mode for boxes - "solid", "majorwireframe", or "densewireframe"
             **kwargs: Additional args (ignored for compatibility)
 
@@ -721,6 +738,11 @@ class PointCloud2(Timestamped):
         points = self.points_f32()
         if len(points) == 0:
             return rr.Points3D([]) if mode != "boxes" else rr.Boxes3D(centers=[])
+
+        if bottom_cutoff is not None:
+            points = points[points[:, 2] >= bottom_cutoff]
+            if len(points) == 0:
+                return rr.Points3D([]) if mode != "boxes" else rr.Boxes3D(centers=[])
 
         # Use class_ids for height-based colormap (viewer resolves colors via AnnotationContext)
         # Fall back to explicit colors when provided
@@ -734,13 +756,10 @@ class PointCloud2(Timestamped):
 
         if mode == "points":
             return rr.Points3D(
-                positions=points,
-                colors=point_colors,
-                class_ids=class_ids,
+                positions=points, colors=point_colors, class_ids=class_ids, radii=voxel_size / 2
             )
         elif mode == "boxes":
-            box_size = size if size is not None else voxel_size
-            half = box_size / 2
+            half = voxel_size / 2
             return rr.Boxes3D(
                 centers=points,
                 half_sizes=[half, half, half],
@@ -753,6 +772,7 @@ class PointCloud2(Timestamped):
                 positions=points,
                 radii=voxel_size / 2,
                 colors=point_colors,
+                class_ids=class_ids,
             )
 
     def filter_by_height(

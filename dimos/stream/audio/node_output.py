@@ -43,7 +43,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         sample_rate: int = 16000,
         channels: int = 1,
         block_size: int = 1024,
-        dtype: np.dtype = np.float32,  # type: ignore[assignment, type-arg]
+        dtype: np.dtype = np.float32,  # type: ignore[assignment]
     ) -> None:
         """
         Initialize SounddeviceAudioOutput.
@@ -79,7 +79,9 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         """
         self.audio_observable = audio_observable  # type: ignore[assignment]
 
-        # Create and start the output stream
+        # Try to create and start the output stream. If no audio device is
+        # available (e.g. in CI / headless), log and continue — audio events
+        # will still be drained from the observable and silently dropped.
         try:
             self._stream = sd.OutputStream(
                 device=self.device_index,
@@ -95,10 +97,11 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
                 f"Started audio output: {self.sample_rate}Hz, "
                 f"{self.channels} channels, {self.block_size} samples per frame"
             )
-
         except Exception as e:
-            logger.error(f"Error starting audio output stream: {e}")
-            raise e
+            self._stream = None
+            logger.warning(
+                f"No audio output device available ({e}); audio events will be consumed and dropped"
+            )
 
         # Subscribe to the observable
         self._subscription = audio_observable.subscribe(  # type: ignore[assignment]

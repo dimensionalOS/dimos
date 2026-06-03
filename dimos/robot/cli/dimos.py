@@ -14,23 +14,37 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from contextlib import suppress
 from datetime import datetime, timezone
 import inspect
 import json
 import os
+from pathlib import Path
 import sys
 import time
-from typing import Any, get_args, get_origin
+import types
+from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
 
 import click
 from dotenv import load_dotenv
+from pydantic import BaseModel
+from pydantic_core import PydanticUndefined
 import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
+from dimos.constants import CONFIG_DIR, LOG_DIR
+from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
+from dimos.utils.cli.map import main as _map_main
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.constants import RerunOpenOption
+
+if TYPE_CHECKING:
+    from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 
 logger = setup_logger()
 
@@ -40,6 +54,26 @@ main = typer.Typer(
 )
 
 load_dotenv()
+
+SIMULATORS = ("mujoco", "dimsim")
+
+
+def _normalize_simulation_argv(argv: list[str]) -> list[str]:
+    """Keep `--simulation` backwards compatible.
+
+    Without an argument it should be `mujoco`, but can be overridden.
+    """
+    out: list[str] = []
+    for arg, nxt in zip(argv, [*argv[1:], None], strict=False):
+        out.append(arg)
+        if arg == "--simulation" and nxt not in SIMULATORS:
+            out.append(SIMULATORS[0])
+    return out
+
+
+def cli_main() -> None:
+    sys.argv = _normalize_simulation_argv(sys.argv)
+    main()
 
 
 def create_dynamic_callback():  # type: ignore[no-untyped-def]
@@ -106,6 +140,76 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
 
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
+main.add_typer(go2tool_app, name="go2tool")
+
+
+def arg_help(
+    config: type[BaseModel],
+    blueprint: Blueprint,
+    indent: str = "    ",
+    module: str = "",
+    _atom: BlueprintAtom | None = None,
+) -> str:
+    output = ""
+    for k, info in config.model_fields.items():
+        if k == "g":
+            continue
+        t = info.annotation
+        if isinstance(t, types.GenericAlias):
+            # Can't be specified on CLI
+            continue
+
+        # TODO(PY314): if isinstance(t, Union):
+        if get_origin(t) in {Union, types.UnionType}:
+            with suppress(StopIteration):
+                t = next(u for u in get_args(t) if issubclass(u, BaseModel))
+
+        if inspect.isclass(t) and issubclass(t, BaseModel):
+            output += f"{indent}{module}{k}:\n"
+            # Find blueprint atom
+            bp = next(bp for bp in blueprint.blueprints if bp.module.name == k)
+            output += arg_help(
+                t, blueprint, indent=indent + "  ", module=module + k + ".", _atom=bp
+            )
+        else:
+            assert _atom is not None
+            # Use __name__ to avoid "<class 'int'>" style output on basic types.
+            display_type = t.__name__ if isinstance(t, type) else t
+            required = "[Required] " if info.is_required() and k not in _atom.kwargs else ""
+            d = _atom.kwargs.get(k, info.default)
+            default = f" (default: {d})" if d is not PydanticUndefined else ""
+            output += f"{indent}* {required}{module}{k}: {display_type}{default}\n"
+    return output
+
+
+def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -> dict[str, Any]:
+    try:
+        kwargs = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        kwargs = {}
+
+    for k, v in os.environ.items():
+        parts = k.lower().split("__")
+        if parts[0] not in config.model_fields:
+            continue
+        d = kwargs
+        for p in parts[:-1]:
+            d = d.setdefault(p, {})
+        d[parts[-1]] = v
+
+    for arg in args:
+        k, _, v = arg.partition("=")
+        parts = k.split(".")
+        d = kwargs
+        for p in parts[:-1]:
+            d = d.setdefault(p, {})
+        d[parts[-1]] = v
+
+    # We don't need this config, but this atleast validates the user input first.
+    # This will help catch misspellings and similar mistakes.
+    config(**kwargs)
+
+    return kwargs  # type: ignore[no-any-return]
 
 
 @main.command()
@@ -114,25 +218,35 @@ def run(
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    blueprint_args: list[str] = typer.Option((), "--option", "-o"),
+    config_path: Path = typer.Option(
+        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+    ),
+    show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
     logger.info("Starting DimOS")
 
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.core.coordination.process_lifecycle import (
+        DIMOS_RUN_ID_ENV,
+        spawn_watchdog,
+    )
     from dimos.core.run_registry import (
-        LOG_BASE_DIR,
         RunEntry,
-        check_port_conflicts,
         cleanup_stale,
         generate_run_id,
     )
-    from dimos.robot.get_all_blueprints import get_by_name, get_module_by_name
+    from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
+
+    # this is a workaround until we have a proper way to have delayed-module-choice in blueprints
+    # ex: vis_module(viewer=global_config.viewer) is wrong (viewer will always be default value) without this patch
     global_config.update(**cli_config_overrides)
 
     # Clean stale registry entries
@@ -140,38 +254,39 @@ def run(
     if stale:
         logger.info(f"Cleaned {stale} stale run entries")
 
-    # Port conflict check
-    conflict = check_port_conflicts()
-    if conflict:
-        typer.echo(
-            f"Error: Ports in use by {conflict.run_id} (PID {conflict.pid}). "
-            f"Run 'dimos stop' first.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
     blueprint_name = "-".join(robot_types)
     run_id = generate_run_id(blueprint_name)
-    log_dir = LOG_BASE_DIR / run_id
+    log_dir = LOG_DIR / run_id
+
+    # Tag every descendant with the run id so the watchdog and stale-run
+    # cleanup can identify them via os.environ after main dies.
+    os.environ[DIMOS_RUN_ID_ENV] = run_id
 
     # Route structured logs (main.jsonl) to the per-run directory.
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
     set_run_log_dir(log_dir)
 
-    blueprint = autoconnect(*map(get_by_name, robot_types))
+    blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
 
     if disable:
-        disabled_classes = tuple(get_module_by_name(name).blueprints[0].module for name in disable)
+        disabled_classes = tuple(
+            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
+        )
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
-    coordinator = ModuleCoordinator.build(blueprint, cli_config_overrides=cli_config_overrides)
+    if show_help:
+        print("Blueprint arguments:")
+        print(arg_help(blueprint.config(), blueprint))
+        return
+
+    blueprint_config = blueprint.config()
+    kwargs = load_config_args(blueprint_config, blueprint_args, config_path)
+    if cli_config_overrides:
+        kwargs["g"] = cli_config_overrides
+
+    coordinator = ModuleCoordinator.build(blueprint, kwargs)
 
     if daemon:
-        from dimos.core.daemon import (
-            daemonize,
-            install_signal_handlers,
-        )
-
         # Health check before daemonizing — catch early crashes
         if not coordinator.health_check():
             typer.echo("Error: health check failed — a worker process died.", err=True)
@@ -191,6 +306,7 @@ def run(
 
         daemonize(log_dir)
 
+        coordinator.start_rpc_service()  # After daemonize().
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -202,9 +318,11 @@ def run(
             original_argv=sys.argv,
         )
         entry.save()
+        spawn_watchdog(run_id, log_dir=log_dir)
         install_signal_handlers(entry, coordinator)
         coordinator.loop()
     else:
+        coordinator.start_rpc_service()
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -216,6 +334,11 @@ def run(
             original_argv=sys.argv,
         )
         entry.save()
+        spawn_watchdog(run_id, log_dir=log_dir)
+        # Foreground: only SIGTERM goes through the handler. SIGINT stays at
+        # default so Ctrl+C raises KeyboardInterrupt and the try/finally below
+        # runs with a visible traceback.
+        install_signal_handlers(entry, coordinator, sigint=False)
         try:
             coordinator.loop()
         finally:
@@ -550,6 +673,123 @@ def send(
     topic_send(topic, message_expr)
 
 
+main.command(name="map")(_map_main)
+
+from dimos.memory2.cli.app import mem_app
+
+main.add_typer(mem_app, name="mem")
+
+
+@main.command()
+def cameracalibrate(
+    source: str = typer.Option(..., "--source", help="Frame source: webcam, folder, or topic"),
+    device_index: int = typer.Option(0, "--device-index", help="Webcam device index"),
+    images: Path | None = typer.Option(
+        None, "--images", help="Directory of calibration images for --source folder"
+    ),
+    topic: str | None = typer.Option(
+        None,
+        "--topic",
+        help=(
+            "Pubsub URI for --source topic (proto:channel), "
+            "e.g. 'jpeg_lcm:/color_image' or 'pshm:color_image'."
+        ),
+    ),
+    topic_timeout_sec: float = typer.Option(
+        60.0,
+        "--topic-timeout-sec",
+        help="Abort --source topic if no frames arrive within this many seconds.",
+    ),
+    cols: int = typer.Option(..., "--cols", help="Inner chessboard corner columns"),
+    rows: int = typer.Option(..., "--rows", help="Inner chessboard corner rows"),
+    square_size_m: float = typer.Option(
+        ..., "--square-size-m", help="Chessboard square size in meters"
+    ),
+    out: Path | None = typer.Option(None, "--out", help="Optional ROS CameraInfo YAML output path"),
+    preview_out: Path | None = typer.Argument(
+        None, help="Optional preview PNG output path. Requires --out."
+    ),
+    camera_name: str = typer.Option("webcam", "--camera-name", help="Camera name in YAML"),
+    target_count: int = typer.Option(20, "--target-count", help="Accepted webcam frame count"),
+    no_display: bool = typer.Option(False, "--no-display", help="Disable OpenCV preview windows"),
+    distortion_model: str = typer.Option(
+        "plumb_bob",
+        "--distortion-model",
+        help=(
+            "Lens model: 'plumb_bob' (5 coeffs, near-pinhole) or 'fisheye' "
+            "(4 coeffs, wide-angle / fisheye; written as ROS 'equidistant')."
+        ),
+    ),
+) -> None:
+    """Calibrate camera intrinsics and write ROS CameraInfo YAML."""
+    from dimos.utils.cli.cameracalibrate.cameracalibrate import run_calibration
+
+    if preview_out is not None and out is None:
+        raise typer.BadParameter("preview output requires --out")
+
+    try:
+        result = run_calibration(
+            source=source,
+            device_index=device_index,
+            images=images,
+            topic=topic,
+            topic_timeout_sec=topic_timeout_sec,
+            cols=cols,
+            rows=rows,
+            square_size_m=square_size_m,
+            out=out,
+            preview_out=preview_out,
+            camera_name=camera_name,
+            target_count=target_count,
+            no_display=no_display,
+            distortion_model=distortion_model,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(f"RMS: {float(result['rms']):.6f} px ({int(result['n_used'])} frame(s) used)")
+    typer.echo(
+        f"Detected pattern: {tuple(result.get('pattern_size', (cols, rows)))} "
+        f"({result.get('pattern_label', 'requested inner corners')})"
+    )
+    if out is not None:
+        typer.echo(f"Wrote camera info YAML to {out}")
+    if preview_out is not None:
+        typer.echo(f"Wrote preview overlay PNG to {preview_out}")
+
+
+@main.command()
+def apriltag(
+    out: Path = typer.Option(Path("apriltags.pdf"), "--out", "-o", help="Output PDF path"),
+    ids: str = typer.Option("0-11", "--ids", help="ID spec, e.g. '0-49' or '0,1,5,10-20'"),
+    size_mm: float = typer.Option(
+        50.0, "--size-mm", "-s", help="Tag black-border edge size in mm (typical: 50 or 100)"
+    ),
+    page_size: str = typer.Option(
+        "a4", "--page-size", "-p", help="Page size: a0..a8 (ISO A series) or letter"
+    ),
+    pack: bool = typer.Option(
+        True, "--pack/--no-pack", help="Pack as many tags per page as fit (vs one per page)"
+    ),
+    family: str = typer.Option(
+        "tag36h11",
+        "--family",
+        help=(
+            "Tag family: AprilTag (tag36h11, tag25h9, tag16h5) or "
+            "ArUco (aruco_original, aruco_mip_36h12, aruco_{4x4,5x5,6x6,7x7}_{50,100,250,1000})"
+        ),
+    ),
+) -> None:
+    """Generate a printable AprilTag/ArUco PDF with calibration ruler."""
+    from dimos.utils.cli.apriltag import generate_pdf, parse_id_spec
+
+    id_list = parse_id_spec(ids)
+    path = generate_pdf(
+        id_list, out, family=family, size_mm=size_mm, page_size=page_size, pack=pack
+    )
+    typer.echo(f"Wrote {len(id_list)} tag(s) to {path}")
+
+
 @main.command(name="rerun-bridge")
 def rerun_bridge_cmd(
     memory_limit: str = typer.Option(
@@ -561,25 +801,14 @@ def rerun_bridge_cmd(
     ),
 ) -> None:
     """Launch the Rerun visualization bridge."""
-    import signal
+    from dimos.visualization.rerun.bridge import run_bridge
 
-    from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-    from dimos.protocol.service.lcmservice import autoconf
-    from dimos.visualization.rerun.bridge import RerunBridgeModule
-
-    autoconf(check_only=True)
-
-    bridge = RerunBridgeModule(
+    run_bridge(
         memory_limit=memory_limit,
-        rerun_open=rerun_open,
+        rerun_open=cast("RerunOpenOption", rerun_open),
         rerun_web=rerun_web,
-        pubsubs=[LCM()],
     )
-    bridge.start()
-
-    signal.signal(signal.SIGINT, lambda *_: bridge.stop())
-    signal.pause()
 
 
 if __name__ == "__main__":
-    main()
+    cli_main()

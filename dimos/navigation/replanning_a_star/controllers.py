@@ -37,29 +37,19 @@ class Controller(Protocol):
 
 class PController:
     _global_config: GlobalConfig
-    _max_linear_speed: float
-    _max_angular_speed: float
+    _speed: float
     _control_frequency: float
 
     _min_linear_velocity: float = 0.2
     _min_angular_velocity: float = 0.2
+    _k_angular: float = 0.5
     _max_angular_accel: float = 2.0
+    _rotation_threshold: float = 90 * (math.pi / 180)
 
-    def __init__(
-        self,
-        global_config: GlobalConfig,
-        max_linear_speed: float,
-        control_frequency: float,
-        max_angular_speed: float = 0.55,
-        k_angular: float = 0.5,
-        rotation_threshold: float = math.radians(90),
-    ):
+    def __init__(self, global_config: GlobalConfig, speed: float, control_frequency: float) -> None:
         self._global_config = global_config
-        self._max_linear_speed = max_linear_speed
-        self._max_angular_speed = max_angular_speed
+        self._speed = speed
         self._control_frequency = control_frequency
-        self._k_angular = k_angular
-        self._rotation_threshold = rotation_threshold
 
     def advance(self, lookahead_point: NDArray[np.float64], current_odom: PoseStamped) -> Twist:
         current_pos = np.array([current_odom.position.x, current_odom.position.y])
@@ -81,7 +71,7 @@ class PController:
             return self._angular_twist(angular_velocity)
 
         # When aligned, drive forward with proportional angular correction
-        linear_velocity = self._max_linear_speed * (1.0 - abs(yaw_error) / self._rotation_threshold)
+        linear_velocity = self._speed * (1.0 - abs(yaw_error) / self._rotation_threshold)
         linear_velocity = self._apply_min_velocity(linear_velocity, self._min_linear_velocity)
 
         return Twist(
@@ -95,7 +85,7 @@ class PController:
 
     def _compute_angular_velocity(self, yaw_error: float) -> float:
         angular_velocity = self._k_angular * yaw_error
-        angular_velocity = np.clip(angular_velocity, -self._max_angular_speed, self._max_angular_speed)
+        angular_velocity = np.clip(angular_velocity, -self._speed, self._speed)
         angular_velocity = self._apply_min_velocity(angular_velocity, self._min_angular_velocity)
         return float(angular_velocity)
 
@@ -130,20 +120,8 @@ class PdController(PController):
     _prev_yaw_error: float
     _prev_angular_velocity: float
 
-    def __init__(
-        self,
-        global_config: GlobalConfig,
-        max_linear_speed: float,
-        control_frequency: float,
-        max_angular_speed: float = 0.55,
-        k_angular: float = 0.5,
-        rotation_threshold: float = math.radians(90),
-    ):
-        super().__init__(
-            global_config, max_linear_speed, control_frequency,
-            max_angular_speed=max_angular_speed,
-            k_angular=k_angular, rotation_threshold=rotation_threshold,
-        )
+    def __init__(self, global_config: GlobalConfig, speed: float, control_frequency: float) -> None:
+        super().__init__(global_config, speed, control_frequency)
 
         self._prev_yaw_error = 0.0
         self._prev_angular_velocity = 0.0
@@ -170,7 +148,7 @@ class PdController(PController):
             self._prev_angular_velocity + max_delta,
         )
 
-        angular_velocity = np.clip(angular_velocity, -self._max_angular_speed, self._max_angular_speed)
+        angular_velocity = np.clip(angular_velocity, -self._speed, self._speed)
         angular_velocity = self._apply_min_velocity(angular_velocity, self._min_angular_velocity)
 
         self._prev_yaw_error = yaw_error

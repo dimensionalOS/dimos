@@ -46,6 +46,9 @@ class _MockTransport:
     def broadcast(self, _stream, msg):
         self.publish(msg)
 
+    def stop(self):
+        self._subscribers.clear()
+
     def subscribe(self, cb):
         self._subscribers.append(cb)
         return lambda: self._subscribers.remove(cb)

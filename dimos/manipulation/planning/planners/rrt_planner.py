@@ -71,7 +71,7 @@ class RRTConnectPlanner:
         connect_step_size: float = 0.05,
         goal_tolerance: float = 0.1,
         collision_step_size: float = 0.02,
-    ):
+    ) -> None:
         self._step_size = step_size
         self._connect_step_size = connect_step_size
         self._goal_tolerance = goal_tolerance

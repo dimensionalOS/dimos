@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-
 from pydantic import Field
-import requests  # type: ignore[import-untyped]
+import requests
 
 from dimos.skills.skills import AbstractSkill
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 
 class GenericRestSkill(AbstractSkill):
@@ -87,7 +86,7 @@ class GenericRestSkill(AbstractSkill):
             logger.debug(
                 f"Request successful. Status: {response.status_code}, Response: {response.text[:100]}..."
             )
-            return response.text  # type: ignore[no-any-return]  # Return text content directly
+            return response.text  # Return text content directly
         except requests.exceptions.HTTPError as http_err:
             logger.error(
                 f"HTTP error occurred: {http_err} - Status Code: {http_err.response.status_code}"

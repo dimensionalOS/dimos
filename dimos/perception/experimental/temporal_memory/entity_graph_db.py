@@ -560,7 +560,7 @@ class EntityGraphDB:
         self,
         parsed: dict[str, Any],
         frame_image: Image,
-        vlm: VlModel[Any],
+        vlm: VlModel,
         timestamp_s: float,
         max_distance_pairs: int = 5,
     ) -> None:

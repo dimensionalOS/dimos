@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from dimos.core.resource import Resource
 from dimos.core.resource_monitor.stats import (
     WorkerStats,
+    collect_children_stats,
     collect_process_stats,
 )
 from dimos.utils.logging_config import setup_logger
@@ -44,6 +45,9 @@ class WorkerInfo(Protocol):
 
     @property
     def module_names(self) -> list[str]: ...
+
+    @property
+    def dedicated(self) -> bool: ...
 
 
 @runtime_checkable
@@ -94,6 +98,7 @@ class StatsMonitor(Resource):
         if self._thread is not None:
             self._thread.join(timeout=5.0)
             self._thread = None
+        self._logger.stop()
 
     def _loop(self) -> None:
         while not self._stop.wait(self._interval):
@@ -110,8 +115,17 @@ class StatsMonitor(Resource):
             pid = w.pid
             if pid is not None:
                 ps = collect_process_stats(pid)
+                children = collect_children_stats(pid)
+                ps_dict = asdict(ps)
+                ps_dict["cpu_percent"] += sum(c.cpu_percent for c in children)
                 worker_stats.append(
-                    WorkerStats(**asdict(ps), worker_id=w.worker_id, modules=w.module_names)
+                    WorkerStats(
+                        **ps_dict,
+                        worker_id=w.worker_id,
+                        modules=w.module_names,
+                        dedicated=w.dedicated,
+                        children=children,
+                    )
                 )
             else:
                 worker_stats.append(
@@ -120,6 +134,7 @@ class StatsMonitor(Resource):
                         alive=False,
                         worker_id=w.worker_id,
                         modules=w.module_names,
+                        dedicated=w.dedicated,
                     )
                 )
 

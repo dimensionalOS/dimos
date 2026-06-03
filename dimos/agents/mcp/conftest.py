@@ -34,7 +34,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
-def agent_setup(request):
+def agent_setup(request, mcp_url: str, lcm_url: str):
     coordinator = None
     transports: list[pLCMTransport] = []
     unsubs: list = []
@@ -50,8 +50,8 @@ def agent_setup(request):
         history: list[BaseMessage] = []
         finished_event = Event()
 
-        agent_transport: pLCMTransport = pLCMTransport("/agent")
-        finished_transport: pLCMTransport = pLCMTransport("/finished")
+        agent_transport: pLCMTransport = pLCMTransport("/agent", url=lcm_url)
+        finished_transport: pLCMTransport = pLCMTransport("/finished", url=lcm_url)
         transports.extend([agent_transport, finished_transport])
 
         def on_message(msg: BaseMessage) -> None:
@@ -66,7 +66,10 @@ def agent_setup(request):
         else:
             fixture_path = FIXTURE_DIR / f"{request.node.name}.json"
 
-        client_kwargs: dict = {"system_prompt": system_prompt}
+        client_kwargs: dict = {
+            "system_prompt": system_prompt,
+            "mcp_server_url": mcp_url,
+        }
 
         if recording or fixture_path.exists():
             client_kwargs["model_fixture"] = str(fixture_path)

@@ -16,7 +16,6 @@ import difflib
 from typing import Any
 
 from langchain_core.messages import HumanMessage
-import pytest
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -53,7 +52,6 @@ class MockedUnitreeSkill(UnitreeSkillContainer):
     pass
 
 
-@pytest.mark.slow
 def test_pounce(agent_setup) -> None:
     history = agent_setup(
         blueprints=[

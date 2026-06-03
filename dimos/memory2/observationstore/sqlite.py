@@ -31,9 +31,8 @@ from dimos.memory2.type.filter import (
     NearFilter,
     TagsFilter,
     TimeRangeFilter,
-    _xyz,
 )
-from dimos.memory2.type.observation import _UNLOADED, Observation
+from dimos.memory2.type.observation import _UNLOADED, Observation, PoseTuple
 from dimos.memory2.utils.sqlite import open_disposable_sqlite_connection
 
 if TYPE_CHECKING:
@@ -46,24 +45,6 @@ T = TypeVar("T")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def _decompose_pose(pose: Any) -> tuple[float, ...] | None:
-    if pose is None:
-        return None
-    if hasattr(pose, "position"):
-        pos = pose.position
-        orient = getattr(pose, "orientation", None)
-        x, y, z = float(pos.x), float(pos.y), float(getattr(pos, "z", 0.0))
-        if orient is not None:
-            return (x, y, z, float(orient.x), float(orient.y), float(orient.z), float(orient.w))
-        return (x, y, z, 0.0, 0.0, 0.0, 1.0)
-    if isinstance(pose, (list, tuple)):
-        vals = [float(v) for v in pose]
-        while len(vals) < 7:
-            vals.append(0.0 if len(vals) < 6 else 1.0)
-        return tuple(vals[:7])
-    return None
-
-
 def _reconstruct_pose(
     x: float | None,
     y: float | None,
@@ -72,10 +53,12 @@ def _reconstruct_pose(
     qy: float | None,
     qz: float | None,
     qw: float | None,
-) -> tuple[float, ...] | None:
+) -> PoseTuple | None:
     if x is None:
         return None
-    return (x, y or 0.0, z or 0.0, qx or 0.0, qy or 0.0, qz or 0.0, qw or 1.0)
+    assert y is not None and z is not None
+    assert qx is not None and qy is not None and qz is not None and qw is not None
+    return (x, y, z, qx, qy, qz, qw)
 
 
 def _compile_filter(f: Filter, stream: str, prefix: str = "") -> tuple[str, list[Any]] | None:
@@ -102,12 +85,7 @@ def _compile_filter(f: Filter, stream: str, prefix: str = "") -> tuple[str, list
             params.append(v)
         return (" AND ".join(clauses), params)
     if isinstance(f, NearFilter):
-        pose = f.pose
-        if pose is None:
-            return None
-        if hasattr(pose, "position"):
-            pose = pose.position
-        cx, cy, cz = _xyz(pose)
+        cx, cy, cz = f.position.x, f.position.y, f.position.z
         r = f.radius
         # R*Tree bounding-box pre-filter + exact squared-distance check
         rtree_sql = (
@@ -156,9 +134,9 @@ def _compile_query(
     """
     prefix = "meta." if join_blob else ""
     if join_blob:
-        select = f'SELECT meta.id, meta.ts, meta.pose_x, meta.pose_y, meta.pose_z, meta.pose_qx, meta.pose_qy, meta.pose_qz, meta.pose_qw, json(meta.tags), blob.data FROM "{table}" AS meta JOIN "{table}_blob" AS blob ON blob.id = meta.id'
+        select = f'SELECT meta.id, meta.ts, meta.value, meta.pose_x, meta.pose_y, meta.pose_z, meta.pose_qx, meta.pose_qy, meta.pose_qz, meta.pose_qw, json(meta.tags), blob.data FROM "{table}" AS meta JOIN "{table}_blob" AS blob ON blob.id = meta.id'
     else:
-        select = f'SELECT id, ts, pose_x, pose_y, pose_z, pose_qx, pose_qy, pose_qz, pose_qw, json(tags) FROM "{table}"'
+        select = f'SELECT id, ts, value, pose_x, pose_y, pose_z, pose_qx, pose_qy, pose_qz, pose_qw, json(tags) FROM "{table}"'
 
     where_parts: list[str] = []
     params: list[Any] = []
@@ -253,7 +231,6 @@ class SqliteObservationStore(ObservationStore[T]):
     - ``SqliteObservationStore(path="file.db", name="x", codec=...)`` — opens and owns its own connection.
     """
 
-    default_config = SqliteObservationStoreConfig
     config: SqliteObservationStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
@@ -273,7 +250,7 @@ class SqliteObservationStore(ObservationStore[T]):
         if self._conn is None:
             assert self._path is not None
             disposable, self._conn = open_disposable_sqlite_connection(self._path)
-            self.register_disposables(disposable)
+            self.register_disposable(disposable)
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
@@ -282,6 +259,7 @@ class SqliteObservationStore(ObservationStore[T]):
             f'CREATE TABLE IF NOT EXISTS "{self._name}" ('
             "    id      INTEGER PRIMARY KEY AUTOINCREMENT,"
             "    ts      REAL    NOT NULL UNIQUE,"
+            "    value   NUMERIC,"
             "    pose_x  REAL, pose_y REAL, pose_z REAL,"
             "    pose_qx REAL, pose_qy REAL, pose_qz REAL, pose_qw REAL,"
             "    tags    BLOB    DEFAULT (jsonb('{}'))"
@@ -318,23 +296,27 @@ class SqliteObservationStore(ObservationStore[T]):
 
     def _row_to_obs(self, row: tuple[Any, ...], *, has_blob: bool = False) -> Observation[T]:
         if has_blob:
-            row_id, ts, px, py, pz, qx, qy, qz, qw, tags_json, blob_data = row
+            row_id, ts, value, px, py, pz, qx, qy, qz, qw, tags_json, blob_data = row
         else:
-            row_id, ts, px, py, pz, qx, qy, qz, qw, tags_json = row
+            row_id, ts, value, px, py, pz, qx, qy, qz, qw, tags_json = row
             blob_data = None
 
         pose = _reconstruct_pose(px, py, pz, qx, qy, qz, qw)
         tags = json.loads(tags_json) if tags_json else {}
 
+        # Scalar data stored inline in value column
+        if value is not None:
+            return Observation(id=row_id, ts=ts, pose_tuple=pose, tags=tags, _data=value)
+
         if has_blob and blob_data is not None:
             assert self._codec is not None, "codec is required for data loading"
             data = self._codec.decode(blob_data)
-            return Observation(id=row_id, ts=ts, pose=pose, tags=tags, _data=data)
+            return Observation(id=row_id, ts=ts, pose_tuple=pose, tags=tags, _data=data)
 
         return Observation(
             id=row_id,
             ts=ts,
-            pose=pose,
+            pose_tuple=pose,
             tags=tags,
             _data=_UNLOADED,
         )
@@ -349,8 +331,9 @@ class SqliteObservationStore(ObservationStore[T]):
                 self._tag_indexes.add(key)
 
     def insert(self, obs: Observation[T]) -> int:
-        pose = _decompose_pose(obs.pose)
+        pose = obs.pose_tuple
         tags_json = json.dumps(obs.tags) if obs.tags else "{}"
+        value = obs._data if isinstance(obs._data, (int, float)) else None
 
         with self._lock:
             if obs.tags:
@@ -361,9 +344,9 @@ class SqliteObservationStore(ObservationStore[T]):
                 px = py = pz = qx = qy = qz = qw = None  # type: ignore[assignment]
 
             cur = self._conn.execute(
-                f'INSERT INTO "{self._name}" (ts, pose_x, pose_y, pose_z, pose_qx, pose_qy, pose_qz, pose_qw, tags) '
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, jsonb(?))",
-                (obs.ts, px, py, pz, qx, qy, qz, qw, tags_json),
+                f'INSERT INTO "{self._name}" (ts, value, pose_x, pose_y, pose_z, pose_qx, pose_qy, pose_qz, pose_qw, tags) '
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, jsonb(?))",
+                (obs.ts, value, px, py, pz, qx, qy, qz, qw, tags_json),
             )
             row_id = cur.lastrowid
             assert row_id is not None
@@ -424,7 +407,7 @@ class SqliteObservationStore(ObservationStore[T]):
         placeholders = ",".join("?" * len(ids))
         if join:
             sql = (
-                f"SELECT meta.id, meta.ts, meta.pose_x, meta.pose_y, meta.pose_z, "
+                f"SELECT meta.id, meta.ts, meta.value, meta.pose_x, meta.pose_y, meta.pose_z, "
                 f"meta.pose_qx, meta.pose_qy, meta.pose_qz, meta.pose_qw, json(meta.tags), blob.data "
                 f'FROM "{self._name}" AS meta '
                 f'JOIN "{self._name}_blob" AS blob ON blob.id = meta.id '
@@ -432,7 +415,7 @@ class SqliteObservationStore(ObservationStore[T]):
             )
         else:
             sql = (
-                f"SELECT id, ts, pose_x, pose_y, pose_z, "
+                f"SELECT id, ts, value, pose_x, pose_y, pose_z, "
                 f"pose_qx, pose_qy, pose_qz, pose_qw, json(tags) "
                 f'FROM "{self._name}" WHERE id IN ({placeholders})'
             )

@@ -19,7 +19,6 @@ import pytest
 from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.memory.timeseries.inmemory import InMemoryStore
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.types.timestamped import (
     Timestamped,
@@ -30,7 +29,8 @@ from dimos.types.timestamped import (
 )
 from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure
-from dimos.utils.testing.replay import TimedSensorReplay
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
+from dimos.utils.timeseries.inmemory import InMemoryStore
 
 
 def test_timestamped_dt_method() -> None:
@@ -281,6 +281,8 @@ def test_time_window_collection() -> None:
     assert window.end_ts == 5.5
 
 
+@pytest.mark.self_hosted
+@pytest.mark.skipif_macos_bug
 def test_timestamp_alignment(test_scheduler) -> None:
     speed = 5.0
 
@@ -296,7 +298,7 @@ def test_timestamp_alignment(test_scheduler) -> None:
 
     # sensor reply of raw video frames
     video_raw = (
-        TimedSensorReplay(
+        LegacyPickleStore(
             "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
         )
         .stream(speed)

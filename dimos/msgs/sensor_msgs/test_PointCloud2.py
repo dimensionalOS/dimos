@@ -14,68 +14,15 @@
 # limitations under the License.
 
 
-from dimos_lcm.sensor_msgs.PointCloud2 import PointCloud2 as LCMPointCloud2
-from dimos_lcm.sensor_msgs.PointField import PointField
-from dimos_lcm.std_msgs.Header import Header
 import numpy as np
+import pytest
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.utils.testing.replay import SensorReplay
 
 
-def _field(name: str, offset: int) -> PointField:
-    field = PointField()
-    field.name = name
-    field.offset = offset
-    field.datatype = PointField.FLOAT32
-    field.count = 1
-    return field
-
-
-def _lcm_xyz_intensity(points: np.ndarray, intensity: np.ndarray) -> LCMPointCloud2:
-    msg = LCMPointCloud2()
-    msg.header = Header()
-    msg.header.frame_id = "map"
-    msg.header.stamp.sec = 123
-    msg.header.stamp.nsec = 456_000_000
-    msg.height = 1
-    msg.width = len(points)
-    msg.fields = [_field("x", 0), _field("y", 4), _field("z", 8), _field("intensity", 12)]
-    msg.fields_length = len(msg.fields)
-    msg.is_bigendian = False
-    msg.point_step = 16
-    msg.row_step = msg.point_step * msg.width
-    msg.data = np.column_stack([points.astype(np.float32), intensity.astype(np.float32)]).tobytes()
-    msg.data_length = len(msg.data)
-    msg.is_dense = True
-    return msg
-
-
-def test_lcm_decode_preserves_intensity_field() -> None:
-    points = np.array([[0.0, 0.0, -0.45], [1.0, 0.0, 0.10]], dtype=np.float32)
-    intensity = np.array([0.0, 0.31], dtype=np.float32)
-
-    decoded = PointCloud2.lcm_decode(_lcm_xyz_intensity(points, intensity).lcm_encode())
-
-    np.testing.assert_allclose(decoded.points_f32(), points)
-    np.testing.assert_allclose(decoded.intensity_f32(), intensity)
-
-
-def test_from_numpy_intensity_roundtrips_through_lcm() -> None:
-    points = np.array([[0.0, 0.0, -0.45], [1.0, 0.0, 0.10]], dtype=np.float32)
-    intensity = np.array([0.0, 0.31], dtype=np.float32)
-
-    decoded = PointCloud2.lcm_decode(
-        PointCloud2.from_numpy(
-            points, frame_id="map", timestamp=123.456, intensity=intensity
-        ).lcm_encode()
-    )
-
-    np.testing.assert_allclose(decoded.points_f32(), points)
-    np.testing.assert_allclose(decoded.intensity_f32(), intensity)
-
-
+@pytest.mark.self_hosted
 def test_lcm_encode_decode() -> None:
     """Test LCM encode/decode preserves pointcloud data."""
     replay = SensorReplay("office_lidar", autocast=pointcloud2_from_webrtc_lidar)
@@ -88,8 +35,6 @@ def test_lcm_encode_decode() -> None:
     original_points, _ = lidar_msg.as_numpy()
     decoded_points, _ = decoded.as_numpy()
 
-    print(f"Original points: {len(original_points)}")
-    print(f"Decoded points: {len(decoded_points)}")
     assert len(original_points) == len(decoded_points), (
         f"Point count mismatch: {len(original_points)} vs {len(decoded_points)}"
     )
@@ -103,38 +48,81 @@ def test_lcm_encode_decode() -> None:
             atol=1e-6,
             err_msg="Point coordinates don't match between original and decoded",
         )
-        print(f"✓ All {len(original_points)} point coordinates match within tolerance")
 
     # 3. Check frame_id is preserved
     assert lidar_msg.frame_id == decoded.frame_id, (
         f"Frame ID mismatch: '{lidar_msg.frame_id}' vs '{decoded.frame_id}'"
     )
-    print(f"✓ Frame ID preserved: '{decoded.frame_id}'")
 
     # 4. Check timestamp is preserved (within reasonable tolerance for float precision)
     if lidar_msg.ts is not None and decoded.ts is not None:
         assert abs(lidar_msg.ts - decoded.ts) < 1e-6, (
             f"Timestamp mismatch: {lidar_msg.ts} vs {decoded.ts}"
         )
-        print(f"✓ Timestamp preserved: {decoded.ts}")
 
     # 5. Check pointcloud properties
     assert len(lidar_msg.pointcloud.points) == len(decoded.pointcloud.points), (
         "Open3D pointcloud size mismatch"
     )
 
-    # 6. Additional detailed checks
-    print("✓ Original pointcloud summary:")
-    print(f"  - Points: {len(original_points)}")
-    print(f"  - Bounds: {original_points.min(axis=0)} to {original_points.max(axis=0)}")
-    print(f"  - Mean: {original_points.mean(axis=0)}")
 
-    print("✓ Decoded pointcloud summary:")
-    print(f"  - Points: {len(decoded_points)}")
-    print(f"  - Bounds: {decoded_points.min(axis=0)} to {decoded_points.max(axis=0)}")
-    print(f"  - Mean: {decoded_points.mean(axis=0)}")
+def test_lcm_intensity_round_trip() -> None:
+    """Test that intensity values survive an lcm_encode → lcm_decode round trip."""
+    points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=np.float32)
+    intensities = np.array([0.25, 1.1, 0.0], dtype=np.float32)
 
-    print("✓ LCM encode/decode test passed - all properties preserved!")
+    original = PointCloud2.from_numpy(
+        points, frame_id="map", timestamp=42.0, intensities=intensities
+    )
+
+    # Verify getter before encoding
+    got = original.intensities_f32()
+    assert got is not None, "intensities_f32() returned None on source cloud"
+    np.testing.assert_allclose(got, intensities, atol=1e-6)
+
+    # Round-trip through LCM
+    binary = original.lcm_encode()
+    decoded = PointCloud2.lcm_decode(binary)
+
+    # Positions preserved
+    decoded_pts, _ = decoded.as_numpy()
+    np.testing.assert_allclose(decoded_pts.astype(np.float32), points, atol=1e-6)
+
+    # Intensities preserved
+    decoded_intensities = decoded.intensities_f32()
+    assert decoded_intensities is not None, "intensities lost after lcm_decode"
+    np.testing.assert_allclose(decoded_intensities, intensities, atol=1e-6)
+
+
+def test_legacy_intensity_keyword_round_trip() -> None:
+    """The old singular intensity keyword/getter is still accepted."""
+    points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+    intensities = np.array([0.25, 1.1], dtype=np.float32)
+
+    original = PointCloud2.from_numpy(
+        points, frame_id="map", timestamp=42.0, intensity=intensities
+    )
+
+    np.testing.assert_allclose(original.intensity_f32(), intensities, atol=1e-6)
+    decoded = PointCloud2.lcm_decode(original.lcm_encode())
+    np.testing.assert_allclose(decoded.intensity_f32(), intensities, atol=1e-6)
+
+
+def test_lcm_no_intensity_round_trip() -> None:
+    """Clouds without intensity should round-trip without creating spurious intensities."""
+    points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+    original = PointCloud2.from_numpy(points, frame_id="map", timestamp=1.0)
+
+    assert original.intensities_f32() is None
+
+    binary = original.lcm_encode()
+    decoded = PointCloud2.lcm_decode(binary)
+
+    # No intensities should appear (all-zero wire data is ignored)
+    assert decoded.intensities_f32() is None, "Spurious intensities created from zero wire data"
+
+    decoded_pts, _ = decoded.as_numpy()
+    np.testing.assert_allclose(decoded_pts.astype(np.float32), points, atol=1e-6)
 
 
 def test_bounding_box_intersects() -> None:
@@ -203,8 +191,6 @@ def test_bounding_box_intersects() -> None:
         result = pc_empty1.bounding_box_intersects(pc_empty2)
         # If no exception, verify behavior is consistent
         assert isinstance(result, bool)
-    except:
+    except Exception:
         # If it raises an exception, that's also acceptable for empty clouds
         pass
-
-    print("✓ All bounding box intersection tests passed!")

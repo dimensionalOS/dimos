@@ -14,7 +14,6 @@
 
 """G1 high-level control via native Unitree SDK2 (DDS)."""
 
-import difflib
 from enum import IntEnum
 import json
 import threading
@@ -40,6 +39,17 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.unitree.g1.effectors.high_level.commands import (
+    ARM_API_ID,
+    ARM_COMMANDS,
+    ARM_COMMANDS_DOC,
+    ARM_TOPIC,
+    MODE_API_ID,
+    MODE_COMMANDS,
+    MODE_COMMANDS_DOC,
+    MODE_TOPIC,
+    execute_g1_command,
+)
 from dimos.robot.unitree.g1.effectors.high_level.high_level_spec import HighLevelG1Spec
 from dimos.utils.logging_config import setup_logger
 
@@ -52,43 +62,6 @@ _LOCO_API_IDS = {
 }
 
 
-# G1 Arm Actions - all use api_id 7106 on topic "rt/api/arm/request"
-G1_ARM_CONTROLS = [
-    ("Handshake", 27, "Perform a handshake gesture with the right hand."),
-    ("HighFive", 18, "Give a high five with the right hand."),
-    ("Hug", 19, "Perform a hugging gesture with both arms."),
-    ("HighWave", 26, "Wave with the hand raised high."),
-    ("Clap", 17, "Clap hands together."),
-    ("FaceWave", 25, "Wave near the face level."),
-    ("LeftKiss", 12, "Blow a kiss with the left hand."),
-    ("ArmHeart", 20, "Make a heart shape with both arms overhead."),
-    ("RightHeart", 21, "Make a heart gesture with the right hand."),
-    ("HandsUp", 15, "Raise both hands up in the air."),
-    ("XRay", 24, "Hold arms in an X-ray pose position."),
-    ("RightHandUp", 23, "Raise only the right hand up."),
-    ("Reject", 22, "Make a rejection or 'no' gesture."),
-    ("CancelAction", 99, "Cancel any current arm action and return hands to neutral position."),
-]
-
-# G1 Movement Modes - all use api_id 7101 on topic "rt/api/sport/request"
-G1_MODE_CONTROLS = [
-    ("WalkMode", 500, "Switch to normal walking mode."),
-    ("WalkControlWaist", 501, "Switch to walking mode with waist control."),
-    ("RunMode", 801, "Switch to running mode."),
-]
-
-_ARM_COMMANDS: dict[str, tuple[int, str]] = {
-    name: (id_, description) for name, id_, description in G1_ARM_CONTROLS
-}
-
-_MODE_COMMANDS: dict[str, tuple[int, str]] = {
-    name: (id_, description) for name, id_, description in G1_MODE_CONTROLS
-}
-
-_ARM_COMMANDS_DOC = "\n".join(f'- "{name}": {desc}' for name, (_, desc) in _ARM_COMMANDS.items())
-_MODE_COMMANDS_DOC = "\n".join(f'- "{name}": {desc}' for name, (_, desc) in _MODE_COMMANDS.items())
-
-
 class FsmState(IntEnum):
     ZERO_TORQUE = 0
     DAMP = 1
@@ -98,7 +71,6 @@ class FsmState(IntEnum):
     SQUAT_STANDUP_TOGGLE = 706
 
 
-# Module
 class G1HighLevelDdsSdkConfig(ModuleConfig):
     ip: str | None = None
     network_interface: str = "eth0"
@@ -110,13 +82,7 @@ class G1HighLevelDdsSdkConfig(ModuleConfig):
 
 
 class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
-    """G1 high-level control module using the native Unitree SDK2 over DDS.
-
-    Suitable for onboard control running directly on the robot.
-    """
-
     cmd_vel: In[Twist]
-    default_config = G1HighLevelDdsSdkConfig
     config: G1HighLevelDdsSdkConfig
 
     # Primary timing knob — individual delays in methods are fractions of this.
@@ -130,8 +96,6 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self._mode_selected = False
         self.motion_switcher: Any = None
         self.loco_client: Any = None
-
-    # lifecycle
 
     @rpc
     def start(self) -> None:
@@ -161,8 +125,10 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self._select_motion_mode()
         self._running = True
 
+        # Stream._transport is the only way to check if a port is wired;
+        # there is no public API for this yet (see dimos/core/stream.py).
         if self.cmd_vel._transport is not None:
-            self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
+            self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
         logger.info("G1 DDS SDK connection started")
 
     @rpc
@@ -180,8 +146,6 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         self._running = False
         logger.info("G1 DDS SDK connection stopped")
         super().stop()
-
-    # HighLevelG1Spec
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -242,11 +206,13 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         parameter = data.get("parameter", {})
 
         try:
-            if api_id == 7101:  # SET_FSM_ID
+            API_SET_FSM_ID = 7101
+            API_SET_VELOCITY = 7105
+            if api_id == API_SET_FSM_ID:
                 fsm_id = parameter.get("data", 0)
                 code = self.loco_client.SetFsmId(fsm_id)
                 return {"code": code}
-            elif api_id == 7105:  # SET_VELOCITY
+            elif api_id == API_SET_VELOCITY:
                 velocity = parameter.get("velocity", [0, 0, 0])
                 dur = parameter.get("duration", 1.0)
                 code = self.loco_client.SetVelocity(velocity[0], velocity[1], velocity[2], dur)
@@ -266,10 +232,18 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
             if self.config.ai_standup:
                 fsm_id = self._get_fsm_id()
+                if fsm_id is None:
+                    logger.warning(
+                        "Could not read FSM ID; aborting stand_up to avoid unsafe state transition"
+                    )
+                    return False
                 if fsm_id == FsmState.ZERO_TORQUE:
                     logger.info("Robot in zero torque, enabling damp mode...")
                     self.loco_client.SetFsmId(FsmState.DAMP)
                     time.sleep(self._standup_step_delay / 3)
+                    # Default to DAMP if the re-query fails — we just commanded
+                    # the transition, so DAMP is the most likely current state.
+                    fsm_id = self._get_fsm_id() or FsmState.DAMP
                 if fsm_id != FsmState.AI_MODE:
                     logger.info("Starting AI mode...")
                     self.loco_client.SetFsmId(FsmState.AI_MODE)
@@ -303,24 +277,11 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
     def disconnect(self) -> None:
         self.stop()
 
-    # skills (LLM-callable)
-
     @skill
     def move_velocity(
         self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0
     ) -> str:
-        """Move the robot using direct velocity commands. Determine duration required based on user distance instructions.
-
-        Example call:
-            args = { "x": 0.5, "y": 0.0, "yaw": 0.0, "duration": 2.0 }
-            move_velocity(**args)
-
-        Args:
-            x: Forward velocity (m/s)
-            y: Left/right velocity (m/s)
-            yaw: Rotational velocity (rad/s)
-            duration: How long to move (seconds)
-        """
+        """Move the robot at the given velocity for ``duration`` seconds."""
         twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
         self.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
@@ -328,7 +289,9 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
     @skill
     def execute_arm_command(self, command_name: str) -> str:
         """Execute a Unitree G1 arm command."""
-        return self._execute_g1_command(_ARM_COMMANDS, 7106, "rt/api/arm/request", command_name)
+        return execute_g1_command(
+            self.publish_request, ARM_COMMANDS, ARM_API_ID, ARM_TOPIC, command_name, logger=logger
+        )
 
     execute_arm_command.__doc__ = f"""Execute a Unitree G1 arm command.
 
@@ -338,13 +301,20 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
         Here are all the command names and what they do.
 
-        {_ARM_COMMANDS_DOC}
+        {ARM_COMMANDS_DOC}
         """
 
     @skill
     def execute_mode_command(self, command_name: str) -> str:
         """Execute a Unitree G1 mode command."""
-        return self._execute_g1_command(_MODE_COMMANDS, 7101, "rt/api/sport/request", command_name)
+        return execute_g1_command(
+            self.publish_request,
+            MODE_COMMANDS,
+            MODE_API_ID,
+            MODE_TOPIC,
+            command_name,
+            logger=logger,
+        )
 
     execute_mode_command.__doc__ = f"""Execute a Unitree G1 mode command.
 
@@ -354,32 +324,8 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
 
         Here are all the command names and what they do.
 
-        {_MODE_COMMANDS_DOC}
+        {MODE_COMMANDS_DOC}
         """
-
-    # private helpers
-
-    def _execute_g1_command(
-        self,
-        command_dict: dict[str, tuple[int, str]],
-        api_id: int,
-        topic: str,
-        command_name: str,
-    ) -> str:
-        if command_name not in command_dict:
-            suggestions = difflib.get_close_matches(
-                command_name, command_dict.keys(), n=3, cutoff=0.6
-            )
-            return f"There's no '{command_name}' command. Did you mean: {suggestions}"
-
-        id_, _ = command_dict[command_name]
-
-        try:
-            self.publish_request(topic, {"api_id": api_id, "parameter": {"data": id_}})
-            return f"'{command_name}' command executed successfully."
-        except Exception as e:
-            logger.error(f"Failed to execute {command_name}: {e}")
-            return "Failed to execute the command."
 
     def _select_motion_mode(self) -> None:
         if not self.motion_switcher or self._mode_selected:

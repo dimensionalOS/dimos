@@ -34,10 +34,13 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 import socket
+import time
 from typing import TYPE_CHECKING, Annotated
 
 from pydantic.experimental.pipeline import validate_as
+from reactivex.disposable import Disposable
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.lidar.livox.ports import (
@@ -53,67 +56,24 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_PUSH_MSG_PORT,
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM
 from dimos.spec import mapping, perception
+from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
 
 _CONFIG_DIR = Path(__file__).parent / "config"
 _logger = setup_logger()
 
 
-def _get_local_ips() -> list[str]:
-    """Return all IPv4 addresses assigned to local interfaces."""
-    ips: list[str] = []
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            addr = str(info[4][0])
-            if addr not in ips:
-                ips.append(addr)
-    except socket.gaierror:
-        pass
-    # Also grab addresses via DGRAM trick for interfaces without DNS
-    try:
-        import subprocess
-
-        out = subprocess.check_output(
-            ["ip", "-4", "-o", "addr", "show"],
-            timeout=5,
-            stderr=subprocess.DEVNULL,
-        ).decode()
-        for line in out.splitlines():
-            # e.g. "2: eth0    inet 192.168.123.5/24 ..."
-            parts = line.split()
-            for i, p in enumerate(parts):
-                if p == "inet" and i + 1 < len(parts):
-                    addr = parts[i + 1].split("/")[0]
-                    if addr not in ips:
-                        ips.append(addr)
-    except Exception:
-        pass
-    return ips
-
-
-def _find_candidate_ips(lidar_ip: str, local_ips: list[str]) -> list[str]:
-    """Suggest local IPs on the same subnet as the lidar."""
-    candidates: list[str] = []
-    try:
-        lidar_net = ipaddress.IPv4Network(f"{lidar_ip}/24", strict=False)
-        for ip in local_ips:
-            if ipaddress.IPv4Address(ip) in lidar_net:
-                candidates.append(ip)
-    except (ValueError, TypeError):
-        pass
-    return candidates
-
-
 class FastLio2Config(NativeModuleConfig):
-    """Config for the FAST-LIO2 + Livox Mid-360 native module."""
-
     cwd: str | None = "cpp"
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build .#fastlio2_native"
-
     # Livox SDK hardware config
     host_ip: str = "192.168.1.5"
     lidar_ip: str = "192.168.1.155"
@@ -123,9 +83,11 @@ class FastLio2Config(NativeModuleConfig):
     # Converted to init_pose CLI arg [x, y, z, qx, qy, qz, qw] in model_post_init.
     mount: Pose = Pose()
 
-    # Frame IDs for output messages
-    frame_id: str = "map"
-    child_frame_id: str = "body"
+    # Frame IDs for output messages.  "odom" reflects that FastLio2 provides
+    # locally-smooth, continuous odometry (no loop-closure jumps).  PGO
+    # publishes the map→odom correction via TF.
+    frame_id: str = FRAME_ODOM
+    child_frame_id: str = FRAME_BODY
 
     # FAST-LIO internal processing rates
     msr_freq: float = 50.0
@@ -151,6 +113,8 @@ class FastLio2Config(NativeModuleConfig):
         Path, validate_as(...).transform(lambda p: p if p.is_absolute() else _CONFIG_DIR / p)
     ] = Path("mid360.yaml")
 
+    debug: bool = False
+
     # SDK port configuration (see livox/ports.py for defaults)
     cmd_data_port: int = SDK_CMD_DATA_PORT
     push_msg_port: int = SDK_PUSH_MSG_PORT
@@ -163,7 +127,7 @@ class FastLio2Config(NativeModuleConfig):
     host_imu_data_port: int = SDK_HOST_IMU_DATA_PORT
     host_log_data_port: int = SDK_HOST_LOG_DATA_PORT
 
-    # Passed as --config_path to the binary (resolved from ``config`` in post-init)
+    # Resolved in __post_init__, passed as --config_path to the binary
     config_path: str | None = None
 
     # init_pose is computed from mount; config is resolved to config_path
@@ -189,31 +153,49 @@ class FastLio2Config(NativeModuleConfig):
         ]
 
 
-class FastLio2(
-    NativeModule[FastLio2Config], perception.Lidar, perception.Odometry, mapping.GlobalPointcloud
-):
-    """FAST-LIO2 SLAM module with integrated Livox Mid-360 driver.
+class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.GlobalPointcloud):
+    config: FastLio2Config
 
-    Ports:
-        lidar (Out[PointCloud2]): World-frame registered point cloud.
-        odometry (Out[Odometry]): Pose with covariance at LiDAR scan rate.
-        global_map (Out[PointCloud2]): Global voxel map (optional, enable via map_freq > 0).
-    """
-
-    default_config = FastLio2Config
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
     global_map: Out[PointCloud2]
 
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+    @rpc
+    def start(self) -> None:
         self._validate_network()
+        super().start()
+        self.register_disposable(
+            Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
+        )
+
+    def _on_odom_for_tf(self, msg: Odometry) -> None:
+        self.tf.publish(
+            Transform(
+                frame_id=FRAME_ODOM,
+                child_frame_id=FRAME_BODY,
+                translation=Vector3(
+                    msg.pose.position.x,
+                    msg.pose.position.y,
+                    msg.pose.position.z,
+                ),
+                rotation=Quaternion(
+                    msg.pose.orientation.x,
+                    msg.pose.orientation.y,
+                    msg.pose.orientation.z,
+                    msg.pose.orientation.w,
+                ),
+                ts=msg.ts or time.time(),
+            )
+        )
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _validate_network(self) -> None:
-        """Pre-flight check: verify host_ip is reachable and suggest alternatives."""
         host_ip = self.config.host_ip
         lidar_ip = self.config.lidar_ip
-        local_ips = _get_local_ips()
+        local_ips = [ip for ip, _iface in get_local_ips()]
 
         _logger.info(
             "FastLio2 network check",
@@ -224,7 +206,11 @@ class FastLio2(
 
         # Check if host_ip is actually assigned to this machine.
         if host_ip not in local_ips:
-            same_subnet = _find_candidate_ips(lidar_ip, local_ips)
+            try:
+                lidar_net = ipaddress.IPv4Network(f"{lidar_ip}/24", strict=False)
+                same_subnet = [ip for ip in local_ips if ipaddress.IPv4Address(ip) in lidar_net]
+            except (ValueError, TypeError):
+                same_subnet = []
 
             if same_subnet:
                 picked = same_subnet[0]

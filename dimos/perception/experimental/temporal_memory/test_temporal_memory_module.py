@@ -529,7 +529,7 @@ class VideoReplayModule(Module):
     def start(self) -> None:
         import reactivex
 
-        def emit_frames(observer, scheduler):  # type: ignore[no-untyped-def]
+        def emit_frames(observer, scheduler):
             for i in range(self.num_frames):
                 img = _make_image(value=min(50 + i * 30, 255))  # Varying brightness
                 img.ts = time.time()
@@ -537,7 +537,7 @@ class VideoReplayModule(Module):
                 time.sleep(0.5)
             observer.on_completed()
 
-        self._disposables.add(
+        self.register_disposable(
             reactivex.create(emit_frames)
             .pipe(
                 ops.observe_on(reactivex.scheduler.NewThreadScheduler()),
@@ -556,7 +556,6 @@ class VideoReplayModule(Module):
 
 @pytest.mark.skipif_in_ci
 @pytest.mark.skipif_no_openai
-@pytest.mark.slow
 class TestTemporalMemoryIntegration:
     @pytest.fixture(scope="function")
     def dimos_cluster(self):

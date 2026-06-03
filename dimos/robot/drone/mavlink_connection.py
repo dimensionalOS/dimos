@@ -20,7 +20,7 @@ import logging
 import time
 from typing import Any
 
-from pymavlink import mavutil  # type: ignore[import-not-found, import-untyped]
+from pymavlink import mavutil  # type: ignore[import-untyped]
 from reactivex import Subject
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -208,7 +208,7 @@ class MavlinkConnection:
             vy = pos_data.get("vy", 0)  # East velocity in m/s (already converted)
 
             # +vx is North, +vy is East in NED mavlink frame
-            # ROS/Foxglove: X=forward(North), Y=left(West), Z=up
+            # ROS/DimOS: X=forward(North), Y=left(West), Z=up
             self._position["x"] += vx * dt  # North → X (forward)
             self._position["y"] += -vy * dt  # East → -Y (right in ROS, Y points left/West)
 
@@ -1031,11 +1031,11 @@ class FakeMavlinkConnection(MavlinkConnection):
         class FakeMavlink:
             def __init__(self) -> None:
                 from dimos.utils.data import get_data
-                from dimos.utils.testing.replay import TimedSensorReplay
+                from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
                 get_data("drone")
 
-                self.replay: Any = TimedSensorReplay("drone/mavlink")
+                self.replay: Any = LegacyPickleStore("drone/mavlink")
                 self.messages: list[dict[str, Any]] = []
                 # The stream() method returns an Observable that emits messages with timing
                 self.replay.stream().subscribe(self.messages.append)

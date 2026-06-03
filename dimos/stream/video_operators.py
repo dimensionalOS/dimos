@@ -225,7 +225,7 @@ class VideoOperators:
         """
 
         def _operator(source: Observable) -> Observable:  # type: ignore[type-arg]
-            def _encode_image(image: np.ndarray) -> tuple[str, tuple[int, int]]:  # type: ignore[type-arg]
+            def _encode_image(image: np.ndarray) -> tuple[str, tuple[int, int]]:
                 try:
                     width, height = image.shape[:2]
                     _, buffer = cv2.imencode(".jpg", image)

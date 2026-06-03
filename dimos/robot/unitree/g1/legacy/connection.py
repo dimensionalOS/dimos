@@ -40,7 +40,7 @@ class G1Config(ModuleConfig):
     connection_type: str = Field(default_factory=lambda m: m["g"].unitree_connection_type)
 
 
-class G1ConnectionBase(Module[_Config], ABC):
+class G1ConnectionBase(Module, ABC):
     """Abstract base for G1 connections (real hardware and simulation).
 
     Modules that depend on G1 connection RPC methods should reference this
@@ -67,7 +67,7 @@ class G1ConnectionBase(Module[_Config], ABC):
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]: ...
 
 
-class G1Connection(G1ConnectionBase[G1Config]):
+class G1Connection(G1ConnectionBase):
     default_config = G1Config
 
     cmd_vel: In[Twist]

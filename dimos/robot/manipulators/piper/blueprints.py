@@ -24,6 +24,7 @@ Usage:
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -31,7 +32,11 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.catalog.piper import PIPER_FK_MODEL, piper as _catalog_piper
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
-_piper_cfg = _catalog_piper(name="arm")
+_piper_cfg = _catalog_piper(
+    name="arm",
+    adapter_type="piper" if global_config.can_port else "mock",
+    address=global_config.can_port or "can0",
+)
 
 # Piper 6-DOF mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_piper = autoconnect(

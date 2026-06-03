@@ -75,17 +75,10 @@ PI = math.pi
 # LFS data asset name for the Unity sim binary
 _LFS_ASSET = "unity_sim_x86"
 
-# Google Drive folder containing VLA Challenge environment zips
-_GDRIVE_FOLDER_ID = "1UD5v6cSfcwIMWmsq9WSk7blJut4kgb-1"
-_DEFAULT_SCENE = "office_1"
-
 # Read timeout for the Unity TCP connection (seconds).  If Unity stops
 # sending data for longer than this the bridge treats it as a hung
 # connection and drops it.
 _BRIDGE_READ_TIMEOUT = 30.0
-
-
-# TCP protocol helpers
 
 
 def _recvall(sock: socket.socket, size: int) -> bytes:
@@ -126,9 +119,6 @@ def _write_tcp_command(sock: socket.socket, command: str, params: dict[str, Any]
     )
 
 
-# Platform validation
-
-
 def _validate_platform() -> None:
     """Raise if the current platform can't run the Unity x86_64 binary."""
     supported_systems = {"Linux"}
@@ -151,64 +141,6 @@ def _validate_platform() -> None:
         )
 
 
-def _download_unity_scene(scene: str, dest_dir: Path) -> Path:
-    """Download a Unity environment zip from Google Drive and extract it.
-
-    Returns the path to the Model.x86_64 binary.
-    """
-    import zipfile
-
-    try:
-        import gdown  # type: ignore[import-untyped]
-    except ImportError:
-        raise RuntimeError(
-            "Unity sim binary not found and 'gdown' is not installed for auto-download. "
-            "Install it with: pip install gdown\n"
-            "Or manually download from: "
-            f"https://drive.google.com/drive/folders/{_GDRIVE_FOLDER_ID}"
-        ) from None
-
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = dest_dir / f"{scene}.zip"
-
-    if not zip_path.exists():
-        print("\n" + "=" * 70, flush=True)
-        print(f"  DOWNLOADING UNITY SIMULATOR — scene: '{scene}'", flush=True)
-        print("  Source: Google Drive (VLA Challenge environments)", flush=True)
-        print(f"  Destination: {dest_dir}", flush=True)
-        print("  This is a one-time download.", flush=True)
-        print("=" * 70 + "\n", flush=True)
-        gdown.download_folder(id=_GDRIVE_FOLDER_ID, output=str(dest_dir), quiet=False)
-        for candidate in dest_dir.rglob(f"{scene}.zip"):
-            zip_path = candidate
-            break
-
-    if not zip_path.exists():
-        raise FileNotFoundError(
-            f"Failed to download scene '{scene}'. "
-            f"Check https://drive.google.com/drive/folders/{_GDRIVE_FOLDER_ID}"
-        )
-
-    extract_dir = dest_dir / scene
-    if not extract_dir.exists():
-        logger.info(f"Extracting {zip_path}...")
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(dest_dir)
-
-    binary = extract_dir / "environment" / "Model.x86_64"
-    if not binary.exists():
-        raise FileNotFoundError(
-            f"Extracted scene but Model.x86_64 not found at {binary}. "
-            f"Expected structure: {scene}/environment/Model.x86_64"
-        )
-
-    binary.chmod(binary.stat().st_mode | 0o111)
-    return binary
-
-
-# Config
-
-
 class UnityBridgeConfig(ModuleConfig):
     """Configuration for the Unity bridge / vehicle simulator.
 
@@ -218,18 +150,8 @@ class UnityBridgeConfig(ModuleConfig):
     """
 
     # Path to the Unity x86_64 binary. Leave empty to auto-resolve
-    # from LFS data or auto-download from Google Drive.
+    # from LFS data (unity_sim_x86/environment/Model.x86_64).
     unity_binary: str = ""
-
-    # Scene name for auto-download (e.g. "office_1", "hotel_room_1").
-    # Only used when unity_binary is not found and auto_download is True.
-    unity_scene: str = _DEFAULT_SCENE
-
-    # Directory to download/cache Unity scenes.
-    unity_cache_dir: str = "~/.cache/dimos/unity_envs"
-
-    # Auto-download the scene from Google Drive if binary is missing.
-    auto_download: bool = True
 
     # Max seconds to wait for Unity to connect after launch.
     unity_connect_timeout: float = 30.0
@@ -266,35 +188,26 @@ class UnityBridgeConfig(ModuleConfig):
     # Odometry drift rate: standard deviation of Gaussian noise added to the
     # internal drift offset each sim step (metres per step). Drift accumulates
     # over time, simulating encoder/IMU integration error.
-    # At 200Hz with drift_rate=0.001: ~4.5cm drift after 10s, ~14cm after 100s.
-    # Set to 0.0 for no drift.
     odom_drift_rate: float = 0.0
 
-    # ─── Terrain inclination fitting (port from ROS vehicleSimulator) ─────
-    # Enable RANSAC-style terrain plane fit to produce vehicle roll/pitch.
-    # Disabled by default — robot stays level when off.
+    lock_z: bool = False
+
     terrain_inclination_enabled: bool = False
-    # Radius around robot to collect terrain points for the plane fit (m).
-    terrain_fit_radius: float = 1.5
-    # Voxel downsample size for terrain points before fit (m).
-    terrain_fit_voxel_size: float = 0.05
-    # Max iterations for outlier rejection.
+    terrain_fit_radius: float = 1.5  # m
+    terrain_fit_voxel_size: float = 0.05  # m
     terrain_fit_max_iterations: int = 5
-    # Reject points farther than this from the current fit (m).
-    terrain_fit_outlier_threshold: float = 0.2
-    # Require at least this many inliers for a valid fit.
+    terrain_fit_outlier_threshold: float = 0.2  # m
     terrain_fit_min_inliers: int = 500
-    # Clamp terrain tilt to this absolute value (degrees).
-    terrain_max_incline_deg: float = 30.0
-    # Band (m) around current terrain_z to treat as ground for plane fit.
-    terrain_ground_band: float = 0.3
-    # Exponential smoothing rate for roll/pitch updates.
+    terrain_max_incline_deg: float = 30.0  # deg
+    terrain_ground_band: float = 0.3  # m
     inclination_smooth_rate: float = 0.2
 
-    # ─── Sensor offset in kinematics (port from ROS vehicleSimulator) ─────
-    # Offset of the sensor origin from the vehicle center (m).
-    sensor_offset_x: float = 0.0
+    sensor_offset_x: float = 0.0  # m
     sensor_offset_y: float = 0.0
+
+    # Disable image decoding and publishing (color_image, semantic_image,
+    # camera_info) to save CPU when only navigation is needed.
+    publish_images: bool = True
 
 
 # Camera intrinsics constants.
@@ -313,10 +226,7 @@ _CAM_CX = _CAM_WIDTH / 2.0
 _CAM_CY = _CAM_HEIGHT / 2.0
 
 
-# Module
-
-
-class UnityBridgeModule(Module[UnityBridgeConfig]):
+class UnityBridgeModule(Module):
     """TCP bridge to the Unity simulator with kinematic odometry integration.
 
     Ports:
@@ -329,7 +239,7 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
         camera_info (Out[CameraInfo]): Camera intrinsics.
     """
 
-    default_config = UnityBridgeConfig
+    config: UnityBridgeConfig
 
     cmd_vel: In[Twist]
     terrain_map: In[PointCloud2]
@@ -346,10 +256,18 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
 
         return rrb.Blueprint(
             rrb.Vertical(
-                rrb.Spatial3DView(origin="world", name="3D"),
-                rrb.Spatial2DView(origin="world/color_image", name="Camera"),
-                row_shares=[2, 1],
+                rrb.Spatial3DView(
+                    origin="world",
+                    name="3D",
+                    # starts in overhead view: useful for agentic debugging
+                    eye_controls=rrb.EyeControls3D(
+                        position=(0.0, 0.0, 20.0),
+                        look_target=(0.0, 0.0, 0.0),
+                        eye_up=(0.0, 1.0, 0.0),
+                    ),
+                ),
             ),
+            collapse_panels=True,
         )
 
     @staticmethod
@@ -409,8 +327,8 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
-        self._disposables.add(Disposable(self.terrain_map.subscribe(self._on_terrain)))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
+        self.register_disposable(Disposable(self.terrain_map.subscribe(self._on_terrain)))
         self._running.set()
         self._sim_thread = threading.Thread(target=self._sim_loop, daemon=True)
         self._sim_thread.start()
@@ -470,14 +388,6 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
             logger.warning(f"LFS asset '{_LFS_ASSET}' extracted but Model.x86_64 not found")
         except Exception as e:
             logger.warning(f"Failed to resolve Unity binary from LFS: {e}")
-
-        # Auto-download from Google Drive (VLA Challenge scenes)
-        if cfg.auto_download:
-            try:
-                cache = Path(cfg.unity_cache_dir).expanduser()
-                return _download_unity_scene(cfg.unity_scene, cache)
-            except Exception as e:
-                logger.warning(f"Auto-download failed: {e}")
 
         return None
 
@@ -553,6 +463,8 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
             self._yaw_rate = twist.angular.z
 
     def _on_terrain(self, cloud: PointCloud2) -> None:
+        if self.config.lock_z:
+            return
         points, _ = cloud.as_numpy()
         if len(points) == 0:
             return
@@ -761,6 +673,8 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
                     )
 
         elif "image" in topic and "compressed" in topic:
+            if not self.config.publish_images:
+                return
             img_result = deserialize_compressed_image(data)
             if img_result is not None:
                 img_bytes, _fmt, _frame_id, ts = img_result
@@ -781,17 +695,15 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
         # Use the same intrinsics as rerun_static_pinhole (120° HFOV pinhole
         # approximation of the cylindrical panorama).
         self.camera_info.publish(
-            CameraInfo(
-                height=height,
+            CameraInfo.from_intrinsics(
+                fx=_CAM_FX,
+                fy=_CAM_FY,
+                cx=_CAM_CX,
+                cy=_CAM_CY,
                 width=width,
-                distortion_model="plumb_bob",
-                D=[0.0, 0.0, 0.0, 0.0, 0.0],
-                K=[_CAM_FX, 0.0, _CAM_CX, 0.0, _CAM_FY, _CAM_CY, 0.0, 0.0, 1.0],
-                R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-                P=[_CAM_FX, 0.0, _CAM_CX, 0.0, 0.0, _CAM_FY, _CAM_CY, 0.0, 0.0, 0.0, 1.0, 0.0],
+                height=height,
                 frame_id="camera",
-                ts=ts,
-            )
+            ).with_ts(ts)
         )
 
     def _send_to_unity(self, topic: str, data: bytes) -> None:

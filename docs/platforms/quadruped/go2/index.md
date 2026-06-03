@@ -35,24 +35,48 @@ Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3
 
 ## Run on Your Go2
 
+### First-time setup, connecting to wifi, finding robot IP
+
+Use `dimos go2tool` to provision wifi and find the robot's IP. Skip if the robot is already on your network and you know its IP.
+
+1. Power on the Go2 — it advertises over BLE immediately.
+
+2. Provision wifi (one-time per network):
+
+optionally use discover to make sure robot is detected
+
+```bash
+dimos go2tool discover
+```
+
+configure wifi
+
+```bash
+dimos go2tool connect-wifi --ssid <wifi> --password <password>
+```
+
+Scans BLE and connects to the only robot it finds, or prompts you to pick if there are several.
+
+3. Find the robot's IP:
+
+```bash
+dimos go2tool discover
+```
+
+Prints `SOURCE NAME IP MAC SERIAL` for every robot it sees over BLE and LAN. Export the IP:
+
+```bash
+export ROBOT_IP=<discovered_ip>
+```
+
 ### Pre-flight checks
 
-1. Robot is reachable and low latency <10ms, 0% packet loss
+1. Robot is reachable and low latency `<10ms`, 0% packet loss
 ```bash
 ping $ROBOT_IP
 ```
 
 2. Built-in obstacle avoidance is on. (DimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots)
-
-3. If video is not in sync with lidar/robot position, sync your clock with an NTP server
-
-```bash
-sudo ntpdate pool.ntp.org
-```
-or
-```bash
-sudo sntp -sS pool.ntp.org
-```
 
 ### Ready to run DimOS
 
@@ -125,7 +149,7 @@ The agent subscribes to camera, LiDAR, and spatial memory streams — it sees wh
 ## Deep Dive
 
 - [Navigation Stack](/docs/capabilities/navigation/native/index.md) — column-carving voxel mapping, costmap generation, A* planning
-- [Visualization](/docs/usage/visualization.md) — Rerun, Foxglove, performance tuning
+- [Visualization](/docs/usage/visualization.md) — Rerun, performance tuning
 - [Data Streams](/docs/usage/data_streams) — RxPY streams, backpressure, quality filtering
 - [Transports](/docs/usage/transports/index.md) — LCM, SHM, DDS
 - [Blueprints](/docs/usage/blueprints.md) — composing modules

@@ -43,7 +43,7 @@ class Imu(Timestamped):
         frame_id: str = "imu_link",
         ts: float | None = None,
     ) -> None:
-        self.ts = ts if ts is not None else time.time()  # type: ignore[assignment]
+        self.ts = ts if ts is not None else time.time()
         self.frame_id = frame_id
         self.angular_velocity = angular_velocity or Vector3(0.0, 0.0, 0.0)
         self.linear_acceleration = linear_acceleration or Vector3(0.0, 0.0, 0.0)
@@ -117,3 +117,9 @@ class Imu(Timestamped):
             f"linear_acceleration={self.linear_acceleration}, "
             f"orientation={self.orientation})"
         )
+
+    def to_rerun(self, axis_length: float = 0.2):  # type: ignore[no-untyped-def]
+        """Orientation axes for rerun."""
+        import rerun as rr
+
+        return rr.TransformAxes3D(axis_length=axis_length)

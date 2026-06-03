@@ -16,7 +16,7 @@
 import numpy as np
 
 
-def calculate_rms_volume(audio_data: np.ndarray) -> float:  # type: ignore[type-arg]
+def calculate_rms_volume(audio_data: np.ndarray) -> float:
     """
     Calculate RMS (Root Mean Square) volume of audio data.
 
@@ -41,7 +41,7 @@ def calculate_rms_volume(audio_data: np.ndarray) -> float:  # type: ignore[type-
     return rms  # type: ignore[no-any-return]
 
 
-def calculate_peak_volume(audio_data: np.ndarray) -> float:  # type: ignore[type-arg]
+def calculate_peak_volume(audio_data: np.ndarray) -> float:
     """
     Calculate peak volume of audio data.
 

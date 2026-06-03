@@ -24,7 +24,7 @@ class Config(TFConfig, LCMConfig):
 
 
 # this doesn't work due to tf_lcm_py package
-class TFLCM(TFSpec[Config], LCMService[Config]):
+class TFLCM(TFSpec, LCMService):
     """A service for managing and broadcasting transforms using LCM.
     This is not a separete module, You can include this in your module
     if you need to access transforms.
@@ -37,7 +37,7 @@ class TFLCM(TFSpec[Config], LCMService[Config]):
     for each module.
     """
 
-    default_config = Config
+    config: Config
 
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)

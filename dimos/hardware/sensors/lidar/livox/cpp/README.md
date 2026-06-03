@@ -69,7 +69,7 @@ Normally launched by `Mid360` via the NativeModule framework:
 
 ```python
 from dimos.hardware.sensors.lidar.livox.module import Mid360
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 
 autoconnect(
     Mid360.blueprint(host_ip="192.168.1.5"),

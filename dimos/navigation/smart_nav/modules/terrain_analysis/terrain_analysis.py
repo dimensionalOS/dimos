@@ -152,6 +152,7 @@ class TerrainAnalysis(NativeModule):
         terrain_map (Out[PointCloud2]): Terrain cost map (intensity=obstacle cost).
     """
 
+    config: TerrainAnalysisConfig
     default_config: type[TerrainAnalysisConfig] = TerrainAnalysisConfig  # type: ignore[assignment]
 
     registered_scan: In[PointCloud2]

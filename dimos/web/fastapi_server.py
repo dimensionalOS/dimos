@@ -38,6 +38,7 @@ from reactivex.disposable import SingleAssignmentDisposable
 from sse_starlette.sse import EventSourceResponse
 import uvicorn
 
+from dimos.core.global_config import global_config
 from dimos.web.edge_io import EdgeIO
 
 # TODO: Resolve threading, start/stop stream functionality.
@@ -48,7 +49,7 @@ class FastAPIServer(EdgeIO):
         self,
         dev_name: str = "FastAPI Server",
         edge_type: str = "Bidirectional",
-        host: str = "0.0.0.0",
+        host: str | None = None,
         port: int = 5555,
         text_streams=None,
         **streams,
@@ -56,7 +57,7 @@ class FastAPIServer(EdgeIO):
         super().__init__(dev_name, edge_type)
         self.app = FastAPI()
         self.port = port
-        self.host = host
+        self.host = host if host is not None else global_config.listen_host
         BASE_DIR = Path(__file__).resolve().parent
         self.templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
         self.streams = streams
@@ -185,10 +186,11 @@ class FastAPIServer(EdgeIO):
         async def index(request: Request):  # type: ignore[no-untyped-def]
             stream_keys = list(self.streams.keys())
             text_stream_keys = list(self.text_streams.keys())
+            # Starlette 0.38+: request is 1st positional arg, not in context dict.
             return self.templates.TemplateResponse(
+                request,
                 "index_fastapi.html",
                 {
-                    "request": request,
                     "stream_keys": stream_keys,
                     "text_stream_keys": text_stream_keys,
                 },

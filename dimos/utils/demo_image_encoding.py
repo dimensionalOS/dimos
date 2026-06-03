@@ -35,7 +35,6 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import JpegLcmTransport, LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.fast_image_generator import random_image
 
 
@@ -76,7 +75,7 @@ class ReceiverModule(Module):
 
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.image.subscribe(self._on_image)))
+        self.register_disposable(Disposable(self.image.subscribe(self._on_image)))
         self._open_file = open("/tmp/receiver-times", "w")
 
     def stop(self) -> None:
@@ -108,9 +107,6 @@ def main() -> None:
         emitter.image.transport = LCMTransport("/go2/color_image", Image)
     receiver.image.connect(emitter.image)
 
-    foxglove_bridge = FoxgloveBridge()
-    foxglove_bridge.start()
-
     dimos.start_all_modules()
 
     try:
@@ -119,7 +115,6 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        foxglove_bridge.stop()
         dimos.close()  # type: ignore[attr-defined]
 
 

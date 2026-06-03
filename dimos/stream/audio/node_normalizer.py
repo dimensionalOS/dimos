@@ -46,7 +46,7 @@ class AudioNormalizer(AbstractAudioTransform):
         max_gain: float = 10.0,
         decay_factor: float = 0.999,
         adapt_speed: float = 0.05,
-        volume_func: Callable[[np.ndarray], float] = calculate_peak_volume,  # type: ignore[type-arg]
+        volume_func: Callable[[np.ndarray], float] = calculate_peak_volume,
     ) -> None:
         """
         Initialize AudioNormalizer.

@@ -89,7 +89,7 @@ class Vector:
         return float(self._data[idx])
 
     def __iter__(self) -> Iterable[float]:
-        return iter(self._data)  # type: ignore[no-any-return]
+        return iter(self._data)
 
     def __repr__(self) -> str:
         components = ",".join(f"{x:.6g}" for x in self._data)

@@ -23,7 +23,7 @@ from dimos_lcm.nav_msgs import (
     MapMetaData,
     OccupancyGrid as LCMOccupancyGrid,
 )
-from dimos_lcm.std_msgs import Time as LCMTime  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Time as LCMTime
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
@@ -481,7 +481,7 @@ class OccupancyGrid(Timestamped):
     def to_rerun(
         self,
         colormap: str | None = None,
-        z_offset: float = 0.01,
+        z_offset: float = 0,
         opacity: float = 1.0,
         cost_range: tuple[int, int] | None = None,
         background: str | None = None,

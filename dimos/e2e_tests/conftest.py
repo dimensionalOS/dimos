@@ -20,6 +20,7 @@ import pytest
 
 from dimos.core.transport import pLCMTransport
 from dimos.e2e_tests.conf_types import StartPersonTrack
+from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -66,11 +67,17 @@ def follow_points(lcm_spy: LcmSpy):
 
 
 @pytest.fixture
-def start_blueprint() -> Iterator[Callable[[str], DimosCliCall]]:
+def start_blueprint(mcp_port: int) -> Iterator[Callable[..., DimosCliCall]]:
     dimos_robot_call = DimosCliCall()
+    dimos_robot_call.mcp_port = mcp_port
 
-    def set_name_and_start(*demo_args: str) -> DimosCliCall:
+    def set_name_and_start(
+        *demo_args: str,
+        simulator: str | None = None,
+    ) -> DimosCliCall:
         dimos_robot_call.demo_args = list(demo_args)
+        if simulator is not None:
+            dimos_robot_call.simulator = simulator
         dimos_robot_call.start()
         return dimos_robot_call
 
@@ -147,6 +154,96 @@ def explore_office(
         (-4.71, 1.17),
         (4.30, 0.87),
     ]
+
+    def explore() -> None:
+        direct_cmd_vel_explorer.follow_points(points)
+
+    return explore
+
+
+@pytest.fixture
+def dim_sim():
+    client = DimSimClient()
+    client.start()
+    yield client
+    client.stop()
+
+
+@pytest.fixture
+def spawn_wall_on_pose(lcm_spy: LcmSpy, dim_sim: DimSimClient):
+    """Spawn a dim_sim wall when the robot's /odom comes within `threshold` metres of `point`."""
+    odom_topic = "/odom#geometry_msgs.PoseStamped"
+    stop_event = threading.Event()
+    workers: list[threading.Thread] = []
+    errors: list[BaseException] = []
+
+    def spawn(*, point, threshold, wall) -> None:
+        px, py = point
+        threshold_sq = threshold * threshold
+        triggered = threading.Event()
+
+        def on_odom(data):
+            if triggered.is_set():
+                return
+            pose = PoseStamped.lcm_decode(data)
+            dx = pose.x - px
+            dy = pose.y - py
+            if dx * dx + dy * dy < threshold_sq:
+                triggered.set()
+
+        def worker():
+            try:
+                with lcm_spy.topic_listener(odom_topic, on_odom):
+                    while not stop_event.is_set():
+                        if triggered.wait(timeout=0.1):
+                            dim_sim.add_wall(*wall)
+                            return
+            except BaseException as e:
+                errors.append(e)
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        workers.append(thread)
+
+    yield spawn
+
+    stop_event.set()
+    for thread in workers:
+        thread.join(timeout=5.0)
+    if errors:
+        raise errors[0]
+
+
+@pytest.fixture
+def explore_house(
+    direct_cmd_vel_explorer: DirectCmdVelExplorer,
+) -> Callable[[], None]:
+    points = [
+        (3.881, 4.803),
+        (4.160, 1.615),
+        (1.596, 1.505),
+        (1.649, 0.137),
+        (-3.644, -0.064),
+        (-3.759, -2.661),
+        (-4.186, -4.830),
+        (-3.759, -2.661),
+        (-1.070, -3.285),
+        (-2.504, -2.452),
+        (-2.647, 5.243),
+        (-3.663, 3.591),
+        (-1.178, 1.974),
+        (-2.416, 2.629),
+        (-2.581, 0.164),
+        (1.834, 0.072),
+        (3.010, -3.883),
+        (1.756, -3.742),
+        (6.336, -4.077),
+        (8.264, -5.119),
+        (6.258, -0.964),
+        (6.453, 5.327),
+    ]
+
+    direct_cmd_vel_explorer.linear_speed = 0.5
 
     def explore() -> None:
         direct_cmd_vel_explorer.follow_points(points)

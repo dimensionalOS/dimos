@@ -43,7 +43,7 @@ class SubjectNotifier(Notifier[T]):
     then iterates outside the lock to avoid deadlocks with slow consumers.
     """
 
-    default_config = SubjectNotifierConfig
+    config: SubjectNotifierConfig
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -68,3 +68,11 @@ class SubjectNotifier(Notifier[T]):
             subs = list(self._subscribers)
         for buf in subs:
             buf.put(obs)
+
+    def stop(self) -> None:
+        """Close all subscribed buffers, unblocking any live iterators."""
+        with self._lock:
+            subs = list(self._subscribers)
+            self._subscribers.clear()
+        for buf in subs:
+            buf.close()

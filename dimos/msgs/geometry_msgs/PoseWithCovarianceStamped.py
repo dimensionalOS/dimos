@@ -29,9 +29,9 @@ from dimos.types.timestamped import Timestamped
 
 # Types that can be converted to/from PoseWithCovarianceStamped
 PoseWithCovarianceStampedConvertable: TypeAlias = (
-    tuple[PoseConvertable, list[float] | np.ndarray]  # type: ignore[type-arg]
+    tuple[PoseConvertable, list[float] | np.ndarray]
     | LCMPoseWithCovarianceStamped
-    | dict[str, PoseConvertable | list[float] | np.ndarray | float | str]  # type: ignore[type-arg]
+    | dict[str, PoseConvertable | list[float] | np.ndarray | float | str]
 )
 
 
@@ -58,7 +58,7 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
         ts: float = 0.0,
         frame_id: str = "",
         pose: Pose | PoseConvertable | None = None,
-        covariance: list[float] | np.ndarray | None = None,  # type: ignore[type-arg]
+        covariance: list[float] | np.ndarray | None = None,
     ) -> None:
         """Initialize with timestamp, frame_id, pose and covariance."""
         self.frame_id = frame_id
@@ -72,10 +72,10 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
         lcm_msg = LCMPoseWithCovarianceStamped()
         lcm_msg.pose.pose = self.pose
         # LCM expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
-            lcm_msg.pose.covariance = self.covariance.tolist()  # type: ignore[has-type]
+        if isinstance(self.covariance, np.ndarray):
+            lcm_msg.pose.covariance = self.covariance.tolist()
         else:
-            lcm_msg.pose.covariance = list(self.covariance)  # type: ignore[has-type]
+            lcm_msg.pose.covariance = list(self.covariance)
         [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)  # type: ignore[no-untyped-call]
         lcm_msg.header.frame_id = self.frame_id
         return lcm_msg.lcm_encode()  # type: ignore[no-any-return]

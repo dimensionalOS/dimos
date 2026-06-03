@@ -18,7 +18,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from ultralytics import YOLOE  # type: ignore[attr-defined, import-not-found]
+from ultralytics import YOLOE  # type: ignore[attr-defined]
 
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.base import Detector

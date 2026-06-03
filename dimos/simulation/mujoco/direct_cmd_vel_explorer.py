@@ -45,7 +45,7 @@ class DirectCmdVelExplorer:
         self._cmd_vel = LCMTransport("/cmd_vel", Twist)
         self._odom = LCMTransport("/odom", PoseStamped)
         self._pose = None
-        self._unsub = self._odom.subscribe(self._on_odom)  # type: ignore[func-returns-value]
+        self._unsub = self._odom.subscribe(self._on_odom)
 
     def stop(self) -> None:
         if self._unsub:

@@ -28,7 +28,7 @@ import time
 from typing import Any
 import webbrowser
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
@@ -47,6 +47,7 @@ _COMMAND_CENTER_DIR = (
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.models import LatLon
@@ -72,7 +73,7 @@ class WebsocketConfig(ModuleConfig):
     port: int = 7779
 
 
-class WebsocketVisModule(Module[WebsocketConfig]):
+class WebsocketVisModule(Module):
     """
     WebSocket-based visualization module for real-time navigation data.
 
@@ -91,7 +92,7 @@ class WebsocketVisModule(Module[WebsocketConfig]):
         - click_goal: Goal position from user clicks
     """
 
-    default_config = WebsocketConfig
+    config: WebsocketConfig
 
     # LCM inputs
     odom: In[PoseStamped]
@@ -157,56 +158,43 @@ class WebsocketVisModule(Module[WebsocketConfig]):
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
 
-        # Auto-open browser only for rerun-web (dashboard with Rerun iframe + command center)
-        # For rerun and foxglove, users access the command center manually if needed
-        if self.config.g.viewer == "rerun-web":  # type: ignore[comparison-overlap]
+        # Only auto-open when the user chose web-based viewing.
+        if self.config.g.viewer == "rerun" and self.config.g.rerun_open in ("web", "both"):
             url = f"http://localhost:{self.config.port}/"
             logger.info(f"Dimensional Command Center: {url}")
 
             global _browser_opened
             with _browser_open_lock:
                 if not _browser_opened:
-                    _browser_opened = True
-
-                    def _open_browser() -> None:
-                        try:
-                            webbrowser.open_new_tab(url)
-                        except Exception as e:
-                            logger.debug(f"Failed to open browser: {e}")
-
-                    threading.Thread(target=_open_browser, daemon=True).start()
+                    try:
+                        webbrowser.open_new_tab(url)
+                        _browser_opened = True
+                    except Exception as e:
+                        logger.debug(f"Failed to open browser: {e}")
 
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)
-            self._disposables.add(Disposable(unsub))
-            logger.info("Subscribed to odom")
-        except Exception as e:
-            logger.warning(f"Failed to subscribe to odom: {e}")
+            self.register_disposable(Disposable(unsub))
+        except Exception:
+            ...
 
         try:
             unsub = self.gps_location.subscribe(self._on_gps_location)
-            self._disposables.add(Disposable(unsub))
-            logger.info("Subscribed to gps_location")
-        except Exception as e:
-            logger.warning(f"Failed to subscribe to gps_location: {e}")
+            self.register_disposable(Disposable(unsub))
+        except Exception:
+            ...
 
         try:
             unsub = self.path.subscribe(self._on_path)
-            self._disposables.add(Disposable(unsub))
-            logger.info("Subscribed to path")
-        except Exception as e:
-            logger.warning(f"Failed to subscribe to path: {e}")
+            self.register_disposable(Disposable(unsub))
+        except Exception:
+            ...
 
-        transport = getattr(self.global_costmap, "_transport", "MISSING")
-        logger.debug(f"[DEBUG] global_costmap transport before subscribe: {transport}")
         try:
             unsub = self.global_costmap.subscribe(self._on_global_costmap)
-            self._disposables.add(Disposable(unsub))
-            logger.debug(f"[DEBUG] Subscribed to global_costmap OK, transport={transport}")
-        except Exception as e:
-            logger.warning(f"Failed to subscribe to global_costmap: {e}", exc_info=True)
-
-        logger.info("WebsocketVisModule.start() complete")
+            self.register_disposable(Disposable(unsub))
+        except Exception:
+            ...
 
     @rpc
     def stop(self) -> None:
@@ -222,11 +210,7 @@ class WebsocketVisModule(Module[WebsocketConfig]):
             async def _disconnect_all() -> None:
                 await self.sio.disconnect()
 
-            fut = asyncio.run_coroutine_threadsafe(_disconnect_all(), self._broadcast_loop)
-            try:
-                fut.result(timeout=2.0)
-            except Exception:
-                pass
+            asyncio.run_coroutine_threadsafe(_disconnect_all(), self._broadcast_loop)
 
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             self._broadcast_loop.call_soon_threadsafe(self._broadcast_loop.stop)
@@ -251,11 +235,10 @@ class WebsocketVisModule(Module[WebsocketConfig]):
 
         async def serve_index(request):  # type: ignore[no-untyped-def]
             """Serve appropriate HTML based on viewer mode."""
-            # If running native Rerun, redirect to standalone command center
-            if self.config.g.viewer != "rerun-web":  # type: ignore[comparison-overlap]
+            if not (
+                self.config.g.viewer == "rerun" and self.config.g.rerun_open in ("web", "both")
+            ):
                 return RedirectResponse(url="/command-center")
-
-            # Otherwise serve full dashboard with Rerun iframe
             return FileResponse(_DASHBOARD_HTML, media_type="text/html")
 
         async def serve_command_center(request):  # type: ignore[no-untyped-def]
@@ -372,7 +355,7 @@ class WebsocketVisModule(Module[WebsocketConfig]):
     def _run_uvicorn_server(self) -> None:
         config = uvicorn.Config(
             self.app,  # type: ignore[arg-type]
-            host="0.0.0.0",
+            host=global_config.listen_host,
             port=self.config.port,
             log_level="error",  # Reduce verbosity
         )

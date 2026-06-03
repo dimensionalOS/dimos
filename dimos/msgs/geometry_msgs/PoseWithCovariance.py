@@ -30,9 +30,9 @@ if TYPE_CHECKING:
 
 # Types that can be converted to/from PoseWithCovariance
 PoseWithCovarianceConvertable: TypeAlias = (
-    tuple[PoseConvertable, list[float] | np.ndarray]  # type: ignore[type-arg]
+    tuple[PoseConvertable, list[float] | np.ndarray]
     | LCMPoseWithCovariance
-    | dict[str, PoseConvertable | list[float] | np.ndarray]  # type: ignore[type-arg]
+    | dict[str, PoseConvertable | list[float] | np.ndarray]
 )
 
 
@@ -51,7 +51,7 @@ class PoseWithCovariance(LCMPoseWithCovariance):  # type: ignore[misc]
     def __init__(
         self,
         pose: Pose | PoseConvertable,
-        covariance: list[float] | np.ndarray | None = None,  # type: ignore[type-arg]
+        covariance: list[float] | np.ndarray | None = None,
     ) -> None:
         """Initialize with pose and optional covariance."""
         self.pose = Pose(pose) if not isinstance(pose, Pose) else pose
@@ -67,7 +67,7 @@ class PoseWithCovariance(LCMPoseWithCovariance):  # type: ignore[misc]
         self.covariance = np.array(lcm_pose_with_cov.covariance).copy()
 
     @dispatch  # type: ignore[no-redef]
-    def __init__(self, pose_dict: dict[str, PoseConvertable | list[float] | np.ndarray]) -> None:  # type: ignore[type-arg]
+    def __init__(self, pose_dict: dict[str, PoseConvertable | list[float] | np.ndarray]) -> None:
         """Initialize from a dictionary with 'pose' and 'covariance' keys."""
         self.pose = Pose(pose_dict["pose"])
         covariance = pose_dict.get("covariance")
@@ -77,7 +77,7 @@ class PoseWithCovariance(LCMPoseWithCovariance):  # type: ignore[misc]
             self.covariance = np.array(covariance, dtype=float).reshape(36)
 
     @dispatch  # type: ignore[no-redef]
-    def __init__(self, pose_tuple: tuple[PoseConvertable, list[float] | np.ndarray]) -> None:  # type: ignore[type-arg]
+    def __init__(self, pose_tuple: tuple[PoseConvertable, list[float] | np.ndarray]) -> None:
         """Initialize from a tuple of (pose, covariance)."""
         self.pose = Pose(pose_tuple[0])
         self.covariance = np.array(pose_tuple[1], dtype=float).reshape(36)
@@ -139,17 +139,17 @@ class PoseWithCovariance(LCMPoseWithCovariance):  # type: ignore[misc]
         return self.pose.yaw
 
     @property
-    def covariance_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
+    def covariance_matrix(self) -> np.ndarray:
         """Get covariance as 6x6 matrix."""
-        return self.covariance.reshape(6, 6)  # type: ignore[has-type, no-any-return]
+        return self.covariance.reshape(6, 6)
 
     @covariance_matrix.setter
-    def covariance_matrix(self, value: np.ndarray) -> None:  # type: ignore[type-arg]
+    def covariance_matrix(self, value: np.ndarray) -> None:
         """Set covariance from 6x6 matrix."""
-        self.covariance = np.array(value).reshape(36)  # type: ignore[has-type]
+        self.covariance = np.array(value).reshape(36)
 
     def __repr__(self) -> str:
-        return f"PoseWithCovariance(pose={self.pose!r}, covariance=<{self.covariance.shape[0] if isinstance(self.covariance, np.ndarray) else len(self.covariance)} elements>)"  # type: ignore[has-type]
+        return f"PoseWithCovariance(pose={self.pose!r}, covariance=<{self.covariance.shape[0] if isinstance(self.covariance, np.ndarray) else len(self.covariance)} elements>)"
 
     def __str__(self) -> str:
         return (
@@ -162,17 +162,17 @@ class PoseWithCovariance(LCMPoseWithCovariance):  # type: ignore[misc]
         """Check if two PoseWithCovariance are equal."""
         if not isinstance(other, PoseWithCovariance):
             return False
-        return self.pose == other.pose and np.allclose(self.covariance, other.covariance)  # type: ignore[has-type]
+        return self.pose == other.pose and np.allclose(self.covariance, other.covariance)
 
     def lcm_encode(self) -> bytes:
         """Encode to LCM binary format."""
         lcm_msg = LCMPoseWithCovariance()
         lcm_msg.pose = self.pose
         # LCM expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
-            lcm_msg.covariance = self.covariance.tolist()  # type: ignore[has-type]
+        if isinstance(self.covariance, np.ndarray):
+            lcm_msg.covariance = self.covariance.tolist()
         else:
-            lcm_msg.covariance = list(self.covariance)  # type: ignore[has-type]
+            lcm_msg.covariance = list(self.covariance)
         return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod

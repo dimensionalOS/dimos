@@ -61,7 +61,7 @@ class AudioEvent:
 
     def __init__(
         self,
-        data: np.ndarray,  # type: ignore[type-arg]
+        data: np.ndarray,
         sample_rate: int,
         timestamp: float,
         channels: int = 1,

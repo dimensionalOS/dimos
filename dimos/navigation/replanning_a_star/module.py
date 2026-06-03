@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-import math
 import os
 from typing import Any
 
@@ -23,9 +21,6 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -33,33 +28,12 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.replanning_a_star.global_planner import GlobalPlanner
+from dimos.utils.logging_config import setup_logger
 
-
-@dataclass
-class Config(ModuleConfig):
-    max_linear_speed: float = 0.55               # Max linear velocity (m/s)
-    max_angular_speed: float = 0.55              # Max angular velocity (rad/s)
-    control_frequency: float = 10                # Command loop rate (Hz)
-    k_angular: float = 0.5                       # Proportional gain for yaw correction
-    rotation_threshold: float = math.radians(90) # Above: rotate in place. Below: drive+rotate
-
-    def __post_init__(self) -> None:
-        if self.max_linear_speed <= 0:
-            raise ValueError(f"max_linear_speed must be positive, got {self.max_linear_speed}")
-        if self.max_angular_speed <= 0:
-            raise ValueError(f"max_angular_speed must be positive, got {self.max_angular_speed}")
-        if self.control_frequency <= 0:
-            raise ValueError(f"control_frequency must be positive, got {self.control_frequency}")
-        if self.k_angular <= 0:
-            raise ValueError(f"k_angular must be positive, got {self.k_angular}")
-        if self.rotation_threshold <= 0:
-            raise ValueError(f"rotation_threshold must be positive, got {self.rotation_threshold}")
+logger = setup_logger()
 
 
 class ReplanningAStarPlanner(Module, NavigationInterface):
-    default_config = Config
-    config: Config
-
     odom: In[PoseStamped]  # TODO: Use TF.
     global_costmap: In[OccupancyGrid]
     goal_request: In[PoseStamped]
@@ -83,16 +57,18 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     def start(self) -> None:
         super().start()
 
-        self._disposables.add(Disposable(self.odom.subscribe(self._planner.handle_odom)))
-        self._disposables.add(
+        self.register_disposable(Disposable(self.odom.subscribe(self._planner.handle_odom)))
+        self.register_disposable(
             Disposable(self.global_costmap.subscribe(self._planner.handle_global_costmap))
         )
-        self._disposables.add(
+        self.register_disposable(
             Disposable(self.goal_request.subscribe(self._planner.handle_goal_request))
         )
-        self._disposables.add(Disposable(self.target.subscribe(self._planner.handle_goal_request)))
+        self.register_disposable(
+            Disposable(self.target.subscribe(self._planner.handle_goal_request))
+        )
 
-        self._disposables.add(
+        self.register_disposable(
             Disposable(
                 self.clicked_point.subscribe(
                     lambda pt: self._planner.handle_goal_request(pt.to_pose_stamped())
@@ -101,16 +77,18 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         )
 
         if self.stop_movement.transport is not None:
-            self._disposables.add(Disposable(self.stop_movement.subscribe(self._on_stop_movement)))
+            self.register_disposable(
+                Disposable(self.stop_movement.subscribe(self._on_stop_movement))
+            )
 
-        self._disposables.add(self._planner.path.subscribe(self.path.publish))
+        self.register_disposable(self._planner.path.subscribe(self.path.publish))
 
-        self._disposables.add(self._planner.cmd_vel.subscribe(self.nav_cmd_vel.publish))
+        self.register_disposable(self._planner.cmd_vel.subscribe(self.nav_cmd_vel.publish))
 
-        self._disposables.add(self._planner.goal_reached.subscribe(self.goal_reached.publish))
+        self.register_disposable(self._planner.goal_reached.subscribe(self.goal_reached.publish))
 
         if "DEBUG_NAVIGATION" in os.environ:
-            self._disposables.add(
+            self.register_disposable(
                 self._planner.navigation_costmap.subscribe(self.navigation_costmap.publish)
             )
 
@@ -125,7 +103,6 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
     def _on_stop_movement(self, msg: Bool) -> None:
         if msg.data:
-            logger.info("ReplanningAStarPlanner: stop_movement received, cancelling goal")
             self.cancel_goal()
 
     @rpc

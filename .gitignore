@@ -2,6 +2,9 @@
 **/*.ignore
 **/*.ignore.*
 
+# Default output of `dimos apriltag`
+/apriltags.pdf
+
 .vscode/
 
 # Ignore Python cache files
@@ -38,10 +41,16 @@ __pycache__
 node_modules
 package.json
 package-lock.json
+!docs/package.json
+!docs/package-lock.json
 
 # Ignore build artifacts
 dist/
 build/
+
+# Rust build artifacts
+**/target/
+**/*.rs.bk
 
 # Ignore data directory but keep .lfs subdirectory
 data/*
@@ -65,6 +74,7 @@ yolo11n.pt
 
 *mobileclip*
 /results
+results/
 **/cpp/result
 
 CLAUDE.MD
@@ -77,9 +87,11 @@ CLAUDE.MD
 htmlcov/
 .coverage
 .coverage.*
-MUJOCO_LOG.TXT
 
-# Beads / Dolt files (added by bd init)
-.dolt/
-*.db
-.beads-credential-key
+# Memory2 autorecord
+recording*.db
+
+# Rerun recordings
+*.rrd
+
+/misc/fresh-ubuntu-tests/cache

@@ -40,7 +40,7 @@ else:
             raise ImportError(_ZED_ERR)
 
         @classmethod
-        def blueprint(cls, *args: object, **kwargs: object) -> None:  # type: ignore[no-untyped-def]
+        def blueprint(cls, *args: object, **kwargs: object) -> None:
             raise ImportError(_ZED_ERR)
 
     class ZEDModule:  # type: ignore[no-redef]

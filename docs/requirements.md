@@ -28,32 +28,35 @@
 Bare `pip install dimos` installs the **core** tier. Extras add capabilities on top.
 
 ```bash
-pip install dimos                           # Core only
-pip install 'dimos[base,unitree]'             # Full stack + Unitree
-pip install 'dimos[base,unitree,sim]'         # + MuJoCo simulation
-pip install 'dimos[base,unitree,drone]'       # + Drone support
-pip install 'dimos[base,unitree,manipulation]' # + Arm control
+pip install dimos                                    # Core only
+pip install 'dimos[base,unitree]'                    # Unitree robot control (no torch)
+pip install 'dimos[base,unitree,perception]'         # + Object detection, VLMs (requires torch)
+pip install 'dimos[base,unitree,sim]'                # + MuJoCo simulation
+pip install 'dimos[base,unitree,perception,sim]'     # Full stack
+pip install 'dimos[base,unitree,drone]'              # + Drone support
+pip install 'dimos[base,unitree,manipulation]'       # + Arm control
 ```
 
 | Extra | What it adds | Key packages | GPU? |
 |-------|-------------|--------------|------|
 | *(core)* | Transport, streams, CLI, blueprints, occupancy maps | dimos-lcm, numpy, scipy, opencv, open3d, numba, Pinocchio, typer, textual | No |
-| `agents` | LLM agent, speech, tool use | langchain, openai, whisper, anthropic | No |
+| `agents` | LLM agent, speech, tool use | langchain, openai, faster-whisper, anthropic | No |
 | `perception` | Object detection, VLMs, tracking | ultralytics, transformers, moondream | **Yes** |
 | `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |
 | `web` | FastAPI web interface, audio | fastapi, uvicorn, ffmpeg-python | No |
 | `sim` | MuJoCo simulation | mujoco, playground, pygame | No |
 | `unitree` | Unitree Go2 / G1 support | unitree-webrtc-connect | No |
+| `unitree-dds` | Unitree DDS bridge (superset of 'unitree') | unitree-sdk2py, cyclonedds | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
 | `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
+| `mapping` | GTSAM-backed pose graph optimization (relocalization, nav_stack PGO) | gtsam-extended | No |
 | `cuda` | GPU acceleration | cupy, onnxruntime-gpu, xformers | **Yes** |
 | `cpu` | CPU inference backends | onnxruntime, ctransformers | No |
 | `misc` | Extra models, embeddings, hardware SDKs | cerebras, edgetam, sentence-transformers, tiktoken | Varies |
 | `docker` | Minimal set for Docker sidecar modules | dimos-lcm, numpy, opencv-headless, rerun-sdk | No |
-| `base` | Kitchen sink (agents + web + perception + viz + sim) | All of the above | **Yes** |
-| `dev` | Linting, testing, type stubs | ruff, mypy, pytest, pre-commit | No |
+| `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
 | `psql` | PostgreSQL storage | psycopg2 | No |
-| `dds` | DDS transport (CycloneDDS) | dev + cyclonedds | No |
+| `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
 
 ## Headless / Server Environments
 

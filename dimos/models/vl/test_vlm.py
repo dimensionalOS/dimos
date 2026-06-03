@@ -1,10 +1,21 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import time
 from typing import TYPE_CHECKING
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-)
 import pytest
 
 from dimos.core.transport import LCMTransport
@@ -20,7 +31,6 @@ if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
 
 
-# For these tests you can run foxglove-bridge to visualize results
 # You can also run lcm-spy to confirm that messages are being published
 
 
@@ -32,7 +42,7 @@ if TYPE_CHECKING:
         (QwenVlModel, "Qwen"),
     ],
 )
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
     if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
@@ -63,11 +73,6 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
     all_detections = ImageDetections2D(image)
     query_times = []
 
-    # Publish to LCM with model-specific channel names
-    annotations_transport: LCMTransport[ImageAnnotations] = LCMTransport(
-        "/annotations", ImageAnnotations
-    )
-
     image_transport: LCMTransport[Image] = LCMTransport("/image", Image)
 
     image_transport.publish(image)
@@ -82,7 +87,6 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
 
         print(f"  Found {len(detections)} detections in {query_time:.3f}s")
         all_detections.detections.extend(detections.detections)
-        annotations_transport.publish(all_detections.to_foxglove_annotations())
 
     avg_time = sum(query_times) / len(query_times) if query_times else 0
     print(f"\n{model_name} Results:")
@@ -90,9 +94,6 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
     print(f"  Total detections: {len(all_detections)}")
     print(all_detections)
 
-    annotations_transport.publish(all_detections.to_foxglove_annotations())
-
-    annotations_transport.lcm.stop()
     image_transport.lcm.stop()
     model.stop()
 
@@ -105,7 +106,7 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
         (QwenVlModel, "Qwen"),
     ],
 )
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> None:
     """Test VLM point detection capabilities."""
@@ -134,11 +135,6 @@ def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> 
     all_detections = ImageDetections2D(image)
     query_times = []
 
-    # Publish to LCM with model-specific channel names
-    annotations_transport: LCMTransport[ImageAnnotations] = LCMTransport(
-        "/annotations", ImageAnnotations
-    )
-
     image_transport: LCMTransport[Image] = LCMTransport("/image", Image)
 
     image_transport.publish(image)
@@ -153,7 +149,6 @@ def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> 
 
         print(f"  Found {len(detections)} points in {query_time:.3f}s")
         all_detections.detections.extend(detections.detections)
-        annotations_transport.publish(all_detections.to_foxglove_annotations())
 
     avg_time = sum(query_times) / len(query_times) if query_times else 0
     print(f"\n{model_name} Results:")
@@ -161,9 +156,6 @@ def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> 
     print(f"  Total points: {len(all_detections)}")
     print(all_detections)
 
-    annotations_transport.publish(all_detections.to_foxglove_annotations())
-
-    annotations_transport.lcm.stop()
     image_transport.lcm.stop()
     model.stop()
 
@@ -174,7 +166,7 @@ def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> 
         (MoondreamVlModel, "Moondream"),
     ],
 )
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_multi optimization - single image, multiple queries."""
@@ -225,13 +217,12 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
     ],
 )
 @pytest.mark.tool
-@pytest.mark.slow
 def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_batch optimization - multiple images, same query."""
-    from dimos.utils.testing.replay import TimedSensorReplay
+    from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
-    # Load 5 frames at 1-second intervals using TimedSensorReplay
-    replay = TimedSensorReplay[Image]("unitree_go2_office_walk2/video")
+    # Load 5 frames at 1-second intervals using LegacyPickleStore
+    replay = LegacyPickleStore[Image]("unitree_go2_office_walk2/video")
     images = [replay.find_closest_seek(i).to_rgb() for i in range(0, 10, 2)]
 
     print(f"\nTesting {model_name} query_batch with {len(images)} images")
@@ -278,16 +269,16 @@ def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
         (QwenVlModel, [None, (512, 512), (256, 256)]),
     ],
 )
-@pytest.mark.slow
+@pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_resize(
     model_class: "type[VlModel]",
     sizes: list[tuple[int, int] | None],
 ) -> None:
     """Test VLM auto_resize effect on performance."""
-    from dimos.utils.testing.replay import TimedSensorReplay
+    from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
-    replay = TimedSensorReplay[Image]("unitree_go2_office_walk2/video")
+    replay = LegacyPickleStore[Image]("unitree_go2_office_walk2/video")
     image = replay.find_closest_seek(0).to_rgb()
 
     labels: list[str] = []

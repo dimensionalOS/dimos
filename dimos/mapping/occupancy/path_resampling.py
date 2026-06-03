@@ -16,7 +16,7 @@
 import math
 
 import numpy as np
-from scipy.ndimage import uniform_filter1d  # type: ignore[import-untyped]
+from scipy.ndimage import uniform_filter1d
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

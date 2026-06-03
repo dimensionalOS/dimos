@@ -21,7 +21,6 @@ from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 import cv2
-from langchain_core.messages import HumanMessage
 
 from dimos.agents.agent_spec import AgentSpec
 from dimos.agents.annotation import skill
@@ -122,6 +121,7 @@ class PerceiveLoopSkill(Module):
                 on_next=self._on_image,
                 on_error=lambda e: logger.exception("Error in perceive loop", exc_info=e),
             )
+        self.start_tool("look_out_for")
 
         return (
             f"Started looking for {json.dumps(description_of_things)}. This will "
@@ -165,10 +165,14 @@ class PerceiveLoopSkill(Module):
             self._model_started = False
 
         if then is None:
-            self._agent_spec.add_message(
-                HumanMessage(f"Found a match for {active_lookout_str}. Please announce audibly.")
+            self.tool_update(
+                "look_out_for",
+                f"Found a match for {active_lookout_str}. Please announce audibly.",
             )
+            self.stop_tool("look_out_for")
             return
+
+        self.stop_tool("look_out_for")
 
         best = max(detections.detections, key=lambda d: d.bbox_2d_volume())
         continuation_context: dict[str, Any] = {
@@ -194,6 +198,7 @@ class PerceiveLoopSkill(Module):
             if self._model_started:
                 self._vl_model.stop()
                 self._model_started = False
+        self.stop_tool("look_out_for")
 
 
 def _write_debug_image(image: Image, detections: ImageDetections2D[Detection2DBBox]) -> None:

@@ -23,7 +23,7 @@ from dimos.types.ros_polyfill import Vector3
 T = TypeVar("T", bound="Vector")
 
 # Vector-like types that can be converted to/from Vector
-VectorLike = Union[Sequence[int | float], Vector3, "Vector", np.ndarray]  # type: ignore[type-arg]
+VectorLike = Union[Sequence[int | float], Vector3, "Vector", np.ndarray]
 
 
 class Vector:
@@ -77,7 +77,7 @@ class Vector:
         return len(self._data)
 
     @property
-    def data(self) -> np.ndarray:  # type: ignore[type-arg]
+    def data(self) -> np.ndarray:
         """Get the underlying numpy array."""
         return self._data
 
@@ -266,7 +266,7 @@ class Vector:
         """Convert the vector to a tuple."""
         return tuple(self._data)
 
-    def to_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
+    def to_numpy(self) -> np.ndarray:
         """Convert the vector to a numpy array."""
         return self._data
 
@@ -290,7 +290,7 @@ class Vector:
         return not self.is_zero()
 
 
-def to_numpy(value: VectorLike) -> np.ndarray:  # type: ignore[type-arg]
+def to_numpy(value: VectorLike) -> np.ndarray:
     """Convert a vector-compatible value to a numpy array.
 
     Args:
@@ -361,7 +361,7 @@ def to_list(value: VectorLike) -> list[float]:
     elif isinstance(value, list):
         return value
     else:
-        return list(value)  # type: ignore[arg-type]
+        return list(value)
 
 
 # Helper functions to check dimensionality

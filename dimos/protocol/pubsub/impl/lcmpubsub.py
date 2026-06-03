@@ -92,7 +92,7 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
         self.l.publish(topic_str, message)
 
     def subscribe_all(self, callback: Callable[[bytes, Topic], Any]) -> Callable[[], None]:
-        return self.subscribe(Topic(re.compile(".*")), callback)  # type: ignore[arg-type]
+        return self.subscribe(Topic(re.compile(".*")), callback)
 
     def subscribe(
         self, topic: Topic, callback: Callable[[bytes, Topic], None]
@@ -137,12 +137,12 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
 
 
 class LCM(  # type: ignore[misc]
-    LCMEncoderMixin,  # type: ignore[type-arg]
+    LCMEncoderMixin,
     LCMPubSubBase,
 ): ...
 
 
-class PickleLCM(  # type: ignore[misc]
+class PickleLCM(
     PickleEncoderMixin,  # type: ignore[type-arg]
     LCMPubSubBase,
 ): ...

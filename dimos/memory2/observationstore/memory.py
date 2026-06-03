@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 import threading
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -30,18 +31,25 @@ T = TypeVar("T")
 
 class ListObservationStoreConfig(ObservationStoreConfig):
     name: str = "<memory>"
+    max_size: int | None = None
 
 
 class ListObservationStore(ObservationStore[T]):
-    """In-memory metadata store for experimentation. Thread-safe."""
+    """In-memory metadata store for experimentation. Thread-safe.
 
-    default_config = ListObservationStoreConfig
+    ``max_size`` controls how many observations are retained:
+    - ``None`` (default) — keep all (unbounded).
+    - ``N`` — rolling window of the most recent N observations.
+    - ``0`` — discard immediately (live-only, no history).
+    """
+
     config: ListObservationStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._name = self.config.name
-        self._observations: list[Observation[T]] = []
+        max_size = self.config.max_size
+        self._observations: deque[Observation[T]] = deque(maxlen=max_size)
         self._next_id = 0
         self._lock = threading.Lock()
 

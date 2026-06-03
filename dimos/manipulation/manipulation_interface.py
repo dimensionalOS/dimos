@@ -163,7 +163,7 @@ class ManipulationInterface:
         """
         if self.perception_stream:
             # Subscribe to the stream and update latest_objects
-            self.stream_subscription = self.perception_stream.get_stream().subscribe(  # type: ignore[no-untyped-call]
+            self.stream_subscription = self.perception_stream.get_stream().subscribe(
                 on_next=self._update_latest_objects,
                 on_error=lambda e: logger.error(f"Error in perception stream: {e}"),
             )

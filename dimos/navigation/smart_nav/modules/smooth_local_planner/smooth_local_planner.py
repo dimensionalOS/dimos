@@ -274,7 +274,7 @@ class SmoothLocalPlannerConfig(ModuleConfig):
     frame_id: str = "vehicle"
 
 
-class SmoothLocalPlanner(Module[SmoothLocalPlannerConfig]):
+class SmoothLocalPlanner(Module):
     """Reactive arc-sampling local planner with EMA-smoothed curvature.
 
     Ports:
@@ -295,6 +295,7 @@ class SmoothLocalPlanner(Module[SmoothLocalPlannerConfig]):
             obstacle crop we scored against (throttled).
     """
 
+    config: SmoothLocalPlannerConfig
     default_config: type[SmoothLocalPlannerConfig] = SmoothLocalPlannerConfig
 
     terrain_map: In[PointCloud2]

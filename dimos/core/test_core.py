@@ -47,7 +47,7 @@ class Navigation(Module):
             self.mov.publish(msg.position)
 
         unsub = self.odometry.subscribe(_odom)
-        self._disposables.add(Disposable(unsub))
+        self.register_disposable(Disposable(unsub))
 
         def _lidar(msg) -> None:
             self.lidar_msg_count += 1
@@ -57,7 +57,7 @@ class Navigation(Module):
                 print("RCV: unknown time", msg)
 
         unsub = self.lidar.subscribe(_lidar)
-        self._disposables.add(Disposable(unsub))
+        self.register_disposable(Disposable(unsub))
 
 
 def test_classmethods() -> None:
@@ -77,7 +77,7 @@ def test_classmethods() -> None:
     # Check that we have the expected RPC methods
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
-    assert len(class_rpcs) == 7
+    assert len(class_rpcs) == 8
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
@@ -92,7 +92,6 @@ def test_classmethods() -> None:
     nav._close_module()
 
 
-@pytest.mark.slow
 @pytest.mark.skipif_in_ci
 def test_basic_deployment(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)

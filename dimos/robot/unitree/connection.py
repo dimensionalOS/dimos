@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import functools
 import threading
 import time
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -29,7 +29,7 @@ from unitree_webrtc_connect.constants import (
     SPORT_CMD,
     VUI_COLOR,
 )
-from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untyped]
+from unitree_webrtc_connect.webrtc_driver import (
     UnitreeWebRTCConnection as LegionConnection,
     WebRTCConnectionMethod,
 )
@@ -41,20 +41,32 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.type.lidar import RawLidarMsg, pointcloud2_from_webrtc_lidar
+from dimos.robot.unitree.type.lidar import (
+    RawLidarMsg,
+    pointcloud2_from_webrtc_lidar,
+)
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.robot.unitree.type.odometry import Odometry
+from dimos.types.timestamped import Timestamped
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure, callback_to_observable
 
 VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 
 
+_T = TypeVar("_T", bound=Timestamped)
+
+
+def time_is_now(x: _T) -> _T:
+    x.ts = time.time()
+    return x
+
+
 @dataclass
 class SerializableVideoFrame:
     """Pickleable wrapper for av.VideoFrame with all metadata"""
 
-    data: np.ndarray  # type: ignore[type-arg]
+    data: np.ndarray
     pts: int | None = None
     time: float | None = None
     dts: int | None = None
@@ -79,6 +91,8 @@ class SerializableVideoFrame:
 
 
 class UnitreeWebRTCConnection(Resource):
+    _SPORT_API_ID_RAGEMODE: int = 2059
+
     def __init__(self, ip: str, mode: str = "ai") -> None:
         self.ip = ip
         self.mode = mode
@@ -246,7 +260,13 @@ class UnitreeWebRTCConnection(Resource):
 
     @simple_mcache
     def lidar_stream(self) -> Observable[PointCloud2]:
-        return backpressure(self.raw_lidar_stream().pipe(ops.map(pointcloud2_from_webrtc_lidar)))
+        return backpressure(
+            self.raw_lidar_stream().pipe(
+                ops.map(pointcloud2_from_webrtc_lidar),
+                ops.map(time_is_now),
+                # repair_stale_ts(),
+            )
+        )
 
     @simple_mcache
     def tf_stream(self) -> Observable[Transform]:
@@ -255,7 +275,14 @@ class UnitreeWebRTCConnection(Resource):
 
     @simple_mcache
     def odom_stream(self) -> Observable[Pose]:
-        return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))
+        return backpressure(
+            self.raw_odom_stream().pipe(
+                ops.map(
+                    Odometry.from_msg,
+                ),
+                ops.map(time_is_now),
+            )
+        )
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:
@@ -268,8 +295,9 @@ class UnitreeWebRTCConnection(Resource):
                         frame.to_ndarray(format="rgb24"),  # type: ignore[attr-defined]
                         format=ImageFormat.RGB,  # Frame is RGB24, not BGR
                         frame_id="camera_optical",
-                    )
+                    ),
                 ),
+                ops.map(time_is_now),
             )
         )
 
@@ -295,6 +323,29 @@ class UnitreeWebRTCConnection(Resource):
     def free_walk(self) -> bool:
         """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
+
+    def enable_rage_mode(self) -> bool:
+        """Enable Rage Mode on the Go2 via WebRTC.
+        Assumes the robot is already in BalanceStand.
+        """
+        rage_ok = bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {"api_id": self._SPORT_API_ID_RAGEMODE, "parameter": {"data": True}},
+            )
+        )
+        time.sleep(2.0)
+
+        joystick_ok = bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {
+                    "api_id": SPORT_CMD["SwitchJoystick"],
+                    "parameter": {"data": True},
+                },
+            )
+        )
+        return rage_ok and joystick_ok
 
     def liedown(self) -> bool:
         return bool(
@@ -324,7 +375,7 @@ class UnitreeWebRTCConnection(Resource):
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
 
-        from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
+        from aiortc import MediaStreamTrack
 
         async def accept_track(track: MediaStreamTrack) -> None:
             while True:
@@ -366,7 +417,7 @@ class UnitreeWebRTCConnection(Resource):
         Returns:
             Observable: An observable stream of video frames or None if video is not available.
         """
-        return self.video_stream()  # type: ignore[no-any-return]
+        return self.video_stream()
 
     def stop_movement(self) -> None:
         """Cancel the auto-stop timer (used by move() for continuous commands)."""

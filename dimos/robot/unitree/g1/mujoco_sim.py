@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import threading
 from threading import Thread
 import time
@@ -21,7 +20,6 @@ from typing import Any
 from pydantic import Field
 from reactivex.disposable import Disposable
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
@@ -33,7 +31,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.g1.connection import G1ConnectionBase
+from dimos.robot.unitree.g1.connection import G1ConnectionBase  # type: ignore[import-untyped]
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
 from dimos.utils.logging_config import setup_logger
@@ -45,9 +43,8 @@ class G1SimConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
-class G1SimConnection(G1ConnectionBase[G1SimConfig]):
-    default_config = G1SimConfig
-
+class G1SimConnection(G1ConnectionBase):
+    config: G1SimConfig
     cmd_vel: In[Twist]
     lidar: Out[PointCloud2]
     odom: Out[PoseStamped]
@@ -70,10 +67,10 @@ class G1SimConnection(G1ConnectionBase[G1SimConfig]):
         assert self.connection is not None
         self.connection.start()
 
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
-        self._disposables.add(self.connection.odom_stream().subscribe(self._publish_sim_odom))
-        self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
-        self._disposables.add(self.connection.video_stream().subscribe(self.color_image.publish))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
+        self.register_disposable(self.connection.odom_stream().subscribe(self._publish_sim_odom))
+        self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+        self.register_disposable(self.connection.video_stream().subscribe(self.color_image.publish))
 
         self._camera_info_thread = Thread(
             target=self._publish_camera_info_loop,
@@ -87,7 +84,7 @@ class G1SimConnection(G1ConnectionBase[G1SimConfig]):
         assert self.connection is not None
         self.connection.stop()
         if self._camera_info_thread and self._camera_info_thread.is_alive():
-            self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._camera_info_thread.join(timeout=1.0)
         super().stop()
 
     def _publish_camera_info_loop(self) -> None:
