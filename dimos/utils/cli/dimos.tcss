@@ -8,7 +8,7 @@ $red: #ff0000;
 $green: #00eeee;
 $yellow: #ffcc00;
 $blue: #5c9ff0;
-$purple: #00eeee;
+$purple: #b06bff;
 $cyan: #00eeee;
 $white: #b5e4f4;
 
@@ -18,7 +18,7 @@ $bright-red: #ff0000;
 $bright-green: #00eeee;
 $bright-yellow: #f2ea8c;
 $bright-blue: #8cbdf2;
-$bright-purple: #00eeee;
+$bright-purple: #c890ff;
 $bright-cyan: #00eeee;
 $bright-white: #ffffff;
 

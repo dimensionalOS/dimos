@@ -18,6 +18,7 @@ from typing import Any
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
+from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
@@ -110,7 +111,13 @@ class NavigationSkillContainer(Module):
         logger.info(f"Tagged {location}")
         return f"Tagged '{location_name}': ({position.x},{position.y})."
 
-    @skill
+    # TODO(capabilities): this skill is `instant`, so the `movement` hold is
+    # released the moment the call returns even though the tagged-location and
+    # semantic-map paths only fire set_goal() and keep navigating. Make it
+    # `background` and close the hold when the robot actually stops -- the
+    # planner already emits a goal-reached signal (see PatrollingModule) -- so
+    # patrol/follow/explore can't start over an active navigation goal.
+    @skill(uses=[CAP_MOVEMENT])
     def navigate_with_text(self, query: str) -> str:
         """Navigate to a location by querying the existing semantic map using natural language.
 

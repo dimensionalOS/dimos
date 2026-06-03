@@ -87,7 +87,7 @@ class TestSave:
         obs = target.first()
         assert obs.data == 42
         assert obs.ts == 1.0
-        assert obs.pose == (1, 2, 3)
+        assert obs.pose_tuple == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)
         assert obs.tags == {"label": "cat"}
 
     def test_save_with_transform(self) -> None:

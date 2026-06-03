@@ -17,3 +17,4 @@ lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "r
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
+validator = { version = "0.20", features = ["derive"] }
