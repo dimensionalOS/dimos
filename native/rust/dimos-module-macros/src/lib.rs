@@ -92,7 +92,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let config_type: Type = classified
         .iter()
         .find_map(|f| matches!(f.kind, FieldKind::Config).then(|| f.ty.clone()))
-        .unwrap_or_else(|| syn::parse_quote!(()));
+        .unwrap_or_else(|| syn::parse_quote!(::dimos_module::NoConfig));
 
     let config_param: TokenStream2 = if config_seen.is_some() {
         quote!(config)

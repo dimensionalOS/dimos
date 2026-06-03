@@ -23,7 +23,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.agents_deprecated.memory.visual_memory import VisualMemory
+from dimos.perception.visual_memory import VisualMemory
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
@@ -249,7 +249,7 @@ class SpatialVectorDB:
             List of results, each containing the image, its metadata, and similarity score
         """
         if self.embedding_provider is None:
-            from dimos.agents_deprecated.memory.image_embedding import ImageEmbeddingProvider
+            from dimos.perception.image_embedding import ImageEmbeddingProvider
 
             self.embedding_provider = ImageEmbeddingProvider(model_name="clip")
 

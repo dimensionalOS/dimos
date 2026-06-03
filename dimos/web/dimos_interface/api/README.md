@@ -31,9 +31,7 @@ The server will start on `http://127.0.0.1:5555`.
 See DimOS Documentation for more info.
 
 ```python
-from dimos.agents_deprecated.agent import OpenAIAgent
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
 
 robot_ip = os.getenv("ROBOT_IP")
@@ -53,15 +51,8 @@ logger.info("Initializing FastAPI server")
 streams = {"unitree_video": video_stream}
 web_interface = RobotWebInterface(port=5555, **streams)
 
-# Initialize agent with robot skills
-skills_instance = MyUnitreeSkills(robot=robot)
-
-agent = OpenAIAgent(
-    dev_name="UnitreeQueryPerceptionAgent",
-    input_query_stream=web_interface.query_stream,
-    output_dir=output_dir,
-    skills=skills_instance,
-)
+# Wire an agent to consume web_interface.query_stream.
+# See the agent modules under dimos/agents/ (e.g. VLMAgent) for current usage.
 
 web_interface.run()
 ```
