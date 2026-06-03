@@ -12,53 +12,160 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Image + pointcloud 3D detection as a memory2 fan-I/O StreamModule.
 
-from typing import TYPE_CHECKING
+Two ``In`` ports (``color_image``, ``pointcloud``) feed one pipeline that
+detects in 2D, aligns each detection frame with the nearest pointcloud, and
+fuses to 3D. One pass emits four kinds of output - a ``Detection2DArray``, a
+``Detection3DArray``, and the top-3 per-object pointclouds / cropped images for
+visualization - all scattered from a single ``Bundle`` per tick. This replaces
+the previous Rx ``align_timestamped`` wiring; cross-port alignment is now
+``Stream.align(..., tolerance=0.25)`` inside ``pipeline()``.
+"""
 
-from reactivex import operators as ops
-from reactivex.observable import Observable
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from dimos.agents.annotation import skill
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.memory2.fanio import Bundle
+from dimos.memory2.module import StreamModule
+from dimos.memory2.stream import Stream
+from dimos.memory2.transform import QualityWindow, Transformer
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
-from dimos.perception.detection.module2D import Detection2DModule
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.detection.detectors.base import Detector
+from dimos.perception.detection.module2D import Config
+from dimos.perception.detection.type.detection2d.base import Filter2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.spec.perception import Camera, Pointcloud
-from dimos.types.timestamped import align_timestamped
-from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from dimos.core.rpc_client import ModuleProxy
+    from dimos.memory2.type.observation import Observation
 
 
-class Detection3DModule(Detection2DModule):
+class Detect2D(Transformer[Image, ImageDetections2D]):
+    """Run the 2D detector on each image, optionally filtering the results.
+
+    Mirrors the old ``Detection2DModule.process_image_frame`` step as a memory2
+    transform so it can sit inside a ``Stream`` pipeline ahead of ``.align()``.
+    """
+
+    def __init__(self, detector: Detector, filters: Sequence[Filter2D] = ()) -> None:
+        self._detector = detector
+        self._filters = tuple(filters)
+
+    def __call__(
+        self, upstream: Iterator[Observation[Image]]
+    ) -> Iterator[Observation[ImageDetections2D]]:
+        for obs in upstream:
+            detections = self._detector.process_image(obs.data)
+            if self._filters:
+                detections = detections.filter(*self._filters)
+            yield obs.derive(data=detections)
+
+
+@dataclass
+class FusedDetections:
+    """Per-frame fusion result, before it is split across output ports.
+
+    Carries both the original 2D detections and the projected 3D detections so a
+    single fused tick can feed every ``Out`` (2D array, 3D array, per-object
+    pointclouds and cropped images) without recomputing anything.
+    """
+
+    detections_2d: ImageDetections2D
+    detections_3d: ImageDetections3DPC
+
+
+class Detection3DModule(StreamModule):
+    """Fuse 2D detections with a pointcloud and publish 2D + 3D detections.
+
+    Fan-I/O shape: ``color_image`` drives the pipeline, ``pointcloud`` is the
+    aligned sibling reached via ``self.streams.pointcloud``. The world->camera
+    transform is resolved from TF at the image timestamp inside :meth:`_fuse`
+    (no pose ``In`` port needed), matching the previous module's behavior.
+    """
+
+    config: Config
+    detector: Detector
+
     color_image: In[Image]
     pointcloud: In[PointCloud2]
 
-    detections: Out[Detection2DArray]
-    # just for visualization,
-    # emits latest pointclouds of detected objects in a frame
+    detections_2d: Out[Detection2DArray]
+    detections_3d: Out[Detection3DArray]
+
+    # Visualization only: top-3 per-object pointclouds and cropped detection
+    # images from the same fused frame.
     detected_pointcloud_0: Out[PointCloud2]
     detected_pointcloud_1: Out[PointCloud2]
     detected_pointcloud_2: Out[PointCloud2]
-
-    # just for visualization, emits latest top 3 detections in a frame
     detected_image_0: Out[Image]
     detected_image_1: Out[Image]
     detected_image_2: Out[Image]
 
-    detection_3d_stream: Observable[ImageDetections3DPC] | None = None
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.detector = self.config.detector()  # type: ignore[call-arg, misc]
+
+    def pipeline(self, image: Stream[Image]) -> Stream[Bundle]:
+        return self.fused_detections(image).map_data(self._to_bundle)
+
+    def fused_detections(self, image: Stream[Image]) -> Stream[FusedDetections]:
+        """2D-detect, align with the nearest pointcloud, then project to 3D.
+
+        Split from :meth:`pipeline` so subclasses (e.g. the object database) can
+        tap the fused stream before it is collapsed into a port ``Bundle``.
+        """
+        return (
+            image.transform(
+                QualityWindow(lambda img: img.sharpness, window=1.0 / self.config.max_freq)
+            )
+            .transform(Detect2D(self.detector, self.config.filter))
+            .align(self.streams.pointcloud, tolerance=0.25)
+            .map_data(self._fuse)
+        )
+
+    def _fuse(self, obs: Observation[Any]) -> FusedDetections:
+        # obs.data is the AlignedPair; its fields are named after the backing
+        # streams (the In ports), so color_image/pointcloud regardless of how the
+        # primary payload changed through Detect2D.
+        pair = obs.data
+        detections_2d: ImageDetections2D = pair.color_image.data
+        pointcloud: PointCloud2 = pair.pointcloud.data
+        transform = self.tf.get("camera_optical", pointcloud.frame_id, detections_2d.image.ts, 5.0)
+        detections_3d = self.process_frame(detections_2d, pointcloud, transform)
+        return FusedDetections(detections_2d=detections_2d, detections_3d=detections_3d)
+
+    def _to_bundle(self, obs: Observation[FusedDetections]) -> Bundle:
+        fused = obs.data
+        values: dict[str, Any] = {
+            "detections_2d": fused.detections_2d.to_ros_detection2d_array(),
+            "detections_3d": fused.detections_3d.to_ros_detection3d_array(),
+        }
+        for index, detection in enumerate(fused.detections_3d[:3]):
+            values[f"detected_pointcloud_{index}"] = detection.pointcloud
+        if self.config.publish_detection_images:
+            for index, detection in enumerate(fused.detections_2d[:3]):
+                values[f"detected_image_{index}"] = detection.cropped_image()
+        return Bundle(values)
 
     def process_frame(
         self,
@@ -158,42 +265,14 @@ class Detection3DModule(Detection2DModule):
         print("No 3d detections, projecting 2d")
 
         center = detections[0].get_bbox_center()
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
         return PoseStamped(
             ts=detections.image.ts,
             frame_id="world",
             position=self.pixel_to_3d(center, assumed_depth=1.5),
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-
-        def detection2d_to_3d(args):  # type: ignore[no-untyped-def]
-            detections, pc = args
-            transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
-            return self.process_frame(detections, pc, transform)
-
-        self.detection_stream_3d = align_timestamped(  # type: ignore[type-var]
-            backpressure(self.detection_stream_2d()),
-            self.pointcloud.observable(),
-            match_tolerance=0.25,
-            buffer_size=20.0,
-        ).pipe(ops.map(detection2d_to_3d))
-
-        self.detection_stream_3d.subscribe(self._publish_detections)
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()
-
-    def _publish_detections(self, detections: ImageDetections3DPC) -> None:
-        if not detections:
-            return
-
-        for index, detection in enumerate(detections[:3]):
-            pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
-            pointcloud_topic.publish(detection.pointcloud)
 
 
 def deploy(  # type: ignore[no-untyped-def]
@@ -205,10 +284,11 @@ def deploy(  # type: ignore[no-untyped-def]
 ) -> "ModuleProxy":
     detector = dimos.deploy(Detection3DModule, camera_info=camera.hardware_camera_info, **kwargs)  # type: ignore[attr-defined]
 
-    detector.image.connect(camera.color_image)
+    detector.color_image.connect(camera.color_image)
     detector.pointcloud.connect(lidar.pointcloud)
 
-    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
+    detector.detections_2d.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
+    detector.detections_3d.transport = LCMTransport(f"{prefix}/detections_3d", Detection3DArray)
 
     detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
     detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)

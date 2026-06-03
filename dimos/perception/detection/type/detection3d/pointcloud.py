@@ -20,10 +20,16 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection3D import Detection3D as Detection3DMsg
 from dimos.perception.detection.type.detection3d.base import Detection3D
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     PointCloudFilter,
@@ -71,6 +77,40 @@ class Detection3DPC(Detection3D):
     def get_bounding_box_dimensions(self) -> tuple[float, float, float]:
         """Get dimensions (width, height, depth) of the detection's bounding box."""
         return self.pointcloud.bounding_box_dimensions
+
+    def to_detection3d_msg(self) -> Detection3DMsg:
+        """Convert to a ROS Detection3D message.
+
+        The oriented-box detections (:class:`Detection3DBBox`) carry an explicit
+        size/orientation; a pointcloud detection instead derives an axis-aligned
+        box from the segmented cloud (center = cloud centroid, size = extent,
+        identity orientation), so it can ride the same ``Detection3DArray`` topic
+        as the marker stack.
+        """
+        msg = Detection3DMsg()
+        msg.header = Header(self.ts, self.frame_id)
+
+        msg.results = [
+            ObjectHypothesisWithPose(
+                hypothesis=ObjectHypothesis(
+                    class_id=str(self.class_id),
+                    score=self.confidence,
+                )
+            )
+        ]
+        msg.results_length = len(msg.results)
+
+        width, height, depth = self.get_bounding_box_dimensions()
+        # Fresh BoundingBox3D: the generated LCM ctor shares a default bbox object.
+        msg.bbox = BoundingBox3D(
+            center=Pose(
+                position=self.center,
+                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            ),
+            size=Vector3(width, height, depth),
+        )
+
+        return msg
 
     def bounding_box_intersects(self, other: Detection3DPC) -> bool:
         """Check if this detection's bounding box intersects with another's."""

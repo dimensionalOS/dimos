@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
@@ -30,6 +32,25 @@ if TYPE_CHECKING:
 
 class ImageDetections3DPC(ImageDetections[Detection3DPC]):
     """Specialized class for 3D detections in an image."""
+
+    def to_ros_detection3d_array(self, frame_id: str | None = None) -> Detection3DArray:
+        """Pack the per-object pointcloud detections into one ``Detection3DArray``.
+
+        Mirrors :meth:`ImageDetections3D.to_ros_detection3d_array` so the
+        pointcloud fusion path can publish a ``Detection3DArray`` alongside its
+        ``Detection2DArray``. With no detections this yields an empty-but-present
+        array stamped at the image time (distinct from "no frame this tick").
+        """
+        resolved_frame_id = frame_id
+        if resolved_frame_id is None:
+            resolved_frame_id = self.detections[0].frame_id if self.detections else ""
+
+        detections = [det.to_detection3d_msg() for det in self.detections]
+        return Detection3DArray(
+            detections_length=len(detections),
+            header=Header(self.image.ts, resolved_frame_id),
+            detections=detections,
+        )
 
     @classmethod
     def from_2d(

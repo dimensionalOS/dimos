@@ -18,6 +18,7 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 from dimos.robot.unitree.go2.connection import GO2Connection
@@ -37,8 +38,11 @@ unitree_go2_detection = (
     .transports(
         {
             # Detection 3D module outputs
-            ("detections", Detection3DModule): LCMTransport(
+            ("detections_2d", Detection3DModule): LCMTransport(
                 "/detector3d/detections", Detection2DArray
+            ),
+            ("detections_3d", Detection3DModule): LCMTransport(
+                "/detector3d/detections_3d", Detection3DArray
             ),
             ("detected_pointcloud_0", Detection3DModule): LCMTransport(
                 "/detector3d/pointcloud/0", PointCloud2

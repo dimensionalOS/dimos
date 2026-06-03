@@ -14,12 +14,13 @@
 from collections.abc import Callable
 from copy import copy
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from reactivex.observable import Observable
 
-from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.memory2.fanio import Bundle
+from dimos.memory2.stream import Stream
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -27,10 +28,13 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
-from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.detection.module3D import Detection3DModule, FusedDetections
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.detection.type.utils import TableStr
+
+if TYPE_CHECKING:
+    from dimos.memory2.type.observation import Observation
 
 
 # Represents an object in space, as collection of 3d detections over time
@@ -146,7 +150,8 @@ class ObjectDBModule(Detection3DModule, TableStr):
     color_image: In[Image]
     pointcloud: In[PointCloud2]
 
-    detections: Out[Detection2DArray]
+    detections_2d: Out[Detection2DArray]
+    detections_3d: Out[Detection3DArray]
     detected_pointcloud_0: Out[PointCloud2]
     detected_pointcloud_1: Out[PointCloud2]
     detected_pointcloud_2: Out[PointCloud2]
@@ -159,18 +164,20 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     remembered_locations: dict[str, PoseStamped]
 
-    @rpc
-    def start(self) -> None:
-        Detection3DModule.start(self)
+    def pipeline(self, image: Stream[Image]) -> Stream[Bundle]:
+        """Same fusion as the base, plus a tap that feeds the object database.
 
-        def update_objects(imageDetections: ImageDetections3DPC) -> None:
-            for detection in imageDetections.detections:
-                self.add_detection(detection)
+        The tap runs on the single fused stream, so detectors still execute once
+        per tick (the object DB update is a side effect, not a second pipeline).
+        """
+        return self.fused_detections(image).tap(self._update_objects).map_data(self._to_bundle)
 
-        self.detection_stream_3d.subscribe(update_objects)
+    def _update_objects(self, obs: "Observation[FusedDetections]") -> None:
+        for detection in obs.data.detections_3d.detections:
+            self.add_detection(detection)
 
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.goto = None
         self.objects = {}
         self.remembered_locations = {}
@@ -259,10 +266,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
     def lookup(self, label: str) -> list[Detection3DPC]:
         """Look up a detection by label."""
         return []
-
-    @rpc
-    def stop(self):  # type: ignore[no-untyped-def]
-        return super().stop()
 
     def goto_object(self, object_id: str) -> Object3D | None:
         """Go to object by id."""

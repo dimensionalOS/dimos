@@ -24,6 +24,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.moduleDB import ObjectDBModule
@@ -55,8 +56,6 @@ unitree_g1_detection = (
     .remappings(
         [
             # Connect detection modules to camera and lidar
-            (Detection3DModule, "image", "color_image"),
-            (Detection3DModule, "pointcloud", "pointcloud"),
             (ObjectDBModule, "image", "color_image"),
             (ObjectDBModule, "pointcloud", "pointcloud"),
             (PersonTracker, "image", "color_image"),
@@ -66,8 +65,11 @@ unitree_g1_detection = (
     .transports(
         {
             # Detection 3D module outputs
-            ("detections", Detection3DModule): LCMTransport(
+            ("detections_2d", Detection3DModule): LCMTransport(
                 "/detector3d/detections", Detection2DArray
+            ),
+            ("detections_3d", Detection3DModule): LCMTransport(
+                "/detector3d/detections_3d", Detection3DArray
             ),
             ("detected_pointcloud_0", Detection3DModule): LCMTransport(
                 "/detector3d/pointcloud/0", PointCloud2
@@ -82,8 +84,11 @@ unitree_g1_detection = (
             ("detected_image_1", Detection3DModule): LCMTransport("/detector3d/image/1", Image),
             ("detected_image_2", Detection3DModule): LCMTransport("/detector3d/image/2", Image),
             # Detection DB module outputs
-            ("detections", ObjectDBModule): LCMTransport(
+            ("detections_2d", ObjectDBModule): LCMTransport(
                 "/detectorDB/detections", Detection2DArray
+            ),
+            ("detections_3d", ObjectDBModule): LCMTransport(
+                "/detectorDB/detections_3d", Detection3DArray
             ),
             ("detected_pointcloud_0", ObjectDBModule): LCMTransport(
                 "/detectorDB/pointcloud/0", PointCloud2
