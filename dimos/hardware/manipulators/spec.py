@@ -105,6 +105,14 @@ class ManipulatorAdapter(Protocol):
         """Check if connected."""
         ...
 
+    def activate(self) -> bool:
+        """Prepare hardware for commanded motion after connect()."""
+        ...
+
+    def deactivate(self) -> bool:
+        """Gracefully stop commanded motion before disconnect()."""
+        ...
+
     def get_info(self) -> ManipulatorInfo:
         """Get manipulator info (vendor, model, DOF)."""
         ...
