@@ -5249,3 +5249,340 @@ Next:
    `terrain_map_ext` source evidence is inconsistent with the physical scene.
 3. Consider a click-distance guard or confirmation in the viewer bridge during
    live bringup so accidental far clicks cannot create long autonomous runs.
+
+### Finding #63 — Rear-only FAST-LIO is much steadier while stationary, but still drifts through yaw
+
+After committing the click-to-goal hardening work, we switched from the front
+Airy lidar/IMU pair to the rear Airy lidar/IMU pair to investigate the user's
+viewer observation that the pose wiggles while the robot is standing still.
+
+Stationary A/B, raw FAST-LIO odometry, PGO off, commands zero:
+
+```
+front-only 60s:
+  net XY drift: 0.0767m
+  odom_x range: 0.2180m
+  odom_y range: 0.2000m
+  odom_yaw range: 4.636deg
+  odom mean: ~19.4 Hz
+  IMU mean: ~194.3 Hz
+
+rear-only 60s:
+  net XY drift: 0.0112m
+  odom_x range: 0.0327m
+  odom_y range: 0.0197m
+  odom_yaw range: 0.605deg
+  odom mean: ~26.3 Hz
+  IMU mean: ~193.7 Hz
+```
+
+This is a strong signal that the front-only stationary wiggle is real raw
+FAST-LIO odometry wiggle, not only viewer lag, and that the rear lidar/IMU pair
+is currently much better for stationary localization.
+
+We then restarted rear-only with `M20_NAV_ENABLED=0` and commanded direct
+`/cmd_vel` yaw for a planner-free SLAM test:
+
+```
+M20_LIDAR_SOURCE=rear
+M20_NAV_ENABLED=0
+M20_NAV_USE_PGO=0
+rotate_and_log.py --topic_imu /airy_imu_rear#sensor_msgs.Imu \
+  --topic_cmd /cmd_vel#geometry_msgs.Twist --yaw -0.4 \
+  --rotate_duration 20 --warmup 1 --cooldown 4
+monitor_nav_convergence.py --duration 35 --imu-topic /airy_imu_rear#sensor_msgs.Imu
+```
+
+Safety/commanding:
+
+- The rotation phase published 400 commands at `wz=-0.4`.
+- The script sent 98 zero `/cmd_vel` messages at the end; after a transient SSH
+  connectivity drop we also sent another 150 explicit zero `/cmd_vel` messages.
+- `M20_NAV_ENABLED=0` meant no SimplePlanner/local_planner/path_follower/
+  terrain_analysis modules were running, so this test isolated FAST-LIO plus
+  direct motor command handling.
+
+Rear yaw result:
+
+```
+command window: 20.0s
+IMU active gz mean: -0.269 rad/s
+gyro-integrated yaw: ~-308deg
+FAST-LIO odom yaw: ~-292deg total
+FAST-LIO/gyro yaw difference: ~16deg over the run
+odom age during rotation: <=0.083s
+IMU rate: ~200 Hz
+odom rate during rotation: ~22 Hz
+translation during command: 0.447m XY
+final translation after cooldown: 0.407m XY
+```
+
+Interpretation:
+
+- Rear yaw is observable in FAST-LIO; the pose rotates in odometry and does not
+  show multi-second upstream odom lag.
+- The viewer's multi-second delay is still most likely Rerun/viewer/tunnel
+  backlog when it appears, not FAST-LIO publishing late.
+- Rear-only is not yet a clean rotation solution: it still converts a roughly
+  290deg yaw into about 0.4m of lateral translation.
+- Because nav was disabled, this drift is not a planner/costmap artifact.
+
+Post-rotation rear stationary check, still nav disabled:
+
+```
+duration: 44.8s
+net XY drift: 0.073m
+odom_x range: 0.116m
+odom_y range: 0.088m
+odom_yaw range: 1.44deg
+odom age after startup: <=0.069s
+odom mean after startup: ~25.0 Hz
+```
+
+So rear-only starts much steadier than front-only, but a yaw event appears to
+leave the local map/estimate in a worse state than the fresh-stationary case.
+
+Current live state after this test:
+
+- Stack is running rear-only with `M20_NAV_ENABLED=0`; click-to-goal navigation
+  is intentionally disabled until restart.
+- `nav_cmd_pub` is matched to DDS and publishing zero commands.
+- Vendor planner/localization/passable-area processes are not running.
+- Required robot services (`yesense`, `handler`, `charge_manager`,
+  `reflective_column`, `rslidar`, `hsLidar`) are still running.
+
+Next:
+
+1. Run the same nav-disabled 20s yaw test on front-only for a true current
+   front-vs-rear rotation A/B. The older front 60s rotation result is not enough
+   because today's rear test used a different duration and nav-disabled setup.
+2. If rear is specifically worse under yaw, inspect rear lidar extrinsics and
+   rear Airy lever-arm/tangential correction first. Startup logs show the rear
+   bridge used `lever_arm_base=(-0.320,0,-0.013)` plus DIFOP body offset
+   `(+0.0045,+0.0042,+0.0043)`.
+3. Do not switch click-to-goal to rear-only just because stationary drift is
+   better; validate rotation and short-goal behavior first.
+
+### Finding #64 — Matched front yaw A/B: front has lower throughput but better final yaw/settling than rear
+
+After the robot rebooted, the vendor nav stack had restarted:
+
+```
+localization_ddsnode
+map_server
+passable_area
+astar_node
+pcl_pass_grid
+localPlanner
+accumulate_cloud
+```
+
+We stopped only those vendor localization/planner services and left the
+required robot services running (`yesense`, `handler`, `charge_manager`,
+`reflective_column`, `rslidar`, `hsLidar`, `drdds_recv`). Disk was healthy
+(`/var/opt/robot/data` 44% used, root overlay 66% used).
+
+Then we ran the matched front-only version of the rear yaw test from Finding
+#63:
+
+```
+M20_LIDAR_SOURCE=front
+M20_NAV_ENABLED=0
+M20_NAV_USE_PGO=0
+rotate_and_log.py --topic_imu /airy_imu_front#sensor_msgs.Imu \
+  --topic_cmd /cmd_vel#geometry_msgs.Twist --yaw -0.4 \
+  --rotate_duration 20 --warmup 1 --cooldown 4
+monitor_nav_convergence.py --duration 35 --imu-topic /airy_imu_front#sensor_msgs.Imu
+```
+
+Front yaw result:
+
+```
+command window: 20.0s
+IMU active gz mean: -0.311 rad/s
+gyro-integrated yaw: ~-356deg
+FAST-LIO odom yaw during command: ~-273deg
+FAST-LIO odom yaw total after cooldown: ~-347deg
+FAST-LIO/gyro final yaw difference: ~9deg
+odom age during rotation: <=0.145s
+IMU rate: ~200 Hz
+odom rate during rotation: ~15.5 Hz
+translation during command: 0.643m XY
+final translation after cooldown: 0.241m XY
+```
+
+Matched rear numbers from Finding #63:
+
+```
+rear odom rate during rotation: ~22 Hz
+rear translation during command: 0.447m XY
+rear final translation after cooldown: 0.407m XY
+rear FAST-LIO/gyro final yaw difference: ~16deg
+```
+
+So the front/rear comparison is mixed:
+
+- Rear is much steadier in a fresh stationary 60s test and publishes odom
+  faster during yaw (`~25 Hz` stationary / `~22 Hz` rotating).
+- Front publishes odom slower (`~15 Hz`) and translates more during the active
+  yaw command, but its final yaw agrees better with gyro and it settles to a
+  smaller final XY error after cooldown.
+- Neither front nor rear gives a clean yaw-in-place solution in this matched
+  20s test; both convert yaw into substantial transient translation.
+
+Front post-rotation stationary check:
+
+```
+duration: 44.8s
+net XY drift: 0.0075m
+odom_x range: 0.058m
+odom_y range: 0.041m
+odom_yaw range: 0.436deg
+odom age after startup: <=0.154s
+odom mean after startup: ~15.45 Hz
+```
+
+This is significantly better than the rear post-rotation stationary check from
+Finding #63 (`0.073m` net XY drift, `1.44deg` yaw range), even though rear was
+better in the fresh-stationary test.
+
+Interpretation:
+
+- The multi-second viewer lag hypothesis is still not supported by robot-side
+  odom timing. Front odom age stayed below `0.15s`; rear stayed below `0.083s`
+  during yaw and below `0.069s` in the passive post-check.
+- The front Airy path remains the safer default for click-to-goal testing today
+  because it has the proven navigation runs and better post-yaw settling in the
+  matched test.
+- Rear-only remains promising for stationary stability, but it needs a specific
+  rear extrinsics / rear Airy lever-arm investigation before it becomes the
+  navigation default.
+
+Next:
+
+1. Resume click-to-goal on the front Airy path with `M20_NAV_USE_PGO=0`.
+2. Keep nav speed conservative (`0.08 m/s`) while we separate planner tuning
+   from localization behavior.
+3. Open a focused rear-lidar follow-up: rear extrinsics, lever arm sign/value,
+   and why rear looks excellent before yaw but worse after yaw.
+
+### Finding #65 — Front click-to-goal works, but live viewer testing exposed motion-time sensor stalls
+
+We restarted the production-style front Airy stack for click-to-goal:
+
+```
+M20_LIDAR_SOURCE=front
+M20_NAV_ENABLED=1
+M20_NAV_USE_PGO=0
+M20_NAV_MAX_SPEED=0.08
+M20_NAV_AUTONOMY_SPEED=0.08
+M20_NAV_MAX_YAW_RATE=20.0
+M20_TERRAIN_VOXEL_SIZE=0.5
+```
+
+Startup was healthy:
+
+- `nav_cmd_pub matched_count=1`
+- front Airy IMU at ~200 Hz
+- `/odometry` around ~19 Hz before motion
+- commands zero before click
+- vendor localization/planner/passable-area stack stayed stopped
+
+Viewer setup note:
+
+- `deploy.sh viewer` again reported PIDs and then the viewer/click bridge exited
+  almost immediately with empty logs.
+- A persistent tmux tunnel + click bridge stayed alive.
+- Launching `dimos-viewer` through Terminal.app kept the GUI process alive.
+- The click bridge confirmed forwarded clicks:
+
+```
+(+1.419, -1.466, +0.011)
+(-2.007, +2.079, +0.005)
+(-2.241, +0.362, +0.003)
+(-2.151, +0.593, +0.003)
+```
+
+First goal result:
+
+```
+goal=(+1.42, -1.47, +0.01)
+simple_planner goal reached (dist=0.28m <= 0.30m)
+monitor final goal distance: ~0.22m
+monitor minimum goal distance: ~0.03m
+nav_cmd_pub returned to zero
+```
+
+This confirms the front click-to-goal path still works after reboot and after
+the matched front/rear yaw A/B.
+
+However, the monitor showed a serious motion-time delivery stall during the
+goal:
+
+```
+before click:
+  odom_hz ~19 Hz
+  imu_hz ~200 Hz
+  odom_age <0.12s
+
+during goal:
+  odom_age rose to ~2.76s
+  imu_age rose to ~2.74s
+  imu_hz readings dropped into the ~15-40 Hz range for several monitor windows
+
+after arrival:
+  odom/IMU recovered to normal rates
+```
+
+This is robot-side timing from `monitor_nav_convergence.py`, not just viewer
+lag. It means the earlier viewer-lag symptom can coexist with a real
+motion-time delivery stall under load.
+
+After the first successful run, more viewer clicks were forwarded while we were
+still sorting out the visible viewer state. A follow-up monitor saw active
+commands toward the later goal while odom/IMU were stale:
+
+```
+cmd/nav nonzero at 0.08 m/s
+odom_age ~2.5-3.8s
+imu_age up to ~5.9s
+goal distance around 0.35m before stop
+```
+
+Because that was not a clean controlled test and sensor ages were unsafe, we
+sent an explicit 150-message zero `/cmd_vel` flood and stopped SmartNav:
+
+```
+sent_zero_cmd_vel 150
+deploy.sh stop --host m20-770-gogo
+```
+
+Post-stop verification:
+
+- `m20_smartnav_native`, `fastlio2_native`, `nav_cmd_pub`,
+  `path_follower`, `local_planner`, `terrain_analysis`,
+  `drdds_lidar_bridge`, and `airy_imu_bridge` were no longer running.
+- Required robot services remained running.
+- The temporary monitor process was killed.
+
+Interpretation:
+
+- Click-to-goal functionality is functionally validated on front Airy.
+- The current blocker for more live testing is not basic goal wiring; it is
+  reliability under motion/load.
+- During motion, sensor delivery can stall for seconds even with vendor nav
+  disabled. This can make planner behavior look like odom lag because it is
+  sometimes real odom/IMU lag, not only viewer backlog.
+- The viewer bridge should probably enforce a safety mode for testing: one
+  click at a time, explicit arming, or click rejection while a goal is active.
+
+Next:
+
+1. Do not run more multi-click live navigation until click arming/debouncing is
+   in place or the operator protocol is tightened.
+2. Reproduce the motion-time odom/IMU stall without the viewer open:
+   inject a single moderate goal from script, monitor `/odometry`, IMU, CPU,
+   and process states.
+3. If the stall reproduces without viewer, profile NOS process scheduling during
+   motion; the current process table shows FAST-LIO near a full reserved core
+   and multiple Python worker processes consuming cores 0-3 heavily.
