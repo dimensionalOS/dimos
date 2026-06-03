@@ -6,19 +6,19 @@ This policy exists for one reason. Contributing to dimOS carries a quality and s
 
 ## The Rules
 
-- **Disclose all AI usage** 
+- **Disclose all AI usage**
 If AI assisted your contribution in any form, say so. Name the tool (for example Claude Code, Cursor, Codex, or Copilot) and describe how much it was involved. A one-line note in the PR or issue is enough.
 
-- **You must fully understand your PR** 
+- **You must fully understand your PR**
 If you cannot explain what your code changes do and how they interact with the rest of the system without the aid of an AI tool, do not submit them. Feel free to *gain* that understanding by interrogating an agent with access to the codebase before contributing.
 
-- **Hardware changes demand extra scrutiny** 
+- **Hardware changes demand extra scrutiny**
 Control loops, motor drivers, planners, and anything that produces motion can damage equipment or hurt people. AI-assisted changes to these areas must be understood line by line and tested in simulation or replay before any hardware claim is made. See the safety section of [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-- **Issues and discussions may use AI, but a human must review and edit the output** 
+- **Issues and discussions may use AI, but a human must review and edit the output**
 AI tends to be verbose and to pad text with noise. Do your own research, trim it down, and write in your own voice, especially for feature proposals and bug reports.
 
-- **No AI-generated media** 
+- **No AI-generated media**
 Text and code are the only acceptable AI-generated contributions. Please do not submit AI-generated art, images, video, audio, or diagrams.
 
 ## Using dimOS vs Contributing to dimOS
