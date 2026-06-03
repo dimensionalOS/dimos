@@ -51,7 +51,7 @@ def test_path_replanning(
     # right door at y=-1 instead.
     spawn_wall_on_pose(
         point=(7, 2),
-        threshold=1.5,
+        threshold=2.5,
         wall=(7, 1.5, 7, 2.5),
     )
 

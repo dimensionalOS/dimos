@@ -37,6 +37,11 @@ export default async function build({ scene, THREE, physics }) {
 
   return {
     embodiment: null,
-    spawnPoint: { x: 0, y: 0.5, z: 0 },
+    // Three.js coords (Y-up).  This maps to ROS/odom (x, y) = (z, x) = (3, 2)
+    // via the bridge's (x,y,z)->(z,x,y) swap, which is the spawn point the
+    // dimsim e2e tests assume (e.g. test_dimsim_path_replaning.py places its
+    // walls around the robot starting at ROS (3, 2)).  Do not move this to the
+    // origin: ROS (0, 0) lands behind the back wall and the robot gets stuck.
+    spawnPoint: { x: 2, y: 0.5, z: 3 },
   };
 }

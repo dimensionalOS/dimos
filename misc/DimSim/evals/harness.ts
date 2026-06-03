@@ -227,18 +227,18 @@ export class EvalHarness {
   async runEval(workflow: EvalWorkflow): Promise<EvalResultMsg> {
     if (!workflow || typeof workflow.success !== "function") {
       const msg = "runEval(workflow) requires { scene, task, success() }";
-      console.error(`[eval] ${msg}`);
+      console.error("[eval] %s", msg);
       return this._fail("", "", "", msg);
     }
     const tag = `${workflow.scene ?? "?"}/${workflow.task}`;
     if (this._activeUrl) {
       const err = `another eval is already running: ${this._activeUrl}`;
-      console.warn(`[eval] ${err}`);
+      console.warn("[eval] %s", err);
       return this._fail("", workflow.scene, workflow.task, err);
     }
     this._activeUrl = tag;
 
-    console.log(`[eval] running: ${tag}`);
+    console.log("[eval] running: %s", tag);
     this._showOverlay(workflow.task, workflow.timeoutSec ?? 120);
 
     const start = Date.now();
@@ -250,7 +250,7 @@ export class EvalHarness {
       try { await workflow.setup(ctx); }
       catch (e: any) {
         const reason = `setup() threw: ${e?.message ?? e}`;
-        console.error(`[eval] ${reason}`);
+        console.error("[eval] %s", reason);
         this._activeUrl = null;
         return this._fail("", workflow.scene, workflow.task, reason, Date.now() - start);
       }
@@ -323,7 +323,7 @@ export class EvalHarness {
       score: result.score,
       durationMs,
     };
-    console.log(`[eval] ${passed ? "PASS" : "FAIL"} (${durationMs}ms): ${result.reason ?? ""}`);
+    console.log("[eval] %s (%dms): %s", passed ? "PASS" : "FAIL", durationMs, result.reason ?? "");
     this._showResult(passed, result.reason ?? (passed ? "ok" : "fail"));
     this._send(msg);
     this._activeUrl = null;
