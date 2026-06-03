@@ -308,17 +308,24 @@ class Transform(Timestamped):
             ts=ts,
         )
 
-    def to_rerun(self) -> rr.Transform3D:
-        """Convert to rerun Transform3D format with frame IDs.
+    def to_rerun(self, frameless: bool = False) -> rr.Transform3D:
+        """Convert to a rerun Transform3D.
 
-        Returns:
-            rr.Transform3D archetype for logging to rerun with parent/child frames
+        Args:
+            frameless: omit ``parent_frame``/``child_frame``. By default the
+                transform carries its frame IDs (resolved via rerun's tf-graph);
+                set this when positioning by entity-path hierarchy instead, where
+                the named frames would not compose.
         """
         import rerun as rr
 
+        translation = [self.translation.x, self.translation.y, self.translation.z]
+        rotation = self.rotation.to_rerun()
+        if frameless:
+            return rr.Transform3D(translation=translation, rotation=rotation)
         return rr.Transform3D(
-            translation=[self.translation.x, self.translation.y, self.translation.z],
-            rotation=self.rotation.to_rerun(),
+            translation=translation,
+            rotation=rotation,
             parent_frame="tf#/" + self.frame_id,
             child_frame="tf#/" + self.child_frame_id,
         )

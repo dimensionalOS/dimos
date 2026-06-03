@@ -25,13 +25,13 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
-from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 logger = setup_logger()
 

@@ -20,9 +20,9 @@ from reactivex import operators as ops
 
 _IS_MACOS = sys.platform == "darwin"
 
-from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_barrier
 from dimos.utils.data import get_data
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 
 @pytest.fixture

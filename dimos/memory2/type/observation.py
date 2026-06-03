@@ -198,7 +198,7 @@ class Observation(Generic[T]):
         )
         kwargs: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
         kwargs.update(overrides)
-        kwargs.update(data_type=type(data), _data=data, _loader=None, _data_lock=threading.Lock())
+        kwargs.update(data_type=type(data), _data=data, _loader=None)
         return cast("Observation[R]", cls(**kwargs))
 
     def tag(self, **tags: Any) -> Self:
@@ -206,6 +206,22 @@ class Observation(Generic[T]):
         kwargs: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
         kwargs.update(
             tags={**self.tags, **tags},
+            _data=_UNLOADED,
+            _loader=lambda: self.data,
+            _data_lock=threading.Lock(),
+        )
+        return type(self)(**kwargs)
+
+    def with_pose(self, pose: Any) -> Self:
+        """Return a new observation with ``pose`` attached, payload kept lazy.
+
+        ``pose`` accepts anything :func:`_to_tuple` handles (a 3-/7-tuple,
+        ``Pose``/``PoseStamped``/``Transform``, or ``None`` to clear).
+        """
+        kwargs: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
+        kwargs.pop("pose_tuple", None)
+        kwargs.update(
+            pose=pose,
             _data=_UNLOADED,
             _loader=lambda: self.data,
             _data_lock=threading.Lock(),

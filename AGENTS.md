@@ -141,6 +141,12 @@ docs/
 
 ---
 
+## For Coding Agents
+
+If you are a coding agent working on this dimos codebase, our coding agent focused docs are at `docs/coding-agents/index.md`
+
+---
+
 ## Architecture
 
 ### Modules
@@ -388,4 +394,4 @@ CI asserts the file is current — if it's stale, CI fails.
 - Testing: `docs/development/testing.md`
 - CLI / dimos run: `docs/development/dimos_run.md`
 - LFS data: `docs/development/large_file_management.md`
-- Agent system: `docs/agents/`
+- Agent system: `docs/coding-agents/`

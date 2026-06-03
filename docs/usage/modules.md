@@ -170,6 +170,93 @@ class HeavyModule(Module):
 
 If declaring dedicated modules would push the pool past half-dedicated, the coordinator auto-grows it so non-dedicated workers always at least match the dedicated count.
 
+## Sync input handlers
+
+If you don't need an asyncio loop, subscribe to your `In[T]` streams from `start()` and register the unsubscribe with `register_disposable` so cleanup happens automatically at `stop()`.
+
+```python
+from reactivex.disposable import Disposable
+
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In
+from dimos.msgs.std_msgs.Int32 import Int32
+
+
+class Counter(Module):
+    value: In[Int32]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._total = 0
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(Disposable(self.value.subscribe(self._on_value)))
+
+    def _on_value(self, msg: Int32) -> None:
+        self._total += msg.data
+```
+
+`In.subscribe(cb)` returns an *unsubscribe function*, not a `DisposableBase`. Wrap it in `Disposable(...)` so `register_disposable` can dispose it on `stop()`. Without this, your handler keeps running after `stop()` and tests will fail thread-leak checks.
+
+The callback runs on whatever thread emits the message, so guard mutable state with a lock if multiple inputs share it.
+
+## Triggering side effects via Specs
+
+A common pattern is "subscribe to a stream, react by calling another module". Declare the other module's protocol as a `Spec` field (single-underscore, private). The coordinator binds the proxy at deploy time, so handlers can call it directly with no extra wiring:
+
+```python
+from typing import Protocol
+
+from reactivex.disposable import Disposable
+
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In
+from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.spec.utils import Spec
+
+
+class NotifierSpec(Spec, Protocol):
+    def notify(self, text: str) -> None: ...
+
+
+class Watchdog(Module):
+    value: In[Int32]
+
+    _notifier: NotifierSpec
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(Disposable(self.value.subscribe(self._on_value)))
+
+    def _on_value(self, msg: Int32) -> None:
+        if msg.data > 100:
+            self._notifier.notify(f"value={msg.data}")
+```
+
+The Spec must match the target module's `@rpc` signatures (sync/async are interchangeable — see [Async modules](#async-modules-lock-free-state)).
+
+To deploy `Watchdog`, add `Watchdog.blueprint()` to an existing blueprint's `autoconnect(...)` chain. The coordinator matches `Out[T]` to `In[T]` by name across the union of modules, and resolves `_notifier: NotifierSpec` to whichever module in the blueprint implements `notify`. No manual wiring required.
+
+## Testing modules
+
+Mock spec dependencies (anything typed `: SomeSpec`) after construction, since the framework normally wires them at deploy time:
+
+```python skip
+@pytest.fixture()
+def module(mocker):
+    m = MyModule(step=10)
+    m._speak_skill = mocker.MagicMock()
+    yield m
+    m.stop()  # required: cleans up the per-instance asyncio loop and thread
+```
+
+The `m.stop()` in teardown matters. The test session-wide thread-leak detector will fail the test otherwise, even if your test body never started any threads.
+
 ## Restarting a module
 
 While iterating on a module it's often convenient to edit its source file
