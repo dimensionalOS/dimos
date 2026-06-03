@@ -404,7 +404,7 @@ tests = [
     "md-babel-py>=1.2.0",
     "py-spy",
     # Fast Rust extension rebuilds for the dev loop. Production wheels go
-    # through setuptools-rust (see setup.py).
+    # through setuptools-rust.
     "maturin>=1.7",
 
     # LSP

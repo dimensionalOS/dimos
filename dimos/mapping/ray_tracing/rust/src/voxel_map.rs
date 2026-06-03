@@ -6,6 +6,7 @@ use serde::Deserialize;
 use validator::{Validate, ValidationError};
 
 pub type VoxelKey = (i32, i32, i32);
+pub type VoxelHealth = i32;
 
 #[derive(Debug, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
@@ -35,8 +36,7 @@ fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
 
 #[derive(Default)]
 pub struct VoxelMap {
-    // Save health of each voxel
-    pub voxels: AHashMap<VoxelKey, i32>,
+    pub voxels: AHashMap<VoxelKey, VoxelHealth>,
 }
 
 impl VoxelMap {
@@ -165,7 +165,7 @@ pub fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
 #[allow(clippy::too_many_arguments)]
 pub fn find_misses_along_ray(
     misses: &mut AHashSet<VoxelKey>,
-    map_voxels: &AHashMap<VoxelKey, i32>,
+    map_voxels: &AHashMap<VoxelKey, VoxelHealth>,
     origin: (f32, f32, f32),
     end: (f32, f32, f32),
     voxel_size: f32,
@@ -330,7 +330,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let mut map_voxels: AHashMap<VoxelKey, i32> = AHashMap::new();
+        let mut map_voxels: AHashMap<VoxelKey, VoxelHealth> = AHashMap::new();
         for v in &expected {
             map_voxels.insert(*v, 1);
         }
@@ -373,7 +373,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let mut map_voxels: AHashMap<VoxelKey, i32> = AHashMap::new();
+        let mut map_voxels: AHashMap<VoxelKey, VoxelHealth> = AHashMap::new();
         for v in &walked {
             map_voxels.insert(*v, 1);
         }

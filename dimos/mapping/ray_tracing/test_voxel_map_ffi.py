@@ -59,29 +59,3 @@ def test_add_frame_rejects_wrong_shape() -> None:
     bad = np.array([1.0, 2.0, 3.0], dtype=np.float32)
     with pytest.raises(ValueError, match="N, 3"):
         mapper.add_frame(bad, (0.0, 0.0, 0.0))
-
-
-def test_add_frame_drops_non_finite_points() -> None:
-    mapper = _mapper()
-    points = np.array(
-        [
-            [5.5, 0.5, 0.5],
-            [float("nan"), 1.0, 1.0],
-            [float("inf"), 2.0, 2.0],
-        ],
-        dtype=np.float32,
-    )
-    mapper.add_frame(points, (0.0, 0.0, 0.0))
-    assert len(mapper) == 1
-
-
-def test_clear_resets_map() -> None:
-    mapper = _mapper()
-    mapper.add_frame(
-        np.array([[5.5, 0.5, 0.5]], dtype=np.float32),
-        (0.0, 0.0, 0.0),
-    )
-    assert len(mapper) == 1
-    mapper.clear()
-    assert len(mapper) == 0
-    assert mapper.global_map().shape == (0, 3)

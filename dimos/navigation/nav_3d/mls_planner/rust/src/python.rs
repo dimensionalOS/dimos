@@ -164,6 +164,10 @@ impl MLSPlanner {
         )
     }
 
+    fn clear(&mut self) {
+        self.planner = Planner::default();
+    }
+
     fn __repr__(&self) -> String {
         let graph = self.planner.graph();
         format!(
