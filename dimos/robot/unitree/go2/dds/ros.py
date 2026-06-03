@@ -43,7 +43,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.go2dds import cdr
+from dimos.robot.unitree.go2.dds import cdr
 
 
 # Shared wire specs (Header/Time) reused by the per-message layouts below.

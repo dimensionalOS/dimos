@@ -28,11 +28,11 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.go2dds.msgs.ControlEvent import ControlEvent
-from dimos.robot.unitree.go2dds.msgs.LowState import LowState
-from dimos.robot.unitree.go2dds.msgs.SportModeState import SportModeState
-from dimos.robot.unitree.go2dds.msgs.Telemetry import Telemetry
-from dimos.robot.unitree.go2dds.store import Go2McapStore
+from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
+from dimos.robot.unitree.go2.dds.msgs.LowState import LowState
+from dimos.robot.unitree.go2.dds.msgs.SportModeState import SportModeState
+from dimos.robot.unitree.go2.dds.msgs.Telemetry import Telemetry
+from dimos.robot.unitree.go2.dds.store import Go2McapStore
 
 pytestmark = [
     pytest.mark.self_hosted,

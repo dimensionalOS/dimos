@@ -21,10 +21,10 @@ from typing import Any
 
 import numpy as np
 
-from dimos.robot.unitree.go2dds.msgs.base import PrettyMsg
-from dimos.robot.unitree.go2dds.msgs.IMUState import IMUState
-from dimos.robot.unitree.go2dds.msgs.PathPoint import PathPoint
-from dimos.robot.unitree.go2dds.msgs.TimeSpec import TimeSpec
+from dimos.robot.unitree.go2.dds.msgs.base import PrettyMsg
+from dimos.robot.unitree.go2.dds.msgs.IMUState import IMUState
+from dimos.robot.unitree.go2.dds.msgs.PathPoint import PathPoint
+from dimos.robot.unitree.go2.dds.msgs.TimeSpec import TimeSpec
 
 
 @dataclass(repr=False)
