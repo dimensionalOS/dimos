@@ -317,27 +317,6 @@ dds = [
     "cyclonedds>=0.10.5",
 ]
 
-# Minimal dependencies for Docker modules that communicate with the DimOS host
-docker = [
-    "dimos-lcm",
-    "numpy>=1.26.4",
-    "scipy>=1.15.1",
-    "reactivex",
-    "plum-dispatch==2.5.7",
-    "structlog>=25.5.0,<26",
-    "pydantic",
-    "pydantic-settings>=2.11.0,<3",
-    "typer>=0.19.2,<1",
-    "requests>=2.28",
-    "opencv-python-headless",
-    "lcm",
-    "sortedcontainers",
-    "PyTurboJPEG",
-    "rerun-sdk",
-    "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
-    "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
-]
-
 base = [
     "dimos[agents,web,perception,visualization]",
 ]
@@ -349,7 +328,7 @@ apriltag = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,docker,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
 ]
 
 [dependency-groups]

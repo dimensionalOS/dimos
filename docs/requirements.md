@@ -53,7 +53,6 @@ pip install 'dimos[base,unitree,manipulation]'       # + Arm control
 | `cuda` | GPU acceleration | cupy, onnxruntime-gpu, xformers | **Yes** |
 | `cpu` | CPU inference backends | onnxruntime, ctransformers | No |
 | `misc` | Extra models, embeddings, hardware SDKs | cerebras, edgetam, sentence-transformers, tiktoken | Varies |
-| `docker` | Minimal set for Docker sidecar modules | dimos-lcm, numpy, opencv-headless, rerun-sdk | No |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
 | `psql` | PostgreSQL storage | psycopg2 | No |
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
