@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from collections import namedtuple
+from functools import cache
 import sys
 import time
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
@@ -54,6 +56,51 @@ T = TypeVar("T")
 R = TypeVar("R")
 O = TypeVar("O", bound=Observation[Any], default=Observation[T])
 logger = setup_logger()
+
+
+@cache
+def _pair_class(field_a: str, field_b: str) -> type:
+    """Cached ``AlignedPair`` namedtuple with fields named after the two streams.
+
+    ``rename=True`` so any non-identifier or duplicate name degrades to ``_0`` /
+    ``_1`` rather than raising — index access (``pair[0]``) always works.
+    """
+    return namedtuple("AlignedPair", [field_a, field_b], rename=True)  # type: ignore[misc]
+
+
+def _nearest_align_iter(
+    primary_iter: Iterator[Observation[Any]],
+    secondary_iter: Iterator[Observation[Any]],
+    tolerance: float,
+    pair_class: type,
+) -> Iterator[Observation[Any]]:
+    """Streaming two-pointer nearest-ts merge over ts-ascending iterators.
+
+    The secondary cursor catches up to each primary; the nearest secondary is
+    whichever of the two bracketing it (the last one at/before ``p`` or the
+    first one after) is closer. O(1) state — only those two are held, never a
+    window — so it streams over arbitrarily long (including live) inputs.
+    """
+    secondary = iter(secondary_iter)
+    prev: Observation[Any] | None = None  # last secondary with ts <= p.ts
+    nxt: Observation[Any] | None = next(secondary, None)  # first secondary after prev
+
+    for p in primary_iter:
+        # Advance the cursor until `nxt` sits past `p`; `prev` trails just behind.
+        while nxt is not None and nxt.ts < p.ts:
+            prev = nxt
+            nxt = next(secondary, None)
+
+        # Nearest is the closer of the two bracketing secondaries.
+        if prev is None:
+            best = nxt
+        elif nxt is None:
+            best = prev
+        else:
+            best = prev if (p.ts - prev.ts) <= (nxt.ts - p.ts) else nxt
+
+        if best is not None and abs(best.ts - p.ts) <= tolerance:
+            yield p.derive(data=pair_class(p, best))
 
 
 class Stream(CompositeResource, Generic[T, O]):
@@ -117,6 +164,14 @@ class Stream(CompositeResource, Generic[T, O]):
                 result += f" | {q_str}"
 
         return result
+
+    @property
+    def name(self) -> str | None:
+        """Backing stream's name (``None`` if unbound), inherited through transforms."""
+        current: Any = self
+        while isinstance(current, Stream):
+            current = current._source
+        return None if current is None else cast("str", current.name)
 
     def is_live(self) -> bool:
         """True if this stream (or any ancestor in the chain) is in live mode."""
@@ -336,6 +391,35 @@ class Stream(CompositeResource, Generic[T, O]):
             xf = FnIterTransformer(xf)
         return Stream(source=self, transform=xf, query=StreamQuery())
 
+    def align(self, other: Stream[Any, Any], *, tolerance: float) -> Stream[Any]:
+        """Pair each observation with the nearest-in-time one from *other*.
+
+        The primary (``self``) drives; for each primary the nearest secondary
+        within ``|Δts| <= tolerance`` is paired, others are skipped. The merge
+        is a single forward pass that assumes **both streams iterate in
+        ascending ts** — true for live streams (arrival order) and for stored
+        streams in insertion order; prepend ``.order_by("ts")`` on a side whose
+        iteration order isn't chronological. Source-agnostic: stored,
+        transformed, and live streams all work (a live side simply never ends).
+
+        The output ``Observation`` carries the primary's ``ts``, ``pose``,
+        ``tags``. ``obs.data`` is an ``AlignedPair`` namedtuple whose fields are
+        named after each side's stream (e.g. ``pair.lidar`` / ``pair.odom``),
+        with ``pair[0]`` / ``pair[1]`` index access always available. Each
+        field is the full :class:`Observation` from that side. Field names fall
+        back to ``primary`` / ``secondary`` when a stream is unnamed or both
+        share a name.
+        """
+        field_a, field_b = self.name, other.name
+        if not field_a or not field_b or field_a == field_b:
+            field_a, field_b = "primary", "secondary"
+        pair_class = _pair_class(field_a, field_b)
+
+        def _align(upstream: Iterator[Observation[Any]]) -> Iterator[Observation[Any]]:
+            return _nearest_align_iter(upstream, iter(other), tolerance, pair_class)
+
+        return self.transform(FnIterTransformer(_align))
+
     def live(self, buffer: BackpressureBuffer[Observation[Any]] | None = None) -> Stream[T, O]:
         """Return a stream whose iteration never ends — backfill then live tail.
 
@@ -413,12 +497,7 @@ class Stream(CompositeResource, Generic[T, O]):
         return (first.ts, last.ts)
 
     def summary(self) -> str:
-        """Return a short human-readable summary: count, time range, avg frequency.
-
-        Relies on ``count()`` and ``get_time_range()`` (``first()`` + ``last()``),
-        all of which backends are expected to serve cheaply — SQL via ORDER BY,
-        the mcap store via forward/reverse iteration.
-        """
+        """Return a short human-readable summary: count, time range, avg frequency."""
         from datetime import datetime, timezone
 
         n = self.count()
@@ -426,12 +505,12 @@ class Stream(CompositeResource, Generic[T, O]):
             return f"{self}: empty"
 
         t0, t1 = self.get_time_range()
-        dur = t1 - t0
-        hz = (n - 1) / dur if n > 1 and dur > 0 else 0.0
         fmt = "%Y-%m-%d %H:%M:%S"
         dt0 = datetime.fromtimestamp(t0, tz=timezone.utc).strftime(fmt)
         dt1 = datetime.fromtimestamp(t1, tz=timezone.utc).strftime(fmt)
-        return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s, {hz:.1f} Hz)"
+        dur = t1 - t0
+        hz = f", {(n - 1) / dur:.2f} Hz" if dur > 0 else ""
+        return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s{hz})"
 
     def materialize(self) -> Stream[T, O]:
         """Materialize into memory and return a replayable stream.

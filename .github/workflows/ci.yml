@@ -154,14 +154,17 @@ jobs:
     strategy:
       matrix:
         pyver: ['3.10', '3.11', '3.12', '3.13', '3.14']
-        os: [ubuntu]
+        os: ["ubuntu-latest"]
         experimental: [false]
         include:
-          - os: ubuntu
+          - os: "ubuntu-latest"
             pyver: "3.14t"
             experimental: false
+          - os: "ubuntu-24.04-arm"
+            pyver: "3.14"
+            experimental: false
       fail-fast: true
-    runs-on: ${{ matrix.os }}-latest
+    runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
     permissions:
       contents: read  # For checkout
@@ -180,12 +183,12 @@ jobs:
           allow-prereleases: true
           python-version: ${{ matrix.pyver }}
       - name: Install dependency for pyaudio (Ubuntu)
-        if: matrix.os == 'ubuntu'
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev
       - name: Install dependency for pyaudio (macOS)
-        if: matrix.os == 'macos'
+        if: startsWith(matrix.os, 'macos')
         run: brew install portaudio
       - name: Cap accidental LFS downloads at 1 MiB
         run: |

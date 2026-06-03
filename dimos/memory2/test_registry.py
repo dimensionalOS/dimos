@@ -41,6 +41,7 @@ class TestQual:
         assert qual(SubjectNotifier) == "dimos.memory2.notifier.subject.SubjectNotifier"
 
 
+@pytest.mark.skipif_no_sqlite_vec
 class TestRegistryStore:
     def test_put_get_round_trip(self, tmp_path) -> None:
         from dimos.memory2.utils.sqlite import open_sqlite_connection
@@ -106,6 +107,7 @@ class TestComponentSerialization:
         restored = SqliteBlobStoreConfig(**dumped)
         assert restored.path == "/tmp/test.db"
 
+    @pytest.mark.skipif_no_sqlite_vec
     def test_sqlite_blob_store_roundtrip(self, tmp_path) -> None:
         store = SqliteBlobStore(path=str(tmp_path / "blob.db"))
         data = store.serialize()
@@ -127,6 +129,7 @@ class TestComponentSerialization:
         restored = SqliteVectorStoreConfig(**dumped)
         assert restored.path == "/tmp/vec.db"
 
+    @pytest.mark.skipif_no_sqlite_vec
     def test_sqlite_vector_store_roundtrip(self, tmp_path) -> None:
         store = SqliteVectorStore(path=str(tmp_path / "vec.db"))
         data = store.serialize()
@@ -166,6 +169,7 @@ class TestBackendSerialization:
         assert data["notifier"]["class"] == qual(SubjectNotifier)
 
 
+@pytest.mark.skipif_no_sqlite_vec
 class TestStoreReopen:
     def test_reopen_preserves_data(self, tmp_path) -> None:
         """Create a store, write data, close, reopen, read back."""
