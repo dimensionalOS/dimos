@@ -18,6 +18,7 @@ use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use serde::Deserialize;
 use tracing::info;
+use validator::Validate;
 
 use ahash::AHashSet;
 
@@ -27,16 +28,23 @@ use crate::nodes::place_nodes;
 use crate::surfaces::{extract_surfaces, ColumnIz};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
 struct Config {
     world_frame: String,
+    #[validate(range(exclusive_min = 0.0))]
     voxel_size: f32,
+    #[validate(range(exclusive_min = 0.0))]
     robot_height: f32,
+    #[validate(range(min = 0))]
     surface_dilation_passes: u32,
+    #[validate(range(min = 0))]
     surface_erosion_passes: u32,
+    #[validate(range(exclusive_min = 0.0))]
     node_spacing_m: f32,
+    #[validate(range(min = 0.0))]
     node_wall_buffer_m: f32,
+    #[validate(range(min = 0.0))]
     node_step_threshold_m: f32,
 }
 
@@ -80,12 +88,6 @@ struct MlsPlanner {
 impl MlsPlanner {
     async fn setup(&mut self) {
         let cfg = &self.config;
-        require_positive("voxel_size", cfg.voxel_size);
-        require_positive("robot_height", cfg.robot_height);
-        require_positive("node_spacing_m", cfg.node_spacing_m);
-        require_non_negative("node_wall_buffer_m", cfg.node_wall_buffer_m);
-        require_non_negative("node_step_threshold_m", cfg.node_step_threshold_m);
-
         self.clearance_cells = (cfg.robot_height / cfg.voxel_size).ceil() as i32;
         self.step_cells = (cfg.node_step_threshold_m / cfg.voxel_size).floor() as i32;
 
@@ -248,18 +250,6 @@ impl MlsPlanner {
 
 fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
-}
-
-fn require_positive(name: &str, v: f32) {
-    if !v.is_finite() || v <= 0.0 {
-        panic!("mls_planner: {name} must be > 0, got {v}");
-    }
-}
-
-fn require_non_negative(name: &str, v: f32) {
-    if !v.is_finite() || v < 0.0 {
-        panic!("mls_planner: {name} must be >= 0, got {v}");
-    }
 }
 
 async fn publish_cloud(
@@ -464,7 +454,5 @@ async fn main() {
     let transport = LcmTransport::new()
         .await
         .expect("failed to create LCM transport");
-    run::<MlsPlanner, _>(transport)
-        .await
-        .expect("mls_planner run failed");
+    run::<MlsPlanner, _>(transport).await;
 }
