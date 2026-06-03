@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, overload
 import numpy as np
 import torch
 
+from dimos.core.resource import Resource
 from dimos.models.base import HuggingFaceModelConfig, LocalModelConfig
 from dimos.types.timestamped import Timestamped
 
@@ -87,7 +88,7 @@ class Embedding(Timestamped):
         return self
 
 
-class EmbeddingModel(ABC):
+class EmbeddingModel(Resource, ABC):
     """Abstract base class for embedding models supporting vision and language."""
 
     device: str
@@ -165,6 +166,5 @@ class EmbeddingModel(ABC):
         similarities = self.compare_one_to_many(query_emb, candidates)
         top_values, top_indices = similarities.topk(k=min(top_k, len(candidates)))
         return [(idx.item(), val.item()) for idx, val in zip(top_indices, top_values, strict=False)]
-
 
         ...

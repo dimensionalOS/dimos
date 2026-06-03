@@ -20,9 +20,9 @@ from reactivex import operators as ops
 
 _IS_MACOS = sys.platform == "darwin"
 
+from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_barrier
 from dimos.utils.data import get_data
-from dimos.utils.testing.replay import TimedSensorReplay
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ def test_opencv_conversion(img: Image) -> None:
 @pytest.mark.tool
 def test_sharpness_stream() -> None:
     get_data("unitree_office_walk")  # Preload data for testing
-    video_store = TimedSensorReplay(
+    video_store = LegacyPickleStore(
         "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
     )
 

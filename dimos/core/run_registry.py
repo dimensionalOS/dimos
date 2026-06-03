@@ -25,6 +25,7 @@ import signal
 import time
 
 from dimos.constants import STATE_DIR
+from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -107,13 +108,31 @@ def list_runs(alive_only: bool = True) -> list[RunEntry]:
 
 
 def cleanup_stale() -> int:
-    """Remove registry entries for dead processes. Returns count removed."""
+    """Remove registry entries for dead processes. Returns count removed.
+
+    Before removing each stale entry, sweeps any descendants that outlived their
+    main process (e.g., because main was SIGKILL'd and the watchdog also died).
+    Sweep runs strictly on entries whose main PID is dead. A live run is never
+    swept, so concurrent `dimos run` invocations are safe.
+    """
+
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
     removed = 0
     for f in list(REGISTRY_DIR.glob("*.json")):
         try:
             entry = RunEntry.load(f)
             if not is_pid_alive(entry.pid):
+                try:
+                    killed = kill_run_processes(entry.run_id)
+                    if killed:
+                        logger.info(
+                            "Swept descendants of stale run",
+                            run_id=entry.run_id,
+                            pid=entry.pid,
+                            killed=killed,
+                        )
+                except Exception:
+                    logger.error("Error sweeping stale run", run_id=entry.run_id, exc_info=True)
                 entry.remove()
                 removed += 1
         except Exception:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import copyreg
 import pickle
 import threading
+import time
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,8 @@ import rpyc
 
 from dimos.porcelain.module_source import ModuleSource
 from dimos.utils.logging_config import setup_logger
+
+_CONNECT_RETRY_DEADLINE_S = 2.0
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
@@ -53,7 +56,7 @@ class RemoteModuleSource(ModuleSource):
     is_remote = True
 
     def __init__(self, host: str, port: int) -> None:
-        self._coord_conn = rpyc.connect(host, port, config={"sync_request_timeout": 30})
+        self._coord_conn = _rpyc_connect(host, port, config={"sync_request_timeout": 30})
         self._cache: dict[str, tuple[rpyc.Connection, Any]] = {}
         self._lock = threading.RLock()
 
@@ -68,7 +71,7 @@ class RemoteModuleSource(ModuleSource):
 
             endpoint = self._coord_conn.root.get_module_endpoint(name)
             host, port, module_id = endpoint[0], int(endpoint[1]), int(endpoint[2])
-            conn = rpyc.connect(host, port, config={"sync_request_timeout": 30})
+            conn = _rpyc_connect(host, port, config={"sync_request_timeout": 30})
             module = conn.root.get_module(module_id)
             self._cache[name] = (conn, module)
             return module
@@ -105,3 +108,16 @@ class RemoteModuleSource(ModuleSource):
             self._coord_conn.close()
         except Exception:
             pass
+
+
+def _rpyc_connect(host: str, port: int, **kwargs: Any) -> rpyc.Connection:
+    deadline = time.monotonic() + _CONNECT_RETRY_DEADLINE_S
+    delay = 0.010
+    while True:
+        try:
+            return rpyc.connect(host, port, **kwargs)
+        except ConnectionRefusedError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.200)

@@ -241,6 +241,9 @@ class MujocoConnection:
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
 
+    def enable_rage_mode(self) -> bool:
+        return True
+
     def get_video_frame(self) -> NDArray[Any] | None:
         if self.shm_data is None:
             return None

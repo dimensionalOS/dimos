@@ -28,11 +28,13 @@ from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingMode
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
+
 # osnet models downloaded from https://kaiyangzhou.github.io/deep-person-reid/MODEL_ZOO.html
 # into dimos/data/models_torchreid/
 # feel free to add more
 class TorchReIDModelConfig(EmbeddingModelConfig):
     model_name: str = "osnet_x1_0"
+
 
 class TorchReIDModel(EmbeddingModel, LocalModel):
     """TorchReID embedding model for person re-identification."""

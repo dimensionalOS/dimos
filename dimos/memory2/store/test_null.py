@@ -40,7 +40,7 @@ def test_max_size_zero_empty_query() -> None:
         stream = store.stream("test", str)
         stream.append("data")
         assert stream.count() == 0
-        assert stream.fetch() == []
+        assert stream.to_list() == []
 
 
 def test_null_store_discards_history() -> None:
@@ -53,4 +53,4 @@ def test_null_store_discards_history() -> None:
         stream.append(3)
 
         assert stream.count() == 0
-        assert stream.fetch() == []
+        assert stream.to_list() == []

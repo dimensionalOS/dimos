@@ -59,19 +59,22 @@ class TestSave:
         source = make_stream(3)
         target = Stream(source=_make_backend("target"))
 
-        source.save(target)
+        source.save(target).drain()
 
-        results = target.fetch()
+        results = target.to_list()
         assert len(results) == 3
         assert [o.data for o in results] == [0, 10, 20]
 
-    def test_save_returns_target_stream(self) -> None:
+    def test_save_is_lazy(self) -> None:
+        """save() returns a lazy passthrough — nothing written until iterated."""
         source = make_stream(2)
         target = Stream(source=_make_backend("target"))
 
-        result = source.save(target)
+        pipeline = source.save(target)
 
-        assert result is target
+        assert target.to_list() == [], "expected target empty before iteration"
+        list(pipeline)  # drive iteration
+        assert len(target.to_list()) == 2
 
     def test_save_preserves_data(self) -> None:
         backend = _make_backend("src")
@@ -79,7 +82,7 @@ class TestSave:
         source = Stream(source=backend)
 
         target = Stream(source=_make_backend("dst"))
-        source.save(target)
+        source.save(target).drain()
 
         obs = target.first()
         assert obs.data == 42
@@ -92,32 +95,32 @@ class TestSave:
         doubled = source.transform(FnTransformer(lambda obs: obs.derive(data=obs.data * 2)))
 
         target = Stream(source=_make_backend("target"))
-        doubled.save(target)
+        doubled.save(target).drain()
 
-        assert [o.data for o in target.fetch()] == [0, 20, 40]
+        assert [o.data for o in target.to_list()] == [0, 20, 40]
 
     def test_save_rejects_transform_target(self) -> None:
         source = make_stream(2)
         base = make_stream(2)
         transform_stream = base.transform(FnTransformer(lambda obs: obs.derive(obs.data)))
 
-        with pytest.raises(TypeError, match="Cannot save to a transform"):
+        with pytest.raises(TypeError, match="Cannot save to"):
             source.save(transform_stream)
 
     def test_save_target_queryable(self) -> None:
         source = make_stream(5, start_ts=0.0)  # ts: 0,1,2,3,4
 
         target = Stream(source=_make_backend("target"))
-        result = source.save(target)
+        source.save(target).drain()
 
-        after_2 = result.after(2.0).fetch()
+        after_2 = target.after(2.0).to_list()
         assert [o.data for o in after_2] == [30, 40]
 
     def test_save_empty_source(self) -> None:
         source = make_stream(0)
         target = Stream(source=_make_backend("target"))
 
-        result = source.save(target)
+        source.save(target).drain()
 
-        assert result.count() == 0
-        assert result.fetch() == []
+        assert target.count() == 0
+        assert target.to_list() == []

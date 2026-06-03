@@ -26,7 +26,6 @@ from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 
 # Add msg_name to LCM PointStamped for testing nested message conversion
 PointStamped.msg_name = "geometry_msgs.PointStamped"
-from dimos.utils.data import get_data
 from dimos.utils.testing.collector import CallbackCollector
 from dimos.utils.testing.replay import TimedSensorReplay
 
@@ -79,10 +78,8 @@ def test_pointcloud2_pubsub(publisher, subscriber):
     that can't be treated like a standard message with direct field copy.
     Uses LCM encode/decode roundtrip to properly convert internal representation.
     """
-    dir_name = get_data("unitree_go2_bigoffice")
-
     # Load real lidar data from replay (5 seconds in)
-    replay = TimedSensorReplay(f"{dir_name}/lidar")
+    replay = TimedSensorReplay("go2_bigoffice/lidar")
     original = replay.find_closest_seek(5.0)
 
     assert original is not None, "Failed to load lidar data from replay"

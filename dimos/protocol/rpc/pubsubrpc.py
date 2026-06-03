@@ -89,13 +89,11 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         self._msg_id_lock = threading.Lock()
 
     def __getstate__(self) -> dict[str, Any]:
-        # ``object.__getstate__`` exists on Python 3.11+ but not 3.10, and
-        # mypy 3.10 reports ``__getstate__ undefined in superclass``.  Use
-        # ``getattr`` with a default to bypass the static lookup; the
-        # result is typed ``Any`` which lets the rebind to ``state`` pass
-        # both mypy versions without a ``# type: ignore``.
-        parent_getstate = getattr(super(), "__getstate__", None)
-        state: dict[str, Any] = parent_getstate() if parent_getstate else self.__dict__.copy()
+        state: dict[str, Any]
+        if hasattr(super(), "__getstate__"):
+            state = super().__getstate__()  # type: ignore[misc, assignment]
+        else:
+            state = self.__dict__.copy()
 
         # Exclude unpicklable attributes when serializing.
         state.pop("_call_thread_pool", None)

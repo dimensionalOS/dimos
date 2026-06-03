@@ -41,13 +41,13 @@ import typer
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.init import rerun_init
 
-RERUN_GRPC_PORT = 9876
+RERUN_GRPC_PORT = 9877
 RERUN_WEB_PORT = 9090
 
 # TODO OUT visual annotations
@@ -182,6 +182,9 @@ class Config(ModuleConfig):
     # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
+    grpc_port: int = RERUN_GRPC_PORT
+    web_port: int = RERUN_WEB_PORT
+
     # Per-entity max update rate (Hz). Entities not listed are unthrottled.
     # Use for heavy entities to prevent viewer backpressure.
     max_hz: dict[str, float] = field(default_factory=dict)
@@ -215,6 +218,7 @@ class RerunBridgeModule(Module):
 
     config: Config
 
+    # TODO this doesn't belong here, either hardcode it or put it to rerun bridge config
     GV_SCALE = 100.0  # graphviz inches to rerun screen units
     MODULE_RADIUS = 30.0
     CHANNEL_RADIUS = 20.0
@@ -301,37 +305,36 @@ class RerunBridgeModule(Module):
         }
 
         # Initialize and spawn Rerun viewer
-        rr.init("dimos")
+        rerun_init("dimos")
 
         if self.config.viewer_mode == "native":
             try:
                 import rerun_bindings
 
                 rerun_bindings.spawn(
-                    port=RERUN_GRPC_PORT,
+                    port=self.config.grpc_port,
                     executable_name="dimos-viewer",
                     memory_limit=self.config.memory_limit,
                 )
+                rr.connect_grpc(f"rerun+http://127.0.0.1:{self.config.grpc_port}/proxy")
             except ImportError:
-                pass  # dimos-viewer not installed
+                rr.spawn(connect=True, memory_limit=self.config.memory_limit)
             except Exception:
                 logger.warning(
                     "dimos-viewer found but failed to spawn, falling back to stock rerun",
                     exc_info=True,
                 )
-            rr.spawn(connect=True, memory_limit=self.config.memory_limit)
+                rr.spawn(connect=True, memory_limit=self.config.memory_limit)
         elif self.config.viewer_mode == "web":
             server_uri = rr.serve_grpc()
             rr.serve_web_viewer(connect_to=server_uri, open_browser=False)
+
         elif self.config.viewer_mode == "connect":
             rr.connect_grpc(self.config.connect_url)
         # "none" - just init, no viewer (connect externally)
 
         if self.config.blueprint:
             rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
-
-        # Register colormap for viewer-side color resolution (PointCloud2 class_ids)
-        register_colormap_annotation("turbo")
 
         # Start pubsubs and subscribe to all messages
         for pubsub in self.config.pubsubs:

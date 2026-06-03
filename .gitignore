@@ -65,6 +65,7 @@ yolo11n.pt
 
 *mobileclip*
 /results
+/result
 **/cpp/result
 
 CLAUDE.MD
@@ -77,3 +78,6 @@ CLAUDE.MD
 htmlcov/
 .coverage
 .coverage.*
+
+# Memory2 autorecord
+recording*.db

@@ -95,7 +95,7 @@ class TestListBackendEmbedding:
         s.append("south", embedding=_emb([0, -1, 0]))
         s.append("west", embedding=_emb([-1, 0, 0]))
 
-        results = s.search(_emb([0, 1, 0]), k=2).fetch()
+        results = s.search(_emb([0, 1, 0]), k=2).to_list()
         assert len(results) == 2
         assert results[0].data == "north"
         assert results[0].similarity is not None
@@ -107,7 +107,7 @@ class TestListBackendEmbedding:
         s.append("close", embedding=_emb([0.9, 0.1, 0]))
         s.append("exact", embedding=_emb([1, 0, 0]))
 
-        results = s.search(_emb([1, 0, 0]), k=3).fetch()
+        results = s.search(_emb([1, 0, 0]), k=3).to_list()
         assert results[0].data == "exact"
         assert results[1].data == "close"
         assert results[2].data == "far"
@@ -119,7 +119,7 @@ class TestListBackendEmbedding:
         s.append("plain")  # no embedding
         s.append("embedded", embedding=_emb([1, 0, 0]))
 
-        results = s.search(_emb([1, 0, 0]), k=10).fetch()
+        results = s.search(_emb([1, 0, 0]), k=10).to_list()
         assert len(results) == 1
         assert results[0].data == "embedded"
 
@@ -129,7 +129,7 @@ class TestListBackendEmbedding:
         s.append("late", ts=20.0, embedding=_emb([1, 0, 0]))
 
         # Only the late one should pass the after filter
-        results = s.after(15.0).search(_emb([1, 0, 0]), k=10).fetch()
+        results = s.after(15.0).search(_emb([1, 0, 0]), k=10).to_list()
         assert len(results) == 1
         assert results[0].data == "late"
 
@@ -139,7 +139,7 @@ class TestListBackendEmbedding:
             s.append(f"item{i}", embedding=_emb([1, 0, 0]))
 
         # search k=5 then limit 2
-        results = s.search(_emb([1, 0, 0]), k=5).limit(2).fetch()
+        results = s.search(_emb([1, 0, 0]), k=5).limit(2).to_list()
         assert len(results) == 2
 
     def test_search_with_live_raises(self, memory_store) -> None:
@@ -156,7 +156,7 @@ class TestTextSearch:
         s.append("temperature normal")
         s.append("motor overheating")
 
-        results = s.search_text("motor").fetch()
+        results = s.search_text("motor").to_list()
         assert len(results) == 2
         assert {r.data for r in results} == {"motor fault detected", "motor overheating"}
 
@@ -165,7 +165,7 @@ class TestTextSearch:
         s.append("Motor Fault")
         s.append("other event")
 
-        results = s.search_text("motor fault").fetch()
+        results = s.search_text("motor fault").to_list()
         assert len(results) == 1
 
     def test_search_text_with_filters(self, memory_store) -> None:
@@ -174,7 +174,7 @@ class TestTextSearch:
         s.append("motor warning", ts=20.0)
         s.append("motor fault", ts=30.0)
 
-        results = s.after(15.0).search_text("fault").fetch()
+        results = s.after(15.0).search_text("fault").to_list()
         assert len(results) == 1
         assert results[0].ts == 30.0
 
@@ -182,7 +182,7 @@ class TestTextSearch:
         s = memory_store.stream("logs", str)
         s.append("all clear")
 
-        results = s.search_text("motor").fetch()
+        results = s.search_text("motor").to_list()
         assert len(results) == 0
 
 
@@ -193,9 +193,9 @@ class TestSaveEmbeddings:
 
         emb = _emb([1, 0, 0])
         src.append("item", embedding=emb)
-        src.save(dst)
+        src.save(dst).drain()
 
-        results = dst.fetch()
+        results = dst.to_list()
         assert len(results) == 1
         assert isinstance(results[0], EmbeddedObservation)
         # Same vector content (different Embedding instance after re-append)
@@ -207,9 +207,9 @@ class TestSaveEmbeddings:
 
         src.append("plain")
         src.append("embedded", embedding=_emb([0, 1, 0]))
-        src.save(dst)
+        src.save(dst).drain()
 
-        results = dst.fetch()
+        results = dst.to_list()
         assert len(results) == 2
         assert type(results[0]) is Observation
         assert isinstance(results[1], EmbeddedObservation)
@@ -248,7 +248,7 @@ class TestEmbedTransformers:
         s.append("img1", ts=1.0)
         s.append("img2", ts=2.0)
 
-        results = s.transform(EmbedImages(model)).fetch()
+        results = s.transform(EmbedImages(model)).to_list()
         assert len(results) == 2
         for obs in results:
             assert isinstance(obs, EmbeddedObservation)
@@ -263,7 +263,7 @@ class TestEmbedTransformers:
         s.append("motor fault", ts=1.0)
         s.append("all clear", ts=2.0)
 
-        results = s.transform(EmbedText(model)).fetch()
+        results = s.transform(EmbedText(model)).to_list()
         assert len(results) == 2
         for obs in results:
             assert isinstance(obs, EmbeddedObservation)
@@ -290,7 +290,7 @@ class TestEmbedTransformers:
         embedded = s.transform(EmbedText(model))
         # Get the embedding for the first item, then search for similar
         first_emb = embedded.first().embedding
-        results = embedded.search(first_emb, k=3).fetch()
+        results = embedded.search(first_emb, k=3).to_list()
         assert len(results) == 3
         # First result should be the exact match
         assert results[0].similarity is not None
@@ -354,7 +354,7 @@ class TestPluggableVectorStore:
             s.append("south", embedding=_emb([0, -1, 0]))
             s.append("west", embedding=_emb([-1, 0, 0]))
 
-            results = s.search(_emb([0, 1, 0]), k=2).fetch()
+            results = s.search(_emb([0, 1, 0]), k=2).to_list()
             assert len(results) == 2
             assert results[0].data == "north"
             assert results[0].similarity is not None
@@ -371,7 +371,7 @@ class TestPluggableVectorStore:
             s.append("late", ts=20.0, embedding=_emb([1, 0, 0]))
 
             # Filter + search: only "late" passes the after filter
-            results = s.after(15.0).search(_emb([1, 0, 0]), k=10).fetch()
+            results = s.after(15.0).search(_emb([1, 0, 0]), k=10).to_list()
             assert len(results) == 1
             assert results[0].data == "late"
 

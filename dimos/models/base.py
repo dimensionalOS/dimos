@@ -27,11 +27,13 @@ from dimos.protocol.service.spec import BaseConfig, Configurable
 # Device string type - 'cuda', 'cpu', 'cuda:0', 'cuda:1', etc.
 DeviceType = Annotated[str, "Device identifier (e.g., 'cuda', 'cpu', 'cuda:0')"]
 
+
 class LocalModelConfig(BaseConfig):
     device: DeviceType = "cuda" if torch.cuda.is_available() else "cpu"
     dtype: torch.dtype = torch.float32
     warmup: bool = False
     autostart: bool = False
+
 
 class LocalModel(Resource, Configurable):
     """Base class for all local GPU/CPU models.
@@ -121,10 +123,12 @@ class LocalModel(Resource, Configurable):
             except Exception:
                 pass
 
+
 class HuggingFaceModelConfig(LocalModelConfig):
     model_name: str = ""
     trust_remote_code: bool = True
     dtype: torch.dtype = torch.float16
+
 
 class HuggingFaceModel(LocalModel):
     """Base class for HuggingFace transformers-based models.

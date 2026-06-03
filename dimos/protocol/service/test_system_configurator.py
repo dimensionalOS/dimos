@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import resource
 import struct
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -96,7 +98,7 @@ class TestWriteSysctlInt:
                     ["sudo", "sysctl", "-w", "net.core.rmem_max=67108864"],
                     check=True,
                     text=True,
-                    capture_output=False,
+                    capture_output=True,
                 )
 
 
@@ -338,9 +340,9 @@ class TestBufferConfiguratorMacOS:
         configurator = BufferConfiguratorMacOS()
         with patch("dimos.protocol.service.system_configurator.lcm._read_sysctl_int") as mock_read:
             mock_read.side_effect = [
-                BufferConfiguratorMacOS.TARGET_BUFFER_SIZE,
-                BufferConfiguratorMacOS.TARGET_RECVSPACE,
-                BufferConfiguratorMacOS.TARGET_DGRAM_SIZE,
+                BufferConfiguratorMacOS.TARGET,
+                BufferConfiguratorMacOS.TARGET,
+                BufferConfiguratorMacOS.TARGET,
             ]
             assert configurator.check() is True
             assert configurator.needs == []
@@ -352,10 +354,27 @@ class TestBufferConfiguratorMacOS:
             assert configurator.check() is False
             assert len(configurator.needs) == 3
 
+    def test_check_uses_saved_config_as_target(self, tmp_path) -> None:
+        conf = tmp_path / "sysctl.json"
+        user_limit = 32 * 2**20  # 32 MiB
+        conf.write_text(json.dumps({"kern.ipc.maxsockbuf": user_limit}))
+        configurator = BufferConfiguratorMacOS()
+        with (
+            patch("dimos.protocol.service.system_configurator.lcm._SYSCTL_CONF", conf),
+            patch("dimos.protocol.service.system_configurator.lcm._read_sysctl_int") as mock_read,
+        ):
+            # maxsockbuf: saved target is 32M, current is 32M → ok
+            # recvspace/maxdgram: no saved value → uses IDEAL (64M) → needs fix
+            mock_read.side_effect = [user_limit] * 3
+            assert configurator.check() is False
+            assert len(configurator.needs) == 2
+            # maxsockbuf should not be in needs
+            assert all(k != "kern.ipc.maxsockbuf" for k, _, _ in configurator.needs)
+
     def test_explanation_lists_needed_changes(self) -> None:
         configurator = BufferConfiguratorMacOS()
         configurator.needs = [
-            ("kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET_BUFFER_SIZE),
+            ("kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET, BufferConfiguratorMacOS.TARGET),
         ]
         explanation = configurator.explanation()
         assert "kern.ipc.maxsockbuf" in explanation
@@ -363,15 +382,50 @@ class TestBufferConfiguratorMacOS:
     def test_fix_writes_needed_values(self) -> None:
         configurator = BufferConfiguratorMacOS()
         configurator.needs = [
-            ("kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET_BUFFER_SIZE),
+            ("kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET, 0),
         ]
-        with patch(
-            "dimos.protocol.service.system_configurator.lcm._write_sysctl_int"
-        ) as mock_write:
+        with (
+            patch("dimos.protocol.service.system_configurator.lcm._write_sysctl_int") as mock_write,
+            patch("dimos.protocol.service.system_configurator.lcm._save_sysctl_conf"),
+        ):
             configurator.fix()
             mock_write.assert_called_once_with(
-                "kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET_BUFFER_SIZE
+                "kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET
             )
+
+    def test_fix_halves_on_failure_and_saves(self, tmp_path) -> None:
+        conf = tmp_path / "sysctl.json"
+        configurator = BufferConfiguratorMacOS()
+        configurator.needs = [("kern.ipc.maxsockbuf", 64000000, 0)]
+        with (
+            patch("dimos.protocol.service.system_configurator.lcm._SYSCTL_CONF", conf),
+            patch("dimos.protocol.service.system_configurator.lcm._write_sysctl_int") as mock_write,
+        ):
+            # Fail at 64M, fail at 32M, succeed at 16M
+            mock_write.side_effect = [
+                subprocess.CalledProcessError(1, "sysctl"),
+                subprocess.CalledProcessError(1, "sysctl"),
+                None,
+            ]
+            configurator.fix()
+            assert mock_write.call_count == 3
+            mock_write.assert_called_with("kern.ipc.maxsockbuf", 16000000)
+            # Saved value should be 16M
+            saved = json.loads(conf.read_text())
+            assert saved["kern.ipc.maxsockbuf"] == 16000000
+
+    def test_fix_stops_at_current_value(self) -> None:
+        configurator = BufferConfiguratorMacOS()
+        configurator.needs = [("kern.ipc.maxsockbuf", 64000000, 32000000)]
+        with (
+            patch("dimos.protocol.service.system_configurator.lcm._write_sysctl_int") as mock_write,
+            patch("dimos.protocol.service.system_configurator.lcm._save_sysctl_conf"),
+        ):
+            # All attempts fail — should stop when halved below current (32M)
+            mock_write.side_effect = subprocess.CalledProcessError(1, "sysctl")
+            configurator.fix()
+            # 64M fails, 32M == current → stops
+            assert mock_write.call_count == 1
 
 
 # MaxFileConfiguratorMacOS tests

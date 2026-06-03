@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import time
 from typing import TYPE_CHECKING
@@ -35,7 +49,7 @@ if TYPE_CHECKING:
 @pytest.mark.slow
 @pytest.mark.skipif_in_ci
 def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
-    if model_class is MoondreamHostedVlModel and 'MOONDREAM_API_KEY' not in os.environ:
+    if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
         pytest.skip("Need MOONDREAM_API_KEY to run")
 
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
@@ -110,7 +124,7 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
 def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> None:
     """Test VLM point detection capabilities."""
 
-    if model_class is MoondreamHostedVlModel and 'MOONDREAM_API_KEY' not in os.environ:
+    if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
         pytest.skip("Need MOONDREAM_API_KEY to run")
 
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
@@ -228,10 +242,10 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
 @pytest.mark.slow
 def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_batch optimization - multiple images, same query."""
-    from dimos.utils.testing.replay import TimedSensorReplay
+    from dimos.memory.timeseries.legacy import LegacyPickleStore
 
-    # Load 5 frames at 1-second intervals using TimedSensorReplay
-    replay = TimedSensorReplay[Image]("unitree_go2_office_walk2/video")
+    # Load 5 frames at 1-second intervals using LegacyPickleStore
+    replay = LegacyPickleStore[Image]("unitree_go2_office_walk2/video")
     images = [replay.find_closest_seek(i).to_rgb() for i in range(0, 10, 2)]
 
     print(f"\nTesting {model_name} query_batch with {len(images)} images")
@@ -285,9 +299,9 @@ def test_vlm_resize(
     sizes: list[tuple[int, int] | None],
 ) -> None:
     """Test VLM auto_resize effect on performance."""
-    from dimos.utils.testing.replay import TimedSensorReplay
+    from dimos.memory.timeseries.legacy import LegacyPickleStore
 
-    replay = TimedSensorReplay[Image]("unitree_go2_office_walk2/video")
+    replay = LegacyPickleStore[Image]("unitree_go2_office_walk2/video")
     image = replay.find_closest_seek(0).to_rgb()
 
     labels: list[str] = []

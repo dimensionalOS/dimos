@@ -897,5 +897,3 @@ class OpenAIAgent(LLMAgent):
         return create(
             lambda observer, _: self._observable_query(observer, incoming_query=query_text)  # type: ignore[arg-type]
         )
-
-

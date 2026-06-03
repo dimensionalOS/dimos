@@ -49,7 +49,7 @@ class TestStoreBasic:
         s.append(2.0, ts=200.0)
         s.append(3.0, ts=300.0)
 
-        results = s.fetch()
+        results = s.to_list()
         assert len(results) == 3
         assert [o.data for o in results] == [1.0, 2.0, 3.0]
 
@@ -94,7 +94,7 @@ class TestStoreBasic:
         s.append(2, ts=20.0)
         s.append(3, ts=30.0)
 
-        results = s.after(15.0).fetch()
+        results = s.after(15.0).to_list()
         assert [o.data for o in results] == [2, 3]
 
     def test_filter_before(self, session: Store) -> None:
@@ -103,7 +103,7 @@ class TestStoreBasic:
         s.append(2, ts=20.0)
         s.append(3, ts=30.0)
 
-        results = s.before(25.0).fetch()
+        results = s.before(25.0).to_list()
         assert [o.data for o in results] == [1, 2]
 
     def test_filter_time_range(self, session: Store) -> None:
@@ -112,7 +112,7 @@ class TestStoreBasic:
         s.append(2, ts=20.0)
         s.append(3, ts=30.0)
 
-        results = s.time_range(15.0, 25.0).fetch()
+        results = s.time_range(15.0, 25.0).to_list()
         assert [o.data for o in results] == [2]
 
     def test_filter_tags(self, session: Store) -> None:
@@ -121,7 +121,7 @@ class TestStoreBasic:
         s.append("b", tags={"kind": "error"})
         s.append("c", tags={"kind": "info"})
 
-        results = s.tags(kind="info").fetch()
+        results = s.tags(kind="info").to_list()
         assert [o.data for o in results] == ["a", "c"]
 
     def test_limit_and_offset(self, session: Store) -> None:
@@ -129,7 +129,7 @@ class TestStoreBasic:
         for i in range(5):
             s.append(i, ts=float(i))
 
-        page = s.offset(1).limit(2).fetch()
+        page = s.offset(1).limit(2).to_list()
         assert [o.data for o in page] == [1, 2]
 
     def test_order_by_desc(self, session: Store) -> None:
@@ -138,7 +138,7 @@ class TestStoreBasic:
         s.append(2, ts=20.0)
         s.append(3, ts=30.0)
 
-        results = s.order_by("ts", desc=True).fetch()
+        results = s.order_by("ts", desc=True).to_list()
         assert [o.data for o in results] == [3, 2, 1]
 
     def test_separate_streams_isolated(self, session: Store) -> None:
@@ -182,7 +182,7 @@ class TestStoreBasic:
         s.append("east", embedding=_emb([1, 0, 0]))
         s.append("south", embedding=_emb([0, -1, 0]))
 
-        results = s.search(_emb([0, 1, 0]), k=2).fetch()
+        results = s.search(_emb([0, 1, 0]), k=2).to_list()
         assert len(results) == 2
         assert results[0].data == "north"
         assert results[0].similarity > 0.99
@@ -194,7 +194,7 @@ class TestStoreBasic:
 
         # SqliteObservationStore blocks search_text to prevent full table scans
         try:
-            results = s.search_text("motor").fetch()
+            results = s.search_text("motor").to_list()
         except NotImplementedError:
             pytest.skip("search_text not supported on this backend")
         assert len(results) == 1
@@ -243,11 +243,11 @@ class TestBlobLoading:
         lazy_s.append("beta", ts=2.0, tags={"k": "w"})
 
         # Lazy read
-        lazy_results = lazy_s.fetch()
+        lazy_results = lazy_s.to_list()
 
         # Eager read — new stream handle with eager_blobs on same backend
         eager_s = sqlite_store.stream("vals", str, eager_blobs=True)
-        eager_results = eager_s.fetch()
+        eager_results = eager_s.to_list()
 
         assert [o.data for o in lazy_results] == [o.data for o in eager_results]
         assert [o.tags for o in lazy_results] == [o.tags for o in eager_results]
@@ -412,7 +412,7 @@ class TestStoreDelegation:
         s.append("north", ts=1.0, embedding=_emb([0, 1, 0]))
         s.append("east", ts=2.0, embedding=_emb([1, 0, 0]))
 
-        results = s.search(_emb([0, 1, 0]), k=2).fetch()
+        results = s.search(_emb([0, 1, 0]), k=2).to_list()
         assert len(vec_spy.searches) == 1
         assert results[0].data == "north"
 

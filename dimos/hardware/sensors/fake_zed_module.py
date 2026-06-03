@@ -27,12 +27,12 @@ import numpy as np
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.std_msgs.Header import Header
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.testing.replay import TimedSensorReplay
 
 logger = setup_logger(level=logging.INFO)
 
@@ -85,7 +85,7 @@ class FakeZEDModule(Module):
                 return x
             return x
 
-        color_replay = TimedSensorReplay(f"{self.recording_path}/color", autocast=image_autocast)
+        color_replay = LegacyPickleStore(f"{self.recording_path}/color", autocast=image_autocast)
         return color_replay.stream()
 
     @functools.cache
@@ -102,7 +102,7 @@ class FakeZEDModule(Module):
                 return x
             return x
 
-        depth_replay = TimedSensorReplay(f"{self.recording_path}/depth", autocast=depth_autocast)
+        depth_replay = LegacyPickleStore(f"{self.recording_path}/depth", autocast=depth_autocast)
         return depth_replay.stream()
 
     @functools.cache
@@ -124,7 +124,7 @@ class FakeZEDModule(Module):
                 return x
             return x
 
-        pose_replay = TimedSensorReplay(f"{self.recording_path}/pose", autocast=pose_autocast)
+        pose_replay = LegacyPickleStore(f"{self.recording_path}/pose", autocast=pose_autocast)
         return pose_replay.stream()
 
     @functools.cache
@@ -200,7 +200,7 @@ class FakeZEDModule(Module):
                 return x
             return x
 
-        info_replay = TimedSensorReplay(
+        info_replay = LegacyPickleStore(
             f"{self.recording_path}/camera_info", autocast=camera_info_autocast
         )
         return info_replay.stream()

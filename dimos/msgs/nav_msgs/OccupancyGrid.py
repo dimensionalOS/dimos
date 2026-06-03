@@ -481,7 +481,7 @@ class OccupancyGrid(Timestamped):
     def to_rerun(
         self,
         colormap: str | None = None,
-        z_offset: float = 0.01,
+        z_offset: float = 0,
         opacity: float = 1.0,
         cost_range: tuple[int, int] | None = None,
         background: str | None = None,

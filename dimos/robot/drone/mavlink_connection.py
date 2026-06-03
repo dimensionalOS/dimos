@@ -1030,12 +1030,12 @@ class FakeMavlinkConnection(MavlinkConnection):
         # Create fake mavlink object
         class FakeMavlink:
             def __init__(self) -> None:
+                from dimos.memory.timeseries.legacy import LegacyPickleStore
                 from dimos.utils.data import get_data
-                from dimos.utils.testing.replay import TimedSensorReplay
 
                 get_data("drone")
 
-                self.replay: Any = TimedSensorReplay("drone/mavlink")
+                self.replay: Any = LegacyPickleStore("drone/mavlink")
                 self.messages: list[dict[str, Any]] = []
                 # The stream() method returns an Observable that emits messages with timing
                 self.replay.stream().subscribe(self.messages.append)
