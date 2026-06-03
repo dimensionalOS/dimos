@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
-from dimos.core.coordination.worker_manager_docker import WorkerManagerDocker
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
@@ -61,7 +60,7 @@ class ModuleCoordinator(Resource):
         g: GlobalConfig = global_config,
     ) -> None:
         self._global_config = g
-        manager_types: list[type[WorkerManager]] = [WorkerManagerDocker, WorkerManagerPython]
+        manager_types: list[type[WorkerManager]] = [WorkerManagerPython]
         self._managers = {cls.deployment_identifier: cls(g=g) for cls in manager_types}
         self._deployed_modules = {}
         self._deployed_atoms: dict[type[ModuleBase], BlueprintAtom] = {}

@@ -40,10 +40,11 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-05-24T23:50:20.556757Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+pyrealsense2-extended = false
 dimos-viewer = false
 
 [manifest]
@@ -1967,7 +1968,7 @@ all = [
     { name = "pydantic-settings" },
     { name = "pygame" },
     { name = "pymavlink" },
-    { name = "pyrealsense2", marker = "sys_platform != 'darwin'" },
+    { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "python-multipart" },
     { name = "pyturbojpeg" },
     { name = "pyyaml" },
@@ -2083,7 +2084,7 @@ manipulation = [
     { name = "piper-sdk" },
     { name = "plotly" },
     { name = "pycollada" },
-    { name = "pyrealsense2", marker = "sys_platform != 'darwin'" },
+    { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "pyyaml" },
     { name = "trimesh" },
     { name = "xacro" },
@@ -2187,6 +2188,7 @@ unitree-dds = [
     { name = "langchain-openai" },
     { name = "langchain-text-splitters" },
     { name = "lap" },
+    { name = "mcap" },
     { name = "moondream" },
     { name = "ollama" },
     { name = "omegaconf" },
@@ -2330,6 +2332,7 @@ tests-self-hosted = [
     { name = "langchain-core" },
     { name = "langchain-openai" },
     { name = "lap" },
+    { name = "mcap" },
     { name = "md-babel-py" },
     { name = "moondream" },
     { name = "mujoco" },
@@ -2415,6 +2418,7 @@ requires-dist = [
     { name = "llvmlite", specifier = ">=0.42.0" },
     { name = "lz4", specifier = ">=4.4.5" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
+    { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
     { name = "numba", specifier = ">=0.60.0" },
@@ -2454,7 +2458,7 @@ requires-dist = [
     { name = "pydantic-settings", marker = "extra == 'docker'", specifier = ">=2.11.0,<3" },
     { name = "pygame", marker = "extra == 'sim'", specifier = ">=2.6.1" },
     { name = "pymavlink", marker = "extra == 'drone'" },
-    { name = "pyrealsense2", marker = "sys_platform != 'darwin' and extra == 'manipulation'" },
+    { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin' and extra == 'manipulation'" },
     { name = "python-dotenv" },
     { name = "python-multipart", marker = "extra == 'misc'", specifier = ">=0.0.27" },
     { name = "pyturbojpeg", specifier = "==1.8.2" },
@@ -2620,6 +2624,7 @@ tests-self-hosted = [
     { name = "langchain-core", specifier = "==1.3.3" },
     { name = "langchain-openai", specifier = ">=1,<2" },
     { name = "lap", specifier = ">=0.5.12" },
+    { name = "mcap", specifier = ">=1.2.0" },
     { name = "md-babel-py", specifier = ">=1.2.0" },
     { name = "moondream" },
     { name = "mujoco", specifier = ">=3.3.4" },
@@ -5439,6 +5444,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c7/74/97e72a36efd4ae2bccb3463284300f8953f199b5ffbc04cbbb0ec78f74b1/matplotlib_inline-0.2.1.tar.gz", hash = "sha256:e1ee949c340d771fc39e241ea75683deb94762c8fa5f2927ec57c83c4dffa9fe", size = 8110, upload-time = "2025-10-23T09:00:22.126Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/af/33/ee4519fa02ed11a94aef9559552f3b17bb863f2ecfe1a35dc7f548cde231/matplotlib_inline-0.2.1-py3-none-any.whl", hash = "sha256:d56ce5156ba6085e00a9d54fead6ed29a9c47e215cd1bba2e976ef39f5710a76", size = 9516, upload-time = "2025-10-23T09:00:20.675Z" },
+]
+
+[[package]]
+name = "mcap"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lz4" },
+    { name = "zstandard" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8b/38/8bd73953b9c37dd7a2c590e72ab4fa4682a43864fe1d55f7209f2536fa64/mcap-1.3.1.tar.gz", hash = "sha256:2878879a786021aa7f7f36319276396a778717ccd013b2191fe94d37572d7551", size = 21676, upload-time = "2025-12-24T21:31:35.476Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/63/22/dad47e86047344f110a9d589d90de49d9c54db7a7ea4f0ef91fb3e8e9f3f/mcap-1.3.1-py3-none-any.whl", hash = "sha256:9098685d67288a8087166504cf4adf617cfa8639bb60e936af113f62c11c293f", size = 20678, upload-time = "2025-12-24T21:31:33.959Z" },
 ]
 
 [[package]]
@@ -8603,19 +8621,26 @@ wheels = [
 ]
 
 [[package]]
-name = "pyrealsense2"
-version = "2.56.5.9235"
+name = "pyrealsense2-extended"
+version = "2.58.1.10581.post1"
 source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/66/ae/7a39455a9874ee53574315f68bc0dfdc036405811ec9da3c7a2771d46d36/pyrealsense2_extended-2.58.1.10581.post1.tar.gz", hash = "sha256:5093218d1a8a125841d0a7c8565ea8dad16eabc89d925dfbb82bbe76d7a5b30b", size = 2440, upload-time = "2026-05-31T20:13:39.432Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/af/2d/d6d4a12a4af3b944e4ab27850bf1e696fc17fbdccdcd5fbbafadbfbca5a4/pyrealsense2-2.56.5.9235-cp310-cp310-manylinux1_x86_64.whl", hash = "sha256:050301dcb13abe49e14449b010732a5b7ec50d0de829c8f8a9356944518d5784", size = 11064623, upload-time = "2025-07-28T14:59:17.835Z" },
-    { url = "https://files.pythonhosted.org/packages/4c/de/217f2b669efd3c109aab1846088733d5241550ae9267a49149224f3b5d72/pyrealsense2-2.56.5.9235-cp310-cp310-manylinux2014_aarch64.whl", hash = "sha256:d68a174f5c3bf43d6eef3aac0de114b4802052c8a98a92dcbb8ecca0f98509d4", size = 4338854, upload-time = "2025-07-28T14:59:20.079Z" },
-    { url = "https://files.pythonhosted.org/packages/13/36/507114d231a16af6a8836059d8b752a90404020629cb52028cc01a8119b9/pyrealsense2-2.56.5.9235-cp310-cp310-win_amd64.whl", hash = "sha256:c0b097b2b3d340a34fd61ca8c7b46e084ffca490318c4cb7f6af0f8f44f94bd9", size = 7799689, upload-time = "2025-07-28T14:59:21.592Z" },
-    { url = "https://files.pythonhosted.org/packages/1f/ab/f2c066a11f632dfcd79b467e728623da9489ed524eb36ec0cc14b497661a/pyrealsense2-2.56.5.9235-cp311-cp311-manylinux1_x86_64.whl", hash = "sha256:76d384ea99f257b4697a82cb3581b05cc69fadfd0701021ad76da098a3e240f0", size = 11067319, upload-time = "2025-07-28T14:59:23.129Z" },
-    { url = "https://files.pythonhosted.org/packages/c7/c7/c609730c3587c395c3097a98c2d856914997454967bea07b3f8849c4af03/pyrealsense2-2.56.5.9235-cp311-cp311-win_amd64.whl", hash = "sha256:7761f610876c0d0039c9dff71f28ae7e73c77f353f1f3b60fb083350d6acf280", size = 7801923, upload-time = "2025-07-28T14:59:24.986Z" },
-    { url = "https://files.pythonhosted.org/packages/fc/20/a46e60a496a17f1cf0cbdffb45e66dc015756e4dbce83580fd569e53e178/pyrealsense2-2.56.5.9235-cp312-cp312-manylinux1_x86_64.whl", hash = "sha256:ba2c22981111adbefb169c39e023af4352a2409dfbff59f02c2404c68b82064b", size = 11062766, upload-time = "2025-07-28T14:59:26.551Z" },
-    { url = "https://files.pythonhosted.org/packages/22/b5/dd8349abac780aed774f65825fc2ed3ca832b0ad2bf3293262bfa9a517b2/pyrealsense2-2.56.5.9235-cp312-cp312-win_amd64.whl", hash = "sha256:e9c64b94cf6170a3ad60416ff1bf969df8aafe383d4bff14e0fa10b2459d885b", size = 7801788, upload-time = "2025-07-28T14:59:28.303Z" },
-    { url = "https://files.pythonhosted.org/packages/a8/66/fa706f1d906a06d5e7015d5b412a48de9914549792eb5cb53c1854e06427/pyrealsense2-2.56.5.9235-cp313-cp313-manylinux1_x86_64.whl", hash = "sha256:c203bc8c79d5958889681408f1038ee69b0021fd8cba7ff2d4532fc90295c4fc", size = 11062717, upload-time = "2025-07-28T14:59:30.072Z" },
-    { url = "https://files.pythonhosted.org/packages/b2/88/19425ce6fa809d31a8d23f46dfa6aed9b16a881e8a00e0162d4b97ba1e64/pyrealsense2-2.56.5.9235-cp313-cp313-win_amd64.whl", hash = "sha256:ad8012f7fec843c3c6ec8904bfff048806dc7b4c7709e021c6ea75e83d8d5096", size = 7802471, upload-time = "2025-07-28T14:59:31.985Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/22/bc5ac6caecaccc90be8409d19b5460d4d138efba935679a0aaf313a19d9e/pyrealsense2_extended-2.58.1.10581.post1-cp310-cp310-manylinux1_x86_64.whl", hash = "sha256:7bea2cada776665790d48ff6f8d44994e52bdf4f72d65393486802735152e7c2", size = 12393387, upload-time = "2026-05-31T20:49:50.883Z" },
+    { url = "https://files.pythonhosted.org/packages/05/94/0471db24eba0ac07a03146a7ad908a96a60a3f724e7b068a6c49d944798c/pyrealsense2_extended-2.58.1.10581.post1-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:84786588eb44ff9e24eecfdc96f5f3adc891ab54be40e65720b466eb6f237207", size = 6346406, upload-time = "2026-05-31T20:49:52.828Z" },
+    { url = "https://files.pythonhosted.org/packages/48/f0/2159f2fa788f2100a4c8e3645747b1889c2dd17abf977d0e042248438805/pyrealsense2_extended-2.58.1.10581.post1-cp310-cp310-win_amd64.whl", hash = "sha256:f3afe733081cd85703dd4df380334ef0e95f43981cb2d5ddcd1f0d0e55116dbd", size = 8751144, upload-time = "2026-05-31T20:49:55.88Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/2c/43e599086ce4ad32fee1a46a09ba998c5cbe3c73441091fe2e68cd4517da/pyrealsense2_extended-2.58.1.10581.post1-cp311-cp311-manylinux1_x86_64.whl", hash = "sha256:3b919fbbd349cc813b98de00c195f3a5fe77fd9d4913c52b040576b11712553c", size = 12395222, upload-time = "2026-05-31T20:49:58.02Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/a5/9b8e536de70dfdba9fab17700fe53902c155171911be82ff12106ddca3b8/pyrealsense2_extended-2.58.1.10581.post1-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:c2f3de9f44b21ac65861c8d53ccc3f8897ac9e6f5e983d26f39744ef6d8c6df2", size = 6350114, upload-time = "2026-05-31T20:50:00.34Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/13/6c01b994b713d7dbe010d5b0738266d37689500cf153a9dbee92a40f67ab/pyrealsense2_extended-2.58.1.10581.post1-cp311-cp311-win_amd64.whl", hash = "sha256:c9ad2211261f84057f9776ee35b07f6f87359223d262eb15fcb2bc85ba937a61", size = 8753521, upload-time = "2026-05-31T20:50:01.82Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/c1/0b5cd6737dc34e23d57a9da59ba5f18f91bc8238f642f3410f227e603357/pyrealsense2_extended-2.58.1.10581.post1-cp312-cp312-manylinux1_x86_64.whl", hash = "sha256:e24187e0fd874c67f0de9a2639908fda90e320220f88d1d200307cf632189544", size = 12392172, upload-time = "2026-05-31T20:50:03.661Z" },
+    { url = "https://files.pythonhosted.org/packages/22/95/149ec7777fc6545664cc543e4ffaf350976f164edac7f8827405fcf8d421/pyrealsense2_extended-2.58.1.10581.post1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:004634383f25e13c66fa71229184c4ddd1931f7235a19851ef976e9489ad186c", size = 6340752, upload-time = "2026-05-31T20:50:05.61Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/9b/f81c8009a3bf8cd2b1d1ce74321c6f8bdb7d7075895fb04800f3795b431d/pyrealsense2_extended-2.58.1.10581.post1-cp312-cp312-win_amd64.whl", hash = "sha256:76ddf1dadd4dd8c542d4249d50dc4507962808f9ae3b6e807f317f319abeead3", size = 8754299, upload-time = "2026-05-31T20:50:09.02Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/a8/d3873f31a98ce5fc66cc5f1f906d906a14659b343a618dc2cc410b85031d/pyrealsense2_extended-2.58.1.10581.post1-cp313-cp313-manylinux1_x86_64.whl", hash = "sha256:5c45bafa274b5748ff0bbad29c556da113a7861793fedd416de7a03459685fde", size = 12392127, upload-time = "2026-05-31T20:50:11.02Z" },
+    { url = "https://files.pythonhosted.org/packages/81/8f/694959c8341e621657c509efcc29302af1147b6928753e3bcb149386d02e/pyrealsense2_extended-2.58.1.10581.post1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:a5bd27a4cc5d4cfb48dbbc704602516bcd4867e6a34064d30c9ebbd6090795c2", size = 6341905, upload-time = "2026-05-31T20:50:13.231Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/cb/cfbaabc04526523b3447aa40671e9f8d0a8392e2aacfa3deedad4767ba44/pyrealsense2_extended-2.58.1.10581.post1-cp313-cp313-win_amd64.whl", hash = "sha256:e11be341ed664770ce27e45d923eb10dbf9589e73e6c83c270bd78e0d5f7fc30", size = 8754796, upload-time = "2026-05-31T20:50:14.643Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/87/d984709551da486736a641c7c3dc376f5c76cdf936818864329216c46b37/pyrealsense2_extended-2.58.1.10581.post1-cp314-cp314-manylinux1_x86_64.whl", hash = "sha256:8140be678f6b6219c54a9ea67a50e6c8ccbbec47fced8d9565df78762c964b54", size = 12849959, upload-time = "2026-05-31T20:50:16.352Z" },
+    { url = "https://files.pythonhosted.org/packages/43/fb/a740f2ff2c6b63bd8d5ebd31870f776b2e4e0812f539df4b9f250ab166ed/pyrealsense2_extended-2.58.1.10581.post1-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:a07f27b3905b7fe277c06a365c5776896fdb48e40d25e951b7da6cfa1899a5b0", size = 6346254, upload-time = "2026-05-31T20:50:18.112Z" },
+    { url = "https://files.pythonhosted.org/packages/df/9c/484d914f28d88a441c053b3ced903fb034ace61812c32f3fe785cbe53b97/pyrealsense2_extended-2.58.1.10581.post1-cp314-cp314-win_amd64.whl", hash = "sha256:3a2d5a9ac8894d7a14fdf26a9763830f930f7c7a205c254be04d5880231261d0", size = 8754378, upload-time = "2026-05-31T20:50:19.419Z" },
 ]
 
 [[package]]

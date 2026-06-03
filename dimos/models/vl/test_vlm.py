@@ -219,7 +219,7 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
 @pytest.mark.tool
 def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_batch optimization - multiple images, same query."""
-    from dimos.memory.timeseries.legacy import LegacyPickleStore
+    from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
     # Load 5 frames at 1-second intervals using LegacyPickleStore
     replay = LegacyPickleStore[Image]("unitree_go2_office_walk2/video")
@@ -276,7 +276,7 @@ def test_vlm_resize(
     sizes: list[tuple[int, int] | None],
 ) -> None:
     """Test VLM auto_resize effect on performance."""
-    from dimos.memory.timeseries.legacy import LegacyPickleStore
+    from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
     replay = LegacyPickleStore[Image]("unitree_go2_office_walk2/video")
     image = replay.find_closest_seek(0).to_rgb()

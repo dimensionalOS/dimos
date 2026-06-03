@@ -239,6 +239,7 @@ unitree-dds = [
     "dimos[unitree]",
     "unitree-sdk2py-dimos>=1.0.2",
     "cyclonedds>=0.10.5",
+    "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2dds store)
 ]
 
 manipulation = [
@@ -248,7 +249,7 @@ manipulation = [
 
     # Hardware SDKs
     "piper-sdk",
-    "pyrealsense2; sys_platform != 'darwin'",
+    "pyrealsense2-extended; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
@@ -445,6 +446,10 @@ lint = [
 tests-self-hosted = [
     {include-group = "tests"},
     "dimos[agents,perception,manipulation,sim,unitree,misc]",
+    # go2dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
+    # pulls `cyclonedds`, whose wheel needs a CycloneDDS C lib the ros-dev image
+    # doesn't expose to the build — and these tests never open a live DDS link.
+    "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
 ]
@@ -453,7 +458,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false }
 override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
@@ -535,6 +540,8 @@ module = [
     "faster_whisper",
     "geometry_msgs.*",
     "lazy_loader",
+    "mcap",
+    "mcap.*",
     "mujoco",
     "mujoco_playground.*",
     "nav_msgs.*",
