@@ -208,6 +208,7 @@ class Observation(Generic[T]):
             tags={**self.tags, **tags},
             _data=_UNLOADED,
             _loader=lambda: self.data,
+            _data_lock=threading.Lock(),
         )
         return type(self)(**kwargs)
 
@@ -223,6 +224,7 @@ class Observation(Generic[T]):
             pose=pose,
             _data=_UNLOADED,
             _loader=lambda: self.data,
+            _data_lock=threading.Lock(),
         )
         return type(self)(**kwargs)
 
