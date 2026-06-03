@@ -89,3 +89,5 @@ recording*.db
 
 # Rerun recordings
 *.rrd
+
+/misc/fresh-ubuntu-tests/cache

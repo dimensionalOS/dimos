@@ -9,19 +9,34 @@ use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use serde::Deserialize;
+use validator::{Validate, ValidationError};
 
 type VoxelKey = (i32, i32, i32);
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
+#[validate(schema(function = "validate_health_range"))]
 struct Config {
+    #[validate(range(exclusive_min = 0.0))]
     voxel_size: f32,
+    #[validate(range(min = 0.0))]
     max_range: f32,
+    #[validate(range(min = 1))]
     ray_subsample: u32,
+    #[validate(range(min = 0.0))]
     shadow_depth: f32,
+    #[validate(range(min = 0.0))]
     grace_depth: f32,
     min_health: i32,
+    #[validate(range(min = 1))]
     max_health: i32,
+}
+
+fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
+    if cfg.min_health >= cfg.max_health {
+        return Err(ValidationError::new("min_health_lt_max_health"));
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -39,7 +54,6 @@ struct LocalBounds {
 }
 
 #[derive(Module)]
-#[module(setup = validate_config)]
 struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
@@ -61,50 +75,6 @@ struct RayTracingVoxelMap {
 }
 
 impl RayTracingVoxelMap {
-    /// Make sure all the configs are valid on setup
-    async fn validate_config(&self) {
-        let cfg = &self.config;
-        if !cfg.voxel_size.is_finite() || cfg.voxel_size <= 0.0 {
-            panic!(
-                "voxel_ray_tracing: voxel_size must be > 0, got {}",
-                cfg.voxel_size
-            );
-        }
-        if !cfg.max_range.is_finite() || cfg.max_range < 0.0 {
-            panic!(
-                "voxel_ray_tracing: max_range must be >= 0, got {}",
-                cfg.max_range
-            );
-        }
-        if !cfg.shadow_depth.is_finite() || cfg.shadow_depth < 0.0 {
-            panic!(
-                "voxel_ray_tracing: shadow_depth must be >= 0, got {}",
-                cfg.shadow_depth
-            );
-        }
-        if !cfg.grace_depth.is_finite() || cfg.grace_depth < 0.0 {
-            panic!(
-                "voxel_ray_tracing: grace_depth must be >= 0, got {}",
-                cfg.grace_depth
-            );
-        }
-        if cfg.ray_subsample == 0 {
-            panic!("voxel_ray_tracing: ray_subsample must be >= 1, got 0");
-        }
-        if cfg.max_health <= 0 {
-            panic!(
-                "voxel_ray_tracing: max_health must be > 0 or voxels can never become visible, got {}",
-                cfg.max_health
-            );
-        }
-        if cfg.min_health >= cfg.max_health {
-            panic!(
-                "voxel_ray_tracing: min_health ({}) must be < max_health ({})",
-                cfg.min_health, cfg.max_health
-            );
-        }
-    }
-
     async fn on_odometry(&mut self, msg: Odometry) {
         self.last_origin = Some((
             msg.pose.pose.position.x as f32,
@@ -570,9 +540,7 @@ async fn main() {
     let transport = LcmTransport::new()
         .await
         .expect("failed to create LCM transport");
-    run::<RayTracingVoxelMap, _>(transport)
-        .await
-        .expect("voxel_ray_tracing run failed");
+    run::<RayTracingVoxelMap, _>(transport).await;
 }
 
 #[cfg(test)]
