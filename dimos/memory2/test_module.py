@@ -26,7 +26,7 @@ from reactivex.scheduler import ThreadPoolScheduler
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import pLCMTransport
-from dimos.memory2.fanio import Bundle, scatter_to_ports
+from dimos.memory2.fanio import Bundle, normalize_to_bundle, scatter_to_ports
 from dimos.memory2.module import StreamModule
 from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.stream import Stream
@@ -127,6 +127,54 @@ def test_e2e_runtime_wiring(module_cls: type[StreamModule]) -> None:
         module.numbers.transport.publish(42)
         assert done.wait(timeout=5.0), f"Timed out, received={received}"
         assert received == [84]
+    finally:
+        unsub()
+        module.stop()
+        _reset_thread_pool()
+        _reset_thread_pool()
+
+
+class SingleOutBundleModule(StreamModule):
+    """One ``Out``, but the pipeline ends in a :class:`Bundle` (marker-style 1->1).
+
+    Reproduces the fan-I/O scatter bug: a Bundle-tail pipeline with a single
+    ``Out`` must publish ``bundle[port_name]``, not the whole ``Bundle``. The
+    bundle also carries an unrouted sibling key (no matching port) which scatter
+    must drop - exactly what happens when a two-output marker module has one
+    ``Out`` commented out but still yields a two-key bundle.
+    """
+
+    numbers: In[int]
+    doubled: Out[int]
+
+    def pipeline(self, stream: Stream[int]) -> Stream[Bundle]:
+        def _to_bundle(upstream: Iterator[Observation[int]]) -> Iterator[Observation[Bundle]]:
+            for obs in upstream:
+                yield obs.derive(data=Bundle({"doubled": obs.data * 2, "unrouted": obs.data}))
+
+        return stream.transform(_to_bundle)
+
+
+@pytest.mark.tool
+def test_single_out_bundle_tail_publishes_field_not_whole_bundle_e2e() -> None:
+    """With one ``Out`` and a Bundle-tail pipeline, the port receives the matching
+    bundle field (M-agnostic scatter), never the whole ``Bundle`` - so a 1->1
+    module needs no dummy second port to "turn on" fan-out, and the unrouted key
+    is dropped rather than leaked onto the single port."""
+    module = SingleOutBundleModule()
+    module.numbers.transport = pLCMTransport("/test/sob_numbers")
+    module.doubled.transport = pLCMTransport("/test/sob_doubled")
+
+    received: list[int] = []
+    done = threading.Event()
+
+    unsub = module.doubled.subscribe(lambda msg: (received.append(msg), done.set()))
+
+    module.start()
+    try:
+        module.numbers.transport.publish(21)
+        assert done.wait(timeout=5.0), f"Timed out, received={received}"
+        assert received == [42]  # bundle["doubled"], not Bundle({...})
     finally:
         unsub()
         module.stop()
@@ -461,3 +509,50 @@ class TestFanOutScatter:
 
         assert empty_out.published == [[]]  # the empty list was published, not skipped
         assert value_out.published == ["v"]
+
+    @pytest.mark.tool
+    def test_single_output_bundle_tail_publishes_field_not_whole_bundle(self) -> None:
+        """A single ``Out`` whose pipeline ends in a ``Bundle`` publishes the
+        field named after the port, not the whole bundle, and silently drops
+        keys with no matching port. This is the M-agnostic rule: one ``Out``
+        reads its key exactly as two would - port count never selects the path."""
+        detections = _RecordingOut("detections")
+        with MemoryStore() as store:
+            src = store.stream("src", object)
+            # Marker-style 1->1: routed key plus an unrouted sibling key.
+            src.append(Bundle({"detections": "d3d", "detections_2d": "d2d"}), ts=0.0)
+            ports = {"detections": detections}
+            produced = normalize_to_bundle(src, ports)
+            disposable = scatter_to_ports(produced, ports)
+            try:
+                assert _wait_until(lambda: len(detections.published) >= 1)
+            finally:
+                disposable.dispose()
+                _reset_thread_pool()
+                _reset_thread_pool()
+
+        # bundle["detections"] only; the unrouted detections_2d field is dropped.
+        assert detections.published == ["d3d"]
+
+    @pytest.mark.tool
+    def test_single_output_raw_payload_is_wrapped_then_published(self) -> None:
+        """A 1:1 pipeline that yields a raw payload (not a ``Bundle``) is
+        normalized into a one-key bundle at the start boundary, so the same
+        bundle-only scatter still delivers the raw value to the sole port -
+        preserving 1:1 back-compat without a per-module rewrite."""
+        global_map = _RecordingOut("global_map")
+        with MemoryStore() as store:
+            src = store.stream("src", int)
+            for i in range(3):
+                src.append(i, ts=float(i))
+            ports = {"global_map": global_map}
+            produced = normalize_to_bundle(src, ports)
+            disposable = scatter_to_ports(produced, ports)
+            try:
+                assert _wait_until(lambda: len(global_map.published) >= 3)
+            finally:
+                disposable.dispose()
+                _reset_thread_pool()
+                _reset_thread_pool()
+
+        assert global_map.published == [0, 1, 2]

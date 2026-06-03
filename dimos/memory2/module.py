@@ -29,7 +29,7 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.memory2.embed import EmbedImages
-from dimos.memory2.fanio import scatter_to_ports
+from dimos.memory2.fanio import normalize_to_bundle, scatter_to_ports
 from dimos.memory2.store.base import StreamAccessor
 from dimos.memory2.store.null import NullStore
 from dimos.memory2.store.sqlite import SqliteStore
@@ -58,11 +58,14 @@ TOut = TypeVar("TOut")
 def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
     """Forward each observation's ``data`` from *stream* to a Module ``Out`` port.
 
-    Thin back-compat alias over :func:`scatter_to_ports` with a single-port
-    mapping, kept so existing imports keep working. Iteration runs on the dimos
-    thread pool via :meth:`Stream.observable`.
+    Thin back-compat alias kept so existing imports keep working: it normalizes a
+    raw single-output stream into the bundle-only scatter contract
+    (:func:`normalize_to_bundle`) and fans it to the one port. A stream that
+    already yields a :class:`Bundle` routes by key instead. Iteration runs on the
+    dimos thread pool via :meth:`Stream.observable`.
     """
-    return scatter_to_ports(stream, {out.name: out})
+    ports = {out.name: out}
+    return scatter_to_ports(normalize_to_bundle(stream, ports), ports)
 
 
 class _LiveInputs:
@@ -121,9 +124,14 @@ class StreamModule(Module, Generic[TIn, TOut]):
             def pipeline(self, lidar: Stream[PointCloud2]) -> Stream[PointCloud2]:
                 return lidar.align(self.streams.pose, tolerance=0.1).transform(...)
 
-    With several ``Out`` ports the pipeline ends in a :class:`Bundle` keyed by
-    port name and :func:`scatter_to_ports` fans it out in one subscribe, so a
-    fused pipeline computes once per tick regardless of output count.
+    The pipeline ends in a :class:`Bundle` keyed by ``Out`` port name and
+    :func:`scatter_to_ports` fans it out in one subscribe, so a fused pipeline
+    computes once per tick regardless of output count. Scatter is M-agnostic: a
+    single ``Out`` reads ``bundle[its_name]`` exactly as several ``Out``\\s each
+    read their own key, so a 1->1 module with a ``Bundle`` tail needs no second
+    port to "turn on" scatter. A 1:1 pipeline that still yields its raw payload is
+    wrapped into a one-key bundle at the start boundary
+    (:func:`normalize_to_bundle`), so the same scatter path serves every module.
 
     The MemoryStore acts as a bridge between the push-based Module In port
     and the pull-based memory2 stream pipeline — it also enables replay and
@@ -197,8 +205,12 @@ class StreamModule(Module, Generic[TIn, TOut]):
         primary_name = next(iter(self.inputs))
         produced = self._apply_pipeline(self._in_streams[primary_name].live())
 
-        # One subscribe regardless of port count -> the pipeline runs once per tick.
-        self.register_disposable(scatter_to_ports(produced, self.outputs))
+        # Normalize a raw 1:1 payload into a one-key Bundle at the start boundary so
+        # scatter stays bundle-only and M-agnostic; a Bundle-tail pipeline (1->1 or
+        # N->M) passes through. One subscribe regardless of port count -> the
+        # pipeline runs once per tick (C3).
+        bundled = normalize_to_bundle(produced, self.outputs)
+        self.register_disposable(scatter_to_ports(bundled, self.outputs))
 
     def _apply_pipeline(self, stream: Stream[TIn]) -> Stream[TOut]:
         """Apply the pipeline to a live stream.
