@@ -80,7 +80,10 @@ class FastLio2RecorderConfig(RecorderConfig):
     # enable. pcap_path defaults to <recording_dir>/mid360.pcap when unset.
     record_pcap: bool = False
     pcap_path: Path | None = None
-    record_pcap_iface: str = "enp2s0"
+    # Capture interface for tcpdump. Machine-specific, so it defaults from the
+    # DIMOS_PCAP_IFACE env var (falling back to enp2s0) to avoid hardcoding a
+    # value that's only correct on one host.
+    record_pcap_iface: str = Field(default_factory=lambda: os.environ.get("DIMOS_PCAP_IFACE", "enp2s0"))
     record_pcap_snaplen: int = 2048
     lidar_ip: str = "192.168.1.107"
 
