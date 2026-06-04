@@ -615,7 +615,7 @@ class TestFanOutScatter:
     def test_multi_output_scatter_runs_pipeline_once_per_tick(self) -> None:
         """Two Out ports fed from one fused pipeline must compute once per
         observation, not once per port: scatter subscribes a single time, so a
-        detector inside the pipeline runs N times for N ticks - not 2N (C3)."""
+        detector inside the pipeline runs N times for N ticks - not 2N."""
         n = 5
         detector_calls: list[int] = []
 

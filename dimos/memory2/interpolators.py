@@ -25,7 +25,7 @@ hook, so fusion modules do not re-derive slerp::
     lidar.align(self.streams.imu, tolerance=0.02, interpolator=interp_odom)
 
 Each helper follows the ``(prev_obs, nxt_obs, alpha) -> payload`` contract:
-both sides are full :class:`Observation`\\s bracketing the primary and
+both sides are full :class:`Observation` bracketing the primary and
 ``alpha`` in ``(0, 1)`` is the primary's fraction of the bracket span.
 Positions and velocities interpolate linearly; orientations slerp along the
 shortest arc. The returned payload is stamped at the interpolated time

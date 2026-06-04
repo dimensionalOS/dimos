@@ -1200,7 +1200,7 @@ def _lerp(prev, nxt, alpha):
 class TestAlignInterpolation:
     """`.align(..., interpolator=)` synthesizes the secondary value at the
     primary timestamp from its two bracketing samples instead of snapping to the
-    nearest one (§5.6)."""
+    nearest one."""
 
     def test_value_is_interpolated_at_the_primary_timestamp(self, session):
         """The paired secondary is the bracket interpolation evaluated at the

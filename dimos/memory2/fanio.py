@@ -121,7 +121,7 @@ def scatter_to_ports(stream: Stream[Any], ports: dict[str, Out[Any]]) -> Disposa
     Bundle-only and M-agnostic: every observation's ``data`` is a :class:`Bundle`
     keyed by ``Out`` port name, and for *each* declared port the matching field is
     published when present and not ``None``. Port count never selects a code path
-    - a single ``Out`` reads ``bundle[its_name]`` exactly as two ``Out``\\s each
+    - a single ``Out`` reads ``bundle[its_name]`` exactly as two ``Out`` each
     read their own key. A missing key or a ``None`` value leaves that port idle
     for the tick; an empty-but-present payload (e.g. an empty detection array)
     still publishes, so "nothing detected this frame" stays distinct from "this
