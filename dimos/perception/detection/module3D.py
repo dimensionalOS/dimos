@@ -94,7 +94,7 @@ class FusedDetections:
     detections_3d: ImageDetections3DPC
 
 
-class Detection3DModule(StreamModule):
+class Detection3DModule(StreamModule[Image, Bundle]):
     """Fuse 2D detections with a pointcloud and publish 2D + 3D detections.
 
     Fan-I/O shape: ``color_image`` drives the pipeline, ``pointcloud`` is the
@@ -281,7 +281,7 @@ def deploy(  # type: ignore[no-untyped-def]
     camera: Camera,
     prefix: str = "/detector3d",
     **kwargs,
-) -> "ModuleProxy":
+) -> ModuleProxy:
     detector = dimos.deploy(Detection3DModule, camera_info=camera.hardware_camera_info, **kwargs)  # type: ignore[attr-defined]
 
     detector.color_image.connect(camera.color_image)

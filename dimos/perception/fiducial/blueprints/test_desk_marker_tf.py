@@ -17,6 +17,8 @@ from pathlib import Path
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.fiducial.blueprints.desk_marker_tf import (
     DESK_CAMERA_FRAME_ID,
     DESK_MARKER_ARUCO_DICTIONARY,
@@ -27,8 +29,6 @@ from dimos.perception.fiducial.blueprints.desk_marker_tf import (
     create_desk_webcam,
     desk_marker_tf,
 )
-from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.fiducial.marker_module import MarkerModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 

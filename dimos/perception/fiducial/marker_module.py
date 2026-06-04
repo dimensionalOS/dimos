@@ -63,7 +63,7 @@ class MarkerModuleConfig(ModuleConfig):
     camera_info: CameraInfo | None = None
 
 
-class MarkerModule(StreamModule):
+class MarkerModule(StreamModule[Image, Bundle]):
     """Publish fiducial marker detections as both ``Detection3DArray`` (world
     poses for LCM / TF consumers) and ``Detection2DArray`` (image-plane overlays).
 

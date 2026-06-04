@@ -93,9 +93,7 @@ def lerp_pose(
     )
 
 
-def interp_odom(
-    prev: Observation[Odometry], nxt: Observation[Odometry], alpha: float
-) -> Odometry:
+def interp_odom(prev: Observation[Odometry], nxt: Observation[Odometry], alpha: float) -> Odometry:
     """Odometry at the primary timestamp: lerp position and twist, slerp orientation.
 
     Covariances are not interpolated - the result carries the default

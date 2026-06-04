@@ -69,16 +69,12 @@ def test_unitree_g1_detection_routes_only_declared_ports() -> None:
     try:
         for module_cls, module in modules.items():
             transported = {
-                name
-                for name, owner in unitree_g1_detection.transport_map
-                if owner is module_cls
+                name for name, owner in unitree_g1_detection.transport_map if owner is module_cls
             }
             assert transported <= set(module.outputs), module_cls.__name__
 
             remapped = {
-                name
-                for owner, name in unitree_g1_detection.remapping_map
-                if owner is module_cls
+                name for owner, name in unitree_g1_detection.remapping_map if owner is module_cls
             }
             assert remapped <= set(module.inputs), module_cls.__name__
     finally:
