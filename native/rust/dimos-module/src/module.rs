@@ -660,8 +660,6 @@ mod tests {
 
         inject_inbound(&inbound, &inbound_notify, "/data", vec![42u8]);
 
-        // compare event timestamps instead of sampling inside a fixed window,
-        // so scheduling delays can neither flake nor mask the result
         wait_for("recv to fire and publish to complete", || {
             !recv_log.lock().unwrap().is_empty() && !publish_log.lock().unwrap().is_empty()
         })
