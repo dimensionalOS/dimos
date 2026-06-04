@@ -346,14 +346,45 @@ FLOWBASE_PLANT_PROFILE = RobotPlantProfile(
     sim_plant=GO2_PLANT_FITTED,  # placeholder until FlowBase has its own fit
 )
 
+# Conservative SHAKEOUT profile for the FIRST on-hardware run of the tall,
+# top-heavy FlowBase: low speed caps (0.3 m/s, 0.5 rad/s), gentle amplitudes,
+# short 1 m / 5 s steps (wz never completes a full spin). Use
+# `--robot flowbase-slow` to validate direction / mast stability / e-stop /
+# wiring at a snail's pace. The fit it produces is LOW-SPEED ONLY (truncated
+# envelope) — re-run `--robot flowbase` for the real full-envelope fit once the
+# bot is trusted. All amplitudes stay below the caps so nothing is clamped
+# (clamped steps would corrupt the K fit). Leaves the canonical profile intact.
+FLOWBASE_SLOW_PLANT_PROFILE = RobotPlantProfile(
+    name="FlowBase (slow shakeout)",
+    robot_id="flowbase_slow",
+    blueprint="coordinator-flowbase-keyboard-teleop",
+    sim_blueprint="coordinator-sim-fopdt-flowbase",
+    joint_prefix="base",
+    vx_max=0.3,
+    wz_max=0.5,
+    tick_rate_hz=10.0,
+    odom_warmup_s=10.0,
+    odom_stale_s=1.0,
+    excited_channels=("vx", "vy", "wz"),
+    si_amplitudes={"vx": [0.1, 0.2], "vy": [0.1, 0.2], "wz": [0.15, 0.3]},
+    floor_probe_amplitudes={"vx": [0.05, 0.1], "vy": [0.1], "wz": [0.1, 0.2]},
+    ceiling_probe_amplitudes={"vx": [0.3], "vy": [0.2], "wz": [0.45]},
+    step_s=5.0,
+    pre_roll_s=1.0,
+    max_dist_m=1.0,
+    sim_plant=GO2_PLANT_FITTED,
+)
+
 ROBOT_PLANT_PROFILES: dict[str, RobotPlantProfile] = {
     "go2": GO2_PLANT_PROFILE,
     "flowbase": FLOWBASE_PLANT_PROFILE,
+    "flowbase-slow": FLOWBASE_SLOW_PLANT_PROFILE,
 }
 
 
 __all__ = [
     "FLOWBASE_PLANT_PROFILE",
+    "FLOWBASE_SLOW_PLANT_PROFILE",
     "GO2_PLANT_FITTED",
     "GO2_PLANT_PROFILE",
     "GO2_VX_RISE",
