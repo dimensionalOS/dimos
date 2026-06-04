@@ -55,10 +55,8 @@ unitree_g1_detection = (
     .global_config(n_workers=8)
     .remappings(
         [
-            # Connect detection modules to camera and lidar
-            (ObjectDBModule, "image", "color_image"),
-            (ObjectDBModule, "pointcloud", "pointcloud"),
-            (PersonTracker, "image", "color_image"),
+            # Currently only the person tracker's detections feed needs routing
+            # to the renamed 2D output.
             (PersonTracker, "detections", "detections_2d"),
         ]
     )
