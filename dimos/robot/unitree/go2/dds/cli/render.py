@@ -23,7 +23,7 @@ the per-frame pose (Transform3D) and the accumulated trajectory (nav_msgs/Path):
 
 Standalone — not wired into the dimos CLI:
 
-    uv run python -m dimos.robot.unitree.go2dds.cli.render \
+    uv run python -m dimos.robot.unitree.go2.dds.cli.render \
         go2_china_office_indoor.mcap --seconds 120
 """
 
@@ -45,9 +45,9 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.robot.unitree.go2dds.extrinsics import LIDAR_TO_BASE
-from dimos.robot.unitree.go2dds.msgs.SportModeState import SportModeState
-from dimos.robot.unitree.go2dds.store import Go2McapStore
+from dimos.robot.unitree.go2.dds.extrinsics import LIDAR_TO_BASE
+from dimos.robot.unitree.go2.dds.msgs.SportModeState import SportModeState
+from dimos.robot.unitree.go2.dds.store import Go2McapStore
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

@@ -38,7 +38,7 @@ def open_store(path: str) -> Store:
         from dimos.memory2.store.sqlite import SqliteStore
 
         return SqliteStore(path=path, must_exist=True)
-    from dimos.robot.unitree.go2dds.store import Go2McapStore  # lazy: robot-layer codec set
+    from dimos.robot.unitree.go2.dds.store import Go2McapStore  # lazy: robot-layer codec set
 
     return Go2McapStore(path=path)
 

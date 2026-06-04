@@ -17,7 +17,7 @@
 Generic and codec-injected — it knows nothing about any robot. The caller
 supplies ``codecs`` (DDS/wire topic -> codec that decodes a message's stored
 bytes) and an optional ``streams`` map (friendly stream name -> topic). See
-``dimos.robot.unitree.go2dds.store.Go2McapStore`` for the Go2 wiring.
+``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 wiring.
 
 Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 ``obs.data``; ts and counts are cheap (counts come from the mcap index).

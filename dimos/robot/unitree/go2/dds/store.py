@@ -14,7 +14,7 @@
 
 """Open a Go2 DDS mcap directly as a read-only memory2 store.
 
-    from dimos.robot.unitree.go2dds.store import Go2McapStore
+    from dimos.robot.unitree.go2.dds.store import Go2McapStore
 
     store = Go2McapStore(path="go2_china_office_indoor.mcap")
     print(store.list_streams())
@@ -31,7 +31,7 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.memory2.store.mcap import McapStore
-from dimos.robot.unitree.go2dds.codec import GO2_CODECS
+from dimos.robot.unitree.go2.dds.codec import GO2_CODECS
 from dimos.utils.data import resolve_named_path
 
 # memory2 stream name -> Go2 DDS topic.
