@@ -21,13 +21,14 @@ import time
 
 import pytest
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.movement_manager.movement_manager import (
     MovementManager,
 )
+
+_COOLDOWN_SLEEP_SEC = 0.1
 
 
 @dataclass
@@ -91,16 +92,51 @@ def test_teleop_suppresses_nav_and_cancels_goal(manager_and_captured):
     assert math.isnan(captured.goal[0].x)
 
 
-def test_nav_resumes_after_cooldown(manager_and_captured):
-    """After the cooldown expires, nav commands pass through again."""
+def test_nav_remains_suppressed_after_teleop_until_new_click(manager_and_captured):
+    """Teleop cancels the active goal; nav may only resume after a fresh click."""
     manager, captured = manager_and_captured
     manager.config.tele_cooldown_sec = 0.05
+    manager._on_click(_click())
     manager._on_teleop(_twist(lx=0.3))
-    time.sleep(DEFAULT_THREAD_JOIN_TIMEOUT)
+    time.sleep(_COOLDOWN_SLEEP_SEC)
     cmd_count_before = len(captured.cmd_vel)
 
     manager._on_nav(_twist(lx=0.9))
+    assert len(captured.cmd_vel) == cmd_count_before
+
+    manager._on_click(_click(x=3.0, y=4.0))
+    manager._on_nav(_twist(lx=0.9))
     assert len(captured.cmd_vel) == cmd_count_before + 1
+
+
+def test_idle_zero_teleop_is_ignored(manager_and_captured):
+    """Viewer-connect zero twists should not cancel goals or publish stop commands."""
+    manager, captured = manager_and_captured
+
+    manager._on_teleop(Twist.zero())
+
+    assert captured.cmd_vel == []
+    assert captured.stop_movement == []
+    assert captured.goal == []
+    assert captured.way_point == []
+
+
+def test_zero_teleop_cancels_active_goal_and_latches_nav(manager_and_captured):
+    """The viewer stop button sends zero teleop; while navigating it is a hard cancel."""
+    manager, captured = manager_and_captured
+    manager.config.tele_cooldown_sec = 0.05
+
+    manager._on_click(_click())
+    manager._on_teleop(Twist.zero())
+
+    assert captured.cmd_vel[-1].is_zero()
+    assert len(captured.stop_movement) == 1
+    assert math.isnan(captured.goal[-1].x)
+
+    cmd_count_before = len(captured.cmd_vel)
+    time.sleep(_COOLDOWN_SLEEP_SEC)
+    manager._on_nav(_twist(lx=0.9))
+    assert len(captured.cmd_vel) == cmd_count_before
 
 
 def test_valid_click_publishes_goal(manager_and_captured):

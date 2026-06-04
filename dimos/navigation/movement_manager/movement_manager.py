@@ -67,6 +67,8 @@ class MovementManager(Module):
         self._lock = threading.Lock()
         self._teleop_active = False
         self._last_teleop_time = 0.0
+        self._goal_active = False
+        self._nav_blocked_until_click = False
 
     @rpc
     def start(self) -> None:
@@ -79,6 +81,8 @@ class MovementManager(Module):
     def stop(self) -> None:
         with self._lock:
             self._teleop_active = False
+            self._goal_active = False
+            self._nav_blocked_until_click = False
         super().stop()
 
     def _on_click(self, msg: PointStamped) -> None:
@@ -93,11 +97,22 @@ class MovementManager(Module):
             logger.warning("Ignored out-of-range click", x=msg.x, y=msg.y, z=msg.z)
             return
 
-        logger.debug("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
+        with self._lock:
+            self._goal_active = True
+            self._nav_blocked_until_click = False
+
+        logger.info(
+            "Goal accepted",
+            x=round(msg.x, 2),
+            y=round(msg.y, 2),
+            z=round(msg.z, 2),
+            frame_id=msg.frame_id,
+            ts=round(msg.ts, 3),
+        )
         self.way_point.publish(msg)
         self.goal.publish(msg)
 
-    def _cancel_goal(self) -> None:
+    def _cancel_goal(self, *, source: str) -> None:
         self.stop_movement.publish(Bool(data=True))
         # NOTE: this NaN goal is more of a safety fallback.
         # It can be REALLY bad if a robot is supposed to stop moving but wont
@@ -107,10 +122,12 @@ class MovementManager(Module):
         )
         self.way_point.publish(cancel)
         self.goal.publish(cancel)
-        logger.debug("Navigation cancelled — waiting for new goal")
+        logger.info("Navigation cancelled — autonomous nav blocked until new click", source=source)
 
     def _on_nav(self, msg: Twist) -> None:
         with self._lock:
+            if self._nav_blocked_until_click:
+                return
             if self._teleop_active:
                 # check if cooldown has expired
                 elapsed = time.monotonic() - self._last_teleop_time
@@ -120,11 +137,21 @@ class MovementManager(Module):
             self.cmd_vel.publish(msg)
 
     def _on_teleop(self, msg: Twist) -> None:
+        is_zero = msg.is_zero()
+        should_cancel = False
         with self._lock:
+            if is_zero and not self._teleop_active and not self._goal_active:
+                return
+
             self._teleop_active = True
             self._last_teleop_time = time.monotonic()
+            if not self._nav_blocked_until_click and (self._goal_active or not is_zero):
+                self._goal_active = False
+                self._nav_blocked_until_click = True
+                should_cancel = True
 
-        self._cancel_goal()
+        if should_cancel:
+            self._cancel_goal(source="teleop")
 
         scale = self.config.tele_cmd_vel_scaling
         scaled = Twist(

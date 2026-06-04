@@ -5586,3 +5586,99 @@ Next:
 3. If the stall reproduces without viewer, profile NOS process scheduling during
    motion; the current process table shows FAST-LIO near a full reserved core
    and multiple Python worker processes consuming cores 0-3 heavily.
+
+### Finding #66 - Viewer stop was not a latched nav cancel in MovementManager
+
+Date: 2026-06-03
+
+During the next live session the router disconnected and was reconnected. After
+the first goal completed, the operator saw new goals appear unexpectedly and had
+to E-stop because the viewer WASD "stop" button did not stop autonomous motion.
+
+Immediate safety action:
+
+- Sent a direct zero-velocity burst to AOS via `M20Protocol`.
+- Hard-killed the DimOS M20 smartnav/native nav stack on NOS.
+- Verified no remaining `m20_smartnav`, `fastlio2_native`,
+  `drdds_lidar_bridge`, `airy_imu_bridge`, `nav_cmd_pub`,
+  `local_planner`, `path_follower`, `terrain_analysis`, `simple_planner`, PGO,
+  or Rerun/WebSocket ports were still active.
+
+Log evidence from `/tmp/smartnav_native.log`:
+
+```
+02:39:05.067 Goal received x=1.0 y=2.0 z=0.0
+02:39:13.571 Goal received x=1.83 y=-0.06 z=-0.19
+02:39:14.251 Goal received x=1.63 y=-0.08 z=-0.19
+02:39:15.436 Goal received x=1.44 y=0.13 z=-0.19
+02:39:17.291 Goal received x=1.31 y=-0.71 z=-0.19
+02:39:17.472 Goal received x=1.45 y=-0.4 z=-0.19
+02:39:18.215 Goal received x=1.41 y=-0.24 z=-0.19
+02:39:19.597 Goal cleared - idle until new goal source=nan_goal
+02:39:21.376 nav_cmd_pub #9801 x=0.188 y=0.053 yaw=0.698
+```
+
+The `(1.0, 2.0)` goal was self-inflicted by a live synthetic `/clicked_point`
+loopback test. That was an unsafe test method and should not be repeated on the
+production click topic while the stack is driving hardware. Future loopback
+tests should use an isolated topic or stop the nav stack first.
+
+The later burst of nearby goals is not explained by that synthetic test. It
+started before the later viewer reconnect at `02:39:43`, so the current evidence
+is consistent with multiple accepted click messages from the viewer path, stale
+queued WebSocket messages, or accidental extra clicks. We did not have enough
+metadata in the log to distinguish those causes.
+
+Root cause of the failed stop:
+
+- The M20 native blueprint is now using `MovementManager`, not the older
+  `CmdVelMux` path that had the "idle zero twist is inert" fix.
+- `RerunWebSocketServer` maps a viewer `stop` event to `tele_cmd_vel=Twist.zero()`.
+- Current `MovementManager._on_teleop` treated every teleop message, including
+  zero twists, as a cancel, but only suppressed nav for `tele_cooldown_sec`.
+- After that cooldown, `_on_nav` resumed forwarding native `PathFollower`
+  commands. `SimplePlanner` had cleared its active goal, but `PathFollower` has
+  no `stop_movement` input and can keep emitting nonzero commands from the last
+  path until a fresh hold path propagates.
+
+Local fix:
+
+- Added a latched `MovementManager` cancel state:
+  - idle zero teleop is ignored;
+  - zero teleop while a navigation goal is active acts as a hard cancel;
+  - nonzero teleop cancels the active autonomous goal;
+  - autonomous `nav_cmd_vel` stays blocked after cancel until a fresh click;
+  - a fresh click unblocks autonomy and publishes the new goal.
+- Added `MovementManager` goal-accepted logging with coordinates, frame id, and
+  timestamp so future "random goal" reports can be tied to the accepted click
+  path.
+
+Verification:
+
+```
+uv run pytest dimos/navigation/movement_manager/test_movement_manager.py \
+  dimos/navigation/test_cmd_vel_mux.py \
+  dimos/visualization/rerun/test_websocket_server.py \
+  dimos/robot/deeprobotics/m20/blueprints/nav/test_m20_smartnav_native.py -q
+
+42 passed
+
+uv run ruff check dimos/navigation/movement_manager/movement_manager.py \
+  dimos/navigation/movement_manager/test_movement_manager.py
+
+All checks passed
+
+uv run ruff format --check dimos/navigation/movement_manager/movement_manager.py \
+  dimos/navigation/movement_manager/test_movement_manager.py
+
+2 files already formatted
+```
+
+Next live test after syncing:
+
+1. Start with the robot physically clear and operator ready on E-stop.
+2. Click one short goal.
+3. Press viewer stop while the robot is still moving.
+4. Confirm `nav_cmd_pub` goes to zero and stays zero for more than 5 seconds.
+5. Confirm no autonomous nav command resumes until a fresh click is accepted.
+6. Then investigate/debounce the unexplained multi-goal burst separately.
