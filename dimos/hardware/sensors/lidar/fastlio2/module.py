@@ -171,7 +171,7 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
     def _on_odom_for_tf(self, msg: Odometry) -> None:
         self.tf.publish(
             Transform(
-                frame_id=self.frame_id,
+                frame_id=self.config.frame_id,
                 child_frame_id=self.config.child_frame_id,
                 translation=Vector3(
                     msg.pose.position.x,
