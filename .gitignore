@@ -60,6 +60,7 @@ yolo11n.pt
 .envrc
 .claude
 **/CLAUDE.md
+.omo/
 .direnv/
 
 /logs
@@ -89,3 +90,4 @@ recording*.db
 
 # Rerun recordings
 *.rrd
+

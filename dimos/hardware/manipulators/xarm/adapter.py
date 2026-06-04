@@ -41,8 +41,9 @@ M_TO_MM = 1000.0
 MAX_CARTESIAN_SPEED_MM = 500.0  # Max cartesian speed in mm/s
 _XARM_LIFECYCLE_SPEED_DEG = 20.0
 _XARM_LIFECYCLE_ACCEL_DEG = 500.0
-_XARM6_INITIAL_JOINTS_RAD = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-_XARM7_INITIAL_JOINTS_RAD = [0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0]
+_XARM6_INITIAL_JOINTS_DEG = [0.0, -40.0, -50.0, 0.0, 90.0, 0.0]
+# TODO (CC): change this once we have 7dof arm setup
+_XARM7_INITIAL_JOINTS_DEG = [0.0, 0.0, 0.0, 0.0, 0.0, math.degrees(-0.7), 0.0]
 
 # XArm mode codes
 _XARM_MODE_POSITION = 0
@@ -245,6 +246,7 @@ class XArmAdapter(ManipulatorAdapter):
         self._prepare_for_position_motion()
         if not self._move_to_initial_pose():
             return False
+        self._arm.motion_enable(enable=False)
         code: int = self._arm.set_state(4)
         return code == 0
 
@@ -252,23 +254,23 @@ class XArmAdapter(ManipulatorAdapter):
         if not self._arm:
             return False
 
-        joints = self._initial_joints()
+        joints = self._initial_joints_degrees()
         if joints is None:
             return True
 
         code: int = self._arm.set_servo_angle(
-            angle=[math.degrees(joint) for joint in joints],
+            angle=joints,
             speed=_XARM_LIFECYCLE_SPEED_DEG,
             mvacc=_XARM_LIFECYCLE_ACCEL_DEG,
             wait=True,
         )
         return code == 0
 
-    def _initial_joints(self) -> list[float] | None:
+    def _initial_joints_degrees(self) -> list[float] | None:
         if self._dof == 6:
-            return _XARM6_INITIAL_JOINTS_RAD
+            return _XARM6_INITIAL_JOINTS_DEG
         if self._dof == 7:
-            return _XARM7_INITIAL_JOINTS_RAD
+            return _XARM7_INITIAL_JOINTS_DEG
         return None
 
     def _prepare_for_position_motion(self) -> None:
