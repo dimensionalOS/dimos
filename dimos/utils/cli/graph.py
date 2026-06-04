@@ -20,6 +20,7 @@ and serves an interactive Mermaid flowchart per blueprint.
 
 from __future__ import annotations
 
+import functools
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import importlib.util
 import json
@@ -40,14 +41,19 @@ from dimos.core.introspection.mermaid import (
     render_mermaid,
 )
 from dimos.core.introspection.utils import ThemeName
-from dimos.utils.data import get_data
+from dimos.utils.data import LfsPath
 
-_CLI_DIR = Path(__file__).parent
-_MERMAID_JS = get_data("mermaid.min.js").read_text(encoding="utf-8")
-_TEMPLATE = jinja2.Template(
-    (_CLI_DIR / "graph.html.jinja").read_text(encoding="utf-8"),
-    autoescape=False,
-)
+
+@functools.lru_cache(maxsize=1)
+def _load_template() -> jinja2.Template:
+    template = Path(__file__).parent / "graph.html.jinja"
+    return jinja2.Template(template.read_text(encoding="utf-8"), autoescape=False)
+
+
+@functools.lru_cache(maxsize=1)
+def _load_mermaid_js() -> str:
+    js_path: Path = LfsPath("mermaid.min.js")
+    return js_path.read_text(encoding="utf-8")
 
 
 def _find_package_root(filepath: str) -> str | None:
@@ -161,7 +167,7 @@ def _build_html(
         tab_buttons.append({"name": name})
         tab_panels.append({"mermaid_code": render.code})
 
-    return _TEMPLATE.render(
+    return _load_template().render(
         background=background,
         text_color=text_color,
         text_muted=text_muted,
@@ -174,7 +180,7 @@ def _build_html(
         border_color=border_color,
         label_bg=label_bg,
         mermaid_theme=mermaid_theme,
-        mermaid_js=_MERMAID_JS,
+        mermaid_js=_load_mermaid_js(),
         tab_buttons=tab_buttons,
         tab_panels=tab_panels,
         all_label_colors_json=json.dumps(per_bp_label_colors),
