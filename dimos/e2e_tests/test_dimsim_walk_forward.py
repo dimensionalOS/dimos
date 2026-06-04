@@ -15,7 +15,7 @@
 import pytest
 
 
-@pytest.mark.dimsim
+@pytest.mark.self_hosted_large
 def test_walk_forward(lcm_spy, start_blueprint, human_input, dim_sim) -> None:
     start_blueprint(
         "run",
@@ -34,4 +34,4 @@ def test_walk_forward(lcm_spy, start_blueprint, human_input, dim_sim) -> None:
 
     human_input("move forward 3 meter")
 
-    lcm_spy.wait_until_odom_position(origin_x + 3, origin_y, threshold=0.4)
+    lcm_spy.wait_until_odom_position(origin_x + 3, origin_y, threshold=0.4, timeout=120)
