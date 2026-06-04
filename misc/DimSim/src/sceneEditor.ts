@@ -376,13 +376,41 @@ export class SceneEditor {
     }
   }
 
+  // loadScript only ever serves bundled scene / eval scripts, which live under
+  // /scenes/ and are plain .js / .mjs ES modules (e.g. /scenes/apartment/index.js,
+  // /scenes/apartment/evals/go-to-kitchen.js). Anything outside this allowlist is
+  // refused so a malicious WS peer cannot turn loadScript into an SSRF primitive.
+  static readonly _SCRIPT_PATH_ALLOWLIST = /^\/scenes\/[A-Za-z0-9._/-]+\.(?:js|mjs)$/;
+
   async _loadScript(url: string, id?: string): Promise<void> {
     try {
-      const resolved = new URL(url, location.origin);
-      if (resolved.origin !== location.origin) {
+      // Parse the user-supplied value only to extract a candidate pathname; the
+      // value itself never reaches fetch().
+      const candidate = new URL(url, location.origin);
+
+      // Defense in depth: reject anything that did not resolve same-origin.
+      if (candidate.origin !== location.origin) {
         throw new Error(`cross-origin URL refused: ${url}`);
       }
-      const resp = await fetch(resolved);
+
+      // Strict allowlist on the pathname: an approved prefix, a safe charset
+      // (no "..", no encoded traversal, no query/fragment, no host characters),
+      // and a .js/.mjs suffix. This is the guard CodeQL recognizes as a
+      // sanitizer for js/request-forgery.
+      const pathname = candidate.pathname;
+      if (
+        pathname.includes("..") ||
+        !SceneEditor._SCRIPT_PATH_ALLOWLIST.test(pathname)
+      ) {
+        throw new Error(`script path not allowed: ${pathname}`);
+      }
+
+      // Build the fetch target purely from the fixed local origin plus the
+      // validated pathname — the raw user URL is never used as the request
+      // target, so the destination host can only ever be this page's origin.
+      const safeUrl = new URL(pathname, location.origin);
+
+      const resp = await fetch(safeUrl.href);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
       const code = await resp.text();
       await this._execCode(code, id);
