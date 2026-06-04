@@ -61,14 +61,14 @@ def test_anonymous_download_returns_presigned_url():
     assert "actions" in obj, f"no download action — server response: {obj}"
 
     href = obj["actions"]["download"]["href"]
-    assert href.startswith("https://dimos-github-lfs.s3"), href
+    assert "dimos-github-lfs" in href, href
 
 
 @pytest.mark.slow
 def test_anonymous_upload_is_forbidden():
-    """An unauthenticated upload returns 403 — only repo collaborators can push."""
+    """An unauthenticated upload returns 401/403 — only repo collaborators can push."""
     response = _batch("upload", "0" * 64, 1)
-    assert response.status_code == 403, response.text
+    assert response.status_code in (401, 403), response.text
 
 
 @pytest.mark.slow

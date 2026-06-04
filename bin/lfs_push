@@ -114,8 +114,19 @@ if [ ${#compressed_entries[@]} -gt 0 ]; then
 
     #git commit -m "$commit_msg"
     echo -e "${GREEN}✓${NC} Compressed file references added. Uploading..."
-    git -c "credential.https://lfs.dimensionalos.com.helper=!f() { echo username=token; echo password=$(gh auth token); }; f" \
-        lfs push origin $(git branch --show-current)
+    # Use a temp askpass script so the token never leaks into process args.
+    _lfs_askpass=$(mktemp)
+    chmod 700 "$_lfs_askpass"
+    cat > "$_lfs_askpass" << 'ASKPASS'
+#!/bin/sh
+case "$1" in
+  *sername*) echo "token" ;;
+  *assword*) gh auth token ;;
+esac
+ASKPASS
+    GIT_ASKPASS="$_lfs_askpass" GIT_TERMINAL_PROMPT=0 \
+        git -c credential.helper= lfs push origin $(git branch --show-current)
+    rm -f "$_lfs_askpass"
     echo -e "${GREEN}✓${NC} Uploaded to LFS"
 else
     echo -e "${GREEN}✓${NC} No test data to compress"
