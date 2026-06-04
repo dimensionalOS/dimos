@@ -457,6 +457,14 @@ mod tests {
         notify.notify_one();
     }
 
+    async fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !cond() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     #[derive(Debug, Deserialize, Default, PartialEq)]
     #[serde(deny_unknown_fields)]
     struct TestConfig {
@@ -627,6 +635,7 @@ mod tests {
     async fn slow_publish_does_not_block_recv() {
         let transport = ControllableMockTransport::new();
         let recv_log = transport.recv_log.clone();
+        let publish_log = transport.publish_log.clone();
         let inbound = transport.inbound.clone();
         let inbound_notify = transport.inbound_notify.clone();
         let publish_delay_ms = transport.publish_delay_ms.clone();
@@ -651,12 +660,18 @@ mod tests {
 
         inject_inbound(&inbound, &inbound_notify, "/data", vec![42u8]);
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // compare event timestamps instead of sampling inside a fixed window,
+        // so scheduling delays can neither flake nor mask the result
+        wait_for("recv to fire and publish to complete", || {
+            !recv_log.lock().unwrap().is_empty() && !publish_log.lock().unwrap().is_empty()
+        })
+        .await;
 
-        let recv_count = recv_log.lock().unwrap().len();
+        let recv_time = recv_log.lock().unwrap()[0];
+        let publish_time = publish_log.lock().unwrap()[0];
         assert!(
-            recv_count >= 1,
-            "expected recv to fire during slow publish; got {recv_count} events. \
+            recv_time < publish_time,
+            "expected recv to fire during the slow publish, not after it. \
              The recv path should be independent of publish latency."
         );
     }
@@ -672,9 +687,12 @@ mod tests {
         let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
         let mut builder = Builder::new(topics(&[("slow", "/slow"), ("out", "/out")]), publish_tx);
 
-        // simulate slow processing function in a receive
+        // simulate slow processing function in a receive. decode takes a fn
+        // pointer, so record the completion time through a static
+        static RECV_FINISHED: Mutex<Option<Instant>> = Mutex::new(None);
         let _input = builder.input("slow", |b| {
             std::thread::sleep(Duration::from_millis(200));
+            *RECV_FINISHED.lock().unwrap() = Some(Instant::now());
             Ok(b.to_vec())
         });
         let output = builder.output("out", |b: &Vec<u8>| b.clone());
@@ -690,15 +708,19 @@ mod tests {
 
         output.publish(&vec![42u8]).await.ok();
 
-        // receive should still be processing, but publish should go through by now
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // compare event timestamps instead of sampling inside a fixed window,
+        // so scheduling delays can neither flake nor mask the result
+        wait_for("publish to complete and recv dispatch to finish", || {
+            !publish_log.lock().unwrap().is_empty() && RECV_FINISHED.lock().unwrap().is_some()
+        })
+        .await;
 
-        let publish_count = publish_log.lock().unwrap().len();
+        let publish_time = publish_log.lock().unwrap()[0];
+        let recv_finished_time = RECV_FINISHED.lock().unwrap().unwrap();
         assert!(
-            publish_count >= 1,
-            "expected publish to fire during slow recv dispatch; got \
-             {publish_count} events. The publish path should be independent \
-             of recv-side CPU work."
+            publish_time < recv_finished_time,
+            "expected publish to fire during slow recv dispatch, not after it. \
+             The publish path should be independent of recv-side CPU work."
         );
     }
 
