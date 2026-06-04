@@ -15,14 +15,14 @@
 
 """G1 stack with keyboard teleop."""
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic import unitree_g1_basic
-from dimos.robot.unitree.keyboard_teleop import keyboard_teleop
+from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.teleop.keyboard.keyboard_pose_teleop import keyboard_pose_teleop
 
 unitree_g1_joystick = autoconnect(
     unitree_g1_basic,
-    keyboard_teleop(),  # Pygame-based joystick control
+    KeyboardTeleop.blueprint(),  # Pygame-based joystick control
     keyboard_pose_teleop(),  # Pygame-based pose goal control
 )
 
