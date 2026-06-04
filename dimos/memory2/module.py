@@ -122,7 +122,15 @@ class StreamModule(Module, Generic[TIn, TOut]):
             map:   Out[PointCloud2]
 
             def pipeline(self, lidar: Stream[PointCloud2]) -> Stream[PointCloud2]:
-                return lidar.align(self.streams.pose, tolerance=0.1).transform(...)
+                return lidar.align(
+                    self.streams.pose, tolerance=0.1, interpolator=lerp_pose
+                ).transform(...)
+
+    ``interpolator=`` is optional: omit it to pair the nearest pose within
+    tolerance; pass one to synthesize the secondary at the exact primary
+    timestamp from its bracketing samples (here, the pose *at scan time*).
+    :mod:`dimos.memory2.interpolators` ships the stock helpers ``lerp_pose``
+    (PoseStamped) and ``interp_odom`` (Odometry).
 
     The pipeline ends in a :class:`Bundle` keyed by ``Out`` port name and
     :func:`scatter_to_ports` fans it out in one subscribe, so a fused pipeline

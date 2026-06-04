@@ -17,9 +17,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+import math
 import threading
 import time
+from typing import NamedTuple
 
+import numpy as np
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
 
@@ -27,11 +30,19 @@ from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import pLCMTransport
 from dimos.memory2.fanio import Bundle, normalize_to_bundle, scatter_to_ports
+from dimos.memory2.interpolators import interp_odom, lerp_pose
 from dimos.memory2.module import StreamModule
 from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import Transformer
 from dimos.memory2.type.observation import Observation
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 # Shared transformer
 
@@ -210,7 +221,9 @@ class ChainedFusion(StreamModule):
         )
 
 
-def _wire_inputs(module: StreamModule, store: MemoryStore, **points: list) -> dict[str, Stream]:
+def _wire_inputs(
+    module: StreamModule, store: MemoryStore, dtype: type = int, **points: list
+) -> dict[str, Stream]:
     """Populate ``module._in_streams`` from ``name=[(ts, value), ...]`` point lists.
 
     Mirrors what ``StreamModule.start()`` assembles, so ``pipeline()`` can reach
@@ -221,7 +234,7 @@ def _wire_inputs(module: StreamModule, store: MemoryStore, **points: list) -> di
     """
     streams: dict[str, Stream] = {}
     for name, pts in points.items():
-        s = store.stream(name, int)
+        s = store.stream(name, dtype)
         for ts, value in pts:
             s.append(value, ts=ts)
         streams[name] = s
@@ -322,6 +335,169 @@ class TestFanInAlign:
         message = str(excinfo.value)
         assert "poze" in message
         assert "lidar" in message and "pose" in message
+
+
+# Interpolated fan-in: the align edge synthesizes the secondary at the scan ts
+
+
+def _apply_pose_to_cloud(cloud: PointCloud2, pose: PoseStamped) -> PointCloud2:
+    """World-frame cloud: rotate the points by the pose, then translate."""
+    points, _ = cloud.as_numpy()
+    world = points @ pose.orientation.to_rotation_matrix().T + np.array([pose.x, pose.y, pose.z])
+    return PointCloud2.from_numpy(world, frame_id="world", timestamp=cloud.ts)
+
+
+class MyFusion(StreamModule):
+    """Pose-at-scan-time fusion: the pose edge carries ``interpolator=lerp_pose``
+    so each scan is deskewed by the pose synthesized at its exact timestamp,
+    not the nearest captured pose."""
+
+    lidar: In[PointCloud2]
+    pose: In[PoseStamped]
+    map: Out[PointCloud2]
+
+    def pipeline(self, lidar: Stream[PointCloud2]) -> Stream[PointCloud2]:
+        return lidar.align(self.streams.pose, tolerance=1.0, interpolator=lerp_pose).map_data(
+            lambda obs: _apply_pose_to_cloud(obs.data.lidar.data, obs.data.pose.data)
+        )
+
+
+class _FusedOdom(NamedTuple):
+    """Author-side intermediate struct - not a ``Bundle`` until the port-keyed tail."""
+
+    odom: Odometry
+    cloud: PointCloud2
+
+
+def _fuse_and_correct(
+    upstream: Iterator[Observation[object]],
+) -> Iterator[Observation[_FusedOdom]]:
+    """Average the imu and leg odometry estimates synthesized at the scan ts."""
+    for obs in upstream:
+        outer = obs.data  # (lidar, leg); the lidar side nests (lidar, imu)
+        leg = outer.leg.data
+        imu = outer.lidar.data.imu.data
+        cloud = outer.lidar.data.lidar.data
+        fused = Odometry(
+            ts=obs.ts,
+            frame_id=imu.frame_id,
+            child_frame_id=imu.child_frame_id,
+            pose=Pose(
+                position=(imu.position + leg.position) * 0.5,
+                orientation=imu.orientation,  # trust the imu for attitude
+            ),
+            twist=Twist(
+                (imu.linear_velocity + leg.linear_velocity) * 0.5,
+                (imu.angular_velocity + leg.angular_velocity) * 0.5,
+            ),
+        )
+        yield obs.derive(data=_FusedOdom(odom=fused, cloud=cloud))
+
+
+class OdomFusion(StreamModule):
+    """3 In / 2 Out fusion: both odometry edges interpolate to the scan ts,
+    and one pipeline run yields a ``Bundle`` keyed by the Out port names."""
+
+    lidar: In[PointCloud2]
+    imu: In[Odometry]
+    leg: In[Odometry]
+    odom: Out[Odometry]
+    map: Out[PointCloud2]
+
+    def pipeline(self, lidar: Stream[PointCloud2]) -> Stream[Bundle]:
+        return (
+            lidar.align(self.streams.imu, tolerance=0.6, interpolator=interp_odom)
+            .align(self.streams.leg, tolerance=0.6, interpolator=interp_odom)
+            .transform(_fuse_and_correct)
+            .map_data(lambda obs: Bundle({"odom": obs.data.odom, "map": obs.data.cloud}))
+        )
+
+
+class TestInterpolatedFusionModules:
+    """Full fusion modules whose align edges carry ``interpolator=`` so the
+    secondary is synthesized at the exact primary timestamp inside
+    ``pipeline()`` (test plan 10.7 at module level)."""
+
+    def test_my_fusion_applies_the_pose_interpolated_at_scan_time(self) -> None:
+        """A scan halfway between two poses is transformed by the halfway pose:
+        position at the midpoint, yaw slerped to 45 degrees - and keeps the scan
+        ts. Nearest-neighbor would snap to an endpoint pose and move every
+        point to a different place."""
+        module = MyFusion()
+        scan = PointCloud2.from_numpy(np.array([[1.0, 0.0, 0.0]]), timestamp=1.5)
+        pose_a = PoseStamped(ts=1.0, frame_id="odom", position=(0, 0, 0))
+        pose_b = PoseStamped(
+            ts=2.0,
+            frame_id="odom",
+            position=(1, 0, 0),
+            orientation=Quaternion.from_euler(Vector3(0, 0, math.pi / 2)),
+        )
+        with MemoryStore() as store:
+            streams = _wire_inputs(
+                module,
+                store,
+                dtype=object,
+                lidar=[(1.5, scan)],
+                pose=[(1.0, pose_a), (2.0, pose_b)],
+            )
+            try:
+                out = module.pipeline(streams["lidar"]).to_list()
+            finally:
+                module.stop()
+
+        assert [o.ts for o in out] == [1.5]
+        points, _ = out[0].data.as_numpy()
+        # Interpolated pose: position (0.5, 0, 0), yaw 45 deg. R(45) @ (1,0,0)
+        # lands on (cos45, sin45, 0) before the translation.
+        half = math.sqrt(2) / 2
+        np.testing.assert_allclose(points[0], [0.5 + half, half, 0.0], atol=1e-6)
+        assert out[0].data.ts == 1.5  # payload stamped at scan time too
+
+    def test_odom_fusion_interpolates_both_edges_then_bundles(self) -> None:
+        """Both odometry edges synthesize their sample at the scan ts before
+        fusing: the averaged position and velocity match the interpolated
+        values exactly - if either edge snapped to a real sample instead, the
+        average would shift to an endpoint mix. One run feeds both Out keys."""
+
+        def odom(ts: float, x: float, vx: float) -> Odometry:
+            return Odometry(
+                ts=ts,
+                frame_id="odom",
+                child_frame_id="base_link",
+                pose=Pose(x, 0.0, 0.0),
+                twist=Twist((vx, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            )
+
+        module = OdomFusion()
+        scan = PointCloud2.from_numpy(np.array([[7.0, 8.0, 9.0]]), timestamp=1.5)
+        with MemoryStore() as store:
+            streams = _wire_inputs(
+                module,
+                store,
+                dtype=object,
+                lidar=[(1.5, scan)],
+                # At the 1.5 scan ts: imu interpolates to x=1.0, vx=1.0.
+                imu=[(1.0, odom(1.0, 0.0, 0.0)), (2.0, odom(2.0, 2.0, 2.0))],
+                # leg interpolates to x=0.5, vx=0.3.
+                leg=[(1.0, odom(1.0, 0.4, 0.2)), (2.0, odom(2.0, 0.6, 0.4))],
+            )
+            try:
+                out = module.pipeline(streams["lidar"]).to_list()
+            finally:
+                module.stop()
+
+        assert [o.ts for o in out] == [1.5]
+        bundle = out[0].data
+        fused = bundle["odom"]
+        # Averages of the two *interpolated* estimates; any nearest-neighbor
+        # snap would give x in {0.2, 1.2, 1.3, 2.3}, never 0.75.
+        assert fused.x == pytest.approx(0.75)
+        assert fused.vx == pytest.approx(0.65)
+        assert fused.ts == 1.5
+        # The scan rides the same bundle untouched.
+        points, _ = bundle["map"].as_numpy()
+        np.testing.assert_allclose(points[0], [7.0, 8.0, 9.0])
+        assert bundle["map"].ts == 1.5
 
 
 # Ingest seam: enrich/drop messages without copying start()
