@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.introspection.utils import ThemeName, sanitize_id
@@ -29,6 +29,13 @@ class Theme(TypedDict):
     mermaid_theme: str
     nodes: list[str]
     edges: list[str]
+
+
+class MermaidRender(NamedTuple):
+    code: str
+    label_colors: dict[str, str]
+    disconnected: set[str]
+    node_colors: dict[str, str]
 
 
 THEMES: dict[ThemeName, Theme] = {
@@ -221,11 +228,8 @@ def render_mermaid(
     ignored_modules: set[str] | None = None,
     show_disconnected: bool = False,
     theme: ThemeName = DEFAULT_THEME,
-) -> tuple[str, dict[str, str], set[str], dict[str, str]]:
-    """Generate a Mermaid flowchart from a Blueprint.
-
-    Returns (mermaid_code, label_color_map, disconnected_labels, node_color_map).
-    """
+) -> MermaidRender:
+    """Generate a Mermaid flowchart from a Blueprint."""
     if ignored_streams is None:
         ignored_streams = set()
     if ignored_modules is None:
@@ -373,5 +377,9 @@ def render_mermaid(
         for i, color in enumerate(edge_colors):
             lines.append(f"    linkStyle {i} stroke:{color},stroke-width:2px")
 
-    node_color_map = node_color.assigned
-    return "\n".join(lines), label_color_map, disconnected_labels, node_color_map
+    return MermaidRender(
+        code="\n".join(lines),
+        label_colors=label_color_map,
+        disconnected=disconnected_labels,
+        node_colors=node_color.assigned,
+    )

@@ -132,11 +132,11 @@ def _build_html(
     tab_buttons: list[dict[str, str]] = []
     tab_panels: list[dict[str, str]] = []
     for name, bp in blueprints:
-        mermaid_code, label_colors, disconnected, node_colors = render_mermaid(
-            bp, show_disconnected=show_disconnected, theme=theme
-        )
+        render = render_mermaid(bp, show_disconnected=show_disconnected, theme=theme)
+        label_colors = render.label_colors
+        node_colors = render.node_colors
         per_bp_label_colors.append(label_colors)
-        per_bp_disconnected.append(disconnected)
+        per_bp_disconnected.append(render.disconnected)
         per_bp_node_colors.append(node_colors)
 
         producers: dict[str, list[str]] = {}
@@ -197,7 +197,7 @@ def _build_html(
         per_bp_typos.append(typos)
 
         tab_buttons.append({"name": name})
-        tab_panels.append({"mermaid_code": mermaid_code})
+        tab_panels.append({"mermaid_code": render.code})
 
     return _TEMPLATE.render(
         background=background,
@@ -228,8 +228,8 @@ def print_markdown(
     blueprints = _load_blueprints(python_file)
     sections: list[str] = []
     for name, bp in blueprints:
-        mermaid_code, _, _, _ = render_mermaid(bp, show_disconnected=show_disconnected, theme=theme)
-        sections.append(f"## {name}\n\n```mermaid\n{mermaid_code}\n```")
+        code = render_mermaid(bp, show_disconnected=show_disconnected, theme=theme).code
+        sections.append(f"## {name}\n\n```mermaid\n{code}\n```")
     print("\n\n".join(sections))
 
 
