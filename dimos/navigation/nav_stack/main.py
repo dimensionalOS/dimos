@@ -41,6 +41,8 @@ def create_nav_stack(
     *,
     use_tare: bool = False,
     use_terrain_map_ext: bool = True,
+    use_pgo: bool = True,
+    use_pgo_corrected_odometry: bool | None = None,
     planner: str = "far",
     vehicle_height: float | None = None,
     max_speed: float | None = None,
@@ -64,6 +66,11 @@ def create_nav_stack(
     override defaults. ``vehicle_height`` and ``max_speed`` propagate to
     the relevant modules automatically.
     """
+    if use_pgo_corrected_odometry is None:
+        use_pgo_corrected_odometry = use_pgo
+    if use_pgo_corrected_odometry and not use_pgo:
+        raise ValueError("use_pgo_corrected_odometry=True requires use_pgo=True")
+
     far_planner_config = {**(far_planner or {})}
     far_planner_config.setdefault("is_static_env", False)
     if vehicle_height is not None:
@@ -76,8 +83,6 @@ def create_nav_stack(
         local_planner_config.setdefault("goal_reached_threshold", waypoint_threshold)
         path_follower_config.setdefault("goal_tolerance", waypoint_threshold)
         simple_planner_config.setdefault("goal_reached_threshold", waypoint_threshold)
-
-    pgo_module: Blueprint = PGO.blueprint(**(pgo or {}))
 
     modules: list[Blueprint] = [
         TerrainAnalysis.blueprint(
@@ -141,8 +146,9 @@ def create_nav_stack(
                 **path_follower_config,
             }
         ),
-        pgo_module,
     ]
+    if use_pgo:
+        modules.append(PGO.blueprint(**(pgo or {})))
     if planner == "simple":
         merged_simple_planner_config: dict[str, Any] = {"replan_rate": replan_rate}
         if vehicle_height is not None:
@@ -180,12 +186,18 @@ def create_nav_stack(
 
     remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
-        (TerrainAnalysis, "odometry", "corrected_odometry"),
-        (TerrainMapExt, "odometry", "corrected_odometry"),
-        (PGO, "global_map", "global_map_pgo"),
         *record_remappings,
     ]
-    if planner == "far":
+    if use_pgo:
+        remappings.append((PGO, "global_map", "global_map_pgo"))
+    if use_pgo_corrected_odometry:
+        remappings.extend(
+            [
+                (TerrainAnalysis, "odometry", "corrected_odometry"),
+                (TerrainMapExt, "odometry", "corrected_odometry"),
+            ]
+        )
+    if planner == "far" and use_pgo_corrected_odometry:
         remappings.append((FarPlanner, "odometry", "corrected_odometry"))
 
     return autoconnect(*modules).remappings(remappings)
