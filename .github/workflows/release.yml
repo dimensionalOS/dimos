@@ -84,9 +84,9 @@ jobs:
       packages: read  # For pulling the ros-dev container from ghcr.io
     container:
       image: ghcr.io/dimensionalos/ros-dev:dev
-      # Expose the host's NVIDIA driver and GPU into the container.
-      # GHA's `container:` doesn't pass `--gpus all` by default, so libcuda
-      # from the driver isn't visible inside the container without this.
+      # Expose the host's NVIDIA driver and GPU into the container. Needs
+      # nvidia-container-toolkit installed on the runner (configured by ops);
+      # without it, container start fails with `could not select device driver`.
       options: --gpus all
     steps:
       - uses: actions/checkout@v5
@@ -98,6 +98,8 @@ jobs:
           git config --global --add safe.directory '*'
           git clean -ffdx
       - name: Install apt dependencies
+        # Workaround until the rebuilt ros-dev image ships libturbojpeg + zstd
+        # baked in (see docker/python/Dockerfile).
         run: |
           sudo apt-get update
           sudo apt-get install libturbojpeg zstd -y
