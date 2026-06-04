@@ -23,7 +23,7 @@ from pathlib import Path
 import struct
 import threading
 import time
-from typing import Any
+from typing import Any, Literal
 
 import lcm as lcmlib
 import numpy as np
@@ -163,9 +163,16 @@ class BabylonSceneViewerModule(Module):
         init_yaw: float = 0.0,
         lock_z: bool = True,
         initial_entities: list[dict[str, Any]] | None = None,
+        entity_authority: Literal["browser", "external"] = "browser",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        # "browser": Havok owns entity physics, browser states republish on
+        # entity_state_batch (historic behavior). "external": an external
+        # sim (MuJoCo) publishes /entity_state_batch; browser entities spawn
+        # kinematic and mirror those poses, and browser-reported states are
+        # ignored.
+        self._entity_authority = entity_authority
         self._mjcf_path = Path(mjcf_path)
         self._assets = assets
         self._port = port
@@ -405,6 +412,7 @@ class BabylonSceneViewerModule(Module):
                 "scenePosition": list(self._scene_translation),
                 "sceneWxyz": list(scene_wxyz),
                 "browserPhysics": self._browser_physics_enabled,
+                "entityAuthority": self._entity_authority,
                 "browserPhysicsHz": self._browser_sim_rate,
                 "browserPhysicsInitialPose": self._browser_initial_pose,
                 "vehicleHeight": self._browser_vehicle_height,
@@ -580,12 +588,26 @@ class BabylonSceneViewerModule(Module):
         # in some order, and the per-client drain serialises naturally on
         # the asyncio loop) — just hand channel + payload over via
         # call_soon_threadsafe and let the loop thread do the rest.
+        if self._entity_authority == "external" and channel.startswith("/entity_state_batch#"):
+            self._mirror_external_entity_states(data)
         if not self._lcm_clients:
             return
         loop = self._server_loop
         if loop is None:
             return
         loop.call_soon_threadsafe(self._lcm_enqueue, channel, data)
+
+    def _mirror_external_entity_states(self, data: bytes) -> None:
+        """Track the external sim's entity poses so reconnect replay spawns
+        entities where they currently are, not at their cooked poses."""
+        try:
+            batch = EntityStateBatch.decode(data)
+        except Exception:
+            return
+        with self._entity_lock:
+            for descriptor, pose in batch.entries:
+                if descriptor.entity_id in self._entities:
+                    self._entity_poses[descriptor.entity_id] = pose
 
     def _lcm_enqueue(self, channel: str, data: bytes) -> None:
         # Runs on the asyncio loop thread. Synthesise the LC02 wire bytes
@@ -922,10 +944,24 @@ class BabylonSceneViewerModule(Module):
             self._entity_poses[descriptor.entity_id] = pose
         self.entity_descriptors.publish(descriptor)
         self._broadcast_json_from_thread(
-            {"type": "entity_spawn", "descriptor": descriptor.to_wire(), "pose": pose_to_wire(pose)}
+            {
+                "type": "entity_spawn",
+                "descriptor": self._spawn_descriptor_wire(descriptor),
+                "pose": pose_to_wire(pose),
+            }
         )
         self._publish_entity_snapshot()
         return True
+
+    def _spawn_descriptor_wire(self, descriptor: EntityDescriptor) -> dict[str, Any]:
+        """Descriptor as sent to the browser. With an external entity
+        authority the browser is a mirror, not a simulator — entities spawn
+        kinematic (mass 0) and get their poses from entity_state_batch."""
+        wire = descriptor.to_wire()
+        if self._entity_authority == "external":
+            wire["kind"] = "kinematic"
+            wire["mass"] = 0.0
+        return wire
 
     @rpc
     def despawn_entity(self, entity_id: str) -> bool:
@@ -1068,6 +1104,10 @@ class BabylonSceneViewerModule(Module):
         ``entity_state_batch`` for cross-process consumers (rust
         scene_lidar). Entries for entities we don't know about are
         dropped (despawn race)."""
+        if self._entity_authority != "browser":
+            # External sim owns entity state; browser-reported poses are
+            # kinematic-mirror echoes, not authority.
+            return
         batch_entries: list[tuple[EntityDescriptor, Pose]] = []
         ts = time.time()
         for raw in states_wire:
@@ -1101,7 +1141,11 @@ class BabylonSceneViewerModule(Module):
                 for entity_id, descriptor in self._entities.items()
             ]
         return [
-            {"type": "entity_spawn", "descriptor": d.to_wire(), "pose": pose_to_wire(pose)}
+            {
+                "type": "entity_spawn",
+                "descriptor": self._spawn_descriptor_wire(d),
+                "pose": pose_to_wire(pose),
+            }
             for d, pose in entities
         ]
 

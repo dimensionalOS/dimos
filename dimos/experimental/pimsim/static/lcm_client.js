@@ -112,7 +112,13 @@ function subscribe(topic, msgClass, callback) {
 }
 
 function subscribePayload(topic, msgClass, callback) {
-  const channel = channelOf(topic, msgClass);
+  return subscribeChannel(channelOf(topic, msgClass), callback);
+}
+
+// Raw-channel variant for dimos types @dimos/msgs can't decode (e.g.
+// pimsim.EntityStateBatch — length-prefixed JSON on the wire). The
+// callback receives the raw payload bytes.
+function subscribeChannel(channel, callback) {
   let subs = payloadSubscribers.get(channel);
   if (!subs) {
     subs = new Set();
@@ -162,7 +168,7 @@ function start(url) {
 }
 
 window.dimosMsgs = msgs;
-window.dimosLcm = { subscribe, subscribePayload, publish, onStatus, start };
+window.dimosLcm = { subscribe, subscribePayload, subscribeChannel, publish, onStatus, start };
 
 // Auto-start so app.js doesn't need to know about us.
 start();

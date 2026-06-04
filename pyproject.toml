@@ -667,6 +667,7 @@ ignore = [
     "*/package-lock.json",
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
+    "dimos/experimental/pimsim/module.py",
     "dimos/manipulation/manipulation_module.py",
     "dimos/manipulation/planning/world/drake_world.py",
     "dimos/navigation/nav_stack/modules/*/main.cpp",

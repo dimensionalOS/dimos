@@ -843,6 +843,16 @@ class MujocoEngine(SimulationEngine):
         qw, qx, qy, qz = self._data.qpos[qpos_adr + 3 : qpos_adr + 7].copy()
         return position, np.array([qx, qy, qz, qw], dtype=np.float64)
 
+    def get_body_world_poses(
+        self, body_ids: list[int]
+    ) -> list[tuple[NDArray[np.float64], NDArray[np.float64]]]:
+        """World (position, quaternion_wxyz) per body id, from latest stepped data."""
+        with self._lock:
+            return [
+                (self._data.xpos[body_id].copy(), self._data.xquat[body_id].copy())
+                for body_id in body_ids
+            ]
+
     def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:
         mapping = self._joint_mappings[joint_index]
         if mapping.actuator_id is None:

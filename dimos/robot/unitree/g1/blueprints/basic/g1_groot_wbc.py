@@ -217,9 +217,16 @@ def _select_backend() -> _BackendSelection:
         )
 
     scene_package = _scene_package_config()
+    scene_entities: list[dict[str, Any]] = []
     if scene_package is not None and scene_package.mujoco_model_path is not None:
-        sim_mjcf_path = scene_package.mujoco_model_path
+        # Scene-package entities (chairs, props) become MuJoCo bodies so the
+        # robot can physically interact with them; their poses publish on
+        # /entity_state_batch (MuJoCo is the entity authority in this mode).
+        from dimos.simulation.mujoco.entity_scene import compose_entity_model
+
+        sim_mjcf_path = compose_entity_model(scene_package) or scene_package.mujoco_model_path
         viewer_mjcf_path = scene_package.mujoco_wrapper_path or _MJCF_PATH
+        scene_entities = scene_package.entities
     else:
         sim_mjcf_path, viewer_mjcf_path = _MJCF_PATH, _MJCF_PATH
     lidar_disabled = _env_bool("DIMOS_DISABLE_LIDAR", False)
@@ -254,6 +261,13 @@ def _select_backend() -> _BackendSelection:
         spawn_xy=global_config.mujoco_start_pos_float,
         spawn_z=_env_float("DIMOS_MUJOCO_START_Z", _DEFAULT_G1_SPAWN_Z_M),
         reset_joint_positions=G1_GROOT_DEFAULT_POSITIONS,
+        scene_entities=scene_entities,
+    ).transports(
+        {
+            ("entity_state_batch", EntityStateBatch): LCMTransport(
+                "/entity_state_batch", EntityStateBatch
+            ),
+        }
     )
     return _BackendSelection(
         blueprint=backend,
@@ -538,6 +552,11 @@ def _babylon_blueprint(viewer_mjcf_path: str | Path, cmd_vel_topic: str) -> Blue
     # let the rust scene_lidar consume it.  No MuJoCo at runtime.
     # "pimsim" is the preferred alias going forward; "babylon" stays accepted.
     babylon_is_physics = global_config.simulation in ("babylon", "pimsim")
+    if global_config.simulation and not babylon_is_physics:
+        # MuJoCo simulates scene-package entities (see compose_entity_model
+        # in _select_backend) and publishes /entity_state_batch; the browser
+        # spawns entities as kinematic mirrors of those poses.
+        kwargs["entity_authority"] = "external"
     if babylon_is_physics:
         kwargs.update(
             enable_sim=True,

@@ -46,7 +46,9 @@ from scipy.spatial.transform import Rotation as R
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.experimental.pimsim.entity import EntityDescriptor, EntityStateBatch
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -83,6 +85,7 @@ def _find_sensor_slice(model: mujoco.MjModel, *names: str, dim: int = 3) -> slic
 _RX180 = R.from_euler("x", 180, degrees=True)
 _LIDAR_GEOM_GROUPS = (0, 0, 1, 1, 0, 0)
 _CMD_VEL_STALE_SEC = 0.5
+_ENTITY_STATE_MIN_INTERVAL_SEC = 1.0 / 30.0
 _ENGINE_CONNECT_TIMEOUT_SEC = 30.0
 _PUBLISH_THREAD_JOIN_TIMEOUT_SEC = 2.0
 _ENGINE_CONNECT_POLL_SEC = 0.1
@@ -130,6 +133,11 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     spawn_z: float | None = None
     spawn_yaw: float | None = None
     reset_joint_positions: list[float] | None = None
+    # Scene-package entity metadata (scene.meta.json ``entities`` entries).
+    # When the loaded model contains matching ``entity:<id>`` bodies (see
+    # dimos.simulation.mujoco.entity_scene), their world poses are published
+    # as an EntityStateBatch — MuJoCo is the entity authority in this mode.
+    scene_entities: list[dict[str, Any]] = Field(default_factory=list)
     imu_gyro_sensor_names: list[str] = Field(
         default_factory=lambda: [
             "imu-pelvis-angular-velocity",
@@ -177,11 +185,17 @@ class MujocoSimModule(
     depth_camera_info: Out[CameraInfo]
     imu: Out[Imu]
     odom: Out[PoseStamped]
+    # Per-tick snapshot of scene-package entities simulated by MuJoCo
+    # (``entity:<id>`` bodies). Same message/topic the browser publishes in
+    # browser-physics mode — consumers don't care who the authority is.
+    entity_state_batch: Out[EntityStateBatch]
     cmd_vel: In[Twist]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._engine: MujocoEngine | None = None
+        self._entity_bodies: list[tuple[EntityDescriptor, int]] = []
+        self._last_entity_state_pub = 0.0
         self._shm: ManipShmWriter | None = None
         self._sim_hooks: Any | None = None
         self._engine_proc: subprocess.Popen[Any] | None = None
@@ -292,6 +306,7 @@ class MujocoSimModule(
         if not self._engine.connect():
             raise RuntimeError("MujocoSimModule: engine.connect() failed")
 
+        self._resolve_entity_bodies()
         self._stop_event.clear()
 
         self._start_kinematic_base_control()
@@ -306,6 +321,36 @@ class MujocoSimModule(
             camera_enabled=self._camera_enabled,
             shm_key=shm_key,
         )
+
+    def _resolve_entity_bodies(self) -> None:
+        """Map configured scene entities to ``entity:<id>`` bodies in the model."""
+        self._entity_bodies = []
+        if not self.config.scene_entities or self._engine is None:
+            return
+        from dimos.simulation.mujoco.entity_scene import entity_body_name
+
+        model = self._engine.model
+        for raw in self.config.scene_entities:
+            try:
+                descriptor = EntityDescriptor.from_wire(raw["descriptor"])
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.warning("MujocoSimModule: bad scene entity metadata: %s", exc)
+                continue
+            body_id = mujoco.mj_name2id(
+                model, mujoco.mjtObj.mjOBJ_BODY, entity_body_name(descriptor.entity_id)
+            )
+            if body_id < 0:
+                logger.warning(
+                    "MujocoSimModule: entity %s not in model (compose_entity_model not used?)",
+                    descriptor.entity_id,
+                )
+                continue
+            self._entity_bodies.append((descriptor, int(body_id)))
+        if self._entity_bodies:
+            logger.info(
+                "MujocoSimModule: publishing entity states for %d scene entities",
+                len(self._entity_bodies),
+            )
 
     def _make_camera_configs(self) -> list[CameraConfig]:
         camera_configs: list[CameraConfig] = []
@@ -636,7 +681,29 @@ class MujocoSimModule(
                     orientation=Quaternion(quat_xyzw),
                 )
             )
+        self._publish_entity_states(engine)
         self._publish_imu(engine)
+
+    def _publish_entity_states(self, engine: MujocoEngine) -> None:
+        """Publish the EntityStateBatch snapshot (throttled — display/lidar
+        consumers, not control)."""
+        if not self._entity_bodies:
+            return
+        now = time.monotonic()
+        if now - self._last_entity_state_pub < _ENTITY_STATE_MIN_INTERVAL_SEC:
+            return
+        self._last_entity_state_pub = now
+
+        poses = engine.get_body_world_poses([body_id for _, body_id in self._entity_bodies])
+        entries: list[tuple[EntityDescriptor, Pose]] = []
+        for (descriptor, _), (pos, wxyz) in zip(self._entity_bodies, poses, strict=True):
+            pose = Pose()
+            pose.position = Vector3(float(pos[0]), float(pos[1]), float(pos[2]))
+            pose.orientation = Quaternion(
+                float(wxyz[1]), float(wxyz[2]), float(wxyz[3]), float(wxyz[0])
+            )
+            entries.append((descriptor, pose))
+        self.entity_state_batch.publish(EntityStateBatch(entries=entries))
 
     def _publish_imu(self, engine: MujocoEngine) -> None:
         shm = self._shm

@@ -148,6 +148,7 @@ const driveLinearSpeed = 0.35;
 const driveStrafeSpeed = 0.25;
 const driveAngularSpeed = 0.8;
 let browserPhysicsEnabled = false;
+let entityAuthorityExternal = false;
 let browserPhysicsPose = { x: 0, y: 0, z: 0.75, yaw: 0 };
 let browserPhysicsCommand = {
   linear: [0, 0, 0],
@@ -851,6 +852,21 @@ function stepBrowserPhysics() {
 
 function configureBrowserPhysics(config) {
   browserPhysicsEnabled = Boolean(config.browserPhysics);
+  // With an external entity authority (MuJoCo sim), entities here are
+  // kinematic mirrors: poses arrive on /entity_state_batch via the LCM
+  // bridge and we never publish our own entity states back.
+  entityAuthorityExternal = config.entityAuthority === "external";
+  if (entityAuthorityExternal) {
+    // whenLcmReady: dimosLcm is an ESM module gated on a network import —
+    // a direct window.dimosLcm check here races it and silently no-ops.
+    whenLcmReady(() => {
+      window.dimosLcm.subscribeChannel(
+        "/entity_state_batch#pimsim.EntityStateBatch",
+        applyExternalEntityBatch,
+      );
+      console.log("[entities] mirroring external entity authority");
+    });
+  }
   if (!browserPhysicsEnabled) return;
   browserVehicleHeight = Number(config.vehicleHeight) || browserVehicleHeight;
   browserStepOffset = Number(config.stepOffset) || browserStepOffset;
@@ -2061,6 +2077,27 @@ function handleEntityDespawn(payload) {
   broadcastEntityStates(true);
 }
 
+// External-authority path: the MuJoCo sim publishes EntityStateBatch
+// (4-byte BE length + JSON) on the bus; the LCM bridge forwards it here.
+// Entities are kinematic mirrors, so applying the mesh pose is enough.
+function applyExternalEntityBatch(payload) {
+  let batch;
+  try {
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    const len = view.getUint32(0, false);
+    const body = new Uint8Array(payload.buffer, payload.byteOffset + 4, len);
+    batch = JSON.parse(new TextDecoder().decode(body));
+  } catch (err) {
+    console.warn("[entities] external batch parse failed", err);
+    return;
+  }
+  for (const state of batch.entities || []) {
+    const entry = entities.get(state.id);
+    if (!entry) continue;
+    applyPoseWire(entry.mesh, state.pose || {});
+  }
+}
+
 function handleEntitySetPose(payload) {
   const entry = entities.get(payload.entity_id);
   if (!entry) return;
@@ -2111,6 +2148,9 @@ function entityStateSignature(states) {
 }
 
 function broadcastEntityStates(force = false) {
+  // External authority (MuJoCo) owns entity state — never echo our
+  // kinematic mirror poses back as if they were simulation output.
+  if (entityAuthorityExternal) return;
   if (entities.size === 0 && !force) return;
   const now = performance.now();
   if (!force && now - lastEntityBroadcast < entityBroadcastIntervalMs) return;
