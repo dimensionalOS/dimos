@@ -391,7 +391,7 @@ mod tests {
     use super::*;
     use serde::Deserialize;
     use std::collections::VecDeque;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
@@ -687,12 +687,13 @@ mod tests {
         let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
         let mut builder = Builder::new(topics(&[("slow", "/slow"), ("out", "/out")]), publish_tx);
 
-        // simulate slow processing function in a receive. decode takes a fn
-        // pointer, so record the completion time through a static
-        static RECV_FINISHED: Mutex<Option<Instant>> = Mutex::new(None);
+        // block the recv worker until the test releases it
+        static RECV_RELEASE: AtomicBool = AtomicBool::new(false);
+        RECV_RELEASE.store(false, Ordering::SeqCst);
         let _input = builder.input("slow", |b| {
-            std::thread::sleep(Duration::from_millis(200));
-            *RECV_FINISHED.lock().unwrap() = Some(Instant::now());
+            while !RECV_RELEASE.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
             Ok(b.to_vec())
         });
         let output = builder.output("out", |b: &Vec<u8>| b.clone());
@@ -708,20 +709,14 @@ mod tests {
 
         output.publish(&vec![42u8]).await.ok();
 
-        // compare event timestamps instead of sampling inside a fixed window,
-        // so scheduling delays can neither flake nor mask the result
-        wait_for("publish to complete and recv dispatch to finish", || {
-            !publish_log.lock().unwrap().is_empty() && RECV_FINISHED.lock().unwrap().is_some()
+        // publish must complete while the recv worker stays blocked
+        wait_for("publish to complete while recv dispatch is blocked", || {
+            !publish_log.lock().unwrap().is_empty()
         })
         .await;
 
-        let publish_time = publish_log.lock().unwrap()[0];
-        let recv_finished_time = RECV_FINISHED.lock().unwrap().unwrap();
-        assert!(
-            publish_time < recv_finished_time,
-            "expected publish to fire during slow recv dispatch, not after it. \
-             The publish path should be independent of recv-side CPU work."
-        );
+        // release the blocked decode so the runtime can shut down
+        RECV_RELEASE.store(true, Ordering::SeqCst);
     }
 
     // propagate_task_failure
