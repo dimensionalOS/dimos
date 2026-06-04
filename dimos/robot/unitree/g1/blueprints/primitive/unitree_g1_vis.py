@@ -17,8 +17,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import rerun as rr
-
 from dimos.core.global_config import global_config
 from dimos.mapping.costmapper import costmap_to_rerun
 from dimos.msgs.nav_msgs.Path import Path
@@ -32,6 +30,8 @@ _PATH_RADIUS_METERS = 0.05
 
 
 def _g1_path_colors(path: Path) -> Any:
+    import rerun as rr
+
     # Empty geometry instead of None so the stale path actually clears.
     if not path.poses:
         return rr.LineStrips3D([])
