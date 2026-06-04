@@ -107,6 +107,7 @@ all_blueprints = {
     "unitree-go2-relocalization": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_relocalization",
     "unitree-go2-ros": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_ros:unitree_go2_ros",
     "unitree-go2-security": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_security:unitree_go2_security",
+    "unitree-go2-wholebody-commander": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_wholebody_commander:unitree_go2_wholebody_commander",
     "unitree-go2-wholebody-coordinator": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_wholebody_coordinator:unitree_go2_wholebody_coordinator",
     "unitree-go2-spatial": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial:unitree_go2_spatial",
     "unitree-go2-temporal-memory": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_temporal_memory:unitree_go2_temporal_memory",
