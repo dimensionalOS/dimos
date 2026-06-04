@@ -16,8 +16,6 @@ from copy import copy
 import time
 from typing import TYPE_CHECKING, Any
 
-from reactivex.observable import Observable
-
 from dimos.core.stream import In, Out
 from dimos.memory2.fanio import Bundle
 from dimos.memory2.stream import Stream
@@ -143,7 +141,6 @@ class Object3D(Detection3DPC):
 class ObjectDBModule(Detection3DModule, TableStr):
     cnt: int = 0
     objects: dict[str, Object3D]
-    object_stream: Observable[Object3D] | None = None
 
     goto: Callable[[PoseStamped], Any] | None = None
 
