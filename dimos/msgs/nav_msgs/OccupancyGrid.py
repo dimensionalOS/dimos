@@ -485,7 +485,7 @@ class OccupancyGrid(Timestamped):
         opacity: float = 1.0,
         cost_range: tuple[int, int] | None = None,
         background: str | None = None,
-        color_lookup_table: np.ndarray | None = None,
+        color_lookup_table: NDArray[np.uint8] | None = None,
     ) -> Archetype:
         """Convert to 3D textured mesh overlay on floor plane.
 
