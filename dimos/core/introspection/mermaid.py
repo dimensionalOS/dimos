@@ -203,6 +203,10 @@ class _ColorAssigner:
             self._next += 1
         return self._assigned[key]
 
+    @property
+    def assigned(self) -> dict[str, str]:
+        return dict(self._assigned)
+
 
 def render_mermaid(
     blueprint_set: Blueprint,
@@ -363,5 +367,5 @@ def render_mermaid(
         for i, color in enumerate(edge_colors):
             lines.append(f"    linkStyle {i} stroke:{color},stroke-width:2px")
 
-    node_color_map = dict(node_color._assigned)
+    node_color_map = node_color.assigned
     return "\n".join(lines), label_color_map, disconnected_labels, node_color_map
