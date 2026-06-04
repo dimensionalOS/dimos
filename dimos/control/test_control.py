@@ -229,6 +229,30 @@ class TestControlCoordinatorLifecycle:
 
         assert LifecycleAdapter.events == ["connect", "activate", "deactivate", "disconnect"]
 
+    def test_start_stop_with_adapter_without_lifecycle_methods(self):
+        """Adapters without activate/deactivate (e.g. twist bases) start and stop cleanly."""
+        from dimos.control.components import make_twist_base_joints
+
+        component = HardwareComponent(
+            hardware_id="base",
+            hardware_type=HardwareType.BASE,
+            joints=make_twist_base_joints("base"),
+            adapter_type="mock_twist_base",
+        )
+        coordinator = ControlCoordinator(publish_joint_state=False, hardware=[component])
+
+        try:
+            coordinator.start()
+            adapter = coordinator._hardware["base"].adapter
+            assert not hasattr(adapter, "activate")
+            assert not hasattr(adapter, "deactivate")
+            # auto_enable falls back to write_enable(True) for adapters without activate()
+            assert adapter.read_enabled()
+        finally:
+            coordinator.stop()
+
+        assert not adapter.is_connected()
+
 
 class TestJointTrajectoryTask:
     def test_initial_state(self, trajectory_task):

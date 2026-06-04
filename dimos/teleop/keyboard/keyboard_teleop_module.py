@@ -48,6 +48,9 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
@@ -136,8 +139,12 @@ class KeyboardTeleopModule(Module):
 
         initial_joints = self._read_joint_positions(self.config.initial_state_timeout)
         if initial_joints is None:
+            logger.error(
+                f"Failed to read initial joint state within "
+                f"{self.config.initial_state_timeout}s; keyboard teleop exiting"
+            )
+            self._stop_event.set()
             return
-        home_pose = JogState.from_fk(model_path, ee_joint_id, self.config.home_joints)
         current_pose = JogState.from_fk(model_path, ee_joint_id, initial_joints).copy()
 
         # Publish initial pose

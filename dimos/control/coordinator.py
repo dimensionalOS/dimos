@@ -225,8 +225,12 @@ class ControlCoordinator(Module):
 
         try:
             if component.auto_enable:
-                if adapter.activate() is False:
-                    raise RuntimeError(f"Failed to activate hardware {component.hardware_id}")
+                activate = getattr(adapter, "activate", None)
+                if callable(activate):
+                    if activate() is False:
+                        raise RuntimeError(f"Failed to activate hardware {component.hardware_id}")
+                elif hasattr(adapter, "write_enable"):
+                    adapter.write_enable(True)
 
             self.add_hardware(adapter, component)
         except Exception:
@@ -709,8 +713,11 @@ class ControlCoordinator(Module):
 
         with self._hardware_lock:
             for hw_id, interface in self._hardware.items():
+                deactivate = getattr(interface.adapter, "deactivate", None)
+                if not callable(deactivate):
+                    continue
                 try:
-                    if interface.adapter.deactivate() is False:
+                    if deactivate() is False:
                         logger.error(f"Hardware {hw_id} deactivate returned False")
                 except Exception as e:
                     logger.error(f"Error deactivating hardware {hw_id}: {e}")
