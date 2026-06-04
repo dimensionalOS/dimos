@@ -37,12 +37,12 @@ from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial import marker_transformer
 from dimos.perception.fiducial.marker_module import MarkerModule
 from dimos.perception.fiducial.marker_transformer import MarkersToBundle
-from dimos.types.timestamped import to_timestamp
 from dimos.perception.fiducial.test_helpers import (
     blank_image,
     camera_info,
     synthetic_marker_image,
 )
+from dimos.types.timestamped import to_timestamp
 
 
 def _marker(image: Image, marker_id: int) -> Detection3DMarker:

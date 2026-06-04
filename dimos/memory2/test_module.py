@@ -299,9 +299,7 @@ class TestFanInAlign:
         away pairs with nothing - so the tolerance keyword actually gates."""
         within = TwoInputFusion()  # tolerance is 0.5
         with MemoryStore() as store:
-            streams = _wire_inputs(
-                within, store, lidar=[(1.0, 11)], pose=[(1.4, 100)]
-            )  # 0.4 < 0.5
+            streams = _wire_inputs(within, store, lidar=[(1.0, 11)], pose=[(1.4, 100)])  # 0.4 < 0.5
             try:
                 matched = within.pipeline(streams["lidar"]).to_list()
             finally:
@@ -635,9 +633,9 @@ class TestFanOutScatter:
             produced = src.transform(CountingDetector())
             disposable = scatter_to_ports(produced, {"low": low, "high": high})
             try:
-                assert _wait_until(
-                    lambda: len(low.published) >= n and len(high.published) >= n
-                ), f"timed out: low={low.published} high={high.published}"
+                assert _wait_until(lambda: len(low.published) >= n and len(high.published) >= n), (
+                    f"timed out: low={low.published} high={high.published}"
+                )
             finally:
                 disposable.dispose()
                 _reset_thread_pool()

@@ -18,9 +18,8 @@ from dataclasses import dataclass, field
 import functools
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+import numpy as np
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
