@@ -246,8 +246,8 @@ class DataPrepModule(Module):
             logger.error("[dataprep] FAILED: %s", err)
 
     def _write_dimos_meta(self, dataset_path: Path, episodes: list[Any]) -> None:
-        """Sidecar describing how this dataset was built. ChunkPolicyModule
-        reads it at inference time to recover the obs/action schema."""
+        """Sidecar describing how this dataset was built, recording the
+        obs/action schema alongside the dataset."""
         meta = {
             "source":      self.config.source,
             "observation": {k: v.model_dump() for k, v in self.config.observation.items()},

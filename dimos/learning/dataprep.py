@@ -65,7 +65,7 @@ class SyncConfig(BaseConfig):
 
 
 class OutputConfig(BaseConfig):
-    format: Literal["lerobot", "hdf5", "rlds"] = "lerobot"
+    format: Literal["lerobot", "hdf5"] = "lerobot"
     path: Path
     metadata: dict[str, Any] = {}
 
@@ -98,7 +98,7 @@ class Sample(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Pure helpers — used by ChunkPolicyModule, format writers, DataPrepModule
+# Pure helpers — used by format writers, DataPrepModule
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -348,8 +348,6 @@ def get_writer(format_name: str) -> Writer:
         from dimos.learning.formats.lerobot import write
     elif format_name == "hdf5":
         from dimos.learning.formats.hdf5 import write
-    elif format_name == "rlds":
-        from dimos.learning.formats.rlds import write
     else:
         raise ValueError(f"Unknown format: {format_name!r}")
     return write

@@ -6,8 +6,8 @@ Two phases:
    LCM streams. `RecordReplay` (CLI flag) captures every active topic
    into `session.db` (memory2 `SqliteStore` format).
 2. **DataPrep** — offline; `DataPrepModule` reads `session.db` and writes
-   a training-ready dataset on disk in one of three formats (LeRobot v2,
-   HDF5, RLDS).
+   a training-ready dataset on disk in one of two formats (LeRobot v2,
+   HDF5).
 
 Same code paths drive both phases as DimOS blueprints. Format dispatch is
 config-only; the same module backs every output format.
@@ -182,7 +182,7 @@ class SyncConfig(BaseConfig):
 
 
 class OutputConfig(BaseConfig):
-    format:   Literal["lerobot", "hdf5", "rlds"] = "lerobot"
+    format:   Literal["lerobot", "hdf5"] = "lerobot"
     path:     Path
     metadata: dict[str, Any] = {}
 ```
@@ -219,8 +219,7 @@ thread is a daemon — there is no mid-iteration cancel.
 ### Pure helpers (in `dataprep.py`)
 
 Stateless, importable without booting a Module. Reused by every format
-writer **and** by `ChunkPolicyModule._build_live_obs` at inference time
-(single source of truth for obs construction).
+writer (single source of truth for obs construction).
 
 ```python
 def resolve_field(msg: Any, ref: StreamField) -> np.ndarray: ...
@@ -259,7 +258,7 @@ def compute_stats(
 
 ### Format writers (`dimos/learning/formats/`)
 
-All three writers consume `Iterator[Sample] + OutputConfig` and accumulate
+Both writers consume `Iterator[Sample] + OutputConfig` and accumulate
 stats via the shared `StreamingStats` (`formats/_stats.py`) so format-
 agnostic stats logic exists in exactly one place.
 
@@ -275,7 +274,6 @@ class StreamingStats:
 |---|---|---|
 | `lerobot` | `meta/{info,episodes,tasks,stats}.json` + `data/chunk-000/episode_NNNNNN.parquet` + `videos/chunk-000/observation.images.<k>/episode_NNNNNN.mp4` | `pyarrow`, `opencv-python` |
 | `hdf5` | single `.hdf5` with `/episodes/episode_NNNNNN/{timestamp, observation/<k>, action/<k>}` + `/stats/<feat>` + `/tasks` + root attrs | `h5py` |
-| `rlds` | `rlds-NNNNN-of-MMMMM.tfrecord` (one `SequenceExample` per episode, RLDS step protocol) + `features.json` + `dataset_info.json` | `tensorflow` |
 
 #### LeRobot v2 specifics
 
@@ -294,10 +292,8 @@ class StreamingStats:
 
 ### dimos_meta.json sidecar
 
-Written into every dataset directory; describes how it was built. Used
-downstream by training (copies + adds policy fields) and by inference
-(reads it at `start()` to recover the obs schema — no operator-supplied
-spec path).
+Written into every dataset directory; describes how it was built and
+records the obs/action schema alongside the data.
 
 ```json
 {
@@ -372,4 +368,4 @@ any consumer of recorded JPEG-encoded `Image` streams, not just learning.
 | `DataPrepModule`       | `Module` | Long-running build job; thread + `get_status` RPC |
 | `RecordReplay`         | transport hook | Captures every stream uniformly; not a per-Module concern |
 | `StreamingStats`       | helper class | No lifecycle, no I/O — pure accumulator |
-| `extract_episodes` / `iter_episode_samples` / `resolve_field` / `compute_stats` | functions | Pure helpers; reused by inference |
+| `extract_episodes` / `iter_episode_samples` / `resolve_field` / `compute_stats` | functions | Pure helpers; reused by every format writer |
