@@ -44,28 +44,12 @@ from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from reactivex.abc import DisposableBase
-
-    from dimos.core.stream import In, Out
+    from dimos.core.stream import In
 
 logger = setup_logger()
 
-T = TypeVar("T")
 TIn = TypeVar("TIn")
 TOut = TypeVar("TOut")
-
-
-def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
-    """Forward each observation's ``data`` from *stream* to a Module ``Out`` port.
-
-    Thin back-compat alias kept so existing imports keep working: it normalizes a
-    raw single-output stream into the bundle-only scatter contract
-    (:func:`normalize_to_bundle`) and fans it to the one port. A stream that
-    already yields a :class:`Bundle` routes by key instead. Iteration runs on the
-    dimos thread pool via :meth:`Stream.observable`.
-    """
-    ports = {out.name: out}
-    return scatter_to_ports(normalize_to_bundle(stream, ports), ports)
 
 
 class _LiveInputs:
@@ -135,7 +119,7 @@ class StreamModule(Module, Generic[TIn, TOut]):
     The pipeline ends in a :class:`Bundle` keyed by ``Out`` port name and
     :func:`scatter_to_ports` fans it out in one subscribe, so a fused pipeline
     computes once per tick regardless of output count. Scatter is M-agnostic: a
-    single ``Out`` reads ``bundle[its_name]`` exactly as several ``Out``\\s each
+    single ``Out`` reads ``bundle[its_name]`` exactly as several ``Out``s each
     read their own key, so a 1->1 module with a ``Bundle`` tail needs no second
     port to "turn on" scatter. A 1:1 pipeline that still yields its raw payload is
     wrapped into a one-key bundle at the start boundary
@@ -148,9 +132,6 @@ class StreamModule(Module, Generic[TIn, TOut]):
 
     _in_streams: dict[str, Stream[Any]]
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-
     @property
     def streams(self) -> StreamAccessor[Stream[Any]]:
         """Live ``Stream`` view of every In port, by name (mirrors ``store.streams``).
@@ -159,8 +140,11 @@ class StreamModule(Module, Generic[TIn, TOut]):
 
             image.align(self.streams.pose, tolerance=0.1)
 
-        Each access returns a fresh ``.live()`` view, so reference a sibling
-        once; use ``.materialize()`` to fan one secondary into two aligns. Do
+        Each access returns a fresh ``.live()`` view whose buffer is
+        single-consumer: feed one accessed view to exactly one ``.align()``
+        edge. To use the same sibling on two edges, access it twice - each
+        access is an independent live subscription. Do not ``.materialize()``
+        a sibling (live streams never end, so it would block forever) and do
         not re-read the primary through this accessor (it would open a second
         live subscription). A missing port name raises ``AttributeError``
         listing the available streams.
@@ -208,7 +192,7 @@ class StreamModule(Module, Generic[TIn, TOut]):
             name: self._wire_input(name, port, store) for name, port in self.inputs.items()
         }
 
-        # First declared In is the primary the pipeline runs over (C1); siblings
+        # First declared In is the primary the pipeline runs over; siblings
         # are reached inside pipeline() via self.streams.<port> for .align().
         primary_name = next(iter(self.inputs))
         produced = self._apply_pipeline(self._in_streams[primary_name].live())
@@ -216,7 +200,7 @@ class StreamModule(Module, Generic[TIn, TOut]):
         # Normalize a raw 1:1 payload into a one-key Bundle at the start boundary so
         # scatter stays bundle-only and M-agnostic; a Bundle-tail pipeline (1->1 or
         # N->M) passes through. One subscribe regardless of port count -> the
-        # pipeline runs once per tick (C3).
+        # pipeline runs once per tick.
         bundled = normalize_to_bundle(produced, self.outputs)
         self.register_disposable(scatter_to_ports(bundled, self.outputs))
 
