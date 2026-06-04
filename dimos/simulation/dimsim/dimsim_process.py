@@ -48,9 +48,9 @@ class DimSimProcess:
         ensure_playwright_chromium(deno_path)
         _kill_port_holder(port)
 
-        render = os.environ.get("DIMSIM_RENDER", "gpu").strip()
-        if os.environ.get("CI"):
-            render = "cpu"
+        render = os.environ.get("DIMSIM_RENDER", "").strip()
+        if not render:
+            render = "cpu" if os.environ.get("CI") else "gpu"
 
         cmd = [
             *base_cmd,
