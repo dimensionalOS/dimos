@@ -170,6 +170,7 @@
         "group": "Contribute",
         "pages": [
           "development/conventions",
+          "development/openspec",
           "development/testing",
           "development/docker",
           "development/grid_testing",
