@@ -16,7 +16,7 @@ FetchContent_MakeAvailable(dimos_lcm)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LCM REQUIRED lcm)
 find_package(Eigen3 REQUIRED)
-find_package(PCL 1.8 REQUIRED COMPONENTS common filters kdtree registration io)
+find_package(PCL 1.8 REQUIRED COMPONENTS common filters kdtree registration)
 find_package(GTSAM REQUIRED)
 
 add_definitions(-DUSE_PCL)

@@ -29,6 +29,10 @@ and overrides `unpackPhase`/`fixupPhase` to use host coreutils
 (`/usr/bin/cp`, `/usr/bin/chmod`) which link against the host's glibc
 2.31 and bypass `fchmodat2`.
 
+`pgo/` is the one local-source wrapper: `build_all.sh` copies
+`dimos/navigation/nav_stack/modules/pgo/cpp` into the wrapper's temporary
+`source/` directory before invoking Nix.
+
 | Module | Upstream | Purpose |
 |---|---|---|
 | `local_planner/` | `dimensionalOS/dimos-module-local-planner/v0.6.0` | Smart-nav local path planner |
@@ -37,6 +41,7 @@ and overrides `unpackPhase`/`fixupPhase` to use host coreutils
 | `path_follower/` | `dimensionalOS/dimos-module-path-follower/v0.2.0` | Pure-pursuit controller |
 | `far_planner/` | `dimensionalOS/dimos-module-far-planner/v0.5.0` | Visibility-graph global planner |
 | `tare_planner/` | `dimensionalOS/dimos-module-tare-planner/v0.1.0` | Frontier exploration planner |
+| `pgo/` | local `dimos/navigation/nav_stack/modules/pgo/cpp` | nav_stack pose graph optimization |
 
 ## Usage
 
@@ -48,13 +53,33 @@ cd dimos/robot/deeprobotics/m20/nix_wrappers/local_planner
 nix --extra-experimental-features 'nix-command flakes' \
   build . --option sandbox false --no-write-lock-file
 
-# Or use the helper script to build all six + relink + pin GC roots:
+# Or use the helper script to build every wrapper + relink + pin GC roots:
 ./build_all.sh
 ```
 
 Note: `--option sandbox false` is required because the overridden
 `unpackPhase` calls `/usr/bin/cp`, which isn't visible inside nix's
 sandbox.
+
+On an Apple Silicon Mac, build in a persistent `linux/arm64` Nix
+container instead of compiling on NOS:
+
+```bash
+# One-time readiness check. Requires OrbStack/Docker to be running.
+./build_on_mac_arm64.sh --ensure-only
+
+# Build one wrapper locally in the ARM Linux container:
+./build_on_mac_arm64.sh pgo
+
+# Build locally, copy the Nix closure to NOS, then relink + pin outputs:
+./build_on_mac_arm64.sh --copy-to-nos --host m20-770-gogo pgo
+```
+
+The container keeps its `/nix/store` in a persistent Docker container
+named `m20-nix-builder`, so repeated builds can reuse fetched inputs and
+previous build outputs. This produces `aarch64-linux` binaries; native
+macOS build products are not usable on NOS. If NOS's Nix store path
+changes, override the remote helper with `NOS_NIX_STORE_BIN=/nix/store/.../bin/nix-store`.
 
 ## Pinning to prevent garbage collection
 
@@ -63,7 +88,7 @@ root. After building, pin each result to survive future GC:
 
 ```bash
 mkdir -p /nix/var/nix/gcroots/custom
-for mod in local_planner arise_slam terrain_analysis path_follower far_planner tare_planner; do
+for mod in local_planner arise_slam terrain_analysis path_follower far_planner tare_planner pgo; do
   path=$(readlink -f dimos/robot/deeprobotics/m20/nix_wrappers/$mod/result)
   ln -sfn "$path" "/nix/var/nix/gcroots/custom/$mod-current"
 done

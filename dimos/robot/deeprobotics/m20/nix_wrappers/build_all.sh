@@ -23,11 +23,22 @@ fi
 
 mkdir -p /nix/var/nix/gcroots/custom
 
-for mod in local_planner arise_slam terrain_analysis path_follower far_planner tare_planner; do
+if [ "$#" -gt 0 ]; then
+    MODULES=("$@")
+else
+    MODULES=(local_planner arise_slam terrain_analysis path_follower far_planner tare_planner pgo)
+fi
+
+for mod in "${MODULES[@]}"; do
     echo "=== Building $mod ==="
     BUILD_DIR="/tmp/m20-nix-wrapper-${mod}"
     rm -rf "$BUILD_DIR"
     cp -R "$WRAPPER_DIR/$mod" "$BUILD_DIR"
+    if [ "$mod" = "pgo" ]; then
+        mkdir -p "$BUILD_DIR/source"
+        cp -R "${DIMOS_ROOT}/dimos/navigation/nav_stack/modules/pgo/cpp/." "$BUILD_DIR/source/"
+        rm -rf "$BUILD_DIR/source/result" "$BUILD_DIR/source/build"
+    fi
     cd "$BUILD_DIR"
     time "$NIX_BIN" \
         --extra-experimental-features 'nix-command flakes' \
@@ -36,16 +47,61 @@ for mod in local_planner arise_slam terrain_analysis path_follower far_planner t
         --no-write-lock-file \
         -o "$WRAPPER_DIR/$mod/result"
 
-    BIN_DIR="${DIMOS_ROOT}/dimos/navigation/smart_nav/modules/${mod}/result/bin"
-    mkdir -p "$BIN_DIR"
     RESOLVED="$(readlink -f "$WRAPPER_DIR/$mod/result")"
-    ln -sfn "$RESOLVED/bin/$mod" "$BIN_DIR/$mod"
+    link_bin() {
+        local bin_name="$1"
+        local bin_dir="$2"
+        mkdir -p "$bin_dir"
+        ln -sfn "$RESOLVED/bin/$bin_name" "$bin_dir/$bin_name"
+    }
+
+    case "$mod" in
+        pgo)
+            link_bin pgo "${DIMOS_ROOT}/dimos/navigation/nav_stack/modules/pgo/cpp/result/bin"
+            ;;
+        far_planner)
+            link_bin far_planner "${DIMOS_ROOT}/dimos/navigation/smart_nav/modules/far_planner/result/bin"
+            if [ -f "$RESOLVED/bin/far_planner_native" ]; then
+                link_bin far_planner_native "${DIMOS_ROOT}/dimos/navigation/nav_stack/modules/far_planner/result/bin"
+            else
+                mkdir -p "${DIMOS_ROOT}/dimos/navigation/nav_stack/modules/far_planner/result/bin"
+                ln -sfn "$RESOLVED/bin/far_planner" \
+                    "${DIMOS_ROOT}/dimos/navigation/nav_stack/modules/far_planner/result/bin/far_planner_native"
+            fi
+            ;;
+        arise_slam)
+            link_bin "$mod" "${DIMOS_ROOT}/dimos/navigation/smart_nav/modules/${mod}/result/bin"
+            ;;
+        *)
+            link_bin "$mod" "${DIMOS_ROOT}/dimos/navigation/smart_nav/modules/${mod}/result/bin"
+            if [ -d "${DIMOS_ROOT}/dimos/navigation/nav_stack/modules/${mod}" ]; then
+                link_bin "$mod" "${DIMOS_ROOT}/dimos/navigation/nav_stack/modules/${mod}/result/bin"
+            fi
+            ;;
+    esac
     ln -sfn "$RESOLVED" "/nix/var/nix/gcroots/custom/$mod-current"
     echo "[build_all] $mod → $RESOLVED/bin/$mod (pinned)"
 done
 
 echo
 echo "=== Done. Bindings: ==="
-for mod in local_planner arise_slam terrain_analysis path_follower far_planner tare_planner; do
-    readlink "${DIMOS_ROOT}/dimos/navigation/smart_nav/modules/${mod}/result/bin/${mod}"
+for mod in "${MODULES[@]}"; do
+    case "$mod" in
+        pgo)
+            readlink "${DIMOS_ROOT}/dimos/navigation/nav_stack/modules/pgo/cpp/result/bin/pgo"
+            ;;
+        far_planner)
+            readlink "${DIMOS_ROOT}/dimos/navigation/smart_nav/modules/far_planner/result/bin/far_planner"
+            readlink "${DIMOS_ROOT}/dimos/navigation/nav_stack/modules/far_planner/result/bin/far_planner_native"
+            ;;
+        arise_slam)
+            readlink "${DIMOS_ROOT}/dimos/navigation/smart_nav/modules/${mod}/result/bin/${mod}"
+            ;;
+        *)
+            readlink "${DIMOS_ROOT}/dimos/navigation/smart_nav/modules/${mod}/result/bin/${mod}"
+            if [ -d "${DIMOS_ROOT}/dimos/navigation/nav_stack/modules/${mod}" ]; then
+                readlink "${DIMOS_ROOT}/dimos/navigation/nav_stack/modules/${mod}/result/bin/${mod}"
+            fi
+            ;;
+    esac
 done
