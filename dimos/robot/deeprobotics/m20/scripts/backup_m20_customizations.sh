@@ -41,7 +41,7 @@ echo "[backup] 5/8 nix store summary (sizes/counts — full store too big to tar
 ssh $SSH_OPTS "${NOS_USER}@${NOS_INTERNAL}" 'df -h /var/opt/robot/data; echo ---count---; ls /nix/store | wc -l; echo ---drdds/slam builds---; ls -d /nix/store/*-drdds_lidar_bridge-* /nix/store/*-smartnav-* /nix/store/*-fastlio2* 2>/dev/null' > "${OUT_DIR}/nix_store_summary.txt"
 
 echo "[backup] 6/8 launch scripts in /tmp"
-for s in start_smartnav.sh start_smartnav_nonav.sh start_airy.sh wrap_build.sh; do
+for s in start_nav_stack.sh start_nav_stack_nonav.sh start_airy.sh wrap_build.sh; do
     ssh $SSH_OPTS "${NOS_USER}@${NOS_INTERNAL}" "cat /tmp/${s} 2>/dev/null" > "${OUT_DIR}/tmp_${s}" || true
 done
 

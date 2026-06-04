@@ -18,8 +18,9 @@
 All modules run on the NOS host via nix:
 - DrddsLidarBridge: reads drdds SHM (lidar + IMU) and publishes to LCM
 - SLAM: either AriseSLAM or FastLio2 (C++ NativeModule, env-selectable)
-- SmartNav: full planning stack (terrain analysis, local planner, path
-  follower, simple planner, PGO, CmdVelMux, ClickToGoal)
+- NavStack: planning stack (terrain analysis, local planner, path follower,
+  simple planner, PGO)
+- MovementManager: click-to-goal relay plus teleop/nav velocity mux
 - NavCmdPub: raw FastDDS publisher for /NAV_CMD (no rclpy needed)
 - M20Connection: camera (RTSP), robot state (UDP heartbeat, gait, mode)
 
@@ -27,8 +28,8 @@ Data flow:
     drdds_recv (host) → POSIX SHM
     → DrddsLidarBridge → raw_points + imu (LCM)
     → SLAM backend → registered_scan + odometry
-    → SmartNav (TerrainAnalysis → LocalPlanner → PathFollower)
-    → CmdVelMux → cmd_vel → NavCmdPub → rt/NAV_CMD (FastDDS) → AOS motors
+    → NavStack (TerrainAnalysis → SimplePlanner → LocalPlanner → PathFollower)
+    → MovementManager → cmd_vel → NavCmdPub → rt/NAV_CMD (FastDDS) → AOS motors
 
 SLAM backend is selected by the `M20_SLAM_BACKEND` env var:
     arise (default) — AriseSLAM single-pass laser-mapping (current state;
@@ -42,7 +43,8 @@ import os
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.navigation.smart_nav.main import smart_nav, smart_nav_rerun_config
+from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.navigation.smart_nav.modules.arise_slam.arise_slam import AriseSLAM
 from dimos.navigation.smart_nav.modules.fastlio2.fastlio2 import FastLio2
 from dimos.robot.deeprobotics.m20.blueprints.nav.m20_rerun import (
@@ -70,7 +72,7 @@ M20_LIDAR_HEIGHT = 0.47  # lidar at 47cm in agile stance
 # CPU affinity for the latency-critical native sensor/SLAM path.
 # NOS boots with `isolcpus=4,5,6,7` so cores 4-7 are reserved (no default
 # scheduler placement). Pinning the native binaries there gives them isolation
-# while Python smartnav workers run on 0-3. Without this pinning, 15+ R/D
+# while Python nav-stack workers run on 0-3. Without this pinning, 15+ R/D
 # threads crammed onto 4 scheduler-default cores produced 3-4 SECOND IMU
 # delivery gaps during rotation, which caused FAST-LIO2 to extrapolate forward
 # on stale IMU and lock ICP to wrong local minima. See FASTLIO2_LOG Finding
@@ -186,7 +188,7 @@ if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy":
         ),
     )
 
-#   M20_NAV_ENABLED=0 drops the entire smart_nav() planner stack
+#   M20_NAV_ENABLED=0 drops the entire nav_stack planner stack
 # (simple_planner / local_planner / path_follower / terrain_analysis).
 # Useful for pure SLAM + teleop testing where an autonomous planner
 # could inject conflicting cmd_vel and make it impossible to isolate
@@ -197,6 +199,10 @@ _NAV_USE_PGO_CORRECTED_ODOMETRY = (
     os.environ.get("M20_NAV_USE_PGO_CORRECTED_ODOMETRY", "1" if _NAV_USE_PGO else "0").strip()
     != "0"
 )
+_NAV_WORLD_FRAME = os.environ.get(
+    "M20_NAV_WORLD_FRAME",
+    "map" if _NAV_USE_PGO else "odom",
+).strip()
 
 
 def _env_float(name: str, default: float) -> float:
@@ -212,21 +218,12 @@ _NAV_MAX_SPEED = _env_float("M20_NAV_MAX_SPEED", 0.20)
 _NAV_AUTONOMY_SPEED = _env_float("M20_NAV_AUTONOMY_SPEED", _NAV_MAX_SPEED)
 _NAV_MAX_ACCEL = _env_float("M20_NAV_MAX_ACCEL", 0.30)
 _NAV_MAX_YAW_RATE = _env_float("M20_NAV_MAX_YAW_RATE", 40.0)
-_NAV_MAX_COMMAND_DURATION = _env_float("M20_NAV_MAX_COMMAND_DURATION", 180.0)
 _NAV_OMNI_DIR_GOAL_THRESHOLD = _env_float("M20_NAV_OMNI_DIR_GOAL_THRESHOLD", 2.0)
 _NAV_OMNI_DIR_DIFF_THRESHOLD = _env_float("M20_NAV_OMNI_DIR_DIFF_THRESHOLD", 3.2)
-_NAV_YAW_RATE_GAIN = _env_float("M20_NAV_YAW_RATE_GAIN", 1.5)
-_NAV_STOP_YAW_RATE_GAIN = _env_float("M20_NAV_STOP_YAW_RATE_GAIN", 1.5)
-_NAV_DIR_DIFF_THRESHOLD = _env_float("M20_NAV_DIR_DIFF_THRESHOLD", 0.4)
 _NAV_GOAL_REACHED_THRESHOLD = _env_float("M20_NAV_GOAL_REACHED_THRESHOLD", 0.30)
-_NAV_STOP_DISTANCE_THRESHOLD = _env_float(
-    "M20_NAV_STOP_DISTANCE_THRESHOLD",
-    _NAV_GOAL_REACHED_THRESHOLD,
-)
 _NAV_SLOW_DOWN_DISTANCE_THRESHOLD = _env_float("M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD", 0.875)
 _NAV_GOAL_BEHIND_RANGE = _env_float("M20_NAV_GOAL_BEHIND_RANGE", 0.30)
 _NAV_FREEZE_ANG = _env_float("M20_NAV_FREEZE_ANG", 180.0)
-_NAV_ROBOT_EXCLUSION_RADIUS = _env_float("M20_NAV_ROBOT_EXCLUSION_RADIUS", 0.0)
 # TerrainAnalysis' upstream noDecayDis keeps points within the robot-local
 # radius forever. On M20 that preserves stale near-body artifacts from gait
 # motion and turns them into phantom local obstacles. Let near-robot terrain
@@ -238,13 +235,17 @@ if _TERRAIN_VOXEL_SIZE <= 0.0:
 _TERRAIN_VOXEL_HALF_WIDTH = math.ceil(10.0 / _TERRAIN_VOXEL_SIZE)
 
 _nav_modules: tuple = ()
+_nav_remappings: list[tuple] = []
 if _NAV_ENABLED:
     _nav_modules = (
-        smart_nav(
-            use_simple_planner=True,
+        create_nav_stack(
+            planner="simple",
             use_pgo=_NAV_USE_PGO,
             use_pgo_corrected_odometry=_NAV_USE_PGO_CORRECTED_ODOMETRY,
             vehicle_height=M20_HEIGHT_CLEARANCE,
+            max_speed=_NAV_MAX_SPEED,
+            waypoint_threshold=_NAV_GOAL_REACHED_THRESHOLD,
+            replan_rate=5.0,
             terrain_analysis={
                 "build_command": None,
                 "terrain_voxel_size": _TERRAIN_VOXEL_SIZE,
@@ -257,6 +258,7 @@ if _NAV_ENABLED:
                 "build_command": None,
                 "max_speed": _NAV_MAX_SPEED,
                 "autonomy_speed": _NAV_AUTONOMY_SPEED,
+                "obstacle_height_threshold": 0.20,
                 "goal_reached_threshold": _NAV_GOAL_REACHED_THRESHOLD,
                 "goal_behind_range": _NAV_GOAL_BEHIND_RANGE,
                 "freeze_ang": _NAV_FREEZE_ANG,
@@ -268,36 +270,39 @@ if _NAV_ENABLED:
                 "autonomy_speed": _NAV_AUTONOMY_SPEED,
                 "max_acceleration": _NAV_MAX_ACCEL,
                 "max_yaw_rate": _NAV_MAX_YAW_RATE,
-                "yaw_rate_gain": _NAV_YAW_RATE_GAIN,
-                "stop_yaw_rate_gain": _NAV_STOP_YAW_RATE_GAIN,
+                "goal_tolerance": _NAV_GOAL_REACHED_THRESHOLD,
                 "omni_dir_goal_threshold": _NAV_OMNI_DIR_GOAL_THRESHOLD,
                 "omni_dir_diff_threshold": _NAV_OMNI_DIR_DIFF_THRESHOLD,
-                "direction_difference_threshold": _NAV_DIR_DIFF_THRESHOLD,
-                "stop_distance_threshold": _NAV_STOP_DISTANCE_THRESHOLD,
                 "slow_down_distance_threshold": _NAV_SLOW_DOWN_DISTANCE_THRESHOLD,
                 "two_way_drive": False,
             },
             simple_planner={
+                "world_frame": _NAV_WORLD_FRAME,
                 "cell_size": 0.3,
                 "obstacle_height_threshold": 0.20,
                 "inflation_radius": 0.4,
                 "ground_offset_below_robot": M20_HEIGHT_CLEARANCE,
-                "robot_exclusion_radius": _NAV_ROBOT_EXCLUSION_RADIUS,
                 "goal_reached_threshold": _NAV_GOAL_REACHED_THRESHOLD,
                 "lookahead_distance": 2.0,
                 "replan_rate": 5.0,
                 "replan_cooldown": 2.0,
             },
             terrain_map_ext={
-                "robot_exclusion_radius": _NAV_ROBOT_EXCLUSION_RADIUS,
+                "world_frame": _NAV_WORLD_FRAME,
+                "decay_time": 300.0,
+                "terrain_voxel_size": _TERRAIN_VOXEL_SIZE,
             },
-            cmd_vel_mux={
-                "max_nav_command_duration_sec": _NAV_MAX_COMMAND_DURATION,
-            },
+            pgo={"build_command": None},
         ),
+        MovementManager.blueprint(),
     )
+    _nav_remappings = [
+        # SimplePlanner owns the local-planner waypoint. MovementManager still
+        # publishes `goal` from viewer clicks and muxes nav/teleop cmd_vel.
+        (MovementManager, "way_point", "_mgr_way_point_unused"),
+    ]
 
-m20_smartnav_native = (
+m20_nav_stack_native = (
     autoconnect(
         m20_connection(
             ip="10.21.31.103",
@@ -315,7 +320,7 @@ m20_smartnav_native = (
         *_nav_modules,
         vis_module(
             viewer_backend=global_config.viewer,
-            rerun_config=smart_nav_rerun_config(
+            rerun_config=nav_stack_rerun_config(
                 {
                     "blueprint": m20_rerun_blueprint,
                     "visual_override": {
@@ -331,7 +336,8 @@ m20_smartnav_native = (
                     "static": {
                         "world/tf/base_link": static_robot,
                     },
-                }
+                },
+                show_registered_scan=True,
             ),
         ),
     )
@@ -353,6 +359,12 @@ m20_smartnav_native = (
                 if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy"
                 else []
             ),
+            *(
+                [(FastLio2, "global_map", "global_map_fastlio")]
+                if _SLAM_BACKEND == "fastlio2"
+                else []
+            ),
+            *_nav_remappings,
         ]
     )
     .global_config(
@@ -368,11 +380,11 @@ m20_smartnav_native = (
 def main() -> None:
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
-    coordinator = ModuleCoordinator.build(m20_smartnav_native)
+    coordinator = ModuleCoordinator.build(m20_nav_stack_native)
     coordinator.loop()
 
 
-__all__ = ["m20_smartnav_native"]
+__all__ = ["m20_nav_stack_native"]
 
 if __name__ == "__main__":
     main()

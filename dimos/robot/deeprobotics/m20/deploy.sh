@@ -17,8 +17,8 @@
 #   ./deploy.sh restore-rsdriver-config [--host <hostname>]  # Restore our rsdriver config edits (post-OTA)
 #   ./deploy.sh validate [--host <hostname>]             # End-to-end healthcheck (services, msgs flowing, config)
 #   ./deploy.sh backup-customizations [--host <hostname>]    # Snapshot pre-OTA NOS state to ~/m20_backup_<ts>/
-#   ./deploy.sh start [--host <hostname>]                # Start smartnav on NOS
-#   ./deploy.sh stop [--host <hostname>]                 # Stop smartnav
+#   ./deploy.sh start [--host <hostname>]                # Start nav stack on NOS
+#   ./deploy.sh stop [--host <hostname>]                 # Stop nav stack
 #   ./deploy.sh restart [--host <hostname>]              # Stop + start
 #   ./deploy.sh bridge-start [--host <hostname>]         # Restart drdds SHM bridge
 #   ./deploy.sh bridge-stop [--host <hostname>]          # Stop bridge
@@ -64,8 +64,9 @@ NOS_USER="${2:-user}"
 AOS_INTERNAL="10.21.31.103"
 DEPLOY_DIR="/var/opt/robot/data/dimos"
 VENV="/home/user/dimos-venv"
-SMARTNAV_MODULE="dimos.robot.deeprobotics.m20.blueprints.nav.m20_smartnav_native"
-SMARTNAV_LOG="/tmp/smartnav_native.log"
+NAV_STACK_MODULE="dimos.robot.deeprobotics.m20.blueprints.nav.m20_nav_stack_native"
+NAV_STACK_LOG="/tmp/m20_nav_stack_native.log"
+NAV_STACK_PID="/tmp/m20_nav_stack.pid"
 M20_SLAM_BACKEND="${M20_SLAM_BACKEND:-fastlio2}"
 M20_FASTLIO2_IMU="${M20_FASTLIO2_IMU:-airy}"
 M20_LIDAR_SOURCE="${M20_LIDAR_SOURCE:-front}"
@@ -76,18 +77,12 @@ M20_NAV_MAX_SPEED="${M20_NAV_MAX_SPEED:-0.20}"
 M20_NAV_AUTONOMY_SPEED="${M20_NAV_AUTONOMY_SPEED:-${M20_NAV_MAX_SPEED}}"
 M20_NAV_MAX_ACCEL="${M20_NAV_MAX_ACCEL:-0.30}"
 M20_NAV_MAX_YAW_RATE="${M20_NAV_MAX_YAW_RATE:-40.0}"
-M20_NAV_MAX_COMMAND_DURATION="${M20_NAV_MAX_COMMAND_DURATION:-180.0}"
 M20_NAV_OMNI_DIR_GOAL_THRESHOLD="${M20_NAV_OMNI_DIR_GOAL_THRESHOLD:-2.0}"
 M20_NAV_OMNI_DIR_DIFF_THRESHOLD="${M20_NAV_OMNI_DIR_DIFF_THRESHOLD:-3.2}"
-M20_NAV_YAW_RATE_GAIN="${M20_NAV_YAW_RATE_GAIN:-1.5}"
-M20_NAV_STOP_YAW_RATE_GAIN="${M20_NAV_STOP_YAW_RATE_GAIN:-1.5}"
-M20_NAV_DIR_DIFF_THRESHOLD="${M20_NAV_DIR_DIFF_THRESHOLD:-0.4}"
 M20_NAV_GOAL_REACHED_THRESHOLD="${M20_NAV_GOAL_REACHED_THRESHOLD:-0.30}"
-M20_NAV_STOP_DISTANCE_THRESHOLD="${M20_NAV_STOP_DISTANCE_THRESHOLD:-${M20_NAV_GOAL_REACHED_THRESHOLD}}"
 M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD="${M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD:-0.875}"
 M20_NAV_GOAL_BEHIND_RANGE="${M20_NAV_GOAL_BEHIND_RANGE:-0.30}"
 M20_NAV_FREEZE_ANG="${M20_NAV_FREEZE_ANG:-180.0}"
-M20_NAV_ROBOT_EXCLUSION_RADIUS="${M20_NAV_ROBOT_EXCLUSION_RADIUS:-0.0}"
 M20_TERRAIN_NO_DECAY_DISTANCE="${M20_TERRAIN_NO_DECAY_DISTANCE:-0.0}"
 M20_TERRAIN_VOXEL_SIZE="${M20_TERRAIN_VOXEL_SIZE:-1.0}"
 M20_RERUN_REGISTERED_SCAN_HZ="${M20_RERUN_REGISTERED_SCAN_HZ:-0.2}"
@@ -187,6 +182,12 @@ case "${CMD}" in
             mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/path_follower/result/bin
             mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/far_planner/result/bin
             mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/tare_planner/result/bin
+            mkdir -p ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/terrain_analysis/result/bin
+            mkdir -p ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/local_planner/result/bin
+            mkdir -p ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/path_follower/result/bin
+            mkdir -p ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/far_planner/result/bin
+            mkdir -p ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/tare_planner/result/bin
+            mkdir -p ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/pgo/cpp/result/bin
 
             link_newest() {
                 # \$1 = store glob (directory pattern), \$2 = bin name, \$3 = dest symlink
@@ -219,14 +220,26 @@ case "${CMD}" in
                 ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/arise_slam/result/bin/arise_slam
             link_current_or_newest terrain_analysis '/nix/store/*-smartnav-terrain-analysis-*/' terrain_analysis \
                 ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/terrain_analysis/result/bin/terrain_analysis
+            link_current_or_newest terrain_analysis '/nix/store/*-smartnav-terrain-analysis-*/' terrain_analysis \
+                ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/terrain_analysis/result/bin/terrain_analysis
             link_current_or_newest local_planner '/nix/store/*-smartnav-local-planner-*/' local_planner \
                 ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/local_planner/result/bin/local_planner
+            link_current_or_newest local_planner '/nix/store/*-smartnav-local-planner-*/' local_planner \
+                ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/local_planner/result/bin/local_planner
             link_current_or_newest path_follower '/nix/store/*-smartnav-path-follower-*/' path_follower \
                 ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/path_follower/result/bin/path_follower
+            link_current_or_newest path_follower '/nix/store/*-smartnav-path-follower-*/' path_follower \
+                ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/path_follower/result/bin/path_follower
             link_current_or_newest far_planner '/nix/store/*-far_planner_native-*/' far_planner \
                 ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/far_planner/result/bin/far_planner
+            link_current_or_newest far_planner '/nix/store/*-far_planner_native-*/' far_planner_native \
+                ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/far_planner/result/bin/far_planner_native
             link_current_or_newest tare_planner '/nix/store/*-smartnav-tare-planner-*/' tare_planner \
                 ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/tare_planner/result/bin/tare_planner
+            link_current_or_newest tare_planner '/nix/store/*-smartnav-tare-planner-*/' tare_planner \
+                ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/tare_planner/result/bin/tare_planner
+            link_current_or_newest pgo '/nix/store/*-smartnav-pgo-*/' pgo \
+                ${DEPLOY_DIR}/dimos/navigation/nav_stack/modules/pgo/cpp/result/bin/pgo
 
             # nav_cmd_pub (built via cmake, not nix — needs /usr/local/lib/libdrdds.so)
             # Build dir lives in the synced source tree so it survives reboots (ext4).
@@ -285,13 +298,16 @@ echo "[provision] Disabling vendor NOS navigation stack..."
 # These factory services consume lidar/imu resources and can publish
 # navigation outputs that conflict with dimos. OTA resets service enablement,
 # so keep this in provisioning rather than relying on one-off manual stops.
+# Masking is intentional: some vendor units can be pulled back in by
+# dependencies even after disable, while mask survives normal reboots.
 # Keep the required robot services alone: rsdriver, yesense, handler,
 # charge_manager, reflective_column, and hsLidar are not disabled here.
 for svc in localization.service planner.service global_planner.service passable_area.service; do
     if systemctl list-unit-files "$svc" >/dev/null 2>&1 \
        && systemctl list-unit-files "$svc" | grep -q "$svc"; then
         systemctl disable --now "$svc" 2>/dev/null || true
-        printf "  %-24s stopped + disabled\n" "$svc"
+        systemctl mask "$svc" 2>/dev/null || true
+        printf "  %-24s stopped + disabled + masked\n" "$svc"
     else
         printf "  %-24s not present\n" "$svc"
     fi
@@ -408,10 +424,10 @@ cat > /etc/sysctl.d/99-m20-nav.conf <<'SYSCTL'
 # LCM carries 2.8MB lidar PointCloud2 fragments over UDP multicast.
 # Default 208KB recv buffer drops fragments → incomplete scans → SLAM fails.
 # Recommended by https://lcm-proj.github.io/lcm/content/multicast-setup.html
-net.core.rmem_max=33554432
-net.core.rmem_default=33554432
-net.core.wmem_max=33554432
-net.core.wmem_default=33554432
+net.core.rmem_max=67108864
+net.core.rmem_default=67108864
+net.core.wmem_max=67108864
+net.core.wmem_default=67108864
 SYSCTL
 sysctl --system | grep -E 'rmem|wmem' | head -4 || true
 
@@ -525,8 +541,8 @@ PROVISION_EOF
         # Build under a fresh build dir owned by the user. CMakeLists is at
         # ../, so we configure once and rebuild as needed. We build:
         #   - drdds_recv (the runtime daemon, installed to /opt)
-        #   - nav_cmd_pub (smartnav binary)
-        #   - drdds_lidar_bridge + airy_imu_bridge (smartnav sensor binaries)
+        #   - nav_cmd_pub (nav-stack command publisher)
+        #   - drdds_lidar_bridge + airy_imu_bridge (nav-stack sensor binaries)
         echo "  cmake configure (idempotent) + build native bridge targets..."
         remote_ssh "
             set -e
@@ -648,7 +664,7 @@ PROVISION_EOF
             printf '%s\n' "$bad_conflicts" | sed 's/^/    /' >&2
             rc=1
         else
-            echo "  vendor nav conflicts:      OK (inactive/disabled)"
+            echo "  vendor nav conflicts:      OK (inactive/disabled or masked)"
         fi
         # 3. drdds_recv process alive
         if ! remote_ssh 'pgrep -f /opt/drdds_bridge/lib/drdds_bridge/drdds_recv >/dev/null'; then
@@ -724,10 +740,10 @@ PROVISION_EOF
         ;;
 
     start)
-        echo "=== Starting smartnav (backend=${M20_SLAM_BACKEND}, imu=${M20_FASTLIO2_IMU}, lidar_source=${M20_LIDAR_SOURCE}, nav=${M20_NAV_ENABLED}, pgo=${M20_NAV_USE_PGO}, pgo_corrected_odom=${M20_NAV_USE_PGO_CORRECTED_ODOMETRY}, viewer=${VIEWER}, speed=${M20_NAV_MAX_SPEED}, yaw=${M20_NAV_MAX_YAW_RATE}, yaw_gain=${M20_NAV_YAW_RATE_GAIN}, stop_yaw_gain=${M20_NAV_STOP_YAW_RATE_GAIN}, dir_diff=${M20_NAV_DIR_DIFF_THRESHOLD}, stop_dist=${M20_NAV_STOP_DISTANCE_THRESHOLD}, slow_down=${M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD}, omni_threshold=${M20_NAV_OMNI_DIR_GOAL_THRESHOLD}, omni_diff=${M20_NAV_OMNI_DIR_DIFF_THRESHOLD}, goal_reached=${M20_NAV_GOAL_REACHED_THRESHOLD}, goal_behind=${M20_NAV_GOAL_BEHIND_RANGE}, freeze_ang=${M20_NAV_FREEZE_ANG}, robot_exclusion=${M20_NAV_ROBOT_EXCLUSION_RADIUS}, terrain_no_decay=${M20_TERRAIN_NO_DECAY_DISTANCE}, terrain_voxel=${M20_TERRAIN_VOXEL_SIZE}, rerun_registered_scan_hz=${M20_RERUN_REGISTERED_SCAN_HZ}, rerun_debug_cloud_hz=${M20_RERUN_DEBUG_CLOUD_HZ}, slam_cores=${M20_SLAM_CORES}, fastlio_cores=${M20_FASTLIO_CORES}, drdds_lidar_cores=${M20_DRDDS_LIDAR_CORES}, airy_imu_cores=${M20_AIRY_IMU_CORES}, rerun_cores=${M20_RERUN_CORES:-none}) ==="
+        echo "=== Starting M20 nav stack (backend=${M20_SLAM_BACKEND}, imu=${M20_FASTLIO2_IMU}, lidar_source=${M20_LIDAR_SOURCE}, nav=${M20_NAV_ENABLED}, pgo=${M20_NAV_USE_PGO}, pgo_corrected_odom=${M20_NAV_USE_PGO_CORRECTED_ODOMETRY}, viewer=${VIEWER}, speed=${M20_NAV_MAX_SPEED}, yaw=${M20_NAV_MAX_YAW_RATE}, accel=${M20_NAV_MAX_ACCEL}, slow_down=${M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD}, omni_threshold=${M20_NAV_OMNI_DIR_GOAL_THRESHOLD}, omni_diff=${M20_NAV_OMNI_DIR_DIFF_THRESHOLD}, goal_reached=${M20_NAV_GOAL_REACHED_THRESHOLD}, goal_behind=${M20_NAV_GOAL_BEHIND_RANGE}, freeze_ang=${M20_NAV_FREEZE_ANG}, terrain_no_decay=${M20_TERRAIN_NO_DECAY_DISTANCE}, terrain_voxel=${M20_TERRAIN_VOXEL_SIZE}, rerun_registered_scan_hz=${M20_RERUN_REGISTERED_SCAN_HZ}, rerun_debug_cloud_hz=${M20_RERUN_DEBUG_CLOUD_HZ}, slam_cores=${M20_SLAM_CORES}, fastlio_cores=${M20_FASTLIO_CORES}, drdds_lidar_cores=${M20_DRDDS_LIDAR_CORES}, airy_imu_cores=${M20_AIRY_IMU_CORES}, rerun_cores=${M20_RERUN_CORES:-none}) ==="
         ssh -n ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "bash -lc '
             # Clear old log first so the readiness poll only sees this boot.
-            : > ${SMARTNAV_LOG}
+            : > ${NAV_STACK_LOG}
             cd ${DEPLOY_DIR}
             setsid -f env \
                 M20_SLAM_BACKEND=${M20_SLAM_BACKEND} \
@@ -744,28 +760,22 @@ PROVISION_EOF
                 M20_NAV_AUTONOMY_SPEED=${M20_NAV_AUTONOMY_SPEED} \
                 M20_NAV_MAX_ACCEL=${M20_NAV_MAX_ACCEL} \
                 M20_NAV_MAX_YAW_RATE=${M20_NAV_MAX_YAW_RATE} \
-                M20_NAV_MAX_COMMAND_DURATION=${M20_NAV_MAX_COMMAND_DURATION} \
                 M20_NAV_OMNI_DIR_GOAL_THRESHOLD=${M20_NAV_OMNI_DIR_GOAL_THRESHOLD} \
                 M20_NAV_OMNI_DIR_DIFF_THRESHOLD=${M20_NAV_OMNI_DIR_DIFF_THRESHOLD} \
-                M20_NAV_YAW_RATE_GAIN=${M20_NAV_YAW_RATE_GAIN} \
-                M20_NAV_STOP_YAW_RATE_GAIN=${M20_NAV_STOP_YAW_RATE_GAIN} \
-                M20_NAV_DIR_DIFF_THRESHOLD=${M20_NAV_DIR_DIFF_THRESHOLD} \
-                M20_NAV_STOP_DISTANCE_THRESHOLD=${M20_NAV_STOP_DISTANCE_THRESHOLD} \
                 M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD=${M20_NAV_SLOW_DOWN_DISTANCE_THRESHOLD} \
                 M20_NAV_GOAL_REACHED_THRESHOLD=${M20_NAV_GOAL_REACHED_THRESHOLD} \
                 M20_NAV_GOAL_BEHIND_RANGE=${M20_NAV_GOAL_BEHIND_RANGE} \
                 M20_NAV_FREEZE_ANG=${M20_NAV_FREEZE_ANG} \
-                M20_NAV_ROBOT_EXCLUSION_RADIUS=${M20_NAV_ROBOT_EXCLUSION_RADIUS} \
                 M20_TERRAIN_NO_DECAY_DISTANCE=${M20_TERRAIN_NO_DECAY_DISTANCE} \
                 M20_TERRAIN_VOXEL_SIZE=${M20_TERRAIN_VOXEL_SIZE} \
                 M20_RERUN_REGISTERED_SCAN_HZ=${M20_RERUN_REGISTERED_SCAN_HZ} \
                 M20_RERUN_REGISTERED_SCAN_MAX_POINTS=${M20_RERUN_REGISTERED_SCAN_MAX_POINTS} \
                 M20_RERUN_DEBUG_CLOUD_HZ=${M20_RERUN_DEBUG_CLOUD_HZ} \
                 VIEWER=${VIEWER} \
-                ${VENV}/bin/python -m ${SMARTNAV_MODULE} \
-                </dev/null > ${SMARTNAV_LOG} 2>&1
+                ${VENV}/bin/python -m ${NAV_STACK_MODULE} \
+                </dev/null > ${NAV_STACK_LOG} 2>&1
             sleep 0.2
-            pgrep -n -f \"${VENV}/bin/python -m ${SMARTNAV_MODULE}\" > /tmp/smartnav.pid || true
+            pgrep -n -f \"${VENV}/bin/python -m ${NAV_STACK_MODULE}\" > ${NAV_STACK_PID} || true
         '"
         # Poll for readiness signals instead of a blind 30s sleep.
         # We require: (a) nav_cmd_pub matched=1 (FastDDS path to AOS alive)
@@ -774,15 +784,15 @@ PROVISION_EOF
         for i in $(seq 1 40); do
             echo -n "."
             sleep 0.5
-            ready=$(remote_ssh "grep -ac 'matched=1' ${SMARTNAV_LOG} 2>/dev/null || true")
-            lidar=$(remote_ssh "grep -ac 'drdds_bridge.*lidar #' ${SMARTNAV_LOG} 2>/dev/null || true")
+            ready=$(remote_ssh "grep -ac 'matched=1' ${NAV_STACK_LOG} 2>/dev/null || true")
+            lidar=$(remote_ssh "grep -ac 'drdds_bridge.*lidar #' ${NAV_STACK_LOG} 2>/dev/null || true")
             if [ "${ready}" -ge 1 ] && [ "${lidar}" -ge 1 ]; then
                 echo " ready (${i}x 0.5s)"
                 break
             fi
         done
         echo "  Status:"
-        remote_ssh "grep -a -E 'matched|keyframe|Running' ${SMARTNAV_LOG} | grep -v sec_nsec | grep -v wireframe | head -5" || true
+        remote_ssh "grep -a -E 'matched|keyframe|Running' ${NAV_STACK_LOG} | grep -v sec_nsec | grep -v wireframe | head -5" || true
         if [ -n "${M20_RERUN_CORES}" ]; then
             echo "  Pinning Rerun listener threads to CPU(s): ${M20_RERUN_CORES}"
             remote_ssh "
@@ -815,17 +825,17 @@ PROVISION_EOF
         ;;
 
     stop)
-        echo "=== Stopping smartnav ==="
+        echo "=== Stopping M20 nav stack ==="
         # Graceful shutdown first (sends sit-down command to robot).
-        remote_ssh "pkill -f '[m]20_smartnav' 2>/dev/null" || true
+        remote_ssh "pkill -f '[m]20_.*nav.*native' 2>/dev/null" || true
         # Poll for process exit (100ms), cap 5s.
         for i in $(seq 1 50); do
             sleep 0.1
-            alive=$(remote_ssh "pgrep -f '[m]20_smartnav' 2>/dev/null | wc -l" || echo 0)
+            alive=$(remote_ssh "pgrep -f '[m]20_.*nav.*native' 2>/dev/null | wc -l" || echo 0)
             [ "${alive}" = "0" ] && break
         done
         # Force-kill if still alive, then release ports.
-        remote_ssh "pkill -9 -f '[m]20_smartnav' 2>/dev/null; pkill -9 -f dimos-venv 2>/dev/null; fuser -k 9877/tcp 9877/tcp 3030/tcp 7779/tcp 2>/dev/null" || true
+        remote_ssh "pkill -9 -f '[m]20_.*nav.*native' 2>/dev/null; pkill -9 -f dimos-venv 2>/dev/null; fuser -k 9877/tcp 9877/tcp 3030/tcp 7779/tcp 2>/dev/null" || true
         echo "=== Stopped ==="
         ;;
 
@@ -848,21 +858,22 @@ PROVISION_EOF
         pkill -f "rerun" 2>/dev/null || true
         pkill -f "ssh.*-L.*9877.*${JUMP_HOST}" 2>/dev/null || true
         pkill -f "ssh.*9877:${NOS_HOST}:9877" 2>/dev/null || true
+        pkill -f "ssh.*9877:127.0.0.1:9877" 2>/dev/null || true
         sleep 1
         # Set up SSH tunnels. In READONLY mode we skip the 3030 (WebSocket)
         # tunnel too — defense in depth: even if rerun decides to ws-connect,
         # there's no path from Mac→NOS for it to publish.
         if [ -n "${READONLY}" ]; then
             ssh -f -N -o ExitOnForwardFailure=yes -o ConnectTimeout=10 ${SSH_OPTS} \
-                -L 9877:${NOS_HOST}:9877 \
-                -L 7779:${NOS_HOST}:7779 \
+                -L 9877:127.0.0.1:9877 \
+                -L 7779:127.0.0.1:7779 \
                 "${NOS_USER}@${NOS_HOST}" \
                 >/tmp/m20_viewer_ssh_tunnel.log 2>&1
         else
             ssh -f -N -o ExitOnForwardFailure=yes -o ConnectTimeout=10 ${SSH_OPTS} \
-                -L 9877:${NOS_HOST}:9877 \
-                -L 7779:${NOS_HOST}:7779 \
-                -L 3030:${NOS_HOST}:3030 \
+                -L 9877:127.0.0.1:9877 \
+                -L 7779:127.0.0.1:7779 \
+                -L 3030:127.0.0.1:3030 \
                 "${NOS_USER}@${NOS_HOST}" \
                 >/tmp/m20_viewer_ssh_tunnel.log 2>&1
         fi
@@ -925,7 +936,7 @@ PROVISION_EOF
         remote_ssh "mountpoint -q /nix && echo '  /nix mounted OK' || echo '  /nix NOT mounted'"
         echo ""
         echo "=== dimos processes ==="
-        remote_ssh "pgrep -a -x python 2>/dev/null | grep m20_smartnav_native" || echo "  smartnav not running"
+        remote_ssh "pgrep -a -x python 2>/dev/null | grep m20_nav_stack_native" || echo "  nav stack not running"
         remote_ssh "pgrep -a nav_cmd_pub 2>/dev/null" || echo "  nav_cmd_pub not running"
         remote_ssh "pgrep -a drdds_lidar 2>/dev/null" || echo "  lidar bridge not running"
         remote_ssh "pgrep -a -x fastlio2_native 2>/dev/null || pgrep -a -x arise_slam 2>/dev/null" || echo "  SLAM backend not running"
@@ -950,8 +961,8 @@ PROVISION_EOF
         echo "  backup-customizations    - snapshot NOS state to ~/m20_backup_<ts>/ (run pre-OTA)"
         echo ""
         echo "Runtime commands:"
-        echo "  start                    - start smartnav on NOS"
-        echo "  stop                     - stop smartnav"
+        echo "  start                    - start nav stack on NOS"
+        echo "  stop                     - stop nav stack"
         echo "  restart                  - stop + start"
         echo "  viewer                   - start SSH tunnels + dimos-viewer locally"
         echo "  bridge-start             - restart drdds SHM bridge (with rsdriver ordering)"

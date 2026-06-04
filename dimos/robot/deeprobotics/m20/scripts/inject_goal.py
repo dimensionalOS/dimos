@@ -4,7 +4,7 @@ robot's current pose.
 
 Bypasses the dimos-viewer click path entirely so the only thing that
 publishes /clicked_point is this script. Lets us validate click-to-goal
-without exercising the viewer's WebSocket → CmdVelMux → ClickToGoal
+without exercising the viewer's WebSocket → MovementManager click relay
 phantom-goal chain (see FASTLIO2_LOG re: 2026-04-27 incident).
 
 Usage on NOS:
@@ -20,10 +20,10 @@ import time
 
 import lcm
 
-# Use dimos.msgs.* types (same as ClickToGoal + SimplePlanner) instead of
-# dimos_lcm.* types directly. The dimos.msgs.PointStamped.lcm_encode
-# wraps the LCM PointStamped and sets header.stamp.sec/nsec from
-# self.ts, which the rest of the dimos pipeline expects.
+# Use dimos.msgs.* types (same as MovementManager + SimplePlanner) instead
+# of dimos_lcm.* types directly. The dimos.msgs.PointStamped.lcm_encode wraps
+# the LCM PointStamped and sets header.stamp.sec/nsec from self.ts, which the
+# rest of the dimos pipeline expects.
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 
@@ -31,13 +31,12 @@ ODOM_TOPIC = "/odometry#nav_msgs.Odometry"
 GOAL_TOPIC = "/clicked_point#geometry_msgs.PointStamped"
 
 
-_pose: dict = {"x": None, "y": None, "z": None,
-               "qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0}
+_pose: dict = {"x": None, "y": None, "z": None, "qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0}
 
 
 def _on_odom(channel: str, data: bytes) -> None:
     # dimos.msgs.Odometry inherits a flat .position / .orientation surface
-    # (same shape as ClickToGoal._on_odom uses).
+    # that is convenient for this one-shot goal calculation.
     msg = Odometry.lcm_decode(data)
     _pose["x"] = msg.position.x
     _pose["y"] = msg.position.y
@@ -66,38 +65,35 @@ def main() -> int:
         lc.handle_timeout(100)
 
     if _pose["x"] is None:
-        print("[inject_goal] ERROR: no /odometry message received in 5s. "
-              "Is FAST-LIO running and out of preroll?", file=sys.stderr)
+        print(
+            "[inject_goal] ERROR: no /odometry message received in 5s. "
+            "Is FAST-LIO running and out of preroll?",
+            file=sys.stderr,
+        )
         return 1
 
-    yaw = _quat_to_yaw(
-        _pose["qx"], _pose["qy"], _pose["qz"], _pose["qw"]
-    )
+    yaw = _quat_to_yaw(_pose["qx"], _pose["qy"], _pose["qz"], _pose["qw"])
     rx, ry, rz = _pose["x"], _pose["y"], _pose["z"]
     gx = rx + distance * math.cos(yaw)
     gy = ry + distance * math.sin(yaw)
     gz = rz
 
     print(
-        f"[inject_goal] robot pose = ({rx:+.3f}, {ry:+.3f}, "
-        f"yaw={math.degrees(yaw):+.1f}°)",
+        f"[inject_goal] robot pose = ({rx:+.3f}, {ry:+.3f}, yaw={math.degrees(yaw):+.1f}°)",
         flush=True,
     )
     print(
-        f"[inject_goal] goal       = ({gx:+.3f}, {gy:+.3f}, {gz:+.3f}) "
-        f"— {distance:+.2f}m forward",
+        f"[inject_goal] goal       = ({gx:+.3f}, {gy:+.3f}, {gz:+.3f}) — {distance:+.2f}m forward",
         flush=True,
     )
     print(
         "[inject_goal] publishing once to /clicked_point. "
-        "SimplePlanner consumes this directly; ClickToGoal also forwards "
-        "compatibility outputs.",
+        "MovementManager relays it to /goal for SimplePlanner.",
         flush=True,
     )
 
-    # dimos.msgs.PointStamped accepts x/y/z/ts/frame_id directly. Same
-    # construction ClickToGoal._on_stop_movement uses, so the encode path
-    # is identical and SimplePlanner's _on_goal will deserialize cleanly.
+    # dimos.msgs.PointStamped accepts x/y/z/ts/frame_id directly, so the
+    # encode path matches the rest of the click-to-goal pipeline.
     msg = PointStamped(x=gx, y=gy, z=gz, ts=time.time(), frame_id="map")
     lc.publish(GOAL_TOPIC, msg.lcm_encode())
 

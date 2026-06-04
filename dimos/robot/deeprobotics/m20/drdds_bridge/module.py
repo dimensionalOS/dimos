@@ -16,7 +16,7 @@
 
 Reads point cloud and IMU data from shared memory segments written by
 drdds_recv (the host-side drdds subscriber) and publishes them as LCM
-messages for AriseSLAM and SmartNav consumption.
+messages for AriseSLAM/FastLio2 and nav_stack consumption.
 
 This is the M20 equivalent of the Mid360 module — it sits at the sensor
 input layer and feeds raw_points + imu into the navigation stack.
@@ -28,7 +28,7 @@ Usage::
     autoconnect(
         DrddsLidarBridge.blueprint(),
         AriseSLAM.blueprint(mount=...),
-        smart_nav(...),
+        create_nav_stack(...),
     ).remappings([
         (DrddsLidarBridge, "lidar", "raw_points"),
     ])
@@ -153,7 +153,7 @@ class NavCmdPub(NativeModule):
     topic naming convention so basic_server on AOS can receive commands.
 
     Ports:
-        cmd_vel (In[Twist]): Velocity commands from CmdVelMux.
+        cmd_vel (In[Twist]): Velocity commands from MovementManager.
     """
 
     config: NavCmdPubConfig

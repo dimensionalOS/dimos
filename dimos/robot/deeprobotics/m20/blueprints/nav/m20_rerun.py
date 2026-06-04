@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 import os
 import time
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -19,6 +19,8 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 
 REGISTERED_SCAN_THROTTLE = "registered_scan"
 DEBUG_CLOUD_THROTTLE = "debug_cloud"
+FLOOR_HALF_EXTENT_M = 12.0
+FLOOR_Z_M = 0.0
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ M20_RERUN_TOPIC_SPECS = (
     M20RerunTopicSpec("/obstacle_cloud", PointCloud2, DEBUG_CLOUD_THROTTLE),
     M20RerunTopicSpec("/costmap_cloud", PointCloud2, DEBUG_CLOUD_THROTTLE),
     M20RerunTopicSpec("/global_map", PointCloud2, DEBUG_CLOUD_THROTTLE),
+    M20RerunTopicSpec("/global_map_fastlio", PointCloud2, DEBUG_CLOUD_THROTTLE),
     M20RerunTopicSpec("/global_map_pgo", PointCloud2, DEBUG_CLOUD_THROTTLE),
     M20RerunTopicSpec("/odometry", Odometry),
     M20RerunTopicSpec("/corrected_odometry", Odometry),
@@ -213,3 +216,23 @@ def static_robot(rr: Any) -> list[Any]:
         ),
         rr.Transform3D(parent_frame="tf#/sensor"),
     ]
+
+
+def static_floor(rr: Any) -> Any:
+    """Large, pickable floor mesh for click-to-goal on clear floor."""
+    s = FLOOR_HALF_EXTENT_M
+    z = FLOOR_Z_M
+    return rr.Mesh3D(
+        vertex_positions=[
+            [-s, -s, z],
+            [s, -s, z],
+            [s, s, z],
+            [-s, s, z],
+        ],
+        triangle_indices=[
+            [0, 1, 2],
+            [0, 2, 3],
+        ],
+        albedo_factor=[80, 80, 80, 24],
+        face_rendering=rr.components.MeshFaceRendering.DoubleSided,
+    )

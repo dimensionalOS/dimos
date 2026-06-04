@@ -65,7 +65,7 @@ all_blueprints = {
     "keyboard-teleop-xarm6": "dimos.robot.manipulators.xarm.blueprints:keyboard_teleop_xarm6",
     "keyboard-teleop-xarm7": "dimos.robot.manipulators.xarm.blueprints:keyboard_teleop_xarm7",
     "legacy-unitree-g1-agentic-sim": "dimos.robot.unitree.g1.legacy.blueprints.agentic.unitree_g1_agentic_sim:legacy_unitree_g1_agentic_sim",
-    "m20-smartnav-native": "dimos.robot.deeprobotics.m20.blueprints.nav.m20_smartnav_native:m20_smartnav_native",
+    "m20-nav-stack-native": "dimos.robot.deeprobotics.m20.blueprints.nav.m20_nav_stack_native:m20_nav_stack_native",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",
     "mid360-fastlio": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio",
     "mid360-fastlio-ray-trace": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio_ray_trace",

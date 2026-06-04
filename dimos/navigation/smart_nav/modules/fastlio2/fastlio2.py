@@ -26,16 +26,23 @@ drives a Livox Mid-360 via the Livox SDK. Both wrap the same C++ binary
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import Annotated
 
 from pydantic.experimental.pipeline import validate_as
+from reactivex.disposable import Disposable
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.nav_stack.frames import FRAME_BODY, FRAME_ODOM
 
 # The C++ binary + YAML configs live under the hardware module (shared
 # between the Livox-hardware wrapper and this LCM-input wrapper). Resolve
@@ -151,3 +158,30 @@ class FastLio2(NativeModule):
     registered_scan: Out[PointCloud2]
     odometry: Out[Odometry]
     global_map: Out[PointCloud2]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(
+            Disposable(self.odometry.transport.subscribe(self._on_odom_for_tf, self.odometry))
+        )
+
+    def _on_odom_for_tf(self, msg: Odometry) -> None:
+        self.tf.publish(
+            Transform(
+                frame_id=FRAME_ODOM,
+                child_frame_id=FRAME_BODY,
+                translation=Vector3(
+                    msg.pose.position.x,
+                    msg.pose.position.y,
+                    msg.pose.position.z,
+                ),
+                rotation=Quaternion(
+                    msg.pose.orientation.x,
+                    msg.pose.orientation.y,
+                    msg.pose.orientation.z,
+                    msg.pose.orientation.w,
+                ),
+                ts=msg.ts or time.time(),
+            )
+        )
