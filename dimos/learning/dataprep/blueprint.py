@@ -39,10 +39,7 @@ from dimos.learning.dataprep.module import DataPrepModule
 learning_dataprep = autoconnect(
     DataPrepModule.blueprint(
         source="data/recordings/pickplace_001.db",
-        episodes=EpisodeExtractor(
-            extractor="ranges",
-            ranges=[(1777931622.11, 1777931646.61)],
-        ),
+        episodes=EpisodeExtractor(),
         observation={
             "image": StreamField(stream="color_image", field="data"),
             "joint_state": StreamField(stream="joint_state", field="position"),
