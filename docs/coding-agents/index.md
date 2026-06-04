@@ -6,6 +6,7 @@ title: "For Agents"
 ├── style.md (code style guidelines for dimos)
 ├── code-quality-rules.md (code-quality rules agents scan/fix against)
 ├── testing.md (docs about writing tests)
+├── ../development/openspec.md (OpenSpec behavior-spec workflow)
 ├── docs (these are docs about writing docs)
 │   ├── codeblocks.md
 │   ├── doclinks.md
