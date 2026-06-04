@@ -8,7 +8,7 @@ If you're showing an API usage pattern, create a minimal working example that ac
 After writing a code block in your markdown file, you can run it by executing
 `md-babel-py run document.md`
 
-more information on this tool is in [codeblocks](/docs/agents/docs/codeblocks.md)
+more information on this tool is in [codeblocks](/docs/coding-agents/docs/codeblocks.md)
 
 # Code or Docs Links
 
@@ -47,7 +47,7 @@ Becomes:
 See [Configuration](/docs/usage/configuration.md) for more details.
 ```
 
-More information on this in [doclinks](/docs/agents/docs/doclinks.md)
+More information on this in [doclinks](/docs/coding-agents/docs/doclinks.md)
 
 # Pikchr
 
