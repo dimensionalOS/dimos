@@ -5,7 +5,21 @@
 const GROUND_TEXTURE_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAASklEQVR42u3PMQ0AAAgDsPk3DR4Iz5LWQRN4MlUEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBARaA3CyKBJG3poVNVYAAAAASUVORK5CYII=";
 
-export default async function build({ scene, THREE, physics }) {
+// Gradient sky dome — parity with the original JSON empty scene.
+const SKY = {
+  enabled: true,
+  topColor: "#1a6be0",
+  horizonColor: "#c8ddf5",
+  bottomColor: "#4a7a4a",
+  brightness: 1.0,
+  softness: 0.6,
+  sunStrength: 0.3,
+  sunHeight: 0.45,
+};
+
+export default async function build({ scene, THREE, physics, setSky }) {
+  setSky(SKY);
+
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
   const sun = new THREE.DirectionalLight(0xfff5e6, 1.5);
