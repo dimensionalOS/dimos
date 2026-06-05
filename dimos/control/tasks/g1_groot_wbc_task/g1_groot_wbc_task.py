@@ -37,6 +37,7 @@ from numpy.typing import NDArray
 import onnxruntime as ort  # type: ignore[import-untyped]
 
 from dimos.control.components import make_humanoid_joints
+from dimos.control.hardware_interface import ConnectedWholeBody
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -752,8 +753,6 @@ class G1GrootWBCTaskParams(BaseConfig):
 
 
 def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
-    from dimos.control.hardware_interface import ConnectedWholeBody
-
     params = G1GrootWBCTaskParams.model_validate(cfg.params)
     hw = hardware.get(params.hardware_id) if hardware else None
     if hw is None:

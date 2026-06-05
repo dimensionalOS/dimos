@@ -322,6 +322,8 @@ class MujocoSimModule(
         # Build engine with SHM hooks installed.
         engine_assets: dict[str, bytes] | None = None
         if self.config.inject_legacy_assets:
+            # Lazy import: get_assets pulls in mujoco_playground (heavy,
+            # optional) and is only needed when injecting bundled meshes.
             from dimos.simulation.mujoco.model import get_assets
 
             engine_assets = get_assets()
