@@ -38,6 +38,7 @@ from dimos.memory2.fanio import Bundle
 from dimos.memory2.module import StreamModule
 from dimos.memory2.stream import Stream
 from dimos.memory2.transform import QualityWindow, Transformer
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -265,7 +266,6 @@ class Detection3DModule(StreamModule[Image, Bundle]):
         print("No 3d detections, projecting 2d")
 
         center = detections[0].get_bbox_center()
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         return PoseStamped(
             ts=detections.image.ts,
