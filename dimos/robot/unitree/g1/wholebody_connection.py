@@ -229,7 +229,7 @@ class G1WholeBodyConnection(Module):
             self._low_state = fresh
         self._verify_mode_machine_once(fresh)
 
-    def _verify_mode_machine_once(self, sample: object) -> None:
+    def _verify_mode_machine_once(self, sample: LowState_) -> None:
         """One-shot sanity check: log if the hardcoded mode_machine
         doesn't match what the firmware reports. Commands with a
         wrong mode_machine are silently rejected, so this prevents
@@ -238,7 +238,7 @@ class G1WholeBodyConnection(Module):
         if self._mode_machine_verified:
             return
         self._mode_machine_verified = True
-        actual = int(getattr(sample, "mode_machine", -1))
+        actual = int(sample.mode_machine)
         if actual != self._mode_machine:
             logger.warning(
                 f"mode_machine mismatch: hardcoded {self._mode_machine}, "
