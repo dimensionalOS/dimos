@@ -167,7 +167,9 @@ export class AiAvatar {
         urls[index],
         (gltf) => { this._applyGLB(gltf); },
         undefined,
-        () => { tryLoad(index + 1); },
+        // Surface avatar-load failures — silent fallback to a bare capsule is a
+        // confusing footgun (usually a stale Git-LFS pointer in dist/).
+        (err) => { console.warn(`[AiAvatar] avatar GLB load failed: ${urls[index]} -> ${err?.message || err}`); tryLoad(index + 1); },
       );
     };
     tryLoad(0);
