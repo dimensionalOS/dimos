@@ -1104,7 +1104,7 @@ def _two_streams(
     return a, b
 
 
-class TestAlign:
+class TestAlignNearestNeighbor:
     """`.align(other, tolerance=)` pairs each primary observation with the
     nearest-in-time secondary within tolerance (PR #2306 nearest-neighbor)."""
 
