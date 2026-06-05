@@ -244,7 +244,7 @@ def _wire_inputs(
 
 class TestFanInAlign:
     """Authors reach sibling In ports through ``self.streams.<port>`` and fuse
-    them with PR #2306 ``.align()`` inside ``pipeline()`` (test plan 10.2)."""
+    them with PR #2306 ``.align()`` inside ``pipeline()``."""
 
     def test_two_input_align_pairs_sibling_and_names_fields_after_ports(self) -> None:
         """The primary aligns against ``self.streams.pose``; each emitted pair is
@@ -414,7 +414,7 @@ class OdomFusion(StreamModule):
 class TestInterpolatedFusionModules:
     """Full fusion modules whose align edges carry ``interpolator=`` so the
     secondary is synthesized at the exact primary timestamp inside
-    ``pipeline()`` (test plan 10.7 at module level)."""
+    ``pipeline()``."""
 
     def test_my_fusion_applies_the_pose_interpolated_at_scan_time(self) -> None:
         """A scan halfway between two poses is transformed by the halfway pose:
@@ -539,7 +539,7 @@ class SkippingIngestModule(StreamModule[int, int]):
 
 class TestIngestSeam:
     """``ingest()`` is the seam that lets a module enrich or drop messages
-    before they enter the pipeline, without copying ``start()`` (test plan 10.3)."""
+    before they enter the pipeline, without copying ``start()``."""
 
     def test_default_ingest_stamps_with_message_time(self) -> None:
         """Default ingest carries each message's own ts (so cross-port ``.align()``
@@ -606,8 +606,7 @@ def _wait_until(predicate, timeout: float = 5.0) -> bool:  # type: ignore[no-unt
 
 class TestFanOutScatter:
     """A multi-output pipeline yields a :class:`Bundle` per tick and
-    :func:`scatter_to_ports` fans it to the matching ports in one subscribe
-    (test plan 10.4, 10.5)."""
+    :func:`scatter_to_ports` fans it to the matching ports in one subscribe."""
 
     @pytest.mark.tool
     def test_multi_output_scatter_runs_pipeline_once_per_tick(self) -> None:
