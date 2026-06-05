@@ -355,7 +355,7 @@ jobs:
       - name: Fix permissions
         run: |
           git config --global --add safe.directory '*'
-          git clean -ffdx
+          sudo git clean -ffdx
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
