@@ -336,7 +336,7 @@ class Detection2DBBox(Detection2D):
         ]
         # results_length governs how many hypotheses LCM encodes; leaving it 0
         # silently drops the hypothesis on the wire (and from results-length-
-        # bounded readers like Detection*Array._label_for_detection).
+        # bounded readers like Detection*Array.label_for_detection).
         return ROSDetection2D(
             header=Header(self.ts, "camera_link"),
             bbox=self.to_ros_bbox(),

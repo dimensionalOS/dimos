@@ -17,7 +17,7 @@ from dimos_lcm.vision_msgs.Detection2DArray import (
     Detection2DArray as LCMDetection2DArray,
 )
 
-from dimos.msgs.vision_msgs.Detection3DArray import _label_for_detection
+from dimos.msgs.vision_msgs.Detection3DArray import label_for_detection
 from dimos.types.timestamped import to_timestamp
 
 
@@ -58,7 +58,7 @@ class Detection2DArray(LCMDetection2DArray):  # type: ignore[misc]
 
             # rr.Box2DFormat.XYWH wants the top-left corner plus size.
             boxes.append((center_x - width / 2.0, center_y - height / 2.0, width, height))
-            labels.append(_label_for_detection(detection))
+            labels.append(label_for_detection(detection))
 
         return rr.Boxes2D(
             array=boxes,

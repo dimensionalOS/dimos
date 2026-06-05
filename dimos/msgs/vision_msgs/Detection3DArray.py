@@ -57,7 +57,7 @@ class Detection3DArray(LCMDetection3DArray):  # type: ignore[misc]
                     orientation.w,
                 )
             )
-            labels.append(_label_for_detection(detection))
+            labels.append(label_for_detection(detection))
 
         return rr.Boxes3D(
             centers=centers,
@@ -67,7 +67,7 @@ class Detection3DArray(LCMDetection3DArray):  # type: ignore[misc]
         )
 
 
-def _label_for_detection(detection: Any) -> str:
+def label_for_detection(detection: Any) -> str:
     marker_id = str(getattr(detection, "id", "")).strip()
     for result in detection.results[: detection.results_length]:
         class_id = str(result.hypothesis.class_id).strip()
