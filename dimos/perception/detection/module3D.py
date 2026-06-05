@@ -20,7 +20,8 @@ fuses to 3D. One pass emits four kinds of output - a ``Detection2DArray``, a
 ``Detection3DArray``, and the top-3 per-object pointclouds / cropped images for
 visualization - all scattered from a single ``Bundle`` per tick. This replaces
 the previous Rx ``align_timestamped`` wiring; cross-port alignment is now
-``Stream.align(..., tolerance=0.25)`` inside ``pipeline()``.
+``Stream.align(..., tolerance=_POINTCLOUD_ALIGN_TOLERANCE_S)`` inside
+``pipeline()``.
 """
 
 from __future__ import annotations
@@ -59,6 +60,11 @@ if TYPE_CHECKING:
 
     from dimos.core.rpc_client import ModuleProxy
     from dimos.memory2.type.observation import Observation
+
+# Cross-port alignment window between the color image and the nearest pointcloud.
+_POINTCLOUD_ALIGN_TOLERANCE_S = 0.25
+# How far back/forward TF may look to resolve the world->camera transform.
+_TF_LOOKUP_TOLERANCE_S = 5.0
 
 
 class Detect2D(Transformer[Image, ImageDetections2D]):
@@ -140,7 +146,7 @@ class Detection3DModule(StreamModule[Image, Bundle]):
                 QualityWindow(lambda img: img.sharpness, window=1.0 / self.config.max_freq)
             )
             .transform(Detect2D(self.detector, self.config.filter))
-            .align(self.streams.pointcloud, tolerance=0.25)
+            .align(self.streams.pointcloud, tolerance=_POINTCLOUD_ALIGN_TOLERANCE_S)
             .map_data(self._fuse)
         )
 
@@ -151,7 +157,9 @@ class Detection3DModule(StreamModule[Image, Bundle]):
         pair = obs.data
         detections_2d: ImageDetections2D = pair.color_image.data
         pointcloud: PointCloud2 = pair.pointcloud.data
-        transform = self.tf.get("camera_optical", pointcloud.frame_id, detections_2d.image.ts, 5.0)
+        transform = self.tf.get(
+            "camera_optical", pointcloud.frame_id, detections_2d.image.ts, _TF_LOOKUP_TOLERANCE_S
+        )
         detections_3d = self.process_frame(detections_2d, pointcloud, transform)
         return FusedDetections(detections_2d=detections_2d, detections_3d=detections_3d)
 
@@ -257,7 +265,9 @@ class Detection3DModule(StreamModule[Image, Bundle]):
             return None  # type: ignore[return-value]
 
         pc = self.pointcloud.get_next()
-        transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
+        transform = self.tf.get(
+            "camera_optical", pc.frame_id, detections.image.ts, _TF_LOOKUP_TOLERANCE_S
+        )
 
         detections3d = self.process_frame(detections, pc, transform)
 
