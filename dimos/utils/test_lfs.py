@@ -50,7 +50,7 @@ def _batch(operation: str, oid: str, size: int, *, auth=None):
     )
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_anonymous_download_returns_presigned_url():
     """An unauthenticated batch download request returns a presigned S3 URL."""
     response = _batch("download", KNOWN_OID, KNOWN_SIZE)
@@ -64,14 +64,14 @@ def test_anonymous_download_returns_presigned_url():
     assert "dimos-github-lfs" in href, href
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_anonymous_upload_is_forbidden():
     """An unauthenticated upload returns 401/403 — only repo collaborators can push."""
     response = _batch("upload", "0" * 64, 1)
     assert response.status_code in (401, 403), response.text
 
 
-@pytest.mark.slow
+@pytest.mark.self_hosted
 def test_known_object_roundtrip():
     """Fetching the known fixture via giftless yields bytes whose SHA matches the pointer."""
     response = _batch("download", KNOWN_OID, KNOWN_SIZE)
