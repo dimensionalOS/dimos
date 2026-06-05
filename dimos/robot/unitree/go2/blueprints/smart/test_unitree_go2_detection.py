@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.coordination.module_coordinator import _get_transport_for
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
@@ -34,13 +33,13 @@ EXPECTED_TOPICS = {
 
 
 def test_detector_transports_resolve_at_runtime() -> None:
-    """The coordinator resolves transports through _get_transport_for with a
-    (stream_name, message_type) key. A key authored in any other shape (e.g. a
-    module class as the second element) never matches; the lookup then falls
-    back silently and the stream publishes on an auto topic like
-    /detections_2d instead of the authored wire topic."""
+    """The coordinator resolves transports through a (stream_name, message_type)
+    key. A key authored in any other shape (e.g. a module class as the second
+    element) never matches; the lookup then falls back silently and the stream
+    publishes on an auto topic like /detections_2d instead of the authored wire
+    topic. Indexing transport_map by that key fails loudly here if a transport
+    was authored under the wrong shape."""
     for (name, msg_type), topic in EXPECTED_TOPICS.items():
-        resolved = _get_transport_for(unitree_go2_detection, name, msg_type)
-        assert resolved is unitree_go2_detection.transport_map[(name, msg_type)]
-        assert resolved.topic.topic == topic
-        assert resolved.topic.lcm_type is msg_type
+        transport = unitree_go2_detection.transport_map[(name, msg_type)]
+        assert transport.topic.topic == topic
+        assert transport.topic.lcm_type is msg_type
