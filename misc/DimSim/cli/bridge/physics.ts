@@ -28,13 +28,16 @@ const DEFAULT_GRAVITY_Y = -9.81;
 const DEFAULT_SPEED_SCALE = 3.0; // Multiplier for cmd_vel (linear + angular)
 const DEFAULT_TURN_SCALE = 3.0;
 const DEFAULT_MAX_ALTITUDE = 50;
+const DEFAULT_WHEEL_BASE = 1.0;     // ackermann: front-rear axle distance (m)
+const DEFAULT_MAX_STEER = 0.6;      // ackermann: max steering angle (rad)
 
 /** Embodiment configuration passed from SceneClient / control channel. */
 export interface EmbodimentConfig {
   radius?: number;
   halfHeight?: number;
   lidarMountHeight?: number;
-  embodimentType?: string;   // "ground" | "drone"
+  embodimentType?: string;   // legacy alias: "ground"->holonomic, "drone"->flight
+  motionModel?: string;      // preferred: "holonomic" | "flight" | "ackermann"
   maxSpeed?: number;
   turnRate?: number;
   gravity?: number;
@@ -43,6 +46,70 @@ export interface EmbodimentConfig {
   maxSlopeAngle?: number;
   friction?: number;
   maxAltitude?: number;
+  wheelBase?: number;        // ackermann: front-rear axle distance (m)
+  maxSteerAngle?: number;    // ackermann: max steering angle (rad)
+}
+
+// ── Embodiment motion models ───────────────────────────────────────────────
+// Each model maps the (already speed-scaled) cmd_vel + current yaw to a desired
+// world displacement and a yaw delta. The shared step path applies that through
+// the kinematic character controller (collision-aware) and publishes odom — so
+// adding an embodiment is just a new function here plus config that selects it.
+type MotionCmd = { linX: number; linY: number; linZ: number; angZ: number };
+type MotionCfg = { gravity: number; maxAltitude: number; wheelBase: number; maxSteerAngle: number };
+type MotionOut = { dx: number; dy: number; dz: number; dyaw: number; clampMaxY?: number };
+
+const _clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+const MOTION_MODELS: Record<
+  string,
+  (cmd: MotionCmd, yaw: number, cfg: MotionCfg, dt: number) => MotionOut
+> = {
+  // Ground / holonomic: forward drive along heading, yaw from angular vel, gravity down.
+  holonomic(cmd, yaw, cfg, dt) {
+    const dyaw = cmd.angZ * dt;
+    const y = yaw + dyaw;
+    return {
+      dx: cmd.linX * Math.sin(y) * dt,
+      dz: cmd.linX * Math.cos(y) * dt,
+      dy: cfg.gravity * dt * dt * 0.5,
+      dyaw,
+    };
+  },
+  // Drone / flight: 6DoF (forward, lateral, vertical), no gravity, altitude clamp.
+  flight(cmd, yaw, cfg, dt) {
+    const dyaw = cmd.angZ * dt;
+    const y = yaw + dyaw;
+    return {
+      dx: (cmd.linX * Math.sin(y) + cmd.linY * Math.cos(y)) * dt,
+      dz: (cmd.linX * Math.cos(y) - cmd.linY * Math.sin(y)) * dt,
+      dy: cmd.linZ * dt,
+      dyaw,
+      clampMaxY: cfg.maxAltitude,
+    };
+  },
+  // Car / Ackermann (bicycle model): angular cmd is the steering angle, and turn
+  // rate scales with forward speed — so it can't pivot in place, it has to drive.
+  ackermann(cmd, yaw, cfg, dt) {
+    const v = cmd.linX;
+    const steer = _clamp(cmd.angZ, -cfg.maxSteerAngle, cfg.maxSteerAngle);
+    const dyaw = (v / Math.max(cfg.wheelBase, 0.01)) * Math.tan(steer) * dt;
+    const y = yaw + dyaw;
+    return {
+      dx: v * Math.sin(y) * dt,
+      dz: v * Math.cos(y) * dt,
+      dy: cfg.gravity * dt * dt * 0.5,
+      dyaw,
+    };
+  },
+};
+
+// Legacy embodimentType → motionModel mapping (back-compat for existing scenes).
+function resolveMotionModel(embodiment?: EmbodimentConfig): string {
+  const m = embodiment?.motionModel;
+  if (m && MOTION_MODELS[m]) return m;
+  if (embodiment?.embodimentType === "drone") return "flight";
+  return "holonomic";
 }
 
 const CH_ODOM = "/odom#geometry_msgs.PoseStamped";
@@ -65,6 +132,7 @@ export class ServerPhysics {
 
   // Embodiment params
   private embodimentType: string;
+  private motionModel: string;
   private speedScale: number;
   private turnScale: number;
   private gravity: number;
@@ -75,6 +143,8 @@ export class ServerPhysics {
   private maxStepHeight: number;
   private groundSnapDist: number;
   private maxSlopeAngle: number;
+  private wheelBase: number;
+  private maxSteerAngle: number;
 
   // Agent state
   private yaw = 0;
@@ -116,6 +186,7 @@ export class ServerPhysics {
 
     // Apply embodiment config with defaults
     this.embodimentType = embodiment?.embodimentType ?? "ground";
+    this.motionModel = resolveMotionModel(embodiment);
     this.speedScale = embodiment?.maxSpeed ?? DEFAULT_SPEED_SCALE;
     this.turnScale = embodiment?.turnRate ?? DEFAULT_TURN_SCALE;
     this.gravity = embodiment?.gravity ?? DEFAULT_GRAVITY_Y;
@@ -126,6 +197,8 @@ export class ServerPhysics {
     this.maxStepHeight = embodiment?.maxStepHeight ?? 0.25;
     this.groundSnapDist = embodiment?.groundSnapDist ?? 0.5;
     this.maxSlopeAngle = embodiment?.maxSlopeAngle ?? 45;
+    this.wheelBase = embodiment?.wheelBase ?? DEFAULT_WHEEL_BASE;
+    this.maxSteerAngle = embodiment?.maxSteerAngle ?? DEFAULT_MAX_STEER;
 
     this._createBodyAndColliders();
 
@@ -193,6 +266,11 @@ export class ServerPhysics {
 
     // Update params
     this.embodimentType = embodiment.embodimentType ?? this.embodimentType;
+    if (embodiment.motionModel && MOTION_MODELS[embodiment.motionModel]) {
+      this.motionModel = embodiment.motionModel;
+    } else if (embodiment.embodimentType) {
+      this.motionModel = resolveMotionModel(embodiment);
+    }
     this.speedScale = embodiment.maxSpeed ?? this.speedScale;
     this.turnScale = embodiment.turnRate ?? this.turnScale;
     this.gravity = embodiment.gravity ?? this.gravity;
@@ -203,6 +281,8 @@ export class ServerPhysics {
     this.maxStepHeight = embodiment.maxStepHeight ?? this.maxStepHeight;
     this.groundSnapDist = embodiment.groundSnapDist ?? this.groundSnapDist;
     this.maxSlopeAngle = embodiment.maxSlopeAngle ?? this.maxSlopeAngle;
+    this.wheelBase = embodiment.wheelBase ?? this.wheelBase;
+    this.maxSteerAngle = embodiment.maxSteerAngle ?? this.maxSteerAngle;
 
     // Remove old colliders and body
     if (this.spineCollider) this.world.removeCollider(this.spineCollider, false);
@@ -217,7 +297,7 @@ export class ServerPhysics {
     this.yaw = savedYaw;
     this.world.step();
 
-    console.log(`[physics] reconfigured: type=${this.embodimentType} radius=${this.agentRadius} halfHeight=${this.agentHalfHeight} speed=${this.speedScale} gravity=${this.gravity}`);
+    console.log(`[physics] reconfigured: type=${this.embodimentType} model=${this.motionModel} radius=${this.agentRadius} halfHeight=${this.agentHalfHeight} speed=${this.speedScale} gravity=${this.gravity}`);
   }
 
   /** Set spawn position (Three.js Y-up). */
@@ -296,59 +376,36 @@ export class ServerPhysics {
     const linZ = hasVel ? this.linZ * this.speedScale : 0;
     const angZ = hasVel ? this.angZ * this.turnScale : 0;
 
-    // Integrate yaw (ROS angZ → Three.js Y rotation)
-    // ROS +z yaw = CCW from above = Three.js +Y rotation
-    this.yaw += angZ * PHYSICS_DT;
-
     const pos = this.body.translation();
-    const cosY = Math.cos(this.yaw);
-    const sinY = Math.sin(this.yaw);
 
-    let newPos: { x: number; y: number; z: number };
+    // Dispatch to the embodiment's motion model: (cmd_vel, yaw) -> displacement
+    // + yaw delta. The collision/odom path below is shared across all models.
+    const model = MOTION_MODELS[this.motionModel] ?? MOTION_MODELS.holonomic;
+    const out = model(
+      { linX, linY, linZ, angZ },
+      this.yaw,
+      {
+        gravity: this.gravity,
+        maxAltitude: this.maxAltitude,
+        wheelBase: this.wheelBase,
+        maxSteerAngle: this.maxSteerAngle,
+      },
+      PHYSICS_DT,
+    );
+    this.yaw += out.dyaw;
 
-    if (this.embodimentType === "drone") {
-      // Drone: 6DoF movement, no gravity, altitude clamping
-      const fwd = linX;
-      const lat = linY;
-      const vert = linZ; // ROS z = vertical for drone
-      const desired = {
-        x: (fwd * sinY + lat * cosY) * PHYSICS_DT,
-        y: vert * PHYSICS_DT,
-        z: (fwd * cosY - lat * sinY) * PHYSICS_DT,
-      };
-
-      this.controller.computeColliderMovement(
-        this.collider,
-        desired,
-        this.RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      );
-      const m = this.controller.computedMovement();
-      newPos = {
-        x: pos.x + m.x,
-        y: Math.min(pos.y + m.y, this.maxAltitude),
-        z: pos.z + m.z,
-      };
-    } else {
-      // Ground robot: gravity, collision-aware
-      const fwd = linX;
-      const desired = {
-        x: (fwd * sinY) * PHYSICS_DT,
-        y: this.gravity * PHYSICS_DT * PHYSICS_DT * 0.5, // gravity
-        z: (fwd * cosY) * PHYSICS_DT,
-      };
-
-      this.controller.computeColliderMovement(
-        this.collider,
-        desired,
-        this.RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      );
-      const m = this.controller.computedMovement();
-      newPos = {
-        x: pos.x + m.x,
-        y: pos.y + m.y,
-        z: pos.z + m.z,
-      };
-    }
+    // Resolve the desired displacement against the world (collision-aware).
+    this.controller.computeColliderMovement(
+      this.collider,
+      { x: out.dx, y: out.dy, z: out.dz },
+      this.RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+    );
+    const m = this.controller.computedMovement();
+    const newPos = {
+      x: pos.x + m.x,
+      y: out.clampMaxY != null ? Math.min(pos.y + m.y, out.clampMaxY) : pos.y + m.y,
+      z: pos.z + m.z,
+    };
 
     this.body.setNextKinematicTranslation(newPos);
 
