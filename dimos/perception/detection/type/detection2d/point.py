@@ -87,7 +87,7 @@ class Detection2DPoint(Detection2D):
             results=[
                 ObjectHypothesisWithPose(
                     ObjectHypothesis(
-                        class_id=self.class_id,
+                        class_id=str(self.class_id),
                         score=self.confidence,
                     )
                 )

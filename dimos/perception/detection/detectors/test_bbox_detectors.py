@@ -110,7 +110,7 @@ def test_detection_ros_conversion(detections) -> None:
     # Check confidence and class_id
     assert len(ros_det.results) > 0
     assert ros_det.results[0].hypothesis.score == detection.confidence
-    assert ros_det.results[0].hypothesis.class_id == detection.class_id
+    assert ros_det.results[0].hypothesis.class_id == str(detection.class_id)
 
 
 def test_detection_is_valid(detections) -> None:
