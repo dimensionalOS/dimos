@@ -371,7 +371,15 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
 def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
     match request:
         case DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs):
+            # Always use the same transport and QoS rules as the host.
+            host_config = kwargs.get("g")
+            if host_config is not None:
+                global_config.update(
+                    transport=host_config.transport, zenoh_qos=host_config.zenoh_qos
+                )
+
             state.instances[module_id] = module_class(**kwargs)
+
             return WorkerResponse(result=module_id)
 
         case SetRefRequest(module_id=module_id, ref=ref):
