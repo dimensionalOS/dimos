@@ -3,6 +3,11 @@ codecov:
   notify:
     manual_trigger: true
 
+coverage:
+  status:
+    project: true
+    patch: true
+
 # Carry forward self-hosted, as these are not run on external PRs.
 flag_management:
   individual_flags:
