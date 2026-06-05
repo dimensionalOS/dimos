@@ -69,6 +69,8 @@ class SkillInfo:
     class_name: str
     func_name: str
     args_schema: str
+    uses: tuple[str, ...] = ()
+    lifecycle: str = "instant"
 
 
 class PeekNotFound:
@@ -438,9 +440,15 @@ class ModuleBase(Configurable, CompositeResource):
             attr = getattr(self, name)
             if callable(attr) and hasattr(attr, "__skill__"):
                 schema = json.dumps(tool(attr).args_schema.model_json_schema())
+                uses = tuple(getattr(attr, "__skill_uses__", ()) or ())
+                lifecycle = getattr(attr, "__skill_lifecycle__", "instant")
                 skills.append(
                     SkillInfo(
-                        class_name=self.__class__.__name__, func_name=name, args_schema=schema
+                        class_name=self.__class__.__name__,
+                        func_name=name,
+                        args_schema=schema,
+                        uses=uses,
+                        lifecycle=lifecycle,
                     )
                 )
         return skills
@@ -488,28 +496,21 @@ class ModuleBase(Configurable, CompositeResource):
         routed as `notifications/progress` frames bound to the originating
         `tools/call`.
 
-        Raises `RuntimeError` if a tool with the same name is already active on
-        this module (two concurrent streams for the same logical tool is almost
-        always a programmer error; `stop_tool` the previous one first).
+        If a stream named `name` is already active, this is a same-tool re-invoke
+        (a capability takeover): the live stream is re-stamped with this
+        invocation's acquire token -- so its eventual stop frame releases *this*
+        hold -- and no second stream is opened. Background skills can therefore
+        call `start_tool` unconditionally before any "already running" return.
         """
         # Lazy import
         from dimos.agents.mcp.tool_stream import ToolStream
 
-        stream = ToolStream(name)
         with self._tools_lock:
-            # Defensive check to prevent duplicate tools with the same name.
-            if name in self._tools:
-                # Unwind the already-constructed stream before raising so the
-                # LCM transport doesn't leak.
-                try:
-                    stream.stop()
-                except Exception:
-                    logger.exception("failed to unwind duplicate ToolStream")
-                raise RuntimeError(
-                    f"Tool {name!r} is already active on {type(self).__name__}. "
-                    f"Call stop_tool({name!r}) first."
-                )
-            self._tools[name] = stream
+            existing = self._tools.get(name)
+            if existing is not None:
+                existing.rebind_acquire_token()
+                return
+            self._tools[name] = ToolStream(name)
 
     def tool_update(self, name: str, message: str) -> None:
         """Publish `message` on the tool-stream channel named `name`.

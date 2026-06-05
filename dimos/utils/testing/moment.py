@@ -17,8 +17,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from dimos.core.resource import Resource
-from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.types.timestamped import Timestamped
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 if TYPE_CHECKING:
     from dimos.core.stream import Transport
