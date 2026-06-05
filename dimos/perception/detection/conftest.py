@@ -233,5 +233,3 @@ def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, No
     moment_provider.cache_clear()
     if module is not None:
         module._close_module()
-
-
