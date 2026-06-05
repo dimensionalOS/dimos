@@ -21,6 +21,8 @@ import numpy as np
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.type import Case
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
+from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 try:
     import cyclonedds as _cyclonedds  # noqa: F401
@@ -270,6 +272,28 @@ try:
 except (ConnectionError, ImportError):
     # either redis is not installed or the server is not running
     print("Redis not available")
+
+
+@contextmanager
+def zenoh_pubsub_channel() -> Generator[Zenoh, None, None]:
+    pool = ZenohSessionPool()
+    zenoh_pubsub = Zenoh(session_pool=pool)
+    zenoh_pubsub.start()
+    yield zenoh_pubsub
+    zenoh_pubsub.stop()
+    pool.close_all()
+
+
+def zenoh_msggen(size: int) -> tuple[ZenohTopic, Image]:
+    return (ZenohTopic("dimos/benchmark/zenoh", Image), make_data_image(size))
+
+
+testcases.append(
+    Case(
+        pubsub_context=zenoh_pubsub_channel,
+        msg_gen=zenoh_msggen,
+    )
+)
 
 
 from dimos.protocol.pubsub.impl.rospubsub import (

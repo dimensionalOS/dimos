@@ -24,7 +24,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.mapping.pointclouds.accumulators.general import GeneralPointCloudAccumulator
 from dimos.mapping.pointclouds.accumulators.protocol import PointCloudAccumulator
 from dimos.mapping.pointclouds.occupancy import general_occupancy
@@ -113,8 +113,8 @@ class Map(Module):
 
 def deploy(dimos: ModuleCoordinator, connection: Go2ConnectionProtocol):  # type: ignore[no-untyped-def]
     mapper = dimos.deploy(Map, global_publish_interval=1.0)
-    mapper.global_map.transport = LCMTransport("/global_map", PointCloud2)
-    mapper.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
+    mapper.global_map.transport = make_transport("/global_map", PointCloud2)
+    mapper.global_costmap.transport = make_transport("/global_costmap", OccupancyGrid)
     mapper.lidar.connect(connection.pointcloud)  # type: ignore[attr-defined]
     mapper.start()
     return mapper
