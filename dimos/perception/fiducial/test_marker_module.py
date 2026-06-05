@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import time
 from typing import Any
 
@@ -384,7 +385,7 @@ def _reset_thread_pool() -> None:
     tp.scheduler = ThreadPoolScheduler(max_workers=tp.get_max_workers())
 
 
-def _wait_until(predicate, timeout: float = 10.0) -> bool:  # type: ignore[no-untyped-def]
+def _wait_until(predicate: Callable[[], bool], timeout: float = 10.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():

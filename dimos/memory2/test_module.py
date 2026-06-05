@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 import math
 import threading
 import time
@@ -509,11 +509,11 @@ class _FakePort:
         self.type = type_
         self._subscribers: list = []
 
-    def subscribe(self, cb):  # type: ignore[no-untyped-def]
+    def subscribe(self, cb: Callable[[int], None]) -> Callable[[], None]:
         self._subscribers.append(cb)
         return lambda: self._subscribers.remove(cb)
 
-    def emit(self, msg) -> None:  # type: ignore[no-untyped-def]
+    def emit(self, msg: int) -> None:
         for cb in list(self._subscribers):
             cb(msg)
 
@@ -590,11 +590,11 @@ class _RecordingOut:
         self.name = name
         self.published: list = []
 
-    def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
+    def publish(self, msg: object) -> None:
         self.published.append(msg)
 
 
-def _wait_until(predicate, timeout: float = 5.0) -> bool:  # type: ignore[no-untyped-def]
+def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
     """Poll *predicate* until true or *timeout* elapses (scatter runs on the pool)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
