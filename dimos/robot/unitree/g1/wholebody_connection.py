@@ -155,7 +155,7 @@ class G1WholeBodyConnection(Module):
         else:
             logger.info("Skipping sport mode release (release_sport_mode=False)")
 
-        logger.info(f"G1WholeBodyConnection connected (mode_machine={self._mode_machine})")
+        logger.info("G1WholeBodyConnection connected", mode_machine=self._mode_machine)
 
         self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
 
@@ -192,7 +192,7 @@ class G1WholeBodyConnection(Module):
                     self._publisher.Write(self._low_cmd)
                 logger.info("Sent safe-stop lowcmd (motors disabled)")
             except (OSError, RuntimeError, AttributeError) as e:
-                logger.warning(f"Safe-stop lowcmd failed: {e}")
+                logger.warning("Safe-stop lowcmd failed", error=str(e))
 
         # Close DDS endpoints explicitly — GC-based cleanup races with in-flight
         # callbacks and segfaults on process exit (mirrors the Go2 adapter).
@@ -241,9 +241,10 @@ class G1WholeBodyConnection(Module):
         actual = int(sample.mode_machine)
         if actual != self._mode_machine:
             logger.warning(
-                f"mode_machine mismatch: hardcoded {self._mode_machine}, "
-                f"robot reports {actual}.  Commands may be silently rejected "
-                f"by firmware — set _MODE_MACHINE_G1 to {actual} for this variant."
+                "mode_machine mismatch; commands may be silently rejected by firmware. "
+                "Set _MODE_MACHINE_G1 to the reported value for this variant.",
+                hardcoded=self._mode_machine,
+                reported=actual,
             )
 
     def _snapshot_motor_imu(

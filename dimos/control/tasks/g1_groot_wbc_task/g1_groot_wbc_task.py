@@ -299,8 +299,11 @@ class G1GrootWBCTask(BaseControlTask):
         self._balance_input = self._balance_session.get_inputs()[0].name
         self._walk_input = self._walk_session.get_inputs()[0].name
         logger.info(
-            f"G1GrootWBCTask '{name}' loaded balance={config.balance_onnx}, "
-            f"walk={config.walk_onnx} (providers: {providers})"
+            "G1GrootWBCTask loaded ONNX models",
+            task=name,
+            balance=str(config.balance_onnx),
+            walk=str(config.walk_onnx),
+            providers=providers,
         )
 
         self._default_29 = np.asarray(config.default_positions_29, dtype=np.float32)
@@ -406,14 +409,15 @@ class G1GrootWBCTask(BaseControlTask):
                 self._arming = True
                 self._armed = False
                 logger.info(
-                    f"G1GrootWBCTask '{self._name}' arming: "
-                    f"ramp → default_15 over {self._arming_duration:.1f}s"
+                    "G1GrootWBCTask arming: ramp to default_15",
+                    task=self._name,
+                    ramp_seconds=self._arming_duration,
                 )
             else:
                 self._arming = False
                 self._armed = True
                 self._reset_policy_state()
-                logger.info(f"G1GrootWBCTask '{self._name}' armed (no ramp)")
+                logger.info("G1GrootWBCTask armed (no ramp)", task=self._name)
             self._arm_pending = False
 
         # Unarmed & not arming: echo current joint positions.  With the
@@ -442,8 +446,9 @@ class G1GrootWBCTask(BaseControlTask):
                 self._armed = True
                 self._reset_policy_state()
                 logger.info(
-                    f"G1GrootWBCTask '{self._name}' ramp complete — policy armed "
-                    f"({'dry-run' if self._dry_run else 'live'})"
+                    "G1GrootWBCTask ramp complete - policy armed",
+                    task=self._name,
+                    mode="dry-run" if self._dry_run else "live",
                 )
             return JointCommandOutput(
                 joint_names=self._joint_names_list,
@@ -532,8 +537,10 @@ class G1GrootWBCTask(BaseControlTask):
             if (state.t_now - self._last_dry_run_log_t) >= 1.0:
                 max_delta = float(np.max(np.abs(target_q_15 - current_15)))
                 logger.info(
-                    f"G1GrootWBCTask '{self._name}' DRY-RUN (|Δq|_max={max_delta:.3f} rad, "
-                    f"model={'walk' if cmd_norm > self._config.cmd_norm_threshold else 'balance'})"
+                    "G1GrootWBCTask DRY-RUN",
+                    task=self._name,
+                    max_dq_rad=max_delta,
+                    model="walk" if cmd_norm > self._config.cmd_norm_threshold else "balance",
                 )
                 self._last_dry_run_log_t = state.t_now
             return None
@@ -546,7 +553,9 @@ class G1GrootWBCTask(BaseControlTask):
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         if joints & self._joint_names_set:
-            logger.warning(f"G1GrootWBCTask '{self._name}' preempted by {by_task} on {joints}")
+            logger.warning(
+                "G1GrootWBCTask preempted", task=self._name, by_task=by_task, joints=joints
+            )
 
     # Velocity command input
 
@@ -595,11 +604,7 @@ class G1GrootWBCTask(BaseControlTask):
         with self._cmd_lock:
             self._cmd[:] = 0.0
             self._last_cmd_time = 0.0
-        logger.info(
-            f"G1GrootWBCTask '{self._name}' started (unarmed"
-            + (", dry-run" if self._dry_run else "")
-            + ")"
-        )
+        logger.info("G1GrootWBCTask started", task=self._name, armed=False, dry_run=self._dry_run)
         if self._config.auto_arm:
             self.arm(self._config.default_ramp_seconds)
 
@@ -610,7 +615,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._arming = False
         self._arm_pending = False
         self._last_targets = None
-        logger.info(f"G1GrootWBCTask '{self._name}' stopped")
+        logger.info("G1GrootWBCTask stopped", task=self._name)
 
     # Arming / dry-run (RPC-callable via coordinator.task_invoke)
 
@@ -627,19 +632,19 @@ class G1GrootWBCTask(BaseControlTask):
         are ignored.  No-op if the task is not ``_active``.
         """
         if not self._active:
-            logger.warning(f"G1GrootWBCTask '{self._name}' arm() called before start() — ignoring")
+            logger.warning("G1GrootWBCTask arm() called before start(); ignoring", task=self._name)
             return False
         if self._armed:
-            logger.info(f"G1GrootWBCTask '{self._name}' already armed — arm() ignored")
+            logger.info("G1GrootWBCTask already armed; arm() ignored", task=self._name)
             return False
         if self._arming or self._arm_pending:
-            logger.info(f"G1GrootWBCTask '{self._name}' arm in progress -- arm() ignored")
+            logger.info("G1GrootWBCTask arm in progress; arm() ignored", task=self._name)
             return False
         ramp = ramp_seconds if ramp_seconds is not None else self._config.default_ramp_seconds
         self._arming_duration = max(0.0, float(ramp))
         self._arm_pending = True
         logger.info(
-            f"G1GrootWBCTask '{self._name}' arm requested (ramp={self._arming_duration:.1f}s)"
+            "G1GrootWBCTask arm requested", task=self._name, ramp_seconds=self._arming_duration
         )
         return True
 
@@ -657,7 +662,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._arm_pending = False
         self._ramp_start = None
         self._reset_policy_state()
-        logger.info(f"G1GrootWBCTask '{self._name}' disarmed (holding current pose)")
+        logger.info("G1GrootWBCTask disarmed (holding current pose)", task=self._name)
         return True
 
     def set_dry_run(self, enabled: bool) -> None:
@@ -673,7 +678,7 @@ class G1GrootWBCTask(BaseControlTask):
             return
         self._dry_run = new_val
         self._last_dry_run_log_t = 0.0
-        logger.info(f"G1GrootWBCTask '{self._name}' dry_run = {new_val}")
+        logger.info("G1GrootWBCTask dry_run changed", task=self._name, dry_run=new_val)
 
     def state_snapshot(self) -> dict[str, Any]:
         """Return the current state-machine flags for UI / telemetry."""
