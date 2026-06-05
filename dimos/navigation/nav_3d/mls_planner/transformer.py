@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.memory2.transform import Transformer
@@ -78,8 +79,13 @@ class MLSPlan(Transformer[PointCloud2, Path]):
 
             voxel_map = obs.data
             planner.update_global_map(voxel_map.points_f32())
+            t_plan = time.perf_counter()
             waypoints = planner.plan(start, self.goal)
+            plan_ms = (time.perf_counter() - t_plan) * 1000
             path = self._path_from_waypoints(waypoints, obs.ts)
+
+            timings = {**planner.last_timings(), "plan_ms": plan_ms}
+            timings["total_ms"] = sum(timings.values())
 
             yield obs.derive(
                 data=path,
@@ -91,5 +97,7 @@ class MLSPlan(Transformer[PointCloud2, Path]):
                     "node_edges": planner.node_edges(),
                     "start": start,
                     "planned": waypoints is not None,
+                    "timings": timings,
+                    "voxels": planner.voxel_count(),
                 },
             )

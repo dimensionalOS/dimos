@@ -17,15 +17,19 @@
 from __future__ import annotations
 
 from pathlib import Path as FsPath
+import re
 from typing import TYPE_CHECKING
 
 import rerun as rr
 import typer
 
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
+from dimos.memory2.store.memory import MemoryStore
 from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory2.stream import Stream
 from dimos.memory2.transform import FnTransformer
 from dimos.memory2.type.observation import Observation
+from dimos.memory2.vis.plot.plot import Plot
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
@@ -39,6 +43,72 @@ if TYPE_CHECKING:
 TIMELINE = "ts"
 
 PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
+
+TIMING_KEYS = ["voxelize_ms", "surfaces_ms", "graph_ms", "plan_ms", "total_ms"]
+SIZE_KEYS = ["voxels", "surface_cells", "nodes", "edges"]
+
+
+def _print_summary(streams: dict[str, dict[str, Stream[float]]]) -> None:
+    print("\nper-frame summary (mean / p50 / p95 / max):")
+    for kind, by_key in streams.items():
+        for key, stream in by_key.items():
+            values = [obs.data for obs in stream]
+            if not values:
+                continue
+            arr = np.asarray(values, dtype=np.float64)
+            mean, p50, p95, peak = (
+                arr.mean(),
+                np.percentile(arr, 50),
+                np.percentile(arr, 95),
+                arr.max(),
+            )
+            print(f"  {kind}/{key:<14} {mean:9.2f} {p50:9.2f} {p95:9.2f} {peak:9.2f}")
+
+
+def _stitch_svgs(svgs: list[str]) -> str:
+    """Stack standalone SVGs vertically into one. Namespaces each panel's ids
+    so matplotlib's reused ids (axes_1, clip paths, glyphs) don't collide."""
+    panels: list[str] = []
+    widths: list[float] = []
+    offset = 0.0
+    for i, svg in enumerate(svgs):
+        body = svg[svg.index("<svg") :]
+        m = re.search(r'width="([\d.]+)pt"\s+height="([\d.]+)pt"', body)
+        if m is None:
+            raise ValueError("could not parse SVG dimensions")
+        width, height = float(m.group(1)), float(m.group(2))
+        prefix = f"s{i}_"
+        body = re.sub(r'id="([^"]+)"', rf'id="{prefix}\1"', body)
+        body = re.sub(r"url\(#([^)]+)\)", rf"url(#{prefix}\1)", body)
+        body = re.sub(r'xlink:href="#([^"]+)"', rf'xlink:href="#{prefix}\1"', body)
+        # Drop the "pt" unit so the nested width/height are read as parent user
+        # units (the outer viewBox is unitless); otherwise pt->px conversion
+        # overflows the parent viewport and clips each panel on the right.
+        body = body.replace(m.group(0), f'width="{width}" height="{height}"', 1)
+        body = body.replace("<svg", f'<svg x="0" y="{offset}"', 1)
+        panels.append(body)
+        widths.append(width)
+        offset += height
+    return (
+        '<?xml version="1.0" encoding="utf-8" standalone="no"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+        f'width="{max(widths)}pt" height="{offset}pt" '
+        f'viewBox="0 0 {max(widths)} {offset}" version="1.1">\n' + "\n".join(panels) + "\n</svg>\n"
+    )
+
+
+def _save_plot(timing_streams: dict[str, Stream[float]], voxels: Stream[float], path: str) -> None:
+    panels: list[str] = []
+    for key in TIMING_KEYS:
+        plot = Plot()
+        plot.add(timing_streams[key], label=key, connect=None)
+        panels.append(plot.to_svg())
+    voxel_plot = Plot()
+    voxel_plot.add(voxels, label="voxels", connect=None)
+    panels.append(voxel_plot.to_svg())
+    with open(path, "w") as f:
+        f.write(_stitch_svgs(panels))
+    print(f"wrote {path}")
 
 
 def _attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
@@ -103,6 +173,9 @@ def main(
         False, "--live", help="Also spawn the rerun viewer when --out is set"
     ),
     render_voxel: float = typer.Option(0.05, "--render-voxel", help="Rerun voxel render size (m)"),
+    plot_out: FsPath | None = typer.Option(
+        None, "--plot-out", help="Write an SVG timing/size plot here when the run ends"
+    ),
 ) -> None:
     db_path = resolve_named_path(dataset, ".db")
 
@@ -119,7 +192,7 @@ def main(
 
     store = SqliteStore(path=str(db_path))
     with store:
-        lidar = store.stream(lidar_stream, PointCloud2).order_by("ts")
+        lidar = store.stream(lidar_stream, PointCloud2).order_by("ts").from_time(110).to_time(120)
         odom = store.stream(odom_stream, Odometry).order_by("ts")
 
         pose_tagged = lidar.align(odom, tolerance=align_tol).transform(
@@ -143,37 +216,65 @@ def main(
 
         rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
 
-        for obs in pipeline:
-            rr.set_time(TIMELINE, timestamp=obs.ts)
+        metrics = MemoryStore()
+        timing_streams = {k: metrics.stream(f"timing_{k}", float) for k in TIMING_KEYS}
+        size_streams = {k: metrics.stream(f"size_{k}", float) for k in SIZE_KEYS}
 
-            start = obs.tags["start"]
-            rr.log("world/start", rr.Points3D([start], colors=[[0, 255, 0]], radii=0.1))
+        try:
+            for obs in pipeline:
+                rr.set_time(TIMELINE, timestamp=obs.ts)
 
-            voxel_map = obs.tags["voxel_map"]
-            rr.log("world/voxel_map", voxel_map.to_rerun(voxel_size=render_voxel))
+                start = obs.tags["start"]
+                rr.log("world/start", rr.Points3D([start], colors=[[0, 255, 0]], radii=0.1))
 
-            surface = obs.tags["surface_map"]
-            if surface.size:
-                rr.log(
-                    "world/surface_map",
-                    rr.Points3D(surface, colors=[[120, 120, 200]], radii=render_voxel / 2),
+                voxel_map = obs.tags["voxel_map"]
+                rr.log("world/voxel_map", voxel_map.to_rerun(voxel_size=render_voxel))
+
+                surface = obs.tags["surface_map"]
+                if surface.size:
+                    rr.log(
+                        "world/surface_map",
+                        rr.Points3D(surface, colors=[[120, 120, 200]], radii=render_voxel / 2),
+                    )
+
+                nodes = obs.tags["nodes"]
+                if nodes.size:
+                    rr.log("world/nodes", rr.Points3D(nodes, colors=[[255, 200, 0]], radii=0.05))
+
+                edges = obs.tags["node_edges"]
+                _log_edges(edges, "world/node_edges")
+                _log_path(obs.data, "world/path")
+
+                timings = obs.tags["timings"]
+                sizes = {
+                    "voxels": obs.tags["voxels"],
+                    "surface_cells": len(surface),
+                    "nodes": len(nodes),
+                    "edges": len(edges),
+                }
+                for key, value in timings.items():
+                    timing_streams[key].append(float(value), ts=obs.ts)
+                    rr.log(f"metrics/timing/{key}", rr.Scalars(value))
+                for key, value in sizes.items():
+                    size_streams[key].append(float(value), ts=obs.ts)
+                    rr.log(f"metrics/size/{key}", rr.Scalars(value))
+
+                count = obs.tags.get("frame_count", "?")
+                planned = obs.tags.get("planned", False)
+                print(
+                    f"frame_count={count} planned={planned} "
+                    f"waypoints={len(obs.data.poses)} "
+                    f"rebuild={timings['total_ms'] - timings['plan_ms']:.1f}ms "
+                    f"plan={timings['plan_ms']:.1f}ms",
+                    end="\r",
+                    flush=True,
                 )
-
-            nodes = obs.tags["nodes"]
-            if nodes.size:
-                rr.log("world/nodes", rr.Points3D(nodes, colors=[[255, 200, 0]], radii=0.05))
-
-            _log_edges(obs.tags["node_edges"], "world/node_edges")
-            _log_path(obs.data, "world/path")
-
-            count = obs.tags.get("frame_count", "?")
-            planned = obs.tags.get("planned", False)
-            print(
-                f"frame_count={count} planned={planned} waypoints={len(obs.data.poses)}",
-                end="\r",
-                flush=True,
-            )
-        print()
+        except KeyboardInterrupt:
+            print("\ninterrupted; reporting metrics for completed frames")
+        finally:
+            _print_summary({"timing": timing_streams, "size": size_streams})
+            if plot_out is not None:
+                _save_plot(timing_streams, size_streams["voxels"], str(plot_out))
 
     if out is not None:
         print(f"wrote {out}")

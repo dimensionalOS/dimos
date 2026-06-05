@@ -53,6 +53,17 @@ class MLSPlanner:
         """Plan a path between start and goal. Returns (W, 3) float32, or None if unreachable."""
         ...
 
+    def voxel_count(self) -> int:
+        """Number of occupied voxels in the current map."""
+        ...
+
+    def last_timings(self) -> dict[str, float]:
+        """Per-substep wall-clock ms of the last update_global_map.
+
+        Keys are voxelize_ms, surfaces_ms, and graph_ms.
+        """
+        ...
+
     def clear(self) -> None:
         """Drop the graph and buffered state."""
         ...

@@ -3,6 +3,8 @@
 
 //! Config and the owned-state Planner that builds and queries the MLS graph.
 
+use std::time::Instant;
+
 use ahash::AHashSet;
 use serde::Deserialize;
 use validator::Validate;
@@ -34,12 +36,21 @@ pub struct Config {
     pub node_step_threshold_m: f32,
 }
 
+/// Wall-clock cost of each stage of the most recent full rebuild, in milliseconds.
+#[derive(Default, Clone, Copy)]
+pub struct RebuildTimings {
+    pub voxelize_ms: f64,
+    pub surfaces_ms: f64,
+    pub graph_ms: f64,
+}
+
 #[derive(Default)]
 pub struct Planner {
     graph: PlannerGraph,
     voxel_map: AHashSet<VoxelKey>,
     by_col: ColumnIz,
     surface: Vec<VoxelKey>,
+    last_timings: RebuildTimings,
 }
 
 impl Planner {
@@ -48,11 +59,14 @@ impl Planner {
         let clearance = (config.robot_height / voxel_size).ceil() as i32;
         let step = (config.node_step_threshold_m / voxel_size).floor() as i32;
 
+        let t_voxelize = Instant::now();
         self.voxel_map.clear();
         for &p in points {
             self.voxel_map.insert(voxelize(p, voxel_size));
         }
+        let voxelize_ms = ms(t_voxelize.elapsed());
 
+        let t_surfaces = Instant::now();
         extract_surfaces(
             &self.voxel_map,
             clearance,
@@ -61,7 +75,9 @@ impl Planner {
             &mut self.by_col,
             &mut self.surface,
         );
+        let surfaces_ms = ms(t_surfaces.elapsed());
 
+        let t_graph = Instant::now();
         build_surface_lookup(&self.surface, &mut self.graph.surface_lookup);
         build_surface_cells(
             &mut self.graph.cells,
@@ -86,6 +102,13 @@ impl Planner {
             &mut self.graph.node_edges,
             &mut self.graph.node_adj,
         );
+        let graph_ms = ms(t_graph.elapsed());
+
+        self.last_timings = RebuildTimings {
+            voxelize_ms,
+            surfaces_ms,
+            graph_ms,
+        };
     }
 
     pub fn plan(
@@ -119,4 +142,12 @@ impl Planner {
     pub fn voxel_count(&self) -> usize {
         self.voxel_map.len()
     }
+
+    pub fn last_timings(&self) -> RebuildTimings {
+        self.last_timings
+    }
+}
+
+fn ms(d: std::time::Duration) -> f64 {
+    d.as_secs_f64() * 1000.0
 }
