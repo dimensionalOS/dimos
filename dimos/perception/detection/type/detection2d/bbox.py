@@ -299,7 +299,12 @@ class Detection2DBBox(Detection2D):
         confidence = 0.0
         if ros_det.results:
             hypothesis = ros_det.results[0].hypothesis
-            class_id = hypothesis.class_id
+            raw_class_id = hypothesis.class_id
+            class_id = (
+                int(raw_class_id)
+                if isinstance(raw_class_id, str) and raw_class_id.isdigit()
+                else raw_class_id
+            )
             confidence = hypothesis.score
 
         # Extract track_id
