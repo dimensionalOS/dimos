@@ -34,6 +34,7 @@ from typing import Any
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import Field
 import reactivex as rx
 from scipy.spatial.transform import Rotation as R
@@ -104,10 +105,10 @@ class _WholeBodySimHooks:
         self._gripper_idx = gripper_idx
         self._gripper_ctrl_range = gripper_ctrl_range
         self._gripper_joint_range = gripper_joint_range
-        self._latest_pd_pos_target: np.ndarray | None = None
-        self._latest_pd_kp: np.ndarray | None = None
-        self._latest_pd_kd: np.ndarray | None = None
-        self._latest_pd_tau: np.ndarray | None = None
+        self._latest_pd_pos_target: NDArray[np.float64] | None = None
+        self._latest_pd_kp: NDArray[np.float64] | None = None
+        self._latest_pd_kd: NDArray[np.float64] | None = None
+        self._latest_pd_tau: NDArray[np.float64] | None = None
 
     def pre_step(self, engine: MujocoEngine) -> None:
         shm = self._shm

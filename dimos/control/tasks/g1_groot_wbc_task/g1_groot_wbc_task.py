@@ -33,6 +33,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from numpy.typing import NDArray
 import onnxruntime as ort  # type: ignore[import-untyped]
 
 from dimos.control.components import make_humanoid_joints
@@ -333,7 +334,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._dry_run = bool(config.auto_dry_run)
         self._arming_duration = 0.0
         self._arming_start_t = 0.0
-        self._ramp_start: np.ndarray | None = None
+        self._ramp_start: NDArray[np.float32] | None = None
         self._last_dry_run_log_t: float = 0.0
 
         self._cmd_lock = threading.Lock()
@@ -695,12 +696,12 @@ class G1GrootWBCTask(BaseControlTask):
 
     def _build_obs(
         self,
-        cmd: np.ndarray,
-        gyro: np.ndarray,
-        gravity: np.ndarray,
-        q: np.ndarray,
-        dq: np.ndarray,
-    ) -> np.ndarray:
+        cmd: NDArray[np.float32],
+        gyro: NDArray[np.float32],
+        gravity: NDArray[np.float32],
+        q: NDArray[np.float32],
+        dq: NDArray[np.float32],
+    ) -> NDArray[np.float32]:
         """Build the 86-dim GR00T observation.  Layout matches
         ``groot_wbc_backend.py`` exactly."""
         obs = np.zeros(_SINGLE_OBS_DIM, dtype=np.float32)
@@ -715,7 +716,7 @@ class G1GrootWBCTask(BaseControlTask):
         return obs
 
     @staticmethod
-    def _projected_gravity(quaternion: tuple[float, ...]) -> np.ndarray:
+    def _projected_gravity(quaternion: tuple[float, ...]) -> NDArray[np.float32]:
         """Project world gravity into body frame.
 
         Uses Unitree DDS quaternion order (w, x, y, z).  Formula matches
