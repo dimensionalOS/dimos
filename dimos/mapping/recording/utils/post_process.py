@@ -98,6 +98,7 @@ def correct_db(
     gtsam_stream,
     marker_length,
     dictionary,
+    add_loop_closures=True,
 ):
     """AprilTag detection -> GTSAM trajectory -> re-anchor lidar. Returns True if
     a corrected trajectory was written."""
@@ -108,7 +109,9 @@ def correct_db(
     if not detections:
         print("   no AprilTags detected — skipping gtsam_odom (no landmark constraints)")
         return False
-    trajectory = build_gtsam_gt(str(db), detections, optical_in_base)
+    trajectory = build_gtsam_gt(
+        str(db), detections, optical_in_base, add_loop_closures=add_loop_closures
+    )
     with SqliteStore(path=str(db)) as store:
         write_gtsam_odom(store, trajectory, gtsam_stream, db.parent / "gtsam_odom.tum")
         stream_names = store.list_streams()
@@ -143,6 +146,7 @@ def process_db(
     dictionary,
     force,
     no_gtsam=False,
+    no_loop=False,
     make_rrd=True,
     camera_freq=30,
     map_voxel=0.1,
@@ -156,11 +160,12 @@ def process_db(
     except Exception as error:
         print(f"   rec_check skipped: {error}")
 
+    try:
+        print(f"   wrote {rec_check.write_summary(db.parent)}")
+    except Exception as error:
+        print(f"   summary failed: {error}")
+
     if check_only:
-        try:
-            print(f"   wrote {rec_check.write_summary(db.parent)}")
-        except Exception as error:
-            print(f"   summary failed: {error}")
         return
 
     with SqliteStore(path=str(db)) as store:
@@ -182,6 +187,7 @@ def process_db(
             gtsam_stream=gtsam_stream,
             marker_length=marker_length,
             dictionary=dictionary,
+            add_loop_closures=not no_loop,
         )
 
     if make_rrd:
@@ -240,6 +246,11 @@ def run(
         action="store_true",
         help="skip AprilTag/GTSAM/re-anchor (e.g. rebuild only the .rrd)",
     )
+    parser.add_argument(
+        "--no-loop",
+        action="store_true",
+        help="skip lidar loop-closure detection (AprilTags-only drift correction)",
+    )
     parser.add_argument("--no-rrd", action="store_true", help="skip the .rrd visualization step")
     parser.add_argument(
         "--camera-freq",
@@ -286,6 +297,7 @@ def run(
                 dictionary=args.dictionary,
                 force=args.force,
                 no_gtsam=args.no_gtsam,
+                no_loop=args.no_loop,
                 make_rrd=not args.no_rrd,
                 camera_freq=args.camera_freq,
                 map_voxel=args.map_voxel,

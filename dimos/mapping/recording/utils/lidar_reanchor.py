@@ -48,7 +48,7 @@ def _load_poses(db_path: str, stream: str):
     ).fetchall()
     conn.close()
     if not rows:
-        raise SystemExit(f"no populated poses in stream '{stream}'")
+        raise ValueError(f"no populated poses in stream '{stream}'")
     return np.array([r[0] for r in rows]), np.array([r[1:8] for r in rows], dtype=np.float64)
 
 

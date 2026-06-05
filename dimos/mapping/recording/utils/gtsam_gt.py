@@ -27,6 +27,7 @@ import sqlite3
 
 import numpy as np
 
+from dimos.mapping.recording.utils.lidar_loop_closure import find_loop_closures
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
@@ -71,7 +72,7 @@ def pick_pose_stream(connection) -> str:
             continue
         if populated > 0:
             return name
-    raise SystemExit(f"no odom stream with populated pose columns among {candidates}")
+    raise ValueError(f"no odom stream with populated pose columns among {candidates}")
 
 
 def build_gtsam_gt(
@@ -85,14 +86,36 @@ def build_gtsam_gt(
     tag_rot_sig=1.0,
     tag_trans_sig=0.1,
     tag_huber=0.5,
+    add_loop_closures=True,
+    loop_lidar_stream="livox_lidar",
+    loop_rot_sig=0.01,
+    loop_trans_sig=1.0,
+    loop_huber=1.0,
+    exclude_marker_ids=(),
+    pose_stream=None,
+    return_landmarks=False,
 ):
-    """Landmark-SLAM the odom chain + AprilTag landmarks. Returns [(ts, pose7), ...]."""
+    """Landmark-SLAM the odom chain + AprilTag landmarks + lidar loop closures.
+
+    Per-DOF weighting plays each source to its strength: AprilTags trust POSITION
+    (tight tag_trans_sig) and ignore their own ORIENTATION (loose tag_rot_sig);
+    lidar loop closures trust ORIENTATION (tight loop_rot_sig, fixes accumulated
+    pitch/yaw drift) and stay out of translation (loose loop_trans_sig).
+
+    `exclude_marker_ids` drops those tags entirely (e.g. a tag mounted on a moving
+    robot is not a static landmark). `pose_stream` forces which odom stream is the
+    pose chain (default: auto-pick) — set it to match the stream the lidar is
+    re-anchored through, so trajectory and clouds share a frame.
+
+    Returns [(ts, pose7), ...], or ([(ts, pose7), ...], {marker_id: pose7_world})
+    of the optimized static-tag world poses when `return_landmarks` is set."""
     import gtsam
     from gtsam import BetweenFactorPose3, PriorFactorPose3
     from gtsam.symbol_shorthand import L, X
 
     connection = sqlite3.connect(db_path)
-    pose_stream = pick_pose_stream(connection)
+    if pose_stream is None:
+        pose_stream = pick_pose_stream(connection)
     pose_rows = connection.execute(
         f"SELECT ts,pose_x,pose_y,pose_z,pose_qx,pose_qy,pose_qz,pose_qw "
         f'FROM "{pose_stream}" WHERE pose_qw IS NOT NULL ORDER BY ts'
@@ -100,7 +123,8 @@ def build_gtsam_gt(
     connection.close()
     pose_rows = pose_rows[::node_stride]
     node_timestamps = np.array([row[0] for row in pose_rows])
-    node_poses = [_pose_from7(row[1:8]) for row in pose_rows]
+    node_poses7 = [list(row[1:8]) for row in pose_rows]
+    node_poses = [_pose_from7(pose7) for pose7 in node_poses7]
     num_nodes = len(pose_rows)
     print(
         f"   gtsam: pose stream '{pose_stream}', {num_nodes} nodes (stride {node_stride}), "
@@ -117,6 +141,10 @@ def build_gtsam_gt(
         ):
             node_index -= 1
         return node_index
+
+    exclude = {int(marker_id) for marker_id in exclude_marker_ids}
+    if exclude:
+        markers = [marker for marker in markers if int(marker["marker_id"]) not in exclude]
 
     graph = gtsam.NonlinearFactorGraph()
     initial = gtsam.Values()
@@ -148,6 +176,22 @@ def build_gtsam_gt(
             landmark_ids.add(marker_id)
         graph.add(BetweenFactorPose3(X(node_index), L(marker_id), tag_in_body, tag_noise))
 
+    loops = []
+    if add_loop_closures:
+        loops = find_loop_closures(
+            db_path, node_timestamps, node_poses7, lidar_stream=loop_lidar_stream
+        )
+        loop_noise = gtsam.noiseModel.Robust.Create(
+            gtsam.noiseModel.mEstimator.Huber.Create(loop_huber),
+            gtsam.noiseModel.Diagonal.Sigmas(np.array([loop_rot_sig] * 3 + [loop_trans_sig] * 3)),
+        )
+        for loop in loops:
+            graph.add(
+                BetweenFactorPose3(
+                    X(loop.i), X(loop.j), _pose_from7(loop.relative_pose7), loop_noise
+                )
+            )
+
     params = gtsam.LevenbergMarquardtParams()
     params.setMaxIterations(100)
     optimizer = gtsam.LevenbergMarquardtOptimizer(graph, initial, params)
@@ -159,13 +203,20 @@ def build_gtsam_gt(
         for node_index in range(num_nodes)
     ]
     print(
-        f"   gtsam: landmarks {sorted(landmark_ids)} | correction max {max(corrections):.2f} m, "
+        f"   gtsam: landmarks {sorted(landmark_ids)} | {len(loops)} loop closures | "
+        f"correction max {max(corrections):.2f} m, "
         f"mean {np.mean(corrections):.2f} m ({optimizer.iterations()} iters)"
     )
-    return [
+    trajectory = [
         (float(node_timestamps[node_index]), _pose_to7(result.atPose3(X(node_index))))
         for node_index in range(num_nodes)
     ]
+    if return_landmarks:
+        landmarks = {
+            marker_id: _pose_to7(result.atPose3(L(marker_id))) for marker_id in sorted(landmark_ids)
+        }
+        return trajectory, landmarks
+    return trajectory
 
 
 def write_gtsam_odom(store, trajectory, stream_name, tum_path):
