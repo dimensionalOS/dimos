@@ -16,7 +16,7 @@
 
 Streams: motor_states (Out[JointState]), imu (Out[Imu]),
 motor_command (In[MotorCommandArray]). 29 motors, ordering from
-make_humanoid_joints("g1") (left leg → right leg → waist → left arm → right arm).
+make_humanoid_joints("g1") (left leg -> right leg -> waist -> left arm -> right arm).
 """
 
 from __future__ import annotations
@@ -40,8 +40,6 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
@@ -60,7 +58,7 @@ _MODE_MACHINE_G1: int = 5
 
 # Joint names sourced from the canonical helper. Order matches the motor index
 # convention above. Single-source-of-truth so any coordinator-side adapter built
-# from make_humanoid_joints("g1") agrees on the wire-level name → motor-index mapping.
+# from make_humanoid_joints("g1") agrees on the wire-level name -> motor-index mapping.
 G1_JOINT_NAMES: list[str] = make_humanoid_joints("g1")
 assert len(G1_JOINT_NAMES) == _NUM_MOTORS
 
@@ -73,7 +71,7 @@ class G1WholeBodyConnectionConfig(ModuleConfig):
 
 
 class G1WholeBodyConnection(Module):
-    """G1 humanoid Module — owns the DDS connection in its own worker."""
+    """G1 humanoid Module - owns the DDS connection in its own worker."""
 
     config: G1WholeBodyConnectionConfig
 
@@ -91,7 +89,7 @@ class G1WholeBodyConnection(Module):
         self._crc: CRC | None = None
         # mode_machine: hardcoded at start() to the static value for the
         # 29-DOF G1.  We log a one-shot warning if the first LowState we
-        # read disagrees — that's the early signal of firmware drift on a
+        # read disagrees - that's the early signal of firmware drift on a
         # variant that needs a different value.
         self._mode_machine: int | None = None
         self._mode_machine_verified: bool = False
@@ -104,7 +102,7 @@ class G1WholeBodyConnection(Module):
     def start(self) -> None:
         super().start()
 
-        # Lazy SDK imports — file must import cleanly outside the [unitree-dds] extra.
+        # Lazy SDK imports - file must import cleanly outside the [unitree-dds] extra.
         from unitree_sdk2py.core.channel import (
             ChannelFactoryInitialize,
             ChannelPublisher,
@@ -122,13 +120,13 @@ class G1WholeBodyConnection(Module):
             else:
                 ChannelFactoryInitialize(0)
         except Exception as e:
-            # Idempotent — already initialised by a sibling participant is fine.
+            # Idempotent - already initialised by a sibling participant is fine.
             logger.debug(f"ChannelFactoryInitialize raised (likely already init'd): {e}")
 
         self._publisher = ChannelPublisher("rt/lowcmd", LowCmd_)
         self._publisher.Init()
 
-        # Passive subscriber — Read() per tick from the publish loop.  The
+        # Passive subscriber - Read() per tick from the publish loop.  The
         # callback variant (Init(self._on_low_state, 10)) doesn't fire
         # reliably under cyclonedds on macOS, which used to leave us
         # blocked here forever waiting for a first LowState.
@@ -157,7 +155,7 @@ class G1WholeBodyConnection(Module):
         else:
             logger.info("Skipping sport mode release (release_sport_mode=False)")
 
-        logger.info(f"G1WholeBodyConnection connected (mode_machine={self._mode_machine})")
+        logger.info("G1WholeBodyConnection connected", mode_machine=self._mode_machine)
 
         self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
 
@@ -177,7 +175,7 @@ class G1WholeBodyConnection(Module):
         # tau=0).  Without this, the motors freeze stiffly at whatever
         # the last commanded pose was and the next ``dimos run`` opens
         # against a robot that's actively fighting its own controllers
-        # — observed as horrible mechanical noise during sport-mode
+        # - observed as horrible mechanical noise during sport-mode
         # release.  Best-effort: any failure is logged, not raised, so
         # cleanup still drains the DDS endpoints.
         if self._publisher is not None and self._low_cmd is not None and self._crc is not None:
@@ -194,9 +192,9 @@ class G1WholeBodyConnection(Module):
                     self._publisher.Write(self._low_cmd)
                 logger.info("Sent safe-stop lowcmd (motors disabled)")
             except (OSError, RuntimeError, AttributeError) as e:
-                logger.warning(f"Safe-stop lowcmd failed: {e}")
+                logger.warning("Safe-stop lowcmd failed", error=str(e))
 
-        # Close DDS endpoints explicitly — GC-based cleanup races with in-flight
+        # Close DDS endpoints explicitly - GC-based cleanup races with in-flight
         # callbacks and segfaults on process exit (mirrors the Go2 adapter).
         if self._subscriber is not None:
             try:
@@ -231,7 +229,7 @@ class G1WholeBodyConnection(Module):
             self._low_state = fresh
         self._verify_mode_machine_once(fresh)
 
-    def _verify_mode_machine_once(self, sample: object) -> None:
+    def _verify_mode_machine_once(self, sample: LowState_) -> None:
         """One-shot sanity check: log if the hardcoded mode_machine
         doesn't match what the firmware reports. Commands with a
         wrong mode_machine are silently rejected, so this prevents
@@ -240,12 +238,13 @@ class G1WholeBodyConnection(Module):
         if self._mode_machine_verified:
             return
         self._mode_machine_verified = True
-        actual = int(getattr(sample, "mode_machine", -1))
+        actual = int(sample.mode_machine)
         if actual != self._mode_machine:
             logger.warning(
-                f"mode_machine mismatch: hardcoded {self._mode_machine}, "
-                f"robot reports {actual}.  Commands may be silently rejected "
-                f"by firmware — set _MODE_MACHINE_G1 to {actual} for this variant."
+                "mode_machine mismatch; commands may be silently rejected by firmware. "
+                "Set _MODE_MACHINE_G1 to the reported value for this variant.",
+                hardcoded=self._mode_machine,
+                reported=actual,
             )
 
     def _snapshot_motor_imu(
@@ -296,16 +295,8 @@ class G1WholeBodyConnection(Module):
                 effort=efforts,
             )
         )
-        # Unitree quat is (w,x,y,z); dimos Quaternion is (x,y,z,w).
-        self.imu.publish(
-            Imu(
-                ts=now,
-                frame_id=frame_id,
-                orientation=Quaternion(quat[1], quat[2], quat[3], quat[0]),
-                angular_velocity=Vector3(gyro[0], gyro[1], gyro[2]),
-                linear_acceleration=Vector3(accel[0], accel[1], accel[2]),
-            )
-        )
+        # Unitree quat is (w,x,y,z); Imu.from_wxyz reorders to dimos (x,y,z,w).
+        self.imu.publish(Imu.from_wxyz(quat, gyro, accel, frame_id=frame_id, ts=now))
 
     def _publish_loop(self) -> None:
         period = 1.0 / float(self.config.publish_rate_hz)
@@ -347,10 +338,10 @@ class G1WholeBodyConnection(Module):
                 or self._publisher is None
                 or self._mode_machine is None
             ):
-                # Pre-start or post-stop — drop silently.
+                # Pre-start or post-stop - drop silently.
                 return
 
-            # Echo mode_machine from the latest LowState — required by G1 firmware.
+            # Echo mode_machine from the latest LowState - required by G1 firmware.
             self._low_cmd.mode_machine = self._mode_machine
 
             for i in range(_NUM_MOTORS):
@@ -382,12 +373,12 @@ class G1WholeBodyConnection(Module):
         msc.SetTimeout(5.0)
         msc.Init()
 
-        # CheckMode returns (status, None) — or (status, {"name": ""}) on
-        # some firmwares — once nothing is active.  Treat both as "already
+        # CheckMode returns (status, None) - or (status, {"name": ""}) on
+        # some firmwares - once nothing is active.  Treat both as "already
         # released" and return without poking ReleaseMode.
         _status, result = msc.CheckMode()
         if not result or not result.get("name"):
-            logger.info("Sport mode already released — skipping ReleaseMode")
+            logger.info("Sport mode already released - skipping ReleaseMode")
             return
 
         while result and result.get("name"):
@@ -395,7 +386,7 @@ class G1WholeBodyConnection(Module):
             _status, result = msc.CheckMode()
             time.sleep(1)
 
-        logger.info("Sport mode released — low-level control active")
+        logger.info("Sport mode released - low-level control active")
 
 
 __all__ = ["G1_JOINT_NAMES", "G1WholeBodyConnection", "G1WholeBodyConnectionConfig"]

@@ -20,7 +20,7 @@ priority; arm joints are left to lower-priority tasks in the blueprint.
 
 Reference implementation: g1_control/backends/groot_wbc_backend.py.
 Observation, action, and model-selection semantics are preserved
-verbatim — changing them drifts us away from the ONNX policies trained
+verbatim - changing them drifts us away from the ONNX policies trained
 by GR00T-WholeBodyControl.
 
 """
@@ -33,9 +33,11 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from numpy.typing import NDArray
 import onnxruntime as ort  # type: ignore[import-untyped]
 
 from dimos.control.components import make_humanoid_joints
+from dimos.control.hardware_interface import ConnectedWholeBody
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -56,11 +58,11 @@ logger = setup_logger()
 # The 29 DDS motor names + their kp/kd for the GR00T-trained policies.
 # Lifted verbatim from g1-control-api/configs/g1_groot_wbc.yaml, which
 # itself copies GR00T-WBC's g1_29dof_gear_wbc.yaml. Diverging from these
-# on real hardware risks instability — the ONNX models were trained
+# on real hardware risks instability - the ONNX models were trained
 # against them.
 g1_joints = make_humanoid_joints("g1")
-g1_legs_waist = g1_joints[:15]  # indices 0..14 — legs (12) + waist (3)
-g1_arms = g1_joints[15:]  # indices 15..28 — left arm (7) + right arm (7)
+g1_legs_waist = g1_joints[:15]  # indices 0..14 - legs (12) + waist (3)
+g1_arms = g1_joints[15:]  # indices 15..28 - left arm (7) + right arm (7)
 
 G1_GROOT_KP: list[float] = [
     150.0,
@@ -126,7 +128,7 @@ G1_GROOT_KD: list[float] = [
 ]
 
 # Relaxed arms-down pose. From g1_control/backends/groot_wbc_backend.py
-# DEFAULT_29[15:] (all zeros) — the zero-offset pose the policy was
+# DEFAULT_29[15:] (all zeros) - the zero-offset pose the policy was
 # trained against. Operators can override at runtime by publishing
 # joint targets on the arms via the coordinator's joint_command transport.
 ARM_DEFAULT_POSE: list[float] = [0.0] * 14
@@ -191,7 +193,7 @@ class G1GrootWBCTaskConfig:
         priority: Arbitration priority (higher wins).  50 is the
             recommended WBC priority per the task.py conventions.
         decimation: Run inference every N ticks.  At 500 Hz tick /
-            50 Hz policy → decimation=10.
+            50 Hz policy -> decimation=10.
         action_scale: Multiplier on raw policy output before adding
             defaults.
         obs_ang_vel_scale: Scale for base angular velocity in obs.
@@ -203,13 +205,13 @@ class G1GrootWBCTaskConfig:
         height_cmd: Fixed height command slot in obs.
         timeout: Seconds without a velocity command before zeroing it.
         auto_arm: Arm the policy automatically on ``start()``.  Default
-            False — safe for real hardware; the blueprint sets True for
+            False - safe for real hardware; the blueprint sets True for
             simulation.
         auto_dry_run: Enter dry-run mode on ``start()``.  Policy still
-            runs but outputs are not emitted to the adapter — useful for
+            runs but outputs are not emitted to the adapter - useful for
             verifying on real hardware without commanding motors.
         default_ramp_seconds: Duration of the arming ramp (current pose
-            → ``default_15``) when ``arm()`` is called without an
+            -> ``default_15``) when ``arm()`` is called without an
             explicit duration.  Set to 0 in simulation (no ramp needed);
             10 s on real hardware mirrors the g1-control-api default.
     """
@@ -256,7 +258,7 @@ class G1GrootWBCTask(BaseControlTask):
 
         target_q_15 = action * action_scale + default_15
 
-    Arms are NOT driven by this task — the blueprint pairs this task
+    Arms are NOT driven by this task - the blueprint pairs this task
     with a lower-priority servo task scoped to the 14 arm joints.
     """
 
@@ -297,8 +299,11 @@ class G1GrootWBCTask(BaseControlTask):
         self._balance_input = self._balance_session.get_inputs()[0].name
         self._walk_input = self._walk_session.get_inputs()[0].name
         logger.info(
-            f"G1GrootWBCTask '{name}' loaded balance={config.balance_onnx}, "
-            f"walk={config.walk_onnx} (providers: {providers})"
+            "G1GrootWBCTask loaded ONNX models",
+            task=name,
+            balance=str(config.balance_onnx),
+            walk=str(config.walk_onnx),
+            providers=providers,
         )
 
         self._default_29 = np.asarray(config.default_positions_29, dtype=np.float32)
@@ -315,7 +320,7 @@ class G1GrootWBCTask(BaseControlTask):
         # Last-known-good state caches. compute() falls back to these
         # whenever a joint is missing from CoordinatorState (transient
         # packet drop, late publisher, etc) instead of substituting 0.0
-        # — feeding a zero pose to the policy makes it think the robot
+        # - feeding a zero pose to the policy makes it think the robot
         # is at the URDF zero (legs straight) and command a snap-back,
         # which on real hardware tips the robot over. ``_state_seen``
         # tracks whether we've ever observed a fully-populated state;
@@ -333,7 +338,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._dry_run = bool(config.auto_dry_run)
         self._arming_duration = 0.0
         self._arming_start_t = 0.0
-        self._ramp_start: np.ndarray | None = None
+        self._ramp_start: NDArray[np.float32] | None = None
         self._last_dry_run_log_t: float = 0.0
 
         self._cmd_lock = threading.Lock()
@@ -360,7 +365,7 @@ class G1GrootWBCTask(BaseControlTask):
         returning True iff the full 29 came back populated this tick.
 
         On a missing joint we keep the cached value rather than dropping
-        in 0.0 — the policy interprets 0.0 as "at URDF zero / legs
+        in 0.0 - the policy interprets 0.0 as "at URDF zero / legs
         straight" and commands a recovery, which tips the robot.
         """
         all_present = True
@@ -388,14 +393,14 @@ class G1GrootWBCTask(BaseControlTask):
 
         # Refresh the last-known-good state caches. If we've never seen
         # a fully-populated state and this tick is also incomplete, hold
-        # off — emitting a command from defaults would snap the robot.
+        # off - emitting a command from defaults would snap the robot.
         fresh = self._refresh_state_caches(state)
         if not self._state_seen and not fresh:
             return None
 
         current_15 = self._cached_q_15.copy()
 
-        # arm() was called — snapshot the ramp start and enter arming /
+        # arm() was called - snapshot the ramp start and enter arming /
         # armed state (ramp=0 arms immediately).
         if self._arm_pending:
             self._ramp_start = current_15.copy()
@@ -404,14 +409,15 @@ class G1GrootWBCTask(BaseControlTask):
                 self._arming = True
                 self._armed = False
                 logger.info(
-                    f"G1GrootWBCTask '{self._name}' arming: "
-                    f"ramp → default_15 over {self._arming_duration:.1f}s"
+                    "G1GrootWBCTask arming: ramp to default_15",
+                    task=self._name,
+                    ramp_seconds=self._arming_duration,
                 )
             else:
                 self._arming = False
                 self._armed = True
                 self._reset_policy_state()
-                logger.info(f"G1GrootWBCTask '{self._name}' armed (no ramp)")
+                logger.info("G1GrootWBCTask armed (no ramp)", task=self._name)
             self._arm_pending = False
 
         # Unarmed & not arming: echo current joint positions.  With the
@@ -426,7 +432,7 @@ class G1GrootWBCTask(BaseControlTask):
                 mode=ControlMode.SERVO_POSITION,
             )
 
-        # Arming: lerp ramp_start → default_15 over arming_duration.
+        # Arming: lerp ramp_start -> default_15 over arming_duration.
         if self._arming:
             assert self._ramp_start is not None
             elapsed = state.t_now - self._arming_start_t
@@ -440,8 +446,9 @@ class G1GrootWBCTask(BaseControlTask):
                 self._armed = True
                 self._reset_policy_state()
                 logger.info(
-                    f"G1GrootWBCTask '{self._name}' ramp complete — policy armed "
-                    f"({'dry-run' if self._dry_run else 'live'})"
+                    "G1GrootWBCTask ramp complete - policy armed",
+                    task=self._name,
+                    mode="dry-run" if self._dry_run else "live",
                 )
             return JointCommandOutput(
                 joint_names=self._joint_names_list,
@@ -479,14 +486,14 @@ class G1GrootWBCTask(BaseControlTask):
         # that build a bare CoordinatorState). The state path is what
         # decouples this task from the WholeBodyAdapter Protocol.
         if state.imu:
-            # Single whole-body adapter is the common case — take any.
+            # Single whole-body adapter is the common case - take any.
             imu = next(iter(state.imu.values()))
         else:
             imu = self._adapter.read_imu()
         gyro = np.asarray(imu.gyroscope, dtype=np.float32)
         gravity = self._projected_gravity(imu.quaternion)
 
-        # Velocity command (with timeout → zero).
+        # Velocity command (with timeout -> zero).
         with self._cmd_lock:
             if (
                 self._config.timeout > 0.0
@@ -530,8 +537,10 @@ class G1GrootWBCTask(BaseControlTask):
             if (state.t_now - self._last_dry_run_log_t) >= 1.0:
                 max_delta = float(np.max(np.abs(target_q_15 - current_15)))
                 logger.info(
-                    f"G1GrootWBCTask '{self._name}' DRY-RUN (|Δq|_max={max_delta:.3f} rad, "
-                    f"model={'walk' if cmd_norm > self._config.cmd_norm_threshold else 'balance'})"
+                    "G1GrootWBCTask DRY-RUN",
+                    task=self._name,
+                    max_dq_rad=max_delta,
+                    model="walk" if cmd_norm > self._config.cmd_norm_threshold else "balance",
                 )
                 self._last_dry_run_log_t = state.t_now
             return None
@@ -544,7 +553,9 @@ class G1GrootWBCTask(BaseControlTask):
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         if joints & self._joint_names_set:
-            logger.warning(f"G1GrootWBCTask '{self._name}' preempted by {by_task} on {joints}")
+            logger.warning(
+                "G1GrootWBCTask preempted", task=self._name, by_task=by_task, joints=joints
+            )
 
     # Velocity command input
 
@@ -573,13 +584,13 @@ class G1GrootWBCTask(BaseControlTask):
     def start(self) -> None:
         """Enter the coordinator tick loop.
 
-        Starts in "active but unarmed" — compute() echoes current joint
+        Starts in "active but unarmed" - compute() echoes current joint
         positions every tick, which (combined with the component's
         kp/kd) produces damping-only behaviour on real hardware (the
         robot sits quietly in dev mode).
 
         If ``config.auto_arm`` is set, schedules an immediate
-        ``arm()`` using ``config.default_ramp_seconds`` — this is how
+        ``arm()`` using ``config.default_ramp_seconds`` - this is how
         the simulation blueprint bypasses the activation ritual.
         If ``config.auto_dry_run`` is set, starts in dry-run mode.
         """
@@ -593,11 +604,7 @@ class G1GrootWBCTask(BaseControlTask):
         with self._cmd_lock:
             self._cmd[:] = 0.0
             self._last_cmd_time = 0.0
-        logger.info(
-            f"G1GrootWBCTask '{self._name}' started (unarmed"
-            + (", dry-run" if self._dry_run else "")
-            + ")"
-        )
+        logger.info("G1GrootWBCTask started", task=self._name, armed=False, dry_run=self._dry_run)
         if self._config.auto_arm:
             self.arm(self._config.default_ramp_seconds)
 
@@ -608,7 +615,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._arming = False
         self._arm_pending = False
         self._last_targets = None
-        logger.info(f"G1GrootWBCTask '{self._name}' stopped")
+        logger.info("G1GrootWBCTask stopped", task=self._name)
 
     # Arming / dry-run (RPC-callable via coordinator.task_invoke)
 
@@ -625,19 +632,19 @@ class G1GrootWBCTask(BaseControlTask):
         are ignored.  No-op if the task is not ``_active``.
         """
         if not self._active:
-            logger.warning(f"G1GrootWBCTask '{self._name}' arm() called before start() — ignoring")
+            logger.warning("G1GrootWBCTask arm() called before start(); ignoring", task=self._name)
             return False
         if self._armed:
-            logger.info(f"G1GrootWBCTask '{self._name}' already armed — arm() ignored")
+            logger.info("G1GrootWBCTask already armed; arm() ignored", task=self._name)
             return False
         if self._arming or self._arm_pending:
-            logger.info(f"G1GrootWBCTask '{self._name}' arm in progress -- arm() ignored")
+            logger.info("G1GrootWBCTask arm in progress; arm() ignored", task=self._name)
             return False
         ramp = ramp_seconds if ramp_seconds is not None else self._config.default_ramp_seconds
         self._arming_duration = max(0.0, float(ramp))
         self._arm_pending = True
         logger.info(
-            f"G1GrootWBCTask '{self._name}' arm requested (ramp={self._arming_duration:.1f}s)"
+            "G1GrootWBCTask arm requested", task=self._name, ramp_seconds=self._arming_duration
         )
         return True
 
@@ -655,7 +662,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._arm_pending = False
         self._ramp_start = None
         self._reset_policy_state()
-        logger.info(f"G1GrootWBCTask '{self._name}' disarmed (holding current pose)")
+        logger.info("G1GrootWBCTask disarmed (holding current pose)", task=self._name)
         return True
 
     def set_dry_run(self, enabled: bool) -> None:
@@ -671,9 +678,9 @@ class G1GrootWBCTask(BaseControlTask):
             return
         self._dry_run = new_val
         self._last_dry_run_log_t = 0.0
-        logger.info(f"G1GrootWBCTask '{self._name}' dry_run = {new_val}")
+        logger.info("G1GrootWBCTask dry_run changed", task=self._name, dry_run=new_val)
 
-    def state_snapshot(self) -> dict[str, object]:
+    def state_snapshot(self) -> dict[str, Any]:
         """Return the current state-machine flags for UI / telemetry."""
         return {
             "active": self._active,
@@ -687,7 +694,7 @@ class G1GrootWBCTask(BaseControlTask):
     # Internal helpers
 
     def _reset_policy_state(self) -> None:
-        """Clear inference state — obs history, last action, tick count."""
+        """Clear inference state - obs history, last action, tick count."""
         self._last_action[:] = 0.0
         self._obs_buf[:] = 0.0
         self._first_inference = True
@@ -695,12 +702,12 @@ class G1GrootWBCTask(BaseControlTask):
 
     def _build_obs(
         self,
-        cmd: np.ndarray,
-        gyro: np.ndarray,
-        gravity: np.ndarray,
-        q: np.ndarray,
-        dq: np.ndarray,
-    ) -> np.ndarray:
+        cmd: NDArray[np.float32],
+        gyro: NDArray[np.float32],
+        gravity: NDArray[np.float32],
+        q: NDArray[np.float32],
+        dq: NDArray[np.float32],
+    ) -> NDArray[np.float32]:
         """Build the 86-dim GR00T observation.  Layout matches
         ``groot_wbc_backend.py`` exactly."""
         obs = np.zeros(_SINGLE_OBS_DIM, dtype=np.float32)
@@ -715,7 +722,7 @@ class G1GrootWBCTask(BaseControlTask):
         return obs
 
     @staticmethod
-    def _projected_gravity(quaternion: tuple[float, ...]) -> np.ndarray:
+    def _projected_gravity(quaternion: tuple[float, ...]) -> NDArray[np.float32]:
         """Project world gravity into body frame.
 
         Uses Unitree DDS quaternion order (w, x, y, z).  Formula matches
@@ -751,8 +758,6 @@ class G1GrootWBCTaskParams(BaseConfig):
 
 
 def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
-    from dimos.control.hardware_interface import ConnectedWholeBody
-
     params = G1GrootWBCTaskParams.model_validate(cfg.params)
     hw = hardware.get(params.hardware_id) if hardware else None
     if hw is None:

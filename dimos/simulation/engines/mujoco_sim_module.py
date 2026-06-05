@@ -34,6 +34,7 @@ from typing import Any
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import Field
 import reactivex as rx
 from scipy.spatial.transform import Rotation as R
@@ -104,10 +105,10 @@ class _WholeBodySimHooks:
         self._gripper_idx = gripper_idx
         self._gripper_ctrl_range = gripper_ctrl_range
         self._gripper_joint_range = gripper_joint_range
-        self._latest_pd_pos_target: np.ndarray | None = None
-        self._latest_pd_kp: np.ndarray | None = None
-        self._latest_pd_kd: np.ndarray | None = None
-        self._latest_pd_tau: np.ndarray | None = None
+        self._latest_pd_pos_target: NDArray[np.float64] | None = None
+        self._latest_pd_kp: NDArray[np.float64] | None = None
+        self._latest_pd_kd: NDArray[np.float64] | None = None
+        self._latest_pd_tau: NDArray[np.float64] | None = None
 
     def pre_step(self, engine: MujocoEngine) -> None:
         shm = self._shm
@@ -235,7 +236,7 @@ class MujocoSimModule(
     exposes joint state/commands to a ``ShmMujocoAdapter`` via shared memory.
 
     The adapter attaches to the same SHM buffers using the MJCF path as the
-    discovery key — no RPC, no globals. From ControlCoordinator's perspective
+    discovery key - no RPC, no globals. From ControlCoordinator's perspective
     the adapter is an ordinary ``ManipulatorAdapter``; SHM is its transport.
     """
 
@@ -313,7 +314,7 @@ class MujocoSimModule(
         if not self.config.address:
             raise RuntimeError("MujocoSimModule: config.address (MJCF path) is required")
 
-        # SHM key — adapter derives the same key from the same MJCF path.
+        # SHM key - adapter derives the same key from the same MJCF path.
         shm_key = shm_key_from_path(self.config.address)
         self._shm = ManipShmWriter(shm_key)
         self._shm_ready_signaled = False
@@ -321,13 +322,15 @@ class MujocoSimModule(
         # Build engine with SHM hooks installed.
         engine_assets: dict[str, bytes] | None = None
         if self.config.inject_legacy_assets:
+            # Lazy import: get_assets pulls in mujoco_playground (heavy,
+            # optional) and is only needed when injecting bundled meshes.
             from dimos.simulation.mujoco.model import get_assets
 
             engine_assets = get_assets()
         # Compose the camera list.  Each registered camera blocks the
         # sim thread inside _step_once (mujoco_engine._render_cameras
         # does update_scene + GPU render synchronously between physics
-        # steps — typically 5-30 ms per camera), so registering a camera
+        # steps - typically 5-30 ms per camera), so registering a camera
         # nobody consumes burns the 500 Hz tick deadline for nothing.
         # Skip the primary camera entirely when none of color / depth /
         # pointcloud is enabled.
@@ -373,8 +376,8 @@ class MujocoSimModule(
             )
 
         # Resolve IMU sensors once. Names come from config so robot-
-        # specific blueprints (G1, H1, Optimus, …) can override; manipulator
-        # MJCFs typically have neither — we leave the slices as None and
+        # specific blueprints (G1, H1, Optimus, ...) can override; manipulator
+        # MJCFs typically have neither - we leave the slices as None and
         # skip IMU publishing for those.
         self._imu_gyro_slice = _find_sensor_slice(
             self._engine.model, *self.config.imu_gyro_sensor_names, dim=3
@@ -491,7 +494,7 @@ class MujocoSimModule(
             shm.signal_ready(num_joints=len(engine.joint_names))
             self._shm_ready_signaled = True
 
-        # Odom — when the MJCF has a free-joint root, publish base pose
+        # Odom - when the MJCF has a free-joint root, publish base pose
         # from qpos[0:7] every step.  Without this, downstream consumers
         # (viser viewer, nav stack) only see joint articulation, not
         # base translation through the world.
@@ -513,7 +516,7 @@ class MujocoSimModule(
                 )
             )
 
-        # IMU — only if MJCF declared the sensors.
+        # IMU - only if MJCF declared the sensors.
         if (
             self._imu_gyro_slice is None
             and self._imu_accel_slice is None
@@ -537,15 +540,8 @@ class MujocoSimModule(
             accel = (0.0, 0.0, 0.0)
         shm.write_imu(quaternion=quat, gyroscope=gyro, accelerometer=accel)
         # Also publish on the stream port for downstream consumers.
-        self.imu.publish(
-            Imu(
-                ts=time.time(),
-                frame_id="pelvis",
-                orientation=Quaternion(quat[1], quat[2], quat[3], quat[0]),
-                angular_velocity=Vector3(gyro[0], gyro[1], gyro[2]),
-                linear_acceleration=Vector3(accel[0], accel[1], accel[2]),
-            )
-        )
+        # quat is (w,x,y,z); Imu.from_wxyz reorders to dimos (x,y,z,w).
+        self.imu.publish(Imu.from_wxyz(quat, gyro, accel, frame_id="pelvis", ts=time.time()))
 
     def _build_camera_info(self) -> None:
         if self._engine is None:
