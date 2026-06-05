@@ -40,8 +40,6 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
@@ -296,16 +294,8 @@ class G1WholeBodyConnection(Module):
                 effort=efforts,
             )
         )
-        # Unitree quat is (w,x,y,z); dimos Quaternion is (x,y,z,w).
-        self.imu.publish(
-            Imu(
-                ts=now,
-                frame_id=frame_id,
-                orientation=Quaternion(quat[1], quat[2], quat[3], quat[0]),
-                angular_velocity=Vector3(gyro[0], gyro[1], gyro[2]),
-                linear_acceleration=Vector3(accel[0], accel[1], accel[2]),
-            )
-        )
+        # Unitree quat is (w,x,y,z); Imu.from_wxyz reorders to dimos (x,y,z,w).
+        self.imu.publish(Imu.from_wxyz(quat, gyro, accel, frame_id=frame_id, ts=now))
 
     def _publish_loop(self) -> None:
         period = 1.0 / float(self.config.publish_rate_hz)

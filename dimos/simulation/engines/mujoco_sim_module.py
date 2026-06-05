@@ -537,15 +537,8 @@ class MujocoSimModule(
             accel = (0.0, 0.0, 0.0)
         shm.write_imu(quaternion=quat, gyroscope=gyro, accelerometer=accel)
         # Also publish on the stream port for downstream consumers.
-        self.imu.publish(
-            Imu(
-                ts=time.time(),
-                frame_id="pelvis",
-                orientation=Quaternion(quat[1], quat[2], quat[3], quat[0]),
-                angular_velocity=Vector3(gyro[0], gyro[1], gyro[2]),
-                linear_acceleration=Vector3(accel[0], accel[1], accel[2]),
-            )
-        )
+        # quat is (w,x,y,z); Imu.from_wxyz reorders to dimos (x,y,z,w).
+        self.imu.publish(Imu.from_wxyz(quat, gyro, accel, frame_id="pelvis", ts=time.time()))
 
     def _build_camera_info(self) -> None:
         if self._engine is None:
