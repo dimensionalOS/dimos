@@ -128,10 +128,9 @@ class SimMujocoG1WholeBodyAdapter:
 
     def disconnect(self) -> None:
         if self._shm is not None:
-            try:
-                self._shm.cleanup()
-            except Exception as e:  # best-effort cleanup
-                logger.warning(f"SHM cleanup raised: {e}")
+            # ManipShmReader.cleanup() is already best-effort: it closes each
+            # SHM buffer and swallows FileNotFoundError/OSError internally.
+            self._shm.cleanup()
         self._shm = None
         self._connected = False
 
