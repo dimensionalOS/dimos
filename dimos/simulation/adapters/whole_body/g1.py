@@ -25,7 +25,6 @@ top of it) can't tell sim from real.
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
@@ -159,21 +158,13 @@ class SimMujocoG1WholeBodyAdapter:
         if not self._connected or self._shm is None:
             return IMUState()
         quat, gyro, accel = self._shm.read_imu()
-        # Derive ZYX Euler from the quaternion — matches the real G1 adapter.
-        w, x, y, z = quat
-        sinr = 2.0 * (w * x + y * z)
-        cosr = 1.0 - 2.0 * (x * x + y * y)
-        roll = math.atan2(sinr, cosr)
-        sinp = 2.0 * (w * y - z * x)
-        pitch = math.copysign(math.pi / 2.0, sinp) if abs(sinp) >= 1.0 else math.asin(sinp)
-        siny = 2.0 * (w * z + x * y)
-        cosy = 1.0 - 2.0 * (y * y + z * z)
-        yaw = math.atan2(siny, cosy)
+        # rpy is left at its zero default to match the real G1 adapter
+        # (TransportWholeBodyAdapter._on_imu). The WBC task's observation
+        # uses only quaternion + gyroscope, so euler is never read downstream.
         return IMUState(
             quaternion=quat,
             gyroscope=gyro,
             accelerometer=accel,
-            rpy=(roll, pitch, yaw),
         )
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
