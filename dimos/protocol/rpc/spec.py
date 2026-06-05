@@ -121,4 +121,10 @@ class RPCServer(Protocol):
 
 
 class RPCSpec(RPCServer, RPCClient):
-    pass
+    def start(self) -> None:
+        if hasattr(super(), "start"):
+            super().start()  # type: ignore[misc]
+
+    def stop(self) -> None:
+        if hasattr(super(), "stop"):
+            super().stop()  # type: ignore[misc]

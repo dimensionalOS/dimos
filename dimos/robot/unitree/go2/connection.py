@@ -32,7 +32,8 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport, pSHMTransport
+from dimos.core.transport import pSHMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.logging_config import setup_logger
 
@@ -382,9 +383,9 @@ def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy"
         f"{prefix}/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     )
 
-    connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", Twist)
+    connection.cmd_vel.transport = make_transport(f"{prefix}/cmd_vel", Twist)
 
-    connection.camera_info.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
+    connection.camera_info.transport = make_transport(f"{prefix}/camera_info", CameraInfo)
     connection.start()
 
     return connection

@@ -68,6 +68,7 @@ import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.process_lifecycle import spawn_watchdog
+from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until as _wait_until
 
 load_dotenv()
 
@@ -132,6 +133,18 @@ def mcp_url(mcp_port: int) -> str:
 def lcm_url() -> str:
     """The LCM bus URL pinned for this xdist worker (or the default)."""
     return os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=0")
+
+
+@pytest.fixture
+def wait_until():
+    """Poll a predicate until it's true or a timeout elapses. See dimos.utils.testing.waiting."""
+    return _wait_until
+
+
+@pytest.fixture
+def retry_until():
+    """Retry an action until a threading.Event fires. See dimos.utils.testing.waiting."""
+    return _retry_until
 
 
 @pytest.hookimpl(tryfirst=True)

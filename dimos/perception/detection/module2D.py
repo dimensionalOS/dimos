@@ -156,16 +156,16 @@ def deploy(  # type: ignore[no-untyped-def]
     prefix: str = "/detector2d",
     **kwargs,
 ) -> Detection2DModule:
-    from dimos.core.transport import LCMTransport
+    from dimos.core.transport_factory import make_transport
 
     detector = Detection2DModule(**kwargs)
     detector.color_image.connect(camera.color_image)
 
-    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
+    detector.detections.transport = make_transport(f"{prefix}/detections", Detection2DArray)
 
-    detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
-    detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)
-    detector.detected_image_2.transport = LCMTransport(f"{prefix}/image/2", Image)
+    detector.detected_image_0.transport = make_transport(f"{prefix}/image/0", Image)
+    detector.detected_image_1.transport = make_transport(f"{prefix}/image/1", Image)
+    detector.detected_image_2.transport = make_transport(f"{prefix}/image/2", Image)
 
     detector.start()
     return detector
