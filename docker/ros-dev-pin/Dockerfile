@@ -8,10 +8,6 @@
 # release.yml greps the digest out of this file and feeds it to consuming jobs'
 # `container:` fields.
 #
-# To seed / refresh manually:
-#   docker pull ghcr.io/dimensionalos/ros-dev:latest
-#   docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/dimensionalos/ros-dev:latest
-#
 # IMPORTANT: do NOT remove the `:latest` tag from the FROM line — Dependabot
 # uses it to anchor which channel to track. With digest-only, it has nothing
 # to follow and stops updating.
