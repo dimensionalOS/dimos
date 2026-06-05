@@ -184,8 +184,6 @@ def _viewer() -> Any:
 
 _coordinator = ControlCoordinator.blueprint(
     tick_rate=_tick_rate,
-    publish_joint_state=True,
-    joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
             hardware_id="g1",
@@ -193,7 +191,6 @@ _coordinator = ControlCoordinator.blueprint(
             joints=g1_joints,
             adapter_type=_adapter_type,
             address=_adapter_address,
-            auto_enable=True,
             wb_config=WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD)),
         ),
     ],
