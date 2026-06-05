@@ -131,8 +131,8 @@ class Detection3DModule(StreamModule[Image, Bundle]):
     def fused_detections(self, image: Stream[Image]) -> Stream[FusedDetections]:
         """2D-detect, align with the nearest pointcloud, then project to 3D.
 
-        Split from :meth:`pipeline` so subclasses (e.g. the object database) can
-        tap the fused stream before it is collapsed into a port ``Bundle``.
+        Split from :meth:`pipeline` so subclasses can tap the fused stream
+        before it is collapsed into a port ``Bundle``.
         """
         return (
             image.transform(

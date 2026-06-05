@@ -15,8 +15,6 @@
 
 """G1 stack with person tracking and 3D detection."""
 
-from typing import Any
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.zed import compat as zed
@@ -27,14 +25,8 @@ from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.moduleDB import ObjectDBModule
 from dimos.perception.detection.person_tracker import PersonTracker
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic import unitree_g1_basic
-
-
-def _person_only(det: Any) -> bool:
-    return bool(det.class_id == 0)
-
 
 unitree_g1_detection = (
     autoconnect(
@@ -43,10 +35,6 @@ unitree_g1_detection = (
         Detection3DModule.blueprint(
             camera_info=zed.CameraInfo.SingleWebcam,
             detector=YoloPersonDetector,
-        ),
-        ObjectDBModule.blueprint(
-            camera_info=zed.CameraInfo.SingleWebcam,
-            filter=_person_only,  # Filter for person class only
         ),
         PersonTracker.blueprint(
             cameraInfo=zed.CameraInfo.SingleWebcam,

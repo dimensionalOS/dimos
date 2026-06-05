@@ -17,8 +17,7 @@
 These run without recorded data or a real detector: a fake 2D detector and a
 synthetic world pointcloud pin the image/pointcloud ``.align()`` edge, the
 timestamped TF lookup, the 2D->3D projection math, and the port-keyed
-``Bundle`` tail in the default CI lane. test_moduleDB.py drives the same
-pipeline against recorded frames on self-hosted runners.
+``Bundle`` tail in the default CI lane.
 
 Scene geometry: the camera sits at the world origin looking down +Z (optical
 convention, identity world->camera transform), and a dense point cluster

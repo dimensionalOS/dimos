@@ -28,7 +28,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.moduleDB import ObjectDBModule
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
@@ -149,9 +148,6 @@ def publish_moment():
         if tf is not None and transforms is not None:
             tf.publish(*transforms)
 
-    # moduleDB.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
-    # moduleDB.target.transport = LCMTransport("/target", PoseStamped)
-
     return publisher
 
 
@@ -239,51 +235,3 @@ def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, No
         module._close_module()
 
 
-@pytest.fixture(scope="session")
-def object_db_module(get_moment):
-    """Create and populate an ObjectDBModule with detections from multiple frames."""
-    from dimos.perception.detection.detectors.yolo import Yolo2DDetector
-
-    c = mock.create_autospec(CameraInfo, spec_set=True, instance=True)
-    module2d = Detection2DModule(detector=lambda: Yolo2DDetector(device="cpu"), camera_info=c)
-    module3d = Detection3DModule(camera_info=connection._camera_info_static())
-    moduleDB = ObjectDBModule(camera_info=connection._camera_info_static())
-
-    # Process 5 frames to build up object history
-    for i in range(5):
-        seek_value = 10.0 + (i * 2)
-        moment = get_moment(seek=seek_value)
-
-        # Process 2D detections
-        imageDetections2d = module2d.process_image_frame(moment["image_frame"])
-
-        # Get camera transform
-        camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
-
-        # Process 3D detections
-        imageDetections3d = module3d.process_frame(
-            imageDetections2d, moment["lidar_frame"], camera_transform
-        )
-
-        # Add to database
-        moduleDB.add_detections(imageDetections3d)
-
-    yield moduleDB
-
-    module2d._close_module()
-    module3d._close_module()
-    moduleDB._close_module()
-
-
-@pytest.fixture(scope="session")
-def first_object(object_db_module):
-    """Get the first object from the database."""
-    objects = list(object_db_module.objects.values())
-    assert len(objects) > 0, "No objects found in database"
-    return objects[0]
-
-
-@pytest.fixture(scope="session")
-def all_objects(object_db_module):
-    """Get all objects from the database."""
-    return list(object_db_module.objects.values())

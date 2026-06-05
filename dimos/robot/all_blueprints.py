@@ -185,7 +185,6 @@ all_modules = {
     "mujoco-sim-module": "dimos.simulation.engines.mujoco_sim_module.MujocoSimModule",
     "nav-record": "dimos.navigation.nav_stack.modules.nav_record.nav_record.NavRecord",
     "navigation-skill-container": "dimos.agents.skills.navigation.NavigationSkillContainer",
-    "object-db-module": "dimos.perception.detection.moduleDB.ObjectDBModule",
     "object-scene-registration-module": "dimos.perception.object_scene_registration.ObjectSceneRegistrationModule",
     "object-tracker2-d": "dimos.perception.object_tracker_2d.ObjectTracker2D",
     "object-tracker3-d": "dimos.perception.object_tracker_3d.ObjectTracker3D",
