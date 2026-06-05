@@ -391,7 +391,7 @@ mod tests {
     use super::*;
     use serde::Deserialize;
     use std::collections::VecDeque;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
@@ -455,6 +455,14 @@ mod tests {
             .unwrap()
             .push_back((channel.to_string(), data));
         notify.notify_one();
+    }
+
+    async fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !cond() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     #[derive(Debug, Deserialize, Default, PartialEq)]
@@ -627,6 +635,7 @@ mod tests {
     async fn slow_publish_does_not_block_recv() {
         let transport = ControllableMockTransport::new();
         let recv_log = transport.recv_log.clone();
+        let publish_log = transport.publish_log.clone();
         let inbound = transport.inbound.clone();
         let inbound_notify = transport.inbound_notify.clone();
         let publish_delay_ms = transport.publish_delay_ms.clone();
@@ -651,12 +660,16 @@ mod tests {
 
         inject_inbound(&inbound, &inbound_notify, "/data", vec![42u8]);
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        wait_for("recv to fire and publish to complete", || {
+            !recv_log.lock().unwrap().is_empty() && !publish_log.lock().unwrap().is_empty()
+        })
+        .await;
 
-        let recv_count = recv_log.lock().unwrap().len();
+        let recv_time = recv_log.lock().unwrap()[0];
+        let publish_time = publish_log.lock().unwrap()[0];
         assert!(
-            recv_count >= 1,
-            "expected recv to fire during slow publish; got {recv_count} events. \
+            recv_time < publish_time,
+            "expected recv to fire during the slow publish, not after it. \
              The recv path should be independent of publish latency."
         );
     }
@@ -672,9 +685,14 @@ mod tests {
         let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_CHANNEL_CAPACITY);
         let mut builder = Builder::new(topics(&[("slow", "/slow"), ("out", "/out")]), publish_tx);
 
-        // simulate slow processing function in a receive
+        // block the recv worker until the test releases it
+        static RECV_RELEASE: AtomicBool = AtomicBool::new(false);
+        RECV_RELEASE.store(false, Ordering::SeqCst);
         let _input = builder.input("slow", |b| {
-            std::thread::sleep(Duration::from_millis(200));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !RECV_RELEASE.load(Ordering::SeqCst) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
             Ok(b.to_vec())
         });
         let output = builder.output("out", |b: &Vec<u8>| b.clone());
@@ -690,16 +708,14 @@ mod tests {
 
         output.publish(&vec![42u8]).await.ok();
 
-        // receive should still be processing, but publish should go through by now
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // publish must complete while the recv worker stays blocked
+        wait_for("publish to complete while recv dispatch is blocked", || {
+            !publish_log.lock().unwrap().is_empty()
+        })
+        .await;
 
-        let publish_count = publish_log.lock().unwrap().len();
-        assert!(
-            publish_count >= 1,
-            "expected publish to fire during slow recv dispatch; got \
-             {publish_count} events. The publish path should be independent \
-             of recv-side CPU work."
-        );
+        // release the blocked decode so the runtime can shut down
+        RECV_RELEASE.store(true, Ordering::SeqCst);
     }
 
     // propagate_task_failure

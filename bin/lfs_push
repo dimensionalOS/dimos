@@ -10,6 +10,20 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# --- LFS auth setup ---
+# Our LFS server (lfs.dimensionalos.com) validates push access via GitHub PAT.
+# Only collaborators with write access on dimensionalOS/dimos can push.
+# We use the gh CLI to provide credentials automatically.
+if ! command -v gh &>/dev/null; then
+    echo -e "${RED}✗${NC} 'gh' CLI not found. Install it: https://cli.github.com"
+    echo -e "  Then run: gh auth login"
+    exit 1
+fi
+if ! gh auth status &>/dev/null 2>&1; then
+    echo -e "${RED}✗${NC} 'gh' CLI not authenticated. Run: gh auth login"
+    exit 1
+fi
+
 #echo -e "${GREEN}Running test data compression check...${NC}"
 
 ROOT=$(git rev-parse --show-toplevel)
@@ -100,7 +114,19 @@ if [ ${#compressed_entries[@]} -gt 0 ]; then
 
     #git commit -m "$commit_msg"
     echo -e "${GREEN}✓${NC} Compressed file references added. Uploading..."
-    git lfs push origin $(git branch --show-current)
+    # Use a temp askpass script so the token never leaks into process args.
+    _lfs_askpass=$(mktemp)
+    chmod 700 "$_lfs_askpass"
+    cat > "$_lfs_askpass" << 'ASKPASS'
+#!/bin/sh
+case "$1" in
+  *sername*) echo "token" ;;
+  *assword*) gh auth token ;;
+esac
+ASKPASS
+    GIT_ASKPASS="$_lfs_askpass" GIT_TERMINAL_PROMPT=0 \
+        git -c credential.helper= lfs push origin $(git branch --show-current)
+    rm -f "$_lfs_askpass"
     echo -e "${GREEN}✓${NC} Uploaded to LFS"
 else
     echo -e "${GREEN}✓${NC} No test data to compress"
