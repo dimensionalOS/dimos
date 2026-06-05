@@ -137,7 +137,7 @@ def scatter_to_ports(stream: Stream[Any], ports: dict[str, Out[Any]]) -> Disposa
     """
 
     def _on_error(e: Exception) -> None:
-        logger.error("scatter_to_ports() pipeline error: %s", e, exc_info=True)
+        logger.exception("scatter_to_ports pipeline error", exc_info=e)
 
     def _emit(obs: Observation[Any]) -> None:
         bundle = obs.data
