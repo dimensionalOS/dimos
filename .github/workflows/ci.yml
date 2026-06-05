@@ -157,11 +157,6 @@ jobs:
       # Override skipif_in_ci so the release-tests job actually runs the
       # heavier tests the normal CI matrix opts out of.
       DIMOS_FULL_TEST_RUN: "1"
-      # Pin uv to Python 3.10 (overrides .python-version=3.12). ROS Humble
-      # ships rclpy as Python 3.10 C extensions; importing them from a 3.12
-      # venv fails the ABI check and _has_ros() returns False, silently
-      # skipping every skipif_no_ros test.
-      UV_PYTHON: "3.10"
     timeout-minutes: 300
     runs-on: [self-hosted, Linux, large]
     permissions:
@@ -214,7 +209,7 @@ jobs:
         run: |
           curl -fL --retry 5 --retry-delay 5 \
             -o /tmp/zed.run \
-            https://download.stereolabs.com/zedsdk/5.0/cu12/ubuntu22
+            https://download.stereolabs.com/zedsdk/5.0/cu12/ubuntu24
           chmod +x /tmp/zed.run
           # `skip_python` stops the SDK installer from auto-installing pyzed
           # for the system Python 3.10 (wasted — can't be reached from the
