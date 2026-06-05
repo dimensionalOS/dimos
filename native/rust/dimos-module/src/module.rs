@@ -689,7 +689,8 @@ mod tests {
         static RECV_RELEASE: AtomicBool = AtomicBool::new(false);
         RECV_RELEASE.store(false, Ordering::SeqCst);
         let _input = builder.input("slow", |b| {
-            while !RECV_RELEASE.load(Ordering::SeqCst) {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !RECV_RELEASE.load(Ordering::SeqCst) && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(1));
             }
             Ok(b.to_vec())
