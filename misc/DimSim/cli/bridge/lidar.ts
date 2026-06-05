@@ -18,11 +18,12 @@ const MIN_RANGE = 0.1;
 const MAX_RANGE = 4;
 const V_MIN_RAD = (-30 * Math.PI) / 180;
 const V_MAX_RAD = (15 * Math.PI) / 180;
-// 5 Hz — at 15k raycasts per scan, 10 Hz starves the physics setInterval
-// (each scan takes 25-30ms on M4, ~60-80ms on weaker runners). 5 Hz halves
-// the per-second blocking budget and matches typical low-end LiDAR rates
-// (RPLIDAR, low-Velodyne). Module docstring already advertised 5 Hz.
-const RATE_MS = 200; // 5 Hz
+// Default publish interval (ms) when no rate is passed in (standalone `dimsim
+// dev` without --lidar-rate). The dimos connector overrides this via
+// --lidar-rate -> ServerLidar(rateMs). Note: ~15k raycasts/scan (~25-30ms on
+// M4, ~60-80ms on weaker runners), so at high rates the `publishing` busy-guard
+// drops frames and effective rate sits below the target on slow/CPU-render boxes.
+const RATE_MS = 200; // 5 Hz default
 
 const CH_LIDAR = "/lidar#sensor_msgs.PointCloud2";
 
@@ -116,9 +117,11 @@ export class ServerLidar {
   private hasPose = false;
 
   private ray: any; // Reusable Ray object (avoids 20k allocations per scan)
+  private rateMs: number; // publish interval (ms); from --lidar-rate, else RATE_MS default
 
-  constructor(lcm: LCM, rapierWorld: any, RAPIER: any, sentSeqs: Set<number>, embodiment?: LidarEmbodimentConfig) {
+  constructor(lcm: LCM, rapierWorld: any, RAPIER: any, sentSeqs: Set<number>, embodiment?: LidarEmbodimentConfig, rateMs?: number) {
     this.lcm = lcm;
+    this.rateMs = rateMs && rateMs > 0 ? rateMs : RATE_MS;
     this.world = rapierWorld;
     this.RAPIER = RAPIER;
     this.sentSeqs = sentSeqs;
@@ -164,7 +167,7 @@ export class ServerLidar {
   start(): void {
     if (this.timer) return;
     // quiet
-    this.timer = setInterval(() => this._scan(), RATE_MS);
+    this.timer = setInterval(() => this._scan(), this.rateMs);
   }
 
   stop(): void {
