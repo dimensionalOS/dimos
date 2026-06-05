@@ -70,7 +70,6 @@ class SimMujocoG1WholeBodyAdapter:
     def __init__(
         self,
         address: str | Path | None = None,
-        domain_id: int = 0,
         **_: Any,
     ) -> None:
         if address is None:
