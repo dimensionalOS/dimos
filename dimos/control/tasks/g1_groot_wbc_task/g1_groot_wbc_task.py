@@ -674,7 +674,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._last_dry_run_log_t = 0.0
         logger.info(f"G1GrootWBCTask '{self._name}' dry_run = {new_val}")
 
-    def state_snapshot(self) -> dict[str, object]:
+    def state_snapshot(self) -> dict[str, Any]:
         """Return the current state-machine flags for UI / telemetry."""
         return {
             "active": self._active,
