@@ -26,7 +26,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _VIDEO_RATE = 50
-_LIDAR_RATE = 1000
+_LIDAR_RATE = 100
 _DIMSIM_DIR = Path(__file__).resolve().parents[3] / "misc" / "DimSim"
 
 

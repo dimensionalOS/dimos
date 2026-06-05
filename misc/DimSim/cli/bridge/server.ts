@@ -225,7 +225,7 @@ export async function startBridgeServer(options: BridgeServerOptions) {
         chState.serverPhysics.setPosition(spawnPos.x, spawnPos.y, spawnPos.z);
       }
 
-      chState.serverLidar = new ServerLidar(chState.lcm, world, RAPIER, chState.sentSeqs, chState.embodiment ?? undefined);
+      chState.serverLidar = new ServerLidar(chState.lcm, world, RAPIER, chState.sentSeqs, chState.embodiment ?? undefined, sensorRates?.lidar);
       chState.serverLidar.setExcludeBody(chState.serverPhysics.getBody());
 
       chState.serverPhysics.setOnPoseUpdate((x, y, z, yaw) => {
@@ -404,15 +404,9 @@ export async function startBridgeServer(options: BridgeServerOptions) {
                 return; // don't relay teleport commands
               }
 
-              // -- Physics collider add/remove: also apply to ServerPhysics
-              // world so live-authored colliders (floor, walls, dynamic balls)
-              // become real obstacles for the server-side agent. Without this,
-              // the dog falls through anything added after the boot snapshot.
-              if (msg.type === "physicsColliderAdd" && msg.uuid && msg.desc) {
-                chState.serverPhysics?.addCollider(msg.uuid, msg.desc);
-              }
-              if (msg.type === "physicsColliderRemove" && msg.uuid) {
-                chState.serverPhysics?.removeCollider(msg.uuid);
+              // Relay-only: server physics is built from the boot snapshot.
+              if (msg.type === "physicsColliderAdd" || msg.type === "physicsColliderRemove") {
+                // handled by the browser; just relay
               }
             } catch { /* not JSON, relay as-is */ }
 

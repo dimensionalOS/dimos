@@ -102,8 +102,6 @@ export class ServerPhysics {
   // Callback to send position to browser
   private onPoseUpdate: ((x: number, y: number, z: number, yaw: number) => void) | null = null;
 
-  private userColliders = new Map<string, { collider: any; body: any | null }>();
-
   constructor(
     lcm: LCM,
     rapierWorld: any,
@@ -227,63 +225,6 @@ export class ServerPhysics {
     this.body.setNextKinematicTranslation({ x, y, z });
     this.world.step(); // apply immediately
     // quiet
-  }
-
-  /** Add a user-authored collider to the world. The browser sends these via
-   * `physicsColliderAdd` when scenes are edited live (SceneClient.add_object,
-   * load_map, etc.). Without this the agent has no floor to stand on. */
-  addCollider(uuid: string, desc: any): void {
-    if (!desc || this.userColliders.has(uuid)) return;
-    const RAPIER = this.RAPIER;
-    const clamp = (v: number) => Math.max(0.001, v);
-    let cd: any;
-    if (desc.shape === "sphere" && desc.radius != null) {
-      cd = RAPIER.ColliderDesc.ball(clamp(desc.radius));
-    } else if (desc.shape === "trimesh" && desc.vertices && desc.indices) {
-      cd = RAPIER.ColliderDesc.trimesh(
-        new Float32Array(desc.vertices),
-        new Uint32Array(desc.indices),
-      );
-    } else if (desc.halfExtents) {
-      const h = desc.halfExtents;
-      cd = RAPIER.ColliderDesc.cuboid(clamp(h.x), clamp(h.y), clamp(h.z));
-    } else {
-      return;
-    }
-    cd.setFriction(0.9);
-    if (desc.restitution != null) cd.setRestitution(desc.restitution);
-    const pos = desc.position ?? { x: 0, y: 0, z: 0 };
-    if (desc.dynamic) {
-      const body = this.world.createRigidBody(
-        RAPIER.RigidBodyDesc.dynamic().setTranslation(pos.x, pos.y, pos.z),
-      );
-      if (desc.mass != null) body.setAdditionalMass(desc.mass);
-      const collider = this.world.createCollider(cd, body);
-      this.userColliders.set(uuid, { collider, body });
-    } else {
-      cd.setTranslation(pos.x, pos.y, pos.z);
-      const collider = this.world.createCollider(cd);
-      this.userColliders.set(uuid, { collider, body: null });
-    }
-  }
-
-  removeCollider(uuid: string): void {
-    const entry = this.userColliders.get(uuid);
-    if (!entry) return;
-    if (entry.body) {
-      this.world.removeRigidBody(entry.body);
-    } else if (entry.collider) {
-      this.world.removeCollider(entry.collider, false);
-    }
-    this.userColliders.delete(uuid);
-  }
-
-  /** Drop every user-authored collider — used when an explicit re-load
-   * of a level clears the existing scene content. */
-  clearUserColliders(): void {
-    for (const uuid of [...this.userColliders.keys()]) {
-      this.removeCollider(uuid);
-    }
   }
 
   /** Set callback for browser position sync. */
