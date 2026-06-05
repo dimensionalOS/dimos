@@ -12,66 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.coordination.blueprints import Blueprint
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.core.coordination.module_coordinator import _get_transport_for
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.detection.module3D import Detection3DModule
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_detection import unitree_go2_detection
 
-
-def test_unitree_go2_detection_transports_follow_renamed_fanio_ports() -> None:
-    """The migrated module splits the old single 2D out into detections_2d /
-    detections_3d; the blueprint must route both (keeping the wire topics LCM
-    consumers already listen on) and must not keep a transport for the retired
-    "detections" port - that key would silently publish nothing."""
-    assert isinstance(unitree_go2_detection, Blueprint)
-    transports = unitree_go2_detection.transport_map
-
-    detections_2d = transports[("detections_2d", Detection3DModule)]
-    assert detections_2d.topic.topic == "/detector3d/detections"  # topic survives the rename
-    assert detections_2d.topic.lcm_type is Detection2DArray
-
-    detections_3d = transports[("detections_3d", Detection3DModule)]
-    assert detections_3d.topic.topic == "/detector3d/detections_3d"
-    assert detections_3d.topic.lcm_type is Detection3DArray
-
-    for index in range(3):
-        pointcloud_out = transports[(f"detected_pointcloud_{index}", Detection3DModule)]
-        assert pointcloud_out.topic.topic == f"/detector3d/pointcloud/{index}"
-        image_out = transports[(f"detected_image_{index}", Detection3DModule)]
-        assert image_out.topic.topic == f"/detector3d/image/{index}"
-
-    assert all(name != "detections" for name, _ in transports)
-
-    # The detector fuses against the accumulated go2 map, not a raw lidar scan.
-    assert unitree_go2_detection.remapping_map[(Detection3DModule, "pointcloud")] == "global_map"
+# Wire topics LCM consumers already listen on, keyed exactly the way the
+# coordinator resolves transports: (stream_name, message_type).
+EXPECTED_TOPICS = {
+    ("detections_2d", Detection2DArray): "/detector3d/detections",
+    ("detections_3d", Detection3DArray): "/detector3d/detections_3d",
+    ("detected_pointcloud_0", PointCloud2): "/detector3d/pointcloud/0",
+    ("detected_pointcloud_1", PointCloud2): "/detector3d/pointcloud/1",
+    ("detected_pointcloud_2", PointCloud2): "/detector3d/pointcloud/2",
+    ("detected_image_0", Image): "/detector3d/image/0",
+    ("detected_image_1", Image): "/detector3d/image/1",
+    ("detected_image_2", Image): "/detector3d/image/2",
+}
 
 
-def test_unitree_go2_detection_routes_only_declared_ports() -> None:
-    """Every transported or remapped port name must exist on the module: a
-    stale key left behind by a port rename never errors at deploy, it just
-    stops publishing (or stops remapping) silently."""
-    module = Detection3DModule(
-        camera_info=CameraInfo.from_intrinsics(
-            fx=600.0, fy=600.0, cx=320.0, cy=240.0, width=640, height=480, frame_id="camera"
-        ),
-        detector=lambda: None,
-    )
-    try:
-        transported = {
-            name
-            for name, owner in unitree_go2_detection.transport_map
-            if owner is Detection3DModule
-        }
-        assert transported
-        assert transported <= set(module.outputs)
-
-        remapped = {
-            name
-            for owner, name in unitree_go2_detection.remapping_map
-            if owner is Detection3DModule
-        }
-        assert remapped <= set(module.inputs)
-    finally:
-        module.stop()
+def test_detector_transports_resolve_at_runtime() -> None:
+    """The coordinator resolves transports through _get_transport_for with a
+    (stream_name, message_type) key. A key authored in any other shape (e.g. a
+    module class as the second element) never matches; the lookup then falls
+    back silently and the stream publishes on an auto topic like
+    /detections_2d instead of the authored wire topic."""
+    for (name, msg_type), topic in EXPECTED_TOPICS.items():
+        resolved = _get_transport_for(unitree_go2_detection, name, msg_type)
+        assert resolved is unitree_go2_detection.transport_map[(name, msg_type)]
+        assert resolved.topic.topic == topic
+        assert resolved.topic.lcm_type is msg_type

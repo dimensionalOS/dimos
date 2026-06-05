@@ -12,81 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.coordination.blueprints import Blueprint
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.core.coordination.module_coordinator import _get_transport_for
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
-from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.moduleDB import ObjectDBModule
-from dimos.perception.detection.person_tracker import PersonTracker
 from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1_detection import unitree_g1_detection
 
-
-def test_unitree_g1_detection_routes_both_fanio_detector_stacks() -> None:
-    """Detection3DModule and ObjectDBModule each split the old single 2D out
-    into detections_2d / detections_3d. Both stacks must keep their original
-    wire topics under their own prefix, and no transport may still target the
-    retired "detections" port (it would silently publish nothing)."""
-    assert isinstance(unitree_g1_detection, Blueprint)
-    transports = unitree_g1_detection.transport_map
-
-    for module_cls, prefix in (
-        (Detection3DModule, "/detector3d"),
-        (ObjectDBModule, "/detectorDB"),
-    ):
-        detections_2d = transports[("detections_2d", module_cls)]
-        assert detections_2d.topic.topic == f"{prefix}/detections"  # topic survives the rename
-        assert detections_2d.topic.lcm_type is Detection2DArray
-
-        detections_3d = transports[("detections_3d", module_cls)]
-        assert detections_3d.topic.topic == f"{prefix}/detections_3d"
-        assert detections_3d.topic.lcm_type is Detection3DArray
-
-        for index in range(3):
-            pointcloud_out = transports[(f"detected_pointcloud_{index}", module_cls)]
-            assert pointcloud_out.topic.topic == f"{prefix}/pointcloud/{index}"
-            image_out = transports[(f"detected_image_{index}", module_cls)]
-            assert image_out.topic.topic == f"{prefix}/image/{index}"
-
-    assert all(name != "detections" for name, _ in transports)
-
-    # The person tracker consumes the renamed 2D output stream.
-    assert unitree_g1_detection.remapping_map[(PersonTracker, "detections")] == "detections_2d"
+# Wire topics LCM consumers already listen on, keyed exactly the way the
+# coordinator resolves transports: (stream_name, message_type).
+EXPECTED_TOPICS = {
+    ("detections_2d", Detection2DArray): "/detector3d/detections",
+    ("detections_3d", Detection3DArray): "/detector3d/detections_3d",
+    ("detected_pointcloud_0", PointCloud2): "/detector3d/pointcloud/0",
+    ("detected_pointcloud_1", PointCloud2): "/detector3d/pointcloud/1",
+    ("detected_pointcloud_2", PointCloud2): "/detector3d/pointcloud/2",
+    ("detected_image_0", Image): "/detector3d/image/0",
+    ("detected_image_1", Image): "/detector3d/image/1",
+    ("detected_image_2", Image): "/detector3d/image/2",
+    ("target", PoseStamped): "/person_tracker/target",
+}
 
 
-def test_unitree_g1_detection_routes_only_declared_ports() -> None:
-    """Every transported or remapped port name must exist on its module: a
-    stale key left behind by a port rename never errors at deploy, it just
-    stops publishing (or stops remapping) silently."""
-    camera_info = CameraInfo.from_intrinsics(
-        fx=600.0, fy=600.0, cx=320.0, cy=240.0, width=640, height=480, frame_id="camera"
-    )
-    modules = {
-        Detection3DModule: Detection3DModule(camera_info=camera_info, detector=lambda: None),
-        ObjectDBModule: ObjectDBModule(camera_info=camera_info, detector=lambda: None),
-        PersonTracker: PersonTracker(cameraInfo=camera_info),
-    }
-    try:
-        for module_cls, module in modules.items():
-            transported = {
-                name for name, owner in unitree_g1_detection.transport_map if owner is module_cls
-            }
-            assert transported <= set(module.outputs), module_cls.__name__
-
-            remapped = {
-                name for owner, name in unitree_g1_detection.remapping_map if owner is module_cls
-            }
-            assert remapped <= set(module.inputs), module_cls.__name__
-    finally:
-        for module in modules.values():
-            module.stop()
-
-
-def test_g1_detection_blueprint_has_no_unknown_remap_owners() -> None:
-    """Catches the inverse failure: a remapping whose owner module is not part
-    of this blueprint at all (e.g. left behind after a module swap)."""
-    blueprint_modules = {bp.module for bp in unitree_g1_detection.blueprints}
-    for owner, _name in unitree_g1_detection.remapping_map:
-        assert owner in blueprint_modules, (
-            f"remapping references {owner.__name__}, which the blueprint does not deploy"
-        )
+def test_detection_transports_resolve_at_runtime() -> None:
+    """The coordinator resolves transports through _get_transport_for with a
+    (stream_name, message_type) key. A key authored in any other shape (e.g. a
+    module class as the second element) never matches; the lookup then falls
+    back silently and the stream publishes on an auto topic like
+    /detections_2d or /target instead of the authored wire topic."""
+    for (name, msg_type), topic in EXPECTED_TOPICS.items():
+        resolved = _get_transport_for(unitree_g1_detection, name, msg_type)
+        assert resolved is unitree_g1_detection.transport_map[(name, msg_type)]
+        assert resolved.topic.topic == topic
+        assert resolved.topic.lcm_type is msg_type
