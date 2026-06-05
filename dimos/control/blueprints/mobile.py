@@ -34,22 +34,32 @@ from dimos.control.components import (
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
+from dimos.hardware.drive_trains.flowbase.driver import FlowBaseDriver
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
+from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.voxels import VoxelGridMapper
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
+from dimos.navigation.odometry_to_pose_stamped import OdometryToPoseStamped
+from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.robot.catalog.ufactory import xarm7 as _catalog_xarm7
 from dimos.robot.sim.fopdt_plant_connection import FopdtPlantConnection
 from dimos.robot.unitree.g1.config import G1_LOCAL_PLANNER_PRECOMPUTED_PATHS
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+from dimos.utils.path_utils import get_project_root
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
+from dimos.visualization.vis_module import vis_module
 
 _base_joints = make_twist_base_joints("base")
 
@@ -390,10 +400,109 @@ coordinator_sim_fopdt_flowbase = (
 )
 
 
+# FlowBase precision-nav — mirrors the Go2 precision-nav (voxel/A* planner →
+# precision controller), made frame-consistent for FlowBase.
+#
+# Click a goal in the rerun viewer; FastLio2 (Mid-360 SLAM) feeds
+# VoxelGridMapper → CostMapper → ReplanningAStarPlanner, which emits `path`.
+# The ControlCoordinator's `precision_follower` (PrecisionPathFollowerTask)
+# follows it; KeyboardTeleop 0-9 keys tune the corridor half-width live.
+#
+# Frame consistency (the key difference vs Go2): FastLio2 emits `Odometry`, but
+# the planner (`odom: In[PoseStamped]`) and the coordinator's transport_lcm
+# adapter both need `PoseStamped`. OdometryToPoseStamped converts it and the
+# SINGLE SLAM pose is published on `/flowbase/odom`, feeding BOTH — so the
+# path/map and the follower share one frame. The coordinator writes `cmd_vel`
+# on `/flowbase/cmd_vel`; FlowBaseDriver forwards it to the FlowBase via Portal
+# RPC (applying the Y/yaw negation). The planner's `nav_cmd_vel` is left unwired.
+#
+# NOTE: reuses `_flowbase_mid360_mount` (the un-calibrated guess); the measured
+# mount Pose(0.22,-0.185,0.381) would improve map quality — see tuning log open
+# items. Tracking uses FastLio2 odom, so the mount mainly affects obstacle map.
+_flowbase_precision_joints = make_twist_base_joints("flowbase")
+_FLOWBASE_ARTIFACT = (
+    get_project_root()
+    / "data"
+    / "characterization"
+    / "flowbase"
+    / "flowbase_config_hw_concrete_2026-06-04_ada8c4ced.json"
+)
+
+coordinator_flowbase_precision_nav = (
+    autoconnect(
+        FastLio2.blueprint(
+            host_ip=os.getenv("LIDAR_HOST_IP", "192.168.1.5"),
+            lidar_ip=os.getenv("LIDAR_IP", "192.168.1.189"),
+            mount=_flowbase_mid360_mount,
+            map_freq=1.0,
+            config="default.yaml",
+        ),
+        OdometryToPoseStamped.blueprint(),
+        VoxelGridMapper.blueprint(emit_every=5),
+        CostMapper.blueprint(),
+        ReplanningAStarPlanner.blueprint(),
+        ControlCoordinator.blueprint(
+            publish_joint_state=True,
+            hardware=[
+                HardwareComponent(
+                    hardware_id="flowbase",
+                    hardware_type=HardwareType.BASE,
+                    joints=_flowbase_precision_joints,
+                    adapter_type="transport_lcm",
+                ),
+            ],
+            tasks=[
+                TaskConfig(
+                    name="precision_follower",
+                    type="precision_path_follower",
+                    joint_names=_flowbase_precision_joints,
+                    priority=10,
+                    params={
+                        "artifact_path": str(_FLOWBASE_ARTIFACT),
+                        "speed": 0.5,  # under the measured 0.63 m/s ceiling
+                        "v_max_override": 0.5,
+                    },
+                ),
+            ],
+        ),
+        FlowBaseDriver.blueprint(),
+        KeyboardTeleop.blueprint(
+            publish_only_when_active=True,
+            disable_movement=True,  # 0-9 e_max slider only; no WASD Twist
+        ),
+        vis_module(viewer_backend=global_config.viewer),
+    )
+    .remappings(
+        [
+            # FastLio2's accumulated map → distinct name so it doesn't clobber
+            # VoxelGridMapper's `global_map` (which CostMapper consumes).
+            (FastLio2, "global_map", "global_map_fastlio"),
+            # OdometryToPoseStamped publishes the SLAM pose as `odom` so it
+            # autoconnects to ReplanningAStarPlanner.odom and shares /flowbase/odom.
+            (OdometryToPoseStamped, "pose", "odom"),
+        ]
+    )
+    .transports(
+        {
+            # ONE SLAM pose feeds the planner AND the coordinator's transport
+            # adapter (which reads /flowbase/odom by hardware_id) → frame-consistent.
+            ("odom", PoseStamped): LCMTransport("/flowbase/odom", PoseStamped),
+            # coordinator's transport adapter writes cmd_vel here; FlowBaseDriver reads it.
+            ("cmd_vel", Twist): LCMTransport("/flowbase/cmd_vel", Twist),
+            ("e_max", Float32): LCMTransport("/e_max", Float32),
+            ("path", Path): LCMTransport("/precision_nav/path", Path),
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        }
+    )
+    .global_config(n_workers=12, robot_model="flowbase")
+)
+
+
 __all__ = [
     "coordinator_flowbase",
     "coordinator_flowbase_keyboard_teleop",
     "coordinator_flowbase_nav",
+    "coordinator_flowbase_precision_nav",
     "coordinator_mobile_manip_mock",
     "coordinator_mock_twist_base",
     "coordinator_sim_fopdt",
