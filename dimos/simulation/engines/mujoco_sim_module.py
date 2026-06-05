@@ -236,7 +236,7 @@ class MujocoSimModule(
     exposes joint state/commands to a ``ShmMujocoAdapter`` via shared memory.
 
     The adapter attaches to the same SHM buffers using the MJCF path as the
-    discovery key — no RPC, no globals. From ControlCoordinator's perspective
+    discovery key - no RPC, no globals. From ControlCoordinator's perspective
     the adapter is an ordinary ``ManipulatorAdapter``; SHM is its transport.
     """
 
@@ -314,7 +314,7 @@ class MujocoSimModule(
         if not self.config.address:
             raise RuntimeError("MujocoSimModule: config.address (MJCF path) is required")
 
-        # SHM key — adapter derives the same key from the same MJCF path.
+        # SHM key - adapter derives the same key from the same MJCF path.
         shm_key = shm_key_from_path(self.config.address)
         self._shm = ManipShmWriter(shm_key)
         self._shm_ready_signaled = False
@@ -330,7 +330,7 @@ class MujocoSimModule(
         # Compose the camera list.  Each registered camera blocks the
         # sim thread inside _step_once (mujoco_engine._render_cameras
         # does update_scene + GPU render synchronously between physics
-        # steps — typically 5-30 ms per camera), so registering a camera
+        # steps - typically 5-30 ms per camera), so registering a camera
         # nobody consumes burns the 500 Hz tick deadline for nothing.
         # Skip the primary camera entirely when none of color / depth /
         # pointcloud is enabled.
@@ -376,8 +376,8 @@ class MujocoSimModule(
             )
 
         # Resolve IMU sensors once. Names come from config so robot-
-        # specific blueprints (G1, H1, Optimus, …) can override; manipulator
-        # MJCFs typically have neither — we leave the slices as None and
+        # specific blueprints (G1, H1, Optimus, ...) can override; manipulator
+        # MJCFs typically have neither - we leave the slices as None and
         # skip IMU publishing for those.
         self._imu_gyro_slice = _find_sensor_slice(
             self._engine.model, *self.config.imu_gyro_sensor_names, dim=3
@@ -494,7 +494,7 @@ class MujocoSimModule(
             shm.signal_ready(num_joints=len(engine.joint_names))
             self._shm_ready_signaled = True
 
-        # Odom — when the MJCF has a free-joint root, publish base pose
+        # Odom - when the MJCF has a free-joint root, publish base pose
         # from qpos[0:7] every step.  Without this, downstream consumers
         # (viser viewer, nav stack) only see joint articulation, not
         # base translation through the world.
@@ -516,7 +516,7 @@ class MujocoSimModule(
                 )
             )
 
-        # IMU — only if MJCF declared the sensors.
+        # IMU - only if MJCF declared the sensors.
         if (
             self._imu_gyro_slice is None
             and self._imu_accel_slice is None

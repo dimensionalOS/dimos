@@ -40,7 +40,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Upper bound on joint count per sim.  Manipulators use ≤10; humanoids
+# Upper bound on joint count per sim.  Manipulators use <=10; humanoids
 # (Unitree G1: 29) push higher.  32 leaves headroom while keeping all
 # per-joint buffers tiny (32 floats = 256 B).
 MAX_JOINTS = 32
@@ -134,7 +134,7 @@ def _unregister(shm: SharedMemory) -> SharedMemory:
 
 @dataclass(frozen=True)
 class ManipShmSet:
-    """Frozen set of named SharedMemory buffers for sim ↔ adapter IPC.
+    """Frozen set of named SharedMemory buffers for sim <-> adapter IPC.
 
     Despite the name (kept for backward compat with existing manipulator
     consumers), the layout now also covers whole-body needs: IMU, per-joint
@@ -408,7 +408,7 @@ class ManipShmReader:
         )
 
     def write_kp_command(self, kp: list[float]) -> None:
-        """Per-joint position-gain target.  Switches command mode to PD+τ."""
+        """Per-joint position-gain target.  Switches command mode to PD+tau."""
         n = min(len(kp), MAX_JOINTS)
         arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.kp_t.buf)
         arr[:n] = kp[:n]

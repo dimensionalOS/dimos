@@ -16,7 +16,7 @@
 
 Streams: motor_states (Out[JointState]), imu (Out[Imu]),
 motor_command (In[MotorCommandArray]). 29 motors, ordering from
-make_humanoid_joints("g1") (left leg → right leg → waist → left arm → right arm).
+make_humanoid_joints("g1") (left leg -> right leg -> waist -> left arm -> right arm).
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ _MODE_MACHINE_G1: int = 5
 
 # Joint names sourced from the canonical helper. Order matches the motor index
 # convention above. Single-source-of-truth so any coordinator-side adapter built
-# from make_humanoid_joints("g1") agrees on the wire-level name → motor-index mapping.
+# from make_humanoid_joints("g1") agrees on the wire-level name -> motor-index mapping.
 G1_JOINT_NAMES: list[str] = make_humanoid_joints("g1")
 assert len(G1_JOINT_NAMES) == _NUM_MOTORS
 
@@ -71,7 +71,7 @@ class G1WholeBodyConnectionConfig(ModuleConfig):
 
 
 class G1WholeBodyConnection(Module):
-    """G1 humanoid Module — owns the DDS connection in its own worker."""
+    """G1 humanoid Module - owns the DDS connection in its own worker."""
 
     config: G1WholeBodyConnectionConfig
 
@@ -89,7 +89,7 @@ class G1WholeBodyConnection(Module):
         self._crc: CRC | None = None
         # mode_machine: hardcoded at start() to the static value for the
         # 29-DOF G1.  We log a one-shot warning if the first LowState we
-        # read disagrees — that's the early signal of firmware drift on a
+        # read disagrees - that's the early signal of firmware drift on a
         # variant that needs a different value.
         self._mode_machine: int | None = None
         self._mode_machine_verified: bool = False
@@ -102,7 +102,7 @@ class G1WholeBodyConnection(Module):
     def start(self) -> None:
         super().start()
 
-        # Lazy SDK imports — file must import cleanly outside the [unitree-dds] extra.
+        # Lazy SDK imports - file must import cleanly outside the [unitree-dds] extra.
         from unitree_sdk2py.core.channel import (
             ChannelFactoryInitialize,
             ChannelPublisher,
@@ -120,13 +120,13 @@ class G1WholeBodyConnection(Module):
             else:
                 ChannelFactoryInitialize(0)
         except Exception as e:
-            # Idempotent — already initialised by a sibling participant is fine.
+            # Idempotent - already initialised by a sibling participant is fine.
             logger.debug(f"ChannelFactoryInitialize raised (likely already init'd): {e}")
 
         self._publisher = ChannelPublisher("rt/lowcmd", LowCmd_)
         self._publisher.Init()
 
-        # Passive subscriber — Read() per tick from the publish loop.  The
+        # Passive subscriber - Read() per tick from the publish loop.  The
         # callback variant (Init(self._on_low_state, 10)) doesn't fire
         # reliably under cyclonedds on macOS, which used to leave us
         # blocked here forever waiting for a first LowState.
@@ -175,7 +175,7 @@ class G1WholeBodyConnection(Module):
         # tau=0).  Without this, the motors freeze stiffly at whatever
         # the last commanded pose was and the next ``dimos run`` opens
         # against a robot that's actively fighting its own controllers
-        # — observed as horrible mechanical noise during sport-mode
+        # - observed as horrible mechanical noise during sport-mode
         # release.  Best-effort: any failure is logged, not raised, so
         # cleanup still drains the DDS endpoints.
         if self._publisher is not None and self._low_cmd is not None and self._crc is not None:
@@ -194,7 +194,7 @@ class G1WholeBodyConnection(Module):
             except (OSError, RuntimeError, AttributeError) as e:
                 logger.warning("Safe-stop lowcmd failed", error=str(e))
 
-        # Close DDS endpoints explicitly — GC-based cleanup races with in-flight
+        # Close DDS endpoints explicitly - GC-based cleanup races with in-flight
         # callbacks and segfaults on process exit (mirrors the Go2 adapter).
         if self._subscriber is not None:
             try:
@@ -338,10 +338,10 @@ class G1WholeBodyConnection(Module):
                 or self._publisher is None
                 or self._mode_machine is None
             ):
-                # Pre-start or post-stop — drop silently.
+                # Pre-start or post-stop - drop silently.
                 return
 
-            # Echo mode_machine from the latest LowState — required by G1 firmware.
+            # Echo mode_machine from the latest LowState - required by G1 firmware.
             self._low_cmd.mode_machine = self._mode_machine
 
             for i in range(_NUM_MOTORS):
@@ -373,12 +373,12 @@ class G1WholeBodyConnection(Module):
         msc.SetTimeout(5.0)
         msc.Init()
 
-        # CheckMode returns (status, None) — or (status, {"name": ""}) on
-        # some firmwares — once nothing is active.  Treat both as "already
+        # CheckMode returns (status, None) - or (status, {"name": ""}) on
+        # some firmwares - once nothing is active.  Treat both as "already
         # released" and return without poking ReleaseMode.
         _status, result = msc.CheckMode()
         if not result or not result.get("name"):
-            logger.info("Sport mode already released — skipping ReleaseMode")
+            logger.info("Sport mode already released - skipping ReleaseMode")
             return
 
         while result and result.get("name"):
@@ -386,7 +386,7 @@ class G1WholeBodyConnection(Module):
             _status, result = msc.CheckMode()
             time.sleep(1)
 
-        logger.info("Sport mode released — low-level control active")
+        logger.info("Sport mode released - low-level control active")
 
 
 __all__ = ["G1_JOINT_NAMES", "G1WholeBodyConnection", "G1WholeBodyConnectionConfig"]

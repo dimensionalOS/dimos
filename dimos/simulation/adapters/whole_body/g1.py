@@ -62,7 +62,7 @@ class SimMujocoG1WholeBodyAdapter:
     (q, kp, kd, tau) commands back into SHM for the engine's pre-step
     PD-with-feedforward hook to apply.
 
-    ``address`` (the MJCF XML path) is the discovery key — both sides
+    ``address`` (the MJCF XML path) is the discovery key - both sides
     derive the same SHM names from it via ``shm_key_from_path``.
     """
 
@@ -73,7 +73,7 @@ class SimMujocoG1WholeBodyAdapter:
     ) -> None:
         if address is None:
             raise ValueError(
-                "SimMujocoG1WholeBodyAdapter: address (MJCF XML path) is required — "
+                "SimMujocoG1WholeBodyAdapter: address (MJCF XML path) is required - "
                 "set HardwareComponent.address to the same MJCF path the "
                 "MujocoSimModule loads."
             )
@@ -85,7 +85,7 @@ class SimMujocoG1WholeBodyAdapter:
     # Lifecycle
 
     def connect(self) -> bool:
-        # Attach with retry — MujocoSimModule may still be starting up.
+        # Attach with retry - MujocoSimModule may still be starting up.
         deadline = time.monotonic() + _ATTACH_RETRY_TIMEOUT_S
         while True:
             try:
@@ -176,7 +176,7 @@ class SimMujocoG1WholeBodyAdapter:
             )
             return False
         # Flatten the per-motor command into per-joint arrays.  POS_STOP
-        # ("no command") is replaced with 0.0 — the engine's PD only
+        # ("no command") is replaced with 0.0 - the engine's PD only
         # acts when kp > 0 anyway, so a zeroed q is harmless.
         q = [cmd.q if cmd.q != POS_STOP else 0.0 for cmd in commands]
         kp = [cmd.kp for cmd in commands]
