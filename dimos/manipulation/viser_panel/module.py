@@ -16,8 +16,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import importlib
-import itertools
-from pathlib import Path
 import threading
 import time
 import traceback
@@ -28,7 +26,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
+from dimos.manipulation.viser_panel.animation import interpolate_joint_path
+from dimos.manipulation.viser_panel.backend import PanelBackend
+from dimos.manipulation.viser_panel.controller import PanelController
+from dimos.manipulation.viser_panel.gui import PanelGui
+from dimos.manipulation.viser_panel.scene import PanelScene
 from dimos.manipulation.viser_panel.state import (
     ActionStatus,
     BackendConnectionStatus,
@@ -44,7 +46,6 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -55,11 +56,6 @@ VISER_INSTALL_HINT = (
 VISER_URDF_INSTALL_HINT = (
     "Viser URDF support requires yourdfpy. Install it with: uv sync --extra manipulation-viser"
 )
-GOAL_ROBOT_FEASIBLE_COLOR = (255, 122, 0)
-GOAL_ROBOT_INFEASIBLE_COLOR = (255, 30, 30)
-GOAL_ROBOT_FEASIBLE_OPACITY = 0.7
-GOAL_ROBOT_INFEASIBLE_OPACITY = 0.75
-GOAL_ROBOT_MESH_COLOR = (*GOAL_ROBOT_FEASIBLE_COLOR, GOAL_ROBOT_FEASIBLE_OPACITY)
 
 
 class ViserManipulationPanelConfig(ModuleConfig):
@@ -89,6 +85,10 @@ class ViserManipulationPanelModule(Module):
         self._urdfs: dict[str, Any] = {}
         self._handles: dict[str, Any] = {}
         self._joint_sliders: dict[str, Any] = {}
+        self._backend: PanelBackend | None = None
+        self._gui: PanelGui | None = None
+        self._scene: PanelScene | None = None
+        self._controller: PanelController | None = None
         self._stop_event = threading.Event()
         self._poll_thread: threading.Thread | None = None
         self._preview_worker = PreviewWorker(
@@ -101,6 +101,52 @@ class ViserManipulationPanelModule(Module):
     @property
     def panel_config(self) -> ViserManipulationPanelConfig:
         return cast("ViserManipulationPanelConfig", self.config)
+
+    def _ensure_backend(self) -> PanelBackend:
+        backend = getattr(self, "_backend", None)
+        if backend is None:
+            backend = PanelBackend(
+                module_ref=getattr(self, "manipulation", None),
+                module_rpc=getattr(self, "rpc", None),
+                remote_factory=RPCClient.remote,
+                timeout_seconds=lambda: self.panel_config.preview_request_timeout,
+            )
+            self._backend = backend
+        if getattr(self, "_client", None) is not None and backend.client is None:
+            backend.client = self._client
+        return backend
+
+    def _ensure_gui(self) -> PanelGui:
+        gui = getattr(self, "_gui", None)
+        if gui is None:
+            gui = PanelGui(self._server, self.session, self._handles, self._joint_sliders)
+            self._gui = gui
+        else:
+            gui.server = self._server
+        return gui
+
+    def _ensure_scene(self) -> PanelScene:
+        scene = getattr(self, "_scene", None)
+        if scene is None:
+            scene = PanelScene(
+                self._server,
+                self.session,
+                self._handles,
+                self._urdfs,
+                self._viser_urdf,
+            )
+            self._scene = scene
+        else:
+            scene.server = self._server
+            scene.viser_urdf = self._viser_urdf
+        return scene
+
+    def _ensure_controller(self) -> PanelController:
+        controller = getattr(self, "_controller", None)
+        if controller is None:
+            controller = PanelController(self)
+            self._controller = controller
+        return controller
 
     @rpc
     def start(self) -> None:
@@ -130,7 +176,7 @@ class ViserManipulationPanelModule(Module):
         if self._poll_thread and self._poll_thread.is_alive():
             self._poll_thread.join(timeout=2.0)
         if self._client is not None:
-            self._client.stop_rpc_client()
+            self._ensure_backend().close()
             self._client = None
         if self._server is not None and hasattr(self._server, "stop"):
             self._server.stop()
@@ -152,28 +198,19 @@ class ViserManipulationPanelModule(Module):
         return viser_extras.ViserUrdf
 
     def _build_gui(self) -> None:
-        if self._server is None:
-            return
-        gui = self._server.gui
-        self._handles["status"] = gui.add_text("Status", initial_value="Disconnected")
-        self._handles["error"] = gui.add_text("Error", initial_value="")
-        self._handles["feasibility"] = gui.add_text("Feasibility", initial_value="unknown")
-        self._handles["robot"] = gui.add_dropdown(
-            "Robot", options=["No robots"], initial_value="No robots"
+        self._ensure_gui().build(
+            on_robot=self._select_robot,
+            on_preset=self._apply_preset,
+            on_plan=lambda: self._run_operation("Plan", self._plan),
+            on_preview=lambda: self._run_operation("Preview", self._preview),
+            on_execute=lambda: self._run_operation("Execute", self._execute),
+            on_cancel=lambda: self._run_operation("Cancel", self._cancel),
+            on_clear_plan=lambda: self._run_operation("Clear Plan", self._clear_plan),
         )
-        self._handles["preset"] = gui.add_dropdown(
-            "Target Preset",
-            options=["Select preset...", "Current"],
-            initial_value="Select preset...",
-        )
-        self._handles["plan"] = gui.add_button("Plan", disabled=True)
-        self._handles["preview"] = gui.add_button("Preview", disabled=True)
-        self._handles["execute"] = gui.add_button("Execute", disabled=True)
-        self._handles["cancel"] = gui.add_button("Cancel")
-        self._handles["clear_plan"] = gui.add_button("Clear Plan")
-        self._wire_static_callbacks()
 
     def _wire_static_callbacks(self) -> None:
+        if not self._handles:
+            return
         self._handles["robot"].on_update(lambda event: self._select_robot(str(event.target.value)))
         self._handles["preset"].on_update(lambda event: self._apply_preset(str(event.target.value)))
         self._handles["plan"].on_click(lambda _: self._run_operation("Plan", self._plan))
@@ -191,34 +228,19 @@ class ViserManipulationPanelModule(Module):
             self._stop_event.wait(interval)
 
     def _reset_manipulation_client(self) -> None:
-        if self._client is not None:
-            self._client.stop_rpc_client()
-        if hasattr(self, "manipulation"):
-            self._client = self.manipulation
-            return
-        module_rpc = getattr(self, "rpc", None)
-        self._client = RPCClient.remote(
-            ManipulationModule,
-            rpc=module_rpc if isinstance(module_rpc, LCMRPC) else None,
-        )
+        self._backend = None
+        self._client = self._ensure_backend().reset_client()
 
     def _list_robots(self) -> list[str]:
-        if self._client is None:
-            self._reset_manipulation_client()
-        client = self._client
-        if client is None:
-            raise RuntimeError("Manipulation RPC client is not connected")
-        try:
-            return list(client.list_robots())
-        except TimeoutError:
-            self._reset_manipulation_client()
-            client = self._client
-            if client is None:
-                raise RuntimeError("Manipulation RPC client is not connected")
-            return list(client.list_robots())
+        robots = self._ensure_backend().list_robots()
+        self._client = self._ensure_backend().client
+        return robots
 
     @rpc
     def refresh_panel_state(self) -> dict[str, Any]:
+        return self._ensure_controller().refresh_panel_state()
+
+    def _refresh_panel_state_impl(self) -> dict[str, Any]:
         with self._lock:
             try:
                 try:
@@ -281,6 +303,9 @@ class ViserManipulationPanelModule(Module):
         self.session.error = message
 
     def _select_robot(self, robot_name: str) -> None:
+        self._ensure_controller().select_robot(robot_name)
+
+    def _select_robot_impl(self, robot_name: str) -> None:
         if robot_name in {"", "No robots"}:
             return
         with self._lock:
@@ -291,12 +316,7 @@ class ViserManipulationPanelModule(Module):
                 self._joint_sliders.clear()
 
     def _update_robot_dropdown(self, robots: Sequence[str]) -> None:
-        handle = self._handles.get("robot")
-        if handle is None:
-            return
-        options = list(robots) or ["No robots"]
-        handle.options = options
-        handle.value = self.session.selected_robot or options[0]
+        self._ensure_gui().update_robot_dropdown(robots)
 
     def _ensure_robot_ui(self, robot_name: str) -> None:
         info = self.session.robot_info or {}
@@ -307,76 +327,25 @@ class ViserManipulationPanelModule(Module):
         self._update_current_robot(robot_name)
 
     def _ensure_scene_nodes(self, robot_name: str, info: dict[str, Any]) -> None:
-        if self._server is None:
-            return
-        if "ee_control" not in self._handles:
-            self._handles["ee_control"] = self._server.scene.add_transform_controls(
-                f"/targets/{robot_name}/ee_control", scale=0.25
-            )
-            self._handles["ee_control"].on_update(
-                lambda event: self._target_pose_changed(event.target)
-            )
-        ViserUrdf = self._viser_urdf
-        if ViserUrdf is None or not info.get("model_path"):
-            return
-        for kind in ("current", "ghost"):
-            key = f"{robot_name}:{kind}"
-            if key not in self._urdfs:
-                root_node_name = (
-                    f"/robots/{robot_name}/current"
-                    if kind == "current"
-                    else f"/targets/{robot_name}/ghost"
-                )
-                mesh_color_override = GOAL_ROBOT_MESH_COLOR if kind == "ghost" else None
-                self._urdfs[key] = ViserUrdf(
-                    self._server,
-                    self._prepared_urdf_path(info),
-                    root_node_name=root_node_name,
-                    mesh_color_override=mesh_color_override,
-                )
-                if kind == "ghost":
-                    self._set_urdf_mesh_material(
-                        self._urdfs[key], GOAL_ROBOT_FEASIBLE_COLOR, GOAL_ROBOT_FEASIBLE_OPACITY
-                    )
+        scene = self._ensure_scene()
+        prepared_urdf_path = self._prepared_urdf_path
+        if getattr(prepared_urdf_path, "__func__", None) is not type(self)._prepared_urdf_path:
+            scene.prepared_urdf_path = prepared_urdf_path
+        scene.ensure_scene_nodes(robot_name, info, self._target_pose_changed)
 
     def _build_joint_sliders(self, robot_name: str, info: dict[str, Any]) -> None:
-        if self._server is None:
-            return
-        names = list(info.get("joint_names") or [])
-        limits = info.get("joint_limits") or []
-        values = self.session.current_joints or [0.0] * len(names)
-        for index, name in enumerate(names):
-            lower, upper = (-3.14, 3.14)
-            if index < len(limits) and limits[index] is not None:
-                lower, upper = limits[index]
-            initial = values[index] if index < len(values) else 0.0
-            slider = self._server.gui.add_slider(
-                name,
-                min=float(lower),
-                max=float(upper),
-                step=0.001,
-                initial_value=float(initial),
-            )
-            slider.on_update(lambda _event, joint_name=name: self._joint_slider_changed(joint_name))
-            self._joint_sliders[name] = slider
+        self._ensure_gui().build_joint_sliders(robot_name, info, self._joint_slider_changed)
 
     def _update_preset_options(self, info: dict[str, Any]) -> None:
-        preset = self._handles.get("preset")
-        if preset is None:
-            return
-        options = ["Select preset...", "Current"]
-        if info.get("init_joints") is not None:
-            options.append("Init")
-        if info.get("home_joints") is not None:
-            options.append("Home")
-        preset.options = options
+        self._ensure_gui().update_preset_options(info)
 
     def _update_current_robot(self, robot_name: str) -> None:
-        current = self._urdfs.get(f"{robot_name}:current")
-        if current is not None and self.session.current_joints is not None:
-            self._set_urdf_joints(current, self.session.current_joints)
+        self._ensure_scene().update_current_robot(robot_name)
 
     def _target_pose_changed(self, target: Any) -> None:
+        self._ensure_controller().target_pose_changed(target)
+
+    def _target_pose_changed_impl(self, target: Any) -> None:
         with self._lock:
             if self.session.sync_source == "joints" or self.session.selected_robot is None:
                 return
@@ -389,6 +358,9 @@ class ViserManipulationPanelModule(Module):
             )
 
     def _joint_slider_changed(self, _joint_name: str) -> None:
+        self._ensure_controller().joint_slider_changed(_joint_name)
+
+    def _joint_slider_changed_impl(self, _joint_name: str) -> None:
         with self._lock:
             if self.session.sync_source == "cartesian" or self.session.selected_robot is None:
                 return
@@ -407,6 +379,9 @@ class ViserManipulationPanelModule(Module):
             )
 
     def _apply_preset(self, preset: str) -> None:
+        self._ensure_controller().apply_preset(preset)
+
+    def _apply_preset_impl(self, preset: str) -> None:
         if preset in {"", "Select preset..."} or self.session.selected_robot is None:
             return
         with self._lock:
@@ -463,35 +438,7 @@ class ViserManipulationPanelModule(Module):
             return {"success": False, "status": "ERROR", "message": str(e)}
 
     def _call_preview_with_timeout(self, call: Any, timeout_status: str) -> dict[str, Any]:
-        result: dict[str, Any] | None = None
-        error: Exception | None = None
-
-        def run() -> None:
-            nonlocal result, error
-            try:
-                result = call()
-            except Exception as e:
-                error = e
-
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        timeout = max(self.panel_config.preview_request_timeout, 0.0)
-        thread.join(timeout=timeout)
-        if thread.is_alive():
-            return {
-                "success": False,
-                "status": timeout_status,
-                "message": f"Preview request timed out after {timeout:.1f}s",
-                "collision_free": False,
-            }
-        if error is not None:
-            raise error
-        return result or {
-            "success": False,
-            "status": "EMPTY_RESULT",
-            "message": "Preview request returned no result",
-            "collision_free": False,
-        }
+        return self._ensure_backend().call_preview_with_timeout(call, timeout_status)
 
     def _apply_preview_result(self, request: PreviewRequest, result: dict[str, Any]) -> None:
         with self._lock:
@@ -524,35 +471,9 @@ class ViserManipulationPanelModule(Module):
             self._update_gui_state()
 
     def _sync_controls_from_targets(self) -> None:
-        if self.session.joint_target is not None:
-            self.session.sync_source = "cartesian"
-            try:
-                info = self.session.robot_info or {}
-                for name, value in zip(
-                    info.get("joint_names") or [], self.session.joint_target, strict=False
-                ):
-                    if name in self._joint_sliders:
-                        self._joint_sliders[name].value = float(value)
-                if self.session.selected_robot:
-                    ghost = self._urdfs.get(f"{self.session.selected_robot}:ghost")
-                    if ghost is not None and self.session.action_status != ActionStatus.PREVIEWING:
-                        self._set_urdf_joints(ghost, self.session.joint_target)
-            finally:
-                self.session.sync_source = None
-        pose = self.session.cartesian_target
-        ee_control = self._handles.get("ee_control")
-        if pose is not None and ee_control is not None:
-            self.session.sync_source = "joints"
-            try:
-                ee_control.position = (pose.position.x, pose.position.y, pose.position.z)
-                ee_control.wxyz = (
-                    pose.orientation.w,
-                    pose.orientation.x,
-                    pose.orientation.y,
-                    pose.orientation.z,
-                )
-            finally:
-                self.session.sync_source = None
+        self._ensure_gui().sync_controls_from_targets(
+            set_ghost_joints=lambda joints: self._ensure_scene().set_selected_ghost_joints(joints)
+        )
 
     def _run_operation(self, name: str, operation: Any) -> None:
         action = {
@@ -581,6 +502,9 @@ class ViserManipulationPanelModule(Module):
         threading.Thread(target=run, daemon=True).start()
 
     def _plan(self) -> None:
+        self._ensure_controller().plan()
+
+    def _plan_impl(self) -> None:
         if (
             self._client is None
             or not self._can_plan_for_operation()
@@ -614,6 +538,9 @@ class ViserManipulationPanelModule(Module):
             self.session.error = str(self._client.get_error() or "Planning failed")
 
     def _preview(self) -> None:
+        self._ensure_controller().preview()
+
+    def _preview_impl(self) -> None:
         if self._client is None or self.session.selected_robot is None:
             return
         path = list(self._client.get_planned_path(self.session.selected_robot) or [])
@@ -626,6 +553,9 @@ class ViserManipulationPanelModule(Module):
             self.session.plan_state.status = PlanStatus.FAILED
 
     def _execute(self) -> None:
+        self._ensure_controller().execute()
+
+    def _execute_impl(self) -> None:
         if (
             self._client is None
             or self.session.selected_robot is None
@@ -641,85 +571,37 @@ class ViserManipulationPanelModule(Module):
             self.session.error = str(self._client.get_error() or "Execution failed")
 
     def _cancel(self) -> None:
+        self._ensure_controller().cancel()
+
+    def _cancel_impl(self) -> None:
         if self._client is not None:
             self._client.cancel()
 
     def _clear_plan(self) -> None:
+        self._ensure_controller().clear_plan()
+
+    def _clear_plan_impl(self) -> None:
         if self._client is not None:
             self._client.clear_planned_path()
         self.session.plan_state = self.session.plan_state.__class__()
         self._render_plan_path([])
 
     def _render_plan_path(self, path: Sequence[JointState]) -> None:
-        if self._server is None:
-            return
-        positions = [
-            [float(index), waypoint.position[0] if waypoint.position else 0.0, 0.02]
-            for index, waypoint in enumerate(path)
-        ]
-        if "plan_path" in self._handles:
-            self._handles["plan_path"].remove()
-            self._handles.pop("plan_path", None)
-        if len(positions) >= 2:
-            self._handles["plan_path"] = self._server.scene.add_line_segments(
-                "/plans/path",
-                points=[[start, end] for start, end in itertools.pairwise(positions)],
-                colors=(80, 180, 255),
-            )
+        self._ensure_scene().render_plan_path(path)
 
     def _animate_ghost_path(self, path: Sequence[JointState], duration: float) -> None:
-        robot = self.session.selected_robot
-        if robot is None or not path:
-            return
-        ghost = self._urdfs.get(f"{robot}:ghost")
-        if ghost is None:
-            return
-        frames = self._interpolate_joint_path(path, duration, self.panel_config.preview_fps)
-        step_delay = duration / max(len(frames) - 1, 1) if duration > 0.0 else 0.0
-        for joints in frames:
-            self._set_urdf_joints(ghost, joints)
-            time.sleep(step_delay)
+        self._ensure_scene().animate_ghost_path(path, duration, self.panel_config.preview_fps)
 
     def _interpolate_joint_path(
         self, path: Sequence[JointState], duration: float, fps: float
     ) -> list[list[float]]:
-        waypoints = [list(waypoint.position) for waypoint in path if waypoint.position]
-        if not waypoints:
-            return []
-        if len(waypoints) == 1 or duration <= 0.0:
-            return [waypoints[-1]]
-        frame_count = max(int(duration * max(fps, 1.0)) + 1, len(waypoints))
-        segment_count = len(waypoints) - 1
-        frames: list[list[float]] = []
-        for frame_index in range(frame_count):
-            path_t = frame_index / max(frame_count - 1, 1)
-            scaled = path_t * segment_count
-            segment_index = min(int(scaled), segment_count - 1)
-            local_t = scaled - segment_index
-            start = waypoints[segment_index]
-            end = waypoints[segment_index + 1]
-            if len(start) != len(end):
-                continue
-            frames.append(
-                [
-                    start_value + (end_value - start_value) * local_t
-                    for start_value, end_value in zip(start, end, strict=False)
-                ]
-            )
-        if frames[-1] != waypoints[-1]:
-            frames.append(waypoints[-1])
-        return frames
+        return interpolate_joint_path(path, duration, fps)
 
     def _update_gui_state(self) -> None:
-        if not self._handles:
-            return
-        self._handles["status"].value = self.session.module_state
-        self._handles["error"].value = self.session.error
-        self._handles["feasibility"].value = self.session.feasibility.status.value
-        self._set_target_visual_state(self.session.feasibility.status == FeasibilityStatus.FEASIBLE)
-        self._handles["plan"].disabled = not self.session.can_plan()
-        self._handles["preview"].disabled = not self.session.can_preview()
-        self._handles["execute"].disabled = not self._can_execute_from_ui()
+        self._ensure_gui().update_gui_state(
+            can_execute=self._can_execute_from_ui(),
+            set_target_visual_state=self._set_target_visual_state,
+        )
 
     def _snapshot(self) -> dict[str, Any]:
         return {
@@ -760,89 +642,27 @@ class ViserManipulationPanelModule(Module):
         joint_state.effort = []
         return joint_state
 
-    def _prepared_urdf_path(self, info: dict[str, Any]) -> Path:
-        package_paths = {
-            package: Path(path) for package, path in (info.get("package_paths") or {}).items()
-        }
-        return Path(
-            prepare_urdf_for_drake(
-                Path(str(info["model_path"])),
-                package_paths=package_paths,
-                xacro_args={
-                    str(key): str(value) for key, value in (info.get("xacro_args") or {}).items()
-                },
-            )
-        )
+    def _prepared_urdf_path(self, info: dict[str, Any]) -> Any:
+        return self._ensure_scene().prepared_urdf_path(info)
 
     def _set_urdf_joints(self, urdf: Any, joints: Sequence[float]) -> None:
-        joint_names = list((self.session.robot_info or {}).get("joint_names") or [])
-        named_joints = self._viser_joint_configuration(urdf, joint_names, joints)
-        if not named_joints:
-            return
-        if hasattr(urdf, "update_cfg"):
-            urdf.update_cfg(named_joints)
-        elif hasattr(urdf, "update_configuration"):
-            urdf.update_configuration(named_joints)
+        self._ensure_scene().set_urdf_joints(urdf, joints)
 
     def _viser_joint_configuration(
         self, urdf: Any, joint_names: Sequence[str], joints: Sequence[float]
     ) -> list[float]:
-        allowed_names = list(self._viser_actuated_joint_names(urdf))
-        if not allowed_names:
-            return []
-        values_by_name: dict[str, float] = {}
-        for name, value in zip(joint_names, joints, strict=False):
-            values_by_name[name] = float(value)
-            values_by_name[name.rsplit("/", 1)[-1]] = float(value)
-        return [values_by_name.get(name, 0.0) for name in allowed_names]
+        return self._ensure_scene().viser_joint_configuration(urdf, joint_names, joints)
 
     def _viser_actuated_joint_names(self, urdf: Any) -> tuple[str, ...]:
-        wrapped_urdf = getattr(urdf, "_urdf", None)
-        names = getattr(wrapped_urdf, "actuated_joint_names", None)
-        if names is not None:
-            return tuple(names)
-        joint_map = getattr(wrapped_urdf, "joint_map", None)
-        if isinstance(joint_map, dict):
-            return tuple(joint_map)
-        return ()
+        return self._ensure_scene().viser_actuated_joint_names(urdf)
 
     def _set_target_visual_state(self, feasible: bool) -> None:
-        color = (0, 180, 255) if feasible else (255, 40, 40)
-        mesh_color = GOAL_ROBOT_FEASIBLE_COLOR if feasible else GOAL_ROBOT_INFEASIBLE_COLOR
-        mesh_opacity = GOAL_ROBOT_FEASIBLE_OPACITY if feasible else GOAL_ROBOT_INFEASIBLE_OPACITY
-        robot = self.session.selected_robot
-        handles = [self._handles.get("ee_control")]
-        if robot is not None:
-            ghost = self._urdfs.get(f"{robot}:ghost")
-            handles.append(ghost)
-            self._set_urdf_mesh_material(ghost, mesh_color, mesh_opacity)
-        for handle in handles:
-            if handle is None:
-                continue
-            for attr in ("color", "material_color"):
-                if hasattr(handle, attr):
-                    try:
-                        setattr(handle, attr, color)
-                    except Exception:
-                        pass
+        self._ensure_scene().set_target_visual_state(feasible)
 
     def _set_urdf_mesh_material(
         self, urdf: Any | None, color: tuple[int, int, int], opacity: float
     ) -> None:
-        if urdf is None:
-            return
-        for mesh in getattr(urdf, "_meshes", ()):
-            for attr in ("color", "material_color"):
-                if hasattr(mesh, attr):
-                    try:
-                        setattr(mesh, attr, color)
-                    except Exception:
-                        pass
-            if hasattr(mesh, "opacity"):
-                try:
-                    mesh.opacity = opacity
-                except Exception:
-                    pass
+        self._ensure_scene().set_urdf_mesh_material(urdf, color, opacity)
 
     def _can_execute_from_ui(self, require_no_operation: bool = True) -> bool:
         if not self.panel_config.allow_plan_execute:

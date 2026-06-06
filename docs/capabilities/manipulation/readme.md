@@ -160,7 +160,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 | File | Description |
 |------|-------------|
 | [`manipulation_module.py`](/dimos/manipulation/manipulation_module.py) | Main module (RPC interface, state machine) |
-| [`viser_panel/module.py`](/dimos/manipulation/viser_panel/module.py) | Optional Viser operator panel over the manipulation RPC interface |
+| [`viser_panel/__init__.py`](/dimos/manipulation/viser_panel/__init__.py) | Optional Viser operator panel package over the manipulation RPC interface |
 | [`manipulation/blueprints.py`](/dimos/manipulation/blueprints.py) | Planner and perception blueprints |
 | [`robot/manipulators/a750/blueprints.py`](/dimos/robot/manipulators/a750/blueprints.py) | A-750 keyboard teleop blueprint |
 | [`robot/manipulators/piper/blueprints.py`](/dimos/robot/manipulators/piper/blueprints.py) | Piper keyboard teleop blueprint |

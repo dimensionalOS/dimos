@@ -22,14 +22,19 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dimos.manipulation.viser_panel.animation import interpolate_joint_path
+from dimos.manipulation.viser_panel.backend import PanelBackend
 from dimos.manipulation.viser_panel.module import (
+    ViserManipulationPanelConfig,
+    ViserManipulationPanelModule,
+)
+from dimos.manipulation.viser_panel.scene import (
     GOAL_ROBOT_FEASIBLE_COLOR,
     GOAL_ROBOT_FEASIBLE_OPACITY,
     GOAL_ROBOT_INFEASIBLE_COLOR,
     GOAL_ROBOT_INFEASIBLE_OPACITY,
     GOAL_ROBOT_MESH_COLOR,
-    ViserManipulationPanelConfig,
-    ViserManipulationPanelModule,
+    PanelScene,
 )
 from dimos.manipulation.viser_panel.state import (
     ActionStatus,
@@ -79,6 +84,11 @@ class FakeScene:
     def add_line_segments(self, _name: str, **kwargs: object) -> FakeHandle:
         self.line_segments.append(kwargs)
         return FakeHandle()
+
+
+class FakeServer:
+    def __init__(self) -> None:
+        self.scene = FakeScene()
 
 
 class FakeViserUrdf:
@@ -185,15 +195,19 @@ def test_panel_ignores_stale_preview_result():
 
 
 def test_panel_preview_request_times_out_without_blocking_worker_forever():
-    panel = _make_panel()
-    cast("ViserManipulationPanelConfig", panel.config).preview_request_timeout = 0.01
+    backend = PanelBackend(
+        module_ref=None,
+        module_rpc=None,
+        remote_factory=MagicMock(),
+        timeout_seconds=lambda: 0.01,
+    )
     release = threading.Event()
 
     def slow_preview() -> dict[str, object]:
         release.wait(timeout=1.0)
         return {"success": True}
 
-    result = panel._call_preview_with_timeout(slow_preview, "IK_TIMEOUT")
+    result = backend.call_preview_with_timeout(slow_preview, "IK_TIMEOUT")
     release.set()
     time.sleep(0.02)
 
@@ -361,13 +375,15 @@ def test_panel_execute_requires_operator_launch_opt_in():
 
 
 def test_panel_renders_plan_path_with_viser_line_segment_shape():
-    panel = _make_panel()
+    session = PanelSession(selected_robot="arm")
+    handles: dict[str, object] = {}
+    server = FakeServer()
+    scene = PanelScene(server, session, handles, {}, None)
     path = [_joint_state([0.0]), _joint_state([0.1]), _joint_state([0.2])]
 
-    panel._render_plan_path(path)
+    scene.render_plan_path(path)
 
-    assert panel._server is not None
-    assert panel._server.scene.line_segments[0]["points"] == [
+    assert server.scene.line_segments[0]["points"] == [
         [[0.0, 0.0, 0.02], [1.0, 0.1, 0.02]],
         [[1.0, 0.1, 0.02], [2.0, 0.2, 0.02]],
     ]
@@ -485,10 +501,9 @@ def test_panel_preview_animates_viser_ghost_path():
 
 
 def test_panel_interpolates_sparse_preview_path():
-    panel = _make_panel()
     path = [_joint_state([0.0, 0.0]), _joint_state([1.0, 2.0])]
 
-    frames = panel._interpolate_joint_path(path, duration=1.0, fps=2.0)
+    frames = interpolate_joint_path(path, duration=1.0, fps=2.0)
 
     assert frames == [[0.0, 0.0], [0.5, 1.0], [1.0, 2.0]]
 
