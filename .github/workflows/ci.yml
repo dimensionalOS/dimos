@@ -194,6 +194,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Import Codecov GPG key
+        # The codecov-action wrapper's own key download from keybase.io is
+        # broken (404), failing signature verification of the codecov CLI.
+        # Pre-seeding the key into the default keyring keeps verification
+        # working. See codecov/codecov-action#1876.
+        run: gpg --import .github/codecov-pgp_keys.asc
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -294,6 +300,12 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
           git clean -ffdx
+      - name: Import Codecov GPG key
+        # The codecov-action wrapper's own key download from keybase.io is
+        # broken (404), failing signature verification of the codecov CLI.
+        # Pre-seeding the key into the default keyring keeps verification
+        # working. See codecov/codecov-action#1876.
+        run: gpg --import .github/codecov-pgp_keys.asc
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -378,6 +390,12 @@ jobs:
         run: |
           sudo git config --global --add safe.directory '*'
           sudo git clean -ffdx
+      - name: Import Codecov GPG key
+        # The codecov-action wrapper's own key download from keybase.io is
+        # broken (404), failing signature verification of the codecov CLI.
+        # Pre-seeding the key into the default keyring keeps verification
+        # working. See codecov/codecov-action#1876.
+        run: gpg --import .github/codecov-pgp_keys.asc
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -478,6 +496,13 @@ jobs:
           self-hosted-tests
           self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}
+    - name: Import Codecov GPG key
+      # Same workaround as in the test jobs, but this job has no checkout, so
+      # fetch the vendored key by commit SHA. See codecov/codecov-action#1876.
+      run: |
+        curl -sSf --retry 5 --retry-all-errors \
+          "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/.github/codecov-pgp_keys.asc" \
+          | gpg --import
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v6
       with:
