@@ -120,12 +120,6 @@
                 ]
               }
             ]
-          },
-          {
-            "group": "Teleoperation",
-            "pages": [
-              "capabilities/teleoperation/hosted"
-            ]
           }
         ]
       },

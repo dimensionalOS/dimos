@@ -64,16 +64,11 @@ Filters to mobile-base axes (linear.x, linear.y, angular.z) and publishes as `Tw
 ```
 teleop/
 ├── quest/
-│   ├── quest_teleop_module.py   # Base Quest teleop module (local WebSocket)
+│   ├── quest_teleop_module.py   # Base Quest teleop module
 │   ├── quest_extensions.py      # ArmTeleop, TwistTeleop
 │   ├── quest_types.py           # QuestControllerState, Buttons
 │   └── web/
 │       └── static/index.html    # WebXR client
-├── quest_hosted/
-│   ├── hosted_teleop_module.py  # Hosted Quest teleop (Cloudflare SFU broker)
-│   ├── hosted_extensions.py     # HostedArmTeleop, HostedTwistTeleop
-│   ├── blueprints.py            # Pre-wired blueprints
-│   └── README.md                # Channel/CF gotchas, threads, sidecars
 ├── phone/
 │   ├── phone_teleop_module.py   # Base Phone teleop module
 │   ├── phone_extensions.py      # SimplePhoneTeleop
@@ -82,9 +77,6 @@ teleop/
 │       └── static/index.html    # Mobile sensor web app
 ├── utils/
 │   ├── teleop_transforms.py     # WebXR → robot frame math
-│   ├── recorder.py              # Generic SQLite recorder (writes .db + report.md on stop)
-│   ├── report.py                # generate_report(db_path) — read .db, emit report.md + PNGs
-│   └── stream_stats.py          # LiveStreamStats + pcts/loss_pct (shared math)
 └── blueprints.py                # Module blueprints for easy instantiation
 ```
 
