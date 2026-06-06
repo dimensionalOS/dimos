@@ -22,6 +22,10 @@ def test_rerun_dashboard_uses_current_host_and_rerun_ports() -> None:
     assert "window.location.hostname" in html
     assert "rerunGrpcPort" in html
     assert "rerunWebPort" in html
+    assert "window.location.protocol" in html
+    assert "normalizeHttpProtocol" in html
+    assert "rerunWebProtocol" in html
+    assert "rerunGrpcProtocol" in html
     assert "9877" in html
     assert "9878" in html
 
@@ -33,3 +37,11 @@ def test_rerun_dashboard_does_not_use_stale_rerun_defaults() -> None:
     assert "localhost:9876" not in html
     assert ":9090" not in html
     assert ":9876" not in html
+
+
+def test_rerun_dashboard_does_not_hardcode_rerun_web_scheme() -> None:
+    html = Path(__file__).with_name("rerun_dashboard.html").read_text()
+
+    assert "rerun.src = `http://" not in html
+    assert "rerun+http://${rerunUrlHost}" not in html
+    assert "rerun.src = `${rerunWebProtocol}://" in html

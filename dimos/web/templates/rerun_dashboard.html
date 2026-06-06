@@ -50,11 +50,22 @@
                     : hostname;
             }
 
+            function normalizeHttpProtocol(value) {
+                return value && value.replace(/:$/, '') === 'https' ? 'https' : 'http';
+            }
+
             const rerunUrlHost = hostForUrl(rerunHost);
-            const rerunGrpcUrl = `rerun+http://${rerunUrlHost}:${rerunGrpcPort}/proxy`;
+            const pageProtocol = normalizeHttpProtocol(window.location.protocol);
+            const rerunWebProtocol = normalizeHttpProtocol(
+                params.get('rerunWebProtocol') || config.webProtocol || pageProtocol
+            );
+            const rerunGrpcProtocol = normalizeHttpProtocol(
+                params.get('rerunGrpcProtocol') || config.grpcProtocol || rerunWebProtocol
+            );
+            const rerunGrpcUrl = `rerun+${rerunGrpcProtocol}://${rerunUrlHost}:${rerunGrpcPort}/proxy`;
 
             commandCenter.src = `${window.location.origin}/command-center`;
-            rerun.src = `http://${rerunUrlHost}:${rerunWebPort}/?url=${encodeURIComponent(rerunGrpcUrl)}`;
+            rerun.src = `${rerunWebProtocol}://${rerunUrlHost}:${rerunWebPort}/?url=${encodeURIComponent(rerunGrpcUrl)}`;
 
             const container = document.querySelector('.container');
             const divider = document.querySelector('.divider');
