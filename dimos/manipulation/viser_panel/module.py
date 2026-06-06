@@ -330,9 +330,12 @@ class ViserManipulationPanelModule(Module):
     def _ensure_scene_nodes(self, robot_name: str, info: dict[str, Any]) -> None:
         scene = self._ensure_scene()
         prepared_urdf_path = self._prepared_urdf_path
-        if getattr(prepared_urdf_path, "__func__", None) is not type(self)._prepared_urdf_path:
-            scene.prepared_urdf_path = prepared_urdf_path
-        scene.ensure_scene_nodes(robot_name, info, self._target_pose_changed)
+        path_factory = (
+            prepared_urdf_path
+            if getattr(prepared_urdf_path, "__func__", None) is not type(self)._prepared_urdf_path
+            else None
+        )
+        scene.ensure_scene_nodes(robot_name, info, self._target_pose_changed, path_factory)
 
     def _build_joint_sliders(self, robot_name: str, info: dict[str, Any]) -> None:
         self._ensure_gui().build_joint_sliders(robot_name, info, self._joint_slider_changed)

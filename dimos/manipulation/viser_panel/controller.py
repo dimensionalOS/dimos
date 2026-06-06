@@ -22,7 +22,8 @@ class PanelController:
         self._panel = panel
 
     def refresh_panel_state(self) -> dict[str, Any]:
-        return self._panel._refresh_panel_state_impl()
+        snapshot: dict[str, Any] = self._panel._refresh_panel_state_impl()
+        return snapshot
 
     def select_robot(self, robot_name: str) -> None:
         self._panel._select_robot_impl(robot_name)

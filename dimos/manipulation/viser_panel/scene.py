@@ -52,6 +52,7 @@ class PanelScene:
         robot_name: str,
         info: dict[str, Any],
         on_target_update: Callable[[Any], None],
+        prepared_urdf_path: Callable[[dict[str, Any]], Path] | None = None,
     ) -> None:
         if self.server is None:
             return
@@ -72,9 +73,10 @@ class PanelScene:
                     else f"/targets/{robot_name}/ghost"
                 )
                 mesh_color_override = GOAL_ROBOT_MESH_COLOR if kind == "ghost" else None
+                path_factory = prepared_urdf_path or self.prepared_urdf_path
                 self.urdfs[key] = ViserUrdf(
                     self.server,
-                    self.prepared_urdf_path(info),
+                    path_factory(info),
                     root_node_name=root_node_name,
                     mesh_color_override=mesh_color_override,
                 )
