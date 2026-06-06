@@ -160,13 +160,13 @@ class DroneController:
             self,
             input_controller: InputController,
             drone_hover_thrust: float = 0.26487,
-            attitude_p: float = 0.1,
-            attitude_d: float = 2.0,
+            attitude_p: float = 0.4,
+            attitude_d: float = 0.5,
             yaw_p: float = 1,
             yaw_d: float = 0.05,
             max_tilt_angle: float = 0.1,
             max_yaw_rate: float = 2.0,
-            velocity_damping: float = 0.08,
+            velocity_damping: float = 0.0,
             **kwargs: Any,
     ) -> None:
         self._input_controller = input_controller
@@ -187,7 +187,7 @@ class DroneController:
 
         pitch = float(command[0]) * self._max_tilt_angle
         roll = -float(command[1]) * self._max_tilt_angle
-        yaw = float(command[2]) * self._max_yaw_rate
+        yaw_rate_desired = float(command[2]) * self._max_yaw_rate
 
         qw, qx, qy, qz = data.qpos[3:7]
 
@@ -216,7 +216,12 @@ class DroneController:
         desired_pitch = np.clip(pitch - self._velocity_damping * vx_body, -self._max_tilt_angle, self._max_tilt_angle)
         desired_roll = np.clip(roll + self._velocity_damping * vy_body, -self._max_tilt_angle, self._max_tilt_angle)
 
-        data.ctrl[0] = self._drone_hover_thrust
+        yaw_rate_error = yaw_rate - yaw_rate_desired
+
+
+        hover_tilt_compensation = 1.0 / (np.cos(current_roll) * np.cos(current_pitch))
+
+        data.ctrl[0] = self._drone_hover_thrust * hover_tilt_compensation
         data.ctrl[1] = self._attitude_p * (current_roll - desired_roll) + self._attitude_d * roll_rate
         data.ctrl[2] = self._attitude_p * (current_pitch - desired_pitch) + self._attitude_d * pitch_rate
-        data.ctrl[3] = self._yaw_p * yaw + self._yaw_d * yaw_rate
+        data.ctrl[3] = self._yaw_d * yaw_rate_error
