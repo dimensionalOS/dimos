@@ -36,6 +36,13 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+# Staging before the scan. The sim boots at qpos0 (camera at the ceiling) and
+# go_init returns to that captured pose, so an un-staged scan sees nothing. We
+# home to the observation pose, recapture it as the go_init target, then dwell so
+# perception accumulates enough frames to promote objects to permanent.
+_GO_HOME_RETRIES = 5
+_SCAN_WARMUP_S = 3.0
+
 
 def _probe_state(client: Any, timeout_s: float) -> str | None:
     """Call ``get_state()`` in a daemon thread; return the state or ``None`` on timeout."""
@@ -108,6 +115,28 @@ def run_health_check(timeout_s: float = 30.0) -> dict[str, Any]:
             "startup_time_ms": startup_ms,
             "warnings": [f"no response from manipulation server within {timeout_s:.0f}s"],
         }
+
+    # Stage the arm before scanning (mirror BenchmarkRunner.prepare()): home to the
+    # observation pose, capture it as the go_init target, then dwell. Never raises —
+    # a staging failure degrades to a warning so the dict stays clean.
+    home_ok = False
+    for _ in range(_GO_HOME_RETRIES):
+        try:
+            home = normalize_skill_result(client.go_home())
+        except Exception as exc:
+            warnings.append(f"go_home raised: {exc!r}")
+            continue
+        if home["success"]:
+            home_ok = True
+            break
+    if home_ok:
+        try:
+            client.set_init_joints_to_current()
+        except Exception as exc:
+            warnings.append(f"set_init_joints_to_current failed: {exc!r}")
+    else:
+        warnings.append("go_home did not succeed; scanning from current pose")
+    time.sleep(_SCAN_WARMUP_S)
 
     # Time a single scan and count detected objects.
     scan_t0 = time.perf_counter()

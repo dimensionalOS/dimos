@@ -297,7 +297,11 @@ _xarm7_sim_cfg = _catalog_xarm7(
     add_gripper=True,
     pitch=math.radians(45),
     tf_extra_links=["link7"],
-    home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0],
+    # Camera-over-desk observation pose (the xarm7.xml "home" keyframe). The sim
+    # boots at qpos0 (arm straight up, camera at the ceiling) and the MuJoCo engine
+    # does not load keyframes; go_home/prepare() drive the arm here and capture it
+    # as the go_init/scan pose so scan_objects() looks down at the desk.
+    home_joints=[0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0],
     pre_grasp_offset=0.05,
 )
 
@@ -335,7 +339,9 @@ xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
         robots=[_xarm7_sim_cfg.to_robot_model_config()],
         planning_timeout=10.0,
-        enable_viz=True,
+        # Meshcat in-process viz is redundant with the RerunBridge below and runs a
+        # second 10Hz scene server per episode; off for the benchmark to cut CPU/mem.
+        enable_viz=False,
     ),
     MujocoSimModule.blueprint(
         address=str(XARM7_SIM_PATH),
@@ -343,9 +349,22 @@ xarm_perception_sim = autoconnect(
         dof=7,
         camera_name="wrist_camera",
         base_frame_id="link7",
-        enable_pointcloud=True,
+        # The perception module builds its own clouds from depth; nothing subscribes
+        # to the sim's pointcloud port (GraspGen is unused — pick uses heuristics).
+        # Disabling drops a 5Hz voxelized full-office-scene cloud (the main mem/CPU sink).
+        enable_pointcloud=False,
     ),
-    ObjectSceneRegistrationModule.blueprint(target_frame="world"),
+    # Match the real-hardware xarm_perception thresholds: promotion reachable in a
+    # short warm-up (3 vs 6 frames), tighter dedup so neighbours don't merge, and a
+    # 1m range cap to drop far office-background detections.
+    ObjectSceneRegistrationModule.blueprint(
+        target_frame="world",
+        distance_threshold=0.08,
+        min_detections_for_permanent=3,
+        max_distance=1.0,
+        use_aabb=True,
+        max_obstacle_width=0.06,
+    ),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,

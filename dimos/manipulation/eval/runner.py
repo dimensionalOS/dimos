@@ -99,11 +99,15 @@ class BenchmarkRunner:
         hardware: str = "sim",
         place_z_default: float = 0.05,
         inter_episode_delay_s: float = 2.0,
+        scan_warmup_s: float = 3.0,
     ) -> None:
         self._recorder = recorder
         self._hardware = hardware
         self._place_z_default = place_z_default
         self._inter_episode_delay_s = inter_episode_delay_s
+        # Dwell after go_init (arm settled at the scan pose) before scan_objects so
+        # perception accumulates enough frames to promote objects to permanent.
+        self._scan_warmup_s = scan_warmup_s
         self._client: Any = None
         self._last_record: dict[str, Any] | None = None
 
@@ -227,7 +231,15 @@ class BenchmarkRunner:
         pick_result: dict[str, Any] | None = None
         place_result: dict[str, Any] | None = None
         try:
+            # Clear the previous episode's perception obstacles so a placed object
+            # left in the planning world can't cause COLLISION_AT_START. Best-effort.
+            try:
+                self._client.clear_perception_obstacles()
+            except Exception:
+                logger.warning("clear_perception_obstacles failed", exc_info=True)
             self._client.go_init()
+            if self._scan_warmup_s > 0:
+                time.sleep(self._scan_warmup_s)
             scan_result = self._timed_call(self._client.scan_objects)
             if scan_result["success"]:
                 pick_result = self._timed_call(lambda: self._client.pick(object_name))
