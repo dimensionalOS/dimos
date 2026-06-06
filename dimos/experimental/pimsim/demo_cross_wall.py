@@ -98,11 +98,11 @@ def _drive_plus_y(command: LCMTransport[Twist]) -> None:
 
 def main() -> int:
     state = _State()
-    command = LCMTransport("/nav_cmd_vel", Twist)
+    command: LCMTransport[Twist] = LCMTransport("/nav_cmd_vel", Twist)
     command.start()
-    odom = LCMTransport("/odom", PoseStamped)
+    odom: LCMTransport[PoseStamped] = LCMTransport("/odom", PoseStamped)
     odom.subscribe(state.on_odom)
-    lidar = LCMTransport("/lidar", PointCloud2)
+    lidar: LCMTransport[PointCloud2] = LCMTransport("/lidar", PointCloud2)
     lidar.subscribe(state.on_lidar)
 
     client = PimSimClient()

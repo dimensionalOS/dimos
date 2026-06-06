@@ -36,13 +36,17 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 
 DEFAULT_WORLD_FRAME = "map"
-DEFAULT_CHILD_FRAME = "base_link"
 # Nav stack frame names (dimos.navigation.nav_stack.frames); kept as literals so
-# this pimsim helper doesn't import the nav stack.
+# this pimsim helper doesn't import the nav stack. The Odometry child frame is
+# the same "body" frame the TF below names, so a later frame lookup is consistent.
 NAV_BODY_FRAME = "body"
 NAV_SENSOR_FRAME = "sensor"
-SENSOR_OFFSET_X = 0.15
-SENSOR_OFFSET_Z = 0.10
+DEFAULT_CHILD_FRAME = NAV_BODY_FRAME
+# Lidar sensor mount offset on the body, in metres. Shared with the
+# SceneLidarModule config (see blueprints/_factory.py) so the TF here and the
+# lidar's own sensor offset can't drift apart.
+LIDAR_SENSOR_X = 0.15
+LIDAR_SENSOR_Z = 0.10
 
 
 class PoseStampedToOdometry(Module):
@@ -73,7 +77,7 @@ class OdomTfBroadcaster(Module):
     async def handle_pose(self, value: PoseStamped) -> None:
         body = Transform.from_pose(NAV_BODY_FRAME, value)
         sensor = Transform(
-            translation=Vector3(SENSOR_OFFSET_X, 0.0, SENSOR_OFFSET_Z),
+            translation=Vector3(LIDAR_SENSOR_X, 0.0, LIDAR_SENSOR_Z),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
             frame_id=NAV_BODY_FRAME,
             child_frame_id=NAV_SENSOR_FRAME,

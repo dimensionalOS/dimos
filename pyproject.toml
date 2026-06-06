@@ -293,6 +293,24 @@ sim = [
     "pygame>=2.6.1",
 ]
 
+# Pimsim browser sim (dimos.experimental.pimsim) + offline scene cooker
+# (dimos.simulation.scene_assets.cook). Browser viewer needs starlette/uvicorn
+# (via [web]) + websockets + playwright; the cooker needs open3d (base) + trimesh
+# + usd-core + vhacdx + coacd; the nav-stack integration test needs gtsam (via
+# [mapping]). gltfpack is a separate non-pip CLI (npm install -g gltfpack) only
+# needed for the default visual optimizer; --visual-optimizer copy/blender work
+# without it.
+pimsim = [
+    "dimos[sim,web,mapping]",
+    "websockets>=13",
+    "playwright>=1.45",
+    "trimesh>=4.12",
+    "usd-core>=24.0",
+    "vhacdx",
+    "coacd>=1.0.11",
+    "matplotlib",
+]
+
 mapping = [
     # PGO for reloc premap + nav_stack experiments
     # Jeff's https://github.com/jeff-hykin/gtsam-extended
@@ -524,13 +542,19 @@ module = [
     "mujoco",
     "mujoco_playground.*",
     "nav_msgs.*",
+    "open3d",
+    "open3d.*",
     "open_clip",
     "pinocchio",
     "piper_sdk.*",
+    "playwright",
+    "playwright.*",
     "plotext",
     "plum.*",
     "portal",
     "psutil",
+    "pxr",
+    "pxr.*",
     "pycuda",
     "pycuda.*",
     "pydrake",
@@ -550,6 +574,8 @@ module = [
     "transformers",
     "transformers.*",
     "torchreid",
+    "trimesh",
+    "trimesh.*",
     "turbojpeg",
     "ultralytics.*",
     "unitree_sdk2py.*",
@@ -560,8 +586,38 @@ module = [
 ]
 ignore_missing_imports = true
 
+# Vendored verbatim from the pimsim branch (pim/dev). Not maintained here, so
+# they aren't type-checked in this repo; the new integration code on top of them
+# (blueprints, odometry_adapter, tests) IS checked.
+[[tool.mypy.overrides]]
+module = [
+    "dimos.experimental.pimsim.module",
+    "dimos.experimental.pimsim.entity",
+    "dimos.experimental.pimsim.headless",
+    "dimos.experimental.pimsim.client",
+    "dimos.experimental.pimsim.config",
+    "dimos.experimental.pimsim.geometry",
+    "dimos.experimental.pimsim.robot_meshes",
+    "dimos.experimental.pimsim.browser",
+    "dimos.experimental.pimsim.perf_probe",
+    "dimos.experimental.pimsim.test_client",
+    "dimos.simulation.scene_assets.*",
+    "dimos.simulation.scenes.catalog",
+    "dimos.simulation.scenes.office",
+    "dimos.simulation.sensors.scene_lidar",
+    "dimos.simulation.mujoco.collision_spec",
+    "dimos.simulation.mujoco.scene_mesh_to_mjcf",
+]
+ignore_errors = true
+
 [[tool.mypy.overrides]]
 module = ["dimos.rxpy_backpressure", "dimos.rxpy_backpressure.*"]
+follow_imports = "skip"
+
+# trimesh ships partial py.typed stubs (so ignore_missing_imports doesn't apply)
+# but leaves methods like Scene.export untyped; skip it like other untyped libs.
+[[tool.mypy.overrides]]
+module = ["trimesh", "trimesh.*"]
 follow_imports = "skip"
 
 [[tool.mypy.overrides]]

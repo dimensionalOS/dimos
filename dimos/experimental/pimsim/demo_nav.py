@@ -41,11 +41,11 @@ def main() -> int:
     coordinator = ModuleCoordinator.build(_babylon_nav_blueprint())
     state = {"x": 0.0, "y": 0.0, "cx": 0.0, "cy": 0.0, "cz": 0.0}
 
-    def on_odom(_c, data):
+    def on_odom(_channel: str, data: bytes) -> None:
         msg = PoseStamped.lcm_decode(data)
         state["x"], state["y"] = msg.x, msg.y
 
-    def on_cmd(_c, data):
+    def on_cmd(_channel: str, data: bytes) -> None:
         msg = Twist.lcm_decode(data)
         state["cx"], state["cy"], state["cz"] = msg.linear.x, msg.linear.y, msg.angular.z
 
@@ -70,14 +70,15 @@ def main() -> int:
         lcm.publish(GOAL_TOPIC, goal.lcm_encode())
         print("[nav] goal=(0,4) published; tracking odom + nav_cmd_vel")
         end = time.time() + 40
+        next_print = time.time()
         while time.time() < end:
             lcm.handle_timeout(200)
-            if int((end - time.time()) * 1000) % 2000 < 220:
+            if time.time() >= next_print:
+                next_print += 2.0
                 print(
                     f"[nav] odom=({state['x']:.2f},{state['y']:.2f}) "
                     f"cmd_vel lin=({state['cx']:.2f},{state['cy']:.2f}) ang={state['cz']:.2f}"
                 )
-                time.sleep(0.25)
     finally:
         browser.stop()
         client.stop()

@@ -34,6 +34,7 @@ Nix-built native binaries, so like the other cross-wall tests this is
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import time
 
 import lcm as lcmlib
@@ -41,8 +42,9 @@ import pytest
 
 pytest.importorskip("gtsam")
 
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.experimental.pimsim.blueprints.babylon_nav import (
+from dimos.experimental.pimsim.blueprints._factory import (
     build_babylon_nav,
     ensure_flat_floor_scene,
 )
@@ -74,7 +76,7 @@ WARMUP_SEC = 15.0
 GOAL_TIMEOUT_SEC = 150.0
 
 
-def _babylon_nav_blueprint():
+def _babylon_nav_blueprint() -> Blueprint:
     """pimsim sim (open floor) + odom adapter + nav stack, wired for routing."""
     return build_babylon_nav(ensure_flat_floor_scene())
 
@@ -84,63 +86,84 @@ def _spawn_wall_with_doorway(client: PimSimClient) -> None:
     client.add_wall(DOOR_X_MAX, WALL_Y, WALL_X_MAX, WALL_Y)
 
 
-def test_pimsim_cross_wall() -> None:
-    coordinator = ModuleCoordinator.build(_babylon_nav_blueprint())
+# Each resource is its own fixture so a failure tearing one down still runs the
+# others' cleanup (pytest runs every finalizer). The browser/client depend on the
+# coordinator so the viewer server is up before they connect; teardown is the
+# reverse (browser, client, then coordinator).
+@pytest.fixture
+def coordinator() -> Iterator[ModuleCoordinator]:
+    coord = ModuleCoordinator.build(_babylon_nav_blueprint())
+    yield coord
+    coord.stop()
 
-    robot_x = robot_y = 0.0
-    odom_seen = 0
-    max_x = 0.0
-    crossed_wall = False
+
+@pytest.fixture
+def browser(coordinator: ModuleCoordinator) -> Iterator[HeadlessBrowser]:
+    headless = HeadlessBrowser()
+    headless.start()
+    yield headless
+    headless.stop()
+
+
+@pytest.fixture
+def pim_client(coordinator: ModuleCoordinator) -> Iterator[PimSimClient]:
+    client = PimSimClient()
+    client.start()
+    yield client
+    client.stop()
+
+
+def test_pimsim_cross_wall(
+    coordinator: ModuleCoordinator,
+    browser: HeadlessBrowser,
+    pim_client: PimSimClient,
+) -> None:
+    state = {"x": 0.0, "y": 0.0, "n": 0, "max_x": 0.0, "crossed": False}
 
     def _on_odom(_channel: str, data: bytes) -> None:
-        nonlocal robot_x, robot_y, odom_seen, max_x, crossed_wall
         msg = PoseStamped.lcm_decode(data)
-        robot_x, robot_y, odom_seen = msg.x, msg.y, odom_seen + 1
-        max_x = max(max_x, msg.x)
+        state["x"], state["y"], state["n"] = msg.x, msg.y, int(state["n"]) + 1
+        state["max_x"] = max(float(state["max_x"]), msg.x)
         if msg.y >= WALL_Y:
-            crossed_wall = True
+            state["crossed"] = True
 
     lcm = lcmlib.LCM(_DEFAULT_LCM_URL)
     lcm.subscribe(ODOM_TOPIC, _on_odom)
+    pim_client.set_agent_position(*ROBOT_START)
 
-    browser = HeadlessBrowser()
-    client = PimSimClient()
-    try:
-        browser.start()
-        client.start()
-        client.set_agent_position(*ROBOT_START)
+    deadline = time.monotonic() + 60.0
+    while time.monotonic() < deadline and state["n"] == 0:
+        lcm.handle_timeout(200)
+    assert state["n"] > 0, "no /odom from pimsim — sim not running"
 
-        deadline = time.monotonic() + 60.0
-        while time.monotonic() < deadline and odom_seen == 0:
-            lcm.handle_timeout(200)
-        assert odom_seen > 0, "no /odom from pimsim — sim not running"
+    _spawn_wall_with_doorway(pim_client)
+    warmup_end = time.monotonic() + WARMUP_SEC
+    while time.monotonic() < warmup_end:
+        lcm.handle_timeout(200)
 
-        _spawn_wall_with_doorway(client)
-        warmup_end = time.monotonic() + WARMUP_SEC
-        while time.monotonic() < warmup_end:
-            lcm.handle_timeout(200)
+    goal = PointStamped(x=GOAL[0], y=GOAL[1], z=0.0, ts=time.time(), frame_id=WORLD_FRAME)
+    lcm.publish(GOAL_TOPIC, goal.lcm_encode())
 
-        goal = PointStamped(x=GOAL[0], y=GOAL[1], z=0.0, ts=time.time(), frame_id=WORLD_FRAME)
-        lcm.publish(GOAL_TOPIC, goal.lcm_encode())
+    reached = False
+    goal_end = time.monotonic() + GOAL_TIMEOUT_SEC
+    next_log = time.monotonic() + 20.0
+    while time.monotonic() < goal_end:
+        lcm.handle_timeout(200)
+        dist = ((state["x"] - GOAL[0]) ** 2 + (state["y"] - GOAL[1]) ** 2) ** 0.5
+        if dist < REACH_THRESHOLD_M:
+            reached = True
+            break
+        # Periodic progress so a mid-route stall is visible, not just a final timeout.
+        if time.monotonic() >= next_log:
+            print(f"[cross_wall] progress odom=({state['x']:.2f},{state['y']:.2f}) dist={dist:.2f}")
+            next_log += 20.0
 
-        reached = False
-        goal_end = time.monotonic() + GOAL_TIMEOUT_SEC
-        while time.monotonic() < goal_end:
-            lcm.handle_timeout(200)
-            if ((robot_x - GOAL[0]) ** 2 + (robot_y - GOAL[1]) ** 2) ** 0.5 < REACH_THRESHOLD_M:
-                reached = True
-                break
-
-        print(
-            f"[cross_wall] final=({robot_x:.2f},{robot_y:.2f}) goal={GOAL} "
-            f"max_x={max_x:.2f} crossed_wall={crossed_wall} reached={reached}"
-        )
-        assert crossed_wall, "box never crossed the wall plane (y >= WALL_Y)"
-        assert reached, (
-            f"box did not reach the goal past the wall: "
-            f"final ({robot_x:.2f}, {robot_y:.2f}), goal {GOAL}"
-        )
-    finally:
-        browser.stop()
-        client.stop()
-        coordinator.stop()
+    print(
+        f"[cross_wall] final=({state['x']:.2f},{state['y']:.2f}) goal={GOAL} "
+        f"max_x={state['max_x']:.2f} crossed_wall={state['crossed']} reached={reached}"
+    )
+    assert state["crossed"], "box never crossed the wall plane (y >= WALL_Y)"
+    assert reached, (
+        f"box did not reach the goal past the wall: "
+        f"final ({state['x']:.2f}, {state['y']:.2f}), goal {GOAL}"
+    )
