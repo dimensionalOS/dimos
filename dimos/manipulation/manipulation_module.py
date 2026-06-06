@@ -650,7 +650,9 @@ class ManipulationModule(Module):
 
         joint_limits = None
         if config.joint_limits_lower is not None and config.joint_limits_upper is not None:
-            joint_limits = list(zip(config.joint_limits_lower, config.joint_limits_upper, strict=False))
+            joint_limits = list(
+                zip(config.joint_limits_lower, config.joint_limits_upper, strict=False)
+            )
         elif self._world_monitor is not None:
             try:
                 lower, upper = self._world_monitor.get_joint_limits(robot_id)
@@ -670,9 +672,7 @@ class ManipulationModule(Module):
             "model_path": str(config.model_path),
             "base_pose": config.base_pose,
             "joint_limits": joint_limits,
-            "package_paths": {
-                package: str(path) for package, path in config.package_paths.items()
-            },
+            "package_paths": {package: str(path) for package, path in config.package_paths.items()},
             "xacro_args": dict(config.xacro_args),
             "max_velocity": config.max_velocity,
             "max_acceleration": config.max_acceleration,
@@ -686,9 +686,7 @@ class ManipulationModule(Module):
         }
 
     @rpc
-    def solve_ik_preview(
-        self, pose: Pose, robot_name: RobotName | None = None
-    ) -> dict[str, Any]:
+    def solve_ik_preview(self, pose: Pose, robot_name: RobotName | None = None) -> dict[str, Any]:
         """Preview IK for a target pose without storing, previewing, executing, or moving.
 
         Args:

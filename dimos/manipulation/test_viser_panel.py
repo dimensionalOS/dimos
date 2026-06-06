@@ -14,9 +14,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import threading
 import time
-from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, patch
 
@@ -186,7 +186,7 @@ def test_panel_ignores_stale_preview_result():
 
 def test_panel_preview_request_times_out_without_blocking_worker_forever():
     panel = _make_panel()
-    cast(ViserManipulationPanelConfig, panel.config).preview_request_timeout = 0.01
+    cast("ViserManipulationPanelConfig", panel.config).preview_request_timeout = 0.01
     release = threading.Event()
 
     def slow_preview() -> dict[str, object]:
@@ -208,7 +208,9 @@ def test_panel_cartesian_preview_uses_timeout_wrapper():
     panel._client.solve_ik_preview.return_value = {"success": True, "collision_free": True}
     request = PreviewRequest(1, "cartesian", "arm", pose=Pose.__new__(Pose))
 
-    with patch.object(panel, "_call_preview_with_timeout", return_value={"success": False}) as timeout:
+    with patch.object(
+        panel, "_call_preview_with_timeout", return_value={"success": False}
+    ) as timeout:
         result = panel._handle_preview_request(request)
 
     assert result == {"success": False}
@@ -330,7 +332,7 @@ def test_panel_execute_enabled_after_fresh_completed_plan():
     panel.session.plan_state = PanelPlanState(
         status=PlanStatus.FRESH,
         robot="arm",
-            start_joints_snapshot=[0.0, 0.0],
+        start_joints_snapshot=[0.0, 0.0],
     )
 
     panel._update_gui_state()
@@ -340,7 +342,7 @@ def test_panel_execute_enabled_after_fresh_completed_plan():
 
 def test_panel_execute_requires_operator_launch_opt_in():
     panel = _make_panel()
-    cast(ViserManipulationPanelConfig, panel.config).allow_plan_execute = False
+    cast("ViserManipulationPanelConfig", panel.config).allow_plan_execute = False
     panel.session.runtime = PanelRuntime.RUNNING
     panel.session.backend_status = BackendConnectionStatus.READY
     panel.session.manipulation_state = "IDLE"
@@ -466,7 +468,7 @@ def test_panel_state_axes_keep_action_separate_from_plan_state():
 
 def test_panel_preview_animates_viser_ghost_path():
     panel = _make_panel()
-    cast(ViserManipulationPanelConfig, panel.config).preview_duration = 0.0
+    cast("ViserManipulationPanelConfig", panel.config).preview_duration = 0.0
     panel.session.selected_robot = "arm"
     panel.session.robot_info = {"joint_names": ["arm/joint1", "arm/joint2", "arm/gripper"]}
     ghost = FakeViserUrdf()
@@ -493,8 +495,8 @@ def test_panel_interpolates_sparse_preview_path():
 
 def test_panel_preview_animates_interpolated_frames():
     panel = _make_panel()
-    cast(ViserManipulationPanelConfig, panel.config).preview_duration = 1.0
-    cast(ViserManipulationPanelConfig, panel.config).preview_fps = 2.0
+    cast("ViserManipulationPanelConfig", panel.config).preview_duration = 1.0
+    cast("ViserManipulationPanelConfig", panel.config).preview_fps = 2.0
     panel.session.selected_robot = "arm"
     panel.session.robot_info = {"joint_names": ["arm/joint1", "arm/joint2"]}
     ghost = FakeViserUrdf()
@@ -508,7 +510,7 @@ def test_panel_preview_animates_interpolated_frames():
 
 def test_panel_preview_does_not_trigger_backend_drake_preview():
     panel = _make_panel()
-    cast(ViserManipulationPanelConfig, panel.config).preview_duration = 0.0
+    cast("ViserManipulationPanelConfig", panel.config).preview_duration = 0.0
     panel.session.selected_robot = "arm"
     panel.session.robot_info = {"joint_names": ["arm/joint1", "arm/joint2", "arm/gripper"]}
     ghost = FakeViserUrdf()

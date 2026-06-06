@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import importlib
+import itertools
 from pathlib import Path
 import threading
 import time
@@ -27,18 +28,18 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.viser_panel.state import (
     ActionStatus,
     BackendConnectionStatus,
     FeasibilityStatus,
-    PanelSession,
     PanelRuntime,
+    PanelSession,
     PlanStatus,
     PreviewRequest,
     PreviewWorker,
     TargetStatus,
 )
-from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -48,7 +49,9 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-VISER_INSTALL_HINT = "Install the optional panel dependencies with: uv sync --extra manipulation-viser"
+VISER_INSTALL_HINT = (
+    "Install the optional panel dependencies with: uv sync --extra manipulation-viser"
+)
 VISER_URDF_INSTALL_HINT = (
     "Viser URDF support requires yourdfpy. Install it with: uv sync --extra manipulation-viser"
 )
@@ -97,7 +100,7 @@ class ViserManipulationPanelModule(Module):
 
     @property
     def panel_config(self) -> ViserManipulationPanelConfig:
-        return cast(ViserManipulationPanelConfig, self.config)
+        return cast("ViserManipulationPanelConfig", self.config)
 
     @rpc
     def start(self) -> None:
@@ -177,7 +180,9 @@ class ViserManipulationPanelModule(Module):
         self._handles["preview"].on_click(lambda _: self._run_operation("Preview", self._preview))
         self._handles["execute"].on_click(lambda _: self._run_operation("Execute", self._execute))
         self._handles["cancel"].on_click(lambda _: self._run_operation("Cancel", self._cancel))
-        self._handles["clear_plan"].on_click(lambda _: self._run_operation("Clear Plan", self._clear_plan))
+        self._handles["clear_plan"].on_click(
+            lambda _: self._run_operation("Clear Plan", self._clear_plan)
+        )
 
     def _poll_loop(self) -> None:
         interval = 1.0 / max(self.panel_config.poll_hz, 0.1)
@@ -240,7 +245,9 @@ class ViserManipulationPanelModule(Module):
                         return self._snapshot()
                     try:
                         self.session.current_joints = client.get_current_joints(robot)
-                        self.session.current_ee_pose = self._pose_from_rpc(client.get_ee_pose(robot))
+                        self.session.current_ee_pose = self._pose_from_rpc(
+                            client.get_ee_pose(robot)
+                        )
                         self.session.manipulation_state = str(client.get_state())
                         self.session.error = str(client.get_error() or "")
                     except TimeoutError as e:
@@ -306,7 +313,9 @@ class ViserManipulationPanelModule(Module):
             self._handles["ee_control"] = self._server.scene.add_transform_controls(
                 f"/targets/{robot_name}/ee_control", scale=0.25
             )
-            self._handles["ee_control"].on_update(lambda event: self._target_pose_changed(event.target))
+            self._handles["ee_control"].on_update(
+                lambda event: self._target_pose_changed(event.target)
+            )
         ViserUrdf = self._viser_urdf
         if ViserUrdf is None or not info.get("model_path"):
             return
@@ -427,7 +436,9 @@ class ViserManipulationPanelModule(Module):
                             sequence_id,
                             "joints",
                             self.session.selected_robot,
-                            joints=self._make_joint_state(info.get("joint_names") or [], list(joints)),
+                            joints=self._make_joint_state(
+                                info.get("joint_names") or [], list(joints)
+                            ),
                         )
                     )
             self._handles["preset"].value = "Select preset..."
@@ -451,9 +462,7 @@ class ViserManipulationPanelModule(Module):
         except Exception as e:
             return {"success": False, "status": "ERROR", "message": str(e)}
 
-    def _call_preview_with_timeout(
-        self, call: Any, timeout_status: str
-    ) -> dict[str, Any]:
+    def _call_preview_with_timeout(self, call: Any, timeout_status: str) -> dict[str, Any]:
         result: dict[str, Any] | None = None
         error: Exception | None = None
 
@@ -503,11 +512,15 @@ class ViserManipulationPanelModule(Module):
             else:
                 status = str(result.get("status") or "invalid")
                 self.session.feasibility.status = (
-                    FeasibilityStatus.COLLISION if status == "COLLISION" else FeasibilityStatus.IK_FAILED
+                    FeasibilityStatus.COLLISION
+                    if status == "COLLISION"
+                    else FeasibilityStatus.IK_FAILED
                 )
                 self.session.feasibility.message = str(result.get("message") or status)
                 self.session.target_status = TargetStatus.INFEASIBLE
-            self._set_target_visual_state(self.session.feasibility.status == FeasibilityStatus.FEASIBLE)
+            self._set_target_visual_state(
+                self.session.feasibility.status == FeasibilityStatus.FEASIBLE
+            )
             self._update_gui_state()
 
     def _sync_controls_from_targets(self) -> None:
@@ -515,7 +528,9 @@ class ViserManipulationPanelModule(Module):
             self.session.sync_source = "cartesian"
             try:
                 info = self.session.robot_info or {}
-                for name, value in zip(info.get("joint_names") or [], self.session.joint_target, strict=False):
+                for name, value in zip(
+                    info.get("joint_names") or [], self.session.joint_target, strict=False
+                ):
                     if name in self._joint_sliders:
                         self._joint_sliders[name].value = float(value)
                 if self.session.selected_robot:
@@ -589,7 +604,9 @@ class ViserManipulationPanelModule(Module):
             self.session.plan_state.robot = robot
             self.session.plan_state.target_pose = self.session.cartesian_target
             self.session.plan_state.target_joints = target
-            self.session.plan_state.start_joints_snapshot = list(current) if current is not None else None
+            self.session.plan_state.start_joints_snapshot = (
+                list(current) if current is not None else None
+            )
             self.session.plan_state.planned_path = list(path or [])
             self._render_plan_path(self.session.plan_state.planned_path)
         else:
@@ -646,7 +663,7 @@ class ViserManipulationPanelModule(Module):
         if len(positions) >= 2:
             self._handles["plan_path"] = self._server.scene.add_line_segments(
                 "/plans/path",
-                points=[[start, end] for start, end in zip(positions[:-1], positions[1:], strict=False)],
+                points=[[start, end] for start, end in itertools.pairwise(positions)],
                 colors=(80, 180, 255),
             )
 
@@ -751,7 +768,9 @@ class ViserManipulationPanelModule(Module):
             prepare_urdf_for_drake(
                 Path(str(info["model_path"])),
                 package_paths=package_paths,
-                xacro_args={str(key): str(value) for key, value in (info.get("xacro_args") or {}).items()},
+                xacro_args={
+                    str(key): str(value) for key, value in (info.get("xacro_args") or {}).items()
+                },
             )
         )
 
@@ -828,7 +847,9 @@ class ViserManipulationPanelModule(Module):
     def _can_execute_from_ui(self, require_no_operation: bool = True) -> bool:
         if not self.panel_config.allow_plan_execute:
             return False
-        if require_no_operation and not self.session.can_execute(self.panel_config.current_match_tolerance):
+        if require_no_operation and not self.session.can_execute(
+            self.panel_config.current_match_tolerance
+        ):
             return False
         if not require_no_operation and not self._can_execute_for_operation():
             return False

@@ -14,12 +14,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 import queue
 import threading
 import time
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -165,7 +166,9 @@ class PanelSession:
             return False
         return all(
             abs(expected - current) <= current_tolerance
-            for expected, current in zip(plan.start_joints_snapshot, self.current_joints, strict=False)
+            for expected, current in zip(
+                plan.start_joints_snapshot, self.current_joints, strict=False
+            )
         )
 
     @property
