@@ -44,10 +44,12 @@ dimos --listen-host 0.0.0.0 --robot-ip "$ROBOT_IP" --viewer rerun --rerun-open w
   run teleop-phone-go2
 ```
 
-5. Run the no-motion teleop doctor:
+5. Confirm the expected local UI listeners are running:
 
 ```bash
-dimos go2tool doctor --robot-ip "$ROBOT_IP" --check-image
+lsof -nP \
+  -iTCP:7779 -iTCP:8444 -iTCP:9878 -iTCP:9877 -iTCP:3030 \
+  -sTCP:LISTEN
 ```
 
 6. Find the operator machine's current LAN IP:
@@ -130,12 +132,6 @@ Check listeners:
 lsof -nP \
   -iTCP:7779 -iTCP:8444 -iTCP:9878 -iTCP:9877 -iTCP:3030 \
   -sTCP:LISTEN
-```
-
-Or run the no-motion doctor:
-
-```bash
-dimos go2tool doctor --robot-ip "$ROBOT_IP" --check-image
 ```
 
 ## Dashboard
