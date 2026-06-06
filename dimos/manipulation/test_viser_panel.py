@@ -401,6 +401,25 @@ def test_panel_execute_requires_operator_launch_opt_in():
     assert panel._handles["execute"].disabled
 
 
+def test_panel_execute_operation_gate_does_not_mutate_action_status():
+    panel = _make_panel()
+    panel.session.runtime = PanelRuntime.RUNNING
+    panel.session.backend_status = BackendConnectionStatus.READY
+    panel.session.selected_robot = "arm"
+    panel.session.manipulation_state = "COMPLETED"
+    panel.session.current_joints = [0.0]
+    panel.session.target_status = TargetStatus.FEASIBLE
+    panel.session.action_status = ActionStatus.EXECUTING
+    panel.session.plan_state = PanelPlanState(
+        status=PlanStatus.FRESH,
+        robot="arm",
+        start_joints_snapshot=[0.0],
+    )
+
+    assert panel._can_execute_for_operation()
+    assert panel.session.action_status == ActionStatus.EXECUTING
+
+
 def test_panel_renders_plan_path_with_viser_line_segment_shape():
     session = PanelSession(selected_robot="arm")
     handles: dict[str, object] = {}

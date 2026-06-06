@@ -148,12 +148,17 @@ class PanelSession:
             self.manipulation_state == "EXECUTING"
         )
 
-    def can_execute(self, current_tolerance: float) -> bool:
+    def can_execute(
+        self,
+        current_tolerance: float,
+        action_status: ActionStatus | None = None,
+    ) -> bool:
         plan = self.plan_state
+        effective_action_status = action_status or self.action_status
         if not (
             self.runtime == PanelRuntime.RUNNING
             and self.backend_status == BackendConnectionStatus.READY
-            and self.action_status == ActionStatus.IDLE
+            and effective_action_status == ActionStatus.IDLE
             and self.target_status == TargetStatus.FEASIBLE
             and self.manipulation_state in {"IDLE", "COMPLETED"}
             and plan.status == PlanStatus.FRESH

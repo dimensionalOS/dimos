@@ -691,12 +691,10 @@ class ViserManipulationPanelModule(Module):
         )
 
     def _can_execute_for_operation(self) -> bool:
-        previous_action = self.session.action_status
-        try:
-            self.session.action_status = ActionStatus.IDLE
-            return self.session.can_execute(self.panel_config.current_match_tolerance)
-        finally:
-            self.session.action_status = previous_action
+        return self.session.can_execute(
+            self.panel_config.current_match_tolerance,
+            action_status=ActionStatus.IDLE,
+        )
 
 
 ViserManipulationPanelModule.__annotations__["config"] = ViserManipulationPanelConfig
