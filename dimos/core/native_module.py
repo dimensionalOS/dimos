@@ -454,6 +454,16 @@ class NativeModule(Module):
             duration_sec=round(build_elapsed, 3),
         )
 
+    def _build_topic_args(self) -> list[str]:
+        """Build the generic ``--<stream_name> <topic>`` CLI args for the native
+        binary from the module's collected topics.  Subclasses whose binary uses
+        a different CLI schema can override this (e.g. return ``[]`` to suppress
+        these args)."""
+        args: list[str] = []
+        for name, topic_str in self._collect_topics().items():
+            args.extend([f"--{name}", topic_str])
+        return args
+
     def _collect_topics(self) -> dict[str, str]:
         topics: dict[str, str] = {}
         for name in list(self.inputs) + list(self.outputs):
