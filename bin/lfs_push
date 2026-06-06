@@ -24,6 +24,15 @@ if ! gh auth status &>/dev/null 2>&1; then
     exit 1
 fi
 
+# Credential helper scoped to our LFS server: when git-lfs gets a 401 from
+# lfs.dimensionalos.com it asks git for credentials, and this helper answers
+# with a fresh token from `gh`. Note `gh auth git-credential` can NOT be used
+# here — it only answers for github.com hosts. Scoped to this one URL, so
+# pushes to github.com (or anywhere else) are unaffected.
+git config --global --replace-all 'credential.https://lfs.dimensionalos.com.helper' \
+    '!f() { if [ "$1" = "get" ]; then echo "username=token"; echo "password=$(gh auth token)"; fi; }; f'
+echo -e "${GREEN}✓${NC} Configured LFS credential helper for lfs.dimensionalos.com"
+
 #echo -e "${GREEN}Running test data compression check...${NC}"
 
 ROOT=$(git rev-parse --show-toplevel)
