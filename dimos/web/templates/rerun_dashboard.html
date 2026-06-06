@@ -29,15 +29,35 @@
 </head>
 <body>
     <div class="container">
-        <iframe class="command-center" src="http://localhost:7779/command-center"></iframe>
+        <iframe class="command-center"></iframe>
         <div class="divider" role="separator" aria-label="Resize panels"></div>
-        <iframe class="rerun" src="http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy"></iframe>
+        <iframe class="rerun"></iframe>
     </div>
     <script>
         (function () {
+            const params = new URLSearchParams(window.location.search);
+            const config = window.DIMOS_RERUN_CONFIG || {};
+            const defaultHost = window.location.hostname || '127.0.0.1';
+            const rerunHost = params.get('rerunHost') || config.host || defaultHost;
+            const rerunGrpcPort = params.get('rerunGrpcPort') || config.grpcPort || '9877';
+            const rerunWebPort = params.get('rerunWebPort') || config.webPort || '9878';
+            const commandCenter = document.querySelector('.command-center');
+            const rerun = document.querySelector('.rerun');
+
+            function hostForUrl(hostname) {
+                return hostname.includes(':') && !hostname.startsWith('[')
+                    ? `[${hostname}]`
+                    : hostname;
+            }
+
+            const rerunUrlHost = hostForUrl(rerunHost);
+            const rerunGrpcUrl = `rerun+http://${rerunUrlHost}:${rerunGrpcPort}/proxy`;
+
+            commandCenter.src = `${window.location.origin}/command-center`;
+            rerun.src = `http://${rerunUrlHost}:${rerunWebPort}/?url=${encodeURIComponent(rerunGrpcUrl)}`;
+
             const container = document.querySelector('.container');
             const divider = document.querySelector('.divider');
-            const commandCenter = document.querySelector('.command-center');
             const body = document.body;
             const minWidth = 0; // 16rem baseline for small screens
 
