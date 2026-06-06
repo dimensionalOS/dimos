@@ -166,7 +166,6 @@ class DroneController:
             yaw_d: float = 0.05,
             max_tilt_angle: float = 0.1,
             max_yaw_rate: float = 2.0,
-            velocity_damping: float = 0.0,
             **kwargs: Any,
     ) -> None:
         self._input_controller = input_controller
@@ -177,7 +176,6 @@ class DroneController:
         self._yaw_d = yaw_d
         self._max_tilt_angle = max_tilt_angle
         self._max_yaw_rate = max_yaw_rate
-        self._velocity_damping = velocity_damping
 
     def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         return self._input_controller.get_command().astype(np.float32)
@@ -199,8 +197,8 @@ class DroneController:
     def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         command = self._input_controller.get_command()
 
-        pitch = float(command[0]) * self._max_tilt_angle
-        roll = -float(command[1]) * self._max_tilt_angle
+        pitch_desired = float(command[0]) * self._max_tilt_angle
+        roll_desired = -float(command[1]) * self._max_tilt_angle
         yaw_rate_desired = float(command[2]) * self._max_yaw_rate
 
         qw, qx, qy, qz = data.qpos[3:7]
@@ -212,20 +210,11 @@ class DroneController:
         pitch_rate = data.qvel[4]
         yaw_rate = data.qvel[5]
 
-        vx_w, vy_w = data.qvel[0], data.qvel[1]
-        cos_y = np.cos(current_yaw)
-        sin_y = np.sin(current_yaw)
-        vx_body = vx_w * cos_y + vy_w * sin_y
-        vy_body = -vx_w * sin_y + vy_w * cos_y
-        
-        desired_pitch = np.clip(pitch - self._velocity_damping * vx_body, -self._max_tilt_angle, self._max_tilt_angle)
-        desired_roll = np.clip(roll + self._velocity_damping * vy_body, -self._max_tilt_angle, self._max_tilt_angle)
-
         yaw_rate_error = yaw_rate - yaw_rate_desired
 
         cos_tilt = max(1.0 - 2.0 * (qx * qx + qy * qy), 0.5)
 
         data.ctrl[0] = self._drone_hover_thrust / cos_tilt
-        data.ctrl[1] = self._attitude_p * (current_roll - desired_roll) + self._attitude_d * roll_rate
-        data.ctrl[2] = self._attitude_p * (current_pitch - desired_pitch) + self._attitude_d * pitch_rate
+        data.ctrl[1] = self._attitude_p * (current_roll - roll_desired) + self._attitude_d * roll_rate
+        data.ctrl[2] = self._attitude_p * (current_pitch - pitch_desired) + self._attitude_d * pitch_rate
         data.ctrl[3] = self._yaw_d * yaw_rate_error
