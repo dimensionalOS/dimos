@@ -22,6 +22,7 @@ from typing import Any
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.viser_panel.animation import PreviewAnimator
 from dimos.manipulation.viser_panel.state import PanelSession
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 GOAL_ROBOT_FEASIBLE_COLOR = (255, 122, 0)
@@ -97,12 +98,12 @@ class PanelScene:
         self.set_urdf_joints(ghost, joints)
         return True
 
-    def render_plan_path(self, path: Sequence[JointState]) -> None:
+    def render_plan_path(self, path: Sequence[JointState], poses: Sequence[Pose]) -> None:
         if self.server is None:
             return
         positions = [
-            [float(index), waypoint.position[0] if waypoint.position else 0.0, 0.02]
-            for index, waypoint in enumerate(path)
+            [float(pose.position.x), float(pose.position.y), float(pose.position.z)]
+            for pose in poses
         ]
         if "plan_path" in self.handles:
             self.handles["plan_path"].remove()

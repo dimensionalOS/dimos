@@ -46,6 +46,16 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 
+
+def _quaternion(x: float, y: float, z: float, w: float) -> Quaternion:
+    quaternion = Quaternion.__new__(Quaternion)
+    quaternion.x = x
+    quaternion.y = y
+    quaternion.z = z
+    quaternion.w = w
+    return quaternion
+
+
 # Single XArm6 planner (standalone, no coordinator)
 _xarm6_planner_cfg = _catalog_xarm6(
     name="arm",
@@ -197,7 +207,7 @@ xarm7_planner_coordinator_agent = autoconnect(
 # Usage: dimos run coordinator-mock, then dimos run xarm-perception
 _XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
-    rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
+    rotation=_quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
 )
 
 _xarm7_perception_cfg = _catalog_xarm7(
@@ -375,6 +385,7 @@ __all__ = [
     "xarm6_planner_only",
     "xarm7_planner_coordinator",
     "xarm7_planner_coordinator_agent",
+    "xarm7_viser_panel_mock",
     "xarm_perception",
     "xarm_perception_agent",
     "xarm_perception_sim",

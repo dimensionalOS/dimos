@@ -597,6 +597,26 @@ class ManipulationModule(Module):
         return self._planned_paths.get(robot[0])
 
     @rpc
+    def get_planned_path_poses(self, robot_name: RobotName | None = None) -> list[Pose] | None:
+        """Get end-effector poses for the stored planned path.
+
+        Args:
+            robot_name: Robot to query (required if multiple robots configured)
+        """
+        if self._world_monitor is None:
+            return None
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return None
+        robot_name, robot_id, _, _ = robot
+        path = self._planned_paths.get(robot_name)
+        if path is None:
+            return None
+        return [
+            self._world_monitor.get_ee_pose(robot_id, joint_state=waypoint) for waypoint in path
+        ]
+
+    @rpc
     def get_visualization_url(self) -> str | None:
         """Get the visualization URL.
 
@@ -686,8 +706,10 @@ class ManipulationModule(Module):
         }
 
     @rpc
-    def solve_ik_preview(self, pose: Pose, robot_name: RobotName | None = None) -> dict[str, Any]:
-        """Preview IK for a target pose without storing, previewing, executing, or moving.
+    def evaluate_pose_target(
+        self, pose: Pose, robot_name: RobotName | None = None
+    ) -> dict[str, Any]:
+        """Evaluate a pose target without storing, previewing, executing, or moving.
 
         Args:
             pose: Target end-effector pose in world coordinates
@@ -756,10 +778,10 @@ class ManipulationModule(Module):
         }
 
     @rpc
-    def solve_fk_preview(
+    def evaluate_joint_target(
         self, joints: JointState, robot_name: RobotName | None = None
     ) -> dict[str, Any]:
-        """Preview FK and feasibility for candidate joints without planning or moving.
+        """Evaluate candidate joints without planning or moving.
 
         Args:
             joints: Candidate joint state
@@ -787,7 +809,13 @@ class ManipulationModule(Module):
         _, robot_id, config, _ = robot
         joint_state = joints
         if not joint_state.name:
-            joint_state = JointState(name=config.joint_names, position=list(joints.position))
+            joint_state = JointState.__new__(JointState)
+            joint_state.ts = joints.ts
+            joint_state.frame_id = joints.frame_id
+            joint_state.name = config.joint_names
+            joint_state.position = list(joints.position)
+            joint_state.velocity = list(joints.velocity or [])
+            joint_state.effort = list(joints.effort or [])
         pose = self._world_monitor.get_ee_pose(robot_id, joint_state=joint_state)
         collision_free = self._world_monitor.is_state_valid(robot_id, joint_state)
         return {

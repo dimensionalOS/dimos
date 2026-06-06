@@ -208,19 +208,6 @@ class ViserManipulationPanelModule(Module):
             on_clear_plan=lambda: self._run_operation("Clear Plan", self._clear_plan),
         )
 
-    def _wire_static_callbacks(self) -> None:
-        if not self._handles:
-            return
-        self._handles["robot"].on_update(lambda event: self._select_robot(str(event.target.value)))
-        self._handles["preset"].on_update(lambda event: self._apply_preset(str(event.target.value)))
-        self._handles["plan"].on_click(lambda _: self._run_operation("Plan", self._plan))
-        self._handles["preview"].on_click(lambda _: self._run_operation("Preview", self._preview))
-        self._handles["execute"].on_click(lambda _: self._run_operation("Execute", self._execute))
-        self._handles["cancel"].on_click(lambda _: self._run_operation("Cancel", self._cancel))
-        self._handles["clear_plan"].on_click(
-            lambda _: self._run_operation("Clear Plan", self._clear_plan)
-        )
-
     def _poll_loop(self) -> None:
         interval = 1.0 / max(self.panel_config.poll_hz, 0.1)
         while not self._stop_event.is_set():
@@ -325,6 +312,20 @@ class ViserManipulationPanelModule(Module):
             self._build_joint_sliders(robot_name, info)
         self._update_preset_options(info)
         self._update_current_robot(robot_name)
+        self._initialize_target_from_current_state()
+
+    def _initialize_target_from_current_state(self) -> None:
+        if (
+            self.session.target_status != TargetStatus.EMPTY
+            or self.session.cartesian_target is not None
+            or self.session.joint_target is not None
+            or self.session.current_ee_pose is None
+        ):
+            return
+        self.session.cartesian_target = self.session.current_ee_pose
+        if self.session.current_joints is not None:
+            self.session.joint_target = list(self.session.current_joints)
+        self._sync_controls_from_targets()
 
     def _ensure_scene_nodes(self, robot_name: str, info: dict[str, Any]) -> None:
         scene = self._ensure_scene()
@@ -425,12 +426,12 @@ class ViserManipulationPanelModule(Module):
             client = self._client
             if request.source == "cartesian" and request.pose is not None:
                 return self._call_preview_with_timeout(
-                    lambda: dict(client.solve_ik_preview(request.pose, request.robot_name)),
+                    lambda: dict(client.evaluate_pose_target(request.pose, request.robot_name)),
                     "IK_TIMEOUT",
                 )
             if request.source == "joints" and request.joints is not None:
                 return self._call_preview_with_timeout(
-                    lambda: dict(client.solve_fk_preview(request.joints, request.robot_name)),
+                    lambda: dict(client.evaluate_joint_target(request.joints, request.robot_name)),
                     "FK_TIMEOUT",
                 )
             return {"success": False, "status": "INVALID", "message": "Invalid preview request"}
@@ -524,6 +525,7 @@ class ViserManipulationPanelModule(Module):
             ok = False
         if ok:
             path = self._client.get_planned_path(robot)
+            poses = self._client.get_planned_path_poses(robot)
             self.session.plan_state.status = PlanStatus.FRESH
             self.session.plan_state.robot = robot
             self.session.plan_state.target_pose = self.session.cartesian_target
@@ -532,7 +534,7 @@ class ViserManipulationPanelModule(Module):
                 list(current) if current is not None else None
             )
             self.session.plan_state.planned_path = list(path or [])
-            self._render_plan_path(self.session.plan_state.planned_path)
+            self._render_plan_path(self.session.plan_state.planned_path, list(poses or []))
         else:
             self.session.plan_state.status = PlanStatus.FAILED
             self.session.error = str(self._client.get_error() or "Planning failed")
@@ -544,7 +546,8 @@ class ViserManipulationPanelModule(Module):
         if self._client is None or self.session.selected_robot is None:
             return
         path = list(self._client.get_planned_path(self.session.selected_robot) or [])
-        self._render_plan_path(path)
+        poses = self._client.get_planned_path_poses(self.session.selected_robot)
+        self._render_plan_path(path, list(poses or []))
         if path:
             self.session.error = "Previewing planned path in Viser"
             self._animate_ghost_path(path, self.panel_config.preview_duration)
@@ -584,10 +587,10 @@ class ViserManipulationPanelModule(Module):
         if self._client is not None:
             self._client.clear_planned_path()
         self.session.plan_state = self.session.plan_state.__class__()
-        self._render_plan_path([])
+        self._render_plan_path([], [])
 
-    def _render_plan_path(self, path: Sequence[JointState]) -> None:
-        self._ensure_scene().render_plan_path(path)
+    def _render_plan_path(self, path: Sequence[JointState], poses: Sequence[Pose]) -> None:
+        self._ensure_scene().render_plan_path(path, poses)
 
     def _animate_ghost_path(self, path: Sequence[JointState], duration: float) -> None:
         self._ensure_scene().animate_ghost_path(path, duration, self.panel_config.preview_fps)

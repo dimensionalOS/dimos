@@ -49,6 +49,9 @@ from dimos.manipulation.viser_panel.state import (
     TargetStatus,
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
@@ -61,6 +64,15 @@ def _joint_state(position: list[float], name: list[str] | None = None) -> JointS
     joint_state.velocity = []
     joint_state.effort = []
     return joint_state
+
+
+def _unit_quaternion() -> Quaternion:
+    quaternion = Quaternion.__new__(Quaternion)
+    quaternion.x = 0.0
+    quaternion.y = 0.0
+    quaternion.z = 0.0
+    quaternion.w = 1.0
+    return quaternion
 
 
 class FakeHandle:
@@ -219,7 +231,7 @@ def test_panel_preview_request_times_out_without_blocking_worker_forever():
 def test_panel_cartesian_preview_uses_timeout_wrapper():
     panel = _make_panel()
     panel._client = MagicMock()
-    panel._client.solve_ik_preview.return_value = {"success": True, "collision_free": True}
+    panel._client.evaluate_pose_target.return_value = {"success": True, "collision_free": True}
     request = PreviewRequest(1, "cartesian", "arm", pose=Pose.__new__(Pose))
 
     with patch.object(
@@ -229,6 +241,21 @@ def test_panel_cartesian_preview_uses_timeout_wrapper():
 
     assert result == {"success": False}
     timeout.assert_called_once()
+    panel._client.evaluate_pose_target.assert_not_called()
+    panel._client.solve_ik_preview.assert_not_called()
+
+
+def test_panel_cartesian_preview_routes_to_target_evaluation_api():
+    panel = _make_panel()
+    panel._client = MagicMock()
+    panel._client.evaluate_pose_target.return_value = {"success": True, "collision_free": True}
+    request = PreviewRequest(1, "cartesian", "arm", pose=Pose.__new__(Pose))
+
+    result = panel._handle_preview_request(request)
+
+    assert result == {"success": True, "collision_free": True}
+    panel._client.evaluate_pose_target.assert_called_once_with(request.pose, "arm")
+    panel._client.solve_ik_preview.assert_not_called()
 
 
 def test_panel_refresh_reports_disconnected_state_when_rpc_unavailable():
@@ -380,13 +407,55 @@ def test_panel_renders_plan_path_with_viser_line_segment_shape():
     server = FakeServer()
     scene = PanelScene(server, session, handles, {}, None)
     path = [_joint_state([0.0]), _joint_state([0.1]), _joint_state([0.2])]
+    poses = [
+        PoseStamped(position=Vector3(0.1, 0.2, 0.3), orientation=_unit_quaternion()),
+        PoseStamped(position=Vector3(0.4, 0.5, 0.6), orientation=_unit_quaternion()),
+        PoseStamped(position=Vector3(0.7, 0.8, 0.9), orientation=_unit_quaternion()),
+    ]
 
-    scene.render_plan_path(path)
+    scene.render_plan_path(path, poses)
 
     assert server.scene.line_segments[0]["points"] == [
-        [[0.0, 0.0, 0.02], [1.0, 0.1, 0.02]],
-        [[1.0, 0.1, 0.02], [2.0, 0.2, 0.02]],
+        [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+        [[0.4, 0.5, 0.6], [0.7, 0.8, 0.9]],
     ]
+
+
+def test_panel_has_no_duplicate_static_callback_wiring_method():
+    assert not hasattr(ViserManipulationPanelModule, "_wire_static_callbacks")
+
+
+def test_panel_backend_rejects_new_preview_when_previous_timed_out():
+    backend = PanelBackend(
+        module_ref=None,
+        module_rpc=None,
+        remote_factory=MagicMock(),
+        timeout_seconds=lambda: 0.01,
+    )
+    release = threading.Event()
+    started = threading.Event()
+    active = 0
+
+    def slow_preview() -> dict[str, object]:
+        nonlocal active
+        active += 1
+        started.set()
+        release.wait(timeout=1.0)
+        active -= 1
+        return {"success": True}
+
+    first = backend.call_preview_with_timeout(slow_preview, "IK_TIMEOUT")
+    assert first["status"] == "IK_TIMEOUT"
+    assert started.is_set()
+
+    second = backend.call_preview_with_timeout(slow_preview, "IK_TIMEOUT")
+
+    release.set()
+    assert backend._preview_thread is not None
+    backend._preview_thread.join(timeout=1.0)
+    assert second["success"] is False
+    assert second["status"] == "PREVIEW_BUSY"
+    assert active == 0
 
 
 def test_panel_snapshot_does_not_force_refresh():
@@ -553,6 +622,24 @@ def test_panel_target_sync_does_not_overwrite_ghost_during_preview():
     panel._sync_controls_from_targets()
 
     assert ghost.cfg == [0.1, 0.2, 0.0]
+
+
+def test_panel_initializes_target_from_current_robot_state():
+    panel = _make_panel()
+    panel.session.selected_robot = "arm"
+    panel.session.robot_info = {"joint_names": ["arm/joint1", "arm/joint2", "arm/gripper"]}
+    panel.session.current_joints = [0.4, 0.5, 0.6]
+    panel.session.current_ee_pose = panel._make_pose((1.0, 2.0, 3.0), (0.1, 0.2, 0.3, 0.4))
+    ghost = FakeViserUrdf()
+    panel._urdfs["arm:ghost"] = ghost
+
+    panel._initialize_target_from_current_state()
+
+    assert panel.session.cartesian_target is panel.session.current_ee_pose
+    assert panel.session.joint_target == [0.4, 0.5, 0.6]
+    assert panel._handles["ee_control"].position == (1.0, 2.0, 3.0)
+    assert panel._handles["ee_control"].wxyz == (0.4, 0.1, 0.2, 0.3)
+    assert ghost.cfg == [0.4, 0.5, 0.0]
 
 
 def test_panel_execute_runs_while_execute_operation_is_marked_in_flight():

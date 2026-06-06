@@ -36,10 +36,14 @@ class PanelBackend:
         self._remote_factory = remote_factory
         self._timeout_seconds = timeout_seconds
         self.client: Any | None = None
+        self._preview_lock = threading.Lock()
+        self._preview_thread: threading.Thread | None = None
 
     def reset_client(self) -> Any | None:
-        if self.client is not None and self.client is not self._module_ref:
-            self.client.stop_rpc_client()
+        with self._preview_lock:
+            if self.client is not None and self.client is not self._module_ref:
+                if not self._preview_thread or not self._preview_thread.is_alive():
+                    self.client.stop_rpc_client()
         if self._module_ref is not None:
             self.client = self._module_ref
             return self.client
@@ -50,8 +54,10 @@ class PanelBackend:
         return self.client
 
     def close(self) -> None:
-        if self.client is not None and self.client is not self._module_ref:
-            self.client.stop_rpc_client()
+        with self._preview_lock:
+            if self.client is not None and self.client is not self._module_ref:
+                if not self._preview_thread or not self._preview_thread.is_alive():
+                    self.client.stop_rpc_client()
         self.client = None
 
     def ensure_client(self) -> Any:
@@ -72,6 +78,14 @@ class PanelBackend:
     def call_preview_with_timeout(
         self, call: Callable[[], dict[str, Any]], timeout_status: str
     ) -> dict[str, Any]:
+        with self._preview_lock:
+            if self._preview_thread is not None and self._preview_thread.is_alive():
+                return {
+                    "success": False,
+                    "status": "PREVIEW_BUSY",
+                    "message": "Previous preview request is still running",
+                    "collision_free": False,
+                }
         result: dict[str, Any] | None = None
         error: Exception | None = None
 
@@ -83,6 +97,8 @@ class PanelBackend:
                 error = e
 
         thread = threading.Thread(target=run, daemon=True)
+        with self._preview_lock:
+            self._preview_thread = thread
         thread.start()
         timeout = max(self._timeout_seconds(), 0.0)
         thread.join(timeout=timeout)
@@ -102,14 +118,14 @@ class PanelBackend:
             "collision_free": False,
         }
 
-    def solve_ik_preview(self, pose: Any, robot_name: str) -> dict[str, Any]:
+    def evaluate_pose_target(self, pose: Any, robot_name: str) -> dict[str, Any]:
         client = self.ensure_client()
         return self.call_preview_with_timeout(
-            lambda: dict(client.solve_ik_preview(pose, robot_name)), "IK_TIMEOUT"
+            lambda: dict(client.evaluate_pose_target(pose, robot_name)), "IK_TIMEOUT"
         )
 
-    def solve_fk_preview(self, joints: Any, robot_name: str) -> dict[str, Any]:
+    def evaluate_joint_target(self, joints: Any, robot_name: str) -> dict[str, Any]:
         client = self.ensure_client()
         return self.call_preview_with_timeout(
-            lambda: dict(client.solve_fk_preview(joints, robot_name)), "FK_TIMEOUT"
+            lambda: dict(client.evaluate_joint_target(joints, robot_name)), "FK_TIMEOUT"
         )

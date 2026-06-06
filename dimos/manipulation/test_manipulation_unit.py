@@ -305,7 +305,7 @@ class TestManipulationPanelRPCs:
 
         assert module.get_planned_path("test_arm") is path
 
-    def test_solve_ik_preview_does_not_store_path_or_change_state(self, robot_config):
+    def test_evaluate_pose_target_does_not_store_path_or_change_state(self, robot_config):
         module = _make_module_with_monitor(robot_config)
         module._kinematics = MagicMock()
         current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
@@ -320,7 +320,7 @@ class TestManipulationPanelRPCs:
             message="ok",
         )
 
-        result = module.solve_ik_preview(Pose(), "test_arm")
+        result = module.evaluate_pose_target(Pose(), "test_arm")
 
         assert result["success"] is True
         assert result["joint_state"] is solution
@@ -329,14 +329,14 @@ class TestManipulationPanelRPCs:
         assert module._planned_trajectories == {}
         assert module._state == ManipulationState.IDLE
 
-    def test_solve_fk_preview_returns_pose_and_feasibility(self, robot_config):
+    def test_evaluate_joint_target_returns_pose_and_feasibility(self, robot_config):
         module = _make_module_with_monitor(robot_config)
         target = JointState(name=[], position=[0.1, 0.2, 0.3])
         pose = PoseStamped(position=Vector3(0.4, 0.5, 0.6), orientation=Quaternion())
         module._world_monitor.get_ee_pose.return_value = pose
         module._world_monitor.is_state_valid.return_value = True
 
-        result = module.solve_fk_preview(target, "test_arm")
+        result = module.evaluate_joint_target(target, "test_arm")
 
         assert result["success"] is True
         assert result["pose"] is pose
@@ -345,6 +345,24 @@ class TestManipulationPanelRPCs:
         assert result["collision_free"] is True
         assert module._planned_paths == {}
         assert module._state == ManipulationState.IDLE
+
+    def test_get_planned_path_poses_returns_fk_for_each_waypoint(self, robot_config):
+        module = _make_module_with_monitor(robot_config)
+        path = [
+            _joint_state([0.0, 0.0, 0.0], robot_config.joint_names),
+            _joint_state([0.1, 0.2, 0.3], robot_config.joint_names),
+        ]
+        poses = [
+            PoseStamped(position=Vector3(0.1, 0.2, 0.3), orientation=_unit_quaternion()),
+            PoseStamped(position=Vector3(0.4, 0.5, 0.6), orientation=_unit_quaternion()),
+        ]
+        module._planned_paths = {"test_arm": path}
+        module._world_monitor.get_ee_pose.side_effect = poses
+
+        result = module.get_planned_path_poses("test_arm")
+
+        assert result == poses
+        assert module._world_monitor.get_ee_pose.call_count == 2
 
 
 class TestRobotModelConfigMapping:
@@ -372,6 +390,26 @@ def _make_module_with_monitor(*configs: RobotModelConfig) -> ManipulationModule:
         robot_id = f"robot_{config.name}"
         module._robots[config.name] = (robot_id, config, MagicMock())
     return module
+
+
+def _unit_quaternion() -> Quaternion:
+    quaternion = Quaternion.__new__(Quaternion)
+    quaternion.x = 0.0
+    quaternion.y = 0.0
+    quaternion.z = 0.0
+    quaternion.w = 1.0
+    return quaternion
+
+
+def _joint_state(position: list[float], name: list[str]) -> JointState:
+    joint_state = JointState.__new__(JointState)
+    joint_state.ts = 0.0
+    joint_state.frame_id = ""
+    joint_state.name = name
+    joint_state.position = position
+    joint_state.velocity = []
+    joint_state.effort = []
+    return joint_state
 
 
 class TestOnJointState:
