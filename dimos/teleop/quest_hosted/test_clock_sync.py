@@ -32,20 +32,19 @@ from dimos.teleop.quest_hosted.hosted_teleop_module import HostedTeleopModule
 
 @pytest.fixture
 def module():
-    """Bare ``HostedTeleopModule`` with a mocked open state channel injected."""
+    """Bare ``HostedTeleopModule`` with a mocked open state-back channel.
+    """
     m = HostedTeleopModule.__new__(HostedTeleopModule)
-    m._state_channel = MagicMock()
-    m._state_channel.readyState = "open"
-    # Pong path prefers state_back_channel if set; force fallback to state_channel
-    # so the existing assertions on m._state_channel.send still hold.
-    m._state_back_channel = None
+    m._state_back_channel = MagicMock()
+    m._state_back_channel.readyState = "open"
+    m._state_channel = None
     return m
 
 
 def _sent_payload(module) -> dict:
     """Decode the JSON the mock channel was asked to send."""
-    module._state_channel.send.assert_called_once()
-    return json.loads(module._state_channel.send.call_args[0][0])
+    module._state_back_channel.send.assert_called_once()
+    return json.loads(module._state_back_channel.send.call_args[0][0])
 
 
 def test_ping_echoes_pong_with_robot_ts(module):
@@ -69,29 +68,39 @@ def test_ping_accepts_str_data(module):
 def test_malformed_json_dropped(module):
     """Garbage payload — pong not sent, no exception."""
     module._on_state_message(b"not json at all")
-    module._state_channel.send.assert_not_called()
+    module._state_back_channel.send.assert_not_called()
 
 
 def test_unknown_type_dropped(module):
     """Future control-plane messages this version doesn't recognise are no-ops."""
     module._on_state_message(b'{"type":"mode_switch","mode":"arm"}')
-    module._state_channel.send.assert_not_called()
+    module._state_back_channel.send.assert_not_called()
 
 
 def test_ping_missing_client_ts_dropped(module):
     """Don't echo nonsense pings — keeps the offset estimator clean."""
     module._on_state_message(b'{"type":"ping"}')
-    module._state_channel.send.assert_not_called()
+    module._state_back_channel.send.assert_not_called()
 
 
 def test_pong_swallowed_when_channel_closed(module):
     """If the channel closed between recv and the send attempt, swallow it."""
-    module._state_channel.readyState = "closed"
+    module._state_back_channel.readyState = "closed"
     module._on_state_message(b'{"type":"ping","client_ts":1.0}')
-    module._state_channel.send.assert_not_called()
+    module._state_back_channel.send.assert_not_called()
 
 
 def test_non_utf8_bytes_dropped(module):
     """Random bytes that aren't valid UTF-8 — drop, don't crash."""
     module._on_state_message(b"\xff\xfe\xfd")
+    module._state_back_channel.send.assert_not_called()
+
+
+def test_pong_dropped_when_state_back_channel_absent(module):
+    """If state_reliable_back never opened, ping arriving on state_reliable
+    must NOT fall back to state_reliable (CF wouldn't bridge it back)."""
+    module._state_back_channel = None
+    module._state_channel = MagicMock()
+    module._state_channel.readyState = "open"
+    module._on_state_message(b'{"type":"ping","client_ts":1.0}')
     module._state_channel.send.assert_not_called()

@@ -142,6 +142,7 @@ class HostedTeleopModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        self._stop_event.clear()
         unsub = self.color_image.subscribe(self._video_track.set_latest)
         self.register_disposable(Disposable(unsub))
         self._start_event_loop()
@@ -494,11 +495,13 @@ class HostedTeleopModule(Module):
             if client_ts is None:
                 return
             pong = json.dumps({"type": "pong", "client_ts": client_ts, "robot_ts": time.time()})
-            out = self._state_back_channel or self._state_channel
+            out = self._state_back_channel
             if out is not None and out.readyState == "open":
                 out.send(pong)
             else:
-                logger.warning("state_reliable: ping received but no open channel for pong")
+                logger.warning(
+                    "state_reliable: ping received but state_reliable_back not open — pong dropped"
+                )
         elif kind == "clock_report":
             rtt = msg.get("rtt_ms")
             off = msg.get("offset_ms")
@@ -562,7 +565,7 @@ class HostedTeleopModule(Module):
         raise ValueError(f"Unexpected frame_id: {frame_id!r}")
 
     def _start_control_loop(self) -> None:
-        self._stop_event.clear()
+        # _stop_event already cleared in start() before any thread spawns.
         self._control_loop_thread = threading.Thread(
             target=self._control_loop,
             daemon=True,
