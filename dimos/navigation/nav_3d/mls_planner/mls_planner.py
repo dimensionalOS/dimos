@@ -16,6 +16,12 @@
 
 from __future__ import annotations
 
-from dimos_mls_planner import MLSPlanner
+try:
+    from dimos_mls_planner import MLSPlanner
+except ImportError as e:
+    raise ImportError(
+        "dimos_mls_planner is not built. Run: "
+        "uv run maturin develop --uv -m dimos/navigation/nav_3d/mls_planner/rust/Cargo.toml"
+    ) from e
 
 __all__ = ["MLSPlanner"]
