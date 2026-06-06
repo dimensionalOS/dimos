@@ -113,6 +113,21 @@ jobs:
           for crate in $CRATES; do
             (cd "$crate" && cargo test --workspace --all-features --locked)
           done
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Build and test PyO3 bindings
+        run: |
+          uv venv
+          uv pip install maturin numpy pytest
+          source .venv/bin/activate
+          maturin develop -m dimos/mapping/ray_tracing/rust/Cargo.toml
+          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/Cargo.toml
+          python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
+          python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
+            dimos/mapping/ray_tracing/test_voxel_map.py \
+            dimos/navigation/nav_3d/mls_planner/test_mls_planner.py
 
   md-babel:
     timeout-minutes: 15
