@@ -170,11 +170,11 @@ class FakeDMControl(ModuleType):
 
 
 @pytest.fixture(autouse=True)
-def fake_dm_control(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_dm = FakeDMControl("dm_control")
-    fake_damiao = FakeDamiao("dm_control.damiao")
-    monkeypatch.setitem(__import__("sys").modules, "dm_control", fake_dm)
-    monkeypatch.setitem(__import__("sys").modules, "dm_control.damiao", fake_damiao)
+def fake_can_motor_control(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_dm = FakeDMControl("can_motor_control")
+    fake_damiao = FakeDamiao("can_motor_control.damiao")
+    monkeypatch.setitem(__import__("sys").modules, "can_motor_control", fake_dm)
+    monkeypatch.setitem(__import__("sys").modules, "can_motor_control.damiao", fake_damiao)
     FakeRobot.last = None
 
 
@@ -244,17 +244,33 @@ def test_motor_specs_use_binding_motor_type_values() -> None:
     assert adapter._robot.arm.dof == 2
 
 
+def test_renamed_can_motor_control_binding_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    imported: list[str] = []
+    real_import_module = importlib.import_module
+
+    def track_can_motor_control(name: str, package: str | None = None) -> ModuleType:
+        if name.startswith("dm_control"):
+            raise ImportError(name)
+        imported.append(name)
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", track_can_motor_control)
+    adapter = DMMotorArm(use_mock_bus=True)
+    assert adapter.connect() is True
+    assert imported[:2] == ["can_motor_control", "can_motor_control.damiao"]
+
+
 def test_missing_binding_fails_only_when_selected(monkeypatch: pytest.MonkeyPatch) -> None:
     real_import_module = importlib.import_module
 
-    def fail_dm_control(name: str, package: str | None = None) -> ModuleType:
-        if name.startswith("dm_control"):
+    def fail_can_motor_control(name: str, package: str | None = None) -> ModuleType:
+        if name.startswith("can_motor_control"):
             raise ImportError(name)
         return real_import_module(name, package)
 
-    monkeypatch.setattr(importlib, "import_module", fail_dm_control)
+    monkeypatch.setattr(importlib, "import_module", fail_can_motor_control)
     adapter = DMMotorArm(use_mock_bus=True)
-    with pytest.raises(DMMotorBindingUnavailableError, match="requires.*dm_control"):
+    with pytest.raises(DMMotorBindingUnavailableError, match="requires.*can-motor-control"):
         adapter.connect()
 
 

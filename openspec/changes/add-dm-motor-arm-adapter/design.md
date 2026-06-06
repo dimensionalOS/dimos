@@ -2,7 +2,7 @@
 
 DimOS currently supports manipulators through the `ManipulatorAdapter` protocol, the manipulator adapter registry, `HardwareComponent.adapter_type`, and the `ControlCoordinator` read/compute/write loop. OpenArm hardware already has an `openarm` adapter that owns a custom Python SocketCAN driver, sets MIT mode, computes Pinocchio-based gravity feed-forward, and preserves existing OpenArm blueprints.
 
-The new `dm_control` package in `/home/cc/codes/dm_control_rs` exposes a Python binding for DMMotor/Damiao hardware. Its Python API owns robot lifecycle and bus ticks through `Robot.connect()`, `Robot.enable()`, repeated `Robot.tick(...)`, group state reads, and arm commands. This change must use that Python binding from DimOS and must not add dependency installation or package-management changes yet.
+The `can-motor-control` package exposes a Python binding for DMMotor/Damiao hardware. Its Python API owns robot lifecycle and bus ticks through `Robot.connect()`, `Robot.enable()`, repeated `Robot.tick(...)`, group state reads, and arm commands. This change must use that Python binding from DimOS and expose the published package through the manipulation extra.
 
 Gravity compensation should follow the existing OpenArm adapter pattern: it is computed in-place inside adapter command writes and controlled with an adapter flag. The gravity-compensation-only helper method must not act like a trajectory or stiff position-hold controller.
 
@@ -10,18 +10,18 @@ Gravity compensation should follow the existing OpenArm adapter pattern: it is c
 
 **Goals:**
 
-- Add a DMMotor manipulator adapter path named `DMMotorArm` that uses the `dm_control` Python binding.
+- Add a DMMotor manipulator adapter path named `DMMotorArm` that uses the `can_motor_control` Python binding.
 - Register the adapter under a stable DimOS adapter key, expected to be `dm_motor_arm`.
 - Preserve existing `openarm` adapter and blueprint behavior unless a later change explicitly migrates it.
 - Provide adapter-level gravity compensation that sends model-based feed-forward torque and can be enabled or disabled with an adapter flag.
-- Keep dependency installation out of scope; environments selecting the adapter must already provide the Python binding.
+- Add the published `can-motor-control` dependency to the manipulation extra; environments selecting the adapter should install `dimos[manipulation]`.
 - Document and validate safe hardware bring-up, especially enable/disable, state freshness, and shutdown behavior.
 
 **Non-Goals:**
 
 - Do not call the Rust crates directly from DimOS.
 - Do not replace the existing `openarm` adapter registration in this change.
-- Do not add pip/uv/maturin dependency installation to DimOS packaging yet.
+- Do not build or vendor the Rust binding in DimOS; consume the published `can-motor-control` package.
 - Do not expose new skills or MCP tools.
 - Do not introduce a separate gravity-compensation module or blueprint.
 
@@ -34,20 +34,20 @@ ControlCoordinator
   -> HardwareComponent(adapter_type="dm_motor_arm")
     -> manipulator adapter registry
       -> DMMotorArm
-        -> dm_control Python binding
+        -> can_motor_control Python binding
           -> SocketCAN / MockCanBus / vcan-backed DMMotor hardware
 ```
 
-The `DMMotorArm` class should satisfy `ManipulatorAdapter` for coordinator-compatible use. It should be discovered through the existing manipulator registry hook and created from `HardwareComponent` fields such as `address`, `dof`, `hardware_id`, and `adapter_kwargs`. The adapter module should not import `dm_control` at module import time; it should import lazily when the adapter is constructed or connected so unrelated DimOS users do not lose registry discovery when the binding is absent.
+The `DMMotorArm` class should satisfy `ManipulatorAdapter` for coordinator-compatible use. It should be discovered through the existing manipulator registry hook and created from `HardwareComponent` fields such as `address`, `dof`, `hardware_id`, and `adapter_kwargs`. The adapter module should not import `can_motor_control` at module import time; it should import lazily when the adapter is constructed or connected so unrelated DimOS users do not lose registry discovery when the binding is absent.
 
-The coordinator path should use existing `joint_state` output and command routing. The adapter must reconcile DimOS' separate read/write calls with `dm_control`'s queued-command plus `Robot.tick(...)` model by owning tick/cache semantics internally. Reads should return coherent cached positions, velocities, and efforts for one cycle rather than independently ticking three times. Writes should queue commands and flush/update at a controlled point so the CAN bus is not double-loaded.
+The coordinator path should use existing `joint_state` output and command routing. The adapter must reconcile DimOS' separate read/write calls with `can_motor_control`'s queued-command plus `Robot.tick(...)` model by owning tick/cache semantics internally. Reads should return coherent cached positions, velocities, and efforts for one cycle rather than independently ticking three times. Writes should queue commands and flush/update at a controlled point so the CAN bus is not double-loaded.
 
 Gravity compensation lives in `DMMotorArm` rather than a separate module. With `gravity_comp=True`, adapter position writes compute `tau_g(q)` from the current measured joint state and send MIT commands with gravity feed-forward. The adapter intentionally supports position and effort semantics only; velocity control is rejected because nonzero gains would hold the supplied `q` anchor. The adapter also exposes a gravity-compensation-only helper that sends MIT commands with `kp=0`, configurable low/no damping, and gravity torque for direct bring-up tests:
 
 ```text
 ControlCoordinator / caller
   -> DMMotorArm adapter
-    -> read current q/dq through dm_control tick/cache
+    -> read current q/dq through can_motor_control tick/cache
     -> compute tau_g(q)
     -> send MIT position command with adapter gains or effort/gravity-only kp=0
 ```
@@ -60,8 +60,8 @@ No new DimOS `Spec` Protocol is required for this change unless implementation n
 
 - **Use the Python binding, not Rust crates directly.** This keeps the integration inside DimOS' Python module/adapter system and matches the user's requested surface.
 - **Create a new `dm_motor_arm` adapter instead of replacing `openarm`.** The current OpenArm adapter includes hardware-specific limits, MIT-mode setup, thermal reporting, and gravity compensation behavior. Replacing it would be a silent compatibility and safety change.
-- **Keep `dm_control` dependency installation out of this change.** The adapter should clearly fail when selected and the Python package is unavailable, but DimOS packaging should not be changed yet.
-- **Use lazy binding import.** Registry discovery should remain healthy even when `dm_control` is not installed.
+- **Expose the binding through `dimos[manipulation]`.** The adapter should clearly fail when selected and the Python package is unavailable, while the manipulation extra should install the published `can-motor-control` package on supported platforms.
+- **Use lazy binding import.** Registry discovery should remain healthy even when `can_motor_control` is not installed.
 - **Treat `Robot.tick(...)` as adapter-owned.** The adapter should ensure one coherent state snapshot per cycle and avoid ticking once per position/velocity/effort read.
 - **Provide gravity compensation in-place through the adapter.** This matches the existing OpenArm implementation and keeps lifecycle/tick ownership inside one hardware adapter.
 - **Use model-based gravity compensation with zero position stiffness for effort/gravity-only commands.** Gravity-only helper calls should send feed-forward torque and optional damping, not position targets with nonzero stiffness.
@@ -71,7 +71,7 @@ No new DimOS `Spec` Protocol is required for this change unless implementation n
 Hardware assumptions:
 
 - DMMotor/Damiao hardware is connected through Linux SocketCAN with CAN-FD enabled by default, or a compatible mock/vcan backend supported by the Python binding.
-- The Python binding is already installed in the active runtime environment.
+- The Python binding is installed in the active runtime environment, typically through `dimos[manipulation]`.
 - Joint ordering in DimOS configuration matches the arm group ordering in the binding/config.
 - Gravity compensation model and hardware joint signs/offsets are valid before enabling gravity-only mode on real hardware.
 
@@ -86,7 +86,7 @@ Safety constraints:
 Simulation/replay:
 
 - Replay is out of scope.
-- Mock/vcan validation through `dm_control.MockCanBus` or SocketCAN virtual interfaces should be supported for development.
+- Mock/vcan validation through `can_motor_control.MockCanBus` or SocketCAN virtual interfaces should be supported for development.
 - Existing `openarm` mock/planner blueprints remain available and unchanged.
 
 Manual QA surface:
@@ -98,8 +98,7 @@ Manual QA surface:
 
 ## Risks / Trade-offs
 
-- **Binding availability and API stability:** `dm_control` is a new binding. Mitigation: avoid package install changes, document expected availability, and keep adapter usage explicit.
-- **Package-name collision:** `dm_control` is also a known Python package name in other ecosystems. Mitigation: document the expected binding source and verify import behavior in QA.
+- **Binding availability and API stability:** `can-motor-control` is a new binding. Mitigation: document expected availability through `dimos[manipulation]`, verify import behavior in QA, and keep adapter usage explicit.
 - **Tick timing:** The binding flushes queued commands and receives feedback through `Robot.tick(...)`. Mitigation: centralize tick/cache behavior in the adapter and avoid multiple ticks per coordinator cycle.
 - **Gravity compensation correctness:** Incorrect model, joint signs, or offsets can push hardware unexpectedly. Mitigation: require mock/vcan and low-rate bring-up, document validation, and avoid position stiffness in gravity-only helper mode.
 

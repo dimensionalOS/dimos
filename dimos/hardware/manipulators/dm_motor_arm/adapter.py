@@ -39,18 +39,17 @@ class DMMotorBindingUnavailableError(RuntimeError):
     pass
 
 
-def _load_dm_control() -> tuple[ModuleType, ModuleType]:
+def _load_can_motor_control() -> tuple[ModuleType, ModuleType]:
     try:
-        dm_control = importlib.import_module("dm_control")
-        damiao = importlib.import_module("dm_control.damiao")
+        can_motor_control = importlib.import_module("can_motor_control")
+        damiao = importlib.import_module("can_motor_control.damiao")
     except ImportError as exc:
         raise DMMotorBindingUnavailableError(
-            "The selected 'dm_motor_arm' adapter requires the Rust-backed dm_control "
-            "Python binding in the active environment. Install/provide that binding "
-            "before selecting adapter_type='dm_motor_arm'; DimOS will not install it "
-            "automatically."
+            "The selected 'dm_motor_arm' adapter requires the Rust-backed "
+            "can-motor-control Python binding in the active environment. Install "
+            "dimos[manipulation] before selecting adapter_type='dm_motor_arm'."
         ) from exc
-    return dm_control, damiao
+    return can_motor_control, damiao
 
 
 def _resolve_motor_type(damiao: ModuleType, motor_type: str | int | Any) -> Any:
@@ -151,7 +150,7 @@ class DMMotorArm(DamiaoArmAdapterBase):
         self._tick_deadline_us = tick_deadline_us
         self._state_cache_ttl_s = state_cache_ttl_s
 
-        self._dm_control: ModuleType | None = None
+        self._can_motor_control: ModuleType | None = None
         self._damiao: ModuleType | None = None
         self._robot: Any = None
         self._arm: Any = None
@@ -184,13 +183,13 @@ class DMMotorArm(DamiaoArmAdapterBase):
 
     def connect(self) -> bool:
         try:
-            self._dm_control, self._damiao = _load_dm_control()
+            self._can_motor_control, self._damiao = _load_can_motor_control()
             self._robot = self._build_robot()
             self._robot.connect()
             self._arm = self._robot[self._arm_name]
             if len(self._arm) != self._dof:
                 raise RuntimeError(
-                    f"dm_control arm group {self._arm_name!r} has {len(self._arm)} joints, "
+                    f"can_motor_control arm group {self._arm_name!r} has {len(self._arm)} joints, "
                     f"expected {self._dof}"
                 )
             self._load_gravity_model()
@@ -207,21 +206,21 @@ class DMMotorArm(DamiaoArmAdapterBase):
         return True
 
     def _build_robot(self) -> Any:
-        assert self._dm_control is not None
+        assert self._can_motor_control is not None
         assert self._damiao is not None
         if self._config_path is not None:
-            return self._dm_control.Robot.from_config(self._config_path)
+            return self._can_motor_control.Robot.from_config(self._config_path)
 
         transport = (
-            self._dm_control.MockCanBus.new_fd(self._address)
+            self._can_motor_control.MockCanBus.new_fd(self._address)
             if self._use_mock_bus and self._fd
-            else self._dm_control.MockCanBus(self._address)
+            else self._can_motor_control.MockCanBus(self._address)
             if self._use_mock_bus
-            else self._dm_control.SocketCanBus(self._address, fd=self._fd)
+            else self._can_motor_control.SocketCanBus(self._address, fd=self._fd)
         )
         codec = self._damiao.DamiaoCodec()
         binding_specs = [
-            self._dm_control.MotorSpec(
+            self._can_motor_control.MotorSpec(
                 spec.name,
                 _resolve_motor_type(self._damiao, spec.type),
                 spec.send_id,
@@ -230,7 +229,7 @@ class DMMotorArm(DamiaoArmAdapterBase):
             for spec in self._motor_specs
         ]
         return (
-            self._dm_control.Robot.builder()
+            self._can_motor_control.Robot.builder()
             .add_bus(self._bus_name, transport, codec)
             .add_arm(self._arm_name, bus=self._bus_name, motors=binding_specs)
             .build()
@@ -270,7 +269,7 @@ class DMMotorArm(DamiaoArmAdapterBase):
             self._arm.torques().astype(float).tolist(),
         )
         if any(len(values) != self._dof for values in state):
-            raise RuntimeError("dm_control state length does not match configured DOF")
+            raise RuntimeError("can_motor_control state length does not match configured DOF")
         self._state_cache = state
         self._state_cache_time = time.monotonic()
         self._last_positions = list(state[0])

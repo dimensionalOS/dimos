@@ -22,7 +22,7 @@ Relevant surfaces include `dimos/hardware/manipulators/openarm/adapter.py`, `dim
 - Do not introduce a new runtime-configurable YAML/TOML sidecar schema for arbitrary users in this change.
 - Do not remove the existing `openarm` adapter registration.
 - Do not silently migrate all OpenArm blueprints to `dm_motor_arm`.
-- Do not add dependency installation or package-management changes for `dm_control`.
+- Do not build or vendor the Rust binding in DimOS; consume the published `can-motor-control` package through the manipulation extra.
 - Do not change the public ControlCoordinator stream contract or add new MCP/skill tools.
 - Do not implement ros2_control or transmission parsing.
 
@@ -36,7 +36,7 @@ ControlCoordinator
     -> manipulator adapter registry
       -> OpenArmAdapter or DMMotorArm
         -> shared Damiao base behavior
-          -> dm_control binding or existing OpenArm CAN bus path, depending on adapter path
+          -> can_motor_control binding or existing OpenArm CAN bus path, depending on adapter path
 ```
 
 The shared base should be an internal hardware-layer abstraction, not a new DimOS `Spec` Protocol. The public adapter contract remains `ManipulatorAdapter` from `dimos/hardware/manipulators/spec.py`. No new module streams, transports, or RPC injection contracts are required.

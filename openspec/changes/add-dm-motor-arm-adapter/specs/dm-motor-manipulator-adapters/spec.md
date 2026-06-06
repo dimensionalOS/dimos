@@ -2,21 +2,21 @@
 
 ### Requirement: DMMotor adapter selection
 
-DimOS SHALL provide an opt-in DMMotor manipulator adapter path for DMMotor/Damiao arms that uses the `dm_control` Python binding as its hardware API surface.
+DimOS SHALL provide an opt-in DMMotor manipulator adapter path for DMMotor/Damiao arms that uses the `can_motor_control` Python binding as its hardware API surface.
 
 #### Scenario: Selecting the DMMotor adapter
 - **GIVEN** a manipulator hardware configuration selects the DMMotor adapter type
-- **AND** the `dm_control` Python binding is available in the runtime environment
+- **AND** the `can_motor_control` Python binding is available in the runtime environment
 - **WHEN** the hardware is initialized
 - **THEN** DimOS SHALL create the DMMotor adapter through the manipulator adapter registry
 - **AND** the adapter SHALL use the Python binding rather than direct Rust crate calls.
 
 #### Scenario: Binding unavailable
 - **GIVEN** a manipulator hardware configuration selects the DMMotor adapter type
-- **AND** the `dm_control` Python binding is not importable
+- **AND** the `can_motor_control` Python binding is not importable
 - **WHEN** the hardware is initialized
 - **THEN** DimOS SHALL fail with an explicit error indicating that the Python binding is unavailable
-- **AND** DimOS SHALL NOT attempt to install dependencies automatically.
+- **AND** DimOS SHALL indicate that the binding is provided by the `dimos[manipulation]` extra on supported platforms.
 
 ### Requirement: DMMotor adapter lifecycle safety
 

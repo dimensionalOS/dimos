@@ -44,6 +44,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+can-motor-control = false
 dimos-viewer = false
 dimos-lcm = false
 lcm-dimos-fork = false
@@ -565,6 +566,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/42/18/94eaffda7b329535d91f00fe605ab1f1e5cd68b2074d03f255c7d250687d/build-1.4.0.tar.gz", hash = "sha256:f1b91b925aa322be454f8330c6fb48b465da993d1e7e7e6fa35027ec49f3c936", size = 50054, upload-time = "2026-01-08T16:41:47.696Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c5/0d/84a4380f930db0010168e0aa7b7a8fed9ba1835a8fbb1472bc6d0201d529/build-1.4.0-py3-none-any.whl", hash = "sha256:6a07c1b8eb6f2b311b96fcbdbce5dab5fe637ffda0fd83c9cac622e927501596", size = 24141, upload-time = "2026-01-08T16:41:46.453Z" },
+]
+
+[[package]]
+name = "can-motor-control"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'win32'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dd/8d/b028431070f11f0b075d9b07f43f16aa134fe0bf50198d5d453f3695be7f/can_motor_control-0.1.0.tar.gz", hash = "sha256:780b2db0757721533f320c679fd90c0465aabfc4b8fd88c614ce2075778870c9", size = 114951, upload-time = "2026-06-06T04:11:04.283Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/76/80/921e6e630d23f7fb98d22a0ce211b4d42c0c30f2f9a5bac749898bab6565/can_motor_control-0.1.0-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:23fb8bd812d34cc306a43efabb484a1bb452c8d89ecf09299d9ce827e2e33234", size = 509924, upload-time = "2026-06-06T04:11:02.666Z" },
 ]
 
 [[package]]
@@ -1908,6 +1922,7 @@ agents = [
 all = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "anthropic" },
+    { name = "can-motor-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "catkin-pkg" },
     { name = "cerebras-cloud-sdk" },
     { name = "ctransformers" },
@@ -2040,6 +2055,7 @@ drone = [
 ]
 manipulation = [
     { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "can-motor-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "kaleido" },
@@ -2336,6 +2352,7 @@ requires-dist = [
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "anthropic", marker = "extra == 'agents'", specifier = ">=0.19.0" },
     { name = "bleak", specifier = ">=3.0.2" },
+    { name = "can-motor-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'manipulation'", specifier = ">=0.1.0" },
     { name = "catkin-pkg", marker = "extra == 'misc'" },
     { name = "cerebras-cloud-sdk", marker = "extra == 'misc'" },
     { name = "colorlog", specifier = "==6.9.0" },

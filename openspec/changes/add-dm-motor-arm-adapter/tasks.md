@@ -1,10 +1,10 @@
 ## 1. Adapter Implementation
 
 - [x] 1.1 Create `dimos/hardware/manipulators/dm_motor_arm/adapter.py` with `DMMotorArm` implementing `ManipulatorAdapter`, registered as `dm_motor_arm`.
-- [x] 1.2 Add lazy `dm_control` Python binding import inside adapter construction/connect paths so registry discovery does not fail when the binding is absent.
+- [x] 1.2 Add lazy `can_motor_control` Python binding import inside adapter construction/connect paths so registry discovery does not fail when the binding is absent.
 - [x] 1.3 Implement DMMotor lifecycle methods for connect, disconnect, enable, disable, clear error, state reads, and supported position/effort command writes through the Python binding.
 - [x] 1.4 Implement adapter-owned tick/cache behavior so one DimOS state-read cycle returns coherent position, velocity, and effort values without independently ticking per field.
-- [x] 1.5 Implement binding-unavailable and lifecycle-error handling with explicit selected-adapter errors and no dependency installation attempts.
+- [x] 1.5 Implement binding-unavailable and lifecycle-error handling with explicit selected-adapter errors when `can_motor_control` is unavailable.
 - [x] 1.6 Add configuration support for binding robot construction from an existing binding TOML path and/or DimOS adapter kwargs, preserving DimOS joint ordering and defaulting CAN-FD on through `canfd=True`.
 - [x] 1.7 Preserve existing `openarm` adapter registration and behavior; do not migrate current OpenArm blueprints unless they explicitly opt into `dm_motor_arm`.
 
@@ -24,7 +24,7 @@
 
 ## 4. Tests
 
-- [x] 4.1 Add unit tests that adapter registry discovery includes `dm_motor_arm` without requiring top-level `dm_control` import success.
+- [x] 4.1 Add unit tests that adapter registry discovery includes `dm_motor_arm` without requiring top-level `can_motor_control` import success.
 - [x] 4.2 Add missing-binding tests showing selected DMMotor adapter use fails with a clear message and does not auto-install dependencies.
 - [x] 4.3 Add adapter lifecycle tests with a fake or mocked binding robot covering connect, enable, read, write, disable, and disconnect order.
 - [x] 4.4 Add tick/cache tests proving one DimOS state-read cycle does not call the binding tick once per position, velocity, and effort read.
@@ -34,7 +34,7 @@
 ## 5. Documentation
 
 - [x] 5.1 Update `docs/capabilities/manipulation/openarm_integration.md` to document the existing `openarm` adapter and new `dm_motor_arm` Python-binding path separately.
-- [x] 5.2 Document that this change does not install `dm_control`; users must provide the expected Python binding in the active environment.
+- [x] 5.2 Document that `dimos[manipulation]` installs `can-motor-control` on supported platforms and that selected adapter use fails clearly if `can_motor_control` is absent.
 - [x] 5.3 Document adapter-level gravity compensation, upstream OpenArm ROS2 gain presets, and position/effort-only command semantics.
 - [x] 5.4 Document staged bring-up: mock/vcan, one-motor validation, full-arm state monitor, gravity compensation, then trajectory-control validation.
 - [x] 5.5 Update contributor or coding-agent docs only if implementation introduces a reusable lazy optional binding adapter pattern.

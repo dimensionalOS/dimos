@@ -22,16 +22,16 @@ Every other arm in dimos wraps a vendor Python SDK:
 | Go2 / G1 | WebRTC | Unitree SDK |
 | Panda | FCI | `panda-py` |
 
-**OpenArm historically shipped no stable Python SDK.** The default `openarm` adapter still uses dimos' in-tree raw-CAN driver and remains the existing production path. It is now implemented as an explicit OpenArm subclass over shared Damiao metadata and gravity/validation helpers, so users still select `adapter_type="openarm"` for OpenArm hardware. DimOS also provides an opt-in `dm_motor_arm` adapter for environments that already provide the Rust-backed `dm_control` Python binding; this change does not install that binding.
+**OpenArm historically shipped no stable Python SDK.** The default `openarm` adapter still uses dimos' in-tree raw-CAN driver and remains the existing production path. It is now implemented as an explicit OpenArm subclass over shared Damiao metadata and gravity/validation helpers, so users still select `adapter_type="openarm"` for OpenArm hardware. DimOS also provides an opt-in `dm_motor_arm` adapter for environments that install the Rust-backed `can-motor-control` Python binding through the manipulation extra.
 
 ## Adapter paths
 
 | Adapter | Hardware API | Dependency expectation | Typical use |
 |---|---|---|---|
 | `openarm` | In-tree SocketCAN Damiao driver | `python-can` plus Pinocchio for gravity feed-forward | Existing OpenArm coordinator, planner, and teleop blueprints. |
-| `dm_motor_arm` | Rust-backed `dm_control` Python binding | Binding must already be importable in the active environment | DMMotor bring-up, binding-backed coordinator operation, and gravity-compensation-only validation. |
+| `dm_motor_arm` | Rust-backed `can-motor-control` Python binding | Install `dimos[manipulation]` so `can_motor_control` is importable | DMMotor bring-up, binding-backed coordinator operation, and gravity-compensation-only validation. |
 
-Selecting `dm_motor_arm` is explicit through blueprint or hardware config. Registry discovery remains available without `dm_control`; selecting the adapter fails with a clear missing-binding error if the package is absent. Future Damiao-based arms should subclass the shared Damiao adapter base with their own typed motor/gain/limit metadata instead of relying on OpenArm defaults.
+Selecting `dm_motor_arm` is explicit through blueprint or hardware config. Registry discovery remains available without `can_motor_control`; selecting the adapter fails with a clear missing-binding error if the package is absent. Future Damiao-based arms should subclass the shared Damiao adapter base with their own typed motor/gain/limit metadata instead of relying on OpenArm defaults.
 
 ## Architecture
 
@@ -142,7 +142,7 @@ dimos run openarm-planner-coordinator
 For the `dm_motor_arm` binding path, stage validation before trajectory control: binding mock or vcan, one motor enable/read, one motor low-rate hold, full-arm state monitor, adapter gravity compensation, then trajectory-control validation.
 
 ```bash
-# requires dm_control binding in the active environment
+# requires the can-motor-control binding from dimos[manipulation]
 sudo MODE=fd ./dimos/robot/manipulators/openarm/scripts/openarm_can_up.sh can0
 
 # read/trajectory coordinator: writes only after a task receives a command
