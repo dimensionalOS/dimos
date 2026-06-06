@@ -182,6 +182,20 @@ class DroneController:
     def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         return self._input_controller.get_command().astype(np.float32)
     
+    def quaternion_to_euler(self, qw: float, qx: float, qy: float, qz: float) -> tuple[float, float, float]:
+        sinr_cosp = 2 * (qw * qx + qy * qz)
+        cosr_cosp = 1 - 2 * (qx * qx + qy * qy)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
+
+        sinp = 2 * (qw * qy - qz * qx)
+        pitch = np.arcsin(np.clip(sinp, -1.0, 1.0))
+        
+        siny_cosp = 2 * (qw * qz + qx * qy)
+        cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
+        yaw = np.arctan2(siny_cosp, cosy_cosp)
+
+        return roll, pitch, yaw
+
     def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
         command = self._input_controller.get_command()
 
@@ -192,16 +206,7 @@ class DroneController:
         qw, qx, qy, qz = data.qpos[3:7]
 
         # Quaternion to Euler 
-        sinr_cosp = 2 * (qw * qx + qy * qz)
-        cosr_cosp = 1 - 2 * (qx * qx + qy * qy)
-        current_roll = np.arctan2(sinr_cosp, cosr_cosp)
-
-        sinp = 2 * (qw * qy - qz * qx)
-        current_pitch = np.arcsin(np.clip(sinp, -1.0, 1.0))
-        
-        siny_cosp = 2 * (qw * qz + qx * qy)
-        cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
-        current_yaw = np.arctan2(siny_cosp, cosy_cosp)
+        current_roll, current_pitch, current_yaw = self.quaternion_to_euler(qw, qx, qy, qz)
 
         roll_rate = data.qvel[3]
         pitch_rate = data.qvel[4]
