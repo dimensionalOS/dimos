@@ -78,15 +78,15 @@
       {
         "group": "Agents",
         "pages": [
-          "agents/index",
-          "agents/style",
-          "agents/testing",
+          "coding-agents/index",
+          "coding-agents/style",
+          "coding-agents/testing",
           {
             "group": "Authoring agent docs",
             "pages": [
-              "agents/docs/index",
-              "agents/docs/codeblocks",
-              "agents/docs/doclinks"
+              "coding-agents/docs/index",
+              "coding-agents/docs/codeblocks",
+              "coding-agents/docs/doclinks"
             ]
           }
         ]
@@ -129,7 +129,8 @@
           {
             "group": "Quadruped",
             "pages": [
-              "platforms/quadruped/go2/index"
+              "platforms/quadruped/go2/index",
+              "platforms/quadruped/go2/local_wifi_teleop_troubleshooting"
             ]
           },
           {
