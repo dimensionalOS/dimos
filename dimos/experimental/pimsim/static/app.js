@@ -627,13 +627,33 @@ function placeMarker(existingMarker, name, position, material, diameter) {
 function updateKeyboardCamera() {
   const deltaSeconds = Math.min(engine.getDeltaTime() / 1000, 0.05);
 
-  // IJKL orbits the view (works while driving too). J/L = left/right,
-  // I/K = up/down.
+  // IJKL free-looks from the camera's own position (pan the view direction),
+  // not an orbit around the target. J/L = left/right, I/K = up/down. Works
+  // while driving too.
   const lookRate = 1.7 * deltaSeconds;
-  if (pressedKeys.has("j")) camera.alpha += lookRate;
-  if (pressedKeys.has("l")) camera.alpha -= lookRate;
-  if (pressedKeys.has("i")) camera.beta = Math.max(0.05, camera.beta - lookRate);
-  if (pressedKeys.has("k")) camera.beta = Math.min(Math.PI - 0.05, camera.beta + lookRate);
+  let yawLook = 0;
+  let pitchLook = 0;
+  if (pressedKeys.has("j")) yawLook += lookRate;
+  if (pressedKeys.has("l")) yawLook -= lookRate;
+  if (pressedKeys.has("i")) pitchLook += lookRate;
+  if (pressedKeys.has("k")) pitchLook -= lookRate;
+  if (yawLook !== 0 || pitchLook !== 0) {
+    const lookUp = new BABYLON.Vector3(0, 0, 1);
+    const eye = camera.position.clone();
+    const distance = Math.max(0.001, BABYLON.Vector3.Distance(eye, camera.target));
+    let forward = camera.target.subtract(eye).normalize();
+    if (yawLook !== 0) {
+      forward = BABYLON.Vector3.TransformNormal(forward, BABYLON.Matrix.RotationAxis(lookUp, yawLook));
+    }
+    if (pitchLook !== 0) {
+      const lookRight = BABYLON.Vector3.Cross(forward, lookUp).normalize();
+      forward = BABYLON.Vector3.TransformNormal(forward, BABYLON.Matrix.RotationAxis(lookRight, pitchLook));
+    }
+    // Clamp pitch so we never flip past straight up/down.
+    forward.z = Math.max(-0.97, Math.min(0.97, forward.z));
+    forward.normalize();
+    camera.setTarget(eye.add(forward.scale(distance)));
+  }
 
   if (driveEnabled) return;
   const speed = (pressedKeys.has("shift") ? 8.0 : 2.7) * deltaSeconds;
