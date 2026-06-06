@@ -55,6 +55,7 @@ drone_primitive_no_nav = (
     .global_config(n_workers=4, robot_model="drone", mujoco_room="empty")
     .transports(
         {
+            ("tele_cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
             ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
         }
