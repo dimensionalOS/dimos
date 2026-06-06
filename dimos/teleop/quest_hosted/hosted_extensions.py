@@ -25,9 +25,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.teleop.quest.quest_teleop_module import Hand
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
 from dimos.teleop.quest_hosted.hosted_teleop_module import (
+    Hand,
     HostedTeleopConfig,
     HostedTeleopModule,
 )

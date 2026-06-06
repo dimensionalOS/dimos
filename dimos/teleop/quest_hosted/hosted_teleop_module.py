@@ -28,6 +28,7 @@ from typing import Any
 from aiortc import (
     RTCBundlePolicy,
     RTCConfiguration,
+    RTCDataChannel,
     RTCIceServer,
     RTCPeerConnection,
     RTCSessionDescription,
@@ -117,11 +118,11 @@ class HostedTeleopModule(Module):
 
         # All three datachannels are negotiated; SCTP ids come from the broker
         # heartbeat ack (so they're None until an operator joins).
-        self._cmd_channel = None
+        self._cmd_channel: RTCDataChannel | None = None
         self._cmd_channel_id: int | None = None
-        self._state_channel = None
+        self._state_channel: RTCDataChannel | None = None
         self._state_channel_id: int | None = None
-        self._state_back_channel = None
+        self._state_back_channel: RTCDataChannel | None = None
         self._state_back_channel_id: int | None = None
 
         self._video_track = CameraVideoTrack()

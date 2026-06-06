@@ -113,7 +113,7 @@ def _read_all(store: SqliteStore) -> dict[str, list[Any]]:
         if name not in available:
             out[name] = []
             continue
-        stream = store.stream(name, msg_type)
+        stream: Any = store.stream(name, msg_type)
         # Stream.__iter__ yields Observation[T]; we want (ts, payload) so the
         # stats math (which reads .ts / .seq on the payload) matches what the
         # benchmark module did with in-memory msgs.
