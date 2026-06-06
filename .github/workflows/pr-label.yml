@@ -1,0 +1,62 @@
+name: pr-label
+
+# Adds/removes `ready-to-merge` based on the `ci-complete` check-run (which is
+# what branch protection gates on). Re-evaluates on a new push too, so a stale
+# label is cleared before the new run finishes.
+#
+# Runs on the default branch via these events, so the GITHUB_TOKEN is
+# write-scoped even for PRs from forks.
+
+on:
+  check_run:
+    types: [completed]
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  ready-to-merge:
+    if: github.event_name == 'pull_request_target' || github.event.check_run.name == 'ci-complete'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write  # To add/remove label
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'ready-to-merge';
+            const { owner, repo } = context.repo;
+            const payload = context.payload;
+
+            let sha, prNumber;
+            if (context.eventName === 'pull_request_target') {
+              sha = payload.pull_request.head.sha;
+              prNumber = payload.pull_request.number;
+            } else {
+              sha = payload.check_run.head_sha;
+              const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner, repo, commit_sha: sha,
+              });
+              prNumber = prs.find(p => p.state === 'open')?.number;
+              if (!prNumber) return;
+            }
+
+            const { data: { check_runs } } = await github.rest.checks.listForRef({
+              owner, repo, ref: sha, check_name: 'ci-complete',
+            });
+            const ciOk = check_runs[0]?.conclusion === 'success';
+
+            if (ciOk) {
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: prNumber, labels: [label],
+              });
+            } else {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner, repo, issue_number: prNumber, name: label,
+                });
+              } catch (e) {
+                if (e.status !== 404) throw e;
+              }
+            }

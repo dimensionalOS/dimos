@@ -87,7 +87,7 @@ classifiers = [
 
 dependencies = [
     # Transport Protocols
-    "dimos-lcm",
+    "dimos-lcm>=0.1.3",
     "PyTurboJPEG==1.8.2",
     # Core
     "numpy>=1.26.4",
@@ -239,7 +239,7 @@ unitree-dds = [
     "dimos[unitree]",
     "unitree-sdk2py-dimos>=1.0.2",
     "cyclonedds>=0.10.5",
-    "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2dds store)
+    "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
 manipulation = [
@@ -425,7 +425,7 @@ lint = [
 tests-self-hosted = [
     {include-group = "tests"},
     "dimos[agents,perception,manipulation,sim,unitree,misc]",
-    # go2dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
+    # go2 dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
     # pulls `cyclonedds`, whose wheel needs a CycloneDDS C lib the ros-dev image
     # doesn't expose to the build — and these tests never open a live DDS link.
     "mcap>=1.2.0",
@@ -437,7 +437,7 @@ tests-self-hosted = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false }
+exclude-newer-package = { dimos-viewer = false, pyrealsense2-extended = false, dimos-lcm = false, lcm-dimos-fork = false }
 override-dependencies = [
     # moondream pins pillow<11 but we need >=12.2.0 for security fixes
     # (CVE-2026-25990, CVE-2026-40192, CVE-2026-42311).
@@ -578,7 +578,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or self_hosted or mujoco or dimsim)'"
+addopts = "--dist=loadfile --durations=10 --timeout=600 --timeout-method=thread -v -ra --showlocals --cov-report=xml -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or self_hosted or mujoco or self_hosted_large)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
