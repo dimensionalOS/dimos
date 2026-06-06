@@ -198,7 +198,7 @@ def _lfs_pull(file_path: Path, repo_root: Path, *, retries: int = 2) -> None:
     env["GIT_LFS_FORCE_PROGRESS"] = "1"
 
     last_err: subprocess.CalledProcessError | None = None
-    for attempt in range(1, retries + 2):  # retries + 1 total attempts
+    for attempt in range(1, retries + 2):  # retries + 1 total attempts  # run 5
         try:
             subprocess.run(
                 ["git", "lfs", "pull", "--include", str(relative_path)],
