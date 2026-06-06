@@ -74,6 +74,24 @@ _RERUN_EYE = os.getenv("DIMOS_RERUN_EYE", "2.0,-2.5,5.0")
 _RERUN_TARGET = os.getenv("DIMOS_RERUN_TARGET", "1.0,2.0,0.2")
 
 
+# Per-scene robot spawn (x, y, yaw). Big cooked scenes have nothing at the map
+# origin, so the robot (and its camera) spawn in a bad spot; this drops it on an
+# open road facing down a street instead. Override any scene with
+# DIMOS_PIMSIM_SPAWN="x,y[,yaw]".
+_SCENE_SPAWNS = {
+    "cyberpunk_city": (90.0, 35.0, 2.094),
+}
+
+
+def _resolve_spawn(package: Any) -> tuple[float, float, float]:
+    override = os.getenv("DIMOS_PIMSIM_SPAWN")
+    if override:
+        parts = [float(value) for value in override.split(",")]
+        return (parts[0], parts[1], parts[2] if len(parts) > 2 else 0.0)
+    package_name = getattr(package.package_dir, "name", "")
+    return _SCENE_SPAWNS.get(package_name, (0.0, 0.0, 0.0))
+
+
 def build_babylon_sim(scene: str | None = None) -> Blueprint:
     """Box-proxy viewer + rust lidar on a cooked scene (name or scene.meta.json)."""
     package = resolve_scene_package(scene or DEFAULT_SCENE)
@@ -82,6 +100,7 @@ def build_babylon_sim(scene: str | None = None) -> Blueprint:
             f"babylon sim needs scene {scene or DEFAULT_SCENE!r} cooked with a "
             "browser collision mesh (python -m dimos.simulation.scene_assets.cook ...)."
         )
+    spawn_x, spawn_y, spawn_yaw = _resolve_spawn(package)
 
     viewer = BabylonSceneViewerModule.blueprint(
         mjcf_path=_PROXY_MJCF,
@@ -98,6 +117,9 @@ def build_babylon_sim(scene: str | None = None) -> Blueprint:
         step_offset=0.10,
         support_floor=True,
         lock_z=True,
+        init_x=spawn_x,
+        init_y=spawn_y,
+        init_yaw=spawn_yaw,
     ).transports(
         {
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),

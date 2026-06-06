@@ -2509,6 +2509,202 @@ if (_camFull) {
   _camFull.onclick = () => setCamSize(_robotCamPanel.dataset.size === "full" ? "pip" : "full");
 }
 setRobotCam(true);
+
+// --- map markers: right-click a surface to drop a named, downloadable point ---
+const markers = [];
+let pendingMarkerPoint = null;
+let pendingMarkerScreen = { x: 0, y: 0 };
+
+const markerArrowMaterial = new BABYLON.StandardMaterial("markerArrowMat", scene);
+markerArrowMaterial.emissiveColor = new BABYLON.Color3(0.27, 0.88, 1.0);
+markerArrowMaterial.diffuseColor = new BABYLON.Color3(0.05, 0.15, 0.2);
+markerArrowMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
+
+const contextMenu = document.getElementById("contextMenu");
+const markerInputBox = document.getElementById("markerInput");
+const markerNameInput = document.getElementById("markerNameInput");
+const markerCountEl = document.getElementById("markerCount");
+
+function hideContextMenu() {
+  if (contextMenu) contextMenu.dataset.open = "false";
+}
+
+function hideMarkerInput() {
+  if (markerInputBox) markerInputBox.dataset.open = "false";
+  pendingMarkerPoint = null;
+}
+
+// Raycast the cursor to the first real surface; fall back to the ground plane.
+function pickSurfacePoint(screenX, screenY) {
+  const hit = scene.pick(
+    screenX,
+    screenY,
+    (mesh) =>
+      mesh.isPickable &&
+      mesh.isEnabled() &&
+      !mesh.name.startsWith("robot") &&
+      !mesh.name.startsWith("marker:"),
+    false,
+    camera,
+  );
+  if (hit && hit.hit && hit.pickedPoint) return hit.pickedPoint.clone();
+  const ray = scene.createPickingRay(screenX, screenY, BABYLON.Matrix.Identity(), camera);
+  if (Math.abs(ray.direction.z) < 1e-6) return null;
+  const t = -ray.origin.z / ray.direction.z;
+  if (t < 0) return null;
+  return ray.origin.add(ray.direction.scale(t));
+}
+
+function nextMarkerName() {
+  let highest = 0;
+  for (const marker of markers) {
+    const match = /^marker_(\d+)$/.exec(marker.name);
+    if (match) highest = Math.max(highest, parseInt(match[1], 10));
+  }
+  return `marker_${highest + 1}`;
+}
+
+function makeMarkerLabel(text, parent, height) {
+  const plane = BABYLON.MeshBuilder.CreatePlane(`marker:${text}:label`, { width: 4, height: 1 }, scene);
+  plane.parent = parent;
+  plane.position.set(0, 0, height);
+  plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+  plane.isPickable = false;
+  const texture = new BABYLON.DynamicTexture(
+    `marker:${text}:dt`,
+    { width: 512, height: 128 },
+    scene,
+    true,
+  );
+  texture.hasAlpha = true;
+  texture.drawText(text, null, 92, "bold 64px monospace", "#8af2ff", "transparent", true);
+  const material = new BABYLON.StandardMaterial(`marker:${text}:lmat`, scene);
+  material.diffuseTexture = texture;
+  material.opacityTexture = texture;
+  material.emissiveColor = new BABYLON.Color3(1, 1, 1);
+  material.specularColor = new BABYLON.Color3(0, 0, 0);
+  material.backFaceCulling = false;
+  plane.material = material;
+  return plane;
+}
+
+// A downward arrow whose tip sits exactly on the clicked point.
+function createMarkerArrow(name, point) {
+  const root = new BABYLON.TransformNode(`marker:${name}`, scene);
+  root.position.copyFrom(point);
+  const headHeight = 1.6;
+  const shaftHeight = 3.2;
+  const head = BABYLON.MeshBuilder.CreateCylinder(
+    `marker:${name}:head`,
+    { height: headHeight, diameterBottom: 0, diameterTop: 1.0, tessellation: 18 },
+    scene,
+  );
+  head.material = markerArrowMaterial;
+  head.isPickable = false;
+  head.parent = root;
+  head.rotation.x = Math.PI / 2;
+  head.position.set(0, 0, headHeight / 2);
+  const shaft = BABYLON.MeshBuilder.CreateCylinder(
+    `marker:${name}:shaft`,
+    { height: shaftHeight, diameter: 0.3, tessellation: 14 },
+    scene,
+  );
+  shaft.material = markerArrowMaterial;
+  shaft.isPickable = false;
+  shaft.parent = root;
+  shaft.rotation.x = Math.PI / 2;
+  shaft.position.set(0, 0, headHeight + shaftHeight / 2);
+  makeMarkerLabel(name, root, headHeight + shaftHeight + 0.9);
+  return root;
+}
+
+function addMarker(name, point) {
+  const root = createMarkerArrow(name, point);
+  markers.push({ name, x: point.x, y: point.y, z: point.z, root });
+  if (markerCountEl) markerCountEl.textContent = String(markers.length);
+  if (ui.appendLog) {
+    ui.appendLog(`marker ${name} @ ${point.x.toFixed(2)}, ${point.y.toFixed(2)}, ${point.z.toFixed(2)}`);
+  }
+}
+
+if (canvas) {
+  canvas.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    pendingMarkerPoint = pickSurfacePoint(event.clientX - rect.left, event.clientY - rect.top);
+    pendingMarkerScreen = { x: event.clientX, y: event.clientY };
+    if (!contextMenu) return;
+    contextMenu.style.left = `${event.clientX}px`;
+    contextMenu.style.top = `${event.clientY}px`;
+    contextMenu.dataset.open = "true";
+  });
+}
+window.addEventListener("click", hideContextMenu);
+
+const ctxPlaceMarker = document.getElementById("ctxPlaceMarker");
+if (ctxPlaceMarker) {
+  ctxPlaceMarker.onclick = (event) => {
+    event.stopPropagation();
+    hideContextMenu();
+    if (!pendingMarkerPoint || !markerInputBox) return;
+    markerNameInput.value = nextMarkerName();
+    markerInputBox.style.left = `${pendingMarkerScreen.x}px`;
+    markerInputBox.style.top = `${pendingMarkerScreen.y}px`;
+    markerInputBox.dataset.open = "true";
+    markerNameInput.focus();
+    markerNameInput.select();
+  };
+}
+
+function commitMarker() {
+  if (pendingMarkerPoint) {
+    const name = (markerNameInput.value || nextMarkerName()).trim() || nextMarkerName();
+    addMarker(name, pendingMarkerPoint);
+  }
+  hideMarkerInput();
+}
+
+if (markerNameInput) {
+  // Keep typing (esp. w/a/s/d) out of the global drive/keycap handlers.
+  markerNameInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitMarker();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      hideMarkerInput();
+    }
+    event.stopPropagation();
+  });
+  markerNameInput.addEventListener("keyup", (event) => event.stopPropagation());
+}
+document.getElementById("markerSave")?.addEventListener("click", commitMarker);
+document.getElementById("markerCancel")?.addEventListener("click", hideMarkerInput);
+
+document.getElementById("downloadMarkers")?.addEventListener("click", () => {
+  const payload = {
+    frame: "world",
+    markers: markers.map((marker) => ({
+      name: marker.name,
+      x: Number(marker.x.toFixed(4)),
+      y: Number(marker.y.toFixed(4)),
+      z: Number(marker.z.toFixed(4)),
+    })),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "markers.json";
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById("clearMarkers")?.addEventListener("click", () => {
+  for (const marker of markers) marker.root.dispose(false, true);
+  markers.length = 0;
+  if (markerCountEl) markerCountEl.textContent = "0";
+});
 document.getElementById("navClick").onclick = () => setClickMode("nav");
 document.getElementById("pointClick").onclick = () => setClickMode("point");
 document.getElementById("spawnClick").onclick = () => setClickMode("spawn");

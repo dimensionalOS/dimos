@@ -145,6 +145,15 @@ limitations under the License.
           </div>
         </section>
 
+        <section class="sheet-group">
+          <div class="group-title">Markers (<span id="markerCount">0</span>)</div>
+          <div class="chip-grid">
+            <button id="downloadMarkers" class="chip" type="button">Download JSON</button>
+            <button id="clearMarkers" class="chip" type="button">Clear</button>
+          </div>
+          <div class="group-hint">Right-click the scene → Place Marker</div>
+        </section>
+
         <section class="sheet-group sheet-group-ultrawide">
           <div class="group-title">Log</div>
           <div class="log-list" id="sessionLog">
@@ -175,6 +184,21 @@ limitations under the License.
         </div>
       </div>
     </aside>
+
+    <!-- Right-click context menu (positioned at the cursor by app.js). -->
+    <div class="context-menu sci-fi" id="contextMenu" data-open="false">
+      <button class="ctx-item" id="ctxPlaceMarker" type="button">Place Marker</button>
+    </div>
+
+    <!-- Marker name prompt (shown after Place Marker). -->
+    <div class="marker-input sci-fi" id="markerInput" data-open="false">
+      <label for="markerNameInput">Marker name</label>
+      <input id="markerNameInput" type="text" spellcheck="false" autocomplete="off" />
+      <div class="marker-input-row">
+        <button class="cam-btn" id="markerCancel" type="button">Cancel</button>
+        <button class="cam-btn primary" id="markerSave" type="button">Place</button>
+      </div>
+    </div>
 
     <script type="module" src="/static/lcm_client.js"></script>
     <script src="/static/ui.js"></script>
