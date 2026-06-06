@@ -90,6 +90,12 @@ def test_check_robot_reports_discovered_mismatch(monkeypatch):
 
 
 def test_check_ports_classifies_lan_and_localhost(monkeypatch):
+    connectable_ports: list[int] = []
+
+    def fake_connectable_hosts(port: int, hosts: list[str], timeout: float = 0.15) -> list[str]:
+        connectable_ports.append(port)
+        return []
+
     endpoints = [
         go2_doctor.UiEndpoint("Command center", 7779, "http"),
         go2_doctor.UiEndpoint("Phone teleop", 8444, "https"),
@@ -98,19 +104,12 @@ def test_check_ports_classifies_lan_and_localhost(monkeypatch):
     monkeypatch.setattr(
         go2_doctor,
         "_tcp_listeners",
-        lambda: {
+        lambda required_ports=None: {
             7779: ["0.0.0.0"],
             8444: ["127.0.0.1"],
         },
     )
-    monkeypatch.setattr(
-        go2_doctor,
-        "_connectable_hosts",
-        lambda port, hosts, timeout=0.15: {
-            7779: ["192.168.0.105"],
-            8444: ["127.0.0.1"],
-        }.get(port, []),
-    )
+    monkeypatch.setattr(go2_doctor, "_connectable_hosts", fake_connectable_hosts)
 
     checks = {check.port: check for check in go2_doctor.check_ports(endpoints)}
 
@@ -119,11 +118,20 @@ def test_check_ports_classifies_lan_and_localhost(monkeypatch):
     assert checks[8444].level is go2_doctor.CheckLevel.WARN
     assert checks[8444].lan_reachable is False
     assert checks[12345].listening is False
+    assert checks[12345].lan_reachable is None
+    assert checks[12345].message == (
+        "listener not detected; bind address unavailable and local probes did not connect"
+    )
+    assert connectable_ports == [12345]
 
 
 def test_check_ports_trusts_lan_bind_even_when_local_tcp_probe_fails(monkeypatch):
     endpoints = [go2_doctor.UiEndpoint("Command center", 7779, "http")]
-    monkeypatch.setattr(go2_doctor, "_tcp_listeners", lambda: {7779: ["0.0.0.0"]})
+    monkeypatch.setattr(
+        go2_doctor,
+        "_tcp_listeners",
+        lambda required_ports=None: {7779: ["0.0.0.0"]},
+    )
     monkeypatch.setattr(go2_doctor, "_connectable_hosts", lambda port, hosts, timeout=0.15: [])
 
     check = go2_doctor.check_ports(endpoints, probe_hosts=["127.0.0.1"])[0]
@@ -138,6 +146,52 @@ def test_parse_lsof_tcp_listener_normalizes_wildcard():
     line = "Python  10190 user  28u IPv4 0x0 0t0 TCP *:7779 (LISTEN)"
 
     assert go2_doctor._parse_lsof_tcp_listener(line) == ("0.0.0.0", 7779)
+
+
+def test_tcp_listeners_merges_lsof_when_required_ports_are_missing(monkeypatch):
+    class FakeAddress:
+        ip = "127.0.0.1"
+        port = 7779
+
+    class FakeConnection:
+        status = go2_doctor.psutil.CONN_LISTEN
+        laddr = FakeAddress()
+
+    monkeypatch.setattr(go2_doctor.psutil, "net_connections", lambda kind: [FakeConnection()])
+    monkeypatch.setattr(
+        go2_doctor,
+        "_lsof_tcp_listeners",
+        lambda: {
+            7779: ["0.0.0.0"],
+            8444: ["0.0.0.0"],
+        },
+    )
+
+    listeners = go2_doctor._tcp_listeners(required_ports=[7779, 8444])
+
+    assert listeners == {
+        7779: ["0.0.0.0", "127.0.0.1"],
+        8444: ["0.0.0.0"],
+    }
+
+
+def test_tcp_listeners_skips_lsof_when_required_ports_are_present(monkeypatch):
+    class FakeAddress:
+        ip = "0.0.0.0"
+        port = 7779
+
+    class FakeConnection:
+        status = go2_doctor.psutil.CONN_LISTEN
+        laddr = FakeAddress()
+
+    monkeypatch.setattr(go2_doctor.psutil, "net_connections", lambda kind: [FakeConnection()])
+    monkeypatch.setattr(
+        go2_doctor,
+        "_lsof_tcp_listeners",
+        lambda: (_ for _ in ()).throw(AssertionError("lsof should not be called")),
+    )
+
+    assert go2_doctor._tcp_listeners(required_ports=[7779]) == {7779: ["0.0.0.0"]}
 
 
 def test_check_image_receives_frame_and_cleans_up(monkeypatch):

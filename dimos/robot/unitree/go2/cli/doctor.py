@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, replace
 from enum import Enum
 import ipaddress
@@ -258,7 +259,7 @@ def check_ports(
     *,
     probe_hosts: list[str] | None = None,
 ) -> list[PortCheck]:
-    listeners = _tcp_listeners()
+    listeners = _tcp_listeners(endpoint.port for endpoint in endpoints)
     hosts = probe_hosts or ["127.0.0.1"]
     return [
         _check_port(endpoint, listeners.get(endpoint.port, []), probe_hosts=hosts)
@@ -448,11 +449,13 @@ def suggested_urls(interfaces: list[LocalInterface], ports: list[PortCheck]) -> 
         return []
 
     preferred = [i for i in interfaces if i.matches_robot_subnet] or interfaces
+    command_accessible = command is not None and _port_lan_accessible(command)
+    phone_accessible = phone is not None and _port_lan_accessible(phone)
     urls: list[str] = []
     for iface in preferred:
-        if command is not None and _port_lan_accessible(command):
+        if command_accessible:
             urls.append(f"http://{iface.ip}:{COMMAND_CENTER_PORT}/command-center")
-        if phone is not None and _port_lan_accessible(phone):
+        if phone_accessible:
             urls.append(f"https://{iface.ip}:{PHONE_TELEOP_PORT}/teleop")
     return urls
 
@@ -526,12 +529,13 @@ def _run_check_from_entry(entry: RunEntry) -> RunCheck:
     )
 
 
-def _tcp_listeners() -> dict[int, list[str]]:
+def _tcp_listeners(required_ports: Iterable[int] | None = None) -> dict[int, list[str]]:
+    required = set(required_ports or [])
     listeners: dict[int, set[str]] = {}
     try:
         connections = psutil.net_connections(kind="tcp")
     except (OSError, psutil.Error):
-        return _lsof_tcp_listeners()
+        connections = []
 
     for conn in connections:
         if conn.status != psutil.CONN_LISTEN or not conn.laddr:
@@ -542,8 +546,9 @@ def _tcp_listeners() -> dict[int, list[str]]:
             continue
         listeners.setdefault(int(port), set()).add(str(host))
 
-    if not listeners:
-        return _lsof_tcp_listeners()
+    if not listeners or any(port not in listeners for port in required):
+        for port, hosts in _lsof_tcp_listeners().items():
+            listeners.setdefault(port, set()).update(hosts)
     return {port: sorted(hosts) for port, hosts in listeners.items()}
 
 
@@ -581,8 +586,8 @@ def _check_port(
             port=endpoint.port,
             listening=False,
             bind_hosts=[],
-            lan_reachable=False,
-            message="not listening",
+            lan_reachable=None,
+            message="listener not detected; bind address unavailable and local probes did not connect",
         )
 
     lan_reachable = any(_host_is_lan_reachable(host) for host in bind_hosts)
