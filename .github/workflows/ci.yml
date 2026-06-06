@@ -194,12 +194,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Import Codecov GPG key
-        # The codecov-action wrapper's own key download from keybase.io is
-        # broken (404), failing signature verification of the codecov CLI.
-        # Pre-seeding the key into the default keyring keeps verification
-        # working. See codecov/codecov-action#1876.
-        run: gpg --import .github/codecov-pgp_keys.asc
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -246,12 +240,21 @@ jobs:
           files: ./coverage.xml
           flags: OS-${{ matrix.os }},Py-${{ matrix.pyver }}
           use_oidc: true
+          # Install the CLI from PyPI (pinned) instead of cli.codecov.io:
+          # the GPG key for the default download path is served from a dead
+          # keybase.io URL, failing every upload. See
+          # codecov/codecov-action#1955 and #2398.
+          use_pypi: true
+          version: "11.2.8"
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v6
         with:
           report_type: test_results
           use_oidc: true
+          # See the "Upload coverage" step above.
+          use_pypi: true
+          version: "11.2.8"
 
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
@@ -300,12 +303,6 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
           git clean -ffdx
-      - name: Import Codecov GPG key
-        # The codecov-action wrapper's own key download from keybase.io is
-        # broken (404), failing signature verification of the codecov CLI.
-        # Pre-seeding the key into the default keyring keeps verification
-        # working. See codecov/codecov-action#1876.
-        run: gpg --import .github/codecov-pgp_keys.asc
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -351,12 +348,21 @@ jobs:
           files: ./coverage.xml
           flags: SelfHosted-${{ matrix.os }}
           use_oidc: true
+          # Install the CLI from PyPI (pinned) instead of cli.codecov.io:
+          # the GPG key for the default download path is served from a dead
+          # keybase.io URL, failing every upload. See
+          # codecov/codecov-action#1955 and #2398.
+          use_pypi: true
+          version: "11.2.8"
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v6
         with:
           report_type: test_results
           use_oidc: true
+          # See the "Upload coverage" step above.
+          use_pypi: true
+          version: "11.2.8"
       - name: Check disk space
         if: failure()
         run: |
@@ -390,12 +396,6 @@ jobs:
         run: |
           sudo git config --global --add safe.directory '*'
           sudo git clean -ffdx
-      - name: Import Codecov GPG key
-        # The codecov-action wrapper's own key download from keybase.io is
-        # broken (404), failing signature verification of the codecov CLI.
-        # Pre-seeding the key into the default keyring keeps verification
-        # working. See codecov/codecov-action#1876.
-        run: gpg --import .github/codecov-pgp_keys.asc
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -446,12 +446,21 @@ jobs:
           files: ./coverage.xml
           flags: SelfHosted-Large
           use_oidc: true
+          # Install the CLI from PyPI (pinned) instead of cli.codecov.io:
+          # the GPG key for the default download path is served from a dead
+          # keybase.io URL, failing every upload. See
+          # codecov/codecov-action#1955 and #2398.
+          use_pypi: true
+          version: "11.2.8"
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v6
         with:
           report_type: test_results
           use_oidc: true
+          # See the "Upload coverage" step above.
+          use_pypi: true
+          version: "11.2.8"
       - name: Check disk space
         if: failure()
         run: |
@@ -496,16 +505,15 @@ jobs:
           self-hosted-tests
           self-hosted-large-tests
         jobs: ${{ toJSON(needs) }}
-    - name: Import Codecov GPG key
-      # Same workaround as in the test jobs, but this job has no checkout, so
-      # fetch the vendored key by commit SHA. See codecov/codecov-action#1876.
-      run: |
-        curl -sSf --retry 5 --retry-all-errors \
-          "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/.github/codecov-pgp_keys.asc" \
-          | gpg --import
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v6
       with:
         run_command: send-notifications
         use_oidc: true
         fail_ci_if_error: true
+        # Install the CLI from PyPI (pinned) instead of cli.codecov.io:
+        # the GPG key for the default download path is served from a dead
+        # keybase.io URL, failing every upload. See
+        # codecov/codecov-action#1955 and #2398.
+        use_pypi: true
+        version: "11.2.8"
