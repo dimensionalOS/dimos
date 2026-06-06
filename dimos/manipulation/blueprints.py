@@ -558,6 +558,8 @@ xarm_perception_agent = autoconnect(
 # Panda + VAMP planner with mock coordinator (standalone, no hardware needed)
 # Usage: dimos run panda-vamp-planner
 # Plans with VAMP SIMD-accelerated planner, visualizes via meshcat.
+_PANDA_HOME_JOINTS = [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
+
 panda_vamp_planner = autoconnect(
     ManipulationModule.blueprint(
         robots=[_make_panda_config("panda", joint_prefix="arm_", coordinator_task="traj_arm")],
@@ -575,6 +577,7 @@ panda_vamp_planner = autoconnect(
                 hardware_type=HardwareType.MANIPULATOR,
                 joints=make_joints("arm", 7),
                 adapter_type="mock",
+                adapter_kwargs={"initial_positions": _PANDA_HOME_JOINTS},
             ),
         ],
         tasks=[

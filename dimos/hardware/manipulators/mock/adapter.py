@@ -46,9 +46,18 @@ class MockAdapter:
     - Development without physical robot
     """
 
-    def __init__(self, dof: int = 6, **_: object) -> None:
+    def __init__(
+        self, dof: int = 6, initial_positions: list[float] | None = None, **_: object
+    ) -> None:
         self._dof = dof
-        self._positions = [0.0] * dof
+        if initial_positions is not None:
+            if len(initial_positions) != dof:
+                raise ValueError(
+                    f"initial_positions has {len(initial_positions)} values but dof={dof}"
+                )
+            self._positions = list(initial_positions)
+        else:
+            self._positions = [0.0] * dof
         self._velocities = [0.0] * dof
         self._efforts = [0.0] * dof
         self._enabled = False

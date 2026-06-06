@@ -40,7 +40,7 @@ from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import PlanningResult, WorldRobotID
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -260,7 +260,9 @@ class VampPlanner:
         planning_time = time.time() - start_time
 
         if not result.solved:
-            status = PlanningStatus.TIMEOUT if planning_time >= timeout else PlanningStatus.NO_SOLUTION
+            status = (
+                PlanningStatus.TIMEOUT if planning_time >= timeout else PlanningStatus.NO_SOLUTION
+            )
             return PlanningResult(
                 status=status,
                 message=f"VAMP {self._algorithm} failed after {result.iterations} iterations",
@@ -330,12 +332,12 @@ class VampPlanner:
         # We use get_live_context to introspect obstacles if available.
         # The obstacle sync is handled by the caller adding obstacles
         # to WorldSpec before planning.
-        if hasattr(world, '_obstacles'):
+        if hasattr(world, "_obstacles"):
             # DrakeWorld stores obstacles in _obstacles dict
             for obs_data in world._obstacles.values():
-                if hasattr(obs_data, 'obstacle'):
+                if hasattr(obs_data, "obstacle"):
                     self._add_obstacle_to_env(env, obs_data.obstacle)
-        elif hasattr(world, 'get_obstacles'):
+        elif hasattr(world, "get_obstacles"):
             # Future WorldSpec implementations may expose this
             for obstacle in world.get_obstacles():
                 self._add_obstacle_to_env(env, obstacle)
@@ -407,9 +409,7 @@ class VampPlanner:
             "PERTURB": vamp.SimplifyRoutine.PERTURB,
         }
         simp_settings.operations = [
-            routine_map[op.upper()]
-            for op in self._simplify_operations
-            if op.upper() in routine_map
+            routine_map[op.upper()] for op in self._simplify_operations if op.upper() in routine_map
         ]
 
         rng = robot_module.halton()
