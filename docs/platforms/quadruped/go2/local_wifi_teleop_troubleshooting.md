@@ -185,9 +185,9 @@ If the robot is reachable but no video appears:
 
 Relevant code:
 
-- Go2 connection: [`dimos/robot/unitree/go2/connection.py`](/dimos/robot/unitree/go2/connection.py)
-- Go2 basic transports: [`dimos/robot/unitree/go2/blueprints/basic/unitree_go2_basic.py`](/dimos/robot/unitree/go2/blueprints/basic/unitree_go2_basic.py)
-- JPEG-LCM Go2 video helper: [`dimos/robot/unitree/go2/blueprints/smart/_with_jpeg.py`](/dimos/robot/unitree/go2/blueprints/smart/_with_jpeg.py)
+- Go2 connection: [`dimos/robot/unitree/go2/connection.py`](https://github.com/dimensionalOS/dimos/blob/main/dimos/robot/unitree/go2/connection.py)
+- Go2 basic transports: [`dimos/robot/unitree/go2/blueprints/basic/unitree_go2_basic.py`](https://github.com/dimensionalOS/dimos/blob/main/dimos/robot/unitree/go2/blueprints/basic/unitree_go2_basic.py)
+- JPEG-LCM Go2 video helper: [`dimos/robot/unitree/go2/blueprints/smart/_with_jpeg.py`](https://github.com/dimensionalOS/dimos/blob/main/dimos/robot/unitree/go2/blueprints/smart/_with_jpeg.py)
 - Rerun visualization: [Viewer Backends](/docs/usage/visualization.md)
 
 ## Keyboard Control
@@ -211,9 +211,9 @@ If "Start Keyboard Control" appears to do nothing:
 
 Relevant code:
 
-- Phone teleop blueprints: [`dimos/teleop/phone/blueprints.py`](/dimos/teleop/phone/blueprints.py)
-- Rerun keyboard WebSocket server: [`dimos/visualization/rerun/websocket_server.py`](/dimos/visualization/rerun/websocket_server.py)
-- Web command center module: [`dimos/web/websocket_vis/websocket_vis_module.py`](/dimos/web/websocket_vis/websocket_vis_module.py)
+- Phone teleop blueprints: [`dimos/teleop/phone/blueprints.py`](https://github.com/dimensionalOS/dimos/blob/main/dimos/teleop/phone/blueprints.py)
+- Rerun keyboard WebSocket server: [`dimos/visualization/rerun/websocket_server.py`](https://github.com/dimensionalOS/dimos/blob/main/dimos/visualization/rerun/websocket_server.py)
+- Web command center module: [`dimos/web/websocket_vis/websocket_vis_module.py`](https://github.com/dimensionalOS/dimos/blob/main/dimos/web/websocket_vis/websocket_vis_module.py)
 - Navigation command mux: [Navigation Stack](/docs/capabilities/navigation/nav_stack.md)
 
 ## Phone Teleop
