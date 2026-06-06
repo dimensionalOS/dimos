@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import typer
 
@@ -197,6 +198,113 @@ def connect_wifi(
             typer.echo("✓ Provisioned.")
 
     asyncio.run(run())
+
+
+@app.command("doctor")
+def doctor(
+    ctx: typer.Context,
+    robot_ip: str | None = typer.Option(
+        None,
+        "--robot-ip",
+        help="Go2 IP address. Defaults to parent --robot-ip, DIMOS_ROBOT_IP, or LAN discovery.",
+    ),
+    discover_lan: bool = typer.Option(
+        True,
+        "--discover/--no-discover",
+        help="Run read-only Go2 LAN discovery.",
+    ),
+    discovery_timeout: float = typer.Option(
+        1.5,
+        "--discovery-timeout",
+        help="Seconds to wait for LAN discovery replies.",
+    ),
+    connect_timeout: float = typer.Option(
+        1.0,
+        "--connect-timeout",
+        help="Seconds to wait for the robot TCP reachability probe.",
+    ),
+    signal_port: int = typer.Option(
+        9991,
+        "--signal-port",
+        help="Go2 local signaling TCP port to probe.",
+    ),
+    ui_port: list[int] = typer.Option(
+        [],
+        "--ui-port",
+        help="Expected UI listener port. Repeat to override the default teleop ports.",
+    ),
+    check_image: bool = typer.Option(
+        False,
+        "--check-image",
+        help="Passively wait for a color_image frame. Does not publish any messages.",
+    ),
+    image_topic: list[str] = typer.Option(
+        [],
+        "--image-topic",
+        help=(
+            "Pubsub URI for color_image. Repeat to override defaults "
+            "(jpeg_lcm:/color_image and pshm:color_image)."
+        ),
+    ),
+    image_timeout: float = typer.Option(
+        2.0,
+        "--image-timeout",
+        help="Seconds to wait for a color_image frame when --check-image is set.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Exit nonzero when any warning or failure is found.",
+    ),
+) -> None:
+    """Diagnose a local Wi-Fi Go2 teleop setup without sending motion commands."""
+    from dimos.core.global_config import global_config
+    from dimos.robot.unitree.go2.cli.doctor import (
+        UiEndpoint,
+        collect_report,
+        default_ui_endpoints,
+        format_report,
+    )
+
+    root_obj = ctx.find_root().obj
+    root_overrides = root_obj if isinstance(root_obj, dict) else {}
+    configured_robot_ip = root_overrides.get("robot_ip")
+    resolved_robot_ip = robot_ip or configured_robot_ip or global_config.robot_ip
+    if resolved_robot_ip is not None and not isinstance(resolved_robot_ip, str):
+        resolved_robot_ip = str(resolved_robot_ip)
+
+    configured_ws_port = root_overrides.get("rerun_websocket_server_port")
+    rerun_ws_port = (
+        int(configured_ws_port)
+        if configured_ws_port is not None
+        else global_config.rerun_websocket_server_port
+    )
+    endpoints = (
+        [UiEndpoint(f"Custom UI {port}", port, "tcp") for port in ui_port]
+        if ui_port
+        else default_ui_endpoints(rerun_ws_port)
+    )
+
+    report = collect_report(
+        robot_ip=resolved_robot_ip,
+        discover_lan=discover_lan,
+        discovery_timeout=discovery_timeout,
+        connect_timeout=connect_timeout,
+        signal_port=signal_port,
+        endpoints=endpoints,
+        check_image_enabled=check_image,
+        image_topics=image_topic or None,
+        image_timeout=image_timeout,
+    )
+
+    if json_output:
+        typer.echo(json.dumps(report.as_dict(), indent=2))
+    else:
+        typer.echo(format_report(report))
+
+    if strict and report.has_problems():
+        raise typer.Exit(1)
 
 
 def main() -> None:
