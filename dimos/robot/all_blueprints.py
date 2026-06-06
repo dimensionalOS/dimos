@@ -123,6 +123,7 @@ all_blueprints = {
     "xarm6-planner-only": "dimos.manipulation.blueprints:xarm6_planner_only",
     "xarm7-planner-coordinator": "dimos.manipulation.blueprints:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.manipulation.blueprints:xarm7_planner_coordinator_agent",
+    "xarm7-viser-panel-mock": "dimos.manipulation.blueprints:xarm7_viser_panel_mock",
 }
 
 
@@ -224,6 +225,7 @@ all_modules = {
     "unitree-skill-container": "dimos.robot.unitree.unitree_skill_container.UnitreeSkillContainer",
     "unity-bridge-module": "dimos.simulation.unity.module.UnityBridgeModule",
     "video-arm-teleop-module": "dimos.teleop.quest.quest_extensions.VideoArmTeleopModule",
+    "viser-manipulation-panel-module": "dimos.manipulation.viser_panel.module.ViserManipulationPanelModule",
     "vlm-agent": "dimos.agents.vlm_agent.VLMAgent",
     "vlm-stream-tester": "dimos.agents.vlm_stream_tester.VlmStreamTester",
     "voxel-grid-mapper": "dimos.mapping.voxels.VoxelGridMapper",

@@ -38,6 +38,7 @@ from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.viser_panel.module import ViserManipulationPanelModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -113,6 +114,38 @@ xarm7_planner_coordinator = autoconnect(
         joint_state_frame_id="coordinator",
         hardware=[_xarm7_cfg.to_hardware_component()],
         tasks=[_xarm7_cfg.to_task_config()],
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
+)
+
+
+_xarm7_viser_mock_cfg = _catalog_xarm7(
+    name="arm",
+    adapter_type="mock",
+    add_gripper=True,
+)
+
+xarm7_viser_panel_mock = autoconnect(
+    ManipulationModule.blueprint(
+        robots=[_xarm7_viser_mock_cfg.to_robot_model_config()],
+        planning_timeout=10.0,
+        enable_viz=True,
+    ),
+    ControlCoordinator.blueprint(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_xarm7_viser_mock_cfg.to_hardware_component()],
+        tasks=[_xarm7_viser_mock_cfg.to_task_config()],
+    ),
+    ViserManipulationPanelModule.blueprint(
+        host="127.0.0.1",
+        port=8095,
+        default_robot="arm",
+        allow_plan_execute=True,
     ),
 ).transports(
     {

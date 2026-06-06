@@ -26,7 +26,10 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
 )
+from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -45,6 +48,10 @@ def robot_config():
         joint_names=["joint1", "joint2", "joint3"],
         end_effector_link="link_tcp",
         base_link="link_base",
+        package_paths={"robot_description": Path("/path/to")},
+        joint_limits_lower=[-1.0, -2.0, -3.0],
+        joint_limits_upper=[1.0, 2.0, 3.0],
+        xacro_args={"prefix": "test_"},
         max_velocity=1.0,
         max_acceleration=2.0,
         coordinator_task_name="traj_arm",
@@ -267,6 +274,77 @@ class TestExecute:
 
         assert module.execute() is False
         assert module._state == ManipulationState.FAULT
+
+
+class TestManipulationPanelRPCs:
+    def test_get_robot_info_includes_panel_metadata(self, robot_config):
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._init_joints = {
+            "test_arm": JointState(
+                name=robot_config.joint_names,
+                position=[0.1, 0.2, 0.3],
+            )
+        }
+
+        info = module.get_robot_info("test_arm")
+
+        assert info is not None
+        assert info["model_path"] == "/path/to/robot.urdf"
+        assert info["base_pose"] == robot_config.base_pose
+        assert info["package_paths"] == {"robot_description": "/path/to"}
+        assert info["xacro_args"] == {"prefix": "test_"}
+        assert info["joint_limits"] == [(-1.0, 1.0), (-2.0, 2.0), (-3.0, 3.0)]
+        assert info["init_joints"] == [0.1, 0.2, 0.3]
+
+    def test_get_planned_path_returns_stored_path(self, robot_config):
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        path = [JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])]
+        module._planned_paths = {"test_arm": path}
+
+        assert module.get_planned_path("test_arm") is path
+
+    def test_solve_ik_preview_does_not_store_path_or_change_state(self, robot_config):
+        module = _make_module_with_monitor(robot_config)
+        module._kinematics = MagicMock()
+        current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
+        solution = JointState(name=robot_config.joint_names, position=[0.1, 0.2, 0.3])
+        module._world_monitor.get_current_joint_state.return_value = current
+        module._world_monitor.is_state_valid.return_value = True
+        module._kinematics.solve.return_value = IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=solution,
+            position_error=0.001,
+            orientation_error=0.002,
+            message="ok",
+        )
+
+        result = module.solve_ik_preview(Pose(), "test_arm")
+
+        assert result["success"] is True
+        assert result["joint_state"] is solution
+        assert result["status"] == "SUCCESS"
+        assert module._planned_paths == {}
+        assert module._planned_trajectories == {}
+        assert module._state == ManipulationState.IDLE
+
+    def test_solve_fk_preview_returns_pose_and_feasibility(self, robot_config):
+        module = _make_module_with_monitor(robot_config)
+        target = JointState(name=[], position=[0.1, 0.2, 0.3])
+        pose = PoseStamped(position=Vector3(0.4, 0.5, 0.6), orientation=Quaternion())
+        module._world_monitor.get_ee_pose.return_value = pose
+        module._world_monitor.is_state_valid.return_value = True
+
+        result = module.solve_fk_preview(target, "test_arm")
+
+        assert result["success"] is True
+        assert result["pose"] is pose
+        assert result["joint_state"].name == robot_config.joint_names
+        assert result["joint_state"].position == [0.1, 0.2, 0.3]
+        assert result["collision_free"] is True
+        assert module._planned_paths == {}
+        assert module._state == ManipulationState.IDLE
 
 
 class TestRobotModelConfigMapping:

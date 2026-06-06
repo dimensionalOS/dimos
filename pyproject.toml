@@ -267,6 +267,11 @@ manipulation = [
     "pyyaml>=6.0",
 ]
 
+manipulation-viser = [
+    "dimos[manipulation]",
+    "viser[urdf]>=1.0.29",
+]
+
 
 cpu = [
     # CPU inference backends
@@ -328,7 +333,7 @@ apriltag = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,psql,sim,unitree,visualization,web]",
+    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,manipulation-viser,misc,perception,psql,sim,unitree,visualization,web]",
 ]
 
 [dependency-groups]
