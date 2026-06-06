@@ -240,12 +240,21 @@ jobs:
           files: ./coverage.xml
           flags: OS-${{ matrix.os }},Py-${{ matrix.pyver }}
           use_oidc: true
+          # Install the CLI from PyPI (pinned) instead of cli.codecov.io:
+          # the GPG key for the default download path is served from a dead
+          # keybase.io URL, failing every upload. See
+          # codecov/codecov-action#1955 and #2398.
+          use_pypi: true
+          version: "11.2.8"
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v6
         with:
           report_type: test_results
           use_oidc: true
+          # See the "Upload coverage" step above.
+          use_pypi: true
+          version: "11.2.8"
 
   self-hosted-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
@@ -298,6 +307,14 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Install codecov CLI
+        # Self-hosted runners have no `pip` on PATH, so codecov-action's
+        # use_pypi can't work here; pre-install the pinned CLI with uv and
+        # point the action at it via `binary`. See codecov/codecov-action#1955
+        # and #2398.
+        run: |
+          uv venv .codecov-venv
+          uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
@@ -339,12 +356,18 @@ jobs:
           files: ./coverage.xml
           flags: SelfHosted-${{ matrix.os }}
           use_oidc: true
+          # Use the pinned CLI from the "Install codecov CLI" step (no pip
+          # on self-hosted runners, and the default cli.codecov.io download
+          # has a broken GPG key fetch). See codecov/codecov-action#1955.
+          binary: .codecov-venv/bin/codecovcli
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v6
         with:
           report_type: test_results
           use_oidc: true
+          # See the "Upload coverage" step above.
+          binary: .codecov-venv/bin/codecovcli
       - name: Check disk space
         if: failure()
         run: |
@@ -382,6 +405,14 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Install codecov CLI
+        # Self-hosted runners have no `pip` on PATH, so codecov-action's
+        # use_pypi can't work here; pre-install the pinned CLI with uv and
+        # point the action at it via `binary`. See codecov/codecov-action#1955
+        # and #2398.
+        run: |
+          uv venv .codecov-venv
+          uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install apt dependencies
         run: |
           sudo apt-get update
@@ -428,12 +459,18 @@ jobs:
           files: ./coverage.xml
           flags: SelfHosted-Large
           use_oidc: true
+          # Use the pinned CLI from the "Install codecov CLI" step (no pip
+          # on self-hosted runners, and the default cli.codecov.io download
+          # has a broken GPG key fetch). See codecov/codecov-action#1955.
+          binary: .codecov-venv/bin/codecovcli
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v6
         with:
           report_type: test_results
           use_oidc: true
+          # See the "Upload coverage" step above.
+          binary: .codecov-venv/bin/codecovcli
       - name: Check disk space
         if: failure()
         run: |
@@ -484,3 +521,9 @@ jobs:
         run_command: send-notifications
         use_oidc: true
         fail_ci_if_error: true
+        # Install the CLI from PyPI (pinned) instead of cli.codecov.io:
+        # the GPG key for the default download path is served from a dead
+        # keybase.io URL, failing every upload. See
+        # codecov/codecov-action#1955 and #2398.
+        use_pypi: true
+        version: "11.2.8"
