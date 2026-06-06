@@ -28,6 +28,33 @@ EOF
     exit 1
 }
 
+# Compute total pending download bytes using text output from ls-files.
+# Works on all git-lfs versions (--json requires 3.6+).
+_pending_bytes() {
+    local ls_out total=0
+    # ls-files --size prints lines like:
+    #   ab3dc507b * path/to/file (11 KB)     ← downloaded (asterisk)
+    #   ab3dc507b - path/to/file (2.5 MB)    ← pointer only (dash)
+    # We sum sizes of pointer-only entries (marked with " - ").
+    ls_out=$("$REAL" ls-files --size "$@" 2>/dev/null) || return 1
+    while IFS= read -r line; do
+        # Skip downloaded files (asterisk marker)
+        [[ "$line" == *" * "* ]] && continue
+        # Extract size with unit from parentheses: (NNN B|KB|MB|GB)
+        if [[ "$line" =~ \(([0-9.]+)\ *(B|KB|MB|GB)\) ]]; then
+            local num="${BASH_REMATCH[1]}" unit="${BASH_REMATCH[2]}"
+            case "$unit" in
+                B)  bytes=$(printf '%.0f' "$num") ;;
+                KB) bytes=$(printf '%.0f' "$(echo "$num * 1024" | bc)") ;;
+                MB) bytes=$(printf '%.0f' "$(echo "$num * 1048576" | bc)") ;;
+                GB) bytes=$(printf '%.0f' "$(echo "$num * 1073741824" | bc)") ;;
+            esac
+            total=$((total + bytes))
+        fi
+    done <<< "$ls_out"
+    echo "$total"
+}
+
 case "${1:-}" in
     smudge)
         tmp=$(mktemp)
@@ -52,7 +79,7 @@ case "${1:-}" in
     pull|fetch|checkout)
         sub="$1"; shift
         orig_args=( "$@" )
-        ls_args=( --json --size )
+        ls_args=()
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 -I|--include|-X|--exclude)
@@ -72,8 +99,7 @@ case "${1:-}" in
                     ;;
             esac
         done
-        total=$("$REAL" ls-files "${ls_args[@]}" 2>/dev/null \
-                | jq '[.files[] | select(.downloaded == false) | .size] | add // 0' 2>/dev/null)
+        total=$(_pending_bytes "${ls_args[@]}")
         if [[ $? -ne 0 || -z "$total" ]]; then
             echo "git-lfs-guard: warning: could not determine LFS download size; allowing $sub" >&2
             total=0
