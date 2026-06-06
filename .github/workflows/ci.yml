@@ -16,6 +16,27 @@ env:
   UV_NO_SYNC: "1"
 
 jobs:
+  compute-ros-pin:
+    # Extracts the ros-dev image digest pinned in docker/ros-dev-pin/Dockerfile
+    # so downstream jobs can reference it from their `container:` field.
+    # That will be updated by Dependabot, and keep CI tests stable.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    outputs:
+      digest: ${{ steps.read.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - id: read
+        run: |
+          DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' docker/ros-dev-pin/Dockerfile)
+          if [ -z "$DIGEST" ]; then
+            echo "::error::No sha256 digest found in docker/ros-dev-pin/Dockerfile"
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
   lint:
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -230,6 +251,7 @@ jobs:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
     if: |
       github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: compute-ros-pin
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -242,7 +264,7 @@ jobs:
           - os: Linux
             # GitHub Actions only honours `container:` on Linux runners.
             container:
-              image: ghcr.io/dimensionalos/ros-dev:dev
+              image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
             markers: "self_hosted or skipif_no_ros"
             experimental: false
           - os: macOS
