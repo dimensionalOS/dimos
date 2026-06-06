@@ -32,8 +32,7 @@ from dimos.teleop.quest_hosted.hosted_teleop_module import HostedTeleopModule
 
 @pytest.fixture
 def module():
-    """Bare ``HostedTeleopModule`` with a mocked open state-back channel.
-    """
+    """Bare ``HostedTeleopModule`` with a mocked open state-back channel."""
     m = HostedTeleopModule.__new__(HostedTeleopModule)
     m._state_back_channel = MagicMock()
     m._state_back_channel.readyState = "open"
