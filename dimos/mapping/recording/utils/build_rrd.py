@@ -210,9 +210,10 @@ def _log_odom_frames(db_path, stride=5):
             static=True,
         )
         # translucent box marking the odom source (child -> inherits the moving
-        # transform); the fastlio_odometry box is yellow, the others green. On a
-        # Go2, the fastlio (mid360) frame's box is the dog trunk, statically offset
-        # to base_link (mid360->base from static_transforms.urdf).
+        # transform); the fastlio_odometry box is yellow, the others green. On a Go2
+        # the fastlio (mid360) frame's box is the dog trunk, statically offset to
+        # base_link (mid360->base). reframe_go2 normalizes fastlio_odometry's pose to
+        # mid360, so this offset always lands the box on the (level) base_link.
         box_color = [220, 220, 0, 128] if name == "fastlio" else [0, 220, 0, 128]
         if name == "fastlio" and is_go2:
             offset = MID360_TO_BASE

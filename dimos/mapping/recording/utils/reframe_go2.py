@@ -42,6 +42,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from dimos.mapping.recording.utils.db_reform import _nearest, parse_urdf_graph, transform_between
+from dimos.mapping.recording.utils.short import rename_go2_streams
 from dimos.mapping.recording.utils.trunc import first_fastlio_ts, rebuild_rrd, truncate_db
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -148,6 +149,12 @@ def reframe(db_path: str, urdf_path: str, rrd_path: str) -> None:
         f"   truncate: removed {sum(removed.values())} pre-fastlio rows from {len(removed)} streams"
     )
 
+    # legacy recordings store the Go2 onboard streams as go2_odom/go2_lidar; rename
+    # to odom/lidar (only when those are missing) so the steps below find them.
+    renamed = rename_go2_streams(db_path)
+    if renamed:
+        print(f"   renamed {', '.join(f'{old}->{new}' for old, new in renamed)}")
+
     graph = parse_urdf_graph(urdf_path)
     mid360_to_base = transform_between(graph, WORLD_FRAME, BASE_FRAME)
     mid360_to_camera = transform_between(graph, WORLD_FRAME, CAMERA_FRAME)
@@ -186,10 +193,18 @@ def reframe(db_path: str, urdf_path: str, rrd_path: str) -> None:
             _update_point_pose(
                 conn, COLOR_IMAGE, row_id, _pose7(world_to_cam), f"{COLOR_IMAGE}_rtree" in tables
             )
+        # normalize fastlio_odometry's pose columns to the raw value (world->mid360):
+        # recorders disagree (some store base_link there), so overwrite from the value
+        # so downstream (build_rrd's mid360->base box) always reads a mid360 frame.
+        fastlio_has_rtree = f"{FASTLIO_ODOM}_rtree" in tables
+        fastlio_ids = [r[0] for r in conn.execute(f'SELECT id FROM "{FASTLIO_ODOM}" ORDER BY ts')]
+        for row_id, value in zip(fastlio_ids, fastlio_pose, strict=True):
+            _update_point_pose(conn, FASTLIO_ODOM, row_id, _pose7(value), fastlio_has_rtree)
         conn.execute("COMMIT")
     finally:
         conn.close()
     print(f"   camera: re-posed {len(color_rows)} '{COLOR_IMAGE}' off {WORLD_FRAME}")
+    print(f"   fastlio: normalized {len(fastlio_ids)} '{FASTLIO_ODOM}' poses to mid360")
 
     # --- 2. align Go2 odom + lidar with one rigid transform A ---
     target0 = fastlio_pose[_nearest(fastlio_ts, odom_ts[0])] + mid360_to_base

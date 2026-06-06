@@ -30,9 +30,9 @@ from pathlib import Path
 import sqlite3
 
 from dimos.mapping.recording.utils import stream_names
-from dimos.mapping.recording.utils.trunc import rebuild_rrd
+from dimos.mapping.recording.utils.trunc import first_fastlio_ts, rebuild_rrd
 
-DB_NAME = "mem2.db"
+DB_NAME = "mem2_orig.db"
 SHORT_DB = "short.db"
 SHORT_RRD = "short.rrd"
 DEFAULT_SECONDS = 30.0
@@ -40,32 +40,17 @@ DEFAULT_SECONDS = 30.0
 _RTREE_SHADOWS = ("_rtree_node", "_rtree_parent", "_rtree_rowid")
 
 
-def _first_ts(conn: sqlite3.Connection) -> float | None:
-    """Earliest timestamp across all streams."""
-    mins: list[float] = []
-    for (name,) in conn.execute("SELECT name FROM _streams"):
-        try:
-            value = conn.execute(f'SELECT MIN(ts) FROM "{name}"').fetchone()[0]
-        except sqlite3.OperationalError:
-            continue
-        if value is not None:
-            mins.append(value)
-    return min(mins) if mins else None
-
-
 def make_short_db(src_db: str, short_db: str, seconds: float) -> tuple[float, float, int]:
-    """Build `short_db` from the first `seconds` of `src_db`. Returns
-    (t_start, cutoff, rows_copied)."""
+    """Build `short_db` from the first `seconds` *after the first fastlio_odometry*
+    of `src_db` (truncates the pre-fastlio prefix). Returns (t_start, cutoff, rows)."""
     for suffix in ("", "-wal", "-shm"):
         stale = Path(short_db + suffix)
         if stale.exists():
             stale.unlink()
 
-    probe = sqlite3.connect(src_db)
-    t_start = _first_ts(probe)
-    probe.close()
+    t_start = first_fastlio_ts(src_db)
     if t_start is None:
-        raise SystemExit("no data in source db")
+        raise SystemExit(f"no '{stream_names.FASTLIO_ODOM}' in source db")
     cutoff = t_start + seconds
 
     conn = sqlite3.connect(short_db)
@@ -86,26 +71,59 @@ def make_short_db(src_db: str, short_db: str, seconds: float) -> tuple[float, fl
         }
         conn.execute("INSERT INTO _streams SELECT * FROM src._streams")
         rows_copied = 0
+        window = (t_start, cutoff)
         for (name,) in conn.execute("SELECT name FROM src._streams").fetchall():
-            in_window_ids = f'SELECT id FROM src."{name}" WHERE ts <= ?'
+            in_window_ids = f'SELECT id FROM src."{name}" WHERE ts >= ? AND ts <= ?'
             cursor = conn.execute(
-                f'INSERT INTO "{name}" SELECT * FROM src."{name}" WHERE ts <= ?', (cutoff,)
+                f'INSERT INTO "{name}" SELECT * FROM src."{name}" WHERE ts >= ? AND ts <= ?', window
             )
             rows_copied += cursor.rowcount
             if f"{name}_blob" in tables:
                 conn.execute(
                     f'INSERT INTO "{name}_blob" SELECT * FROM src."{name}_blob" '
                     f"WHERE id IN ({in_window_ids})",
-                    (cutoff,),
+                    window,
                 )
             if f"{name}_rtree" in tables:
                 conn.execute(
                     f'INSERT INTO "{name}_rtree" SELECT * FROM src."{name}_rtree" '
                     f"WHERE id IN ({in_window_ids})",
-                    (cutoff,),
+                    window,
                 )
         conn.commit()
         return t_start, cutoff, rows_copied
+    finally:
+        conn.close()
+
+
+def rename_go2_streams(db_path: str) -> list[tuple[str, str]]:
+    """Rename legacy go2_odom/go2_lidar -> odom/lidar in `db_path` (data, _blob and
+    _rtree tables + the _streams row), so reframe_go2 finds them. No-op if absent or
+    already renamed. ALTER TABLE is metadata-only; the rtree renames its shadows."""
+    renames = [("go2_odom", "odom"), ("go2_lidar", "lidar")]
+    conn = sqlite3.connect(db_path)
+    try:
+        streams = {row[0] for row in conn.execute("SELECT name FROM _streams")}
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        done: list[tuple[str, str]] = []
+        conn.execute("BEGIN")
+        for old, new in renames:
+            if old not in streams or new in streams:
+                continue
+            conn.execute(f'ALTER TABLE "{old}" RENAME TO "{new}"')
+            if f"{old}_blob" in tables:
+                conn.execute(f'ALTER TABLE "{old}_blob" RENAME TO "{new}_blob"')
+            if f"{old}_rtree" in tables:
+                conn.execute(f'ALTER TABLE "{old}_rtree" RENAME TO "{new}_rtree"')
+            conn.execute("UPDATE _streams SET name=? WHERE name=?", (new, old))
+            done.append((old, new))
+        conn.execute("COMMIT")
+        return done
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
     finally:
         conn.close()
 
@@ -128,8 +146,11 @@ def main() -> None:
     short_db = recording_dir / SHORT_DB
     short_rrd = recording_dir / SHORT_RRD
 
-    print(f">> first {args.seconds:g}s of {src_db}")
+    print(f">> first {args.seconds:g}s after first {stream_names.FASTLIO_ODOM} of {src_db}")
     *_, rows = make_short_db(str(src_db), str(short_db), args.seconds)
+    renamed = rename_go2_streams(str(short_db))
+    if renamed:
+        print(f"   renamed {', '.join(f'{old}->{new}' for old, new in renamed)}")
     span = (
         sqlite3.connect(str(short_db))
         .execute(f'SELECT MAX(ts) - MIN(ts) FROM "{stream_names.FASTLIO_ODOM}"')
