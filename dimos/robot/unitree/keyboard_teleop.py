@@ -160,6 +160,12 @@ class KeyboardTeleop(Module):
             if pygame.K_d in self._keys_held:
                 twist.angular.z = -self.angular_speed
 
+            # Altitude (R/F)
+            if pygame.K_r in self._keys_held:
+                twist.linear.z = self.linear_speed
+            if pygame.K_f in self._keys_held:
+                twist.linear.z = -self.linear_speed
+
             # Apply speed modifiers (Shift = boost, Ctrl = slow)
             speed_multiplier = 1.0
             if pygame.K_LSHIFT in self._keys_held or pygame.K_RSHIFT in self._keys_held:
@@ -170,9 +176,10 @@ class KeyboardTeleop(Module):
             twist.linear.x *= speed_multiplier
             twist.linear.y *= speed_multiplier
             twist.angular.z *= speed_multiplier
+            twist.linear.z *= speed_multiplier
 
             if self.publish_only_when_active:
-                active = twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0
+                active = twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0 or twist.linear.z != 0
                 # Publish while active; publish exactly one zero on the
                 # active->idle transition (clean stop); then stay silent
                 # so a co-publisher owns /cmd_vel.
@@ -212,6 +219,7 @@ class KeyboardTeleop(Module):
             f"Linear X (Forward/Back): {twist.linear.x:+.2f} m/s",
             f"Linear Y (Strafe L/R): {twist.linear.y:+.2f} m/s",
             f"Angular Z (Turn L/R): {twist.angular.z:+.2f} rad/s",
+            f"Linear Z (Up/Down): {twist.linear.z:+.2f} m/s",
             "",
             "Keys: " + ", ".join([pygame.key.name(k).upper() for k in self._keys_held if k < 256]),
         ]
@@ -223,14 +231,14 @@ class KeyboardTeleop(Module):
                 self._screen.blit(surf, (20, y_pos))
             y_pos += 30
 
-        if twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0:
+        if twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0 or twist.linear.z != 0:
             pygame.draw.circle(self._screen, (255, 0, 0), (450, 30), _INDICATOR_RADIUS)
         else:
             pygame.draw.circle(self._screen, (0, 255, 0), (450, 30), _INDICATOR_RADIUS)
 
         y_pos = 280
         help_texts = [
-            "WS: Move | AD: Turn | QE: Strafe",
+            "WS: Move | AD: Turn | QE: Strafe | RF: Up/Down",
             "Shift: Boost | Ctrl: Slow",
             "Space: E-Stop | ESC: Quit",
         ]
