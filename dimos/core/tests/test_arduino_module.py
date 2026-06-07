@@ -16,8 +16,13 @@
 
 Covers the pure/host-side logic — header generation, topic enum
 assignment, the three-way registry sync, port detection with mocked
-arduino-cli, and QEMU cleanup paths.  These tests do not require a real
-Arduino or QEMU.
+arduino-cli, and QEMU cleanup paths.  No real Arduino or QEMU needed.
+
+The Python<->C++ hash-registry sync check reads ``main.cpp`` directly and
+runs in the normal lane.  The two registry-header checks that need the
+nix-built ``arduino_msgs`` headers shell out to ``nix build`` and are
+marked ``slow``+``tool`` so they run in the self-hosted lane (which has
+nix) instead of silently skipping.
 """
 
 from __future__ import annotations
@@ -44,15 +49,14 @@ from dimos.core.arduino_module import (
     _arduino_tools_bin_dir as _real_arduino_tools_bin_dir,
 )
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.Twist import Twist
 
 # Fixtures / helpers
 
 
 @pytest.fixture(autouse=True)
-def _fake_arduino_tools_bin_dir(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> Any:
+def _fake_arduino_tools_bin_dir(tmp_path_factory):
     """Short-circuit ``_arduino_tools_bin_dir`` for every test in this file.
 
     Without this, every helper that shells out to ``arduino-cli`` /
@@ -95,23 +99,31 @@ class _ExampleModule(ArduinoModule):
     twist_echo_out: Out[Twist]
 
 
-def _make_module() -> _ExampleModule:
-    """Build an _ExampleModule without triggering its __init__ machinery.
+# Modules built by `_make_module` register here so the autouse fixture below
+# closes each one after the test, releasing its RPC loop thread.
+_created_modules: list[ArduinoModule] = []
 
-    ArduinoModule subclasses pydantic Module whose real `__init__` spins
-    up RPC / worker plumbing we don't need for unit tests.  We use
-    `__new__` to bypass it, then install bare `In` / `Out` stubs (via
-    `__new__` again) into `self.__dict__` — the `Module.inputs` /
-    `Module.outputs` properties are read-only `@property`s that scan
-    `__dict__` for any attribute that is an `In`/`Out` instance, so
-    this is the minimum required to make those properties return the
-    expected port names.
+
+@pytest.fixture(autouse=True)
+def _close_created_modules():
+    yield
+    while _created_modules:
+        _created_modules.pop()._close_module()
+
+
+def _make_module(module_cls=_ExampleModule, config=None):
+    """Construct a real ArduinoModule via its normal ``__init__``.
+
+    The base ``__init__`` auto-instantiates the declared ``In``/``Out``
+    streams, so there is no reason to bypass construction. The autouse
+    ``_close_created_modules`` fixture closes each instance afterward so the
+    RPC loop thread does not leak. Pass ``config`` to override the default.
     """
-    inst = _ExampleModule.__new__(_ExampleModule)
-    inst.config = _ExampleConfig()
-    inst.__dict__["twist_in"] = In.__new__(In)
-    inst.__dict__["twist_echo_out"] = Out.__new__(Out)
-    return inst
+    module = module_cls()
+    if config is not None:
+        module.config = config
+    _created_modules.append(module)
+    return module
 
 
 # _build_topic_enum
@@ -129,30 +141,24 @@ def test_build_full_config_combines_connection_and_topics() -> None:
 
     Keep in sync with parse_args() in dimos/hardware/arduino/cpp/main.cpp.
     """
-    mod = _make_module()
+    mod = _with_topics(
+        _make_module(),
+        {
+            "twist_in": "cmd#geometry_msgs.Twist",
+            "twist_echo_out": "echo#geometry_msgs.Twist",
+        },
+    )
     mod.config.auto_reconnect = False
     mod.config.reconnect_interval = 1.5
-    with (
-        mock.patch.object(
-            mod,
-            "_resolve_topics",
-            return_value={
-                "twist_echo_out": "echo#geometry_msgs.Twist",
-                "twist_in": "cmd#geometry_msgs.Twist",
-            },
-        ),
-        mock.patch.object(
-            mod,
-            "_build_topic_enum",
-            return_value={"twist_echo_out": 1, "twist_in": 2},
-        ),
-    ):
-        cfg = mod._build_full_config("/dev/ttyACM0")
+
+    cfg = mod._build_full_config("/dev/ttyACM0")
 
     assert cfg["serial_port"] == "/dev/ttyACM0"
     assert cfg["baudrate"] == 115200
     assert cfg["reconnect"] is False
     assert cfg["reconnect_interval"] == 1.5
+    # IDs come from the real _build_topic_enum (1-based, alphabetical by stream
+    # name) → twist_echo_out=1, twist_in=2; channels come from the transports.
     assert cfg["topics"] == [
         {"id": 1, "channel": "echo#geometry_msgs.Twist", "is_output": True},
         {"id": 2, "channel": "cmd#geometry_msgs.Twist", "is_output": False},
@@ -164,7 +170,7 @@ def test_build_full_config_combines_connection_and_topics() -> None:
 # _generate_header — config embedding & escaping
 
 
-def _patch_sketch_and_build_dirs(mod: _ExampleModule, tmp_path: Path) -> Any:
+def _patch_sketch_and_build_dirs(mod, tmp_path):
     """Redirect ``_resolve_sketch_dir`` and ``_build_dir`` into ``tmp_path``.
 
     ``_generate_header`` writes the header into the sketch dir (so
@@ -337,17 +343,18 @@ def test_arduino_tools_bin_dir_raises_on_missing_nix() -> None:
     a flake output and come from a ``nix build`` rather than from
     ``$PATH``.
     """
-    # Clear the ``lru_cache`` so we actually re-enter the function body.
+    # Clear the lru_cache so we re-enter the function body, and clear it again
+    # in `finally` so a failure here can't leave a poisoned cache for later tests.
     _real_arduino_tools_bin_dir.cache_clear()
-    with mock.patch(
-        "dimos.core.arduino_module.subprocess.run",
-        side_effect=FileNotFoundError,
-    ):
-        with pytest.raises(RuntimeError, match="nix"):
-            _real_arduino_tools_bin_dir()
-    # Leave the cache cleared so the next test (which may have its own
-    # fake_arduino_tools_bin_dir fixture) starts from a known state.
-    _real_arduino_tools_bin_dir.cache_clear()
+    try:
+        with mock.patch(
+            "dimos.core.arduino_module.subprocess.run",
+            side_effect=FileNotFoundError,
+        ):
+            with pytest.raises(RuntimeError, match="nix"):
+                _real_arduino_tools_bin_dir()
+    finally:
+        _real_arduino_tools_bin_dir.cache_clear()
 
 
 def test_detect_port_wraps_non_zero_exit() -> None:
@@ -461,6 +468,8 @@ def _main_cpp_path() -> Path:
     return _ARDUINO_HW_DIR / "cpp" / "main.cpp"
 
 
+@pytest.mark.slow
+@pytest.mark.tool
 def test_registry_headers_exist_on_disk() -> None:
     common = _arduino_common_dir()
     missing = [
@@ -501,58 +510,36 @@ def test_registry_matches_main_cpp_hash_registry() -> None:
 
 # _resolve_topics — validates LCM-typed channel strings
 
-# NOTE: these tests monkey-patch ``inputs``/``outputs`` on the ``_ExampleModule``
-# *instance* rather than relying on stream auto-discovery, because
-# ``_make_module`` uses bypass constructors that don't set up real
-# transports.  The parent ``_collect_topics`` walks transports via
-# ``getattr(self, name)._transport.topic``, so we stub the whole chain.
-
 
 class _FakeTransport:
+    """Transport stand-in for tests: carries a topic; ``stop()`` is a no-op
+    (called by ``Stream.stop()`` when the module is closed)."""
+
     def __init__(self, topic: str) -> None:
         self.topic = topic
 
-
-class _FakeStream:
-    def __init__(self, topic: str) -> None:
-        self._transport = _FakeTransport(topic)
+    def stop(self) -> None:
+        pass
 
 
-def _make_module_with_topics(topics: dict[str, str]) -> _ExampleModule:
-    """Build a module whose `super()._collect_topics()` returns `topics`."""
-    mod = _make_module()
-    # Install fake streams so NativeModule._collect_topics walks them.
+def _with_topics(mod, topics):
+    """Attach fake transports (carrying typed channel strings) to the module's
+    real streams via the public ``set_transport`` API. Streams left without a
+    transport are simply skipped by ``_collect_topics``."""
     for name, topic in topics.items():
-        mod.__dict__[name] = _FakeStream(topic)
-    # Force `inputs` / `outputs` to report the fake names (otherwise
-    # the module-level reflection sees only the two In/Out stubs from
-    # _make_module).  Monkey-patch the properties on this instance.
-    inputs_list = list(topics)
-    mod.__class__.inputs = property(lambda self: inputs_list)
-    mod.__class__.outputs = property(lambda self: [])
+        mod.set_transport(name, _FakeTransport(topic))
     return mod
 
 
 def test_resolve_topics_accepts_typed_lcm_channels() -> None:
-    mod = _make_module_with_topics({"twist_in": "twist_command#geometry_msgs.Twist"})
-    try:
-        resolved = mod._resolve_topics()
-        assert resolved == {"twist_in": "twist_command#geometry_msgs.Twist"}
-    finally:
-        # Unwind the monkey-patched properties so later tests see
-        # the real Module.inputs/outputs descriptors.
-        del mod.__class__.inputs
-        del mod.__class__.outputs
+    mod = _with_topics(_make_module(), {"twist_in": "twist_command#geometry_msgs.Twist"})
+    assert mod._resolve_topics() == {"twist_in": "twist_command#geometry_msgs.Twist"}
 
 
 def test_resolve_topics_rejects_bare_channel_names() -> None:
-    mod = _make_module_with_topics({"twist_in": "twist_command"})
-    try:
-        with pytest.raises(RuntimeError, match="'#msg_type' suffix"):
-            mod._resolve_topics()
-    finally:
-        del mod.__class__.inputs
-        del mod.__class__.outputs
+    mod = _with_topics(_make_module(), {"twist_in": "twist_command"})
+    with pytest.raises(RuntimeError, match="'#msg_type' suffix"):
+        mod._resolve_topics()
 
 
 # _validate_inbound_payload_sizes — AVR SRAM guard
@@ -563,7 +550,6 @@ def test_resolve_topics_rejects_bare_channel_names() -> None:
 # ``_get_stream_types`` uses ``get_type_hints`` which re-evaluates the
 # string annotations via ``eval(..., globals=module.__dict__, ...)``
 # and can't see locals of a test function.
-from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 
 
 class _BigInboundModule(ArduinoModule):
@@ -594,32 +580,25 @@ def test_validate_inbound_payload_sizes_passes_for_small_inbound() -> None:
 
 def test_validate_inbound_payload_sizes_rejects_oversized_inbound() -> None:
     """PoseWithCovariance is 352 bytes on the wire (8B fingerprint + 344B data) — exceeds the 256 AVR default."""
-    mod = _BigInboundModule.__new__(_BigInboundModule)
-    mod.config = _ExampleConfig()
-    mod.__dict__["pose_in"] = In.__new__(In)
-
+    mod = _make_module(_BigInboundModule)
     with pytest.raises(ValueError, match="DSP_MAX_PAYLOAD"):
         mod._validate_inbound_payload_sizes(mod._get_stream_types())
 
 
 def test_validate_inbound_payload_sizes_ignores_outbound() -> None:
     """Even an oversized *outbound* stream is fine — the Arduino owns the encoder."""
-    mod = _BigOutboundModule.__new__(_BigOutboundModule)
-    mod.config = _ExampleConfig()
-    mod.__dict__["pose_out"] = Out.__new__(Out)
-
+    mod = _make_module(_BigOutboundModule)
     mod._validate_inbound_payload_sizes(mod._get_stream_types())  # must not raise
 
 
 def test_validate_inbound_payload_sizes_skips_non_avr_board() -> None:
     """A non-AVR FQBN skips the check entirely — non-AVR gets 1024."""
-    mod = _Esp32Module.__new__(_Esp32Module)
-    mod.config = _Esp32Config()
-    mod.__dict__["pose_in"] = In.__new__(In)
-
+    mod = _make_module(_Esp32Module)
     mod._validate_inbound_payload_sizes(mod._get_stream_types())  # must not raise
 
 
+@pytest.mark.slow
+@pytest.mark.tool
 def test_registry_headers_cover_all_arduino_msgs_files() -> None:
     """Every header referenced by _KNOWN_TYPE_HEADERS must exist on disk.
     Extra generated headers (from dimos-lcm codegen) and infrastructure
