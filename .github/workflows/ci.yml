@@ -153,6 +153,45 @@ jobs:
           node-version: 'lts/*'
       - name: Install Python dependencies
         run: uv sync --group tests --frozen
+      - name: Restore Hugging Face model cache
+        id: hf-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/huggingface
+          # The docs determine which models get downloaded, so any docs
+          # change may introduce a new model: go online and re-save the
+          # cache then. restore-keys still seeds the new cache with the
+          # previously cached models, so only genuinely new models are
+          # downloaded.
+          key: hf-models-${{ hashFiles('docs/**/*.md') }}
+          restore-keys: |
+            hf-models-
+      - name: Prefetch Hugging Face models
+        if: steps.hf-cache.outputs.cache-hit != 'true'
+        # Anonymous downloads from shared GitHub runner IPs get rate-limited
+        # by huggingface.co (HTTP 429), so retry with backoff. Models already
+        # in the restored cache are not re-downloaded.
+        run: |
+          for i in 1 2 3 4 5; do
+            uv run python -c "from transformers import CLIPModel, CLIPProcessor; m = 'openai/clip-vit-base-patch32'; CLIPModel.from_pretrained(m); CLIPProcessor.from_pretrained(m)" && exit 0
+            echo "Hugging Face download failed (likely rate-limited); retry $i in $((i * 30))s"
+            sleep $((i * 30))
+          done
+          echo "::error::Could not download Hugging Face models after 5 attempts"
+          exit 1
+      - name: Save Hugging Face model cache
+        # Save right after the download (not in a post step) so a failure in
+        # the doc blocks below doesn't throw away the downloaded models.
+        if: steps.hf-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-${{ hashFiles('docs/**/*.md') }}
+      - name: Run Hugging Face offline on exact cache hit
+        # Zero huggingface.co requests when every model is already cached:
+        # immune to rate limiting.
+        if: steps.hf-cache.outputs.cache-hit == 'true'
+        run: echo "HF_HUB_OFFLINE=1" >> "$GITHUB_ENV"
       - name: Execute documentation code blocks
         run: ./bin/run-doc-codeblocks --ci --no-cache
 
