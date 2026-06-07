@@ -31,14 +31,10 @@ import hashlib
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
-from typing import TypeVar
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-
-# Bound to `np.generic` so `NDArray[_NPDType]` is a well-formed type; every
-# dtype class we pass in (np.float64, np.int32, ...) is a subclass.
-_NPDType = TypeVar("_NPDType", bound=np.generic)
 
 from dimos.utils.logging_config import setup_logger
 
@@ -256,7 +252,7 @@ class ManipShmWriter:
             except OSError as exc:
                 logger.warning("SHM unlink failed", name=shm.name, error=str(exc))
 
-    def _array(self, buf: SharedMemory, n: int, dtype: type[_NPDType]) -> NDArray[_NPDType]:
+    def _array(self, buf: SharedMemory, n: int, dtype: Any) -> NDArray[Any]:
         return np.ndarray((n,), dtype=dtype, buffer=buf.buf)
 
     def _control(self) -> NDArray[np.int32]:
