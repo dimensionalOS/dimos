@@ -175,6 +175,9 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
             m_viewer.sync()
 
+            if (robot_name == "cf2"):
+                m_viewer.cam.lookat = data.qpos[0:3]
+
             # Always update odometry
             pos = data.qpos[0:3].copy()
             quat = data.qpos[3:7].copy()  # (w, x, y, z)
