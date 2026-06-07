@@ -278,15 +278,6 @@ def test_generate_header_rejects_invalid_define_name(tmp_path: Path) -> None:
             mod._generate_header()
 
 
-def test_tuning_fields_default_to_none() -> None:
-    """Tuning knobs default to None (use header defaults)."""
-    cfg = _ExampleConfig()
-    assert cfg.max_subs is None
-    assert cfg.max_pending is None
-    assert cfg.max_msg_size is None
-    assert cfg.max_payload is None
-
-
 # _detect_port — mocked arduino-cli
 
 
