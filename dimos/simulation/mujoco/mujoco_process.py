@@ -46,6 +46,28 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+class DroneMockController:
+    """Controller that simulates drone commands from shared memory."""
+
+    def __init__(self, shm_interface: ShmReader) -> None:
+        self.shm = shm_interface
+        self._command = np.zeros(4, dtype=np.float32)
+
+    def get_command(self) -> NDArray[Any]:
+        """Get the current movement command."""
+        cmd_data = self.shm.read_command()
+        if cmd_data is not None:
+            linear, angular = cmd_data
+            self._command[0] = linear[0]  # forward/backward
+            self._command[1] = linear[1]  # left/right
+            self._command[2] = angular[2]  # rotation (yaw)
+            self._command[3] = linear[2]  # vertical (up/down)
+        result: NDArray[Any] = self._command.copy()
+        return result
+
+    def stop(self) -> None:
+        """Stop method to satisfy InputController protocol."""
+        pass
 
 class MockController:
     """Controller that reads commands from shared memory."""
@@ -75,8 +97,13 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     robot_name = config.robot_model or "unitree_go1"
     if robot_name == "unitree_go2":
         robot_name = "unitree_go1"
-
-    controller = MockController(shm)
+        controller = MockController(shm)
+    elif robot_name == "drone":
+        robot_name = "cf2"
+        controller = DroneMockController(shm)
+    else:
+        controller = MockController(shm)
+    
     model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
 
     if model is None or data is None:
@@ -87,6 +114,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
             z = 0.3
         case "unitree_g1":
             z = 0.8
+        case "cf2":
+            z = 0.5
         case _:
             z = 0
 
@@ -154,14 +183,14 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
             current_time = time.time()
 
             # Video rendering
-            if current_time - last_video_time >= video_interval:
+            if camera_id != -1 and current_time - last_video_time >= video_interval:
                 rgb_renderer.update_scene(data, camera=camera_id, scene_option=scene_option)
                 pixels = rgb_renderer.render()
                 shm.write_video(pixels)
                 last_video_time = current_time
 
             # Lidar/depth rendering
-            if current_time - last_lidar_time >= lidar_interval:
+            if lidar_camera_id != -1 and current_time - last_lidar_time >= lidar_interval:
                 # Render all depth cameras
                 depth_renderer.update_scene(data, camera=lidar_camera_id, scene_option=scene_option)
                 depth_front = depth_renderer.render()

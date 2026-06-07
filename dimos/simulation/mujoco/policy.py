@@ -200,6 +200,7 @@ class DroneController:
         pitch_desired = float(command[0]) * self._max_tilt_angle
         roll_desired = -float(command[1]) * self._max_tilt_angle
         yaw_rate_desired = float(command[2]) * self._max_yaw_rate
+        thrust_desired = float(command[3]) * self._drone_hover_thrust
 
         qw, qx, qy, qz = data.qpos[3:7]
 
@@ -211,10 +212,8 @@ class DroneController:
         yaw_rate = data.qvel[5]
 
         yaw_rate_error = yaw_rate - yaw_rate_desired
-
-        cos_tilt = max(1.0 - 2.0 * (qx * qx + qy * qy), 0.5)
-
-        data.ctrl[0] = self._drone_hover_thrust / cos_tilt
+        
+        data.ctrl[0] = thrust_desired + self._drone_hover_thrust
         data.ctrl[1] = self._attitude_p * (current_roll - roll_desired) + self._attitude_d * roll_rate
         data.ctrl[2] = self._attitude_p * (current_pitch - pitch_desired) + self._attitude_d * pitch_rate
         data.ctrl[3] = self._yaw_d * yaw_rate_error
