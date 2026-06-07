@@ -14,14 +14,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dimos.memory2.transform import Transformer
+from dimos.memory2.utils.poseless import posed_only
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.nav_3d.mls_planner.mls_planner import MLSPlanner
-from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -30,8 +30,6 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.memory2.type.observation import Observation
-
-logger = setup_logger()
 
 
 class MLSPlan(Transformer[PointCloud2, Path]):
@@ -43,20 +41,12 @@ class MLSPlan(Transformer[PointCloud2, Path]):
         goal: tuple[float, float, float],
         voxel_size: float = 0.1,
         robot_height: float = 1.5,
-        surface_dilation_passes: int = 3,
-        surface_erosion_passes: int = 3,
-        node_spacing_m: float = 1.0,
-        node_wall_buffer_m: float = 0.3,
-        node_step_threshold_m: float = 0.25,
+        **planner_kwargs: Any,
     ) -> None:
         self.goal = goal
         self.voxel_size = voxel_size
         self.robot_height = robot_height
-        self.surface_dilation_passes = surface_dilation_passes
-        self.surface_erosion_passes = surface_erosion_passes
-        self.node_spacing_m = node_spacing_m
-        self.node_wall_buffer_m = node_wall_buffer_m
-        self.node_step_threshold_m = node_step_threshold_m
+        self._planner_kwargs = planner_kwargs
 
     def _path_from_waypoints(self, waypoints: NDArray[np.float32] | None, ts: float) -> Path:
         poses: list[PoseStamped] = []
@@ -79,17 +69,10 @@ class MLSPlan(Transformer[PointCloud2, Path]):
         planner = MLSPlanner(
             voxel_size=self.voxel_size,
             robot_height=self.robot_height,
-            surface_dilation_passes=self.surface_dilation_passes,
-            surface_erosion_passes=self.surface_erosion_passes,
-            node_spacing_m=self.node_spacing_m,
-            node_wall_buffer_m=self.node_wall_buffer_m,
-            node_step_threshold_m=self.node_step_threshold_m,
+            **self._planner_kwargs,
         )
-        for obs in upstream:
-            if obs.pose_tuple is None:
-                logger.debug("MLSPlan: obs %s has no pose; skipping", obs.id)
-                continue
-            x, y, z, *_ = obs.pose_tuple
+        for obs, pose in posed_only(upstream, "MLSPlan"):
+            x, y, z, *_ = pose
             start = (float(x), float(y), float(z) - self.robot_height)
 
             voxel_map = obs.data

@@ -14,22 +14,20 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory2.transform import Transformer
+from dimos.memory2.utils.poseless import posed_only
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from dimos.memory2.type.observation import Observation
-
-logger = setup_logger()
 
 
 class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
@@ -40,21 +38,15 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         *,
         voxel_size: float = 0.1,
         max_range: float = 30.0,
-        ray_subsample: int = 1,
-        shadow_depth: float = 0.2,
-        grace_depth: float = 0.2,
-        min_health: int = -2,
-        max_health: int = 1,
         emit_every: int = 1,
+        **mapper_kwargs: Any,
     ) -> None:
+        if emit_every < 0:
+            raise ValueError(f"emit_every must be >= 0, got {emit_every}")
         self.voxel_size = voxel_size
         self.max_range = max_range
-        self.ray_subsample = ray_subsample
-        self.shadow_depth = shadow_depth
-        self.grace_depth = grace_depth
-        self.min_health = min_health
-        self.max_health = max_health
         self.emit_every = emit_every
+        self._mapper_kwargs = mapper_kwargs
 
     def _make_obs(
         self,
@@ -76,22 +68,13 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         upstream: Iterator[Observation[PointCloud2]],
     ) -> Iterator[Observation[PointCloud2]]:
         mapper = VoxelRayMapper(
-            voxel_size=self.voxel_size,
-            max_range=self.max_range,
-            ray_subsample=self.ray_subsample,
-            shadow_depth=self.shadow_depth,
-            grace_depth=self.grace_depth,
-            min_health=self.min_health,
-            max_health=self.max_health,
+            voxel_size=self.voxel_size, max_range=self.max_range, **self._mapper_kwargs
         )
         last_obs: Observation[PointCloud2] | None = None
         count = 0
 
-        for obs in upstream:
-            if obs.pose_tuple is None:
-                logger.debug("RayTraceMap: obs %s has no pose; skipping", obs.id)
-                continue
-            x, y, z, *_ = obs.pose_tuple
+        for obs, pose in posed_only(upstream, "RayTraceMap"):
+            x, y, z, *_ = pose
             mapper.add_frame(obs.data.points_f32(), (x, y, z))
             last_obs = obs
             count += 1

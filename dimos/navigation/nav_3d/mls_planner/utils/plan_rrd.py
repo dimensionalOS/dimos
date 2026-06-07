@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Replay a lidar+odometry .db through RayTraceMap and MLSPlan into rerun."""
+"""Dev replay util: run a lidar+odometry .db through RayTraceMap and MLSPlan into rerun."""
 
 from __future__ import annotations
 
 from pathlib import Path as FsPath
+from typing import TYPE_CHECKING
 
-import numpy as np
 import rerun as rr
 import typer
 
@@ -32,10 +32,16 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_an
 from dimos.navigation.nav_3d.mls_planner.transformer import MLSPlan
 from dimos.utils.data import resolve_named_path
 
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
+
 TIMELINE = "ts"
 
+PairObs = Observation[tuple[Observation[PointCloud2], Observation[Odometry]]]
 
-def _attach_pose_from_odom(pair_obs: Observation) -> Observation[PointCloud2]:
+
+def _attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
     lidar_obs = pair_obs.data[0]
     odom_obs = pair_obs.data[1]
     odom = odom_obs.data
@@ -51,7 +57,7 @@ def _attach_pose_from_odom(pair_obs: Observation) -> Observation[PointCloud2]:
     return lidar_obs.with_pose(pose_tuple)
 
 
-def _log_edges(edges: np.ndarray, entity: str) -> None:
+def _log_edges(edges: NDArray[np.float32], entity: str) -> None:
     if edges.size == 0:
         rr.log(entity, rr.LineStrips3D([]))
         return
@@ -86,10 +92,12 @@ def main(
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     ray_subsample: int = typer.Option(1, "--ray-subsample", help="Keep every Nth ray"),
     emit_every: int = typer.Option(1, "--emit-every", help="Replan every N lidar frames"),
-    robot_height: float = typer.Option(1.5, "--robot-height", help="Robot height (m)"),
+    robot_height: float = typer.Option(0.3, "--robot-height", help="Robot height (m)"),
     node_spacing: float = typer.Option(1.0, "--node-spacing", help="Graph node spacing (m)"),
     goal: tuple[float, float, float] = typer.Option(
-        (1.25, 35.45, 1.9), "--goal", help="Planner goal xyz"
+        (1.25, 35.45, 1.9),
+        "--goal",
+        help="Planner goal xyz. Default is dataset-specific; override per recording.",
     ),
     live: bool = typer.Option(
         False, "--live", help="Also spawn the rerun viewer when --out is set"
