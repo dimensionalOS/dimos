@@ -19,6 +19,8 @@ from __future__ import annotations
 import threading
 from typing import Any
 
+from reactivex.disposable import Disposable
+
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -57,7 +59,7 @@ class TestPublisher(Module):
         super().start()
         self._stop_event = threading.Event()
         self._echo_lock = threading.Lock()
-        self.echo_in.subscribe(self._on_echo)
+        self.register_disposable(Disposable(self.echo_in.subscribe(self._on_echo)))
         self._thread = threading.Thread(target=self._publish_loop, daemon=True)
         self._thread.start()
         logger.info("TestPublisher started")

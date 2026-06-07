@@ -34,6 +34,8 @@ import threading
 import time
 from typing import Any
 
+from reactivex.disposable import Disposable
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
@@ -88,6 +90,7 @@ class TestHarness(Module):
     _quat_echoes: list[tuple[float, float, float, float]]
     _lock: Any  # threading.Lock
     _done: bool
+    _send_thread: threading.Thread | None = None
 
     @rpc
     def start(self) -> None:
@@ -99,13 +102,19 @@ class TestHarness(Module):
         self._lock = threading.Lock()
         self._done = False
 
-        self.bool_in.subscribe(self._on_bool)
-        self.int32_in.subscribe(self._on_int32)
-        self.vec3_in.subscribe(self._on_vec3)
-        self.quat_in.subscribe(self._on_quat)
+        self.register_disposable(Disposable(self.bool_in.subscribe(self._on_bool)))
+        self.register_disposable(Disposable(self.int32_in.subscribe(self._on_int32)))
+        self.register_disposable(Disposable(self.vec3_in.subscribe(self._on_vec3)))
+        self.register_disposable(Disposable(self.quat_in.subscribe(self._on_quat)))
 
-        # Start sending in a background thread
-        threading.Thread(target=self._send_all, daemon=True).start()
+        self._send_thread = threading.Thread(target=self._send_all, daemon=True)
+        self._send_thread.start()
+
+    @rpc
+    def stop(self) -> None:
+        if self._send_thread is not None:
+            self._send_thread.join(timeout=5)
+        super().stop()
 
     def _on_bool(self, msg: Bool) -> None:
         with self._lock:

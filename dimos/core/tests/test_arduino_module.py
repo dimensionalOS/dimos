@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from typing import Any
 from unittest import mock
@@ -441,9 +442,6 @@ def _arduino_common_dir() -> Path:
     resolve them through `nix build` the same way ArduinoModule does at
     runtime.  Skips if nix is not available.
     """
-    import shutil
-    import subprocess
-
     if shutil.which("nix") is None:
         pytest.skip("nix not available — cannot resolve Arduino message headers")
 
@@ -539,8 +537,8 @@ def _make_module_with_topics(topics: dict[str, str]) -> _ExampleModule:
     # the module-level reflection sees only the two In/Out stubs from
     # _make_module).  Monkey-patch the properties on this instance.
     inputs_list = list(topics)
-    mod.__class__.inputs = property(lambda self: inputs_list)  # type: ignore[method-assign,assignment]
-    mod.__class__.outputs = property(lambda self: [])  # type: ignore[method-assign,assignment]
+    mod.__class__.inputs = property(lambda self: inputs_list)
+    mod.__class__.outputs = property(lambda self: [])
     return mod
 
 
