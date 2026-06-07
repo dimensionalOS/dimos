@@ -358,35 +358,44 @@ class ArduinoModule(NativeModule):
         return []
 
     @rpc
-    def start(self) -> None:
-        """Launch the C++ bridge subprocess (and QEMU if virtual)."""
+    def _build_full_config(self, serial_port: str) -> dict[str, Any]:
+        """Combine connection settings and the resolved topic mappings into a
+        single config object, serialized into the bridge's one ``--full-config``
+        JSON arg.  The bridge reads everything from this and ignores all other
+        args, so there is no per-topic CLI flag schema to keep in sync.
+
+        Topics are assembled here (rather than at ``__init__``) because the
+        port transports are only resolved once the module is wired and started.
+        """
         topics = self._resolve_topics()
         topic_enum = self._build_topic_enum()
+        topic_entries = [
+            {
+                "id": topic_id,
+                "channel": topics[stream_name],
+                "is_output": stream_name in self.outputs,
+            }
+            for stream_name, topic_id in topic_enum.items()
+            if stream_name in topics
+        ]
+        return {
+            "serial_port": serial_port,
+            "baudrate": self.config.baudrate,
+            "reconnect": self.config.auto_reconnect,
+            "reconnect_interval": self.config.reconnect_interval,
+            "topics": topic_entries,
+        }
 
+    def start(self) -> None:
+        """Launch the C++ bridge subprocess (and QEMU if virtual)."""
         if self.config.virtual:
             serial_port = self._start_qemu()
         else:
             serial_port = self.config.port or "/dev/ttyACM0"
 
-        bridge_args = [
-            "--serial_port",
-            serial_port,
-            "--baudrate",
-            str(self.config.baudrate),
-            "--reconnect",
-            str(self.config.auto_reconnect).lower(),
-            "--reconnect_interval",
-            str(self.config.reconnect_interval),
-        ]
-
-        for stream_name, topic_id in topic_enum.items():
-            if stream_name not in topics:
-                continue
-            lcm_channel = topics[stream_name]
-            if stream_name in self.outputs:
-                bridge_args.extend(["--topic_out", str(topic_id), lcm_channel])
-            elif stream_name in self.inputs:
-                bridge_args.extend(["--topic_in", str(topic_id), lcm_channel])
+        # The bridge reads its entire configuration from one --full-config
+        # JSON arg and ignores everything else (see _build_full_config).
+        bridge_args = ["--full-config", json.dumps(self._build_full_config(serial_port))]
 
         if self._bridge_bin is not None:
             self.config.executable = self._bridge_bin

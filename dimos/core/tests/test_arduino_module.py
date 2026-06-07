@@ -123,6 +123,43 @@ def test_build_topic_enum_assigns_1_based_alphabetical() -> None:
     assert enum == {"twist_echo_out": 1, "twist_in": 2}
 
 
+def test_build_full_config_combines_connection_and_topics() -> None:
+    """The bridge reads one --full-config JSON arg; this is its schema.
+
+    Keep in sync with parse_args() in dimos/hardware/arduino/cpp/main.cpp.
+    """
+    mod = _make_module()
+    mod.config.auto_reconnect = False
+    mod.config.reconnect_interval = 1.5
+    with (
+        mock.patch.object(
+            mod,
+            "_resolve_topics",
+            return_value={
+                "twist_echo_out": "echo#geometry_msgs.Twist",
+                "twist_in": "cmd#geometry_msgs.Twist",
+            },
+        ),
+        mock.patch.object(
+            mod,
+            "_build_topic_enum",
+            return_value={"twist_echo_out": 1, "twist_in": 2},
+        ),
+    ):
+        cfg = mod._build_full_config("/dev/ttyACM0")
+
+    assert cfg["serial_port"] == "/dev/ttyACM0"
+    assert cfg["baudrate"] == 115200
+    assert cfg["reconnect"] is False
+    assert cfg["reconnect_interval"] == 1.5
+    assert cfg["topics"] == [
+        {"id": 1, "channel": "echo#geometry_msgs.Twist", "is_output": True},
+        {"id": 2, "channel": "cmd#geometry_msgs.Twist", "is_output": False},
+    ]
+    # The wire format is JSON — the whole config must serialize cleanly.
+    assert json.loads(json.dumps(cfg)) == cfg
+
+
 # _generate_header — config embedding & escaping
 
 

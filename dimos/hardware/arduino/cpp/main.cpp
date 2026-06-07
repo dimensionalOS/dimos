@@ -40,6 +40,8 @@
 /* LCM */
 #include <lcm/lcm-cpp.hpp>
 
+#include <nlohmann/json.hpp>
+
 /* DSP protocol constants + CRC */
 #include "dsp_protocol.h"
 
@@ -134,38 +136,71 @@ static speed_t baud_to_speed(int baud, bool *ok)
     }
 }
 
-/* `exit(1)` on unknown flags, missing required arg values, or unsupported
- * baud rates.  Silently falling back to a default is a footgun. */
+/* The bridge reads its entire configuration from a single
+ * `--full-config <json>` argument, produced by
+ * ArduinoModule._build_full_config() on the Python side.  ALL other
+ * arguments are ignored — there is no per-field/per-topic CLI schema to
+ * keep in sync between Python and C++.
+ *
+ * JSON schema:
+ *   {
+ *     "serial_port": "/dev/ttyACM0",
+ *     "baudrate": 115200,
+ *     "reconnect": true,
+ *     "reconnect_interval": 2.0,
+ *     "topics": [ { "id": 1, "channel": "/imu#sensor_msgs.Imu",
+ *                   "is_output": true }, ... ]
+ *   }
+ *
+ * `exit(1)` on a missing/invalid --full-config or an unsupported baud rate.
+ * Silently falling back to a default is a footgun. */
 static void parse_args(Bridge &b, int argc, char **argv)
 {
+    const char *full_config = nullptr;
     for (int i = 1; i < argc; i++) {
         std::string arg(argv[i]);
+        if (arg == "--full-config" && i + 1 < argc) {
+            full_config = argv[++i];
+        }
+        /* All other arguments are intentionally ignored. */
+    }
 
-        if (arg == "--serial_port" && i + 1 < argc) {
-            b.serial_port = argv[++i];
-        } else if (arg == "--baudrate" && i + 1 < argc) {
-            b.baudrate = std::atoi(argv[++i]);
-            bool ok;
-            (void)baud_to_speed(b.baudrate, &ok);
-            if (!ok) {
-                fprintf(stderr, "[bridge] Unsupported baud rate: %d\n", b.baudrate);
-                exit(1);
-            }
-        } else if (arg == "--reconnect" && i + 1 < argc) {
-            std::string val(argv[++i]);
-            b.reconnect = (val == "true" || val == "1");
-        } else if (arg == "--reconnect_interval" && i + 1 < argc) {
-            b.reconnect_interval = std::atof(argv[++i]);
-        } else if ((arg == "--topic_out" || arg == "--topic_in") && i + 2 < argc) {
-            auto tm = std::make_unique<TopicMapping>();
-            tm->topic_id = (uint16_t)std::atoi(argv[++i]);
-            tm->lcm_channel = argv[++i];
-            tm->is_output = (arg == "--topic_out");
-            b.topics.push_back(std::move(tm));
-        } else {
-            fprintf(stderr, "[bridge] Unknown or malformed argument: %s\n", arg.c_str());
+    if (full_config == nullptr) {
+        fprintf(stderr, "[bridge] Missing required --full-config <json> argument\n");
+        exit(1);
+    }
+
+    nlohmann::json cfg;
+    try {
+        cfg = nlohmann::json::parse(full_config);
+    } catch (const std::exception &e) {
+        fprintf(stderr, "[bridge] Failed to parse --full-config JSON: %s\n", e.what());
+        exit(1);
+    }
+
+    try {
+        b.serial_port = cfg.at("serial_port").get<std::string>();
+        b.baudrate = cfg.at("baudrate").get<int>();
+        b.reconnect = cfg.value("reconnect", true);
+        b.reconnect_interval = cfg.value("reconnect_interval", 2.0f);
+
+        bool ok;
+        (void)baud_to_speed(b.baudrate, &ok);
+        if (!ok) {
+            fprintf(stderr, "[bridge] Unsupported baud rate: %d\n", b.baudrate);
             exit(1);
         }
+
+        for (const auto &t : cfg.at("topics")) {
+            auto tm = std::make_unique<TopicMapping>();
+            tm->topic_id = (uint16_t)t.at("id").get<int>();
+            tm->lcm_channel = t.at("channel").get<std::string>();
+            tm->is_output = t.at("is_output").get<bool>();
+            b.topics.push_back(std::move(tm));
+        }
+    } catch (const std::exception &e) {
+        fprintf(stderr, "[bridge] Malformed --full-config: %s\n", e.what());
+        exit(1);
     }
 }
 

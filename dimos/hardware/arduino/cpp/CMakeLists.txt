@@ -20,6 +20,9 @@ set(ARDUINO_MSGS "${DIMOS_LCM_DIR}/generated/arduino_c_msgs")
 # LCM library
 find_package(lcm REQUIRED)
 
+# nlohmann/json — header-only JSON parser for the --full-config arg
+find_package(nlohmann_json REQUIRED)
+
 add_executable(arduino_bridge main.cpp)
 
 target_include_directories(arduino_bridge PRIVATE
@@ -28,6 +31,6 @@ target_include_directories(arduino_bridge PRIVATE
     ${ARDUINO_MSGS}        # lcm_coretypes_arduino.h, dimos_lcm_pubsub.h
 )
 
-target_link_libraries(arduino_bridge PRIVATE lcm pthread)
+target_link_libraries(arduino_bridge PRIVATE lcm pthread nlohmann_json::nlohmann_json)
 
 install(TARGETS arduino_bridge DESTINATION bin)

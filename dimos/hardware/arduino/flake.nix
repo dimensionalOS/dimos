@@ -69,7 +69,7 @@
           src = ./.;
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
-          buildInputs = [ lcmFull pkgs.glib ];
+          buildInputs = [ lcmFull pkgs.glib pkgs.nlohmann_json ];
 
           cmakeFlags = [
             "-DDIMOS_LCM_DIR=${dimos-lcm}"
