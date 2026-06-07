@@ -138,6 +138,26 @@ jobs:
           node-version: 'lts/*'
       - name: Install Python dependencies
         run: uv sync --group tests --frozen
+      - name: Cache Hugging Face models
+        id: hf-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          # The docs determine which models get downloaded, so any docs
+          # change may introduce a new model: go online and re-save the
+          # cache then. restore-keys still seeds the new cache with the
+          # previously cached models, so only genuinely new models are
+          # downloaded (huggingface_hub falls back to cached files when
+          # revalidation is rate-limited).
+          key: hf-models-${{ hashFiles('docs/**/*.md') }}
+          restore-keys: |
+            hf-models-
+      - name: Run Hugging Face offline on exact cache hit
+        # Zero huggingface.co requests when every model is already cached;
+        # anonymous requests from shared GitHub runner IPs get rate-limited
+        # (HTTP 429), which was flaking this job.
+        if: steps.hf-cache.outputs.cache-hit == 'true'
+        run: echo "HF_HUB_OFFLINE=1" >> "$GITHUB_ENV"
       - name: Execute documentation code blocks
         run: ./bin/run-doc-codeblocks --ci --no-cache
 
