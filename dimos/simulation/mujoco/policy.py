@@ -213,7 +213,7 @@ class DroneController:
 
         yaw_rate_error = yaw_rate - yaw_rate_desired
         
-        data.ctrl[0] = thrust_desired + self._drone_hover_thrust
+        data.ctrl[0] = max(thrust_desired + self._drone_hover_thrust, self._drone_hover_thrust * 0.5)
         data.ctrl[1] = self._attitude_p * (current_roll - roll_desired) + self._attitude_d * roll_rate
         data.ctrl[2] = self._attitude_p * (current_pitch - pitch_desired) + self._attitude_d * pitch_rate
         data.ctrl[3] = self._yaw_d * yaw_rate_error
