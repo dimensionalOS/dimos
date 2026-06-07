@@ -254,7 +254,7 @@ manipulation = [
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
 
     # Hardware SDKs
-    "can-motor-control>=0.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "can-motor-control>=0.0.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "piper-sdk",
     "pyrealsense2-extended; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
