@@ -64,7 +64,7 @@ class LocalPlanner(Resource):
     _goal_tolerance: float
     _controller: Controller
 
-    _speed: float = 0.55
+    _speed: float = 0.85
     _control_frequency: float = 10
     _orientation_tolerance: float = 0.35
     _navigation_costmap_interval: float = 1.0

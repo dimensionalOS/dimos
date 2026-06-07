@@ -17,6 +17,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.mapping.costmapper import costmap_to_rerun
 from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitree_go2_agentic
 from dimos.visualization.vis_module import vis_module
 
@@ -25,15 +26,6 @@ def _convert_camera_info(camera_info: Any) -> Any:
     return camera_info.to_rerun(
         image_topic="/world/color_image",
         optical_frame="camera_optical",
-    )
-
-
-def _convert_navigation_costmap(grid: Any) -> Any:
-    return grid.to_rerun(
-        colormap="Accent",
-        z_offset=0.015,
-        opacity=0.2,
-        background="#484981",
     )
 
 
@@ -75,7 +67,7 @@ _rerun_config = {
     "blueprint": _go2_rerun_blueprint,
     "visual_override": {
         "world/camera_info": _convert_camera_info,
-        "world/navigation_costmap": _convert_navigation_costmap,
+        "world/navigation_costmap": costmap_to_rerun,
     },
     "static": {
         "world/tf/base_link": _static_base_link,
