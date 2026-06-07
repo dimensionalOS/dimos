@@ -6,6 +6,24 @@ work so future contributors can understand why the fork differs from upstream.
 
 Entries are listed in reverse chronological order.
 
+## 2026-05-28
+
+- Branch: `refactor/go2-architecture-layers`
+- Summary: Made the security patrol tracker initialize lazily so the Go2
+  agentic blueprint can deploy in CPU-only MuJoCo/WSL environments when
+  security patrol is not used. Calling `start_security_patrol` still reports
+  the EdgeTAM CUDA requirement if no compatible GPU is available.
+- Files/modules:
+  - `dimos/experimental/security_demo/security_module.py`
+  - `dimos/robot/unitree/go2/PROJECT_CHANGELOG.md`
+- Validation:
+  - Ran `python -m py_compile dimos/experimental/security_demo/security_module.py`.
+  - Instantiated `SecurityModule(camera_info=CameraInfo())` in UbuntuDev using
+    the existing WSL dependency environment; construction completed on CPU.
+- Open items:
+  - Add a CPU-capable tracker fallback if security patrol needs to run without
+    CUDA.
+
 ## 2026-05-22
 
 - Branch: `refactor/go2-architecture-layers`

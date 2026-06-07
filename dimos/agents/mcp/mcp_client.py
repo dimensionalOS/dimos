@@ -74,7 +74,7 @@ _TOOL_DOMAINS = {
 
 class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
-    model: str = "gpt-4o"
+    model: str = "ollama:qwen3.6:latest"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
 

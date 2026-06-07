@@ -149,6 +149,7 @@ class SecurityModule(Module):
 
     _planner_spec: ReplanningAStarPlannerSpec
     _speak_skill: SpeakSkillSpec
+    _tracker: EdgeTAMProcessor | None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -156,7 +157,7 @@ class SecurityModule(Module):
         self._router: PatrolRouter = _create_router(self.config.g)
         self._visual_servo = _create_visual_servo(self.config, self.config.g)
         self._detector = YoloPersonDetector()
-        self._tracker = EdgeTAMProcessor()
+        self._tracker = None
 
         self._depth_estimator = DepthEstimator(self.depth_image.publish)
 
@@ -185,7 +186,8 @@ class SecurityModule(Module):
         self._stop_security_patrol_internal()
         self._depth_estimator.stop()
         self._detector.stop()
-        self._tracker.stop()
+        if self._tracker is not None:
+            self._tracker.stop()
         super().stop()
 
     @skill
@@ -197,6 +199,10 @@ class SecurityModule(Module):
         with self._lock:
             if self._main_thread is not None and self._main_thread.is_alive():
                 return "Security patrol is already running. Use `stop_security_patrol` to stop."
+
+        tracker_error = self._ensure_tracker_available()
+        if tracker_error is not None:
+            return tracker_error
 
         if not self._depth_started:
             self._depth_estimator.start()
@@ -221,6 +227,16 @@ class SecurityModule(Module):
             "Security patrol started. The robot will patrol, detect, and follow "
             "persons automatically. Use `stop_security_patrol` to stop."
         )
+
+    def _ensure_tracker_available(self) -> str | None:
+        if self._tracker is not None:
+            return None
+        try:
+            self._tracker = EdgeTAMProcessor()
+        except RuntimeError as exc:
+            logger.warning("Security patrol unavailable", error=str(exc))
+            return f"Security patrol unavailable: {exc}"
+        return None
 
     @skill
     def stop_security_patrol(self) -> str:
@@ -310,7 +326,12 @@ class SecurityModule(Module):
 
         # Init EdgeTAM with YOLO bbox for continuous tracking
         box = np.array(list(best.bbox), dtype=np.float32)
-        self._tracker.init_track(image=image, box=box, obj_id=1)
+        tracker = self._tracker
+        if tracker is None:
+            logger.warning("Security tracker unavailable, stopping security patrol")
+            self._stop_security_patrol_internal()
+            return
+        tracker.init_track(image=image, box=box, obj_id=1)
 
         self._cancel_current_goal()
         self._has_active_goal = False
@@ -326,7 +347,13 @@ class SecurityModule(Module):
             self._stop_event.wait(timeout=_ANTI_BUSY_LOOP_TIMEOUT)
             return
 
-        detections = self._tracker.process_image(latest_image)
+        tracker = self._tracker
+        if tracker is None:
+            logger.warning("Security tracker unavailable, resuming patrol")
+            self._transition_to("PATROLLING")
+            return
+
+        detections = tracker.process_image(latest_image)
 
         if len(detections) == 0:
             self.cmd_vel.publish(Twist.zero())
