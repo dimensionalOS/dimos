@@ -357,7 +357,6 @@ class ArduinoModule(NativeModule):
         # generic --<stream_name> <topic> args from NativeModule.
         return []
 
-    @rpc
     def _build_full_config(self, serial_port: str) -> dict[str, Any]:
         """Combine connection settings and the resolved topic mappings into a
         single config object, serialized into the bridge's one ``--full-config``
@@ -386,6 +385,7 @@ class ArduinoModule(NativeModule):
             "topics": topic_entries,
         }
 
+    @rpc
     def start(self) -> None:
         """Launch the C++ bridge subprocess (and QEMU if virtual)."""
         if self.config.virtual:
