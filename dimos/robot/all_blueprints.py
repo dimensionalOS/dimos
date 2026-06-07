@@ -17,7 +17,7 @@
 
 all_blueprints = {
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",
-    "arduino-twist-echo-virtual": "dimos.hardware.arduino.examples.arduino_twist_echo.blueprint:arduino_twist_echo_virtual",
+    "arduino-msg-example": "dimos.hardware.arduino.examples.arduino_twist_echo.blueprint:arduino_msg_example",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.control.blueprints.teleop:coordinator_cartesian_ik_piper",
@@ -129,6 +129,8 @@ all_blueprints = {
 
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
+    "arduino-multi-echo": "dimos.hardware.arduino.examples.arduino_multi_echo.module.ArduinoMultiEcho",
+    "arduino-twist-echo": "dimos.hardware.arduino.examples.arduino_twist_echo.module.ArduinoTwistEcho",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions.ArmTeleopModule",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation.BBoxNavigationModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
@@ -184,7 +186,6 @@ all_modules = {
     "module-b": "dimos.robot.unitree.demo_error_on_name_conflicts.ModuleB",
     "movement-manager": "dimos.navigation.movement_manager.movement_manager.MovementManager",
     "mujoco-sim-module": "dimos.simulation.engines.mujoco_sim_module.MujocoSimModule",
-    "multi-echo": "dimos.hardware.arduino.examples.arduino_multi_echo.module.MultiEcho",
     "nav-record": "dimos.navigation.nav_stack.modules.nav_record.nav_record.NavRecord",
     "navigation-skill-container": "dimos.agents.skills.navigation.NavigationSkillContainer",
     "object-db-module": "dimos.perception.detection.moduleDB.ObjectDBModule",
@@ -221,7 +222,6 @@ all_modules = {
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory.TemporalMemory",
     "terrain-analysis": "dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis.TerrainAnalysis",
     "terrain-map-ext": "dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext.TerrainMapExt",
-    "twist-echo": "dimos.hardware.arduino.examples.arduino_twist_echo.module.TwistEcho",
     "twist-teleop-module": "dimos.teleop.quest.quest_extensions.TwistTeleopModule",
     "unitree-g1-skill-container": "dimos.robot.unitree.g1.skill_container.UnitreeG1SkillContainer",
     "unitree-skill-container": "dimos.robot.unitree.unitree_skill_container.UnitreeSkillContainer",

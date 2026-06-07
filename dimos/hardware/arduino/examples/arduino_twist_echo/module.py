@@ -26,7 +26,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 
 
-class TwistEchoConfig(ArduinoModuleConfig):
+class ArduinoTwistEchoConfig(ArduinoModuleConfig):
     sketch_path: str = "sketch/sketch.ino"
     board_fqbn: str = "arduino:avr:uno"
     baudrate: int = 115200
@@ -35,10 +35,10 @@ class TwistEchoConfig(ArduinoModuleConfig):
     echo_delay_ms: int = 50
 
 
-class TwistEcho(ArduinoModule):
+class ArduinoTwistEcho(ArduinoModule):
     """Arduino that echoes received Twist commands back."""
 
-    config: TwistEchoConfig
+    config: ArduinoTwistEchoConfig
 
     # DimOS sends Twist commands to the Arduino
     twist_in: In[Twist]

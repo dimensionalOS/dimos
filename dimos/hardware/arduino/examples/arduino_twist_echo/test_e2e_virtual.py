@@ -14,7 +14,7 @@
 
 """End-to-end test for the virtual-Arduino path.
 
-Boots the ``arduino_twist_echo_virtual`` blueprint — which spins up a
+Boots the ``arduino_msg_example`` blueprint — which spins up a
 ``TestPublisher`` module, compiles the sketch via ``arduino-cli``,
 launches ``qemu-system-avr`` with the ELF, and runs the ``arduino_bridge``
 subprocess — then waits for several Twist messages to round-trip
@@ -97,7 +97,7 @@ def test_virtual_arduino_round_trip() -> None:
     # machinery, no reason to pay for it on a skip.
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.hardware.arduino.examples.arduino_twist_echo.blueprint import (
-        arduino_twist_echo_virtual,
+        arduino_msg_example,
     )
     from dimos.hardware.arduino.examples.arduino_twist_echo.test_publisher import (
         TestPublisher,
@@ -106,7 +106,7 @@ def test_virtual_arduino_round_trip() -> None:
     # Disable Rerun so tests don't try to launch a viewer.
     build_overrides = MappingProxyType({"g": {"viewer": "none"}})
 
-    coordinator = ModuleCoordinator.build(arduino_twist_echo_virtual, build_overrides.copy())
+    coordinator = ModuleCoordinator.build(arduino_msg_example, build_overrides.copy())
     try:
         publisher = coordinator.get_instance(TestPublisher)
         assert publisher is not None, (

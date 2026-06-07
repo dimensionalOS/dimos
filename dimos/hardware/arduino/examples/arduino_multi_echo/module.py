@@ -28,16 +28,16 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int32 import Int32
 
 
-class MultiEchoConfig(ArduinoModuleConfig):
+class ArduinoMultiEchoConfig(ArduinoModuleConfig):
     sketch_path: str = "sketch/sketch.ino"
     board_fqbn: str = "arduino:avr:uno"
     baudrate: int = 115200
 
 
-class MultiEcho(ArduinoModule):
+class ArduinoMultiEcho(ArduinoModule):
     """Arduino that echoes multiple message types back."""
 
-    config: MultiEchoConfig
+    config: ArduinoMultiEchoConfig
 
     bool_in: In[Bool]
     bool_out: Out[Bool]

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Blueprint: virtual Arduino TwistEcho + a test publisher.
+"""Blueprint: virtual Arduino ArduinoTwistEcho + a test publisher.
 
 Run with:
     dimos run arduino-twist-echo-virtual
@@ -24,29 +24,29 @@ this module's variable from a script.
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.arduino.examples.arduino_twist_echo.module import TwistEcho
+from dimos.hardware.arduino.examples.arduino_twist_echo.module import ArduinoTwistEcho
 from dimos.hardware.arduino.examples.arduino_twist_echo.test_publisher import (
     TestPublisher,
 )
 
 # Two modules wired by autoconnect via stream name+type matching:
 #   TestPublisher.cmd_out      (Out[Twist])  ──┐
-#   TwistEcho.twist_in         (In[Twist])  ◀──┘  via remapping
+#   ArduinoTwistEcho.twist_in         (In[Twist])  ◀──┘  via remapping
 #
-#   TwistEcho.twist_echo_out   (Out[Twist])  ──┐
+#   ArduinoTwistEcho.twist_echo_out   (Out[Twist])  ──┐
 #   TestPublisher.echo_in      (In[Twist])   ◀─┘  via remapping
-arduino_twist_echo_virtual = (
+arduino_msg_example = (
     autoconnect(
         TestPublisher.blueprint(publish_period_s=0.5),
-        TwistEcho.blueprint(virtual=True),
+        ArduinoTwistEcho.blueprint(virtual=True),
     )
     .remappings(
         [
-            # TestPublisher.cmd_out → TwistEcho.twist_in
+            # TestPublisher.cmd_out → ArduinoTwistEcho.twist_in
             (TestPublisher, "cmd_out", "twist_command"),
-            (TwistEcho, "twist_in", "twist_command"),
-            # TwistEcho.twist_echo_out → TestPublisher.echo_in
-            (TwistEcho, "twist_echo_out", "twist_echo"),
+            (ArduinoTwistEcho, "twist_in", "twist_command"),
+            # ArduinoTwistEcho.twist_echo_out → TestPublisher.echo_in
+            (ArduinoTwistEcho, "twist_echo_out", "twist_echo"),
             (TestPublisher, "echo_in", "twist_echo"),
         ]
     )

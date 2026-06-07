@@ -41,7 +41,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.hardware.arduino.examples.arduino_multi_echo.module import MultiEcho
+from dimos.hardware.arduino.examples.arduino_multi_echo.module import ArduinoMultiEcho
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Bool import Bool
@@ -302,25 +302,25 @@ def main() -> None:
     bp = (
         autoconnect(
             TestHarness.blueprint(),
-            MultiEcho.blueprint(virtual=False),
+            ArduinoMultiEcho.blueprint(virtual=False),
         )
         .remappings(
             [
                 (TestHarness, "bool_out", "bool_cmd"),
-                (MultiEcho, "bool_in", "bool_cmd"),
-                (MultiEcho, "bool_out", "bool_echo"),
+                (ArduinoMultiEcho, "bool_in", "bool_cmd"),
+                (ArduinoMultiEcho, "bool_out", "bool_echo"),
                 (TestHarness, "bool_in", "bool_echo"),
                 (TestHarness, "int32_out", "int32_cmd"),
-                (MultiEcho, "int32_in", "int32_cmd"),
-                (MultiEcho, "int32_out", "int32_echo"),
+                (ArduinoMultiEcho, "int32_in", "int32_cmd"),
+                (ArduinoMultiEcho, "int32_out", "int32_echo"),
                 (TestHarness, "int32_in", "int32_echo"),
                 (TestHarness, "vec3_out", "vec3_cmd"),
-                (MultiEcho, "vec3_in", "vec3_cmd"),
-                (MultiEcho, "vec3_out", "vec3_echo"),
+                (ArduinoMultiEcho, "vec3_in", "vec3_cmd"),
+                (ArduinoMultiEcho, "vec3_out", "vec3_echo"),
                 (TestHarness, "vec3_in", "vec3_echo"),
                 (TestHarness, "quat_out", "quat_cmd"),
-                (MultiEcho, "quat_in", "quat_cmd"),
-                (MultiEcho, "quat_out", "quat_echo"),
+                (ArduinoMultiEcho, "quat_in", "quat_cmd"),
+                (ArduinoMultiEcho, "quat_out", "quat_echo"),
                 (TestHarness, "quat_in", "quat_echo"),
             ]
         )
