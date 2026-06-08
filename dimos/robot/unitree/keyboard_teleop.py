@@ -161,9 +161,9 @@ class KeyboardTeleop(Module):
                 twist.angular.z = -self.angular_speed
 
             # Altitude (R/F)
-            if pygame.K_r in self._keys_held:
+            if pygame.K_r in self._keys_held or pygame.K_UP in self._keys_held:
                 twist.linear.z = self.linear_speed
-            if pygame.K_f in self._keys_held:
+            if pygame.K_f in self._keys_held or pygame.K_DOWN in self._keys_held:
                 twist.linear.z = -self.linear_speed
 
             # Apply speed modifiers (Shift = boost, Ctrl = slow)
@@ -238,7 +238,7 @@ class KeyboardTeleop(Module):
 
         y_pos = 280
         help_texts = [
-            "WS: Move | AD: Turn | QE: Strafe | RF: Up/Down",
+            "WS: Move | AD: Turn | QE: Strafe | RF/Arrows: Up/Down",
             "Shift: Boost | Ctrl: Slow",
             "Space: E-Stop | ESC: Quit",
         ]
