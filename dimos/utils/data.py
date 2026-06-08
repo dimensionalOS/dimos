@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.logging_config import setup_logger
@@ -191,23 +192,30 @@ def _is_lfs_pointer_file(file_path: Path) -> bool:
         return False
 
 
-def _lfs_pull(file_path: Path, repo_root: Path) -> None:
-    try:
-        relative_path = file_path.relative_to(repo_root)
+def _lfs_pull(file_path: Path, repo_root: Path, *, retries: int = 2) -> None:
+    relative_path = file_path.relative_to(repo_root)
 
-        env = os.environ.copy()
-        env["GIT_LFS_FORCE_PROGRESS"] = "1"
+    env = os.environ.copy()
+    env["GIT_LFS_FORCE_PROGRESS"] = "1"
 
-        subprocess.run(
-            ["git", "lfs", "pull", "--include", str(relative_path)],
-            cwd=repo_root,
-            check=True,
-            env=env,
-        )
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to pull LFS file {file_path}: {e}")
+    last_err: subprocess.CalledProcessError | None = None
+    for attempt in range(1, retries + 2):  # retries + 1 total attempts
+        try:
+            subprocess.run(
+                ["git", "lfs", "pull", "--include", str(relative_path)],
+                cwd=repo_root,
+                check=True,
+                env=env,
+            )
+            return
+        except subprocess.CalledProcessError as e:
+            last_err = e
+            if attempt <= retries:
+                time.sleep(attempt)  # 1s, 2s backoff
 
-    return None
+    raise RuntimeError(
+        f"Failed to pull LFS file {file_path} after {retries + 1} attempts: {last_err}"
+    )
 
 
 def _decompress_archive(filename: str | Path) -> Path:
