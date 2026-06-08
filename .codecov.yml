@@ -5,8 +5,8 @@ codecov:
 
 coverage:
   status:
-    project: true
-    patch: true
+    project:
+    patch:
 
 # Carry forward self-hosted, as these are not run on external PRs.
 flag_management:
