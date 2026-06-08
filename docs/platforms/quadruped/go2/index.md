@@ -1,6 +1,6 @@
-# Unitree Go2 — Getting Started
+# Unitree Go2 - Getting Started
 
-The Unitree Go2 is DimOS's primary reference platform. Full autonomous navigation, mapping, and agentic control — no ROS required.
+The Unitree Go2 is DimOS's primary reference platform. Full autonomous navigation, mapping, and agentic control - no ROS required.
 
 ## Requirements
 
@@ -23,7 +23,7 @@ source .venv/bin/activate
 uv pip install 'dimos[base,unitree]'
 ```
 
-## Try It — No Hardware Needed
+## Try It - No Hardware Needed
 
 ```bash
 # Replay a recorded Go2 navigation session
@@ -31,7 +31,7 @@ uv pip install 'dimos[base,unitree]'
 dimos --replay run unitree-go2
 ```
 
-Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3D visualization — watch the Go2 map and navigate an office in real time.
+Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3D visualization - watch the Go2 map and navigate an office in real time.
 
 ## Run on Your Go2
 
@@ -39,7 +39,12 @@ Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3
 
 Use `dimos go2tool` to provision wifi and find the robot's IP. Skip if the robot is already on your network and you know its IP.
 
-1. Power on the Go2 — it advertises over BLE immediately.
+macOS caveat: BLE provisioning can crash when Bleak/Python is run directly from
+Terminal or Warp because of Bluetooth permission handling. If that happens, use
+a LaunchServices-opened `.app` helper with Bluetooth usage keys. See
+[Go2 Wi-Fi Provisioning](/docs/coding-agents/go2-wifi-provisioning.md).
+
+1. Power on the Go2 - it advertises over BLE immediately.
 
 2. Provision wifi (one-time per network):
 
@@ -52,10 +57,10 @@ dimos go2tool discover
 configure wifi
 
 ```bash
-dimos go2tool connect-wifi --ssid <wifi> --password <password>
+dimos go2tool connect-wifi --ssid <wifi>
 ```
 
-Scans BLE and connects to the only robot it finds, or prompts you to pick if there are several.
+Scans BLE and connects to the only robot it finds, or prompts you to pick if there are several. The password prompt uses hidden input; avoid passing Wi-Fi passwords in process args.
 
 3. Find the robot's IP:
 
@@ -91,9 +96,9 @@ That's it. DimOS connects via WebRTC (no jailbreak required), starts the full na
 
 | Module | What It Does |
 |--------|-------------|
-| **GO2Connection** | WebRTC connection to the robot — streams LiDAR, video, odometry |
+| **GO2Connection** | WebRTC connection to the robot - streams LiDAR, video, odometry |
 | **VoxelGridMapper** | Builds a 3D voxel map using column-carving (CUDA accelerated) |
-| **CostMapper** | Converts 3D map → 2D costmap via terrain slope analysis |
+| **CostMapper** | Converts 3D map to 2D costmap via terrain slope analysis |
 | **ReplanningAStarPlanner** | Continuous A* path planning with dynamic replanning |
 | **WavefrontFrontierExplorer** | Autonomous exploration of unmapped areas |
 | **RerunBridge** | 3D visualization in browser |
@@ -113,7 +118,7 @@ uv pip install 'dimos[base,unitree,sim]'
 dimos --simulation run unitree-go2
 ```
 
-Full navigation stack in MuJoCo — same code, simulated robot.
+Full navigation stack in MuJoCo - same code, simulated robot.
 
 ## Agentic Control
 
@@ -132,7 +137,7 @@ humancli
 > explore the space
 ```
 
-The agent subscribes to camera, LiDAR, and spatial memory streams — it sees what the robot sees.
+The agent subscribes to camera, LiDAR, and spatial memory streams - it sees what the robot sees.
 
 ## Available Blueprints
 
@@ -148,8 +153,8 @@ The agent subscribes to camera, LiDAR, and spatial memory streams — it sees wh
 
 ## Deep Dive
 
-- [Navigation Stack](/docs/capabilities/navigation/native/index.md) — column-carving voxel mapping, costmap generation, A* planning
-- [Visualization](/docs/usage/visualization.md) — Rerun, performance tuning
-- [Data Streams](/docs/usage/data_streams) — RxPY streams, backpressure, quality filtering
-- [Transports](/docs/usage/transports/index.md) — LCM, SHM, DDS
-- [Blueprints](/docs/usage/blueprints.md) — composing modules
+- [Navigation Stack](/docs/capabilities/navigation/native/index.md) - column-carving voxel mapping, costmap generation, A* planning
+- [Visualization](/docs/usage/visualization.md) - Rerun, performance tuning
+- [Data Streams](/docs/usage/data_streams) - RxPY streams, backpressure, quality filtering
+- [Transports](/docs/usage/transports/index.md) - LCM, SHM, DDS
+- [Blueprints](/docs/usage/blueprints.md) - composing modules

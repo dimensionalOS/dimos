@@ -1,10 +1,7 @@
 # For Agents
 
-├── worktrees.md (creating provisioned worktrees with `bin/worktree`)
-├── style.md (code style guidelines for dimos)
-├── testing.md (docs about writing tests)
-├── docs (these are docs about writing docs)
-│   ├── codeblocks.md
-│   ├── doclinks.md
-│   └── index.md
-└── index.md
+- [Worktrees](/docs/coding-agents/worktrees.md): creating provisioned worktrees with `bin/worktree`
+- [Style](/docs/coding-agents/style.md): code style guidelines for DimOS
+- [Testing](/docs/coding-agents/testing.md): docs about writing tests
+- [Go2 Wi-Fi Provisioning](/docs/coding-agents/go2-wifi-provisioning.md): AP-to-Wi-Fi setup notes for coding agents
+- [Docs](/docs/coding-agents/docs/index.md): docs about writing docs

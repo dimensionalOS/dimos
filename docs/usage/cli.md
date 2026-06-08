@@ -193,6 +193,28 @@ Print resolved GlobalConfig values and their sources.
 dimos show-config
 ```
 
+### `dimos go2tool`
+
+Provision and verify Unitree Go2 network setup.
+
+```bash
+dimos go2tool discover
+dimos go2tool connect-wifi --ssid <wifi>
+dimos go2tool setup --ssid <wifi>
+dimos go2tool verify --robot-ip <robot-ip>
+```
+
+| Command | Description |
+|---------|-------------|
+| `discover` | Show Go2 robots discovered over BLE and LAN. |
+| `connect-wifi` | Send Wi-Fi credentials to a Go2 over BLE. Omit `--password` to use the hidden prompt. |
+| `setup` | Provision Wi-Fi, rediscover the robot on LAN, and verify `:9991/con_notify`. |
+| `verify` | Probe `http://<robot-ip>:9991/con_notify` without sending movement commands. |
+
+BLE commands support `--ble-backend {auto,helper,direct}` and `--ble-helper`.
+On macOS, `auto` uses the LaunchServices helper for finite BLE scans and
+provisioning; set `DIMOS_GO2_BLE_HELPER` to point at a custom helper `.app`.
+
 ---
 
 ## Agent & MCP Commands
