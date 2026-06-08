@@ -127,7 +127,9 @@ jobs:
           python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
           python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
             dimos/mapping/ray_tracing/test_voxel_map.py \
-            dimos/navigation/nav_3d/mls_planner/test_mls_planner.py
+            dimos/mapping/ray_tracing/test_transformer.py \
+            dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
+            dimos/navigation/nav_3d/mls_planner/test_transformer.py
 
   md-babel:
     timeout-minutes: 15

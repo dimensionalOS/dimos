@@ -18,6 +18,8 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
+pytest.importorskip("dimos_voxel_ray_tracing")
+
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
