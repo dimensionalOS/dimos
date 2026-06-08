@@ -1,5 +1,10 @@
 [build-system]
-requires = ["setuptools>=70", "wheel", "pybind11>=2.12"]
+requires = [
+    "setuptools>=70",
+    "wheel",
+    "pybind11>=2.12",
+    "tomli>=2.0; python_version < '3.11'",
+]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -40,6 +45,7 @@ exclude = [
     "**/*.css",
     "**/*.js",
     "**/*.tcss",
+    "**/*.pyi",
     "rxpy_backpressure/*.txt",
 ]
 
@@ -375,6 +381,8 @@ tests = [
     "watchdog>=3.0.0",
     "md-babel-py>=1.2.0",
     "py-spy",
+    # Builds the pyo3 Rust extension modules into the venv.
+    "maturin>=1.7",
 
     # LSP
     "python-lsp-server[all]==1.14.0",
