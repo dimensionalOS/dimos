@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from collections import namedtuple
+from functools import cache
 import sys
 import time
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
@@ -54,6 +56,51 @@ T = TypeVar("T")
 R = TypeVar("R")
 O = TypeVar("O", bound=Observation[Any], default=Observation[T])
 logger = setup_logger()
+
+
+@cache
+def _pair_class(field_a: str, field_b: str) -> type:
+    """Cached ``AlignedPair`` namedtuple with fields named after the two streams.
+
+    ``rename=True`` so any non-identifier or duplicate name degrades to ``_0`` /
+    ``_1`` rather than raising — index access (``pair[0]``) always works.
+    """
+    return namedtuple("AlignedPair", [field_a, field_b], rename=True)  # type: ignore[misc]
+
+
+def _nearest_align_iter(
+    primary_iter: Iterator[Observation[Any]],
+    secondary_iter: Iterator[Observation[Any]],
+    tolerance: float,
+    pair_class: type,
+) -> Iterator[Observation[Any]]:
+    """Streaming two-pointer nearest-ts merge over ts-ascending iterators.
+
+    The secondary cursor catches up to each primary; the nearest secondary is
+    whichever of the two bracketing it (the last one at/before ``p`` or the
+    first one after) is closer. O(1) state — only those two are held, never a
+    window — so it streams over arbitrarily long (including live) inputs.
+    """
+    secondary = iter(secondary_iter)
+    prev: Observation[Any] | None = None  # last secondary with ts <= p.ts
+    nxt: Observation[Any] | None = next(secondary, None)  # first secondary after prev
+
+    for p in primary_iter:
+        # Advance the cursor until `nxt` sits past `p`; `prev` trails just behind.
+        while nxt is not None and nxt.ts < p.ts:
+            prev = nxt
+            nxt = next(secondary, None)
+
+        # Nearest is the closer of the two bracketing secondaries.
+        if prev is None:
+            best = nxt
+        elif nxt is None:
+            best = prev
+        else:
+            best = prev if (p.ts - prev.ts) <= (nxt.ts - p.ts) else nxt
+
+        if best is not None and abs(best.ts - p.ts) <= tolerance:
+            yield p.derive(data=pair_class(p, best))
 
 
 class Stream(CompositeResource, Generic[T, O]):
@@ -117,6 +164,14 @@ class Stream(CompositeResource, Generic[T, O]):
                 result += f" | {q_str}"
 
         return result
+
+    @property
+    def name(self) -> str | None:
+        """Backing stream's name (``None`` if unbound), inherited through transforms."""
+        current: Any = self
+        while isinstance(current, Stream):
+            current = current._source
+        return None if current is None else cast("str", current.name)
 
     def is_live(self) -> bool:
         """True if this stream (or any ancestor in the chain) is in live mode."""
@@ -196,8 +251,22 @@ class Stream(CompositeResource, Generic[T, O]):
     def offset(self, n: int) -> Stream[T, O]:
         return self._replace_query(offset_val=n)
 
-    # Time windowing — None means unbounded on that side. ``*_time`` is relative
-    # to the stream's first observation; ``*_timestamp`` is absolute epoch seconds.
+    # Windowing helpers — None on either bound means unbounded on that side.
+    # Index helpers (``*_seek``) count observations; time helpers (``*_time``)
+    # are relative to the first observation; ``*_timestamp`` is absolute epoch.
+    def from_seek(self, i: int | None) -> Stream[T, O]:
+        """Window by index: drop the first ``i`` observations."""
+        return self if i is None else self.offset(i)
+
+    def to_seek(self, i: int | None) -> Stream[T, O]:
+        """Window by index: keep the first ``i`` observations."""
+        return self if i is None else self.limit(i)
+
+    def range_seek(self, start: int | None, stop: int | None) -> Stream[T, O]:
+        """Window by index: observations ``[start, stop)``."""
+        s = self if start is None else self.offset(start)
+        return s if stop is None else s.limit(stop - (start or 0))
+
     def from_time(self, seconds: float | None) -> Stream[T, O]:
         """Keep observations from ``seconds`` after the first (relative)."""
         if seconds is None:
@@ -217,6 +286,17 @@ class Stream(CompositeResource, Generic[T, O]):
         except LookupError:
             return self
         return self.before(t0 + seconds)
+
+    def range_time(self, start: float | None, stop: float | None) -> Stream[T, O]:
+        """Window by time: ``[start, stop)`` seconds from the first observation."""
+        if start is None and stop is None:
+            return self
+        try:
+            t0 = self.first().ts
+        except LookupError:
+            return self
+        s = self if start is None else self.after(t0 + start)
+        return s if stop is None else s.before(t0 + stop)
 
     def from_timestamp(self, ts: float | None) -> Stream[T, O]:
         """Keep observations after absolute epoch ``ts``."""
@@ -311,6 +391,35 @@ class Stream(CompositeResource, Generic[T, O]):
             xf = FnIterTransformer(xf)
         return Stream(source=self, transform=xf, query=StreamQuery())
 
+    def align(self, other: Stream[Any, Any], *, tolerance: float) -> Stream[Any]:
+        """Pair each observation with the nearest-in-time one from *other*.
+
+        The primary (``self``) drives; for each primary the nearest secondary
+        within ``|Δts| <= tolerance`` is paired, others are skipped. The merge
+        is a single forward pass that assumes **both streams iterate in
+        ascending ts** — true for live streams (arrival order) and for stored
+        streams in insertion order; prepend ``.order_by("ts")`` on a side whose
+        iteration order isn't chronological. Source-agnostic: stored,
+        transformed, and live streams all work (a live side simply never ends).
+
+        The output ``Observation`` carries the primary's ``ts``, ``pose``,
+        ``tags``. ``obs.data`` is an ``AlignedPair`` namedtuple whose fields are
+        named after each side's stream (e.g. ``pair.lidar`` / ``pair.odom``),
+        with ``pair[0]`` / ``pair[1]`` index access always available. Each
+        field is the full :class:`Observation` from that side. Field names fall
+        back to ``primary`` / ``secondary`` when a stream is unnamed or both
+        share a name.
+        """
+        field_a, field_b = self.name, other.name
+        if not field_a or not field_b or field_a == field_b:
+            field_a, field_b = "primary", "secondary"
+        pair_class = _pair_class(field_a, field_b)
+
+        def _align(upstream: Iterator[Observation[Any]]) -> Iterator[Observation[Any]]:
+            return _nearest_align_iter(upstream, iter(other), tolerance, pair_class)
+
+        return self.transform(FnIterTransformer(_align))
+
     def live(self, buffer: BackpressureBuffer[Observation[Any]] | None = None) -> Stream[T, O]:
         """Return a stream whose iteration never ends — backfill then live tail.
 
@@ -388,20 +497,20 @@ class Stream(CompositeResource, Generic[T, O]):
         return (first.ts, last.ts)
 
     def summary(self) -> str:
-        """Return a short human-readable summary: count, time range, duration."""
+        """Return a short human-readable summary: count, time range, avg frequency."""
         from datetime import datetime, timezone
 
         n = self.count()
         if n == 0:
             return f"{self}: empty"
 
-        (t0, t1) = self.get_time_range()
-
+        t0, t1 = self.get_time_range()
         fmt = "%Y-%m-%d %H:%M:%S"
         dt0 = datetime.fromtimestamp(t0, tz=timezone.utc).strftime(fmt)
         dt1 = datetime.fromtimestamp(t1, tz=timezone.utc).strftime(fmt)
         dur = t1 - t0
-        return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s)"
+        hz = f", {(n - 1) / dur:.2f} Hz" if dur > 0 else ""
+        return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s{hz})"
 
     def materialize(self) -> Stream[T, O]:
         """Materialize into memory and return a replayable stream.
@@ -415,6 +524,9 @@ class Stream(CompositeResource, Generic[T, O]):
         target = cast("Stream[T, O]", mem.stream("materialize"))
         self.save(target).drain()
         return target
+
+    def run(self) -> int:
+        return self.drain()
 
     def drain(self) -> int:
         """Consume all observations, discarding results. Returns count consumed.
