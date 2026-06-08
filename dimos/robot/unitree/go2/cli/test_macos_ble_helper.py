@@ -281,7 +281,7 @@ async def test_provision_wifi_keeps_password_out_of_argv_request_and_progress(
     assert serial == "SER123"
     assert captured_cmds
     assert all(password not in item for cmd in captured_cmds for item in cmd)
-    assert progress == ["unsafe progress contains <redacted>"]
+    assert progress == ["unsafe progress contains [REDACTED]"]
 
 
 def test_helper_progress_writer_redacts_password(tmp_path: Path) -> None:
@@ -296,5 +296,5 @@ def test_helper_progress_writer_redacts_password(tmp_path: Path) -> None:
 
     text = progress_path.read_text(encoding="utf-8")
     assert password not in text
-    assert "<redacted>" in text
+    assert "[REDACTED]" in text
     assert _mode(progress_path) == 0o600

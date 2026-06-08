@@ -285,7 +285,7 @@ async def provision_wifi(
     helper_app_path: str | Path | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> str | None:
-    """Provision Wi-Fi through the macOS LaunchServices BLE helper."""
+    """Provision wifi through the macOS LaunchServices BLE helper."""
     response = await _invoke_helper_async(
         "provision_wifi",
         {
@@ -442,7 +442,7 @@ def _sanitize_text(text: str, secrets: Sequence[str]) -> str:
     safe = text
     for secret in secrets:
         if secret:
-            safe = safe.replace(secret, "<redacted>")
+            safe = safe.replace(secret, "[REDACTED]")
     return safe
 
 

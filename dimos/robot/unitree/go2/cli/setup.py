@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Guided Go2 Wi-Fi setup orchestration without Typer wiring."""
+"""Guided Go2 wifi setup orchestration without Typer wiring."""
 
 from __future__ import annotations
 
@@ -289,9 +289,9 @@ async def setup_go2_wifi(
     rediscovery_attempts: int = 5,
     rediscovery_delay_s: float = 2.0,
 ) -> Go2WifiSetupResult:
-    """Provision Go2 Wi-Fi over BLE, rediscover it on LAN, then verify WebRTC.
+    """Provision Go2 wifi over BLE, rediscover it on LAN, then verify WebRTC.
 
-    The caller injects BLE discovery, Wi-Fi provisioning, and LAN discovery
+    The caller injects BLE discovery, wifi provisioning, and LAN discovery
     functions. This keeps Typer prompting and concrete backends outside the
     orchestration so it can be tested without hardware.
     """
@@ -345,8 +345,8 @@ async def setup_go2_wifi(
             country_code,
         )
     except Exception as e:
-        return fail("provision_wifi", f"Wi-Fi provisioning failed: {e}", selected_ble=selected_ble)
-    add_step("provision_wifi", True, "Provisioned Wi-Fi credentials over BLE.")
+        return fail("provision_wifi", f"wifi provisioning failed: {e}", selected_ble=selected_ble)
+    add_step("provision_wifi", True, "Provisioned wifi credentials over BLE.")
 
     target_serial = provisioned_serial or selected_ble.serial
     lan_robot: Go2LanSelection | None = None
@@ -369,7 +369,7 @@ async def setup_go2_wifi(
     if lan_robot is None:
         return fail(
             "lan_discovery",
-            lan_error or "No LAN robot found after Wi-Fi provisioning.",
+            lan_error or "No LAN robot found after wifi provisioning.",
             selected_ble=selected_ble,
         )
     add_step("lan_discovery", True, f"Found LAN robot {lan_robot.serial} at {lan_robot.ip}.")

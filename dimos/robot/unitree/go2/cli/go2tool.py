@@ -322,8 +322,8 @@ def discover(
 
 @app.command("connect-wifi")
 def connect_wifi(
-    ssid: str | None = typer.Option(None, "--ssid", help="Wi-Fi SSID"),
-    password: str | None = typer.Option(None, "--password", help="Wi-Fi password"),
+    ssid: str | None = typer.Option(None, "--ssid", help="wifi SSID"),
+    password: str | None = typer.Option(None, "--password", help="wifi password"),
     country: str = typer.Option("US", "--country", help="Two-letter country code"),
     mac: str | None = typer.Option(None, "--mac", help="BLE MAC (skip scan)"),
     serial: str | None = typer.Option(
@@ -350,7 +350,7 @@ def connect_wifi(
         help="macOS BLE helper .app path.",
     ),
 ) -> None:
-    """Provision a Go2 with Wi-Fi credentials over Bluetooth.
+    """Provision a Go2 with wifi credentials over Bluetooth.
 
     Fully non-interactive when (--mac | --serial | --name) and --ssid/--password
     are all provided.
@@ -406,11 +406,11 @@ def connect_wifi(
                     raise typer.Exit(1)
                 target = devices[idx - 1].address
 
-        wifi_ssid = ssid if ssid is not None else typer.prompt("Wi-Fi SSID")
+        wifi_ssid = ssid if ssid is not None else typer.prompt("wifi SSID")
         wifi_password = (
             password
             if password is not None
-            else typer.prompt("Wi-Fi password", hide_input=True, default="", show_default=False)
+            else typer.prompt("wifi password", hide_input=True, default="", show_default=False)
         )
 
         def _on_error(attempt: int, exc: BaseException) -> None:
@@ -454,8 +454,8 @@ def verify(
 
 @app.command("setup")
 def setup(
-    ssid: str = typer.Option(..., "--ssid", help="Wi-Fi SSID"),
-    password: str | None = typer.Option(None, "--password", help="Wi-Fi password"),
+    ssid: str = typer.Option(..., "--ssid", help="wifi SSID"),
+    password: str | None = typer.Option(None, "--password", help="wifi password"),
     country: str = typer.Option("US", "--country", help="Two-letter country code"),
     serial: str | None = typer.Option(None, "--serial", help="Robot serial to select"),
     name: str | None = typer.Option(None, "--name", help="Robot BLE name to select"),
@@ -494,7 +494,7 @@ def setup(
         help="macOS BLE helper .app path.",
     ),
 ) -> None:
-    """Provision Wi-Fi, rediscover the robot on LAN, and verify its IP."""
+    """Provision wifi, rediscover the robot on LAN, and verify its IP."""
     from dimos.robot.unitree.go2.cli.landiscovery import discover as discover_lan_once
     from dimos.robot.unitree.go2.cli.setup import LanRobot, setup_go2_wifi
     from dimos.robot.unitree.go2.cli.verify import verify_robot_ip
@@ -508,7 +508,7 @@ def setup(
     wifi_password = (
         password
         if password is not None
-        else typer.prompt("Wi-Fi password", hide_input=True, default="", show_default=False)
+        else typer.prompt("wifi password", hide_input=True, default="", show_default=False)
     )
     secrets = (wifi_password,)
 

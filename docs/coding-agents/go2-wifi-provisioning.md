@@ -1,7 +1,7 @@
-# Go2 Wi-Fi Provisioning
+# Go2 wifi provisioning
 
 Use this runbook when a Go2 needs to move from its AP/BLE setup state onto a
-site Wi-Fi network, or when `dimos go2tool connect-wifi` behaves differently on
+site wifi network, or when `dimos go2tool connect-wifi` behaves differently on
 macOS than it does on Linux.
 
 ## macOS Bluetooth Authorization
@@ -9,7 +9,7 @@ macOS than it does on Linux.
 `go2tool` uses Bleak over Bluetooth. On macOS, direct Python execution from some
 terminal environments can fail before Bluetooth authorization is usable. The
 default `auto` BLE backend uses a LaunchServices-opened helper `.app` for finite
-scans and Wi-Fi provisioning so macOS TCC can authorize Bluetooth access against
+scans and wifi provisioning so macOS TCC can authorize Bluetooth access against
 the app bundle and its `Info.plist` usage keys.
 
 If direct BLE fails only on macOS, treat Bluetooth/TCC authorization as a likely
@@ -23,8 +23,8 @@ Start with discovery. This shows robots seen over BLE and LAN:
 dimos go2tool discover
 ```
 
-If the robot is still in AP/BLE setup mode, provision it onto the target Wi-Fi.
-Do not pass the Wi-Fi password in process args. Omit `--password`; the CLI will
+If the robot is still in AP/BLE setup mode, provision it onto the target wifi.
+Do not pass the wifi password in process args. Omit `--password`; the CLI will
 prompt with hidden input.
 
 Example:
@@ -47,7 +47,7 @@ keys in `Info.plist`:
 - `NSBluetoothPeripheralUsageDescription`
 - `NSBluetoothUsageDescription`
 
-The helper passes the Wi-Fi password through a mode-`0600` temporary file, not
+The helper passes the wifi password through a mode-`0600` temporary file, not
 argv. Keep using the CLI's hidden password prompt unless automation requires a
 different secret source.
 
@@ -77,4 +77,4 @@ For agentic stacks, use the same `--robot-ip` flag with the target blueprint.
 
 Verification is discovery, endpoint probing, and process startup only. Do not
 send movement commands, teleop input, MCP skill calls, or `agent-send` messages
-during Wi-Fi provisioning verification.
+during wifi provisioning verification.

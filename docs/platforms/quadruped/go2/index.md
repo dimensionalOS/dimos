@@ -35,18 +35,18 @@ Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3
 
 ## Run on Your Go2
 
-### First-time setup, connecting to Wi-Fi, finding robot IP
+### First-time setup, connecting to wifi, finding robot IP
 
-Use `dimos go2tool` to provision Wi-Fi and find the robot's IP. Skip if the robot is already on your network and you know its IP.
+Use `dimos go2tool` to provision wifi and find the robot's IP. Skip if the robot is already on your network and you know its IP.
 
 macOS caveat: BLE provisioning can fail when direct Python execution cannot get
 usable Bluetooth authorization from the terminal. The default `auto` BLE backend
 uses a LaunchServices-opened helper for finite scans and provisioning on macOS.
-See [Go2 Wi-Fi Provisioning](/docs/coding-agents/go2-wifi-provisioning.md).
+See [Go2 wifi provisioning](/docs/coding-agents/go2-wifi-provisioning.md).
 
 1. Power on the Go2 — it advertises over BLE immediately.
 
-2. Provision Wi-Fi (one-time per network):
+2. Provision wifi (one-time per network):
 
 optionally use discover to make sure robot is detected
 
@@ -54,13 +54,13 @@ optionally use discover to make sure robot is detected
 dimos go2tool discover
 ```
 
-configure Wi-Fi
+configure wifi
 
 ```bash
 dimos go2tool connect-wifi --ssid <wifi>
 ```
 
-Scans BLE and connects to the only robot it finds, or prompts you to pick if there are several. The password prompt uses hidden input; avoid passing Wi-Fi passwords in process args.
+Scans BLE and connects to the only robot it finds, or prompts you to pick if there are several. The password prompt uses hidden input; avoid passing wifi passwords in process args.
 
 3. Find the robot's IP:
 
