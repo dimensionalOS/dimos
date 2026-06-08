@@ -96,7 +96,7 @@ def load_model(
 
     match robot:
         case "unitree_go1":
-            policy: OnnxController = Go1OnnxController(**params)
+            policy: OnnxController | DroneController = Go1OnnxController(**params)
         case "unitree_g1":
             policy = G1OnnxController(**params, drift_compensation=[-0.18, 0.0, -0.09])
         case "cf2":

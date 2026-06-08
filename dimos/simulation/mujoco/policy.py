@@ -162,8 +162,7 @@ class DroneController:
             drone_hover_thrust: float = 0.26487,
             attitude_p: float = 0.4,
             attitude_d: float = 0.5,
-            yaw_p: float = 1,
-            yaw_d: float = 0.05,
+            yaw_d: float = 0.1,
             max_tilt_angle: float = 0.1,
             max_yaw_rate: float = 2.0,
             **kwargs: Any,
@@ -172,14 +171,13 @@ class DroneController:
         self._drone_hover_thrust = drone_hover_thrust
         self._attitude_p = attitude_p
         self._attitude_d = attitude_d
-        self._yaw_p = yaw_p
         self._yaw_d = yaw_d
         self._max_tilt_angle = max_tilt_angle
         self._max_yaw_rate = max_yaw_rate
 
-    def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+    def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray[Any, Any]:
         return self._input_controller.get_command().astype(np.float32)
-    
+
     def quaternion_to_euler(self, qw: float, qx: float, qy: float, qz: float) -> tuple[float, float, float]:
         sinr_cosp = 2 * (qw * qx + qy * qz)
         cosr_cosp = 1 - 2 * (qx * qx + qy * qy)
@@ -187,7 +185,7 @@ class DroneController:
 
         sinp = 2 * (qw * qy - qz * qx)
         pitch = np.arcsin(np.clip(sinp, -1.0, 1.0))
-        
+
         siny_cosp = 2 * (qw * qz + qx * qy)
         cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
         yaw = np.arctan2(siny_cosp, cosy_cosp)
@@ -204,7 +202,7 @@ class DroneController:
 
         qw, qx, qy, qz = data.qpos[3:7]
 
-        # Quaternion to Euler 
+        # Quaternion to Euler
         current_roll, current_pitch, current_yaw = self.quaternion_to_euler(qw, qx, qy, qz)
 
         roll_rate = data.qvel[3]
@@ -212,7 +210,7 @@ class DroneController:
         yaw_rate = data.qvel[5]
 
         yaw_rate_error = yaw_rate - yaw_rate_desired
-        
+
         data.ctrl[0] = max(thrust_desired + self._drone_hover_thrust, self._drone_hover_thrust * 0.5)
         data.ctrl[1] = self._attitude_p * (current_roll - roll_desired) + self._attitude_d * roll_rate
         data.ctrl[2] = self._attitude_p * (current_pitch - pitch_desired) + self._attitude_d * pitch_rate
