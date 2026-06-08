@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """External CLI for sending joint targets to the Go2 wholebody coordinator.
 
 Pair with ``unitree-go2-wholebody-coordinator`` running in another terminal.
@@ -66,17 +80,33 @@ assert len(_JOINT_NAMES) == _NUM_MOTORS
 #   0:FR_hip 1:FR_thigh 2:FR_calf 3:FL_hip 4:FL_thigh 5:FL_calf
 #   6:RR_hip 7:RR_thigh 8:RR_calf 9:RL_hip 10:RL_thigh 11:RL_calf
 _STANDING = [
-    -0.0442, +0.6880, -1.4558,   # FR
-    +0.0240, +0.6984, -1.5437,   # FL
-    -0.0105, +0.7103, -1.4343,   # RR
-    +0.1227, +0.6420, -1.4284,   # RL
+    -0.0442,
+    +0.6880,
+    -1.4558,  # FR
+    +0.0240,
+    +0.6984,
+    -1.5437,  # FL
+    -0.0105,
+    +0.7103,
+    -1.4343,  # RR
+    +0.1227,
+    +0.6420,
+    -1.4284,  # RL
 ]
 
 _SITTING = [
-    -0.0867, +1.2304, -2.7534,   # FR
-    +0.0390, +1.2525, -2.7704,   # FL
-    -0.3335, +1.2953, -2.7901,   # RR  (rear hips splay outward at rest)
-    +0.3887, +1.2642, -2.7634,   # RL
+    -0.0867,
+    +1.2304,
+    -2.7534,  # FR
+    +0.0390,
+    +1.2525,
+    -2.7704,  # FL
+    -0.3335,
+    +1.2953,
+    -2.7901,  # RR  (rear hips splay outward at rest)
+    +0.3887,
+    +1.2642,
+    -2.7634,  # RL
 ]
 
 # Per-joint envelope min/max from the two captures.
@@ -250,8 +280,7 @@ class CommanderCLI:
                 return
             alpha = float(parts[1])
             self._target = [
-                (1.0 - alpha) * _SITTING[i] + alpha * _STANDING[i]
-                for i in range(_NUM_MOTORS)
+                (1.0 - alpha) * _SITTING[i] + alpha * _STANDING[i] for i in range(_NUM_MOTORS)
             ]
             self._publish_with_clamp_report(f"lerp alpha={alpha:.3f} (0=sit, 1=stand)")
             return
@@ -358,7 +387,7 @@ class CommanderCLI:
             requested = list(self._target)
             clamped_target, clamped_idx = _clamp(self._target)
             self._target = clamped_target  # keep local in sync with what was published
-            self._armed = True             # enable heartbeat republishing
+            self._armed = True  # enable heartbeat republishing
         if clamped_idx:
             print(f"  {note}; clamped {len(clamped_idx)} joint(s):")
             for i in clamped_idx:
