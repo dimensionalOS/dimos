@@ -95,7 +95,7 @@ def main(
     robot_height: float = typer.Option(0.3, "--robot-height", help="Robot height (m)"),
     node_spacing: float = typer.Option(1.0, "--node-spacing", help="Graph node spacing (m)"),
     goal: tuple[float, float, float] = typer.Option(
-        (1.25, 35.45, 1.9),
+        (0.0, 0.0, 0.0),
         "--goal",
         help="Planner goal xyz. Default is dataset-specific; override per recording.",
     ),
