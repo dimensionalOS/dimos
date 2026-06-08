@@ -26,8 +26,6 @@ from dimos.hardware.manipulators.damiao.specs import DamiaoArmSpec, DamiaoMotorS
 if TYPE_CHECKING:
     from dimos.hardware.manipulators.registry import AdapterRegistry
 
-OpenArmRSMotorSpecConfig = DamiaoMotorSpec
-
 
 class OpenArmRSBindingUnavailableError(DamiaoBindingUnavailableError):
     pass
@@ -128,6 +126,5 @@ def register(registry: AdapterRegistry) -> None:
 __all__ = [
     "OpenArmRSAdapter",
     "OpenArmRSBindingUnavailableError",
-    "OpenArmRSMotorSpecConfig",
     "register",
 ]
