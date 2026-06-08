@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pytest import MonkeyPatch
+
+from dimos.web.dimos_interface.api.server import FastAPIServer
 from dimos.web.robot_web_interface import RobotWebInterface
 
 
-def test_robot_web_interface_accepts_explicit_host() -> None:
+def test_robot_web_interface_accepts_explicit_host(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(FastAPIServer, "setup_routes", lambda self: None)
+
     interface = RobotWebInterface(host="0.0.0.0", port=8444)
 
     assert interface.host == "0.0.0.0"
