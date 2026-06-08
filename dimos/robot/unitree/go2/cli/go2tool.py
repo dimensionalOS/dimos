@@ -306,9 +306,17 @@ def discover(
             grace = 0.25 if backend_runtime is not None and backend_runtime.kind == "helper" else 0
             loop.call_later(timeout + grace, _stop)
 
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                continue
+            if isinstance(result, BaseException):
+                raise result
 
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except Exception as e:
+        _exit_error(str(e))
     typer.echo("\nStopped.")
 
 

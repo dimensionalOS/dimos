@@ -4,19 +4,16 @@ Use this runbook when a Go2 needs to move from its AP/BLE setup state onto a
 site Wi-Fi network, or when `dimos go2tool connect-wifi` behaves differently on
 macOS than it does on Linux.
 
-## Why The Last Run Took Time
+## macOS Bluetooth Authorization
 
-The slow part was not the Go2 provisioning protocol. It was macOS Bluetooth
-permission handling.
+`go2tool` uses Bleak over Bluetooth. On macOS, direct Python execution from some
+terminal environments can fail before Bluetooth authorization is usable. The
+default `auto` BLE backend uses a LaunchServices-opened helper `.app` for finite
+scans and Wi-Fi provisioning so macOS TCC can authorize Bluetooth access against
+the app bundle and its `Info.plist` usage keys.
 
-`go2tool` uses Bleak over Bluetooth. On macOS, direct Python execution from a
-terminal app such as Terminal or Warp can crash or fail before the Bluetooth
-permission flow is usable. A LaunchServices-opened `.app` bundle worked because
-macOS TCC could authorize Bluetooth access against the app bundle and its
-`Info.plist` usage keys.
-
-If this happens again, treat it as a macOS Bluetooth/TCC issue first, not as a
-robot firmware issue.
+If direct BLE fails only on macOS, treat Bluetooth/TCC authorization as a likely
+cause before assuming a robot firmware issue.
 
 ## Normal Flow
 
@@ -30,12 +27,10 @@ If the robot is still in AP/BLE setup mode, provision it onto the target Wi-Fi.
 Do not pass the Wi-Fi password in process args. Omit `--password`; the CLI will
 prompt with hidden input.
 
-Public-safe example: move the robot/AP label `dimair09` onto SSID
-`dimensional_5G`. The AP label is not necessarily the BLE name, so use
-discovery to select the robot interactively:
+Example:
 
 ```sh skip
-dimos go2tool connect-wifi --ssid dimensional_5G
+dimos go2tool connect-wifi --ssid <wifi>
 ```
 
 If more than one robot appears, select the intended robot at the prompt or use
@@ -43,17 +38,18 @@ If more than one robot appears, select the intended robot at the prompt or use
 
 ## macOS Helper Requirements
 
-When direct terminal execution crashes on macOS, run the provisioning helper as
-a LaunchServices-opened `.app`, for example with `open`, and include these
-Bluetooth usage keys in `Info.plist`:
+On macOS, `--ble-backend auto` builds and validates a cached helper `.app` when
+needed. To use a custom helper bundle, pass `--ble-helper <path>` or set
+`DIMOS_GO2_BLE_HELPER`. The helper bundle must include these Bluetooth usage
+keys in `Info.plist`:
 
 - `NSBluetoothAlwaysUsageDescription`
 - `NSBluetoothPeripheralUsageDescription`
 - `NSBluetoothUsageDescription`
 
-Keep secrets out of process args. Pass the SSID and robot selector through
-non-secret configuration, then prompt for the Wi-Fi password inside the helper
-or read it from a protected secret source.
+The helper passes the Wi-Fi password through a mode-`0600` temporary file, not
+argv. Keep using the CLI's hidden password prompt unless automation requires a
+different secret source.
 
 ## Post-Provision Checks
 
@@ -66,7 +62,7 @@ dimos go2tool discover
 Look for a LAN row with the robot IP. Probe the Go2 WebRTC notification endpoint:
 
 ```sh skip
-curl -fsS http://<robot-ip>:9991/con_notify
+curl -fsS -X POST http://<robot-ip>:9991/con_notify
 ```
 
 Then run DimOS with the discovered IP:

@@ -235,6 +235,22 @@ def test_discover_auto_timeout_zero_uses_direct_ble_on_darwin(
     assert "SER123" in result.output
 
 
+def test_discover_surfaces_ble_backend_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_find_robots(*args: object, **kwargs: object) -> list[ble.Go2Device]:
+        raise RuntimeError("invalid helper app")
+
+    monkeypatch.setattr(go2tool.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(macos_ble_helper, "find_robots", fake_find_robots)
+
+    result = _runner.invoke(
+        go2tool.app,
+        ["discover", "--ble", "--ble-backend", "helper", "--timeout", "0.1"],
+    )
+
+    assert result.exit_code == 1
+    assert "invalid helper app" in result.output
+
+
 def test_connect_wifi_mac_skips_scan_and_redacts_prompted_password(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
