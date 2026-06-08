@@ -117,10 +117,13 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Install dependency for pyaudio
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev
       - name: Build and test PyO3 bindings
         run: |
-          uv venv
-          uv pip install maturin numpy pytest
+          uv sync --group tests --frozen
           source .venv/bin/activate
           maturin develop -m dimos/mapping/ray_tracing/rust/Cargo.toml
           maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/Cargo.toml
