@@ -28,8 +28,6 @@ Quick start:
 """
 
 import math
-import os
-from pathlib import Path
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
@@ -40,12 +38,15 @@ from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.sim_presets import xarm7_mujoco_scene_preset
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 # Single XArm6 planner (standalone, no coordinator)
 _xarm6_planner_cfg = _catalog_xarm6(
@@ -288,105 +289,15 @@ xarm_perception_agent = autoconnect(
 # camera streams and joint state via shared memory.
 # ShmMujocoAdapter attaches to the same SHM buffers by MJCF path.
 
-from dimos.robot.catalog.ufactory import XARM7_SIM_PATH
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-from dimos.simulation.scene_assets.spec import load_scene_package
-from dimos.visualization.rerun.bridge import RerunBridgeModule
-
-
-def _xarm_scene_package():
-    """Load a cooked scene package when DIMOS_SCENE_PACKAGE_PATH is set.
-
-    The path can be the package directory or its scene.meta.json. When
-    unset, returns None - MujocoSimModule falls back to the legacy
-    address= path against XARM7_SIM_PATH.
-    """
-    path = os.environ.get("DIMOS_SCENE_PACKAGE_PATH")
-    if not path:
-        return None
-
-    p = Path(path).expanduser()
-    if p.is_dir():
-        p = p / "scene.meta.json"
-    if not p.exists():
-        raise FileNotFoundError(f"DIMOS_SCENE_PACKAGE_PATH does not exist: {p}")
-
-    package = load_scene_package(p)
-    if package.mujoco_scene_path is None:
-        raise ValueError(f"Scene package has no MuJoCo scene artifact: {p}")
-    if not package.mujoco_scene_path.exists():
-        raise FileNotFoundError(
-            f"Scene package MuJoCo scene artifact does not exist: {package.mujoco_scene_path}"
-        )
-    return package
-
-
-_xarm_scene_pkg = _xarm_scene_package()
-
-_xarm7_scene_pkg_mode = _xarm_scene_pkg is not None
-_xarm7_legacy_home_joints = [0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0]
-_xarm7_scene_home_joints = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
-_xarm7_scene_yaw = math.radians(90.0)
-_xarm7_sim_yaw = _xarm7_scene_yaw if _xarm7_scene_pkg_mode else 0.0
-_xarm7_table_standoff_m = 0.45
-_xarm7_mjcf_base_z_offset_m = 0.12
-
-
-def _xarm7_scene_spawn() -> tuple[tuple[float, float], float]:
-    if _xarm_scene_pkg is None:
-        return (0.0, 0.0), 0.0
-
-    table = next(
-        (
-            entity
-            for entity in _xarm_scene_pkg.entities
-            if entity.get("id") == "manip_table" or "table" in entity.get("tags", [])
-        ),
-        None,
-    )
-    if table is None:
-        return (0.0, 0.0), 0.0
-
-    pose = table.get("initial_pose", {})
-    descriptor = table.get("descriptor", {})
-    extents = descriptor.get("extents") or [0.0, 0.0, 0.0]
-    table_x = float(pose.get("x", 0.0))
-    table_y = float(pose.get("y", 0.0))
-    table_z = float(pose.get("z", 0.0))
-    table_top_z = table_z + float(extents[2]) / 2.0
-    return (
-        (table_x, table_y - _xarm7_table_standoff_m),
-        table_top_z - _xarm7_mjcf_base_z_offset_m,
-    )
-
-
-_xarm7_scene_spawn_xy, _xarm7_scene_spawn_z = _xarm7_scene_spawn()
-_xarm7_sim_base_pose = [
-    _xarm7_scene_spawn_xy[0] if _xarm7_scene_pkg_mode else 0.0,
-    _xarm7_scene_spawn_xy[1] if _xarm7_scene_pkg_mode else 0.0,
-    _xarm7_scene_spawn_z if _xarm7_scene_pkg_mode else 0.0,
-    0.0,
-    0.0,
-    math.sin(_xarm7_sim_yaw / 2.0),
-    math.cos(_xarm7_sim_yaw / 2.0),
-]
-_xarm7_sim_home_joints = (
-    _xarm7_scene_home_joints if _xarm7_scene_pkg_mode else _xarm7_legacy_home_joints
-)
-_xarm7_robot_mjcf = Path(str(XARM7_SIM_PATH)).parent / "xarm7.xml"
-_xarm7_sim_address = str(_xarm7_robot_mjcf if _xarm7_scene_pkg_mode else XARM7_SIM_PATH)
-
-
+_xarm7_sim_preset = xarm7_mujoco_scene_preset()
 _xarm7_sim_cfg = _catalog_xarm7(
     name="arm",
     adapter_type="sim_mujoco",
-    address=_xarm7_sim_address,
     add_gripper=True,
     pitch=math.radians(45),
     tf_extra_links=["link7"],
-    base_pose=_xarm7_sim_base_pose,
-    home_joints=_xarm7_sim_home_joints,
     pre_grasp_offset=0.05,
+    **_xarm7_sim_preset.robot_config_kwargs,
 )
 
 
@@ -426,25 +337,7 @@ xarm_perception_sim = autoconnect(
         enable_viz=True,
     ),
     MujocoSimModule.blueprint(
-        # Compose-at-start when DIMOS_SCENE_PACKAGE_PATH is set; legacy
-        # address= path otherwise (preserves the apple/orange/cup
-        # standalone xarm7/scene.xml behavior for existing eval runs).
-        **(
-            dict(
-                scene_xml=str(_xarm_scene_pkg.mujoco_scene_path),
-                # Robot-only MJCF (xarm7.xml is the bare arm; scene.xml is
-                # the apple/orange/cup test rig with its own floor+table).
-                robot_mjcf=str(_xarm7_robot_mjcf),
-                scene_entities=_xarm_scene_pkg.entities,
-                spawn_xy=_xarm7_scene_spawn_xy,
-                spawn_z=_xarm7_scene_spawn_z,
-                spawn_yaw=_xarm7_sim_yaw,
-                initial_joint_positions=_xarm7_sim_home_joints,
-                render_geom_groups=(0, 1, 2, 3),
-            )
-            if _xarm_scene_pkg is not None
-            else dict(address=str(XARM7_SIM_PATH))
-        ),
+        **_xarm7_sim_preset.mujoco_module_kwargs,
         headless=False,
         dof=7,
         camera_name="wrist_camera",
