@@ -86,7 +86,7 @@ jobs:
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       should-run: true
-      from-image: ubuntu:22.04
+      from-image: ubuntu:24.04
       to-image: ghcr.io/dimensionalos/ros:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile:  ros
 
