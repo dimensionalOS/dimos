@@ -17,7 +17,7 @@
 A :class:`DdsCodec` is the bytes<->payload pair for one DDS message type. The
 same codec decodes a recorded mcap message and a live DDS sample (both are CDR),
 and its ``encode`` half publishes back to the wire — so this is shared by the
-reader, :class:`~dimos.robot.unitree.go2dds.store.Go2McapStore`, and (later) a live
+reader, :class:`~dimos.robot.unitree.go2.dds.store.Go2McapStore`, and (later) a live
 DDS bridge. It is distinct from memory2's storage codecs (pickle/lcm/jpeg);
 they only coincide when an mcap is opened as a store.
 
@@ -35,11 +35,11 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.go2dds import cdr, ros
-from dimos.robot.unitree.go2dds.msgs.ControlEvent import ControlEvent
-from dimos.robot.unitree.go2dds.msgs.LowState import LowState
-from dimos.robot.unitree.go2dds.msgs.SportModeState import SportModeState
-from dimos.robot.unitree.go2dds.msgs.Telemetry import Telemetry
+from dimos.robot.unitree.go2.dds import cdr, ros
+from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
+from dimos.robot.unitree.go2.dds.msgs.LowState import LowState
+from dimos.robot.unitree.go2.dds.msgs.SportModeState import SportModeState
+from dimos.robot.unitree.go2.dds.msgs.Telemetry import Telemetry
 
 
 @runtime_checkable

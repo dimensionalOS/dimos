@@ -12,25 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""go2/ControlEvent — app-level JSON control-log events (topic ``control_log``).
-
-A tagged event stream keyed by ``type`` (e.g. ``velocity_input`` carries
-``lx/ly/az``; ``brightness`` carries ``level``). Fields beyond ``type`` are
-optional; :class:`~dimos.robot.unitree.go2dds.codec.JsonCodec` drops keys it
-doesn't recognise, so new event shapes won't break decoding.
-"""
+"""go2/Telemetry — app-level JSON status packet (topic ``telemetry``)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from dimos.robot.unitree.go2dds.msgs.base import PrettyMsg
+from dimos.robot.unitree.go2.dds.msgs.base import PrettyMsg
 
 
 @dataclass(repr=False)
-class ControlEvent(PrettyMsg):
+class Telemetry(PrettyMsg):
     type: str
-    lx: float | None = None  # velocity_input
-    ly: float | None = None
-    az: float | None = None
-    level: int | None = None  # brightness
+    battery: float  # fraction 0..1
+    body_h: float
+    current_a: float
+    imu_hz: float
+    lidar: bool
+    lidar_hz: float
+    lowstate_hz: float
+    mode: int
+    obstacle: bool
+    odom_hz: float
+    points_per_s: float
+    rage: bool
+    recording: dict[str, Any]  # {active, bytes, duration_s, file}
+    rss_mb: float
+    sportmode_hz: float
+    vel: list[float]  # [vx, vy]
+    yaw: float
