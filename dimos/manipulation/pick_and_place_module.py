@@ -102,16 +102,16 @@ class PickAndPlaceModule(ManipulationModule):
             logger.info("Subscribed to objects port (async)")
 
         # Start obstacle monitor for perception integration
-        if self._world_monitor is not None:
-            self._world_monitor.start_obstacle_monitor()
+        if (scene := self._planning_scene()) is not None:
+            scene.start_obstacle_monitor()
 
         logger.info("PickAndPlaceModule started")
 
     def _on_objects(self, objects: list[DetObject]) -> None:
         """Callback when objects received from perception (runs on RxPY thread pool)."""
         try:
-            if self._world_monitor is not None:
-                self._world_monitor.on_objects(objects)
+            if (scene := self._planning_scene()) is not None:
+                scene.on_objects(objects)
         except Exception as e:
             logger.error(f"Exception in _on_objects: {e}")
 
@@ -121,11 +121,12 @@ class PickAndPlaceModule(ManipulationModule):
 
         Also snapshots the current detections so pick/place can use stable labels.
         """
-        if self._world_monitor is None:
+        scene = self._planning_scene()
+        if scene is None:
             return []
-        result = self._world_monitor.refresh_obstacles(min_duration)
+        result = scene.refresh_obstacles(min_duration)
         # Snapshot detections at refresh time — the live cache is volatile
-        self._detection_snapshot = self._world_monitor.get_cached_objects()
+        self._detection_snapshot = scene.get_cached_objects()
         logger.info(f"Detection snapshot: {[d.name for d in self._detection_snapshot]}")
         return result
 
@@ -136,35 +137,39 @@ class PickAndPlaceModule(ManipulationModule):
         Use this when the planner reports COLLISION_AT_START — detected objects
         may overlap the robot's current position and block planning.
         """
-        if self._world_monitor is None:
+        scene = self._planning_scene()
+        if scene is None:
             return SkillResult.fail(
                 "WORLD_MONITOR_UNAVAILABLE",
                 "No world monitor available",
             )
-        count = self._world_monitor.clear_perception_obstacles()
+        count = scene.clear_perception_obstacles()
         self._detection_snapshot = []
         return SkillResult.ok(f"Cleared {count} perception obstacle(s) from planning world")
 
     @rpc
     def get_perception_status(self) -> dict[str, int]:
         """Get perception obstacle status (cached/added counts)."""
-        if self._world_monitor is None:
+        scene = self._planning_scene()
+        if scene is None:
             return {"cached": 0, "added": 0}
-        return self._world_monitor.get_perception_status()
+        return scene.get_perception_status()
 
     @rpc
     def list_cached_detections(self) -> list[dict[str, Any]]:
         """List cached detections from perception."""
-        if self._world_monitor is None:
+        scene = self._planning_scene()
+        if scene is None:
             return []
-        return self._world_monitor.list_cached_detections()
+        return scene.list_cached_detections()
 
     @rpc
     def list_added_obstacles(self) -> list[dict[str, Any]]:
         """List perception obstacles currently in the planning world."""
-        if self._world_monitor is None:
+        scene = self._planning_scene()
+        if scene is None:
             return []
-        return self._world_monitor.list_added_obstacles()
+        return scene.list_added_obstacles()
 
     @rpc
     def generate_grasps(

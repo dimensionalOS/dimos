@@ -37,11 +37,19 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.planning.factory import create_kinematics, create_planner
+from dimos.manipulation.planning.backends import PlannedMotion, create_planning_backend
+from dimos.manipulation.planning.backends.base import PlanningBackend, SceneFacade
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
-from dimos.manipulation.planning.spec.models import JointPath, Obstacle, RobotName, WorldRobotID
+from dimos.manipulation.planning.spec.models import (
+    IKResult,
+    JointPath,
+    Obstacle,
+    PlanningResult,
+    RobotName,
+    WorldRobotID,
+)
 from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
@@ -89,6 +97,8 @@ class ManipulationModuleConfig(ModuleConfig):
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
+    planning_backend: str = "drake"
+    planning_backend_options: dict[str, Any] = Field(default_factory=dict)
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
@@ -120,6 +130,7 @@ class ManipulationModule(Module):
         self._error_message = ""
 
         # Planning components (initialized in start())
+        self._planning_backend: PlanningBackend | None = None
         self._world_monitor: WorldMonitor | None = None
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
@@ -164,10 +175,18 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
-        self._world_monitor = WorldMonitor(enable_viz=self.config.enable_viz)
+        self._planning_backend = create_planning_backend(
+            name=self.config.planning_backend,
+            enable_viz=self.config.enable_viz,
+            planner_name=self.config.planner_name,
+            kinematics_name=self.config.kinematics_name,
+            options=self.config.planning_backend_options,
+        )
+        scene = self._planning_backend.scene()
 
         for robot_config in self.config.robots:
-            robot_id = self._world_monitor.add_robot(robot_config)
+            backend_robot = scene.add_robot(robot_config)
+            robot_id = backend_robot.robot_id
             traj_gen = JointTrajectoryGenerator(
                 num_joints=len(robot_config.joint_names),
                 max_velocity=robot_config.max_velocity,
@@ -175,7 +194,7 @@ class ManipulationModule(Module):
             )
             self._robots[robot_config.name] = (robot_id, robot_config, traj_gen)
 
-        self._world_monitor.finalize()
+        scene.finalize()
 
         # Add floor obstacle to prevent trajectories below the table surface
         if self.config.floor_z is not None:
@@ -191,19 +210,22 @@ class ManipulationModule(Module):
                 obstacle_type=ObstacleType.BOX,
                 dimensions=(0.6, 1.2, thickness),
             )
-            self._world_monitor.add_obstacle(floor_obs)
+            scene.add_obstacle(floor_obs)
             logger.info(f"Floor obstacle added at z={fz:.3f}")
 
         for _, (robot_id, _, _) in self._robots.items():
-            self._world_monitor.start_state_monitor(robot_id)
+            scene.start_state_monitor(robot_id)
 
         if self.config.enable_viz:
-            self._world_monitor.start_visualization_thread(rate_hz=10.0)
-            if url := self._world_monitor.get_visualization_url():
-                logger.info(f"Visualization: {url}")
+            visualization = self._planning_backend.visualization()
+            if visualization is not None:
+                visualization.start_visualization_thread(rate_hz=10.0)
+                if url := visualization.get_visualization_url():
+                    logger.info(f"Visualization: {url}")
 
-        self._planner = create_planner(name=self.config.planner_name)
-        self._kinematics = create_kinematics(name=self.config.kinematics_name)
+        self._world_monitor = self._planning_backend.world_monitor
+        self._planner = self._planning_backend.legacy_planner
+        self._kinematics = self._planning_backend.legacy_kinematics
 
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):
@@ -214,6 +236,13 @@ class ManipulationModule(Module):
             )
             self._tf_thread.start()
             logger.info("TF publishing thread started")
+
+    def _planning_scene(self) -> SceneFacade | WorldMonitor | None:
+        if self._planning_backend is not None:
+            return self._planning_backend.scene()
+        if self._world_monitor is not None:
+            return self._world_monitor
+        return None
 
     def _get_default_robot_name(self) -> RobotName | None:
         """Get default robot name (first robot if only one, else None)."""
@@ -252,7 +281,8 @@ class ManipulationModule(Module):
         coordinator joint names, then routes to the correct monitor.
         """
         try:
-            if self._world_monitor is None:
+            scene = self._planning_scene()
+            if scene is None:
                 return
 
             # Build name → index map once for the whole message
@@ -282,7 +312,7 @@ class ManipulationModule(Module):
                 )
 
                 # Route to specific monitor
-                self._world_monitor.on_joint_state(sub_msg, robot_id=robot_id)
+                scene.on_joint_state(sub_msg, robot_id=robot_id)
 
                 # Capture per-robot init joints on first receipt
                 if robot_name not in self._init_joints:
@@ -305,12 +335,13 @@ class ManipulationModule(Module):
         period = 0.1  # 10Hz
         while not self._tf_stop_event.is_set():
             try:
-                if self._world_monitor is None:
+                scene = self._planning_scene()
+                if scene is None:
                     break
                 transforms: list[Transform] = []
                 for robot_id, config, _ in self._robots.values():
                     # Publish world → EE
-                    ee_pose = self._world_monitor.get_ee_pose(robot_id)
+                    ee_pose = scene.get_ee_pose(robot_id)
                     if ee_pose is not None:
                         ee_tf = Transform.from_pose(config.end_effector_link, ee_pose)
                         ee_tf.frame_id = "world"
@@ -318,7 +349,7 @@ class ManipulationModule(Module):
 
                     # Publish world → each extra link
                     for link_name in config.tf_extra_links:
-                        link_pose = self._world_monitor.get_link_pose(robot_id, link_name)
+                        link_pose = scene.get_link_pose(robot_id, link_name)
                         if link_pose is not None:
                             link_tf = Transform.from_pose(link_name, link_pose)
                             link_tf.frame_id = "world"
@@ -378,8 +409,8 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to query (required if multiple robots configured)
         """
-        if (robot := self._get_robot(robot_name)) and self._world_monitor:
-            state = self._world_monitor.get_current_joint_state(robot[1])
+        if (robot := self._get_robot(robot_name)) and (scene := self._planning_scene()):
+            state = scene.get_current_joint_state(robot[1])
             if state is not None:
                 return list(state.position)
         return None
@@ -391,8 +422,8 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to query (required if multiple robots configured)
         """
-        if (robot := self._get_robot(robot_name)) and self._world_monitor:
-            return self._world_monitor.get_ee_pose(robot[1], joint_state=None)
+        if (robot := self._get_robot(robot_name)) and (scene := self._planning_scene()):
+            return scene.get_ee_pose(robot[1], joint_state=None)
         return None
 
     @rpc
@@ -403,10 +434,10 @@ class ManipulationModule(Module):
             joints: Joint configuration to check
             robot_name: Robot to check (required if multiple robots configured)
         """
-        if (robot := self._get_robot(robot_name)) and self._world_monitor:
+        if (robot := self._get_robot(robot_name)) and (scene := self._planning_scene()):
             _, robot_id, config, _ = robot
             joint_state = JointState(name=config.joint_names, position=joints)
-            return self._world_monitor.is_state_valid(robot_id, joint_state)
+            return scene.is_state_valid(robot_id, joint_state)
         return False
 
     def _begin_planning(
@@ -417,7 +448,7 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to plan for (required if multiple robots configured)
         """
-        if self._world_monitor is None:
+        if self._planning_scene() is None:
             logger.error("Planning not initialized")
             return None
         if (robot := self._get_robot(robot_name)) is None:
@@ -438,12 +469,11 @@ class ManipulationModule(Module):
 
     def _dismiss_preview(self, robot_id: WorldRobotID) -> None:
         """Hide the preview ghost if the world supports it."""
-        if self._world_monitor is None:
+        if self._planning_backend is None:
             return
-        world = self._world_monitor.world
-        if hasattr(world, "hide_preview"):
-            world.hide_preview(robot_id)
-            world.publish_visualization()
+        visualization = self._planning_backend.visualization()
+        if visualization is not None:
+            visualization.dismiss_preview(robot_id)
 
     @rpc
     def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
@@ -453,14 +483,10 @@ class ManipulationModule(Module):
             pose: Target end-effector pose
             robot_name: Robot to plan for (required if multiple robots configured)
         """
-        if self._kinematics is None or (r := self._begin_planning(robot_name)) is None:
+        if self._planning_backend is None or (r := self._begin_planning(robot_name)) is None:
             return False
         robot_name, robot_id = r
-        assert self._world_monitor  # guaranteed by _begin_planning
-
-        current = self._world_monitor.get_current_joint_state(robot_id)
-        if current is None:
-            return self._fail("No joint state")
+        _, _, traj_gen = self._robots[robot_name]
 
         # Convert Pose to PoseStamped for the IK solver
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -471,18 +497,21 @@ class ManipulationModule(Module):
             orientation=pose.orientation,
         )
 
-        ik = self._kinematics.solve(
-            world=self._world_monitor.world,
+        result = self._planning_backend.planner().plan_to_pose(
             robot_id=robot_id,
             target_pose=target_pose,
-            seed=current,
-            check_collision=True,
+            timeout=self.config.planning_timeout,
+            trajectory_generator=traj_gen,
         )
-        if not ik.is_success() or ik.joint_state is None:
-            return self._fail(f"IK failed: {ik.status.name}")
-
-        logger.info(f"IK solved, error: {ik.position_error:.4f}m")
-        return self._plan_path_only(robot_name, robot_id, ik.joint_state)
+        if isinstance(result, PlannedMotion):
+            if result.ik_result is not None:
+                logger.info(f"IK solved, error: {result.ik_result.position_error:.4f}m")
+            return self._store_planned_motion(robot_name, result)
+        if isinstance(result, IKResult):
+            return self._fail(f"IK failed: {result.status.name}")
+        if isinstance(result, PlanningResult):
+            return self._fail(f"Planning failed: {result.status.name}")
+        return self._fail("Planning failed")
 
     @rpc
     def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
@@ -502,38 +531,24 @@ class ManipulationModule(Module):
         self, robot_name: RobotName, robot_id: WorldRobotID, goal: JointState
     ) -> bool:
         """Plan path from current position to goal, store result."""
-        assert self._world_monitor and self._planner  # guaranteed by _begin_planning
+        assert self._planning_backend  # guaranteed by _begin_planning
         self._dismiss_preview(robot_id)
-        start = self._world_monitor.get_current_joint_state(robot_id)
-        if start is None:
-            return self._fail("No joint state")
-
-        # Trim goal to planner DOF (e.g. strip gripper joint from coordinator state)
-        planner_dof = len(start.position)
-        if len(goal.position) > planner_dof:
-            goal = JointState(
-                name=list(goal.name[:planner_dof]) if goal.name else [],
-                position=list(goal.position[:planner_dof]),
-            )
-
-        result = self._planner.plan_joint_path(
-            world=self._world_monitor.world,
+        _, _, traj_gen = self._robots[robot_name]
+        result = self._planning_backend.planner().plan_to_joints(
             robot_id=robot_id,
-            start=start,
             goal=goal,
             timeout=self.config.planning_timeout,
+            trajectory_generator=traj_gen,
         )
-        if not result.is_success():
+        if isinstance(result, PlanningResult):
             return self._fail(f"Planning failed: {result.status.name}")
+        return self._store_planned_motion(robot_name, result)
 
-        logger.info(f"Path: {len(result.path)} waypoints")
-        self._planned_paths[robot_name] = result.path
-
-        _, _, traj_gen = self._robots[robot_name]
-        # Convert JointState path to list of position lists for trajectory generator
-        traj = traj_gen.generate([list(state.position) for state in result.path])
-        self._planned_trajectories[robot_name] = traj
-        logger.info(f"Trajectory: {traj.duration:.3f}s")
+    def _store_planned_motion(self, robot_name: RobotName, motion: PlannedMotion) -> bool:
+        logger.info(f"Path: {len(motion.path)} waypoints")
+        self._planned_paths[robot_name] = motion.path
+        self._planned_trajectories[robot_name] = motion.trajectory
+        logger.info(f"Trajectory: {motion.trajectory.duration:.3f}s")
 
         self._state = ManipulationState.COMPLETED
         return True
@@ -546,9 +561,7 @@ class ManipulationModule(Module):
             duration: Total animation duration in seconds
             robot_name: Robot to preview (required if multiple robots configured)
         """
-        from dimos.manipulation.planning.utils.path_utils import interpolate_path
-
-        if self._world_monitor is None:
+        if self._planning_backend is None:
             return False
 
         robot = self._get_robot(robot_name)
@@ -561,10 +574,10 @@ class ManipulationModule(Module):
             logger.warning(f"No planned path to preview for {robot_name}")
             return False
 
-        # Interpolate and animate
-        interpolated = interpolate_path(planned_path, resolution=0.1)
-        self._world_monitor.world.animate_path(robot_id, interpolated, duration)
-        return True
+        visualization = self._planning_backend.visualization()
+        return visualization is not None and visualization.preview_path(
+            robot_id, planned_path, duration
+        )
 
     @rpc
     def has_planned_path(self) -> bool:
@@ -588,9 +601,10 @@ class ManipulationModule(Module):
         Returns:
             URL string or None if visualization not enabled
         """
-        if self._world_monitor is None:
+        if self._planning_backend is None:
             return None
-        return self._world_monitor.get_visualization_url()
+        visualization = self._planning_backend.visualization()
+        return visualization.get_visualization_url() if visualization is not None else None
 
     @rpc
     def clear_planned_path(self) -> bool:
@@ -691,9 +705,10 @@ class ManipulationModule(Module):
         if robot is None:
             return False
         robot_name_resolved, robot_id, _, _ = robot
-        if self._world_monitor is None:
+        scene = self._planning_scene()
+        if scene is None:
             return False
-        current = self._world_monitor.get_current_joint_state(robot_id)
+        current = scene.get_current_joint_state(robot_id)
         if current is None:
             logger.error("Cannot capture init joints — no current joint state")
             return False
@@ -801,6 +816,21 @@ class ManipulationModule(Module):
         """Access the world monitor for advanced obstacle/world operations."""
         return self._world_monitor
 
+    @property
+    def planning_backend(self) -> PlanningBackend | None:
+        return self._planning_backend
+
+    @rpc
+    def get_planning_backend_info(self) -> dict[str, Any] | None:
+        if self._planning_backend is None:
+            return None
+        capabilities = self._planning_backend.capabilities()
+        return {
+            "name": self._planning_backend.name,
+            "capabilities": capabilities.__dict__,
+            "diagnostics": self._planning_backend.diagnostics().as_dict(),
+        }
+
     @rpc
     def add_obstacle(
         self,
@@ -811,7 +841,8 @@ class ManipulationModule(Module):
         mesh_path: str | None = None,
     ) -> str:
         """Add obstacle: shape='box'|'sphere'|'cylinder'|'mesh'. Returns obstacle_id."""
-        if not self._world_monitor:
+        scene = self._planning_scene()
+        if scene is None:
             return ""
 
         # Map shape string to ObstacleType
@@ -841,14 +872,15 @@ class ManipulationModule(Module):
             dimensions=tuple(dimensions) if dimensions else (),
             mesh_path=mesh_path,
         )
-        return self._world_monitor.add_obstacle(obstacle)
+        return scene.add_obstacle(obstacle)
 
     @rpc
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle from the planning world."""
-        if self._world_monitor is None:
+        scene = self._planning_scene()
+        if scene is None:
             return False
-        return self._world_monitor.remove_obstacle(obstacle_id)
+        return scene.remove_obstacle(obstacle_id)
 
     def _get_gripper_hardware_id(self, robot_name: RobotName | None = None) -> str | None:
         """Get gripper hardware ID for a robot."""
@@ -1229,8 +1261,8 @@ class ManipulationModule(Module):
 
         # Move through a safe waypoint: 10cm above and 5cm in front of init pose.
         # This avoids direct paths through the workspace that could collide with objects.
-        if self._world_monitor is not None:
-            init_ee = self._world_monitor.get_ee_pose(robot_id, joint_state=init)
+        if (scene := self._planning_scene()) is not None:
+            init_ee = scene.get_ee_pose(robot_id, joint_state=init)
             if init_ee is not None:
                 wp = Pose(
                     Vector3(
@@ -1271,7 +1303,7 @@ class ManipulationModule(Module):
             self._tf_thread = None
 
         # Stop world monitor (includes visualization thread)
-        if self._world_monitor is not None:
-            self._world_monitor.stop_all_monitors()
+        if self._planning_backend is not None:
+            self._planning_backend.stop()
 
         super().stop()

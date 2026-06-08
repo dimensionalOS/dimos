@@ -24,8 +24,10 @@ import pytest
 
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
+    ManipulationModuleConfig,
     ManipulationState,
 )
+from dimos.manipulation.planning.backends.base import BackendRobot
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -96,11 +98,61 @@ def _make_module():
         module._robots = {}
         module._planned_paths = {}
         module._planned_trajectories = {}
+        module._planning_backend = None
         module._world_monitor = None
         module._planner = None
         module._kinematics = None
         module._coordinator_client = None
+        module._tf_stop_event = threading.Event()
+        module._tf_thread = None
         return module
+
+
+class TestPlanningBackendSelection:
+    def test_config_defaults_to_drake_backend(self):
+        config = ManipulationModuleConfig()
+
+        assert config.planning_backend == "drake"
+        assert config.planning_backend_options == {}
+
+    def test_initialize_planning_creates_active_backend(self, robot_config):
+        module = _make_module()
+        module.config = ManipulationModuleConfig(robots=[robot_config])
+
+        scene = MagicMock()
+        scene.add_robot.return_value = BackendRobot(
+            name=robot_config.name,
+            robot_id="robot_test_arm",
+            config=robot_config,
+        )
+        backend = MagicMock()
+        backend.scene.return_value = scene
+        backend.visualization.return_value = MagicMock()
+        backend.world_monitor = MagicMock()
+        backend.legacy_planner = MagicMock()
+        backend.legacy_kinematics = MagicMock()
+
+        with patch(
+            "dimos.manipulation.manipulation_module.create_planning_backend",
+            return_value=backend,
+        ) as create_backend:
+            module._initialize_planning()
+
+        create_backend.assert_called_once_with(
+            name="drake",
+            enable_viz=False,
+            planner_name="rrt_connect",
+            kinematics_name="jacobian",
+            options={},
+        )
+        scene.add_robot.assert_called_once_with(robot_config)
+        scene.finalize.assert_called_once()
+        scene.start_state_monitor.assert_called_once_with("robot_test_arm")
+        assert module._planning_backend is backend
+        assert module._world_monitor is backend.world_monitor
+        assert module._planner is backend.legacy_planner
+        assert module._kinematics is backend.legacy_kinematics
+        assert "test_arm" in module._robots
 
 
 class TestStateMachine:
