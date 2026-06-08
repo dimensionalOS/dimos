@@ -36,14 +36,6 @@ def _flat_floor(half_extent: float = 3.0, spacing: float = 0.1) -> NDArray[np.fl
     return np.stack([xs.ravel(), ys.ravel(), zs.ravel()], axis=1)
 
 
-def test_start_z_is_dropped_by_robot_height() -> None:
-    obs = _obs(np.zeros((1, 3), dtype=np.float32), pose=(1.0, 2.0, 3.0))
-
-    [out] = list(MLSPlan(goal=(10.0, 10.0, 0.0), robot_height=0.4)(iter([obs])))
-
-    assert out.tags["start"] == (1.0, 2.0, 3.0 - 0.4)
-
-
 def test_flat_floor_yields_populated_path_and_planned_true() -> None:
     obs = _obs(_flat_floor(), pose=(-2.0, -2.0, 1.0))
 

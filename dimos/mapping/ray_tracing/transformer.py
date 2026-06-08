@@ -21,7 +21,6 @@ import open3d.core as o3c  # type: ignore[import-untyped]
 
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory2.transform import Transformer
-from dimos.memory2.utils.poseless import posed_only
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
@@ -73,8 +72,10 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         last_obs: Observation[PointCloud2] | None = None
         count = 0
 
-        for obs, pose in posed_only(upstream, "RayTraceMap"):
-            x, y, z, *_ = pose
+        for obs in upstream:
+            if obs.pose_tuple is None:
+                continue
+            x, y, z, *_ = obs.pose_tuple
             mapper.add_frame(obs.data.points_f32(), (x, y, z))
             last_obs = obs
             count += 1

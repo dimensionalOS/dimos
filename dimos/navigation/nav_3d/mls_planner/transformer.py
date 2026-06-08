@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from dimos.memory2.transform import Transformer
-from dimos.memory2.utils.poseless import posed_only
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -71,8 +70,10 @@ class MLSPlan(Transformer[PointCloud2, Path]):
             robot_height=self.robot_height,
             **self._planner_kwargs,
         )
-        for obs, pose in posed_only(upstream, "MLSPlan"):
-            x, y, z, *_ = pose
+        for obs in upstream:
+            if obs.pose_tuple is None:
+                continue
+            x, y, z, *_ = obs.pose_tuple
             start = (float(x), float(y), float(z) - self.robot_height)
 
             voxel_map = obs.data

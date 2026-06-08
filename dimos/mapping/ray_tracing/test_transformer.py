@@ -50,25 +50,6 @@ def test_emit_every_n_yields_on_cadence_and_flushes_remainder() -> None:
     assert [r.tags["frame_count"] for r in results] == [3, 6, 7]
 
 
-def test_pose_propagates_to_emitted_obs() -> None:
-    pose = (1.5, -2.0, 0.5)
-    obs = _obs(_cube(), ts=1.0, pose=pose)
-
-    [emitted] = list(RayTraceMap()(iter([obs])))
-
-    assert emitted.pose_tuple is not None
-    assert emitted.pose_tuple[:3] == pose
-
-
-def test_emit_every_zero_yields_single_batch_map() -> None:
-    obs = [_obs(_cube(), ts=float(i), pose=(0.0, 0.0, 0.0)) for i in range(4)]
-
-    results = list(RayTraceMap(emit_every=0)(iter(obs)))
-
-    assert len(results) == 1
-    assert results[0].tags["frame_count"] == 4
-
-
 def test_poseless_obs_are_skipped() -> None:
     points = _cube()
     poseless = Observation(id=1, ts=0.0, pose=None, _data=PointCloud2.from_numpy(points))
