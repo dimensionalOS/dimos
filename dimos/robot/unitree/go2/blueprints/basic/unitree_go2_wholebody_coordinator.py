@@ -34,10 +34,9 @@ from dimos.robot.unitree.go2.wholebody_connection import Go2WholeBodyConnection
 
 _go2_joints = make_quadruped_joints("go2")
 
-# Per-joint PD gains, applied by ConnectedWholeBody when converting
-# position commands → MotorCommand
-_KP = (25.0,) * 12
-_KD = (0.5,) * 12
+
+_KP = (20.0, 30.0, 40.0) * 4
+_KD = (1.0, 1.5, 2.0) * 4
 
 # ROBOT_INTERFACE pins cyclonedds to a NIC; required on multi-NIC hosts.
 unitree_go2_wholebody_coordinator = (
