@@ -538,6 +538,33 @@ def test_panel_plan_runs_while_plan_operation_is_marked_in_flight():
     assert panel.session.plan_state.status == PlanStatus.FRESH
 
 
+def test_panel_plan_uses_client_snapshot_when_client_resets_mid_operation():
+    panel = _make_panel()
+    panel.session.runtime = PanelRuntime.RUNNING
+    panel.session.backend_status = BackendConnectionStatus.READY
+    panel.session.selected_robot = "arm"
+    panel.session.manipulation_state = "IDLE"
+    panel.session.feasibility.status = FeasibilityStatus.FEASIBLE
+    panel.session.target_status = TargetStatus.FEASIBLE
+    panel.session.joint_target = [0.1, 0.2]
+    panel.session.current_joints = [0.0, 0.0]
+    panel.session.robot_info = {"joint_names": ["j1", "j2"]}
+    client = panel._client
+    assert client is not None
+    client.get_planned_path.return_value = [_joint_state([0.0]), _joint_state([0.1])]
+
+    def reset_client_during_plan(_target: JointState, _robot: str) -> bool:
+        panel._client = None
+        return True
+
+    client.plan_to_joints.side_effect = reset_client_during_plan
+
+    panel._plan()
+
+    client.get_planned_path.assert_called_once_with("arm")
+    assert panel.session.plan_state.status == PlanStatus.FRESH
+
+
 def test_panel_state_axes_keep_action_separate_from_plan_state():
     panel = _make_panel()
     panel.session.runtime = PanelRuntime.RUNNING

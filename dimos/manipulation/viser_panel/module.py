@@ -509,72 +509,86 @@ class ViserManipulationPanelModule(Module):
         self._ensure_controller().plan()
 
     def _plan_impl(self) -> None:
-        if (
-            self._client is None
-            or not self._can_plan_for_operation()
-            or self.session.selected_robot is None
-        ):
-            return
-        robot = self.session.selected_robot
-        current = self.session.current_joints
-        target = self.session.joint_target
-        self.session.plan_state.status = PlanStatus.PLANNING
-        if target is not None:
+        with self._lock:
+            client = self._client
+            if client is None or not self._can_plan_for_operation():
+                return
+            robot = self.session.selected_robot
+            if robot is None:
+                return
+            current = (
+                list(self.session.current_joints)
+                if self.session.current_joints is not None
+                else None
+            )
+            target = (
+                list(self.session.joint_target) if self.session.joint_target is not None else None
+            )
+            cartesian_target = self.session.cartesian_target
             names = list((self.session.robot_info or {}).get("joint_names") or [])
-            ok = bool(self._client.plan_to_joints(self._make_joint_state(names, target), robot))
-        elif self.session.cartesian_target is not None:
-            ok = bool(self._client.plan_to_pose(self.session.cartesian_target, robot))
+            self.session.plan_state.status = PlanStatus.PLANNING
+        if target is not None:
+            ok = bool(client.plan_to_joints(self._make_joint_state(names, target), robot))
+        elif cartesian_target is not None:
+            ok = bool(client.plan_to_pose(cartesian_target, robot))
         else:
             ok = False
         if ok:
-            path = self._client.get_planned_path(robot)
-            poses = self._client.get_planned_path_poses(robot)
-            self.session.plan_state.status = PlanStatus.FRESH
-            self.session.plan_state.robot = robot
-            self.session.plan_state.target_pose = self.session.cartesian_target
-            self.session.plan_state.target_joints = target
-            self.session.plan_state.start_joints_snapshot = (
-                list(current) if current is not None else None
-            )
-            self.session.plan_state.planned_path = list(path or [])
-            self._render_plan_path(self.session.plan_state.planned_path, list(poses or []))
+            path = list(client.get_planned_path(robot) or [])
+            poses = list(client.get_planned_path_poses(robot) or [])
+            with self._lock:
+                self.session.plan_state.status = PlanStatus.FRESH
+                self.session.plan_state.robot = robot
+                self.session.plan_state.target_pose = cartesian_target
+                self.session.plan_state.target_joints = target
+                self.session.plan_state.start_joints_snapshot = current
+                self.session.plan_state.planned_path = path
+            self._render_plan_path(path, poses)
         else:
-            self.session.plan_state.status = PlanStatus.FAILED
-            self.session.error = str(self._client.get_error() or "Planning failed")
+            with self._lock:
+                self.session.plan_state.status = PlanStatus.FAILED
+                self.session.error = str(client.get_error() or "Planning failed")
 
     def _preview(self) -> None:
         self._ensure_controller().preview()
 
     def _preview_impl(self) -> None:
-        if self._client is None or self.session.selected_robot is None:
+        with self._lock:
+            client = self._client
+            robot = self.session.selected_robot
+        if client is None or robot is None:
             return
-        path = list(self._client.get_planned_path(self.session.selected_robot) or [])
-        poses = self._client.get_planned_path_poses(self.session.selected_robot)
+        path = list(client.get_planned_path(robot) or [])
+        poses = client.get_planned_path_poses(robot)
         self._render_plan_path(path, list(poses or []))
         if path:
-            self.session.error = "Previewing planned path in Viser"
+            with self._lock:
+                self.session.error = "Previewing planned path in Viser"
             self._animate_ghost_path(path, self.panel_config.preview_duration)
         else:
-            self.session.error = "No planned path to preview"
-            self.session.plan_state.status = PlanStatus.FAILED
+            with self._lock:
+                self.session.error = "No planned path to preview"
+                self.session.plan_state.status = PlanStatus.FAILED
 
     def _execute(self) -> None:
         self._ensure_controller().execute()
 
     def _execute_impl(self) -> None:
-        if (
-            self._client is None
-            or self.session.selected_robot is None
-            or not self._can_execute_for_operation()
-        ):
-            self.session.error = "Execute is not available for the current plan"
-            return
-        self.session.plan_state.status = PlanStatus.EXECUTING
-        if bool(self._client.execute(self.session.selected_robot)):
-            self.session.error = "Execution accepted"
+        with self._lock:
+            client = self._client
+            robot = self.session.selected_robot
+            can_execute = self._can_execute_for_operation()
+            if client is None or robot is None or not can_execute:
+                self.session.error = "Execute is not available for the current plan"
+                return
+            self.session.plan_state.status = PlanStatus.EXECUTING
+        if bool(client.execute(robot)):
+            with self._lock:
+                self.session.error = "Execution accepted"
         else:
-            self.session.plan_state.status = PlanStatus.FAILED
-            self.session.error = str(self._client.get_error() or "Execution failed")
+            with self._lock:
+                self.session.plan_state.status = PlanStatus.FAILED
+                self.session.error = str(client.get_error() or "Execution failed")
 
     def _cancel(self) -> None:
         self._ensure_controller().cancel()
