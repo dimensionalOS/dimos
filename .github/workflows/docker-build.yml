@@ -21,7 +21,6 @@ jobs:
       ros:        ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.ros }}
       python:     ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.python }}
       dev:        ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.dev }}
-      navigation: ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.navigation }}
       branch-tag: ${{ steps.set-tag.outputs.branch_tag }}
     steps:
       - name: Fix permissions
@@ -59,11 +58,6 @@ jobs:
 
             dev:
               - docker/dev/**
-
-            navigation:
-              - .github/workflows/_docker-build-template.yml
-              - .github/workflows/docker-build.yml
-              - docker/navigation/**
 
       - name: Determine Branch Tag
         id: set-tag
@@ -145,7 +139,7 @@ jobs:
       dockerfile: dev
 
   build-complete:
-    needs: [check-changes, ros, python, ros-python, dev, ros-dev, navigation]
+    needs: [check-changes, ros, python, ros-python, dev, ros-dev]
     runs-on: [self-hosted, Linux]
     if: always()
     steps:
