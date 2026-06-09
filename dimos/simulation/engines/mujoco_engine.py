@@ -46,6 +46,8 @@ logger = setup_logger()
 # Step hook signature: called with the engine instance inside the sim thread.
 StepHook = Callable[["MujocoEngine"], None]
 
+_MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
+
 
 @dataclass
 class CameraConfig:
@@ -173,7 +175,7 @@ class MujocoEngine(SimulationEngine):
         return xml_path
 
     def _find_first_freejoint_adrs(self) -> tuple[int | None, int | None]:
-        if self._model.njnt > 0 and int(self._model.jnt_type[0]) == int(mujoco.mjtJoint.mjJNT_FREE):
+        if self._model.njnt > 0 and int(self._model.jnt_type[0]) == _MJJNT_FREE:
             return int(self._model.jnt_qposadr[0]), int(self._model.jnt_dofadr[0])
         return None, None
 

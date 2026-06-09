@@ -28,6 +28,12 @@ import mujoco
 
 from dimos.simulation.utils.xml_parser import JointMapping
 
+_MJOBJ_BODY = int(mujoco.mjtObj.mjOBJ_BODY)
+_MJOBJ_JOINT = int(mujoco.mjtObj.mjOBJ_JOINT)
+_MJOBJ_ACTUATOR = int(mujoco.mjtObj.mjOBJ_ACTUATOR)
+_MJOBJ_SENSOR = int(mujoco.mjtObj.mjOBJ_SENSOR)  # type: ignore[attr-defined]
+_MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
+
 
 @dataclass(frozen=True)
 class RobotSimSpec:
@@ -95,7 +101,7 @@ def resolve_robot_sim_binding(
     if spec.root_body_names:
         root_body_id = _find_unique_id(
             model,
-            mujoco.mjtObj.mjOBJ_BODY,
+            _MJOBJ_BODY,
             spec.root_body_names,
             spec.model_prefix,
             "root body",
@@ -104,17 +110,17 @@ def resolve_robot_sim_binding(
     if spec.root_joint_names:
         root_joint_id = _find_unique_id(
             model,
-            mujoco.mjtObj.mjOBJ_JOINT,
+            _MJOBJ_JOINT,
             spec.root_joint_names,
             spec.model_prefix,
             "root joint",
         )
-        if int(model.jnt_type[root_joint_id]) != int(mujoco.mjtJoint.mjJNT_FREE):
-            root_name = _name(model, mujoco.mjtObj.mjOBJ_JOINT, root_joint_id)
+        if int(model.jnt_type[root_joint_id]) != _MJJNT_FREE:
+            root_name = _name(model, _MJOBJ_JOINT, root_joint_id)
             raise ValueError(f"Robot '{spec.robot_id}' root joint '{root_name}' is not a freejoint")
         if root_body_id is not None and int(model.jnt_bodyid[root_joint_id]) != root_body_id:
-            root_joint_name = _name(model, mujoco.mjtObj.mjOBJ_JOINT, root_joint_id)
-            root_body_name = _name(model, mujoco.mjtObj.mjOBJ_BODY, root_body_id)
+            root_joint_name = _name(model, _MJOBJ_JOINT, root_joint_id)
+            root_body_name = _name(model, _MJOBJ_BODY, root_body_id)
             raise ValueError(
                 f"Robot '{spec.robot_id}' root joint '{root_joint_name}' is not on "
                 f"root body '{root_body_name}'"
@@ -151,40 +157,40 @@ def resolve_robot_sim_binding(
     for index, model_joint_name in enumerate(model_joint_names):
         joint_id = _find_unique_id(
             model,
-            mujoco.mjtObj.mjOBJ_JOINT,
+            _MJOBJ_JOINT,
             (model_joint_name,),
             spec.model_prefix,
             f"policy joint {index}",
         )
-        if int(model.jnt_type[joint_id]) == int(mujoco.mjtJoint.mjJNT_FREE):
-            joint_name = _name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+        if int(model.jnt_type[joint_id]) == _MJJNT_FREE:
+            joint_name = _name(model, _MJOBJ_JOINT, joint_id)
             raise ValueError(f"Robot '{spec.robot_id}' policy joint '{joint_name}' is free")
         mapping = mappings_by_joint_id.get(joint_id)
         if mapping is None:
-            joint_name = _name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+            joint_name = _name(model, _MJOBJ_JOINT, joint_id)
             raise ValueError(
                 f"Robot '{spec.robot_id}' policy joint '{joint_name}' has no actuator mapping"
             )
         actuator_id = mapping.actuator_id
         if actuator_id is None:
-            joint_name = _name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+            joint_name = _name(model, _MJOBJ_JOINT, joint_id)
             raise ValueError(f"Robot '{spec.robot_id}' policy joint '{joint_name}' has no actuator")
         if model_actuator_names is not None:
             expected_actuator_id = _find_unique_id(
                 model,
-                mujoco.mjtObj.mjOBJ_ACTUATOR,
+                _MJOBJ_ACTUATOR,
                 (model_actuator_names[index],),
                 spec.model_prefix,
                 f"policy actuator {index}",
             )
             if actuator_id != expected_actuator_id:
-                joint_name = _name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+                joint_name = _name(model, _MJOBJ_JOINT, joint_id)
                 raise ValueError(
                     f"Robot '{spec.robot_id}' joint '{joint_name}' actuator mismatch: "
                     f"mapping={actuator_id}, expected={expected_actuator_id}"
                 )
         if mapping.qpos_adr is None or mapping.dof_adr is None:
-            joint_name = _name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+            joint_name = _name(model, _MJOBJ_JOINT, joint_id)
             raise ValueError(f"Robot '{spec.robot_id}' policy joint '{joint_name}' has no qpos")
 
         ordered_mappings.append(mapping)
@@ -237,14 +243,12 @@ def _find_sensor_slice(
 ) -> slice | None:
     if not names:
         return None
-    sensor_id = _find_unique_id_or_none(
-        model, mujoco.mjtObj.mjOBJ_SENSOR, names, model_prefix, "sensor"
-    )
+    sensor_id = _find_unique_id_or_none(model, _MJOBJ_SENSOR, names, model_prefix, "sensor")
     if sensor_id is None:
         return None
     sensor_dim = int(model.sensor_dim[sensor_id])
     if sensor_dim != dim:
-        sensor_name = _name(model, mujoco.mjtObj.mjOBJ_SENSOR, sensor_id)
+        sensor_name = _name(model, _MJOBJ_SENSOR, sensor_id)
         raise ValueError(f"MuJoCo sensor '{sensor_name}' has dim {sensor_dim}, expected {dim}")
     adr = int(model.sensor_adr[sensor_id])
     return slice(adr, adr + dim)
@@ -252,7 +256,7 @@ def _find_sensor_slice(
 
 def _find_unique_id(
     model: mujoco.MjModel,
-    obj_type: mujoco.mjtObj,
+    obj_type: int,
     names: tuple[str, ...],
     model_prefix: str | None,
     label: str,
@@ -265,7 +269,7 @@ def _find_unique_id(
 
 def _find_unique_id_or_none(
     model: mujoco.MjModel,
-    obj_type: mujoco.mjtObj,
+    obj_type: int,
     names: tuple[str, ...],
     model_prefix: str | None,
     label: str,
@@ -302,7 +306,7 @@ def _candidate_names(name: str, model_prefix: str | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(candidates))
 
 
-def _name(model: mujoco.MjModel, obj_type: mujoco.mjtObj, obj_id: int) -> str:
+def _name(model: mujoco.MjModel, obj_type: int, obj_id: int) -> str:
     return mujoco.mj_id2name(model, obj_type, obj_id) or f"<unnamed:{obj_id}>"
 
 
