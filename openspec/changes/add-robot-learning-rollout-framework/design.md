@@ -49,7 +49,7 @@ TemporalSampleAssembler
 RobotContract.to_lerobot / from_lerobot
         │
         ├── Offline LeRobot exporter
-        └── PolicyRolloutModule
+        └── RobotPolicyModule / PolicyRolloutModule
                  │
                  ▼
           RobotAction / action chunk adapter
@@ -244,9 +244,27 @@ The linked Tea-style/reference contract pattern is useful for `features()`, `to_
 
 ### Policy rollout layer
 
-`PolicyRolloutModule` should own policy/model lifecycle and low-rate inference. It subscribes to the same typed streams used by recording, maintains latest observations, uses the temporal sample assembler to build a native sample, uses the robot contract to convert that sample to LeRobot/policy inputs, and periodically produces a robot-native action or joint trajectory action chunk.
+`RobotPolicyModule` or `PolicyRolloutModule` should be the backend-hosting policy runtime. It owns policy/model lifecycle, rollout start/stop state, low-rate inference scheduling, backend selection, and chunk submission. It subscribes to the same typed streams used by recording, maintains latest observations, uses the temporal sample assembler to build a native sample, and delegates policy inference to a backend implementation.
+
+The module should support multiple backend implementations behind a common policy backend API. `LeRobotBackend` is the first implementation, but the boundary should leave room for scripted/test backends, ONNX backends, remote policy services, or other learned-policy runtimes without changing stream assembly or coordinator submission.
+
+The common backend API should be chunk-oriented rather than raw-vector-oriented. A minimal shape is:
+
+```text
+PolicyBackend
+  initialize()
+  generate_action_chunk(sample: RobotLearningSample) -> RobotActionChunk
+  reset()
+  close()
+```
+
+For the LeRobot backend, `generate_action_chunk(...)` should call `RobotContract.to_lerobot(sample)`, run the LeRobot policy, decode policy output with `RobotContract.from_lerobot(action_vec)`, and return a robot-native action chunk. Future backends can produce the same `RobotActionChunk` without going through LeRobot.
+
+The policy module should not itself be a LeRobot adapter. Its job is orchestration: get a current native sample, call the selected backend, validate or drop the returned chunk according to rollout state, and hand accepted chunks to coordinator-managed execution.
 
 The policy module should submit chunks to coordinator-managed control via a module reference/RPC or a typed stream consumed by a task. It should not write manipulator adapters or low-level motor commands directly.
+
+For the first manipulation path, accepted chunks should become `JointTrajectory` commands and be submitted to the configured ControlCoordinator task, likely through `ControlCoordinator.task_invoke(task_name, "execute", {"trajectory": trajectory})` unless a dedicated chunk task needs richer status. The conversion from `RobotActionChunk` to `JointTrajectory` may live in a small action adapter or contract-adjacent helper, but coordinator timing and preemption remain task-owned.
 
 If a public DimOS `Spec` Protocol is needed, define one around chunk submission/status rather than model internals. The protocol should hide whether the implementation uses `task_invoke`, a stream, or a specialized task method.
 
@@ -309,7 +327,11 @@ CLI surfaces are optional but likely useful for export and inspection, for examp
    - Rationale: LeRobot expects fixed-FPS frame rows. Memory2 can preserve raw timestamps and the exporter can resample/align deterministically.
    - Alternative: action-stream or policy-tick clock. These are useful for live inference, but they do not by themselves guarantee LeRobot-compatible dense frame rows.
 
-7. **Episode storage decision remains open.**
+7. **RobotPolicyModule owns backend orchestration, not backend-specific inference.**
+   - Rationale: the module should provide one rollout runtime for start/stop, sample assembly, backend selection, `generate_action_chunk(...)`, chunk validation, and coordinator submission. LeRobot is the first backend, but scripted/test, ONNX, remote, or other learned-policy backends should plug in behind the same action-chunk API.
+   - Alternative: implement a LeRobot-only policy module. This would be faster initially but would mix rollout lifecycle, LeRobot tensor conversion, and coordinator submission in one component.
+
+8. **Episode storage decision remains open.**
    Three alternatives should be evaluated before implementation:
 
    **Separate Memory2 recording per episode**
@@ -352,7 +374,7 @@ Rollout steps:
 
 1. Define specs for recording, frame alignment, policy rollout control, chunk preemption, and LeRobot export.
 2. Implement the manipulation-first temporal sample assembler, robot contract, and raw Memory2 recording/export path.
-3. Add the policy rollout module and coordinator chunk execution/status path.
+3. Add the multi-backend robot policy module and coordinator chunk execution/status path.
 4. Add optional CLI/docs for recording inspection and LeRobot export.
 5. Add example/mock manipulation blueprint only if useful; regenerate blueprint registry if a runnable blueprint is added.
 
@@ -363,6 +385,7 @@ Rollback should be simple because the new behavior is opt-in: remove rollout mod
 - Should episodes be stored as separate Memory2 recordings, combined recordings with episode metadata, or per-session recordings with an episode metadata stream?
 - Should chunk submission use `ControlCoordinator.task_invoke`, a typed stream, or a dedicated DimOS `Spec` Protocol?
 - What is the initial manipulation sample schema and robot contract, including required stream roles, joint ordering, gripper representation, camera names, and action-vector layout?
+- What is the exact `PolicyBackend.generate_action_chunk(...)` signature and `RobotActionChunk` shape shared by LeRobot and future backends?
 - Should action chunks include only commanded future joint positions, or both commanded and actually executed positions for export?
 - What per-stream alignment tolerances and missing-sample policies should the assembler use by default for live rollout and fixed-FPS export?
 - Which manipulation stack should provide the first manual QA surface: mock coordinator, xArm/Piper, or simulation?
