@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<robot name="UF_ROBOT">
+  <group name="arm">
+    <joint name="joint1"/>
+    <joint name="joint2"/>
+    <joint name="joint3"/>
+    <joint name="joint4"/>
+    <joint name="joint5"/>
+    <joint name="joint6"/>
+    <joint name="joint7"/>
+  </group>
+</robot>

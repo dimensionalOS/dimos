@@ -1,0 +1,47 @@
+{
+  "manipulationmodule": {
+    "planning_backend": "roboplan",
+    "enable_viz": false,
+    "planning_backend_options": {
+      "roboplan": {
+        "model_path": "data/xarm_description/urdf/xarm7/xarm7.urdf",
+        "srdf_path": "dimos/manipulation/planning/examples/roboplan_xarm7.srdf",
+        "package_paths": [
+          "data"
+        ],
+        "planning_group": "arm",
+        "active_joint_names": [
+          "joint1",
+          "joint2",
+          "joint3",
+          "joint4",
+          "joint5",
+          "joint6",
+          "joint7"
+        ],
+        "base_frame": "link_base",
+        "end_effector_frame": "link7",
+        "retiming": "dimos",
+        "rrt": {
+          "max_nodes": 1000,
+          "max_connection_distance": 3.0,
+          "collision_check_step_size": 0.05,
+          "collision_check_use_bisection": false,
+          "goal_biasing_probability": 0.15,
+          "rrt_connect": true
+        },
+        "ik": {
+          "max_iters": 100,
+          "max_time": 0.05,
+          "check_collisions": true
+        },
+        "toppra": {
+          "dt": 0.02,
+          "mode": "Hermite",
+          "velocity_scale": 1.0,
+          "acceleration_scale": 1.0
+        }
+      }
+    }
+  }
+}
