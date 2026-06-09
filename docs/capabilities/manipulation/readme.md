@@ -1,6 +1,6 @@
 # Manipulation
 
-Motion planning and teleoperation for robotic manipulators. Uses Drake for physics simulation and Meshcat for 3D visualization.
+Motion planning and teleoperation for robotic manipulators. Drake is the default planning backend for physics simulation and Meshcat visualization; RoboPlan can be selected as an optional manipulation planning backend for RoboPlan-native scene loading, RRT planning, IK, and optional TOPPRA timing.
 
 ## Quick Start
 
@@ -82,6 +82,53 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 - **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
 - **ManipulationModule** — Drake physics, Meshcat viz, RRT motion planning, obstacle management
 
+## Optional RoboPlan Backend
+
+Manipulation stacks can opt into RoboPlan without changing the public RPC, skill, preview, or execute method names:
+
+```python skip
+ManipulationModule(
+    robots=[robot_config],
+    planning_backend="roboplan",
+    planning_backend_options={
+        "roboplan": {
+            "srdf_path": "/path/to/robot.srdf",
+            "planning_group": "arm",
+            "active_joint_names": robot_config.joint_names,
+            "base_frame": robot_config.base_link,
+            "end_effector_frame": robot_config.end_effector_link,
+            "retiming": "dimos",
+        }
+    },
+)
+```
+
+```error
+Traceback (most recent call last):
+  File "/tmp/tmpya5ckocy.py", line 1, in <module>
+    ManipulationModule(
+    ^^^^^^^^^^^^^^^^^^
+NameError: name 'ManipulationModule' is not defined
+
+Exit code: 1
+```
+
+RoboPlan is optional and lazy-imported. Default Drake-backed manipulation stacks still start if RoboPlan is not installed. When RoboPlan is selected, the robot config must provide the URDF path, SRDF path, package paths for meshes when needed, joint order, base and end-effector frames, and complete joint limits.
+
+RoboPlan changes planning only. Real robot execution still goes through the existing `ControlCoordinator` trajectory task path, including coordinator joint-name translation and execution state handling. Validate RoboPlan configurations in mock or simulation before supervised hardware use.
+
+Verify required RoboPlan modules with:
+
+```bash
+python -c "import roboplan.core, roboplan.rrt, roboplan.simple_ik"
+```
+
+For `retiming="toppra"`, also verify:
+
+```bash
+python -c "import roboplan.toppra"
+```
+
 ## Blueprints
 
 | Blueprint | Description |
@@ -121,3 +168,4 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 | [`teleop/keyboard/keyboard_teleop_module.py`](/dimos/teleop/keyboard/keyboard_teleop_module.py) | Keyboard teleop module |
 | [`planning/world/drake_world.py`](/dimos/manipulation/planning/world/drake_world.py) | Drake physics backend |
 | [`planning/planners/rrt_planner.py`](/dimos/manipulation/planning/planners/rrt_planner.py) | RRT-Connect motion planner |
+| [`planning/backends/roboplan/backend.py`](/dimos/manipulation/planning/backends/roboplan/backend.py) | Optional RoboPlan active backend |
