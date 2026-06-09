@@ -339,11 +339,7 @@ class Go2WholeBodyConnection(Module):
             # at boot, _on_motor_command overwrites it when the coordinator
             # sends new targets, but BOTH need this thread to actually push
             # the bytes onto the wire continuously.
-            if (
-                self._publisher is not None
-                and self._low_cmd is not None
-                and self._crc is not None
-            ):
+            if self._publisher is not None and self._low_cmd is not None and self._crc is not None:
                 try:
                     with self._lock:
                         self._low_cmd.crc = self._crc.Crc(self._low_cmd)
