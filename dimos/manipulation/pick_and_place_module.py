@@ -23,17 +23,13 @@ Extends ManipulationModule with perception integration and long-horizon skills:
 from __future__ import annotations
 
 import math
-from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
-from dimos.core.docker_module import DockerModuleProxy as DockerRunner
 from dimos.core.stream import In
-from dimos.manipulation.grasping.graspgen_module import GraspGenModule
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
@@ -45,7 +41,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.detection.type.detection3d.object import (
     Object as DetObject,
 )
-from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -53,10 +48,6 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 logger = setup_logger()
-
-# The host-side path (graspgen_visualization_output_path) is volume-mounted here.
-_GRASPGEN_VIZ_CONTAINER_DIR = "/output/graspgen"
-_GRASPGEN_VIZ_CONTAINER_PATH = f"{_GRASPGEN_VIZ_CONTAINER_DIR}/visualization.json"
 
 # Beyond this XY distance from the base, the arm cannot reach both high and far,
 # so pre-grasp/pre-place offsets are reduced.
@@ -72,19 +63,7 @@ _TALL_OBJECT_MIN_HEIGHT = 0.06
 
 
 class PickAndPlaceModuleConfig(ManipulationModuleConfig):
-    """Configuration for PickAndPlaceModule (adds GraspGen settings)."""
-
-    # GraspGen Docker settings
-    graspgen_docker_image: str = "dimos-graspgen:latest"
-    graspgen_gripper_type: str = "robotiq_2f_140"
-    graspgen_num_grasps: int = 400
-    graspgen_topk_num_grasps: int = 100
-    graspgen_grasp_threshold: float = -1.0
-    graspgen_filter_collisions: bool = False
-    graspgen_save_visualization_data: bool = False
-    graspgen_visualization_output_path: Path = (
-        Path.home() / ".dimos" / "graspgen" / "visualization.json"
-    )
+    """Configuration for PickAndPlaceModule."""
 
 
 class PickAndPlaceModule(ManipulationModule):
@@ -103,9 +82,6 @@ class PickAndPlaceModule(ManipulationModule):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-
-        # GraspGen Docker runner (lazy initialized on first generate_grasps call)
-        self._graspgen: DockerRunner | None = None
 
         # Last pick pose: stored during pick so place_back() can return the object
         self._last_pick_pose: Pose | None = None
@@ -190,69 +166,16 @@ class PickAndPlaceModule(ManipulationModule):
             return []
         return self._world_monitor.list_added_obstacles()
 
-    def _get_graspgen(self) -> DockerRunner:
-        """Get or create GraspGen Docker module (lazy init, thread-safe)."""
-        # Fast path: already initialized (no lock needed for read)
-        if self._graspgen is not None:
-            return self._graspgen
-
-        # Slow path: need to initialize (acquire lock to prevent race condition)
-        with self._lock:
-            # Double-check: another thread may have initialized while we waited for lock
-            if self._graspgen is not None:
-                return self._graspgen
-
-            # Ensure GraspGen model checkpoints are pulled from LFS
-            get_data("models_graspgen")
-
-            docker_file = (
-                DIMOS_PROJECT_ROOT
-                / "dimos"
-                / "manipulation"
-                / "grasping"
-                / "docker_context"
-                / "Dockerfile"
-            )
-
-            # Auto-mount host directory for visualization output when enabled.
-            docker_volumes: list[tuple[str, str, str]] = []
-            if self.config.graspgen_save_visualization_data:
-                host_dir = self.config.graspgen_visualization_output_path.parent
-                host_dir.mkdir(parents=True, exist_ok=True)
-                docker_volumes.append((str(host_dir), _GRASPGEN_VIZ_CONTAINER_DIR, "rw"))
-
-            graspgen = DockerRunner(
-                GraspGenModule,  # type: ignore[arg-type]
-                docker_file=docker_file,
-                docker_build_context=DIMOS_PROJECT_ROOT,
-                docker_image=self.config.graspgen_docker_image,
-                docker_env={"CI": "1"},  # skip interactive system config prompt in container
-                docker_volumes=docker_volumes,
-                gripper_type=self.config.graspgen_gripper_type,
-                num_grasps=self.config.graspgen_num_grasps,
-                topk_num_grasps=self.config.graspgen_topk_num_grasps,
-                grasp_threshold=self.config.graspgen_grasp_threshold,
-                filter_collisions=self.config.graspgen_filter_collisions,
-                save_visualization_data=self.config.graspgen_save_visualization_data,
-                visualization_output_path=_GRASPGEN_VIZ_CONTAINER_PATH,
-            )
-            graspgen.start()
-            self._graspgen = graspgen  # cache only after successful start
-            return self._graspgen
-
     @rpc
     def generate_grasps(
         self,
         pointcloud: PointCloud2,
         scene_pointcloud: PointCloud2 | None = None,
     ) -> PoseArray | None:
-        """Generate grasp poses for the given point cloud via GraspGen Docker module."""
-        try:
-            graspgen = self._get_graspgen()
-            return graspgen.generate_grasps(pointcloud, scene_pointcloud)  # type: ignore[no-any-return]
-        except Exception as e:
-            logger.error(f"Grasp generation failed: {e}")
-            return None
+        """Generate grasp poses for the given point cloud via GraspGen module."""
+        raise NotImplementedError(
+            "GraspGen Docker support removed; see issue #1266 for re-implementation as NativeModule subclass"
+        )
 
     def _compute_pre_grasp_pose(self, grasp_pose: Pose, offset: float = 0.10) -> Pose:
         """Compute a pre-grasp pose offset along the approach direction (local -Z).
@@ -801,13 +724,6 @@ then refreshes perception obstacles.
 
     @rpc
     def stop(self) -> None:
-        """Stop the pick-and-place module (cleanup GraspGen + delegate to base)."""
+        """Stop the pick-and-place module."""
         logger.info("Stopping PickAndPlaceModule")
-
-        # Stop GraspGen Docker container (thread-safe access to shared state)
-        with self._lock:
-            if self._graspgen is not None:
-                self._graspgen.stop()
-                self._graspgen = None
-
         super().stop()

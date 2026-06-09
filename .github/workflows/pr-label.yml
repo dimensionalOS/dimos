@@ -1,0 +1,76 @@
+name: pr-label
+
+# Adds/removes `ready-to-merge` based on the `ci-complete` job's conclusion
+# (which is what branch protection gates on). The `workflow_run` event fires
+# after the `ci` workflow finishes; `pull_request_target: synchronize` clears
+# the stale label on a new push before CI finishes on the new commit.
+#
+# Runs on the default branch via these events, so the GITHUB_TOKEN is
+# write-scoped even for PRs from forks.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  pull_request_target:
+    types: [synchronize]
+
+permissions: {}
+
+jobs:
+  ready-to-merge:
+    if: github.event_name == 'pull_request_target' || github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write  # To add/remove label
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'ready-to-merge';
+            const { owner, repo } = context.repo;
+            const event = context.eventName;
+            const payload = context.payload;
+
+            let prNumbers, ciOk;
+
+            if (event === 'pull_request_target') {
+              // synchronize → new push; clear any stale label until ci re-runs.
+              prNumbers = [payload.pull_request.number];
+              ciOk = false;
+            } else {
+              const run = payload.workflow_run;
+              const jobs = await github.paginate(
+                github.rest.actions.listJobsForWorkflowRun,
+                { owner, repo, run_id: run.id, per_page: 100 },
+              );
+              const ciComplete = jobs.find(j => j.name === 'ci-complete');
+              ciOk = ciComplete?.conclusion === 'success';
+
+              prNumbers = run.pull_requests?.map(p => p.number) ?? [];
+              if (prNumbers.length === 0) {
+                // Fork PRs: workflow_run.pull_requests is empty; resolve via head SHA.
+                const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                  owner, repo, commit_sha: run.head_sha,
+                });
+                prNumbers = prs.filter(p => p.state === 'open').map(p => p.number);
+              }
+            }
+
+            core.info(`event=${event} prs=${prNumbers.join(',')} ciOk=${ciOk}`);
+
+            for (const prNumber of prNumbers) {
+              if (ciOk) {
+                await github.rest.issues.addLabels({
+                  owner, repo, issue_number: prNumber, labels: [label],
+                });
+              } else {
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner, repo, issue_number: prNumber, name: label,
+                  });
+                } catch (e) {
+                  if (e.status !== 404) throw e;
+                }
+              }
+            }

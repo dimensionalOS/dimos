@@ -14,7 +14,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timedelta
 import json
 import textwrap
 import threading
@@ -22,13 +23,17 @@ from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage
 from rich.highlighter import JSONHighlighter
+from rich.panel import Panel
+from rich.text import Text
 from rich.theme import Theme
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
 from textual.geometry import Size
-from textual.widgets import Input, RichLog
+from textual.strip import Strip
+from textual.widgets import Input, RichLog, Static
 
+from dimos.agents.mcp import tool_stream
 from dimos.core.transport import pLCMTransport
 from dimos.utils.cli import theme
 from dimos.utils.generic import truncate_display_string
@@ -51,6 +56,107 @@ JSON_THEME = Theme(
     }
 )
 
+# How many of a tool's most recent stream lines to show inside its box.
+RECENT_LINES = 5
+# Prefix `McpClient` puts on tool-stream updates it re-emits to `/agent`.
+TOOL_MSG_PREFIX = "[tool:"
+# Markers pairing a tool call with its result in the scrollback.
+TOOL_CALL_MARKER = "▶"
+TOOL_RESULT_MARKER = "↳"
+# Backstop: finalize a stopped tool's box this long after the stop if no agent
+# activity follows to trigger an idle transition.
+STOP_FINALIZE_DELAY = 1.0
+
+
+def _format_elapsed(delta: timedelta) -> str:
+    total = int(delta.total_seconds())
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def _split_tool_message(content: Any) -> tuple[str, str] | None:
+    """Parse a `[tool:NAME] <text>` tool-stream message into (name, text)."""
+    if not isinstance(content, str) or not content.startswith(TOOL_MSG_PREFIX):
+        return None
+    end = content.find("]")
+    if end == -1:
+        return None
+    return content[len(TOOL_MSG_PREFIX) : end], content[end + 1 :].lstrip()
+
+
+class ToolPanel:
+    """Live state for one streaming tool's box.
+
+    ``entries`` holds the most recent ``(timestamp, kind, text)`` tuples where
+    ``kind`` is ``"tool"`` (a stream update) or ``"agent"`` (the agent's reply
+    to one), so each box shows the stream and the agent's annotations together.
+    """
+
+    def __init__(self, tool_name: str, start: datetime) -> None:
+        self.tool_name = tool_name
+        self.start = start
+        self.entries: deque[tuple[str, str, str]] = deque(maxlen=RECENT_LINES)
+        self.count = 0
+        self.static: Static | None = None
+
+
+class ToolPanelRegion:
+    """Docked region of live per-tool boxes.
+
+    All methods run on the Textual main thread; the tool-stream subscription
+    hands updates over via ``call_from_thread``.
+    """
+
+    def __init__(
+        self,
+        container: Container,
+        flush_fn: Callable[[Any], None],
+    ) -> None:
+        self._container = container
+        self._flush = flush_fn
+        self._panels: dict[str, ToolPanel] = {}
+
+    def update(self, tool_name: str, text: str, kind: str, timestamp: str) -> None:
+        panel = self._panels.get(tool_name)
+        if panel is None:
+            panel = ToolPanel(tool_name, datetime.now())
+            self._panels[tool_name] = panel
+            panel.entries.append((timestamp, kind, text))
+            panel.count = 1
+            panel.static = Static(self._render(panel))
+            self._container.mount(panel.static)
+        else:
+            panel.entries.append((timestamp, kind, text))
+            panel.count += 1
+            assert panel.static is not None
+            panel.static.update(self._render(panel))
+
+    def finalize(self, tool_name: str) -> None:
+        panel = self._panels.pop(tool_name, None)
+        if panel is None:
+            return
+        self._flush(self._render(panel, done=True))
+        if panel.static is not None:
+            panel.static.remove()
+
+    def _render(self, panel: ToolPanel, done: bool = False) -> Panel:
+        elapsed = _format_elapsed(datetime.now() - panel.start)
+        body = Text()
+        hidden = panel.count - len(panel.entries)
+        if hidden > 0:
+            body.append(f"(+{hidden} earlier)\n", style=theme.DIM)
+        for i, (timestamp, kind, text) in enumerate(panel.entries):
+            if i:
+                body.append("\n")
+            body.append(f"{timestamp} ", style=theme.TIMESTAMP)
+            if kind == "agent":
+                body.append("> ", style=theme.AGENT)
+                body.append(text, style=theme.AGENT)
+            else:
+                body.append(text)
+        status = f"{panel.count} updates" if done else "running"
+        title = f"{panel.tool_name}  {status}  {elapsed}"
+        return Panel(body, title=title, title_align="left", border_style=theme.PURPLE)
+
 
 class ThinkingIndicator:
     """Manages a throbbing 'thinking...' chat message in a RichLog."""
@@ -59,7 +165,7 @@ class ThinkingIndicator:
         self,
         app: App[Any],
         chat_log: RichLog,
-        add_message_fn: Callable[[str, str, str, str], None],
+        add_message_fn: Callable[[str, str, str, str], object],
     ) -> None:
         self._app: App[Any] = app
         self._chat_log = chat_log
@@ -140,6 +246,12 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         scrollbar-size: 0 0;
     }}
 
+    #tool-panels {{
+        height: auto;
+        max-height: 50%;
+        overflow-y: auto;
+    }}
+
     Input {{
         dock: bottom;
     }}
@@ -162,6 +274,16 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         self._subscription_thread: threading.Thread | None = None
         self._idle_subscription_thread: threading.Thread | None = None
         self._thinking: ThinkingIndicator | None = None
+        self._tool_panels: ToolPanelRegion | None = None
+        self._tool_stream_cleanup: Callable[[], None] | None = None
+        # The tool whose box the next agent reply belongs to (None -> inline).
+        self._reply_target: str | None = None
+        # tool_call_id -> the scrollback strips of that call, so its result can
+        # be spliced in directly beneath it (calls/results can arrive in any order).
+        self._tool_call_anchors: dict[str, list[Strip]] = {}
+        # Tools that have stopped but whose box waits for the agent to catch up.
+        self._pending_stops: set[str] = set()
+        self._agent_is_idle = True
         self._running = False
 
     def compose(self) -> ComposeResult:
@@ -169,6 +291,8 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         with Container(id="chat-container"):
             self.chat_log = RichLog(highlight=True, markup=True, wrap=False)
             yield self.chat_log
+
+        yield Container(id="tool-panels")
 
         self.input_widget = Input(placeholder="Type a message...")
         yield self.input_widget
@@ -185,6 +309,12 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
 
         assert self.chat_log is not None
         self._thinking = ThinkingIndicator(self, self.chat_log, self._add_message)
+
+        # Live boxes for streaming tools, fed straight off the tool-stream topic.
+        self._tool_panels = ToolPanelRegion(
+            self.query_one("#tool-panels", Container), self._flush_tool_panel
+        )
+        self._tool_stream_cleanup = tool_stream.subscribe(self._on_tool_stream)
 
         # Start subscription threads
         self._subscription_thread = threading.Thread(target=self._subscribe_to_agent, daemon=True)
@@ -204,6 +334,9 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
     def on_unmount(self) -> None:
         """Clean up when unmounting."""
         self._running = False
+        if self._tool_stream_cleanup is not None:
+            self._tool_stream_cleanup()
+            self._tool_stream_cleanup = None
 
     def _subscribe_to_agent(self) -> None:
         """Subscribe to agent messages in a separate thread."""
@@ -211,6 +344,8 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         def receive_msg(msg) -> None:  # type: ignore[no-untyped-def]
             if not self._running:
                 return
+            assert self._tool_panels is not None
+            assert self._thinking is not None
 
             timestamp = datetime.now().strftime("%H:%M:%S")
 
@@ -228,55 +363,178 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
                     "tool_calls", []
                 )
 
-                # Display the main content first
-                if content:
+                # A reply to a tool-stream update goes inside that tool's box so
+                # it reads as an annotation of the stream, not the agent talking
+                # to itself. Replies to a typed message stay inline.
+                if content and self._reply_target is not None and isinstance(content, str):
+                    self.call_from_thread(
+                        self._tool_panels.update, self._reply_target, content, "agent", timestamp
+                    )
+                elif content:
                     self.call_from_thread(
                         self._add_message, timestamp, "agent", content, theme.AGENT
                     )
 
-                # Display tool calls separately with different formatting
+                # Tool calls are real actions; always show them inline, and
+                # remember each one so its result can be grouped under it.
                 if tool_calls:
                     for tc in tool_calls:
                         tool_info = self._format_tool_call(tc)
                         self.call_from_thread(
-                            self._add_message, timestamp, "tool", tool_info, theme.TOOL
+                            self._write_tool_call, timestamp, tool_info, tc.get("id")
                         )
 
-                # If neither content nor tool calls, show a placeholder
-                if not content and not tool_calls:
+                # If neither content nor tool calls, show a placeholder (but not
+                # for the silent step that can follow a tool-stream update).
+                if not content and not tool_calls and self._reply_target is None:
                     self.call_from_thread(
                         self._add_message, timestamp, "agent", "<no response>", theme.DIM
                     )
             elif isinstance(msg, ToolMessage):
                 self.call_from_thread(
-                    self._add_message, timestamp, "tool", msg.content, theme.TOOL_RESULT
+                    self._write_tool_result,
+                    timestamp,
+                    msg.content,
+                    getattr(msg, "tool_call_id", None),
                 )
             elif isinstance(msg, HumanMessage):
+                # Tool-stream updates arrive here as `[tool:NAME] <text>`. Route
+                # the update into the tool's box and remember the tool so the
+                # following agent reply lands in the same box. A real typed
+                # message clears the target and renders inline.
+                parsed = _split_tool_message(msg.content)
+                if parsed is not None:
+                    name, text = parsed
+                    self._reply_target = name
+                    if text:
+                        self.call_from_thread(
+                            self._tool_panels.update, name, text, "tool", timestamp
+                        )
+                    return
+                self._reply_target = None
                 self.call_from_thread(
                     self._add_message, timestamp, "human", msg.content, theme.HUMAN
                 )
+                # Keep the spinner up while this turn is processed (also re-shows
+                # it in the rare case a stale idle signal hid it post-submit).
+                self.call_from_thread(self._thinking.show)
 
         self._agent_transport.subscribe(receive_msg)
 
     def _subscribe_to_idle(self) -> None:
         def receive_idle(is_idle: bool) -> None:
-            assert self._thinking is not None
-
             if not self._running:
                 return
-
-            self.call_from_thread(self._thinking.hide if is_idle else self._thinking.show)
+            self.call_from_thread(self._set_agent_idle, is_idle)
 
         self._agent_idle.subscribe(receive_idle)
+
+    def _set_agent_idle(self, is_idle: bool) -> None:
+        assert self._thinking is not None
+        self._agent_is_idle = is_idle
+        if is_idle:
+            # "thinking..." is only shown for human-initiated turns (on submit),
+            # so just hide here. Showing it on every busy signal would flash it
+            # for each tool-stream update, which the agent also runs through the
+            # graph.
+            self._thinking.hide()
+            # The queue is drained, so every stopped tool's trailing replies
+            # have now rendered -> finalize their boxes. A short delay lets the
+            # last reply (delivered on a separate topic) settle first.
+            if self._pending_stops:
+                self.set_timer(0.15, self._flush_pending_stops)
+
+    def _flush_pending_stops(self) -> None:
+        assert self._tool_panels is not None
+        # Only finalize while the agent is idle. A stop can arrive while the
+        # tool's last update/reply is still queued (the real-time stop signal
+        # outruns the LLM-paced /agent stream); finalizing then would strand the
+        # trailing reply in a new, never-closing box. A later idle retries.
+        if not self._agent_is_idle or not self._pending_stops:
+            return
+        for name in self._pending_stops:
+            self._tool_panels.finalize(name)
+        self._pending_stops.clear()
+
+    def _on_tool_stream(self, msg: dict[str, Any]) -> None:
+        """Watch the tool-stream topic for stop signals.
+
+        Box content (updates and the agent's replies) is driven off the ordered
+        `/agent` stream so the two stay paired; this subscription only needs the
+        stop signal, which is the one event `/agent` does not carry (a
+        self-terminating background tool produces no message there).
+        """
+        if not self._running:
+            return
+        if msg.get("method") != tool_stream.TOOL_STREAM_STOPPED_METHOD:
+            return
+        tool_name = (msg.get("params") or {}).get("tool_name") or "tool"
+        self.call_from_thread(self._record_stop, tool_name)
+
+    def _record_stop(self, tool_name: str) -> None:
+        self._pending_stops.add(tool_name)
+        # Don't finalize off the current (possibly stale) idle flag: the tool's
+        # last update may have just been queued and not yet rendered. The idle
+        # handler finalizes once the agent has caught up; this timer is only a
+        # backstop for a tool that stops with no further agent activity.
+        self.set_timer(STOP_FINALIZE_DELAY, self._flush_pending_stops)
+
+    def _flush_tool_panel(self, renderable: Any) -> None:
+        """Write a finalized tool box into the scrollback, keeping the
+        thinking indicator pinned to the bottom."""
+        assert self._thinking is not None
+        reattach = self._thinking.detach_if_needed()
+        self.chat_log.write(renderable)  # type: ignore[union-attr]
+        if reattach:
+            self._thinking.reattach()
 
     def _format_tool_call(self, tool_call: ToolCall) -> str:
         """Format a tool call for display."""
         name = tool_call.get("name", "unknown")
         args = tool_call.get("args", {})
         args_str = json.dumps(args, separators=(",", ":"))
-        return f"▶ {name}({args_str})"
+        return f"{TOOL_CALL_MARKER} {name}({args_str})"
 
-    def _add_message(self, timestamp: str, sender: str, content: str, color: str) -> None:
+    def _write_tool_call(self, timestamp: str, tool_info: str, call_id: str | None) -> None:
+        strips = self._add_message(timestamp, "tool", tool_info, theme.TOOL)
+        if call_id and strips:
+            self._tool_call_anchors[call_id] = strips
+
+    def _write_tool_result(self, timestamp: str, content: str, call_id: str | None) -> None:
+        text = f"{TOOL_RESULT_MARKER} {content}"
+        anchor = self._tool_call_anchors.pop(call_id, None) if call_id else None
+        if anchor is None:
+            # No matching call on screen (e.g. a lookout continuation) -> append.
+            self._add_message(timestamp, "tool", text, theme.TOOL_RESULT)
+            return
+        self._insert_after(anchor, timestamp, text)
+
+    def _insert_after(self, anchor: list[Strip], timestamp: str, text: str) -> None:
+        """Render a tool result and splice it into the log right below the
+        matching tool call, even when lines were written in between."""
+        log = self.chat_log
+        assert log is not None
+        new_strips = self._add_message(timestamp, "tool", text, theme.TOOL_RESULT)
+        if not new_strips:
+            return
+        # Pull the just-appended result back out so it can be re-homed.
+        new_ids = {id(s) for s in new_strips}
+        log.lines = [line for line in log.lines if id(line) not in new_ids]
+        # Locate the call's last line by identity (indices shift as the log
+        # grows) and splice the result in directly after it.
+        anchor_id = id(anchor[-1])
+        insert_at = len(log.lines)
+        for i, line in enumerate(log.lines):
+            if id(line) == anchor_id:
+                insert_at = i + 1
+                break
+        log.lines[insert_at:insert_at] = new_strips
+        log._line_cache.clear()
+        log.virtual_size = Size(log.virtual_size.width, len(log.lines))
+        log.refresh()
+        log.scroll_end(animate=False)
+
+    def _add_message(self, timestamp: str, sender: str, content: str, color: str) -> list[Strip]:
         assert self._thinking is not None
         reattach = self._thinking.detach_if_needed()
 
@@ -308,6 +566,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         # Split content into lines first (respecting explicit newlines)
         lines = content.split("\n")
 
+        before = len(self.chat_log.lines)  # type: ignore[union-attr]
         for line_idx, line in enumerate(lines):
             # Wrap each line to fit the available width
             if line_idx == 0:
@@ -334,8 +593,10 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
                     # Empty line
                     self.chat_log.write(indent + "│")  # type: ignore[union-attr]
 
+        written = list(self.chat_log.lines[before:])  # type: ignore[union-attr]
         if reattach:
             self._thinking.reattach()
+        return written
 
     def _add_system_message(self, content: str) -> None:
         """Add a system message to the chat."""
@@ -375,11 +636,16 @@ Tool calls are displayed in cyan with ▶ prefix"""
             self._add_system_message(help_text)
             return
 
-        # Send to agent (message will be displayed when received back)
+        # Send to agent (message will be displayed when received back). Show
+        # "thinking..." now so a human turn always has a spinner, even while the
+        # agent first drains any queued tool-stream updates.
+        if self._thinking is not None:
+            self._thinking.show()
         self._human_transport.publish(message)
 
     def action_clear(self) -> None:
         """Clear the chat log."""
+        self._tool_call_anchors.clear()
         self.chat_log.clear()  # type: ignore[union-attr]
 
     def action_quit(self) -> None:  # type: ignore[override]
