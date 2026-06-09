@@ -30,7 +30,6 @@ from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import TaskConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.model_parser import ModelDescription, parse_model
 
@@ -85,6 +84,9 @@ class RobotConfig(BaseModel):
     # Planning
     max_velocity: float = 1.0
     max_acceleration: float = 2.0
+    joint_limits_lower: list[float] | None = None
+    joint_limits_upper: list[float] | None = None
+    velocity_limits: list[float] | None = None
     pre_grasp_offset: float = 0.10
 
     # Gripper
@@ -206,7 +208,7 @@ class RobotConfig(BaseModel):
         bp = self.base_pose
         base_pose = PoseStamped(
             position=Vector3(x=bp[0], y=bp[1], z=bp[2]),
-            orientation=Quaternion(bp[3], bp[4], bp[5], bp[6]),
+            orientation=[bp[3], bp[4], bp[5], bp[6]],
         )
 
         exclusions = list(self.collision_exclusion_pairs)
@@ -230,6 +232,9 @@ class RobotConfig(BaseModel):
             xacro_args=self.xacro_args,
             collision_exclusion_pairs=exclusions,
             auto_convert_meshes=self.auto_convert_meshes,
+            joint_limits_lower=self.joint_limits_lower,
+            joint_limits_upper=self.joint_limits_upper,
+            velocity_limits=self.velocity_limits,
             max_velocity=self.max_velocity,
             max_acceleration=self.max_acceleration,
             joint_name_mapping=self.joint_name_mapping,
