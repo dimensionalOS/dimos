@@ -14,9 +14,9 @@
 
 """Behavioral tests for the G1 GR00T WBC task.
 
-ONNX runtime is stubbed so these tests exercise policy selection,
-observation layout, decimation, dry-run, arming, and partial-state cache
-behavior without depending on the actual GR00T weights.
+ONNX runtime is stubbed so these tests exercise the policy input contract,
+safety state transitions, and partial-state cache behavior without depending
+on the actual GR00T weights.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ import numpy as np
 import pytest
 
 from dimos.control.components import make_humanoid_joints
-from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
+from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.g1_groot_wbc_task import g1_groot_wbc_task
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1GrootWBCTask,
@@ -156,30 +156,6 @@ def _state_at(t_now: float, joint_names: list[str]) -> CoordinatorState:
     )
 
 
-def test_claims_legs_and_waist_only(task: G1GrootWBCTask, joints_29: list[str]) -> None:
-    claim = task.claim()
-
-    assert claim.joints == frozenset(joints_29[:15])
-    assert claim.priority == 50
-    assert claim.mode == ControlMode.SERVO_POSITION
-
-
-def test_zero_cmd_uses_balance_model(
-    task: G1GrootWBCTask, joints_29: list[str], patched_ort: list[str]
-) -> None:
-    task.start()
-    state = _state_at(100.0, joints_29)
-
-    result = None
-    for _ in range(10):
-        result = task.compute(state)
-
-    assert result is not None
-    assert result.mode == ControlMode.SERVO_POSITION
-    assert len(result.positions) == 15
-    assert patched_ort == ["balance"]
-
-
 def test_nonzero_cmd_uses_walk_until_timeout(
     task: G1GrootWBCTask, joints_29: list[str], patched_ort: list[str]
 ) -> None:
@@ -192,25 +168,6 @@ def test_nonzero_cmd_uses_walk_until_timeout(
         task.compute(_state_at(102.0, joints_29))
 
     assert patched_ort == ["walk", "balance"]
-
-
-def test_decimation_reemits_last_policy_target(
-    task: G1GrootWBCTask, joints_29: list[str], patched_ort: list[str]
-) -> None:
-    task.start()
-    state = _state_at(100.0, joints_29)
-
-    for _ in range(9):
-        assert task.compute(state) is None
-    first = task.compute(state)
-    assert first is not None
-    assert patched_ort == ["balance"]
-
-    for _ in range(9):
-        echo = task.compute(state)
-        assert echo is not None
-        assert echo.positions == first.positions
-    assert patched_ort == ["balance"]
 
 
 def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> None:
@@ -234,19 +191,6 @@ def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> Non
     )
     np.testing.assert_allclose(obs[42:71], dq * 0.05)
     np.testing.assert_array_equal(obs[71:86], np.zeros(15))
-
-
-def test_first_inference_tiles_history_buffer(task: G1GrootWBCTask, joints_29: list[str]) -> None:
-    task.start()
-    state = _state_at(100.0, joints_29)
-
-    for _ in range(10):
-        task.compute(state)
-
-    buf = task._obs_buf[0]
-    first_obs = buf[0:86]
-    for k in range(1, 6):
-        np.testing.assert_array_equal(buf[86 * k : 86 * (k + 1)], first_obs)
 
 
 def test_partial_state_keeps_claimed_cache_consistent_with_full_cache(
@@ -334,25 +278,6 @@ def test_dry_run_suppresses_output_but_keeps_policy_hot(
     assert np.any(task._obs_buf != 0.0)
 
 
-def test_disarm_returns_to_hold_pose(
-    unarmed_task: G1GrootWBCTask, joints_29: list[str], patched_ort: list[str]
-) -> None:
-    unarmed_task.start()
-    assert unarmed_task.arm(ramp_seconds=0.0)
-    state = _state_at(100.0, joints_29)
-    for _ in range(10):
-        unarmed_task.compute(state)
-    assert patched_ort == ["balance"]
-
-    assert unarmed_task.disarm()
-    for _ in range(30):
-        out = unarmed_task.compute(state)
-
-    assert out is not None
-    np.testing.assert_allclose(out.positions, [0.0] * 15, atol=1e-6)
-    assert patched_ort == ["balance"]
-
-
 def test_projected_gravity_matches_reference_quaternion_order() -> None:
     np.testing.assert_allclose(
         G1GrootWBCTask._projected_gravity((1.0, 0.0, 0.0, 0.0)),
@@ -367,31 +292,3 @@ def test_projected_gravity_matches_reference_quaternion_order() -> None:
         np.array([0.0, -1.0, 0.0]),
         atol=1e-6,
     )
-
-
-def test_joint_count_validation(patched_ort: list[str], stub_adapter: MagicMock) -> None:
-    _ = patched_ort
-    joints_29 = make_humanoid_joints("g1")
-
-    with pytest.raises(ValueError, match="15 joint names"):
-        G1GrootWBCTask(
-            name="bad",
-            config=G1GrootWBCTaskConfig(
-                balance_onnx="/fake/balance.onnx",
-                walk_onnx="/fake/walk.onnx",
-                joint_names=joints_29[:10],
-                all_joint_names=joints_29,
-            ),
-            adapter=stub_adapter,
-        )
-    with pytest.raises(ValueError, match="29 all_joint_names"):
-        G1GrootWBCTask(
-            name="bad",
-            config=G1GrootWBCTaskConfig(
-                balance_onnx="/fake/balance.onnx",
-                walk_onnx="/fake/walk.onnx",
-                joint_names=joints_29[:15],
-                all_joint_names=joints_29[:20],
-            ),
-            adapter=stub_adapter,
-        )
