@@ -18,10 +18,9 @@ Runs the two-model GR00T WBC locomotion policy (balance + walk) inside
 the coordinator tick loop.  Claims the 15 legs+waist joints at high
 priority; arm joints are left to lower-priority tasks in the blueprint.
 
-Reference implementation: g1_control/backends/groot_wbc_backend.py.
-Observation, action, and model-selection semantics are preserved
-verbatim - changing them drifts us away from the ONNX policies trained
-by GR00T-WholeBodyControl.
+Observation, action, and model-selection semantics are part of the
+bundled ONNX policy contract. Changing them can drift this task away
+from the behavior the policies were trained for.
 
 """
 
@@ -55,11 +54,10 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-# The 29 DDS motor names + their kp/kd for the GR00T-trained policies.
-# Lifted verbatim from g1-control-api/configs/g1_groot_wbc.yaml, which
-# itself copies GR00T-WBC's g1_29dof_gear_wbc.yaml. Diverging from these
-# on real hardware risks instability - the ONNX models were trained
-# against them.
+# The 29 DDS motor names plus the per-joint kp/kd values used with the
+# GR00T-trained policies. Diverging from these on real hardware risks
+# instability because the ONNX models were trained against this control
+# contract.
 g1_joints = make_humanoid_joints("g1")
 g1_legs_waist = g1_joints[:15]  # indices 0..14 - legs (12) + waist (3)
 g1_arms = g1_joints[15:]  # indices 15..28 - left arm (7) + right arm (7)
@@ -127,16 +125,14 @@ G1_GROOT_KD: list[float] = [
     2.0,  # right arm
 ]
 
-# Relaxed arms-down pose. From g1_control/backends/groot_wbc_backend.py
-# DEFAULT_29[15:] (all zeros) - the zero-offset pose the policy was
-# trained against. Operators can override at runtime by publishing
-# joint targets on the arms via the coordinator's joint_command transport.
+# Relaxed arms-down pose. The policy treats all 14 arm defaults as zero.
+# Operators can override at runtime by publishing joint targets on the
+# arms via the coordinator's joint_command transport.
 ARM_DEFAULT_POSE: list[float] = [0.0] * 14
 
 
-# Default joint angles copied verbatim from
-# g1_control/backends/groot_wbc_backend.py DEFAULT_29.  Policy was trained
-# against these as the zero-offset pose.
+# Default joint angles for all 29 G1 joints. The policy treats these as
+# its zero-offset pose.
 _DEFAULT_POSITIONS_29 = [
     -0.1,
     0.0,
@@ -212,8 +208,8 @@ class G1GrootWBCTaskConfig:
             verifying on real hardware without commanding motors.
         default_ramp_seconds: Duration of the arming ramp (current pose
             -> ``default_15``) when ``arm()`` is called without an
-            explicit duration.  Set to 0 in simulation (no ramp needed);
-            10 s on real hardware mirrors the g1-control-api default.
+            explicit duration. Set to 0 in simulation (no ramp needed);
+            10 s on real hardware gives operators time to verify the ramp.
     """
 
     balance_onnx: str | Path
@@ -460,8 +456,8 @@ class G1GrootWBCTask(BaseControlTask):
 
         # Armed: run the policy.  In dry-run mode we still compute (so
         # the obs buffer stays hot), but return None so no command goes
-        # downstream.  A throttled log line shows what WOULD have been
-        # sent, which is how g1-control-api lets operators verify pre-go.
+        # downstream. A throttled log line shows what WOULD have been
+        # sent so operators can verify pre-go behavior.
         self._tick_count += 1
 
         # Decimation: only run inference every N ticks.  Between inference
