@@ -23,18 +23,28 @@ Start with discovery. This shows robots seen over BLE and LAN:
 dimos go2tool discover
 ```
 
-If the robot is still in AP/BLE setup mode, provision it onto the target wifi.
-Do not pass the wifi password in process args. Omit `--password`; the CLI will
-prompt with hidden input.
+If the robot is still in AP/BLE setup mode, run setup to provision wifi,
+rediscover the robot on LAN, and print the IP to use with DimOS. For
+interactive use, omit `--password`; the CLI will prompt with hidden input.
+For automation, `--password <password>` is supported.
 
 Example:
 
 ```sh skip
-dimos go2tool connect-wifi --ssid <wifi>
+dimos go2tool setup --ssid <wifi>
 ```
 
-If more than one robot appears, select the intended robot at the prompt or use
-`--name`, `--serial`, or `--mac` from the discovery output.
+If more than one robot may be visible, use one selector from the discovery
+output so setup does not choose the wrong robot:
+
+```sh skip
+dimos go2tool setup --ssid <wifi> --serial <serial>
+dimos go2tool setup --ssid <wifi> --name <ble-name>
+dimos go2tool setup --ssid <wifi> --mac <ble-address>
+```
+
+Use `connect-wifi` instead of `setup` only when you want the lower-level BLE
+provisioning step without LAN rediscovery and verification.
 
 ## macOS Helper Requirements
 
@@ -48,8 +58,8 @@ keys in `Info.plist`:
 - `NSBluetoothUsageDescription`
 
 The helper passes the wifi password through a mode-`0600` temporary file, not
-argv. Keep using the CLI's hidden password prompt unless automation requires a
-different secret source.
+argv. Prefer the CLI's hidden password prompt for interactive use; use
+`--password` when a script or test needs a fully non-interactive command.
 
 ## Post-Provision Checks
 

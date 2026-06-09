@@ -57,10 +57,20 @@ dimos go2tool discover
 configure wifi
 
 ```bash
-dimos go2tool connect-wifi --ssid <wifi>
+dimos go2tool setup --ssid <wifi>
 ```
 
-Scans BLE and connects to the only robot it finds, or prompts you to pick if there are several. The password prompt uses hidden input; avoid passing wifi passwords in process args.
+For interactive use, omit `--password`; the password prompt uses hidden input.
+For automation, `--password <password>` is supported. `setup` configures wifi,
+finds the robot on LAN, and prints the IP to use with DimOS.
+
+If several Go2s may be nearby, pass one selector from `discover` output:
+
+```bash
+dimos go2tool setup --ssid <wifi> --serial <serial>
+dimos go2tool setup --ssid <wifi> --name <ble-name>
+dimos go2tool setup --ssid <wifi> --mac <ble-address>
+```
 
 3. Find the robot's IP:
 
@@ -68,7 +78,9 @@ Scans BLE and connects to the only robot it finds, or prompts you to pick if the
 dimos go2tool discover
 ```
 
-Prints `SOURCE NAME IP MAC SERIAL` for every robot it sees over BLE and LAN. Export the IP:
+Prints `SOURCE NAME IP MAC SERIAL` for every robot it sees over BLE and LAN.
+If you used `setup`, this IP is also printed as `export ROBOT_IP=<ip>`. Export
+the IP:
 
 ```bash
 export ROBOT_IP=<discovered_ip>
