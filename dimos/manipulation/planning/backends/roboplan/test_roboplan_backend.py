@@ -21,6 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from dimos.manipulation.planning.backends.registry import create_planning_backend
+from dimos.manipulation.planning.backends.roboplan.backend import RoboPlanPlanningBackend
 from dimos.manipulation.planning.backends.roboplan.config import parse_backend_config
 from dimos.manipulation.planning.backends.roboplan.conversion import dimos_path_from_roboplan
 from dimos.manipulation.planning.backends.roboplan.imports import RoboPlanBackendUnavailableError
@@ -110,3 +111,39 @@ def test_dimos_path_from_roboplan_expands_active_joint_subset() -> None:
     )
 
     assert [state.position for state in path] == [[0.1, 0.2, 7.0], [0.3, 0.4, 7.0]]
+
+
+def test_world_pose_targets_are_converted_to_roboplan_base_frame(tmp_path: Path) -> None:
+    model = tmp_path / "robot.urdf"
+    srdf = tmp_path / "robot.srdf"
+    model.write_text("<robot name='arm'/>")
+    srdf.write_text("<robot name='arm'/>")
+    robot = _robot_config(model)
+    robot.base_link = "link_base"
+    robot.base_pose = PoseStamped(
+        frame_id="world",
+        position=Vector3(1.0, 2.0, 3.0),
+        orientation=[0.0, 0.0, 0.0, 1.0],
+    )
+    backend = RoboPlanPlanningBackend(
+        options={
+            "srdf_path": str(srdf),
+            "base_frame": "link_base",
+            "end_effector_frame": "tool0",
+        }
+    )
+    backend.add_robot(robot)
+
+    converted = backend._target_pose_for_roboplan(
+        PoseStamped(
+            frame_id="world",
+            position=Vector3(1.25, 2.5, 3.75),
+            orientation=[0.0, 0.0, 0.0, 1.0],
+        )
+    )
+
+    assert converted is not None
+    assert converted.frame_id == "link_base"
+    assert converted.position.x == pytest.approx(0.25)
+    assert converted.position.y == pytest.approx(0.5)
+    assert converted.position.z == pytest.approx(0.75)

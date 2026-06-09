@@ -520,14 +520,16 @@ class RoboPlanPlanningBackend:
             return _planning_failure("No current joint state for RoboPlan pose planning")
         if self._components is None or self._ik is None:
             return IKResult(IKStatus.NO_SOLUTION, message="RoboPlan IK is not initialized")
-        if target_pose.frame_id and target_pose.frame_id != self._require_config().base_frame:
+        normalized_target = self._target_pose_for_roboplan(target_pose)
+        if normalized_target is None:
             return IKResult(
                 IKStatus.NO_SOLUTION,
                 message=(
-                    f"RoboPlan target frame '{target_pose.frame_id}' does not match "
-                    f"configured base frame '{self._require_config().base_frame}'"
+                    f"RoboPlan target frame does not match configured base frame "
+                    f"'{self._require_config().base_frame}'"
                 ),
             )
+        target_pose = normalized_target
         solution = self._components.core.JointConfiguration()
         goal = self._components.core.CartesianConfiguration(
             self._require_config().base_frame,
@@ -640,6 +642,21 @@ class RoboPlanPlanningBackend:
                 native_traj, self._require_robot().config.joint_names
             )
         return trajectory_generator.generate([list(state.position) for state in path])
+
+    def _target_pose_for_roboplan(self, target_pose: PoseStamped) -> PoseStamped | None:
+        config = self._require_config()
+        frame_id = target_pose.frame_id or config.base_frame
+        if frame_id == config.base_frame:
+            return target_pose
+        if frame_id != "world":
+            return None
+        base_pose = self._require_robot().config.base_pose
+        if base_pose.frame_id and base_pose.frame_id != "world":
+            return None
+        target_in_base = np.linalg.inv(transform_from_pose(base_pose)) @ transform_from_pose(
+            target_pose
+        )
+        return pose_from_transform(target_in_base, frame_id=config.base_frame)
 
     def _apply_obstacle(self, obstacle: Obstacle) -> SceneUpdateResult:
         config = self._require_config()
