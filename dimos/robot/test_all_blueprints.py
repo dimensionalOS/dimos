@@ -27,7 +27,7 @@ OPTIONAL_ERROR_SUBSTRINGS = {
 }
 
 # These need git LFS, so can't be run on the ubuntu runners.
-SELF_HOSTED_BLUEPRINTS = frozenset(
+_SELF_HOSTED_BLUEPRINTS = frozenset(
     {
         "alfred-nav",
         "coordinator-basic",
@@ -65,11 +65,12 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "xarm6-planner-only",
         "xarm7-planner-coordinator",
         "xarm7-planner-coordinator-agent",
+        "xarm7-viser-panel-mock",
     }
 )
 
-UBUNTU_BLUEPRINTS = sorted(set(all_blueprints) - SELF_HOSTED_BLUEPRINTS)
-SELF_HOSTED_BLUEPRINTS = sorted(SELF_HOSTED_BLUEPRINTS)
+UBUNTU_BLUEPRINTS = sorted(set(all_blueprints) - _SELF_HOSTED_BLUEPRINTS)
+SELF_HOSTED_BLUEPRINTS = sorted(_SELF_HOSTED_BLUEPRINTS)
 
 
 def _check_blueprint(blueprint_name: str) -> None:
@@ -93,6 +94,10 @@ def test_old_self_hosted_blueprints() -> None:
     """Validate no non-existent name in SELF_HOSTED_BLUEPRINTS."""
     unused_names = set(SELF_HOSTED_BLUEPRINTS) - set(all_blueprints)
     assert not unused_names
+
+
+def test_xarm7_viser_panel_mock_requires_self_hosted_lfs() -> None:
+    assert "xarm7-viser-panel-mock" in SELF_HOSTED_BLUEPRINTS
 
 
 @pytest.mark.parametrize("blueprint_name", UBUNTU_BLUEPRINTS)

@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Viser Manipulation Target UI Mock</title>
+  <link rel="icon" href="data:," />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: #121a2e;
+      --panel-2: #18223a;
+      --border: #2b3858;
+      --text: #e8edf8;
+      --muted: #95a3bc;
+      --current: #d8dee9;
+      --target: #55c2ff;
+      --target-soft: rgba(85, 194, 255, 0.24);
+      --ok: #48d597;
+      --warn: #ffd166;
+      --bad: #ff5d73;
+      --disabled: #51607a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, #17223c 0, var(--bg) 46%);
+      color: var(--text);
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(560px, 1fr) 380px;
+      gap: 16px;
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    .viewport,
+    .sidebar,
+    .card {
+      border: 1px solid var(--border);
+      background: rgba(18, 26, 46, 0.88);
+      border-radius: 18px;
+      box-shadow: 0 22px 60px rgba(0, 0, 0, 0.28);
+    }
+
+    .viewport {
+      position: relative;
+      overflow: hidden;
+      min-height: 680px;
+      background:
+        linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px),
+        radial-gradient(circle at 50% 38%, rgba(85,194,255,0.12), transparent 28%),
+        #0d1326;
+      background-size: 36px 36px, 36px 36px, auto, auto;
+    }
+
+    .topbar {
+      position: absolute;
+      z-index: 5;
+      top: 16px;
+      left: 16px;
+      right: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      background: rgba(8, 12, 26, 0.66);
+      backdrop-filter: blur(12px);
+    }
+
+    .title h1 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: 0.02em;
+    }
+
+    .title p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.06);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 14px var(--ok);
+    }
+
+    .scene {
+      position: absolute;
+      inset: 88px 24px 24px;
+    }
+
+    .legend {
+      position: absolute;
+      left: 16px;
+      bottom: 16px;
+      z-index: 5;
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      background: rgba(8, 12, 26, 0.66);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .swatch {
+      width: 18px;
+      height: 10px;
+      border-radius: 999px;
+    }
+
+    .swatch.current { background: var(--current); }
+    .swatch.ghost { background: var(--target); opacity: 0.48; }
+    .swatch.gizmo { background: transparent; border: 2px solid var(--target); height: 18px; width: 18px; }
+
+    .robot {
+      position: absolute;
+      left: 43%;
+      top: 46%;
+      width: 210px;
+      height: 300px;
+      transform: translate(-50%, -50%) rotate(-8deg);
+    }
+
+    .robot.ghost {
+      left: 57%;
+      top: 44%;
+      opacity: 0.44;
+      filter: drop-shadow(0 0 24px rgba(85,194,255,0.35));
+    }
+
+    .link,
+    .joint {
+      position: absolute;
+      border-radius: 999px;
+    }
+
+    .current .link { background: linear-gradient(90deg, #cfd7e6, #f4f7fb); }
+    .current .joint { background: #ffffff; border: 3px solid #7786a3; }
+    .ghost .link { background: rgba(85,194,255,0.82); border: 1px solid rgba(255,255,255,0.24); }
+    .ghost .joint { background: rgba(85,194,255,0.72); border: 3px solid rgba(85,194,255,0.9); }
+
+    .base { left: 78px; bottom: 20px; width: 84px; height: 30px; border-radius: 10px; }
+    .joint.base-j { left: 101px; bottom: 48px; width: 34px; height: 34px; }
+    .l1 { left: 110px; bottom: 78px; width: 26px; height: 95px; transform-origin: bottom center; transform: rotate(-18deg); }
+    .joint.j2 { left: 74px; bottom: 160px; width: 32px; height: 32px; }
+    .l2 { left: 70px; bottom: 183px; width: 24px; height: 92px; transform-origin: bottom center; transform: rotate(54deg); }
+    .joint.j3 { left: 136px; bottom: 248px; width: 28px; height: 28px; }
+    .l3 { left: 154px; bottom: 257px; width: 20px; height: 70px; transform-origin: bottom center; transform: rotate(92deg); }
+
+    .label {
+      position: absolute;
+      padding: 5px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(8, 12, 26, 0.76);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .current-label { left: 34%; top: 22%; color: var(--current); }
+    .ghost-label { left: 61%; top: 20%; color: var(--target); border-color: rgba(85,194,255,0.32); }
+
+    .gizmo {
+      position: absolute;
+      left: 64%;
+      top: 37%;
+      width: 86px;
+      height: 86px;
+      border: 2px dashed var(--target);
+      border-radius: 50%;
+      box-shadow: 0 0 32px rgba(85,194,255,0.32);
+    }
+
+    .gizmo::before,
+    .gizmo::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform-origin: left center;
+      height: 3px;
+      border-radius: 999px;
+    }
+
+    .gizmo::before { width: 74px; background: #ff5d73; transform: rotate(0deg); }
+    .gizmo::after { width: 62px; background: #48d597; transform: rotate(-90deg); }
+
+    .z-axis {
+      position: absolute;
+      left: 39px;
+      top: -22px;
+      width: 4px;
+      height: 74px;
+      border-radius: 999px;
+      background: #55c2ff;
+    }
+
+    .path {
+      position: absolute;
+      left: 41%;
+      top: 42%;
+      width: 250px;
+      height: 120px;
+      border-top: 3px dotted rgba(85,194,255,0.5);
+      border-radius: 50%;
+      transform: rotate(-12deg);
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 14px;
+      overflow: auto;
+    }
+
+    .card {
+      padding: 14px;
+      background: var(--panel);
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #c6d2ea;
+    }
+
+    label {
+      display: block;
+      margin: 10px 0 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    select,
+    button,
+    input[type="text"] {
+      width: 100%;
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 9px 10px;
+      font: inherit;
+      font-size: 13px;
+    }
+
+    button {
+      cursor: default;
+      border-color: rgba(85,194,255,0.32);
+      background: linear-gradient(180deg, rgba(85,194,255,0.18), rgba(85,194,255,0.08));
+    }
+
+    button.secondary {
+      border-color: var(--border);
+      background: var(--panel-2);
+      color: var(--muted);
+    }
+
+    button.danger {
+      border-color: rgba(255,93,115,0.4);
+      background: rgba(255,93,115,0.12);
+      color: #ffc8d0;
+    }
+
+    button:disabled {
+      color: var(--disabled);
+      border-color: #303a54;
+      background: #11182a;
+    }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .row.three { grid-template-columns: 1fr 1fr 1fr; }
+
+    .readout {
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: #0e1528;
+      border: 1px solid rgba(255,255,255,0.06);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .readout strong { color: var(--text); font-weight: 600; }
+
+    .status-ok {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--ok);
+      border-color: rgba(72,213,151,0.28);
+      background: rgba(72,213,151,0.08);
+    }
+
+    .status-unknown {
+      color: var(--warn);
+      border-color: rgba(255,209,102,0.28);
+      background: rgba(255,209,102,0.08);
+    }
+
+    .slider-row {
+      display: grid;
+      grid-template-columns: 42px 1fr 54px;
+      align-items: center;
+      gap: 9px;
+      margin: 8px 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--target);
+    }
+
+    .hint {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 12px 0;
+    }
+
+    @media (max-width: 980px) {
+      .app { grid-template-columns: 1fr; }
+      .viewport { min-height: 560px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="viewport" aria-label="3D scene mock">
+      <div class="topbar">
+        <div class="title">
+          <h1>Viser Manipulation Panel Mock</h1>
+          <p>Static HTML only. Mirrors the proposed Viser target UI.</p>
+        </div>
+        <div class="pill"><span class="dot"></span> Manipulation state: COMPLETED</div>
+      </div>
+
+      <div class="scene">
+        <div class="path" title="planned path preview"></div>
+
+        <div class="label current-label">solid current robot</div>
+        <div class="robot current" aria-label="current robot">
+          <div class="link base"></div>
+          <div class="joint base-j"></div>
+          <div class="link l1"></div>
+          <div class="joint j2"></div>
+          <div class="link l2"></div>
+          <div class="joint j3"></div>
+          <div class="link l3"></div>
+        </div>
+
+        <div class="label ghost-label">translucent target ghost</div>
+        <div class="robot ghost" aria-label="target ghost robot">
+          <div class="link base"></div>
+          <div class="joint base-j"></div>
+          <div class="link l1"></div>
+          <div class="joint j2"></div>
+          <div class="link l2"></div>
+          <div class="joint j3"></div>
+          <div class="link l3"></div>
+        </div>
+
+        <div class="gizmo" aria-label="EEF target gizmo">
+          <div class="z-axis"></div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <div class="legend-row"><span class="swatch current"></span> Current robot: live, solid, authoritative</div>
+        <div class="legend-row"><span class="swatch ghost"></span> Target ghost: IK/FK preview, translucent</div>
+        <div class="legend-row"><span class="swatch gizmo"></span> EEF target gizmo: draggable pose handle</div>
+      </div>
+    </section>
+
+    <aside class="sidebar" aria-label="Viser sidebar controls mock">
+      <section class="card">
+        <h2>Robot</h2>
+        <label for="robot">Selected robot</label>
+        <select id="robot">
+          <option>xarm7</option>
+          <option>piper</option>
+          <option>xarm6</option>
+        </select>
+        <div class="row">
+          <div class="readout"><strong>State</strong><br />COMPLETED</div>
+          <div class="readout"><strong>Trajectory</strong><br />idle</div>
+        </div>
+        <p class="hint">Current robot is rendered solid from live joint state. Target controls never recolor the live robot.</p>
+      </section>
+
+      <section class="card">
+        <h2>Target Preset</h2>
+        <label for="preset">Initialize target</label>
+        <select id="preset">
+          <option>Select preset...</option>
+          <option>Current position</option>
+          <option>Init joints</option>
+          <option>Home joints</option>
+          <option>Named preset: ready-front</option>
+        </select>
+        <button style="margin-top: 8px;">Apply Preset</button>
+        <p class="hint">Preset applies once, then returns to neutral. No “follow current pose” mode.</p>
+      </section>
+
+      <section class="card">
+        <h2>EEF Target Gizmo</h2>
+        <div class="row three">
+          <div class="readout"><strong>X</strong><br />0.42 m</div>
+          <div class="readout"><strong>Y</strong><br />0.08 m</div>
+          <div class="readout"><strong>Z</strong><br />0.31 m</div>
+        </div>
+        <div class="row three" style="margin-top: 8px;">
+          <div class="readout"><strong>Roll</strong><br />0.00</div>
+          <div class="readout"><strong>Pitch</strong><br />1.57</div>
+          <div class="readout"><strong>Yaw</strong><br />0.20</div>
+        </div>
+        <p class="hint">Dragging the Viser transform control enqueues async IK preview. The sidebar does not block while IK runs.</p>
+      </section>
+
+      <section class="card">
+        <h2>Joint Target Sliders</h2>
+        <div class="slider-row"><span>J1</span><input type="range" min="-180" max="180" value="15" /><span>0.26</span></div>
+        <div class="slider-row"><span>J2</span><input type="range" min="-180" max="180" value="-30" /><span>-0.52</span></div>
+        <div class="slider-row"><span>J3</span><input type="range" min="-180" max="180" value="42" /><span>0.73</span></div>
+        <div class="slider-row"><span>J4</span><input type="range" min="-180" max="180" value="20" /><span>0.35</span></div>
+        <div class="slider-row"><span>J5</span><input type="range" min="-180" max="180" value="-18" /><span>-0.31</span></div>
+        <div class="slider-row"><span>J6</span><input type="range" min="-180" max="180" value="54" /><span>0.94</span></div>
+        <div class="slider-row"><span>J7</span><input type="range" min="-180" max="180" value="8" /><span>0.14</span></div>
+        <p class="hint">Moving sliders enqueues async FK + collision preview and moves the target gizmo/ghost.</p>
+      </section>
+
+      <section class="card">
+        <h2>Feasibility</h2>
+        <div class="readout status-ok"><strong>Feasible</strong><span>IK + collision OK</span></div>
+        <p class="hint">If infeasible, target gizmo and target ghost turn red; live current robot remains unchanged.</p>
+      </section>
+
+      <section class="card">
+        <h2>Plan</h2>
+        <div class="row">
+          <button>Plan</button>
+          <button class="secondary">Preview</button>
+        </div>
+        <div class="row" style="margin-top: 8px;">
+          <button>Execute</button>
+          <button class="danger">Cancel</button>
+        </div>
+        <button class="secondary" style="margin-top: 8px;">Clear Plan</button>
+        <div class="divider"></div>
+        <button class="secondary">Reset Fault</button>
+        <p class="hint">Plan uses latest feasible synchronized target. Execute requires fresh plan and confirmation on hardware.</p>
+      </section>
+    </aside>
+  </main>
+</body>
+</html>

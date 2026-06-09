@@ -5,6 +5,12 @@ edition = "2021"
 description = "Native Rust multi-level surface path planner for dimos"
 license = "Apache-2.0"
 
+[lib]
+# Must match the #[pymodule] fn name in python.rs.
+name = "dimos_mls_planner"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
 [[bin]]
 name = "mls_planner"
 path = "src/main.rs"
@@ -20,6 +26,8 @@ validator = { version = "0.20", features = ["derive"] }
 image = { version = "0.25", default-features = false }
 imageproc = { version = "0.25", default-features = false }
 rayon = "1"
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
+numpy = "0.25"
 
 [profile.release]
 lto = "thin"

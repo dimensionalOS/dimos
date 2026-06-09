@@ -38,12 +38,23 @@ from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.viser_panel.module import ViserManipulationPanelModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
+
+
+def _quaternion(x: float, y: float, z: float, w: float) -> Quaternion:
+    quaternion = Quaternion.__new__(Quaternion)
+    quaternion.x = x
+    quaternion.y = y
+    quaternion.z = z
+    quaternion.w = w
+    return quaternion
+
 
 # Single XArm6 planner (standalone, no coordinator)
 _xarm6_planner_cfg = _catalog_xarm6(
@@ -121,6 +132,38 @@ xarm7_planner_coordinator = autoconnect(
 )
 
 
+_xarm7_viser_mock_cfg = _catalog_xarm7(
+    name="arm",
+    adapter_type="mock",
+    add_gripper=True,
+)
+
+xarm7_viser_panel_mock = autoconnect(
+    ManipulationModule.blueprint(
+        robots=[_xarm7_viser_mock_cfg.to_robot_model_config()],
+        planning_timeout=10.0,
+        enable_viz=True,
+    ),
+    ControlCoordinator.blueprint(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_xarm7_viser_mock_cfg.to_hardware_component()],
+        tasks=[_xarm7_viser_mock_cfg.to_task_config()],
+    ),
+    ViserManipulationPanelModule.blueprint(
+        host="127.0.0.1",
+        port=8095,
+        default_robot="arm",
+        allow_plan_execute=True,
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
+)
+
+
 # XArm7 planner + LLM agent for testing base ManipulationModule skills
 # No perception — uses the base module's planning + gripper skills only.
 # Usage: dimos run coordinator-mock, then dimos run xarm7-planner-coordinator-agent
@@ -164,7 +207,7 @@ xarm7_planner_coordinator_agent = autoconnect(
 # Usage: dimos run coordinator-mock, then dimos run xarm-perception
 _XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
-    rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
+    rotation=_quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
 )
 
 _xarm7_perception_cfg = _catalog_xarm7(
@@ -342,6 +385,7 @@ __all__ = [
     "xarm6_planner_only",
     "xarm7_planner_coordinator",
     "xarm7_planner_coordinator_agent",
+    "xarm7_viser_panel_mock",
     "xarm_perception",
     "xarm_perception_agent",
     "xarm_perception_sim",

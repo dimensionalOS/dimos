@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,6 +30,9 @@ from dimos.manipulation.manipulation_module import (
 )
 from dimos.manipulation.planning.backends.base import BackendRobot
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.models import IKResult
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -43,10 +47,14 @@ def robot_config():
     return RobotModelConfig(
         name="test_arm",
         model_path=Path("/path/to/robot.urdf"),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        base_pose=_pose_stamped(0.0, 0.0, 0.0),
         joint_names=["joint1", "joint2", "joint3"],
         end_effector_link="link_tcp",
         base_link="link_base",
+        package_paths={"robot_description": Path("/path/to")},
+        joint_limits_lower=[-1.0, -2.0, -3.0],
+        joint_limits_upper=[1.0, 2.0, 3.0],
+        xacro_args={"prefix": "test_"},
         max_velocity=1.0,
         max_acceleration=2.0,
         coordinator_task_name="traj_arm",
@@ -59,7 +67,7 @@ def robot_config_with_mapping():
     return RobotModelConfig(
         name="left_arm",
         model_path=Path("/path/to/robot.urdf"),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        base_pose=_pose_stamped(0.0, 0.0, 0.0),
         joint_names=["joint1", "joint2", "joint3"],
         end_effector_link="link_tcp",
         base_link="link_base",
@@ -282,7 +290,7 @@ class TestExecute:
         config_no_task = RobotModelConfig(
             name="arm",
             model_path=Path("/path"),
-            base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+            base_pose=_pose_stamped(0.0, 0.0, 0.0),
             joint_names=["j1"],
             end_effector_link="ee",
         )
@@ -321,6 +329,93 @@ class TestExecute:
         assert module._state == ManipulationState.FAULT
 
 
+class TestManipulationPanelRPCs:
+    def test_get_robot_info_includes_panel_metadata(self, robot_config):
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        module._init_joints = {"test_arm": _joint_state([0.1, 0.2, 0.3], robot_config.joint_names)}
+
+        info = module.get_robot_info("test_arm")
+
+        assert info is not None
+        assert info["model_path"] == "/path/to/robot.urdf"
+        assert info["base_pose"] == robot_config.base_pose
+        assert info["package_paths"] == {"robot_description": "/path/to"}
+        assert info["xacro_args"] == {"prefix": "test_"}
+        assert info["joint_limits"] == [(-1.0, 1.0), (-2.0, 2.0), (-3.0, 3.0)]
+        assert info["init_joints"] == [0.1, 0.2, 0.3]
+
+    def test_get_planned_path_returns_stored_path(self, robot_config):
+        module = _make_module()
+        module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
+        path = [_joint_state([0.0, 0.0, 0.0], robot_config.joint_names)]
+        module._planned_paths = {"test_arm": path}
+
+        assert module.get_planned_path("test_arm") is path
+
+    def test_evaluate_pose_target_does_not_store_path_or_change_state(self, robot_config):
+        module = _make_module_with_monitor(robot_config)
+        module._kinematics = MagicMock()
+        current = _joint_state([0.0, 0.0, 0.0], robot_config.joint_names)
+        solution = _joint_state([0.1, 0.2, 0.3], robot_config.joint_names)
+        monitor = cast("MagicMock", module._world_monitor)
+        monitor.get_current_joint_state.return_value = current
+        monitor.is_state_valid.return_value = True
+        module._kinematics.solve.return_value = IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=solution,
+            position_error=0.001,
+            orientation_error=0.002,
+            message="ok",
+        )
+
+        result = module.evaluate_pose_target(_pose(), "test_arm")
+
+        assert result["success"] is True
+        assert result["joint_state"] is solution
+        assert result["status"] == "SUCCESS"
+        assert module._planned_paths == {}
+        assert module._planned_trajectories == {}
+        assert module._state == ManipulationState.IDLE
+
+    def test_evaluate_joint_target_returns_pose_and_feasibility(self, robot_config):
+        module = _make_module_with_monitor(robot_config)
+        target = _joint_state([0.1, 0.2, 0.3], [])
+        pose = _pose_stamped(0.4, 0.5, 0.6)
+        monitor = cast("MagicMock", module._world_monitor)
+        monitor.get_ee_pose.return_value = pose
+        monitor.is_state_valid.return_value = True
+
+        result = module.evaluate_joint_target(target, "test_arm")
+
+        assert result["success"] is True
+        assert result["pose"] is pose
+        assert result["joint_state"].name == robot_config.joint_names
+        assert result["joint_state"].position == [0.1, 0.2, 0.3]
+        assert result["collision_free"] is True
+        assert module._planned_paths == {}
+        assert module._state == ManipulationState.IDLE
+
+    def test_get_planned_path_poses_returns_fk_for_each_waypoint(self, robot_config):
+        module = _make_module_with_monitor(robot_config)
+        path = [
+            _joint_state([0.0, 0.0, 0.0], robot_config.joint_names),
+            _joint_state([0.1, 0.2, 0.3], robot_config.joint_names),
+        ]
+        poses = [
+            _pose_stamped(0.1, 0.2, 0.3),
+            _pose_stamped(0.4, 0.5, 0.6),
+        ]
+        module._planned_paths = {"test_arm": path}
+        monitor = cast("MagicMock", module._world_monitor)
+        monitor.get_ee_pose.side_effect = poses
+
+        result = module.get_planned_path_poses("test_arm")
+
+        assert result == poses
+        assert monitor.get_ee_pose.call_count == 2
+
+
 class TestRobotModelConfigMapping:
     """Test RobotModelConfig joint name mapping helpers."""
 
@@ -348,6 +443,42 @@ def _make_module_with_monitor(*configs: RobotModelConfig) -> ManipulationModule:
     return module
 
 
+def _unit_quaternion() -> Quaternion:
+    quaternion = Quaternion.__new__(Quaternion)
+    quaternion.x = 0.0
+    quaternion.y = 0.0
+    quaternion.z = 0.0
+    quaternion.w = 1.0
+    return quaternion
+
+
+def _pose() -> Pose:
+    pose = Pose.__new__(Pose)
+    pose.position = Vector3(0.0, 0.0, 0.0)
+    pose.orientation = _unit_quaternion()
+    return pose
+
+
+def _pose_stamped(x: float, y: float, z: float) -> PoseStamped:
+    pose = PoseStamped.__new__(PoseStamped)
+    pose.position = Vector3(x, y, z)
+    pose.orientation = _unit_quaternion()
+    return pose
+
+
+def _joint_state(
+    position: list[float], name: list[str], velocity: list[float] | None = None
+) -> JointState:
+    joint_state = JointState.__new__(JointState)
+    joint_state.ts = 0.0
+    joint_state.frame_id = ""
+    joint_state.name = name
+    joint_state.position = position
+    joint_state.velocity = velocity or []
+    joint_state.effort = []
+    return joint_state
+
+
 class TestOnJointState:
     """Test _on_joint_state routing, splitting, and init capture."""
 
@@ -355,16 +486,17 @@ class TestOnJointState:
         """Joint positions from aggregated message are routed to the correct monitor."""
         module = _make_module_with_monitor(robot_config_with_mapping)
 
-        msg = JointState(
-            name=["left/joint1", "left/joint2", "left/joint3"],
-            position=[0.1, 0.2, 0.3],
+        msg = _joint_state(
+            [0.1, 0.2, 0.3],
+            ["left/joint1", "left/joint2", "left/joint3"],
             velocity=[1.0, 2.0, 3.0],
         )
         module._on_joint_state(msg)
 
         # Verify world_monitor received the sub-message
-        module._world_monitor.on_joint_state.assert_called_once()
-        call_args = module._world_monitor.on_joint_state.call_args
+        monitor = cast("MagicMock", module._world_monitor)
+        monitor.on_joint_state.assert_called_once()
+        call_args = monitor.on_joint_state.call_args
         sub_msg = call_args[0][0]
         assert sub_msg.position == [0.1, 0.2, 0.3]
         assert sub_msg.velocity == [1.0, 2.0, 3.0]
@@ -375,31 +507,23 @@ class TestOnJointState:
         module = _make_module_with_monitor(robot_config_with_mapping)
 
         # Message has none of left_arm's joints
-        msg = JointState(
-            name=["right/joint1", "right/joint2"],
-            position=[0.5, 0.6],
-        )
+        msg = _joint_state([0.5, 0.6], ["right/joint1", "right/joint2"])
         module._on_joint_state(msg)
 
-        module._world_monitor.on_joint_state.assert_not_called()
+        monitor = cast("MagicMock", module._world_monitor)
+        monitor.on_joint_state.assert_not_called()
 
     def test_captures_init_joints_on_first_call(self, robot_config_with_mapping):
         """First joint state is stored as init joints; subsequent calls don't overwrite."""
         module = _make_module_with_monitor(robot_config_with_mapping)
 
-        first_msg = JointState(
-            name=["left/joint1", "left/joint2", "left/joint3"],
-            position=[0.1, 0.2, 0.3],
-        )
+        first_msg = _joint_state([0.1, 0.2, 0.3], ["left/joint1", "left/joint2", "left/joint3"])
         module._on_joint_state(first_msg)
         assert "left_arm" in module._init_joints
         assert module._init_joints["left_arm"].position == [0.1, 0.2, 0.3]
 
         # Second call should NOT overwrite
-        second_msg = JointState(
-            name=["left/joint1", "left/joint2", "left/joint3"],
-            position=[0.9, 0.8, 0.7],
-        )
+        second_msg = _joint_state([0.9, 0.8, 0.7], ["left/joint1", "left/joint2", "left/joint3"])
         module._on_joint_state(second_msg)
         assert module._init_joints["left_arm"].position == [0.1, 0.2, 0.3]
 
@@ -408,7 +532,7 @@ class TestOnJointState:
         left_config = RobotModelConfig(
             name="left",
             model_path=Path("/path/to/robot.urdf"),
-            base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+            base_pose=_pose_stamped(0.0, 0.0, 0.0),
             joint_names=["j1", "j2"],
             end_effector_link="ee",
             base_link="base",
@@ -418,7 +542,7 @@ class TestOnJointState:
         right_config = RobotModelConfig(
             name="right",
             model_path=Path("/path/to/robot.urdf"),
-            base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+            base_pose=_pose_stamped(0.0, 0.0, 0.0),
             joint_names=["j1", "j2"],
             end_effector_link="ee",
             base_link="base",
@@ -427,20 +551,18 @@ class TestOnJointState:
         )
         module = _make_module_with_monitor(left_config, right_config)
 
-        msg = JointState(
-            name=["left/j1", "left/j2", "right/j1", "right/j2"],
-            position=[1.0, 2.0, 3.0, 4.0],
+        msg = _joint_state(
+            [1.0, 2.0, 3.0, 4.0],
+            ["left/j1", "left/j2", "right/j1", "right/j2"],
             velocity=[0.1, 0.2, 0.3, 0.4],
         )
         module._on_joint_state(msg)
 
-        assert module._world_monitor.on_joint_state.call_count == 2
+        monitor = cast("MagicMock", module._world_monitor)
+        assert monitor.on_joint_state.call_count == 2
 
         # Collect calls by robot_id
-        calls = {
-            call[1]["robot_id"]: call[0][0]
-            for call in module._world_monitor.on_joint_state.call_args_list
-        }
+        calls = {call[1]["robot_id"]: call[0][0] for call in monitor.on_joint_state.call_args_list}
         assert calls["robot_left"].position == [1.0, 2.0]
         assert calls["robot_right"].position == [3.0, 4.0]
         assert calls["robot_left"].velocity == [0.1, 0.2]
@@ -453,8 +575,5 @@ class TestOnJointState:
         module._world_monitor = None
 
         # Should not raise
-        msg = JointState(
-            name=["left/joint1", "left/joint2", "left/joint3"],
-            position=[0.1, 0.2, 0.3],
-        )
+        msg = _joint_state([0.1, 0.2, 0.3], ["left/joint1", "left/joint2", "left/joint3"])
         module._on_joint_state(msg)

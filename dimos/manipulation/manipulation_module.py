@@ -600,6 +600,41 @@ class ManipulationModule(Module):
         return path is not None and len(path) > 0
 
     @rpc
+    def get_planned_path(self, robot_name: RobotName | None = None) -> JointPath | None:
+        """Get the currently stored planned path for a robot.
+
+        Args:
+            robot_name: Robot to query (required if multiple robots configured)
+
+        Returns:
+            Planned path waypoints or None if no path is stored
+        """
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return None
+        return self._planned_paths.get(robot[0])
+
+    @rpc
+    def get_planned_path_poses(self, robot_name: RobotName | None = None) -> list[Pose] | None:
+        """Get end-effector poses for the stored planned path.
+
+        Args:
+            robot_name: Robot to query (required if multiple robots configured)
+        """
+        if self._world_monitor is None:
+            return None
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return None
+        robot_name, robot_id, _, _ = robot
+        path = self._planned_paths.get(robot_name)
+        if path is None:
+            return None
+        return [
+            self._world_monitor.get_ee_pose(robot_id, joint_state=waypoint) for waypoint in path
+        ]
+
+    @rpc
     def get_visualization_url(self) -> str | None:
         """Get the visualization URL.
 
@@ -652,12 +687,32 @@ class ManipulationModule(Module):
 
         robot_name, robot_id, config, _ = robot
 
+        joint_limits = None
+        if config.joint_limits_lower is not None and config.joint_limits_upper is not None:
+            joint_limits = list(
+                zip(config.joint_limits_lower, config.joint_limits_upper, strict=False)
+            )
+        elif self._world_monitor is not None:
+            try:
+                lower, upper = self._world_monitor.get_joint_limits(robot_id)
+                joint_limits = [
+                    (float(lower_value), float(upper_value))
+                    for lower_value, upper_value in zip(lower, upper, strict=False)
+                ]
+            except Exception as e:
+                logger.debug(f"Could not load joint limits for '{robot_name}': {e}")
+
         return {
             "name": config.name,
             "world_robot_id": robot_id,
             "joint_names": config.joint_names,
             "end_effector_link": config.end_effector_link,
             "base_link": config.base_link,
+            "model_path": str(config.model_path),
+            "base_pose": config.base_pose,
+            "joint_limits": joint_limits,
+            "package_paths": {package: str(path) for package, path in config.package_paths.items()},
+            "xacro_args": dict(config.xacro_args),
             "max_velocity": config.max_velocity,
             "max_acceleration": config.max_acceleration,
             "has_joint_name_mapping": bool(config.joint_name_mapping),
@@ -667,6 +722,128 @@ class ManipulationModule(Module):
             "init_joints": list(init.position)
             if (init := self._init_joints.get(robot_name))
             else None,
+        }
+
+    @rpc
+    def evaluate_pose_target(
+        self, pose: Pose, robot_name: RobotName | None = None
+    ) -> dict[str, Any]:
+        """Evaluate a pose target without storing, previewing, executing, or moving.
+
+        Args:
+            pose: Target end-effector pose in world coordinates
+            robot_name: Robot to solve for (required if multiple robots configured)
+        """
+        if self._world_monitor is None or self._kinematics is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNAVAILABLE",
+                "message": "Planning is not initialized",
+                "position_error": None,
+                "orientation_error": None,
+                "collision_free": False,
+            }
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNKNOWN_ROBOT",
+                "message": "Robot not found",
+                "position_error": None,
+                "orientation_error": None,
+                "collision_free": False,
+            }
+        _, robot_id, _, _ = robot
+        current = self._world_monitor.get_current_joint_state(robot_id)
+        if current is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "NO_JOINT_STATE",
+                "message": "No joint state",
+                "position_error": None,
+                "orientation_error": None,
+                "collision_free": False,
+            }
+
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+        target_pose = PoseStamped(
+            frame_id="world",
+            position=pose.position,
+            orientation=pose.orientation,
+        )
+        ik = self._kinematics.solve(
+            world=self._world_monitor.world,
+            robot_id=robot_id,
+            target_pose=target_pose,
+            seed=current,
+            check_collision=True,
+        )
+        joint_state = ik.joint_state if ik.is_success() else None
+        collision_free = bool(
+            joint_state is not None and self._world_monitor.is_state_valid(robot_id, joint_state)
+        )
+        return {
+            "success": joint_state is not None and collision_free,
+            "joint_state": joint_state,
+            "status": ik.status.name,
+            "message": ik.message,
+            "position_error": ik.position_error,
+            "orientation_error": ik.orientation_error,
+            "collision_free": collision_free,
+        }
+
+    @rpc
+    def evaluate_joint_target(
+        self, joints: JointState, robot_name: RobotName | None = None
+    ) -> dict[str, Any]:
+        """Evaluate candidate joints without planning or moving.
+
+        Args:
+            joints: Candidate joint state
+            robot_name: Robot to solve for (required if multiple robots configured)
+        """
+        if self._world_monitor is None:
+            return {
+                "success": False,
+                "pose": None,
+                "joint_state": None,
+                "status": "UNAVAILABLE",
+                "message": "Planning is not initialized",
+                "collision_free": False,
+            }
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return {
+                "success": False,
+                "pose": None,
+                "joint_state": None,
+                "status": "UNKNOWN_ROBOT",
+                "message": "Robot not found",
+                "collision_free": False,
+            }
+        _, robot_id, config, _ = robot
+        joint_state = joints
+        if not joint_state.name:
+            joint_state = JointState.__new__(JointState)
+            joint_state.ts = joints.ts
+            joint_state.frame_id = joints.frame_id
+            joint_state.name = config.joint_names
+            joint_state.position = list(joints.position)
+            joint_state.velocity = list(joints.velocity or [])
+            joint_state.effort = list(joints.effort or [])
+        pose = self._world_monitor.get_ee_pose(robot_id, joint_state=joint_state)
+        collision_free = self._world_monitor.is_state_valid(robot_id, joint_state)
+        return {
+            "success": collision_free,
+            "pose": pose,
+            "joint_state": joint_state,
+            "status": "SUCCESS" if collision_free else "COLLISION",
+            "message": "" if collision_free else "Joint state is in collision or invalid",
+            "collision_free": collision_free,
         }
 
     @rpc

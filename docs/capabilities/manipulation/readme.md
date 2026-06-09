@@ -59,6 +59,51 @@ preview()               # Preview in Meshcat
 execute()               # Execute via coordinator
 ```
 
+### Viser Operator Panel (optional)
+
+The Viser manipulation panel is a companion operator UI for a running
+`ManipulationModule`. It is optional and installed separately from the base
+manipulation extra:
+
+```bash
+uv sync --extra manipulation-viser
+```
+
+This extra installs Viser with URDF support, including `yourdfpy`, which is
+required to render robot models with `ViserUrdf`.
+
+Start a manipulation stack first, then launch the panel in another terminal:
+
+```bash
+python -m dimos.manipulation.viser_panel --host 127.0.0.1 --port 8095
+```
+
+For a single-command mock test stack with no hardware, run:
+
+```bash
+uv run --extra manipulation-viser dimos run xarm7-viser-panel-mock
+```
+
+Open `http://127.0.0.1:8095` unless `--open-browser` is passed. The panel shows
+a disconnected state and keeps planning/execution controls disabled until it can
+reach a compatible `ManipulationModule` over RPC.
+
+The panel keeps the live robot and target visible at the same time:
+
+- the current robot reflects live joint state;
+- the target ghost follows the current target and turns red when infeasible;
+- the end-effector transform gizmo is separate from both robot meshes;
+- Cartesian target movement and joint sliders are both visible and stay
+  synchronized through IK/FK preview RPCs;
+- Current, Init, and Home presets apply once, then the selector returns to its
+  neutral state.
+
+Planning, local Viser preview, execution, cancel, and clear plan use public
+`ManipulationModule` RPCs. Hardware execution is opt-in: pass `--allow-execute`
+and verify the target and plan are still fresh before Execute is enabled. Do not
+execute on hardware until the same operation has been checked in mock or
+simulation and Cancel remains visible.
+
 ### Perception + Agent
 
 ```bash
@@ -139,6 +184,7 @@ python -c "import roboplan.toppra"
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
 | `xarm6-planner-only` | XArm6 standalone planner (no coordinator) |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
+| `xarm7-viser-panel-mock` | Mock XArm7 planner + coordinator + Viser operator panel |
 | `dual-xarm6-planner` | Dual XArm6 planning |
 | `xarm-perception` | XArm7 + RealSense camera for perception |
 | `xarm-perception-agent` | XArm7 perception + LLM agent |
@@ -161,6 +207,7 @@ python -c "import roboplan.toppra"
 | File | Description |
 |------|-------------|
 | [`manipulation_module.py`](/dimos/manipulation/manipulation_module.py) | Main module (RPC interface, state machine) |
+| [`viser_panel/module.py`](/dimos/manipulation/viser_panel/module.py) | Optional Viser operator panel module over the manipulation RPC interface |
 | [`manipulation/blueprints.py`](/dimos/manipulation/blueprints.py) | Planner and perception blueprints |
 | [`robot/manipulators/a750/blueprints.py`](/dimos/robot/manipulators/a750/blueprints.py) | A-750 keyboard teleop blueprint |
 | [`robot/manipulators/piper/blueprints.py`](/dimos/robot/manipulators/piper/blueprints.py) | Piper keyboard teleop blueprint |
