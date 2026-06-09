@@ -29,6 +29,42 @@ XARM7_FK_MODEL = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 
+XARM6_JOINT_LIMITS_LOWER = [
+    -6.28318530718,
+    -2.059,
+    -3.927,
+    -6.28318530718,
+    -1.69297,
+    -6.28318530718,
+]
+XARM6_JOINT_LIMITS_UPPER = [
+    6.28318530718,
+    2.0944,
+    0.19198,
+    6.28318530718,
+    3.14159265359,
+    6.28318530718,
+]
+XARM7_JOINT_LIMITS_LOWER = [
+    -3.1101767270538954,
+    -2.18,
+    -3.1101767270538954,
+    -0.11,
+    -3.1101767270538954,
+    -1.75,
+    -3.1101767270538954,
+]
+XARM7_JOINT_LIMITS_UPPER = [
+    3.1101767270538954,
+    2.18,
+    3.1101767270538954,
+    3.1101767270538954,
+    3.1101767270538954,
+    3.1101767270538954,
+    3.1101767270538954,
+]
+XARM_JOINT_VELOCITY_LIMITS = [3.14] * 7
+
 # XArm gripper collision exclusions (parallel linkage mechanism)
 # The gripper uses mimic joints where non-adjacent links can overlap legitimately
 XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -83,6 +119,9 @@ def xarm7(
         "joint_names": [f"joint{i}" for i in range(1, 8)],
         "base_link": "link_base",
         "home_joints": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "joint_limits_lower": XARM7_JOINT_LIMITS_LOWER,
+        "joint_limits_upper": XARM7_JOINT_LIMITS_UPPER,
+        "velocity_limits": XARM_JOINT_VELOCITY_LIMITS,
         "base_pose": [x_offset, y_offset, z_offset, 0, 0, 0, 1],
         "package_paths": {"xarm_description": LfsPath("xarm_description")},
         "xacro_args": xacro_args,
@@ -135,6 +174,9 @@ def xarm6(
         "joint_names": [f"joint{i}" for i in range(1, 7)],
         "base_link": "link_base",
         "home_joints": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "joint_limits_lower": XARM6_JOINT_LIMITS_LOWER,
+        "joint_limits_upper": XARM6_JOINT_LIMITS_UPPER,
+        "velocity_limits": XARM_JOINT_VELOCITY_LIMITS[:6],
         "base_pose": [x_offset, y_offset, z_offset, 0, 0, 0, 1],
         "package_paths": {"xarm_description": LfsPath("xarm_description")},
         "xacro_args": xacro_args,
@@ -157,8 +199,13 @@ def xarm6(
 
 __all__ = [
     "XARM6_FK_MODEL",
+    "XARM6_JOINT_LIMITS_LOWER",
+    "XARM6_JOINT_LIMITS_UPPER",
     "XARM7_FK_MODEL",
+    "XARM7_JOINT_LIMITS_LOWER",
+    "XARM7_JOINT_LIMITS_UPPER",
     "XARM_GRIPPER_COLLISION_EXCLUSIONS",
+    "XARM_JOINT_VELOCITY_LIMITS",
     "xarm6",
     "xarm7",
 ]
