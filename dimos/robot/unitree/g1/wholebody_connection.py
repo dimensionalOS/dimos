@@ -41,6 +41,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
@@ -62,6 +64,24 @@ _MODE_MACHINE_G1: int = 5
 # from make_humanoid_joints("g1") agrees on the wire-level name -> motor-index mapping.
 G1_JOINT_NAMES: list[str] = make_humanoid_joints("g1")
 assert len(G1_JOINT_NAMES) == _NUM_MOTORS
+
+
+def _imu_from_unitree_wxyz(
+    quaternion: tuple[float, float, float, float],
+    gyroscope: tuple[float, float, float],
+    accelerometer: tuple[float, float, float],
+    *,
+    frame_id: str,
+    ts: float,
+) -> Imu:
+    _w, x, y, z = quaternion
+    return Imu(
+        orientation=Quaternion(x, y, z, _w),
+        angular_velocity=Vector3(*gyroscope),
+        linear_acceleration=Vector3(*accelerometer),
+        frame_id=frame_id,
+        ts=ts,
+    )
 
 
 class G1WholeBodyConnectionConfig(ModuleConfig):
@@ -323,8 +343,8 @@ class G1WholeBodyConnection(Module):
                 effort=efforts,
             )
         )
-        # Unitree quat is (w,x,y,z); Imu.from_wxyz reorders to dimos (x,y,z,w).
-        self.imu.publish(Imu.from_wxyz(quat, gyro, accel, frame_id=frame_id, ts=now))
+        # Unitree reports quaternions as (w,x,y,z); Imu/Quaternion stores (x,y,z,w).
+        self.imu.publish(_imu_from_unitree_wxyz(quat, gyro, accel, frame_id=frame_id, ts=now))
 
     def _publish_loop(self) -> None:
         period = 1.0 / float(self.config.publish_rate_hz)

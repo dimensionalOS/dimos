@@ -52,31 +52,6 @@ class Imu(Timestamped):
         self.angular_velocity_covariance = angular_velocity_covariance or [0.0] * 9
         self.linear_acceleration_covariance = linear_acceleration_covariance or [0.0] * 9
 
-    @classmethod
-    def from_wxyz(
-        cls,
-        quaternion: tuple[float, float, float, float],
-        gyroscope: tuple[float, float, float],
-        accelerometer: tuple[float, float, float],
-        *,
-        frame_id: str = "imu_link",
-        ts: float | None = None,
-    ) -> Imu:
-        """Build an Imu from a (w, x, y, z) quaternion.
-
-        Unitree DDS and MuJoCo report orientation as (w, x, y, z); the dimos
-        Quaternion is (x, y, z, w). Reordering happens here, in one place, so
-        the conversion isn't copy-pasted at every publish site.
-        """
-        w, x, y, z = quaternion
-        return cls(
-            orientation=Quaternion(x, y, z, w),
-            angular_velocity=Vector3(*gyroscope),
-            linear_acceleration=Vector3(*accelerometer),
-            frame_id=frame_id,
-            ts=ts,
-        )
-
     def lcm_encode(self) -> bytes:
         msg = LCMImu()
         [msg.header.stamp.sec, msg.header.stamp.nsec] = self.ros_timestamp()
@@ -142,3 +117,9 @@ class Imu(Timestamped):
             f"linear_acceleration={self.linear_acceleration}, "
             f"orientation={self.orientation})"
         )
+
+    def to_rerun(self, axis_length: float = 0.2):  # type: ignore[no-untyped-def]
+        """Orientation axes for rerun."""
+        import rerun as rr
+
+        return rr.TransformAxes3D(axis_length=axis_length)

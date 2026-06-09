@@ -89,6 +89,24 @@ def _default_identity_transform() -> Transform:
     )
 
 
+def _imu_from_mujoco_wxyz(
+    quaternion: tuple[float, float, float, float],
+    gyroscope: tuple[float, float, float],
+    accelerometer: tuple[float, float, float],
+    *,
+    frame_id: str,
+    ts: float,
+) -> Imu:
+    w, x, y, z = quaternion
+    return Imu(
+        orientation=Quaternion(x, y, z, w),
+        angular_velocity=Vector3(*gyroscope),
+        linear_acceleration=Vector3(*accelerometer),
+        frame_id=frame_id,
+        ts=ts,
+    )
+
+
 class _WholeBodySimHooks:
     """Per-step bridge between MuJoCo actuators and whole-body SHM."""
 
@@ -559,8 +577,10 @@ class MujocoSimModule(
             accel = (0.0, 0.0, 0.0)
         shm.write_imu(quaternion=quat, gyroscope=gyro, accelerometer=accel)
         # Also publish on the stream port for downstream consumers.
-        # quat is (w,x,y,z); Imu.from_wxyz reorders to dimos (x,y,z,w).
-        self.imu.publish(Imu.from_wxyz(quat, gyro, accel, frame_id="pelvis", ts=time.time()))
+        # MuJoCo reports quaternions as (w,x,y,z); Imu/Quaternion stores (x,y,z,w).
+        self.imu.publish(
+            _imu_from_mujoco_wxyz(quat, gyro, accel, frame_id="pelvis", ts=time.time())
+        )
 
         if not self._shm_ready_signaled:
             shm.signal_ready(num_joints=len(engine.joint_names))
