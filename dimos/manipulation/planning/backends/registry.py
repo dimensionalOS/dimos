@@ -39,5 +39,14 @@ def create_planning_backend(
             kinematics_name=kinematics_name,
             options=options or {},
         )
+    if normalized == "roboplan":
+        from dimos.manipulation.planning.backends.roboplan.backend import RoboPlanPlanningBackend
 
-    raise ValueError(f"Unknown planning backend: {name}. Available: ['drake']")
+        return RoboPlanPlanningBackend(
+            enable_viz=enable_viz,
+            planner_name=planner_name,
+            kinematics_name=kinematics_name,
+            options=options or {},
+        )
+
+    raise ValueError(f"Unknown planning backend: {name}. Available: ['drake', 'roboplan']")
