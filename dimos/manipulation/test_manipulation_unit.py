@@ -28,7 +28,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModuleConfig,
     ManipulationState,
 )
-from dimos.manipulation.planning.backends.base import BackendRobot
+from dimos.manipulation.planning.backends.base import BackendRobot, PlannedMotion
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult
@@ -376,6 +376,43 @@ class TestManipulationPanelRPCs:
         assert result["status"] == "SUCCESS"
         assert module._planned_paths == {}
         assert module._planned_trajectories == {}
+        assert module._state == ManipulationState.IDLE
+
+    def test_evaluate_pose_target_uses_backend_when_legacy_ik_is_unavailable(self, robot_config):
+        module = _make_module()
+        traj_gen = MagicMock()
+        module._robots = {"test_arm": ("robot_id", robot_config, traj_gen)}
+        module._world_monitor = None
+        module._kinematics = None
+        scene = MagicMock()
+        planner = MagicMock()
+        backend = MagicMock()
+        backend.scene.return_value = scene
+        backend.planner.return_value = planner
+        module._planning_backend = backend
+        current = _joint_state([0.0, 0.0, 0.0], robot_config.joint_names)
+        solution = _joint_state([0.1, 0.2, 0.3], robot_config.joint_names)
+        scene.get_current_joint_state.return_value = current
+        scene.is_state_valid.return_value = True
+        planner.plan_to_pose.return_value = PlannedMotion(
+            path=[],
+            trajectory=MagicMock(),
+            planning_result=MagicMock(),
+            ik_result=IKResult(
+                status=IKStatus.SUCCESS,
+                joint_state=solution,
+                message="RoboPlan IK succeeded",
+            ),
+        )
+
+        result = module.evaluate_pose_target(_pose(), "test_arm")
+
+        assert result["success"] is True
+        assert result["joint_state"] is solution
+        assert result["status"] == "SUCCESS"
+        assert result["message"] == "RoboPlan IK succeeded"
+        planner.plan_to_pose.assert_called_once()
+        assert module._planned_paths == {}
         assert module._state == ManipulationState.IDLE
 
     def test_evaluate_joint_target_returns_pose_and_feasibility(self, robot_config):

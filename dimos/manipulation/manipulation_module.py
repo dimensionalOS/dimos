@@ -734,16 +734,6 @@ class ManipulationModule(Module):
             pose: Target end-effector pose in world coordinates
             robot_name: Robot to solve for (required if multiple robots configured)
         """
-        if self._world_monitor is None or self._kinematics is None:
-            return {
-                "success": False,
-                "joint_state": None,
-                "status": "UNAVAILABLE",
-                "message": "Planning is not initialized",
-                "position_error": None,
-                "orientation_error": None,
-                "collision_free": False,
-            }
         robot = self._get_robot(robot_name)
         if robot is None:
             return {
@@ -755,8 +745,19 @@ class ManipulationModule(Module):
                 "orientation_error": None,
                 "collision_free": False,
             }
-        _, robot_id, _, _ = robot
-        current = self._world_monitor.get_current_joint_state(robot_id)
+        robot_name, robot_id, _, traj_gen = robot
+        scene = self._planning_scene()
+        if scene is None:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNAVAILABLE",
+                "message": "Planning is not initialized",
+                "position_error": None,
+                "orientation_error": None,
+                "collision_free": False,
+            }
+        current = scene.get_current_joint_state(robot_id)
         if current is None:
             return {
                 "success": False,
@@ -775,16 +776,64 @@ class ManipulationModule(Module):
             position=pose.position,
             orientation=pose.orientation,
         )
-        ik = self._kinematics.solve(
-            world=self._world_monitor.world,
-            robot_id=robot_id,
-            target_pose=target_pose,
-            seed=current,
-            check_collision=True,
-        )
-        joint_state = ik.joint_state if ik.is_success() else None
+        if self._world_monitor is not None and self._kinematics is not None:
+            ik = self._kinematics.solve(
+                world=self._world_monitor.world,
+                robot_id=robot_id,
+                target_pose=target_pose,
+                seed=current,
+                check_collision=True,
+            )
+            joint_state = ik.joint_state if ik.is_success() else None
+        elif self._planning_backend is not None:
+            result = self._planning_backend.planner().plan_to_pose(
+                robot_id=robot_id,
+                target_pose=target_pose,
+                timeout=getattr(
+                    getattr(self, "config", None),
+                    "planning_timeout",
+                    ManipulationModuleConfig().planning_timeout,
+                ),
+                trajectory_generator=traj_gen,
+            )
+            if isinstance(result, PlannedMotion) and result.ik_result is not None:
+                ik = result.ik_result
+                joint_state = ik.joint_state if ik.is_success() else None
+            elif isinstance(result, IKResult):
+                ik = result
+                joint_state = None
+            elif isinstance(result, PlanningResult):
+                return {
+                    "success": False,
+                    "joint_state": None,
+                    "status": result.status.name,
+                    "message": result.message,
+                    "position_error": None,
+                    "orientation_error": None,
+                    "collision_free": False,
+                }
+            else:
+                return {
+                    "success": False,
+                    "joint_state": None,
+                    "status": "NO_SOLUTION",
+                    "message": "Pose evaluation failed",
+                    "position_error": None,
+                    "orientation_error": None,
+                    "collision_free": False,
+                }
+        else:
+            return {
+                "success": False,
+                "joint_state": None,
+                "status": "UNAVAILABLE",
+                "message": "Planning is not initialized",
+                "position_error": None,
+                "orientation_error": None,
+                "collision_free": False,
+            }
         collision_free = bool(
-            joint_state is not None and self._world_monitor.is_state_valid(robot_id, joint_state)
+            joint_state is not None and scene.is_state_valid(robot_id, joint_state)
         )
         return {
             "success": joint_state is not None and collision_free,
@@ -806,15 +855,6 @@ class ManipulationModule(Module):
             joints: Candidate joint state
             robot_name: Robot to solve for (required if multiple robots configured)
         """
-        if self._world_monitor is None:
-            return {
-                "success": False,
-                "pose": None,
-                "joint_state": None,
-                "status": "UNAVAILABLE",
-                "message": "Planning is not initialized",
-                "collision_free": False,
-            }
         robot = self._get_robot(robot_name)
         if robot is None:
             return {
@@ -826,6 +866,16 @@ class ManipulationModule(Module):
                 "collision_free": False,
             }
         _, robot_id, config, _ = robot
+        scene = self._planning_scene()
+        if scene is None:
+            return {
+                "success": False,
+                "pose": None,
+                "joint_state": None,
+                "status": "UNAVAILABLE",
+                "message": "Planning is not initialized",
+                "collision_free": False,
+            }
         joint_state = joints
         if not joint_state.name:
             joint_state = JointState.__new__(JointState)
@@ -835,8 +885,8 @@ class ManipulationModule(Module):
             joint_state.position = list(joints.position)
             joint_state.velocity = list(joints.velocity or [])
             joint_state.effort = list(joints.effort or [])
-        pose = self._world_monitor.get_ee_pose(robot_id, joint_state=joint_state)
-        collision_free = self._world_monitor.is_state_valid(robot_id, joint_state)
+        pose = scene.get_ee_pose(robot_id, joint_state=joint_state)
+        collision_free = scene.is_state_valid(robot_id, joint_state)
         return {
             "success": collision_free,
             "pose": pose,

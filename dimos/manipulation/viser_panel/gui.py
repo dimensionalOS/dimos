@@ -157,7 +157,10 @@ class PanelGui:
             return
         self.handles["status"].value = self.session.module_state
         self.handles["error"].value = self.session.error
-        self.handles["feasibility"].value = self.session.feasibility.status.value
+        feasibility = self.session.feasibility.status.value
+        if self.session.feasibility.message:
+            feasibility = f"{feasibility}: {self.session.feasibility.message}"
+        self.handles["feasibility"].value = feasibility
         set_target_visual_state(self.session.feasibility.status == FeasibilityStatus.FEASIBLE)
         self.handles["plan"].disabled = not self.session.can_plan()
         self.handles["preview"].disabled = not self.session.can_preview()
