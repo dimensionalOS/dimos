@@ -72,6 +72,7 @@ all_blueprints = {
     "openarm-mock-planner-coordinator": "dimos.robot.manipulators.openarm.blueprints:openarm_mock_planner_coordinator",
     "openarm-planner-coordinator": "dimos.robot.manipulators.openarm.blueprints:openarm_planner_coordinator",
     "path-planner-eval": "dimos.navigation.nav_3d.evaluator.blueprints:path_planner_eval",
+    "roboplan-xarm7-planner-coordinator": "dimos.manipulation.planning.examples.demo_roboplan_xarm7_blueprint:roboplan_xarm7_planner_coordinator",
     "teleop-phone": "dimos.teleop.phone.blueprints:teleop_phone",
     "teleop-phone-go2": "dimos.teleop.phone.blueprints:teleop_phone_go2",
     "teleop-phone-go2-fleet": "dimos.teleop.phone.blueprints:teleop_phone_go2_fleet",
@@ -124,6 +125,7 @@ all_blueprints = {
     "xarm6-planner-only": "dimos.manipulation.blueprints:xarm6_planner_only",
     "xarm7-planner-coordinator": "dimos.manipulation.blueprints:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.manipulation.blueprints:xarm7_planner_coordinator_agent",
+    "xarm7-roboplan-viser-panel-mock": "dimos.manipulation.blueprints:xarm7_roboplan_viser_panel_mock",
     "xarm7-viser-panel-mock": "dimos.manipulation.blueprints:xarm7_viser_panel_mock",
 }
 

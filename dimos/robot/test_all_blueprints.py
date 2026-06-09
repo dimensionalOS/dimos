@@ -50,6 +50,7 @@ _SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-xarm6",
         "coordinator-xarm7",
         "dual-xarm6-planner",
+        "roboplan-xarm7-planner-coordinator",
         "teleop-quest-dual",
         "teleop-quest-go2",
         "teleop-quest-piper",
@@ -65,6 +66,7 @@ _SELF_HOSTED_BLUEPRINTS = frozenset(
         "xarm6-planner-only",
         "xarm7-planner-coordinator",
         "xarm7-planner-coordinator-agent",
+        "xarm7-roboplan-viser-panel-mock",
         "xarm7-viser-panel-mock",
     }
 )
@@ -97,7 +99,9 @@ def test_old_self_hosted_blueprints() -> None:
 
 
 def test_xarm7_viser_panel_mock_requires_self_hosted_lfs() -> None:
+    assert "roboplan-xarm7-planner-coordinator" in SELF_HOSTED_BLUEPRINTS
     assert "xarm7-viser-panel-mock" in SELF_HOSTED_BLUEPRINTS
+    assert "xarm7-roboplan-viser-panel-mock" in SELF_HOSTED_BLUEPRINTS
 
 
 @pytest.mark.parametrize("blueprint_name", UBUNTU_BLUEPRINTS)

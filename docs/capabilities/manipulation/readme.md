@@ -84,6 +84,13 @@ For a single-command mock test stack with no hardware, run:
 uv run --extra manipulation-viser dimos run xarm7-viser-panel-mock
 ```
 
+To run the same mock operator panel with RoboPlan as the active planner and
+Viser as the visualization surface, run:
+
+```bash
+uv run --extra manipulation-viser dimos run xarm7-roboplan-viser-panel-mock
+```
+
 Open `http://127.0.0.1:8095` unless `--open-browser` is passed. The panel shows
 a disconnected state and keeps planning/execution controls disabled until it can
 reach a compatible `ManipulationModule` over RPC.
@@ -184,6 +191,7 @@ python -c "import roboplan.toppra"
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
 | `xarm6-planner-only` | XArm6 standalone planner (no coordinator) |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
+| `xarm7-roboplan-viser-panel-mock` | Mock XArm7 RoboPlan planner + coordinator + Viser operator panel |
 | `xarm7-viser-panel-mock` | Mock XArm7 planner + coordinator + Viser operator panel |
 | `dual-xarm6-planner` | Dual XArm6 planning |
 | `xarm-perception` | XArm7 + RealSense camera for perception |

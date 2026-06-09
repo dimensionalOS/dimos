@@ -28,6 +28,7 @@ Quick start:
 """
 
 import math
+from pathlib import Path
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
@@ -44,7 +45,11 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
+from dimos.robot.catalog.ufactory import (
+    XARM7_FK_MODEL,
+    xarm6 as _catalog_xarm6,
+    xarm7 as _catalog_xarm7,
+)
 
 
 def _quaternion(x: float, y: float, z: float, w: float) -> Quaternion:
@@ -150,6 +155,71 @@ xarm7_viser_panel_mock = autoconnect(
         joint_state_frame_id="coordinator",
         hardware=[_xarm7_viser_mock_cfg.to_hardware_component()],
         tasks=[_xarm7_viser_mock_cfg.to_task_config()],
+    ),
+    ViserManipulationPanelModule.blueprint(
+        host="127.0.0.1",
+        port=8095,
+        default_robot="arm",
+        allow_plan_execute=True,
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
+)
+
+
+_xarm7_roboplan_viser_mock_cfg = _catalog_xarm7(
+    name="arm",
+    adapter_type="mock",
+    add_gripper=False,
+    model_path=XARM7_FK_MODEL,
+)
+
+_ROBOPLAN_XARM7_OPTIONS = {
+    "model_path": Path("data/xarm_description/urdf/xarm7/xarm7.urdf"),
+    "srdf_path": Path("dimos/manipulation/planning/examples/roboplan_xarm7.srdf"),
+    "package_paths": [Path("data")],
+    "planning_group": "arm",
+    "active_joint_names": _xarm7_roboplan_viser_mock_cfg.joint_names,
+    "base_frame": "link_base",
+    "end_effector_frame": "link7",
+    "retiming": "dimos",
+    "rrt": {
+        "max_nodes": 1000,
+        "max_connection_distance": 3.0,
+        "collision_check_step_size": 0.05,
+        "collision_check_use_bisection": False,
+        "goal_biasing_probability": 0.15,
+        "rrt_connect": True,
+    },
+    "ik": {
+        "max_iters": 100,
+        "max_time": 0.05,
+        "check_collisions": True,
+    },
+    "toppra": {
+        "dt": 0.02,
+        "mode": "Hermite",
+        "velocity_scale": 1.0,
+        "acceleration_scale": 1.0,
+    },
+}
+
+xarm7_roboplan_viser_panel_mock = autoconnect(
+    ManipulationModule.blueprint(
+        robots=[_xarm7_roboplan_viser_mock_cfg.to_robot_model_config()],
+        planning_timeout=10.0,
+        enable_viz=False,
+        planning_backend="roboplan",
+        planning_backend_options={"roboplan": _ROBOPLAN_XARM7_OPTIONS},
+    ),
+    ControlCoordinator.blueprint(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_xarm7_roboplan_viser_mock_cfg.to_hardware_component()],
+        tasks=[_xarm7_roboplan_viser_mock_cfg.to_task_config()],
     ),
     ViserManipulationPanelModule.blueprint(
         host="127.0.0.1",
@@ -385,6 +455,7 @@ __all__ = [
     "xarm6_planner_only",
     "xarm7_planner_coordinator",
     "xarm7_planner_coordinator_agent",
+    "xarm7_roboplan_viser_panel_mock",
     "xarm7_viser_panel_mock",
     "xarm_perception",
     "xarm_perception_agent",
