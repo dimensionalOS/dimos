@@ -125,6 +125,8 @@ _LIDAR_SOURCE = os.environ.get("M20_LIDAR_SOURCE", "front").strip().lower()
 if _LIDAR_SOURCE not in {"front", "rear"}:
     raise ValueError(f"M20_LIDAR_SOURCE must be 'front' or 'rear' (got {_LIDAR_SOURCE!r})")
 
+_SENSOR_REPLAY = os.environ.get("M20_SENSOR_REPLAY", "0").strip() != "0"
+
 _SLAM_BACKEND = os.environ.get("M20_SLAM_BACKEND", "arise").strip().lower()
 if _SLAM_BACKEND not in {"arise", "fastlio2"}:
     raise ValueError(f"M20_SLAM_BACKEND must be 'arise' or 'fastlio2' (got {_SLAM_BACKEND!r})")
@@ -163,7 +165,7 @@ else:
     )
 
 _extra_imu_modules: tuple = ()
-if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy":
+if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy" and not _SENSOR_REPLAY:
     # rsdriver in send_separately:true mode publishes the front Airy alone on
     # /LIDAR/POINTS and rear Airy alone on /LIDAR/POINTS2 (in base_link frame,
     # with each extrinsic applied). Pair the selected lidar with the same
@@ -302,8 +304,10 @@ if _NAV_ENABLED:
         (MovementManager, "way_point", "_mgr_way_point_unused"),
     ]
 
-m20_nav_stack_native = (
-    autoconnect(
+_hardware_modules = ()
+_hardware_remappings: list[tuple] = []
+if not _SENSOR_REPLAY:
+    _hardware_modules = (
         m20_connection(
             ip="10.21.31.103",
             enable_camera=False,  # TODO: re-enable once startup is fast
@@ -316,6 +320,15 @@ m20_nav_stack_native = (
             cpu_affinity=_DRDDS_LIDAR_CPU_AFFINITY,
         ),
         *_extra_imu_modules,
+    )
+    _hardware_remappings = [
+        # DrddsLidarBridge outputs "lidar"; SLAM backends expect "raw_points"
+        (DrddsLidarBridge, "lidar", "raw_points"),
+    ]
+
+m20_nav_stack_native = (
+    autoconnect(
+        *_hardware_modules,
         _slam_module,
         *_nav_modules,
         vis_module(
@@ -343,8 +356,7 @@ m20_nav_stack_native = (
     )
     .remappings(
         [
-            # DrddsLidarBridge outputs "lidar"; SLAM backends expect "raw_points"
-            (DrddsLidarBridge, "lidar", "raw_points"),
+            *_hardware_remappings,
             # When the Airy IMU path is active, two IMU publishers coexist —
             # rename both to distinct topics and pin FAST-LIO2 to the Airy one
             # so autoconnect isn't ambiguous. AriseSLAM (the other SLAM option)

@@ -27,9 +27,11 @@ from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import
 )
 from dimos.navigation.nav_stack.modules.terrain_map_ext.terrain_map_ext import TerrainMapExt
 from dimos.navigation.smart_nav.modules.fastlio2.fastlio2 import FastLio2
+from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.drdds_bridge.module import (
     AiryImuBridge,
     DrddsLidarBridge,
+    NavCmdPub,
 )
 
 _MODULE = "dimos.robot.deeprobotics.m20.blueprints.nav.m20_nav_stack_native"
@@ -61,6 +63,7 @@ def _load_m20_native(
     fastlio_cores: str | None = None,
     drdds_lidar_cores: str | None = None,
     airy_imu_cores: str | None = None,
+    sensor_replay: str | None = None,
 ):
     monkeypatch.setenv("M20_NAV_ENABLED", "1")
     if max_yaw_rate is None:
@@ -130,6 +133,10 @@ def _load_m20_native(
         monkeypatch.delenv("M20_AIRY_IMU_CORES", raising=False)
     else:
         monkeypatch.setenv("M20_AIRY_IMU_CORES", airy_imu_cores)
+    if sensor_replay is None:
+        monkeypatch.delenv("M20_SENSOR_REPLAY", raising=False)
+    else:
+        monkeypatch.setenv("M20_SENSOR_REPLAY", sensor_replay)
 
     return importlib.import_module(_MODULE)
 
@@ -411,3 +418,18 @@ def test_m20_click_goals_always_flow_through_simple_planner(monkeypatch):
     assert remappings[(MovementManager, "way_point")] == "_mgr_way_point_unused"
     assert (SimplePlanner, "goal") not in remappings
     assert (SimplePlanner, "clicked_point") not in remappings
+
+
+def test_m20_sensor_replay_mode_skips_hardware_modules(monkeypatch):
+    monkeypatch.setenv("M20_SLAM_BACKEND", "fastlio2")
+    monkeypatch.setenv("M20_FASTLIO2_IMU", "airy")
+    module = _load_m20_native(monkeypatch, sensor_replay="1")
+    remappings = module.m20_nav_stack_native.remapping_map
+
+    assert _module_count(module, M20Connection) == 0
+    assert _module_count(module, NavCmdPub) == 0
+    assert _module_count(module, DrddsLidarBridge) == 0
+    assert _module_count(module, AiryImuBridge) == 0
+    assert _module_count(module, FastLio2) == 1
+    assert remappings[(FastLio2, "imu")] == "airy_imu_front"
+    assert remappings[(FastLio2, "global_map")] == "global_map_fastlio"
