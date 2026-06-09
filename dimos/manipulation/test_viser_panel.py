@@ -431,6 +431,24 @@ def test_panel_renders_plan_path_with_viser_line_segment_shape():
     assert points[0][0] == [0.1, 0.2, 0.3]
 
 
+def test_panel_render_plan_path_skips_failed_fk_poses():
+    session = PanelSession(selected_robot="arm")
+    handles: dict[str, object] = {}
+    server = FakeServer()
+    scene = PanelScene(server, session, handles, {}, None)
+    path = [_joint_state([0.0]), _joint_state([0.1]), _joint_state([0.2])]
+    poses = [
+        PoseStamped(position=Vector3(0.1, 0.2, 0.3), orientation=_unit_quaternion()),
+        None,
+        PoseStamped(position=Vector3(0.7, 0.8, 0.9), orientation=_unit_quaternion()),
+    ]
+
+    scene.render_plan_path(path, poses)
+
+    points = cast("list[list[list[float]]]", server.scene.line_segments[0]["points"])
+    assert points == [[[0.1, 0.2, 0.3], [0.7, 0.8, 0.9]]]
+
+
 def test_panel_backend_rejects_new_preview_when_previous_timed_out():
     backend = PanelBackend(
         module_ref=None,

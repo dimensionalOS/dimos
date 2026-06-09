@@ -100,12 +100,13 @@ class PanelScene:
         self.set_urdf_joints(ghost, joints)
         return True
 
-    def render_plan_path(self, path: Sequence[JointState], poses: Sequence[Pose]) -> None:
+    def render_plan_path(self, path: Sequence[JointState], poses: Sequence[Pose | None]) -> None:
         if self.server is None:
             return
         positions = [
             [float(pose.position.x), float(pose.position.y), float(pose.position.z)]
             for pose in poses
+            if pose is not None
         ]
         if "plan_path" in self.handles:
             self.handles["plan_path"].remove()
