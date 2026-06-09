@@ -13,23 +13,34 @@
 # limitations under the License.
 
 import time
+from collections.abc import Iterator
+
+import pytest
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
+from dimos.utils.testing.collector import CallbackCollector
+
+
+@pytest.fixture
+def lcm(lcm_url: str) -> Iterator[LCM]:
+    lcm = LCM(url=lcm_url)
+    lcm.start()
+    try:
+        yield lcm
+    finally:
+        lcm.stop()
 
 
 # Publishes a series of transforms representing a robot kinematic chain
 # to actual LCM messages, rerun running in parallel should render this
-def test_publish_transforms() -> None:
-    from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
-
-    lcm = LCM()
-    lcm.start()
-
-    topic = Topic(topic="/tf", lcm_type=LCMTFMessage)
+def test_publish_transforms(lcm: LCM) -> None:
+    topic = Topic(topic="/tf", lcm_type=TFMessage)
+    collector = CallbackCollector(2)
+    lcm.subscribe(topic, collector)
 
     # Create a robot kinematic chain using our new types
     current_time = time.time()
@@ -52,9 +63,6 @@ def test_publish_transforms() -> None:
         ts=current_time,
     )
 
-    lcm.publish(topic, TFMessage(world_to_base, base_to_arm))
-
-    time.sleep(0.05)
     # 3. Arm to gripper transform (gripper extended)
     arm_to_gripper = Transform(
         translation=Vector3(0.5, 0.0, 0.0),
@@ -64,4 +72,16 @@ def test_publish_transforms() -> None:
         ts=current_time,
     )
 
+    lcm.publish(topic, TFMessage(world_to_base, base_to_arm))
     lcm.publish(topic, TFMessage(world_to_base, arm_to_gripper))
+    collector.wait()
+
+    assert len(collector.results) == 2
+
+    first, _ = collector.results[0]
+    assert isinstance(first, TFMessage)
+    assert [t.child_frame_id for t in first] == ["base_link", "arm_link"]
+
+    second, _ = collector.results[1]
+    assert isinstance(second, TFMessage)
+    assert [t.child_frame_id for t in second] == ["base_link", "gripper_link"]
