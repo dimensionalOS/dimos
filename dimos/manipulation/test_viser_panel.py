@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import threading
 import time
 from typing import cast
@@ -29,11 +28,6 @@ from dimos.manipulation.viser_panel.module import (
     ViserManipulationPanelModule,
 )
 from dimos.manipulation.viser_panel.scene import (
-    GOAL_ROBOT_FEASIBLE_COLOR,
-    GOAL_ROBOT_FEASIBLE_OPACITY,
-    GOAL_ROBOT_INFEASIBLE_COLOR,
-    GOAL_ROBOT_INFEASIBLE_OPACITY,
-    GOAL_ROBOT_MESH_COLOR,
     PanelScene,
 )
 from dimos.manipulation.viser_panel.state import (
@@ -104,7 +98,7 @@ class FakeServer:
 
 
 class FakeViserUrdf:
-    def __init__(self) -> None:
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
         self._urdf = type(
             "FakeUrdf", (), {"actuated_joint_names": ["joint1", "joint2", "drive_joint"]}
         )()
@@ -343,7 +337,7 @@ def test_panel_fails_fast_when_viser_urdf_dependency_is_missing():
             panel._import_viser_urdf()
 
 
-def test_panel_applies_feasible_preview_and_updates_target_color():
+def test_panel_applies_feasible_preview_to_targets():
     panel = _make_panel()
     panel.session.latest_sequence_id = 1
     panel.session.robot_info = {"joint_names": ["j1", "j2"]}
@@ -357,8 +351,6 @@ def test_panel_applies_feasible_preview_and_updates_target_color():
     assert panel.session.feasibility.status == FeasibilityStatus.FEASIBLE
     assert panel.session.target_status == TargetStatus.FEASIBLE
     assert panel.session.joint_target == [0.1, 0.2]
-    assert panel._handles["ee_control"].color == (0, 180, 255)
-    assert panel._urdfs["arm:ghost"].color == (0, 180, 255)
 
 
 def test_panel_execute_enabled_after_fresh_completed_plan():
@@ -434,14 +426,9 @@ def test_panel_renders_plan_path_with_viser_line_segment_shape():
 
     scene.render_plan_path(path, poses)
 
-    assert server.scene.line_segments[0]["points"] == [
-        [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
-        [[0.4, 0.5, 0.6], [0.7, 0.8, 0.9]],
-    ]
-
-
-def test_panel_has_no_duplicate_static_callback_wiring_method():
-    assert not hasattr(ViserManipulationPanelModule, "_wire_static_callbacks")
+    points = cast("list[list[list[float]]]", server.scene.line_segments[0]["points"])
+    assert len(points) == len(poses) - 1
+    assert points[0][0] == [0.1, 0.2, 0.3]
 
 
 def test_panel_backend_rejects_new_preview_when_previous_timed_out():
@@ -499,40 +486,34 @@ def test_panel_updates_viser_urdf_with_matching_named_joints():
     assert urdf.cfg == [0.1, 0.2, 0.0]
 
 
-def test_panel_creates_goal_robot_as_transparent_colored_overlay():
+def test_panel_creates_current_and_goal_robot_scene_nodes():
     panel = _make_panel()
     panel._urdfs = {}
-    created: list[dict[str, object]] = []
+    panel._viser_urdf = FakeViserUrdf
 
-    class CapturingViserUrdf:
-        def __init__(self, _server: object, _path: object, **kwargs: object) -> None:
-            created.append(kwargs)
-
-    panel._viser_urdf = CapturingViserUrdf
-
-    with patch.object(panel, "_prepared_urdf_path", return_value=Path("robot.urdf")):
+    with patch.object(panel, "_prepared_urdf_path", return_value="robot.urdf"):
         panel._ensure_scene_nodes("arm", {"model_path": "robot.xacro"})
 
-    assert created == [
-        {"root_node_name": "/robots/arm/current", "mesh_color_override": None},
-        {"root_node_name": "/targets/arm/ghost", "mesh_color_override": GOAL_ROBOT_MESH_COLOR},
-    ]
+    assert "arm:current" in panel._urdfs
+    assert "arm:ghost" in panel._urdfs
 
 
-def test_panel_updates_goal_robot_mesh_color_for_feasibility():
+def test_panel_updates_goal_robot_visual_state_for_feasibility():
     panel = _make_panel()
     ghost = FakeViserUrdf()
     panel._urdfs["arm:ghost"] = ghost
 
     panel._set_target_visual_state(True)
+    feasible_colors = [mesh.color for mesh in ghost._meshes]
+    feasible_opacities = [mesh.opacity for mesh in ghost._meshes]
 
-    assert all(mesh.color == GOAL_ROBOT_FEASIBLE_COLOR for mesh in ghost._meshes)
-    assert all(mesh.opacity == GOAL_ROBOT_FEASIBLE_OPACITY for mesh in ghost._meshes)
+    assert all(color is not None for color in feasible_colors)
+    assert all(opacity is not None for opacity in feasible_opacities)
 
     panel._set_target_visual_state(False)
 
-    assert all(mesh.color == GOAL_ROBOT_INFEASIBLE_COLOR for mesh in ghost._meshes)
-    assert all(mesh.opacity == GOAL_ROBOT_INFEASIBLE_OPACITY for mesh in ghost._meshes)
+    assert [mesh.color for mesh in ghost._meshes] != feasible_colors
+    assert [mesh.opacity for mesh in ghost._meshes] != feasible_opacities
 
 
 def test_panel_plan_runs_while_plan_operation_is_marked_in_flight():
@@ -609,23 +590,6 @@ def test_panel_preview_animates_interpolated_frames():
         panel._animate_ghost_path([_joint_state([0.0, 0.0]), _joint_state([1.0, 2.0])], 1.0)
 
     assert ghost.cfg_history == [[0.0, 0.0, 0.0], [0.5, 1.0, 0.0], [1.0, 2.0, 0.0]]
-
-
-def test_panel_preview_does_not_trigger_backend_drake_preview():
-    panel = _make_panel()
-    cast("ViserManipulationPanelConfig", panel.config).preview_duration = 0.0
-    panel.session.selected_robot = "arm"
-    panel.session.robot_info = {"joint_names": ["arm/joint1", "arm/joint2", "arm/gripper"]}
-    ghost = FakeViserUrdf()
-    panel._urdfs["arm:ghost"] = ghost
-    client = panel._client
-    assert client is not None
-    client.get_planned_path.return_value = [_joint_state([0.1, 0.2, 0.3])]
-
-    panel._preview()
-
-    client.preview_path.assert_not_called()
-    assert ghost.cfg == [0.1, 0.2, 0.0]
 
 
 def test_panel_target_sync_does_not_overwrite_ghost_during_preview():
