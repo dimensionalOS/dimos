@@ -9,3 +9,10 @@
 │   ├── doclinks.md
 │   └── index.md
 └── index.md
+
+## Manipulation backend notes
+
+- Use the active backend protocols in `dimos/manipulation/planning/backends/base.py` for backend-neutral manipulation work.
+- Keep optional RoboPlan imports inside `dimos/manipulation/planning/backends/roboplan/`; default Drake-backed stacks must not import RoboPlan.
+- Set RoboPlan RRT, IK, and TOPPRA options explicitly in adapter code instead of relying on upstream binding defaults.
+- Do not edit `dimos/robot/all_blueprints.py` manually. Regenerate it with `pytest dimos/robot/test_all_blueprints_generation.py` only if new RoboPlan blueprints are exported.

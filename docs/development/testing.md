@@ -49,6 +49,19 @@ pytest --numprocesses=auto dimos
 
 The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes `self_hosted`/`mujoco`/`tool`, so plain `pytest dimos` runs only the default suite; `--numprocesses=auto` parallelizes across cores via pytest-xdist.
 
+RoboPlan backend unit tests mock optional dependency behavior and can be run without installing RoboPlan:
+
+```bash
+uv run pytest dimos/manipulation/planning/backends/roboplan/test_roboplan_backend.py -v
+```
+
+RoboPlan-selected integration or manual QA requires the RoboPlan bindings used by the configuration. Verify the modules before running those tests:
+
+```bash
+python -c "import roboplan.core, roboplan.rrt, roboplan.simple_ik"
+python -c "import roboplan.toppra"  # only for retiming="toppra"
+```
+
 ### Self-hosted tests
 
 ```bash
