@@ -21,6 +21,7 @@ make_humanoid_joints("g1") (left leg -> right leg -> waist -> left arm -> right 
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import threading
 from threading import Thread
 import time
@@ -68,6 +69,28 @@ class G1WholeBodyConnectionConfig(ModuleConfig):
     release_sport_mode: bool = True
     publish_rate_hz: float = 500.0
     frame_id: str = "g1_pelvis"
+    mode_machine: int = _MODE_MACHINE_G1
+
+
+@dataclass(frozen=True)
+class G1LowStateSnapshot:
+    """Motor and IMU data copied from one G1 LowState frame.
+
+    Attributes:
+        positions: Motor positions for the 29 controllable G1 motors.
+        velocities: Motor velocities for the 29 controllable G1 motors.
+        efforts: Estimated motor torques for the 29 controllable G1 motors.
+        quaternion: IMU orientation in Unitree/MuJoCo w,x,y,z order.
+        gyroscope: IMU angular velocity in rad/s.
+        accelerometer: IMU linear acceleration in m/s^2.
+    """
+
+    positions: list[float]
+    velocities: list[float]
+    efforts: list[float]
+    quaternion: tuple[float, float, float, float]
+    gyroscope: tuple[float, float, float]
+    accelerometer: tuple[float, float, float]
 
 
 class G1WholeBodyConnection(Module):
@@ -87,10 +110,10 @@ class G1WholeBodyConnection(Module):
         self._low_cmd: LowCmd_ | None = None
         self._low_state: LowState_ | None = None
         self._crc: CRC | None = None
-        # mode_machine: hardcoded at start() to the static value for the
-        # 29-DOF G1.  We log a one-shot warning if the first LowState we
-        # read disagrees - that's the early signal of firmware drift on a
-        # variant that needs a different value.
+        # mode_machine: configured at start() to the static value for the
+        # robot variant. We log a one-shot warning if the first LowState
+        # we read disagrees - that's the early signal of firmware drift on
+        # a variant that needs a different value.
         self._mode_machine: int | None = None
         self._mode_machine_verified: bool = False
         # Guards _low_cmd / _low_state / _mode_machine across DDS, publish, and LCM threads.
@@ -136,8 +159,8 @@ class G1WholeBodyConnection(Module):
         # POS_STOP/VEL_STOP + zero gains so the robot can't twitch pre-command.
         self._low_cmd = unitree_hg_msg_dds__LowCmd_()
         self._low_cmd.mode_pr = 0  # PR (pitch/roll) mode
-        # mode_machine is a static value (see comment above the constant).
-        self._mode_machine = _MODE_MACHINE_G1
+        # mode_machine is a static value for a given robot variant.
+        self._mode_machine = int(self.config.mode_machine)
         self._low_cmd.mode_machine = self._mode_machine
         for i in range(_NUM_MOTOR_SLOTS):
             self._low_cmd.motor_cmd[i].mode = 0x01  # enable
@@ -179,20 +202,23 @@ class G1WholeBodyConnection(Module):
         # release.  Best-effort: any failure is logged, not raised, so
         # cleanup still drains the DDS endpoints.
         if self._publisher is not None and self._low_cmd is not None and self._crc is not None:
-            try:
-                with self._lock:
-                    for i in range(_NUM_MOTOR_SLOTS):
-                        self._low_cmd.motor_cmd[i].mode = 0x00  # disable
-                        self._low_cmd.motor_cmd[i].q = POS_STOP
-                        self._low_cmd.motor_cmd[i].dq = VEL_STOP
-                        self._low_cmd.motor_cmd[i].kp = 0
-                        self._low_cmd.motor_cmd[i].kd = 0
-                        self._low_cmd.motor_cmd[i].tau = 0
-                    self._low_cmd.crc = self._crc.Crc(self._low_cmd)
+            sent_safe_stop = False
+            with self._lock:
+                for i in range(_NUM_MOTOR_SLOTS):
+                    self._low_cmd.motor_cmd[i].mode = 0x00  # disable
+                    self._low_cmd.motor_cmd[i].q = POS_STOP
+                    self._low_cmd.motor_cmd[i].dq = VEL_STOP
+                    self._low_cmd.motor_cmd[i].kp = 0
+                    self._low_cmd.motor_cmd[i].kd = 0
+                    self._low_cmd.motor_cmd[i].tau = 0
+                self._low_cmd.crc = self._crc.Crc(self._low_cmd)
+                try:
                     self._publisher.Write(self._low_cmd)
+                    sent_safe_stop = True
+                except (OSError, RuntimeError) as e:
+                    logger.warning("Safe-stop lowcmd failed", error=str(e))
+            if sent_safe_stop:
                 logger.info("Sent safe-stop lowcmd (motors disabled)")
-            except (OSError, RuntimeError, AttributeError) as e:
-                logger.warning("Safe-stop lowcmd failed", error=str(e))
 
         # Close DDS endpoints explicitly - GC-based cleanup races with in-flight
         # callbacks and segfaults on process exit (mirrors the Go2 adapter).
@@ -242,36 +268,38 @@ class G1WholeBodyConnection(Module):
         if actual != self._mode_machine:
             logger.warning(
                 "mode_machine mismatch; commands may be silently rejected by firmware. "
-                "Set _MODE_MACHINE_G1 to the reported value for this variant.",
-                hardcoded=self._mode_machine,
+                "Set G1WholeBodyConnectionConfig.mode_machine to the reported value "
+                "for this variant.",
+                configured=self._mode_machine,
                 reported=actual,
             )
 
-    def _snapshot_motor_imu(
-        self,
-    ) -> (
-        tuple[
-            list[float],
-            list[float],
-            list[float],
-            tuple[float, float, float, float],
-            tuple[float, float, float],
-            tuple[float, float, float],
-        ]
-        | None
-    ):
+    def _snapshot_motor_imu(self) -> G1LowStateSnapshot | None:
         """Return the latest real motor/IMU sample, or None before first LowState."""
         with self._lock:
             ls = self._low_state
             if ls is None:
                 return None
-            return (
-                [ls.motor_state[i].q for i in range(_NUM_MOTORS)],
-                [ls.motor_state[i].dq for i in range(_NUM_MOTORS)],
-                [ls.motor_state[i].tau_est for i in range(_NUM_MOTORS)],
-                tuple(ls.imu_state.quaternion),
-                tuple(ls.imu_state.gyroscope),
-                tuple(ls.imu_state.accelerometer),
+            return G1LowStateSnapshot(
+                positions=[float(ls.motor_state[i].q) for i in range(_NUM_MOTORS)],
+                velocities=[float(ls.motor_state[i].dq) for i in range(_NUM_MOTORS)],
+                efforts=[float(ls.motor_state[i].tau_est) for i in range(_NUM_MOTORS)],
+                quaternion=(
+                    float(ls.imu_state.quaternion[0]),
+                    float(ls.imu_state.quaternion[1]),
+                    float(ls.imu_state.quaternion[2]),
+                    float(ls.imu_state.quaternion[3]),
+                ),
+                gyroscope=(
+                    float(ls.imu_state.gyroscope[0]),
+                    float(ls.imu_state.gyroscope[1]),
+                    float(ls.imu_state.gyroscope[2]),
+                ),
+                accelerometer=(
+                    float(ls.imu_state.accelerometer[0]),
+                    float(ls.imu_state.accelerometer[1]),
+                    float(ls.imu_state.accelerometer[2]),
+                ),
             )
 
     def _publish_motor_state_and_imu(
@@ -307,16 +335,15 @@ class G1WholeBodyConnection(Module):
             self._drain_low_state()
             sample = self._snapshot_motor_imu()
             if sample is not None:
-                positions, velocities, efforts, quat, gyro, accel = sample
                 self._publish_motor_state_and_imu(
                     now=time.time(),
                     frame_id=frame_id,
-                    positions=positions,
-                    velocities=velocities,
-                    efforts=efforts,
-                    quat=quat,
-                    gyro=gyro,
-                    accel=accel,
+                    positions=sample.positions,
+                    velocities=sample.velocities,
+                    efforts=sample.efforts,
+                    quat=sample.quaternion,
+                    gyro=sample.gyroscope,
+                    accel=sample.accelerometer,
                 )
 
             next_tick += period
@@ -389,4 +416,9 @@ class G1WholeBodyConnection(Module):
         logger.info("Sport mode released - low-level control active")
 
 
-__all__ = ["G1_JOINT_NAMES", "G1WholeBodyConnection", "G1WholeBodyConnectionConfig"]
+__all__ = [
+    "G1_JOINT_NAMES",
+    "G1LowStateSnapshot",
+    "G1WholeBodyConnection",
+    "G1WholeBodyConnectionConfig",
+]

@@ -62,6 +62,7 @@ from dimos.simulation.engines.mujoco_shm import (
     ManipShmWriter,
     shm_key_from_path,
 )
+from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
 from dimos.spec import perception
 from dimos.utils.logging_config import setup_logger
 
@@ -204,6 +205,7 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     # MJCFs that reference meshes by bare filename (G1 GR00T, Go2) need this;
     # self-contained MJCFs with on-disk meshes (xarm scene.xml) don't.
     inject_legacy_assets: bool = False
+    robot_sim_spec: RobotSimSpec | None = None
     # MJCF sensor names used to publish IMU. The module probes these in
     # order and uses the first that exists in the model; if none match
     # IMU publishing stays silent. Default list covers the common
@@ -247,9 +249,9 @@ class MujocoSimModule(
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
     imu: Out[Imu]
-    # Floating-base pose (qpos[0:7]) for robots whose MJCF has a free
-    # joint at the root.  Published every step; consumers like the viser
-    # viewer use this to translate the robot in world space.
+    # Floating-base pose for robots whose MJCF has a free joint at the
+    # root. Published every step; consumers like the viser viewer use
+    # this to translate the robot in world space.
     odom: Out[PoseStamped]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -267,11 +269,13 @@ class MujocoSimModule(
 
         # IMU sensor slices into MjData.sensordata, resolved once at start.
         # None if the MJCF has no recognized IMU sensors (e.g. arm-only sims).
+        self._imu_quat_slice: slice | None = None
         self._imu_gyro_slice: slice | None = None
         self._imu_accel_slice: slice | None = None
-        # Quaternion is read from the floating-base qpos[3:7] when the model
-        # has a free joint at the root; None otherwise.
+        # Quaternion is read from the floating-base qpos when the model
+        # has a free joint at the robot root; None otherwise.
         self._imu_base_qpos_slice: slice | None = None
+        self._root_base_qpos_adr: int | None = None
 
     @property
     def _camera_link(self) -> str:
@@ -355,6 +359,7 @@ class MujocoSimModule(
             headless=self.config.headless,
             cameras=cameras,
             assets=engine_assets,
+            robot_sim_spec=self.config.robot_sim_spec,
         )
 
         # Detect gripper (extra joint beyond dof).
@@ -375,22 +380,29 @@ class MujocoSimModule(
                 joint_range=joint_range,
             )
 
-        # Resolve IMU sensors once. Names come from config so robot-
-        # specific blueprints (G1, H1, Optimus, ...) can override; manipulator
-        # MJCFs typically have neither - we leave the slices as None and
-        # skip IMU publishing for those.
-        self._imu_gyro_slice = _find_sensor_slice(
-            self._engine.model, *self.config.imu_gyro_sensor_names, dim=3
-        )
-        self._imu_accel_slice = _find_sensor_slice(
-            self._engine.model, *self.config.imu_accel_sensor_names, dim=3
-        )
-        # Floating-base orientation is qpos[3:7] (w,x,y,z) when the root
-        # joint is a free joint.  Detect by checking jnt_type[0].
-        if self._engine.model.njnt > 0 and int(self._engine.model.jnt_type[0]) == int(
-            mujoco.mjtJoint.mjJNT_FREE  # type: ignore[attr-defined]
-        ):
-            self._imu_base_qpos_slice = slice(3, 7)
+        # Resolve IMU/root state once. RobotSimSpec wins when provided:
+        # it scopes sensors and floating base to the policy robot rather
+        # than assuming global model order.
+        binding = self._engine.robot_binding
+        if binding is not None:
+            self._imu_quat_slice = binding.imu_quat_slice
+            self._imu_gyro_slice = binding.imu_gyro_slice
+            self._imu_accel_slice = binding.imu_accel_slice
+            self._root_base_qpos_adr = binding.root_qpos_adr
+        else:
+            self._imu_quat_slice = None
+            self._imu_gyro_slice = _find_sensor_slice(
+                self._engine.model, *self.config.imu_gyro_sensor_names, dim=3
+            )
+            self._imu_accel_slice = _find_sensor_slice(
+                self._engine.model, *self.config.imu_accel_sensor_names, dim=3
+            )
+            self._root_base_qpos_adr = self._engine.root_qpos_adr
+
+        if self._root_base_qpos_adr is not None:
+            self._imu_base_qpos_slice = slice(
+                self._root_base_qpos_adr + 3, self._root_base_qpos_adr + 7
+            )
         else:
             self._imu_base_qpos_slice = None
 
@@ -490,18 +502,17 @@ class MujocoSimModule(
         shm = self._shm
         if shm is None:
             return
-        if not self._shm_ready_signaled:
-            shm.signal_ready(num_joints=len(engine.joint_names))
-            self._shm_ready_signaled = True
 
         # Odom - when the MJCF has a free-joint root, publish base pose
-        # from qpos[0:7] every step.  Without this, downstream consumers
-        # (viser viewer, nav stack) only see joint articulation, not
-        # base translation through the world.
+        # every step.  Without this, downstream consumers (viser viewer,
+        # nav stack) only see joint articulation, not base translation
+        # through the world.
         data = engine.data  # in-process: same MjData the sim thread mutates
-        if self._imu_base_qpos_slice is not None:
-            base_pos = data.qpos[0:3]
-            base_quat = data.qpos[3:7]  # (w, x, y, z) per MuJoCo convention
+        if self._root_base_qpos_adr is not None:
+            base_pos = data.qpos[self._root_base_qpos_adr : self._root_base_qpos_adr + 3]
+            base_quat = data.qpos[
+                self._root_base_qpos_adr + 3 : self._root_base_qpos_adr + 7
+            ]  # (w, x, y, z) per MuJoCo convention
             self.odom.publish(
                 PoseStamped(
                     ts=time.time(),
@@ -518,12 +529,20 @@ class MujocoSimModule(
 
         # IMU - only if MJCF declared the sensors.
         if (
-            self._imu_gyro_slice is None
+            self._imu_quat_slice is None
+            and self._imu_gyro_slice is None
             and self._imu_accel_slice is None
             and self._imu_base_qpos_slice is None
         ):
+            if not self._shm_ready_signaled:
+                shm.signal_ready(num_joints=len(engine.joint_names))
+                self._shm_ready_signaled = True
             return
-        if self._imu_base_qpos_slice is not None:
+
+        if self._imu_quat_slice is not None:
+            q = data.sensordata[self._imu_quat_slice]
+            quat = (float(q[0]), float(q[1]), float(q[2]), float(q[3]))
+        elif self._imu_base_qpos_slice is not None:
             q = data.qpos[self._imu_base_qpos_slice]
             quat = (float(q[0]), float(q[1]), float(q[2]), float(q[3]))
         else:
@@ -542,6 +561,10 @@ class MujocoSimModule(
         # Also publish on the stream port for downstream consumers.
         # quat is (w,x,y,z); Imu.from_wxyz reorders to dimos (x,y,z,w).
         self.imu.publish(Imu.from_wxyz(quat, gyro, accel, frame_id="pelvis", ts=time.time()))
+
+        if not self._shm_ready_signaled:
+            shm.signal_ready(num_joints=len(engine.joint_names))
+            self._shm_ready_signaled = True
 
     def _build_camera_info(self) -> None:
         if self._engine is None:

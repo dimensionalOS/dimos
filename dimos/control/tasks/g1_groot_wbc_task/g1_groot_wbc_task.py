@@ -360,29 +360,31 @@ class G1GrootWBCTask(BaseControlTask):
         return self._active
 
     def _refresh_state_caches(self, state: CoordinatorState) -> bool:
-        """Pull current q/dq for the 15 claimed joints and the full 29
-        from ``CoordinatorState``, updating last-known-good caches and
-        returning True iff the full 29 came back populated this tick.
+        """Pull current q/dq for the full 29 from ``CoordinatorState``.
+
+        Updates last-known-good caches and returns True iff the full 29
+        came back populated this tick. The 15 claimed-joint q cache is
+        derived from the first 15 entries of the same full-state cache,
+        so ramp/hold behavior and policy observations cannot diverge on
+        partial packets.
 
         On a missing joint we keep the cached value rather than dropping
         in 0.0 - the policy interprets 0.0 as "at URDF zero / legs
         straight" and commands a recovery, which tips the robot.
         """
         all_present = True
-        for i, jname in enumerate(self._joint_names_list):
-            pos = state.joints.get_position(jname)
-            if pos is None:
-                all_present = False
-            else:
-                self._cached_q_15[i] = pos
         for i, jname in enumerate(self._all_joint_names):
             pos = state.joints.get_position(jname)
             vel = state.joints.get_velocity(jname)
-            if pos is None or vel is None:
+            if pos is None:
                 all_present = False
             else:
                 self._cached_q_29[i] = pos
+            if vel is None:
+                all_present = False
+            else:
                 self._cached_dq_29[i] = vel
+        self._cached_q_15[:] = self._cached_q_29[:_NUM_ACTIONS]
         if all_present:
             self._state_seen = True
         return all_present

@@ -73,8 +73,38 @@ _MJCF_PATH = LfsPath("mujoco_sim/g1_gear_wbc.xml")
 
 _adapter_address: str | Path
 
-if global_config.simulation:
+if global_config.simulation and global_config.simulation != "mujoco":
+    raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco")
+
+if global_config.simulation == "mujoco":
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+    from dimos.simulation.engines.robot_sim_binding import (
+        RobotSimSpec,
+        mjcf_joint_names_from_hardware,
+    )
+
+    _g1_sim_joints = tuple(g1_joints)
+    _g1_sim_spec = RobotSimSpec(
+        robot_id="g1",
+        hardware_joints=_g1_sim_joints,
+        root_body_names=("pelvis",),
+        root_joint_names=("floating_base_joint",),
+        require_floating_base=True,
+        model_joint_names=mjcf_joint_names_from_hardware(_g1_sim_joints),
+        imu_gyro_names=(
+            "imu-pelvis-angular-velocity",
+            "imu-torso-angular-velocity",
+            "gyro_pelvis",
+            "imu_gyro",
+        ),
+        imu_accel_names=(
+            "imu-pelvis-linear-acceleration",
+            "imu-torso-linear-acceleration",
+            "accelerometer_pelvis",
+            "imu_accel",
+        ),
+        require_imu=True,
+    )
 
     # Sim backend: MuJoCo engine via SHM.
     _backend = MujocoSimModule.blueprint(
@@ -85,6 +115,7 @@ if global_config.simulation:
         enable_depth=False,
         enable_pointcloud=False,
         inject_legacy_assets=True,
+        robot_sim_spec=_g1_sim_spec,
     )
     # MujocoSimModule's ``odom`` Out is the sole producer of ``/odom``
     # now - the coordinator no longer polls the whole-body adapter for

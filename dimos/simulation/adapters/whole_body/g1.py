@@ -139,8 +139,9 @@ class SimMujocoG1WholeBodyAdapter:
     # IO (WholeBodyAdapter protocol)
 
     def read_motor_states(self) -> list[MotorState]:
-        if not self._connected or self._shm is None:
+        if not self.has_motor_states():
             return [MotorState()] * _NUM_MOTORS
+        assert self._shm is not None
         positions = self._shm.read_positions(_NUM_MOTORS)
         velocities = self._shm.read_velocities(_NUM_MOTORS)
         efforts = self._shm.read_efforts(_NUM_MOTORS)
@@ -155,8 +156,9 @@ class SimMujocoG1WholeBodyAdapter:
         return self._connected and self._shm is not None
 
     def read_imu(self) -> IMUState:
-        if not self._connected or self._shm is None:
+        if not self.has_motor_states():
             return IMUState()
+        assert self._shm is not None
         quat, gyro, accel = self._shm.read_imu()
         # rpy is left at its zero default to match the real G1 adapter
         # (TransportWholeBodyAdapter._on_imu). The WBC task's observation
@@ -168,8 +170,9 @@ class SimMujocoG1WholeBodyAdapter:
         )
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
-        if not self._connected or self._shm is None:
+        if not self.is_connected():
             return False
+        assert self._shm is not None
         if len(commands) != _NUM_MOTORS:
             logger.error(
                 f"SimMujocoG1WholeBodyAdapter: expected {_NUM_MOTORS} commands, got {len(commands)}"

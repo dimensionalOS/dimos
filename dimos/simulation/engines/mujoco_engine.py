@@ -30,6 +30,11 @@ from numpy.typing import NDArray
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.simulation.engines.base import SimulationEngine
+from dimos.simulation.engines.robot_sim_binding import (
+    RobotSimBinding,
+    RobotSimSpec,
+    resolve_robot_sim_binding,
+)
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
@@ -87,6 +92,7 @@ class MujocoEngine(SimulationEngine):
         on_before_step: StepHook | None = None,
         on_after_step: StepHook | None = None,
         assets: dict[str, bytes] | None = None,
+        robot_sim_spec: RobotSimSpec | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
@@ -106,8 +112,18 @@ class MujocoEngine(SimulationEngine):
 
         self._data = mujoco.MjData(self._model)
         self._joint_mappings = build_joint_mappings(self._xml_path, self._model)
+        self._robot_binding: RobotSimBinding | None = None
+        if robot_sim_spec is not None:
+            self._robot_binding = resolve_robot_sim_binding(
+                self._model, robot_sim_spec, self._joint_mappings
+            )
+            self._joint_mappings = list(self._robot_binding.joint_mappings)
         self._joint_names = [mapping.name for mapping in self._joint_mappings]
         self._num_joints = len(self._joint_names)
+        self._root_qpos_adr = self._robot_binding.root_qpos_adr if self._robot_binding else None
+        self._root_qvel_adr = self._robot_binding.root_qvel_adr if self._robot_binding else None
+        if self._root_qpos_adr is None:
+            self._root_qpos_adr, self._root_qvel_adr = self._find_first_freejoint_adrs()
         timestep = float(self._model.opt.timestep)
         self._control_frequency = 1.0 / timestep if timestep > 0.0 else 100.0
 
@@ -155,6 +171,11 @@ class MujocoEngine(SimulationEngine):
         if not xml_path.exists():
             raise FileNotFoundError(f"MuJoCo XML not found: {xml_path}")
         return xml_path
+
+    def _find_first_freejoint_adrs(self) -> tuple[int | None, int | None]:
+        if self._model.njnt > 0 and int(self._model.jnt_type[0]) == int(mujoco.mjtJoint.mjJNT_FREE):
+            return int(self._model.jnt_qposadr[0]), int(self._model.jnt_dofadr[0])
+        return None, None
 
     def _current_position(self, mapping: JointMapping) -> float:
         if mapping.joint_id is not None and mapping.qpos_adr is not None:
@@ -351,6 +372,22 @@ class MujocoEngine(SimulationEngine):
     @property
     def joint_names(self) -> list[str]:
         return list(self._joint_names)
+
+    @property
+    def robot_binding(self) -> RobotSimBinding | None:
+        return self._robot_binding
+
+    @property
+    def has_root_freejoint(self) -> bool:
+        return self._root_qpos_adr is not None
+
+    @property
+    def root_qpos_adr(self) -> int | None:
+        return self._root_qpos_adr
+
+    @property
+    def root_qvel_adr(self) -> int | None:
+        return self._root_qvel_adr
 
     @property
     def model(self) -> mujoco.MjModel:
