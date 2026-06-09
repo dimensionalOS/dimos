@@ -182,6 +182,11 @@ class ManipulationModule(Module):
             kinematics_name=self.config.kinematics_name,
             options=self.config.planning_backend_options,
         )
+        logger.info(
+            "Planning backend selected",
+            planning_backend=self.config.planning_backend,
+            backend_class=type(self._planning_backend).__name__,
+        )
         scene = self._planning_backend.scene()
 
         for robot_config in self.config.robots:
