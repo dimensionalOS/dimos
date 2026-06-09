@@ -129,9 +129,10 @@ class TestManipulationModuleIntegration:
     def test_module_initialization(self, module):
         """Test module initializes with real Drake world."""
         assert module._state == ManipulationState.IDLE
-        assert module._world_monitor is not None
-        assert module._planner is not None
-        assert module._kinematics is not None
+        assert module.planning_backend is not None
+        capabilities = module.planning_backend.capabilities()
+        assert capabilities.joint_planning
+        assert capabilities.inverse_kinematics
         assert "test_arm" in module._robots
 
     def test_joint_state_sync(self, module, joint_state_zeros):

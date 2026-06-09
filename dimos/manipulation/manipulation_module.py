@@ -39,7 +39,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.manipulation.planning.backends import PlannedMotion, create_planning_backend
 from dimos.manipulation.planning.backends.base import PlanningBackend, SceneFacade
-from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
@@ -50,7 +49,6 @@ from dimos.manipulation.planning.spec.models import (
     RobotName,
     WorldRobotID,
 )
-from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
 )
@@ -100,7 +98,7 @@ class ManipulationModuleConfig(ModuleConfig):
     planning_backend: str = "drake"
     planning_backend_options: dict[str, Any] = Field(default_factory=dict)
     planner_name: str = "rrt_connect"  # "rrt_connect"
-    kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
+    kinematics_name: str = "jacobian"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
@@ -118,7 +116,7 @@ class ManipulationModule(Module):
 
     config: ManipulationModuleConfig
 
-    # Input: Joint state from coordinator (for world sync)
+    # Input: Joint state from coordinator (for backend scene sync)
     joint_state: In[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -131,9 +129,6 @@ class ManipulationModule(Module):
 
         # Planning components (initialized in start())
         self._planning_backend: PlanningBackend | None = None
-        self._world_monitor: WorldMonitor | None = None
-        self._planner: PlannerSpec | None = None
-        self._kinematics: KinematicsSpec | None = None
 
         # Robot registry: maps robot_name -> (world_robot_id, config, trajectory_gen)
         self._robots: RobotRegistry = {}
@@ -170,7 +165,7 @@ class ManipulationModule(Module):
         logger.info("ManipulationModule started")
 
     def _initialize_planning(self) -> None:
-        """Initialize world, planner, and trajectory generator."""
+        """Initialize active backend and trajectory generators."""
         if not self.config.robots:
             logger.warning("No robots configured, planning disabled")
             return
@@ -228,10 +223,6 @@ class ManipulationModule(Module):
                 if url := visualization.get_visualization_url():
                     logger.info(f"Visualization: {url}")
 
-        self._world_monitor = self._planning_backend.world_monitor
-        self._planner = self._planning_backend.legacy_planner
-        self._kinematics = self._planning_backend.legacy_kinematics
-
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):
             _ = self.tf  # Eager init
@@ -242,11 +233,9 @@ class ManipulationModule(Module):
             self._tf_thread.start()
             logger.info("TF publishing thread started")
 
-    def _planning_scene(self) -> SceneFacade | WorldMonitor | None:
+    def _planning_scene(self) -> SceneFacade | None:
         if self._planning_backend is not None:
             return self._planning_backend.scene()
-        if self._world_monitor is not None:
-            return self._world_monitor
         return None
 
     def _get_default_robot_name(self) -> RobotName | None:
@@ -473,7 +462,7 @@ class ManipulationModule(Module):
         return False
 
     def _dismiss_preview(self, robot_id: WorldRobotID) -> None:
-        """Hide the preview ghost if the world supports it."""
+        """Hide the preview ghost if the active backend supports it."""
         if self._planning_backend is None:
             return
         visualization = self._planning_backend.visualization()
@@ -621,7 +610,8 @@ class ManipulationModule(Module):
         Args:
             robot_name: Robot to query (required if multiple robots configured)
         """
-        if self._world_monitor is None:
+        scene = self._planning_scene()
+        if scene is None:
             return None
         robot = self._get_robot(robot_name)
         if robot is None:
@@ -630,9 +620,8 @@ class ManipulationModule(Module):
         path = self._planned_paths.get(robot_name)
         if path is None:
             return None
-        return [
-            self._world_monitor.get_ee_pose(robot_id, joint_state=waypoint) for waypoint in path
-        ]
+        poses = [scene.get_ee_pose(robot_id, joint_state=waypoint) for waypoint in path]
+        return [pose for pose in poses if pose is not None]
 
     @rpc
     def get_visualization_url(self) -> str | None:
@@ -692,9 +681,9 @@ class ManipulationModule(Module):
             joint_limits = list(
                 zip(config.joint_limits_lower, config.joint_limits_upper, strict=False)
             )
-        elif self._world_monitor is not None:
+        elif (scene := self._planning_scene()) is not None:
             try:
-                lower, upper = self._world_monitor.get_joint_limits(robot_id)
+                lower, upper = scene.get_joint_limits(robot_id)
                 joint_limits = [
                     (float(lower_value), float(upper_value))
                     for lower_value, upper_value in zip(lower, upper, strict=False)
@@ -776,16 +765,7 @@ class ManipulationModule(Module):
             position=pose.position,
             orientation=pose.orientation,
         )
-        if self._world_monitor is not None and self._kinematics is not None:
-            ik = self._kinematics.solve(
-                world=self._world_monitor.world,
-                robot_id=robot_id,
-                target_pose=target_pose,
-                seed=current,
-                check_collision=True,
-            )
-            joint_state = ik.joint_state if ik.is_success() else None
-        elif self._planning_backend is not None:
+        if self._planning_backend is not None:
             result = self._planning_backend.planner().plan_to_pose(
                 robot_id=robot_id,
                 target_pose=target_pose,
@@ -1044,11 +1024,6 @@ class ManipulationModule(Module):
             return None
 
     @property
-    def world_monitor(self) -> WorldMonitor | None:
-        """Access the world monitor for advanced obstacle/world operations."""
-        return self._world_monitor
-
-    @property
     def planning_backend(self) -> PlanningBackend | None:
         return self._planning_backend
 
@@ -1108,7 +1083,7 @@ class ManipulationModule(Module):
 
     @rpc
     def remove_obstacle(self, obstacle_id: str) -> bool:
-        """Remove an obstacle from the planning world."""
+        """Remove an obstacle from the planning scene."""
         scene = self._planning_scene()
         if scene is None:
             return False
@@ -1534,7 +1509,7 @@ class ManipulationModule(Module):
             self._tf_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._tf_thread = None
 
-        # Stop world monitor (includes visualization thread)
+        # Stop active planning backend (includes visualization thread)
         if self._planning_backend is not None:
             self._planning_backend.stop()
 

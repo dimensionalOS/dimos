@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
-from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -107,9 +106,6 @@ def _make_module():
         module._planned_paths = {}
         module._planned_trajectories = {}
         module._planning_backend = None
-        module._world_monitor = None
-        module._planner = None
-        module._kinematics = None
         module._coordinator_client = None
         module._tf_stop_event = threading.Event()
         module._tf_thread = None
@@ -136,9 +132,6 @@ class TestPlanningBackendSelection:
         backend = MagicMock()
         backend.scene.return_value = scene
         backend.visualization.return_value = MagicMock()
-        backend.world_monitor = MagicMock()
-        backend.legacy_planner = MagicMock()
-        backend.legacy_kinematics = MagicMock()
 
         with patch(
             "dimos.manipulation.manipulation_module.create_planning_backend",
@@ -157,9 +150,6 @@ class TestPlanningBackendSelection:
         scene.finalize.assert_called_once()
         scene.start_state_monitor.assert_called_once_with("robot_test_arm")
         assert module._planning_backend is backend
-        assert module._world_monitor is backend.world_monitor
-        assert module._planner is backend.legacy_planner
-        assert module._kinematics is backend.legacy_kinematics
         assert "test_arm" in module._robots
 
 
@@ -205,8 +195,7 @@ class TestStateMachine:
 
     def test_begin_planning_state_checks(self, robot_config):
         """_begin_planning only allowed from IDLE or COMPLETED."""
-        module = _make_module()
-        module._world_monitor = MagicMock()
+        module = _make_module_with_monitor(robot_config)
         module._robots = {"test_arm": ("robot_id", robot_config, MagicMock())}
 
         # From IDLE - OK
@@ -355,18 +344,23 @@ class TestManipulationPanelRPCs:
 
     def test_evaluate_pose_target_does_not_store_path_or_change_state(self, robot_config):
         module = _make_module_with_monitor(robot_config)
-        module._kinematics = MagicMock()
         current = _joint_state([0.0, 0.0, 0.0], robot_config.joint_names)
         solution = _joint_state([0.1, 0.2, 0.3], robot_config.joint_names)
-        monitor = cast("MagicMock", module._world_monitor)
-        monitor.get_current_joint_state.return_value = current
-        monitor.is_state_valid.return_value = True
-        module._kinematics.solve.return_value = IKResult(
-            status=IKStatus.SUCCESS,
-            joint_state=solution,
-            position_error=0.001,
-            orientation_error=0.002,
-            message="ok",
+        scene = module._planning_backend.scene.return_value
+        planner = module._planning_backend.planner.return_value
+        scene.get_current_joint_state.return_value = current
+        scene.is_state_valid.return_value = True
+        planner.plan_to_pose.return_value = PlannedMotion(
+            path=[],
+            trajectory=MagicMock(),
+            planning_result=MagicMock(),
+            ik_result=IKResult(
+                status=IKStatus.SUCCESS,
+                joint_state=solution,
+                position_error=0.001,
+                orientation_error=0.002,
+                message="ok",
+            ),
         )
 
         result = module.evaluate_pose_target(_pose(), "test_arm")
@@ -378,12 +372,10 @@ class TestManipulationPanelRPCs:
         assert module._planned_trajectories == {}
         assert module._state == ManipulationState.IDLE
 
-    def test_evaluate_pose_target_uses_backend_when_legacy_ik_is_unavailable(self, robot_config):
+    def test_evaluate_pose_target_uses_backend_facade(self, robot_config):
         module = _make_module()
         traj_gen = MagicMock()
         module._robots = {"test_arm": ("robot_id", robot_config, traj_gen)}
-        module._world_monitor = None
-        module._kinematics = None
         scene = MagicMock()
         planner = MagicMock()
         backend = MagicMock()
@@ -419,9 +411,9 @@ class TestManipulationPanelRPCs:
         module = _make_module_with_monitor(robot_config)
         target = _joint_state([0.1, 0.2, 0.3], [])
         pose = _pose_stamped(0.4, 0.5, 0.6)
-        monitor = cast("MagicMock", module._world_monitor)
-        monitor.get_ee_pose.return_value = pose
-        monitor.is_state_valid.return_value = True
+        scene = module._planning_backend.scene.return_value
+        scene.get_ee_pose.return_value = pose
+        scene.is_state_valid.return_value = True
 
         result = module.evaluate_joint_target(target, "test_arm")
 
@@ -444,13 +436,13 @@ class TestManipulationPanelRPCs:
             _pose_stamped(0.4, 0.5, 0.6),
         ]
         module._planned_paths = {"test_arm": path}
-        monitor = cast("MagicMock", module._world_monitor)
-        monitor.get_ee_pose.side_effect = poses
+        scene = module._planning_backend.scene.return_value
+        scene.get_ee_pose.side_effect = poses
 
         result = module.get_planned_path_poses("test_arm")
 
         assert result == poses
-        assert monitor.get_ee_pose.call_count == 2
+        assert scene.get_ee_pose.call_count == 2
 
 
 class TestRobotModelConfigMapping:
@@ -470,9 +462,12 @@ class TestRobotModelConfigMapping:
 
 
 def _make_module_with_monitor(*configs: RobotModelConfig) -> ManipulationModule:
-    """Create a ManipulationModule with a mocked world monitor and robots configured."""
     module = _make_module()
-    module._world_monitor = MagicMock()
+    scene = MagicMock()
+    backend = MagicMock()
+    backend.scene.return_value = scene
+    backend.planner.return_value = MagicMock()
+    module._planning_backend = backend
     module._init_joints = {}
     for config in configs:
         robot_id = f"robot_{config.name}"
@@ -530,10 +525,9 @@ class TestOnJointState:
         )
         module._on_joint_state(msg)
 
-        # Verify world_monitor received the sub-message
-        monitor = cast("MagicMock", module._world_monitor)
-        monitor.on_joint_state.assert_called_once()
-        call_args = monitor.on_joint_state.call_args
+        scene = module._planning_backend.scene.return_value
+        scene.on_joint_state.assert_called_once()
+        call_args = scene.on_joint_state.call_args
         sub_msg = call_args[0][0]
         assert sub_msg.position == [0.1, 0.2, 0.3]
         assert sub_msg.velocity == [1.0, 2.0, 3.0]
@@ -547,8 +541,8 @@ class TestOnJointState:
         msg = _joint_state([0.5, 0.6], ["right/joint1", "right/joint2"])
         module._on_joint_state(msg)
 
-        monitor = cast("MagicMock", module._world_monitor)
-        monitor.on_joint_state.assert_not_called()
+        scene = module._planning_backend.scene.return_value
+        scene.on_joint_state.assert_not_called()
 
     def test_captures_init_joints_on_first_call(self, robot_config_with_mapping):
         """First joint state is stored as init joints; subsequent calls don't overwrite."""
@@ -595,21 +589,19 @@ class TestOnJointState:
         )
         module._on_joint_state(msg)
 
-        monitor = cast("MagicMock", module._world_monitor)
-        assert monitor.on_joint_state.call_count == 2
+        scene = module._planning_backend.scene.return_value
+        assert scene.on_joint_state.call_count == 2
 
         # Collect calls by robot_id
-        calls = {call[1]["robot_id"]: call[0][0] for call in monitor.on_joint_state.call_args_list}
+        calls = {call[1]["robot_id"]: call[0][0] for call in scene.on_joint_state.call_args_list}
         assert calls["robot_left"].position == [1.0, 2.0]
         assert calls["robot_right"].position == [3.0, 4.0]
         assert calls["robot_left"].velocity == [0.1, 0.2]
         assert calls["robot_right"].velocity == [0.3, 0.4]
 
-    def test_no_monitor_returns_early(self, robot_config_with_mapping):
-        """When world_monitor is None, _on_joint_state returns without error."""
+    def test_no_planning_backend_returns_early(self, robot_config_with_mapping):
         module = _make_module()
         module._robots = {"left_arm": ("id", robot_config_with_mapping, MagicMock())}
-        module._world_monitor = None
 
         # Should not raise
         msg = _joint_state([0.1, 0.2, 0.3], ["left/joint1", "left/joint2", "left/joint3"])
