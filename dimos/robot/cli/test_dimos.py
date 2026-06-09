@@ -12,13 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from typing import Literal
 
+from pydantic import BaseModel
 import pytest
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
-from dimos.robot.cli.dimos import _normalize_simulation_argv, arg_help
+from dimos.robot.cli.dimos import (
+    DEFAULT_CONFIG_PATH,
+    _normalize_simulation_argv,
+    arg_help,
+    load_config_args,
+)
 
 
 @pytest.mark.parametrize(
@@ -144,3 +151,31 @@ def test_blueprint_arg_help_required():
         "      * testmodule.spam: str (default: eggs)",
         "",
     ]
+
+
+def _test_config_model() -> type[BaseModel]:
+    class Config(BaseModel):
+        value: str = "default"
+
+    class BlueprintConfig(BaseModel):
+        testmodule: Config | None = None
+
+    return BlueprintConfig
+
+
+def test_load_config_args_ignores_missing_default_config():
+    assert load_config_args(_test_config_model(), [], DEFAULT_CONFIG_PATH) == {}
+
+
+def test_load_config_args_rejects_missing_explicit_config(tmp_path: Path):
+    with pytest.raises(Exception, match="Config file does not exist"):
+        _ = load_config_args(_test_config_model(), [], tmp_path / "missing.json")
+
+
+def test_load_config_args_reads_explicit_config(tmp_path: Path):
+    config_path = tmp_path / "dimos.json"
+    _ = config_path.write_text('{"testmodule": {"value": "from-config"}}')
+
+    assert load_config_args(_test_config_model(), [], config_path) == {
+        "testmodule": {"value": "from-config"}
+    }

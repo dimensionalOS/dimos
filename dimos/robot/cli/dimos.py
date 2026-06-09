@@ -61,6 +61,7 @@ main = typer.Typer(
 load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
+DEFAULT_CONFIG_PATH = CONFIG_DIR / "dimos"
 
 
 def _normalize_simulation_argv(argv: list[str]) -> list[str]:
@@ -190,7 +191,13 @@ def arg_help(
 def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -> dict[str, Any]:
     try:
         kwargs = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+    except OSError as exc:
+        if path != DEFAULT_CONFIG_PATH:
+            raise typer.BadParameter(f"Config file does not exist: {path}") from exc
+        kwargs = {}
+    except json.JSONDecodeError as exc:
+        if path != DEFAULT_CONFIG_PATH:
+            raise typer.BadParameter(f"Config file is not valid JSON: {path}") from exc
         kwargs = {}
 
     for k, v in os.environ.items():
@@ -225,7 +232,7 @@ def run(
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
     blueprint_args: list[str] = typer.Option((), "--option", "-o"),
     config_path: Path = typer.Option(
-        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+        DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config file"
     ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
