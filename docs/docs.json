@@ -80,6 +80,7 @@
         "pages": [
           "agents/index",
           "agents/style",
+          "agents/code-quality-rules",
           "agents/testing",
           {
             "group": "Authoring agent docs",

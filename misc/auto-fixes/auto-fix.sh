@@ -20,12 +20,18 @@ usage() {
 BRANCH="$1"
 # shellcheck disable=SC2016
 PLACEHOLDER='$$BRANCH$$'
+# shellcheck disable=SC2016
+RULES_PLACEHOLDER='$$RULES$$'
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 SCAN_TEMPLATE="$REPO_ROOT/misc/auto-fixes/scan_template.md"
 FIX_TEMPLATE="$REPO_ROOT/misc/auto-fixes/fix_template.md"
+# The code-quality rules live in docs so they can be reused by other prompts; the scan prompt is
+# assembled by injecting them at the template's $$RULES$$ placeholder.
+RULES_FILE="$REPO_ROOT/docs/coding-agents/code-quality-rules.md"
 [[ -f "$SCAN_TEMPLATE" ]] || { err "missing $SCAN_TEMPLATE"; exit 1; }
 [[ -f "$FIX_TEMPLATE" ]]  || { err "missing $FIX_TEMPLATE";  exit 1; }
+[[ -f "$RULES_FILE" ]]   || { err "missing $RULES_FILE";   exit 1; }
 
 EXPECTED_NAME="$(git -C "$REPO_ROOT" config user.name)"
 EXPECTED_EMAIL="$(git -C "$REPO_ROOT" config user.email)"
@@ -70,6 +76,7 @@ log ">> running scan agent"
 # In the detached worktree the bare local <branch> ref may not exist, so the template's
 # `git diff main...$$BRANCH$$` is pointed at origin/<branch>.
 scan_prompt="$(cat "$SCAN_TEMPLATE")"
+scan_prompt="${scan_prompt//"$RULES_PLACEHOLDER"/$(cat "$RULES_FILE")}"
 scan_prompt="${scan_prompt//"$PLACEHOLDER"/origin/$BRANCH}"
 if ! ( cd "$WORKTREE" && claude -p "$scan_prompt" --dangerously-skip-permissions ); then
   err "scan agent failed"
