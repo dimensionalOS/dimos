@@ -11,4 +11,4 @@
 # IMPORTANT: do NOT remove the `:latest` tag from the FROM line — Dependabot
 # uses it to anchor which channel to track. With digest-only, it has nothing
 # to follow and stops updating.
-FROM ghcr.io/dimensionalos/ros-dev:latest@sha256:0496bc4075010606afff818c2c40676a86d4e3b8d7c8455dc4fd0f7fa68af700
+FROM ghcr.io/dimensionalos/ros-dev:latest@sha256:54ca65415d578adeb556f006d297526aed4fe5a8182bcfa6e0f2348c2c286b7c
