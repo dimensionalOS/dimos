@@ -208,7 +208,7 @@ def _write_graphs(
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-    except Exception:
+    except ImportError:
         logger.warning("matplotlib unavailable — report has no graphs")
         return []
 
