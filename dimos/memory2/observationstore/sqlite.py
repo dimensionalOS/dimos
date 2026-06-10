@@ -258,7 +258,7 @@ class SqliteObservationStore(ObservationStore[T]):
         self._conn.execute(
             f'CREATE TABLE IF NOT EXISTS "{self._name}" ('
             "    id      INTEGER PRIMARY KEY AUTOINCREMENT,"
-            "    ts      REAL    NOT NULL UNIQUE,"
+            "    ts      REAL    NOT NULL,"
             "    value   NUMERIC,"
             "    pose_x  REAL, pose_y REAL, pose_z REAL,"
             "    pose_qx REAL, pose_qy REAL, pose_qz REAL, pose_qw REAL,"
