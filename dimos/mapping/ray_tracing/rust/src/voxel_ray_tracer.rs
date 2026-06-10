@@ -567,12 +567,6 @@ fn find_misses_along_ray(
             continue;
         }
 
-        // don't remove points in the same xy plane as the hit, unless the plane only walks that plane
-        // we do this to preserve floors, which is more important than some missed points
-        if origin_voxel.2 != endpoint.2 && z == endpoint.2 {
-            continue;
-        }
-
         let cx = x as f32 * voxel_size + half;
         let cy = y as f32 * voxel_size + half;
         let cz = z as f32 * voxel_size + half;
@@ -617,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn find_misses_along_ray_hits_correct_voxels_1() {
+    fn find_misses_along_ray_hits_correct_voxels() {
         let voxel_size = 1.0;
         let shadow_depth = 2.0;
         let origin = (0.5, 0.5, 0.5);
@@ -655,57 +649,6 @@ mod tests {
             endpoint,
         );
 
-        assert_eq!(misses, expected);
-    }
-
-    #[test]
-    fn find_misses_along_ray_hits_correct_voxels_2() {
-        let voxel_size = 1.0;
-        let shadow_depth = 2.0;
-        let origin = (0.5, 0.5, 0.5);
-        let end = (3.5, 2.5, 1.5);
-        let inv = 1.0 / voxel_size;
-        let origin_voxel = world_to_voxel(origin.0, origin.1, origin.2, inv);
-        let endpoint = world_to_voxel(end.0, end.1, end.2, inv);
-
-        let walked: AHashSet<VoxelKey> = [
-            (1, 0, 0),
-            (1, 1, 0),
-            (1, 1, 1),
-            (2, 1, 1),
-            (2, 2, 1),
-            (4, 2, 1),
-            (4, 3, 1),
-            (4, 3, 2),
-        ]
-        .into_iter()
-        .collect();
-        let mut map_voxels: AHashMap<VoxelKey, Voxel> = AHashMap::new();
-        for v in &walked {
-            map_voxels.insert(*v, Voxel::with_health(1));
-        }
-
-        let mut misses: AHashSet<VoxelKey> = AHashSet::new();
-        find_misses_along_ray(
-            &mut misses,
-            &map_voxels,
-            origin,
-            end,
-            voxel_size,
-            shadow_depth,
-            0.0,
-            0.5,
-            origin_voxel,
-            endpoint,
-        );
-
-        // z-slab protection skips voxels in the endpoint's z-slab when the
-        // ray crosses z-slabs. Endpoint is at z=1 here.
-        let expected: AHashSet<VoxelKey> = walked
-            .iter()
-            .filter(|v| v.2 != endpoint.2)
-            .copied()
-            .collect();
         assert_eq!(misses, expected);
     }
 
@@ -821,11 +764,18 @@ mod tests {
             max_health: 1,
             graze_cos: 0.5,
         };
-        let inv = 1.0 / voxel_size;
-
-        // Cover the full range we will probe, plus a little for shadow.
+        // A real floor is a 2d plane, not a wire. Build it from accumulated
+        // returns over a y band so the centerline voxels the ray walks have a
+        // full planar neighborhood and earn a trustworthy vertical normal.
         let max_x = 25.0_f32;
-        let n_ground = (max_x / voxel_size).ceil() as i32;
+        let y_half = 0.3_f32;
+        let ds = voxel_size / 3.0;
+        let nx = (max_x / ds).ceil() as i32;
+        let ny = (2.0 * y_half / ds).ceil() as i32;
+        let floor_z = voxel_size * 0.5;
+        let floor_points: Vec<(f32, f32, f32)> = (0..=nx)
+            .flat_map(|i| (0..=ny).map(move |j| (i as f32 * ds, -y_half + j as f32 * ds, floor_z)))
+            .collect();
 
         let ranges: Vec<f32> = (1..=20).map(|i| i as f32).collect();
         let mut table = format!(
@@ -835,24 +785,23 @@ mod tests {
         );
         let mut total_clipped = 0usize;
         for &range in &ranges {
-            let mut map = VoxelMap::default();
-            for i in 0..n_ground {
-                let x = (i as f32) * voxel_size + voxel_size * 0.5;
-                let key = world_to_voxel(x, 0.0, 0.0, inv);
-                map.set(key, cfg.max_health);
-            }
-            let n_before = map.voxels.len();
+            let (mut map, _) = build_surface(&floor_points, voxel_size, cfg.max_health);
+            // The ray walks the y=0, z=0 row, so only that row is ever at risk.
+            let center_row: Vec<VoxelKey> = map
+                .voxels
+                .keys()
+                .copied()
+                .filter(|k| k.1 == 0 && k.2 == 0)
+                .collect();
+            let n_before = center_row.len();
 
             let origin = (0.0_f32, 0.0_f32, lidar_height);
             let points = vec![(range, 0.0_f32, 0.0_f32)];
             update_map(&mut map, origin, &points, &cfg);
 
-            let n_after_ground: usize = (0..n_ground)
-                .filter(|i| {
-                    let x = (*i as f32) * voxel_size + voxel_size * 0.5;
-                    let key = world_to_voxel(x, 0.0, 0.0, inv);
-                    map.voxels.contains_key(&key)
-                })
+            let n_after_ground = center_row
+                .iter()
+                .filter(|k| map.voxels.contains_key(k))
                 .count();
             let clipped = n_before - n_after_ground;
             let pct = 100.0 * clipped as f32 / n_before as f32;
@@ -860,6 +809,28 @@ mod tests {
                 "{range:>6.1}  {n_before:>20}  {clipped:>7}  {pct:>10.1}\n"
             ));
             total_clipped += clipped;
+
+            // Emit one x-z picture so the floor and its normals are visible.
+            // Window the floor to a little past the hit so the image stays readable.
+            if (range - 8.0).abs() < 1e-3 {
+                let floor: Vec<VoxelKey> = center_row
+                    .iter()
+                    .copied()
+                    .filter(|k| (k.0 as f32) * voxel_size <= range + 1.5)
+                    .collect();
+                let svg = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ground_clip.svg");
+                write_stair_svg(
+                    &svg,
+                    &floor,
+                    &map,
+                    &points,
+                    origin,
+                    &points,
+                    voxel_size,
+                    cfg.shadow_depth,
+                    cfg.grace_depth,
+                );
+            }
         }
         eprint!("{table}");
         assert!(
