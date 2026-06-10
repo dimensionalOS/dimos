@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Direct Cloudflare Realtime SFU provider (app credentials).
+"""Direct Cloudflare Realtime SFU provider — TEST AND BENCHMARK ONLY.
 
-CF DataChannels are unidirectional, so this provider holds two CF sessions —
-one publishing, one subscribing — giving a process loopback pubsub through
-the CF edge. Used by integration tests and the pubsub benchmark; robots
-talk to operators through the broker provider instead.
+Never deploy this on a robot: it authenticates with the CF *app secret*,
+which must not leave server-side/dev environments (robots carry revocable
+``dtk_live_*`` keys and go through the dimensional-teleop broker — see
+``broker.py``). CF DataChannels are unidirectional, so this provider holds
+two CF sessions — one publishing, one subscribing — giving a single process
+loopback pubsub through the CF edge: exactly what the integration tests and
+the pubsub benchmark need, and nothing else.
 
 Env vars (fallback when config fields are unset):
     CF_TELEOP_APP_ID     — Cloudflare Realtime app id
