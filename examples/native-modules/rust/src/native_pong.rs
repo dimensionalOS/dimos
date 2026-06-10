@@ -1,10 +1,12 @@
 use dimos_module::{run, Input, LcmTransport, Module, Output};
 use lcm_msgs::geometry_msgs::{Twist, Vector3};
 use serde::Deserialize;
+use validator::Validate;
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Validate)]
 #[serde(deny_unknown_fields)]
 struct PongConfig {
+    #[validate(range(min = 0, max = 1000))]
     sample_config: i64,
 }
 
@@ -39,5 +41,5 @@ async fn main() {
     let transport = LcmTransport::new()
         .await
         .expect("Failed to create transport");
-    run::<Pong, _>(transport).await.expect("pong run failed");
+    run::<Pong, _>(transport).await;
 }

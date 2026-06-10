@@ -313,7 +313,8 @@ class ResourceSpyApp(App[None]):
             wid = w.get("worker_id", "?")
             role_style = theme.BRIGHT_GREEN if alive else theme.BRIGHT_RED
             modules = ", ".join(w.get("modules", [])) or ""
-            entries.append((f"worker {wid}", role_style, w, modules, str(w.get("pid", ""))))
+            label = f"worker {wid} (dedicated)" if w.get("dedicated") else f"worker {wid}"
+            entries.append((label, role_style, w, modules, str(w.get("pid", ""))))
 
         # Per-metric max for relative coloring
         ranges = _compute_ranges([d for _, _, d, _, _ in entries])
@@ -466,6 +467,7 @@ _PREVIEW_DATA: dict[str, Any] = {
         {
             "worker_id": 1,
             "alive": False,
+            "dedicated": True,
             "modules": ["vision"],
             "cpu_percent": 87.0,
             "pss": 536_870_912,
@@ -505,7 +507,12 @@ def _preview() -> None:
     for w in data["workers"]:
         rs = theme.BRIGHT_GREEN if w.get("alive") else theme.BRIGHT_RED
         mods = ", ".join(w.get("modules", []))
-        entries.append((f"worker {w['worker_id']}", rs, w, mods, str(w.get("pid", ""))))
+        label = (
+            f"worker {w['worker_id']} (dedicated)"
+            if w.get("dedicated")
+            else f"worker {w['worker_id']}"
+        )
+        entries.append((label, rs, w, mods, str(w.get("pid", ""))))
 
     ranges = _compute_ranges([d for _, _, d, _, _ in entries])
 

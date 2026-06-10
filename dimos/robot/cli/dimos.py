@@ -38,6 +38,12 @@ from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.mapping.utils.cli.map import main as _map_main
+from dimos.mapping.utils.cli.pose_fill import main as _map_pose_fill_main
+from dimos.mapping.utils.cli.rename import main as _map_rename_main
+from dimos.mapping.utils.cli.replay import main as _map_replay_main
+from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_main
+from dimos.mapping.utils.cli.summary import main as _map_summary_main
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
@@ -234,7 +240,6 @@ def run(
     )
     from dimos.core.run_registry import (
         RunEntry,
-        check_port_conflicts,
         cleanup_stale,
         generate_run_id,
     )
@@ -253,16 +258,6 @@ def run(
     stale = cleanup_stale()
     if stale:
         logger.info(f"Cleaned {stale} stale run entries")
-
-    # Port conflict check
-    conflict = check_port_conflicts()
-    if conflict:
-        typer.echo(
-            f"Error: Ports in use by {conflict.run_id} (PID {conflict.pid}). "
-            f"Run 'dimos stop' first.",
-            err=True,
-        )
-        raise typer.Exit(1)
 
     blueprint_name = "-".join(robot_types)
     run_id = generate_run_id(blueprint_name)
@@ -316,7 +311,7 @@ def run(
 
         daemonize(log_dir)
 
-        rpyc_port = coordinator.start_rpyc_service()  # After daemonize().
+        coordinator.start_rpc_service()  # After daemonize().
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -325,7 +320,6 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
@@ -333,7 +327,7 @@ def run(
         install_signal_handlers(entry, coordinator)
         coordinator.loop()
     else:
-        rpyc_port = coordinator.start_rpyc_service()
+        coordinator.start_rpc_service()
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -342,7 +336,6 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
-            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
@@ -683,6 +676,20 @@ def send(
     from dimos.robot.cli.topic import topic_send
 
     topic_send(topic, message_expr)
+
+
+map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
+main.add_typer(map_app, name="map")
+map_app.command("global")(_map_main)
+map_app.command("summary")(_map_summary_main)
+map_app.command("rename")(_map_rename_main)
+map_app.command("pose-fill")(_map_pose_fill_main)
+map_app.command("replay")(_map_replay_main)
+map_app.command("replay-marker")(_map_replay_marker_main)
+
+from dimos.memory2.cli.app import mem_app
+
+main.add_typer(mem_app, name="mem")
 
 
 @main.command()

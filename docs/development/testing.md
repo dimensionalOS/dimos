@@ -63,6 +63,27 @@ When writing or debugging a specific self-hosted test, override `-m` yourself to
 pytest -m self_hosted dimos/path/to/test_something.py
 ```
 
+## Testing on a fresh Ubuntu install
+
+CI tests dimos with pre-built images and cached deps, so it can't catch gaps
+between what [`installation/ubuntu.md`](/docs/installation/ubuntu.md) tells a new user to
+do and what a clean machine actually needs (e.g. a system package we require but
+forgot to document).
+
+The [misc/fresh-ubuntu-tests/](/misc/fresh-ubuntu-tests/) harness closes that
+gap. It replays the documented install + test flow inside a fresh, official,
+**unmodified** Ubuntu Desktop 24.04 VM (VirtualBox).
+
+It's intended to be executed locally.
+
+```sh skip
+cd misc/fresh-ubuntu-tests
+
+./vmtest.sh build   # download + verify the official ISO, install, snapshot "golden" (once, ~15-30 min)
+./vmtest.sh run     # clone golden, run the doc flow, report PASS/FAIL
+./vmtest.sh clean   # delete leftover run clones and logs (keeps the ISO + golden VM)
+```
+
 ## Writing tests
 
 Test files live next to the code they test. If you have `dimos/core/pubsub.py`, its tests go in `dimos/core/test_pubsub.py`.
@@ -84,7 +105,6 @@ Simple example code:
 ```python
 import pytest
 
-
 class RobotArm:
     def __init__(self, device: str) -> None:
         self.device = device
@@ -102,7 +122,6 @@ class RobotArm:
     @property
     def position(self) -> tuple[float, float, float]:
         return self._position
-
 
 @pytest.fixture
 def arm():

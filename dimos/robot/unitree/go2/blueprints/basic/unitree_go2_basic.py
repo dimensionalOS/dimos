@@ -105,6 +105,7 @@ rerun_config = {
     "visual_override": {
         "world/camera_info": _convert_camera_info,
         "world/global_map": _convert_global_map,
+        "world/merged_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,
     },
     "max_hz": {

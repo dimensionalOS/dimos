@@ -1,6 +1,6 @@
 # Go2 Non-ROS Navigation
 
-<img src="assets/noros_nav.gif" width="100%">
+![output](assets/noros_nav.gif)
 
 The Go2 navigation stack runs entirely without ROS. It uses a **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations.
 
@@ -38,6 +38,7 @@ text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 </details>
 
 ![output](assets/go2nav_dataflow.svg)
+
 ## Pipeline Steps
 
 ### 1. LiDAR Frame — [`GO2Connection`](/dimos/robot/unitree/go2/connection.py)
@@ -176,5 +177,4 @@ unitree_go2 = autoconnect(
 
 to_svg(unitree_go2, "assets/go2_blueprint.svg")
 ```
-<!--Result:-->
 ![output](assets/go2_blueprint.svg)
