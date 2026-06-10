@@ -63,10 +63,11 @@ class Hand(IntEnum):
 class HostedTeleopConfig(ModuleConfig):
     control_loop_hz: float = 50.0
 
-    broker_url: str = os.getenv("TELEOP_BROKER_URL", "https://teleop.dimensionalos.com")
-    broker_api_key: str = os.getenv("TELEOP_API_KEY", "")
-    robot_id: str = os.getenv("TELEOP_ROBOT_ID", "")
-    robot_name: str = os.getenv("TELEOP_ROBOT_NAME", "")
+    broker_url: str = "https://teleop.dimensionalos.com"
+    # Empty defaults; resolved from TELEOP_* env vars at start() if unset.
+    broker_api_key: str = ""
+    robot_id: str = ""
+    robot_name: str = ""
 
     stun_urls: list[str] = ["stun:stun.cloudflare.com:3478"]
     turn_urls: list[str] = []
@@ -247,8 +248,8 @@ class HostedTeleopModule(Module):
 
         url = f"{self.config.broker_url.rstrip('/')}/api/v1/sessions"
         body = {
-            "robot_id": self.config.robot_id,
-            "robot_name": self.config.robot_name,
+            "robot_id": self.config.robot_id or os.getenv("TELEOP_ROBOT_ID", ""),
+            "robot_name": self.config.robot_name or os.getenv("TELEOP_ROBOT_NAME", ""),
             "sdp_offer": self._pc.localDescription.sdp,
         }
         resp = await self._http.post(url, json=body, headers=self._auth_headers())
@@ -295,8 +296,9 @@ class HostedTeleopModule(Module):
         self._session_id = None
 
     def _auth_headers(self) -> dict[str, str]:
-        if self.config.broker_api_key:
-            return {"X-Robot-API-Key": self.config.broker_api_key}
+        api_key = self.config.broker_api_key or os.getenv("TELEOP_API_KEY")
+        if api_key:
+            return {"X-Robot-API-Key": api_key}
         return {}
 
     def _start_heartbeat(self) -> None:
