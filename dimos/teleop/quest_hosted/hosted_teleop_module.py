@@ -290,12 +290,12 @@ class HostedTeleopModule(Module):
         )
         self._heartbeat_thread.start()
 
-    def _record_cmd_arrival(self, ts: float | None, seq: int | None) -> None:
+    def _record_cmd_arrival(self, ts: float | None) -> None:
         """Hook for the subclass cmd-decode path; feeds the HUD telemetry."""
-        self._cmd_stats.record(ts, seq)
+        self._cmd_stats.record(ts)
 
     def _start_telemetry(self) -> None:
-        """Push command-plane health (latency/jitter/loss/rate) to the operator HUD."""
+        """Push command-plane health (latency/jitter/rate) to the operator HUD."""
 
         def send_telemetry() -> None:
             stats = self._cmd_stats.snapshot()

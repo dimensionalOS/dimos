@@ -17,7 +17,7 @@
 
 Reads the streams a ``TeleopRecorder`` writes (twist, poses, buttons, video
 stats) and emits ``report.md`` next to it.
-The math (percentiles, loss, reorder, stalls) is the same one the live HUD
+The math (percentiles, rate, jitter, stalls) is the same one the live HUD
 uses — both go through ``stream_stats``.
 
 Importable from ``TeleopRecorder.stop()`` (post-hoc on the run's own .db) or
@@ -40,14 +40,11 @@ from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.teleop.quest.quest_types import Buttons
-from dimos.teleop.utils.stream_stats import loss_pct, pcts, reorder_count
+from dimos.teleop.utils.stream_stats import pcts
 from dimos.teleop.utils.video_stats import VideoStats
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-# Streams with loss at or above this percent are flagged WARN in the report.
-_LOSS_THRESHOLD_PCT = 1.0
 
 # Streams the recorder declares + the dimos msg type to decode each as. Order
 # here drives the order in the report.
@@ -114,7 +111,7 @@ def _read_all(store: SqliteStore) -> dict[str, list[Any]]:
             continue
         stream: Any = store.stream(name, msg_type)
         # Stream.__iter__ yields Observation[T]; we want (ts, payload) so the
-        # stats math (which reads .ts / .seq on the payload) matches what the
+        # stats math (which reads .ts on the payload) matches what the
         # benchmark module did with in-memory msgs.
         out[name] = [obs.data for obs in stream]
     return out
@@ -133,17 +130,16 @@ def _run_duration(records: dict[str, list[Any]]) -> float:
 def _summary(records: list[Any], stall_factor: float = 3.0) -> dict[str, Any]:
     """Stats for one twist/pose/buttons stream.
 
-    Computed from each message's ``.ts`` (sender stamp, clock-sync calibrated)
-    and ``.seq`` where present. We treat .ts as the arrival time too because
-    the recorder doesn't persist a separate wall-arrival stamp — for these
-    streams in practice the recorder writes within microseconds of arrival, so
-    inter-stamp deltas track inter-arrival deltas closely.
+    Computed from each message's ``.ts`` (sender stamp, clock-sync calibrated).
+    We treat .ts as the arrival time too because the recorder doesn't persist a
+    separate wall-arrival stamp — for these streams in practice the recorder
+    writes within microseconds of arrival, so inter-stamp deltas track
+    inter-arrival deltas closely.
 
-    Buttons lacks ``.ts``/``.seq``, so rate/jitter/loss are all ``None``.
+    Buttons lacks ``.ts``, so rate/jitter are ``None``.
     """
     count = len(records)
     tss = [float(m.ts) for m in records if getattr(m, "ts", None) is not None]
-    seqs = [int(m.seq) for m in records if getattr(m, "seq", None) is not None]
 
     intervals_ms = (np.diff(sorted(tss)) * 1000.0).tolist() if len(tss) >= 2 else []
     span = (tss[-1] - tss[0]) if len(tss) >= 2 else 0.0
@@ -157,8 +153,6 @@ def _summary(records: list[Any], stall_factor: float = 3.0) -> dict[str, Any]:
         "count": count,
         "rate_hz": (len(tss) - 1) / span if span > 0 else None,
         "jitter_ms": pcts(intervals_ms),
-        "loss_pct": loss_pct(seqs),
-        "reorder_count": reorder_count(seqs),
         "stall_count": len(stalls),
         "stall_total_s": sum(stalls) / 1000.0,
     }
@@ -216,8 +210,8 @@ def _format_report(
         "",
         "> Generated from the recording's `.db` at session stop. Stream stats "
         "are computed from each message's sender timestamp (clock-sync "
-        "calibrated) and monotonic `seq`. Rate, jitter, loss are clock-"
-        "independent; video stats come from the operator's `getStats()`.",
+        "calibrated). Rate and jitter are clock-independent; video stats come "
+        "from the operator's `getStats()`.",
         "",
     ]
     if not active:
@@ -227,13 +221,6 @@ def _format_report(
 
     for name, s in active.items():
         jitter = s["jitter_ms"]
-        loss = s["loss_pct"]
-
-        checks: list[str] = []
-        if loss is not None:
-            checks.append(f"loss {'PASS' if loss < _LOSS_THRESHOLD_PCT else 'WARN'} ({loss:.2f}%)")
-
-        loss_line = f"{loss:.2f}%" if loss is not None else "n/a (no seq)"
         jitter_line = (
             f"- Jitter (ms): p50 {jitter['p50']:.1f} / p95 {jitter['p95']:.1f} "
             f"/ p99 {jitter['p99']:.1f} / max {jitter['max']:.1f}"
@@ -247,10 +234,7 @@ def _format_report(
             f"- Messages: {s['count']}",
             f"- Rate: {s['rate_hz']:.2f} Hz" if s["rate_hz"] else "- Rate: n/a",
             jitter_line,
-            f"- Loss: {loss_line}",
-            f"- Reorder: {s['reorder_count']}",
             f"- Stalls: {s['stall_count']} ({s['stall_total_s']:.2f} s total)",
-            f"- **Checks:** {', '.join(checks) if checks else 'n/a'}",
             "",
         ]
     lines += _video_lines(video)

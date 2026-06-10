@@ -88,25 +88,21 @@ class HostedTwistTeleopModule(HostedTeleopModule):
 
     cmd_vel: Out[Twist]
 
-    def _publish_twist(
-        self, lx: float, ly: float, az: float, ts: float, frame_id: str, seq: int
-    ) -> None:
+    def _publish_twist(self, lx: float, ly: float, az: float, ts: float, frame_id: str) -> None:
         ls = self.config.linear_speed
         as_ = self.config.angular_speed
         linear = Vector3(lx * ls, ly * ls, 0.0)
         angular = Vector3(0.0, 0.0, az * as_)
         self.cmd_vel.publish(Twist(linear=linear, angular=angular))
         self.cmd_vel_stamped.publish(
-            TwistStamped(ts=ts, frame_id=frame_id, seq=seq, linear=linear, angular=angular)
+            TwistStamped(ts=ts, frame_id=frame_id, linear=linear, angular=angular)
         )
 
     def _on_twist_bytes(self, data: bytes) -> None:
-        # Keyboard/touch path: stamped ts + seq feed the HUD command-plane stats.
+        # Keyboard/touch path: stamped ts feeds the HUD command-plane stats.
         msg = TwistStamped.lcm_decode(data)
-        self._record_cmd_arrival(msg.ts, msg.seq)
-        self._publish_twist(
-            msg.linear.x, msg.linear.y, msg.angular.z, msg.ts, msg.frame_id, msg.seq
-        )
+        self._record_cmd_arrival(msg.ts)
+        self._publish_twist(msg.linear.x, msg.linear.y, msg.angular.z, msg.ts, msg.frame_id)
 
     def _on_joy_bytes(self, data: bytes) -> None:
         # VR thumbsticks → base velocity. Left Y = fwd/back, left X = strafe,
@@ -118,4 +114,4 @@ class HostedTwistTeleopModule(HostedTeleopModule):
         fwd = -left.thumbstick.y if left is not None else 0.0
         strafe = -left.thumbstick.x if left is not None else 0.0
         yaw = -right.thumbstick.x if right is not None else 0.0
-        self._publish_twist(fwd, strafe, yaw, time.time(), "vr", 0)
+        self._publish_twist(fwd, strafe, yaw, time.time(), "vr")

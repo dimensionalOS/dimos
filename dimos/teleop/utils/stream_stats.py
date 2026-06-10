@@ -12,15 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Stat helpers for teleop streams (latency / jitter / loss / reorder).
+"""Stat helpers for teleop streams (latency / jitter / rate).
 
 Two flavors live here:
 
-* **Pure functions** (`pcts`, `loss_pct`, `reorder_count`) — shared by the
-  post-hoc report writer (``teleop/utils/report.py``) and any live stats
-  consumer.
+* **`pcts`** — a pure percentile helper shared by the post-hoc report writer
+  (``teleop/utils/report.py``) and any live stats consumer.
 * **`LiveStreamStats`** — a rolling-window class for always-on consumers that
   only need a recent snapshot (e.g. the operator HUD's command-plane telemetry).
+
+Packet loss / reorder are transport-layer concerns and are intentionally not
+computed here from an application sequence number. TODO: surface command-plane
+loss from datachannel/SCTP stats (same source as VideoStats.loss_pct), not a
+per-message seq.
 """
 
 from __future__ import annotations
@@ -47,70 +51,41 @@ def pcts(values: Sequence[float]) -> dict[str, float] | None:
     }
 
 
-def loss_pct(seqs: Sequence[int]) -> float | None:
-    """Loss % from gaps in a monotonic sequence; None if fewer than 2 samples.
-
-    ``loss = 1 - distinct_received / (max_seq - min_seq + 1)``. Reorders and
-    duplicates do not inflate it — only genuinely missing seq values count.
-    """
-    valid = [s for s in seqs if s is not None]
-    if len(valid) < 2:
-        return None
-    expected = max(valid) - min(valid) + 1
-    received = len(set(valid))
-    return max(0.0, (1.0 - received / expected) * 100.0)
-
-
-def reorder_count(seqs: Sequence[int]) -> int:
-    """Count messages that arrived with a seq below an already-seen maximum."""
-    count = 0
-    running_max = -1
-    for s in seqs:
-        if s is None:
-            continue
-        if s < running_max:
-            count += 1
-        else:
-            running_max = s
-    return count
-
-
 class LiveStreamStats:
     """Rolling-window health for an always-on stream consumer.
 
-    Records ``(wall, ts, seq)`` per arrival in a bounded deque so old samples
+    Records ``(wall, ts)`` per arrival in a bounded deque so old samples
     fall off automatically; ``snapshot()`` returns the current window's median
-    E2E latency, median inter-arrival jitter, seq-gap loss, and arrival rate.
+    E2E latency, median inter-arrival jitter, and arrival rate.
     Thread-safe — ``record()`` runs on the transport callback,
     ``snapshot()`` on a separate reader.
     """
 
     def __init__(self, window: int = 120) -> None:
         self._lock = threading.Lock()
-        # (wall_arrival, ts, seq); ts/seq are None when the stream is unstamped.
-        self._samples: deque[tuple[float, float | None, int | None]] = deque(maxlen=window)
+        # (wall_arrival, ts); ts is None when the stream is unstamped.
+        self._samples: deque[tuple[float, float | None]] = deque(maxlen=window)
 
-    def record(self, ts: float | None, seq: int | None) -> None:
-        """Note an inbound message's send-stamp + monotonic counter."""
+    def record(self, ts: float | None) -> None:
+        """Note an inbound message's send-stamp (None if unstamped)."""
         with self._lock:
-            self._samples.append((time.time(), ts, seq))
+            self._samples.append((time.time(), ts))
 
     def snapshot(self) -> dict[str, float | None] | None:
-        """Median latency/jitter (ms), loss (%), rate (Hz), or None.
+        """Median latency/jitter (ms), rate (Hz), or None.
 
         Returns ``None`` until at least two samples have landed (one inter-arrival
-        interval is needed). Uses the module's shared ``pcts`` / ``loss_pct`` so
-        the math matches the benchmark module's report.
+        interval is needed). Uses the module's shared ``pcts`` so the math matches
+        the report writer.
         """
         with self._lock:
             samples = list(self._samples)
         if len(samples) < 2:
             return None
 
-        arrivals = [w for w, _, _ in samples]
+        arrivals = [w for w, _ in samples]
         intervals_ms = [(b - a) * 1000.0 for a, b in pairwise(arrivals)]
-        e2e_ms = [(w - ts) * 1000.0 for w, ts, _ in samples if ts is not None]
-        seqs = [s for _, _, s in samples if s is not None]
+        e2e_ms = [(w - ts) * 1000.0 for w, ts in samples if ts is not None]
 
         e2e = pcts(e2e_ms)
         jit = pcts(intervals_ms)
@@ -118,9 +93,8 @@ class LiveStreamStats:
         return {
             "latency_ms": e2e["p50"] if e2e else None,
             "jitter_ms": jit["p50"] if jit else None,
-            "loss_pct": loss_pct(seqs),
             "rate_hz": (len(samples) - 1) / span if span > 0 else None,
         }
 
 
-__all__ = ["LiveStreamStats", "loss_pct", "pcts", "reorder_count"]
+__all__ = ["LiveStreamStats", "pcts"]
