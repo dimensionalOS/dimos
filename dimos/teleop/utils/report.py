@@ -46,7 +46,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# E2E latency acceptance bands (ms), keyed on p50.
+# Streams with loss at or above this percent are flagged WARN in the report.
 _LOSS_THRESHOLD_PCT = 1.0
 
 # Streams the recorder declares + the dimos msg type to decode each as. Order
