@@ -32,7 +32,7 @@ jobs:
             const event = context.eventName;
             const payload = context.payload;
 
-            let prNumbers, ciOk;
+            let prNumbers, ciOk, runHeadSha = null;
 
             if (event === 'pull_request_target') {
               // synchronize → new push; clear any stale label until ci re-runs.
@@ -40,6 +40,7 @@ jobs:
               ciOk = false;
             } else {
               const run = payload.workflow_run;
+              runHeadSha = run.head_sha;
               const jobs = await github.paginate(
                 github.rest.actions.listJobsForWorkflowRun,
                 { owner, repo, run_id: run.id, per_page: 100 },
@@ -51,15 +52,27 @@ jobs:
               if (prNumbers.length === 0) {
                 // Fork PRs: workflow_run.pull_requests is empty; resolve via head SHA.
                 const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-                  owner, repo, commit_sha: run.head_sha,
+                  owner, repo, commit_sha: runHeadSha,
                 });
                 prNumbers = prs.filter(p => p.state === 'open').map(p => p.number);
               }
             }
 
-            core.info(`event=${event} prs=${prNumbers.join(',')} ciOk=${ciOk}`);
+            core.info(`event=${event} prs=${prNumbers.join(',')} ciOk=${ciOk} runHeadSha=${runHeadSha}`);
 
             for (const prNumber of prNumbers) {
+              if (runHeadSha) {
+                // workflow_run events can be delivered after a newer push;
+                // skip if the PR has moved past the SHA we evaluated.
+                const { data: pr } = await github.rest.pulls.get({
+                  owner, repo, pull_number: prNumber,
+                });
+                if (pr.head.sha !== runHeadSha) {
+                  core.info(`stale: #${prNumber} head=${pr.head.sha} run=${runHeadSha}; skipping`);
+                  continue;
+                }
+              }
+
               if (ciOk) {
                 await github.rest.issues.addLabels({
                   owner, repo, issue_number: prNumber, labels: [label],
