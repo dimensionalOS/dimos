@@ -44,10 +44,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     min_health: int = -2
     max_health: int = 1
     # Spare a clearing miss when |ray dot surface normal| is below this.
-    # Larger spares steeper grazes, protecting floors, treads and landings.
     graze_cos: float = 0.7
     # Only spare a voxel whose neighborhood was hit within this many frames.
-    # A voxel that goes stale clears despite its normal. Large disables it.
     recency_window: int = 15
 
 

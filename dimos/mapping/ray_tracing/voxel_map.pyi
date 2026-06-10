@@ -46,8 +46,7 @@ class VoxelRayMapper:
     def global_map_normals(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
         """Return healthy voxel centers and their surface normals, both (M, 3) float32.
 
-        The two arrays are in matching order. The normal is the zero vector where
-        the voxel has no confident planar normal.
+        Matching order. The normal is the zero vector where the voxel has no plane.
         """
         ...
 

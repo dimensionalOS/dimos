@@ -12,12 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Replay a lidar+odometry .db through several voxel-mapper variants at once.
+"""Replay a lidar+odometry .db through several voxel-mapper variants into rerun.
 
-Each variant's global map is logged to its own rerun entity (world/maps/<name>),
-so they overlay in one view and can be toggled on and off independently. Lidar
-and odometry are aligned by timestamp so each frame carries the robot pose used
-as the ray-cast origin.
+Each variant's global map is a separate, toggleable entity under world/maps.
 
 Usage:
     uv run python -m dimos.mapping.ray_tracing.utils.raytrace_rrd go2_mid360_stairs
@@ -27,6 +24,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import rerun as rr
 import typer
 
@@ -51,6 +49,21 @@ COLORS = {
 
 # A window large enough to never expire, i.e. recency gating off.
 RECENCY_OFF = 1_000_000_000
+
+# Variants whose normal gate is active, so their normals are worth drawing.
+NORMAL_VARIANTS = {"normal_gate", "no_recency"}
+
+
+def _height_colors(centers: np.ndarray, base: list[int]) -> np.ndarray:
+    """Shade each voxel by height, keeping the method's base hue."""
+    if len(centers) == 0:
+        return np.empty((0, 3), np.uint8)
+    z = centers[:, 2]
+    span = float(z.max() - z.min())
+    # Only the top half of the brightness scale, so the low end stays visible.
+    t = (z - z.min()) / span if span > 1e-6 else np.zeros(len(z), np.float32)
+    brightness = 0.5 + 0.5 * t
+    return (np.asarray(base, np.float32) * brightness[:, None]).astype(np.uint8)
 
 
 def _attach_pose_from_odom(pair_obs: PairObs) -> Observation[PointCloud2]:
@@ -80,6 +93,7 @@ def main(
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     emit_every: int = typer.Option(1, "--emit-every", help="Log the maps every N frames"),
     render_voxel: float = typer.Option(0.05, "--render-voxel", help="Voxel render size (m)"),
+    normal_scale: float = typer.Option(0.08, "--normal-scale", help="Normal arrow length (m)"),
     raw: bool = typer.Option(True, "--raw/--no-raw", help="Also log the raw sensor cloud"),
 ) -> None:
     db_path = resolve_named_path(dataset, ".db")
@@ -99,9 +113,9 @@ def main(
         static=True,
     )
 
-    # naive accumulates every voxel and never clears. The rest are defaults except:
-    # no_normal_gate turns the normal gate off; no_recency keeps the gate but never
-    # lets a spare expire (recency off); normal_gate is the full default behavior.
+    # naive accumulates every voxel and never clears. no_normal_gate turns the
+    # normal gate off. no_recency keeps the gate but never expires a spare.
+    # normal_gate is the full default behavior.
     mappers = {
         "naive": VoxelRayMapper(
             voxel_size=voxel_size,
@@ -140,10 +154,38 @@ def main(
                 continue
 
             rr.set_time(TIMELINE, timestamp=obs.ts)
+            robot = np.asarray([x, y, z], np.float32)
             for name, mapper in mappers.items():
+                if name not in NORMAL_VARIANTS:
+                    centers = mapper.global_map()
+                    rr.log(
+                        f"world/maps/{name}",
+                        rr.Points3D(
+                            centers,
+                            colors=_height_colors(centers, COLORS[name]),
+                            radii=render_voxel / 2,
+                        ),
+                    )
+                    continue
+                centers, normals = mapper.global_map_normals()
                 rr.log(
                     f"world/maps/{name}",
-                    rr.Points3D(mapper.global_map(), colors=[COLORS[name]], radii=render_voxel / 2),
+                    rr.Points3D(
+                        centers,
+                        colors=_height_colors(centers, COLORS[name]),
+                        radii=render_voxel / 2,
+                    ),
+                )
+                keep = np.any(normals != 0.0, axis=1)
+                origins, vectors = centers[keep], normals[keep]
+                # PCA normals are sign-ambiguous. Orient them toward the robot.
+                flip = np.sum(vectors * (robot - origins), axis=1) < 0
+                vectors = np.where(flip[:, None], -vectors, vectors)
+                rr.log(
+                    f"world/maps/{name}/normals",
+                    rr.Arrows3D(
+                        origins=origins, vectors=vectors * normal_scale, colors=[COLORS[name]]
+                    ),
                 )
             if raw:
                 rr.log("world/raw_points", rr.Points3D(pts, colors=[[90, 90, 90]], radii=0.01))

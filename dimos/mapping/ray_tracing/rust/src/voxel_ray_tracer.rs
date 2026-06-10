@@ -29,20 +29,10 @@ pub struct Config {
     /// Spare a clearing miss when |ray dot normal| is below this. Higher
     /// protects steeper grazing surfaces like floors and treads.
     #[validate(range(min = 0.0, max = 1.0))]
-    #[serde(default = "default_graze_cos")]
     pub graze_cos: f32,
     /// Only spare a voxel whose neighborhood was hit within this many frames.
     /// A stale voxel clears despite its normal. Large disables it.
-    #[serde(default = "default_recency_window")]
     pub recency_window: u32,
-}
-
-fn default_graze_cos() -> f32 {
-    0.7
-}
-
-fn default_recency_window() -> u32 {
-    15
 }
 
 fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
@@ -153,6 +143,7 @@ impl Voxel {
         self.m2 += q * q.transpose();
     }
 
+    #[cfg(test)]
     fn planar_normal(&self) -> Option<Vector3<f32>> {
         self.normal
     }
@@ -390,8 +381,8 @@ pub fn iter_global_points(
         })
 }
 
-/// Healthy voxel centers paired with their estimated surface normal. The normal
-/// is the zero vector where the voxel has no confident planar normal.
+/// Healthy voxel centers paired with their surface normal, in matching order.
+/// The normal is the zero vector where the voxel has no planar normal.
 pub fn iter_global_normals(
     map: &VoxelMap,
     voxel_size: f32,
@@ -406,7 +397,7 @@ pub fn iter_global_normals(
                 ky as f32 * voxel_size + half,
                 kz as f32 * voxel_size + half,
             );
-            let normal = c.planar_normal().map_or([0.0; 3], |n| [n[0], n[1], n[2]]);
+            let normal = c.normal.map_or([0.0; 3], |n| [n[0], n[1], n[2]]);
             (pos, normal)
         })
 }
@@ -482,7 +473,7 @@ pub fn update_map(
         map.accumulate(p, cfg.voxel_size);
     }
 
-    // each miss is only checked once; removal drops the covariance with it
+    // each miss is only checked once. removal drops the covariance with it
     let mut removed: Vec<VoxelKey> = Vec::new();
     for v in misses.difference(&hits) {
         if let Some(c) = map.voxels.get_mut(v) {
@@ -825,9 +816,7 @@ mod tests {
             graze_cos: 0.5,
             recency_window: 60,
         };
-        // A real floor is a 2d plane, not a wire. Build it from accumulated
-        // returns over a y band so the centerline voxels the ray walks have a
-        // full planar neighborhood and earn a trustworthy vertical normal.
+        // Build the floor over a y band so it is a 2d plane, not a wire.
         let max_x = 25.0_f32;
         let y_half = 0.3_f32;
         let ds = voxel_size / 3.0;
@@ -879,7 +868,7 @@ mod tests {
                     .copied()
                     .filter(|k| (k.0 as f32) * voxel_size <= range + 1.5)
                     .collect();
-                let svg = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ground_clip.svg");
+                let svg = std::env::temp_dir().join("ground_clip.svg");
                 write_stair_svg(
                     &svg,
                     &floor,
@@ -907,8 +896,7 @@ mod tests {
         voxel_size: f32,
     ) -> Vec<(f32, f32, f32)> {
         let ds = voxel_size / 6.0;
-        // A real step spans many voxels across its width; sample the full width so
-        // treads have two in-plane directions and nosings a dominant edge along y.
+        // Sample the full step width so treads keep two in-plane directions.
         let width = 3.0 * voxel_size;
         let ny = 19;
         let mut pts = Vec::new();
@@ -1212,10 +1200,7 @@ mod tests {
             recency_window: 60,
         };
 
-        // True continuous staircase in the x-z plane (single y row): household
-        // slope, run = 0.3 m, rise = 0.2 m. Each step is a vertical riser face
-        // and a horizontal tread top, stored as axis-aligned segments
-        // (vertical?, fixed, lo, hi) in world meters.
+        // Staircase
         const N: i32 = 5;
         let run = 3.0 * voxel_size;
         let rise = 2.0 * voxel_size;
@@ -1233,9 +1218,8 @@ mod tests {
         let lidar = sample_segments(&segments, voxel_size);
         let (mut map, all_stairs) = build_surface(&lidar, voxel_size, cfg.max_health);
 
-        // Voxels with a trustworthy normal before the clearing pass. The grazing
-        // gate must spare every one of these; the only voxels it may clear are
-        // the tread/riser junctions, which have no plane and rely on health.
+        // The grazing gate must spare every voxel that has a normal. Only the
+        // tread/riser junctions, which have no plane, may clear.
         let planar: Vec<VoxelKey> = all_stairs
             .iter()
             .copied()
@@ -1260,7 +1244,7 @@ mod tests {
 
         update_map(&mut map, origin, &hits, &cfg);
 
-        let svg_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("stair_clip.svg");
+        let svg_path = std::env::temp_dir().join("stair_clip.svg");
         write_stair_svg(
             &svg_path,
             &all_stairs,
@@ -1337,7 +1321,7 @@ mod tests {
 
         update_map(&mut map, origin, &hits, &cfg);
 
-        let svg_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("floor_clip.svg");
+        let svg_path = std::env::temp_dir().join("floor_clip.svg");
         write_stair_svg(
             &svg_path,
             &all_surf,
@@ -1423,7 +1407,7 @@ mod tests {
 
         let (mut map, surf) = build_surface(&lidar, voxel_size, 1);
         update_map(&mut map, origin, &hits, &cfg(0.7));
-        let svg = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("landing_clip.svg");
+        let svg = std::env::temp_dir().join("landing_clip.svg");
         write_stair_svg(
             &svg, &surf, &map, &lidar, origin, &hits, voxel_size, 0.2, 0.2,
         );

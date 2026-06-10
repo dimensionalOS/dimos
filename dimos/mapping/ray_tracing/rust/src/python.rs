@@ -117,9 +117,8 @@ impl VoxelRayMapper {
             .into_pyarray(py)
     }
 
-    /// Healthy voxel centers and their unit surface normals, both (M, 3) float32
-    /// in matching order. The normal is the zero vector where the voxel has no
-    /// confident planar normal.
+    /// Healthy voxel centers and their surface normals, both (M, 3) float32 in
+    /// matching order. The normal is the zero vector where there is no plane.
     fn global_map_normals<'py>(
         &self,
         py: Python<'py>,
