@@ -11,7 +11,7 @@ dimos run xarm6-planner-only
 # 2. Keyboard teleop with mock arm (single command):
 dimos run keyboard-teleop-xarm7
 
-# 3. Interactive RPC client (plan, preview, execute from Python):
+# 3. Interactive RPC client (plan, inspect, execute from Python):
 dimos run xarm7-planner-coordinator                                    # terminal 1
 python -i -m dimos.manipulation.planning.examples.manipulation_client  # terminal 2
 ```
@@ -21,7 +21,7 @@ In the interactive client:
 commands()              # List available commands
 joints()                # Get current joint positions
 plan([0.1] * 7)         # Plan to target
-preview()               # Preview in Meshcat (url() for link)
+get_planned_path()      # Inspect stored path data; use Viser for visual preview
 execute()               # Execute via coordinator
 ```
 
@@ -87,7 +87,6 @@ config = RobotModelConfig(
 module = ManipulationModule(
     robots=[config],
     planning_timeout=10.0,
-    enable_viz=True,
     planning_backend="drake",
     planner_name="rrt_connect",           # Only option
     kinematics_name="drake_optimization", # Or "jacobian"
@@ -118,7 +117,7 @@ module.execute()  # Sends to coordinator
 
 | Backend | Selection | Notes |
 |---------|-----------|-------|
-| `drake` | `planning_backend="drake"` or omitted | Default backend. Uses Drake physics, collision checking, and Meshcat preview when visualization is enabled. |
+| `drake` | `planning_backend="drake"` or omitted | Default backend. Uses Drake physics and collision checking. |
 | `roboplan` | `planning_backend="roboplan"` | Optional backend. Uses RoboPlan scene, RRT, SimpleIK, and optional RoboPlan TOPPRA retiming. |
 
 RoboPlan is selected through the existing `ManipulationModule` configuration surface:
@@ -173,7 +172,7 @@ RoboPlan requires a URDF from `RobotModelConfig.model_path`, an SRDF path in `pl
 | Pointcloud layers / attached objects | Reported as unsupported unless runtime capabilities say otherwise. |
 | FK / Jacobian | Exposed when the installed RoboPlan scene binding provides `forwardKinematics` and `computeFrameJacobian`. |
 | Distance query | Reported as unsupported. |
-| Visualization / path preview | Reported as unavailable; planning and execution remain usable without preview. |
+| Path rendering | Owned by the Viser manipulation panel; the backend returns normalized path data. |
 | Retiming | `retiming="dimos"` uses the existing DimOS trajectory generator. `retiming="toppra"` requires `roboplan.toppra`. |
 
 ### RoboPlan Dependency Troubleshooting
@@ -211,7 +210,7 @@ Some distributions split RoboPlan into separate Python binding packages for core
 
 | Backend | Description |
 |---------|-------------|
-| `DrakeWorld` | Drake physics with Meshcat visualization |
+| `DrakeWorld` | Drake physics and collision checking |
 | `RoboPlan` | Optional native RoboPlan scene, RRT, SimpleIK, and optional TOPPRA timing |
 
 ## Blueprints

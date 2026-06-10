@@ -24,7 +24,6 @@ from dimos.manipulation.planning.backends.base import (
     PlanningBackend,
     SceneFacade,
     SceneUpdateResult,
-    VisualizationFacade,
 )
 from dimos.manipulation.planning.backends.registry import create_planning_backend
 from dimos.manipulation.planning.spec.models import IKResult, PlanningResult
@@ -41,6 +40,5 @@ __all__ = [
     "PlanningResult",
     "SceneFacade",
     "SceneUpdateResult",
-    "VisualizationFacade",
     "create_planning_backend",
 ]

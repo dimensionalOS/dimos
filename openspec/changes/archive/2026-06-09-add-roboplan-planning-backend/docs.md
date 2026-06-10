@@ -5,7 +5,7 @@
   - `planning_backend="roboplan"` configuration examples.
   - Required RoboPlan robot planning assets: URDF, SRDF if required by the selected RoboPlan APIs, package paths, planning group or active joint names, base frame, end-effector frame, joint order, and joint limits.
   - RoboPlan-specific `planning_backend_options` examples for RRT, IK, retiming, and scene projection.
-  - Supported and unsupported feature table for joint planning, pose planning/IK, collision validation, primitive obstacles, mesh/pointcloud layers, attached objects, FK/Jacobian/distance queries, and visualization/path preview.
+  - Supported and unsupported feature table for joint planning, pose planning/IK, collision validation, primitive obstacles, mesh/pointcloud layers, attached objects, FK/Jacobian/distance queries, and Viser-owned path rendering.
   - Troubleshooting for missing RoboPlan modules or native bindings, including a verification command such as `python -c "import roboplan.core, roboplan.rrt"` and optional `roboplan.toppra` when TOPPRA retiming is selected.
 - Update any manipulation blueprint docs that introduce a RoboPlan demo or configuration. If no new runnable blueprint is added, document RoboPlan selection as a module/blueprint configuration option rather than a new top-level CLI command.
 - Add or update a short hardware-safety note in the manipulation docs: RoboPlan changes planning only; real robot execution remains mediated by ControlCoordinator trajectory tasks and should be validated in mock/sim before supervised hardware use.

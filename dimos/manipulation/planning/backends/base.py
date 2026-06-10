@@ -70,8 +70,6 @@ class BackendCapabilities:
     mesh_obstacles: bool = False
     pointcloud_layers: bool = False
     attached_objects: bool = False
-    visualization: bool = False
-    path_preview: bool = False
     drake_native_access: bool = False
 
 
@@ -247,23 +245,6 @@ class PlannerFacade(Protocol):
 
 
 @runtime_checkable
-class VisualizationFacade(Protocol):
-    """Visualization facade exposed by an active planning backend."""
-
-    def start_visualization_thread(self, rate_hz: float = 10.0) -> None: ...
-
-    def get_visualization_url(self) -> str | None: ...
-
-    def publish_visualization(self) -> None: ...
-
-    def preview_path(
-        self, robot_id: WorldRobotID, path: JointPath, duration: float = 3.0
-    ) -> bool: ...
-
-    def dismiss_preview(self, robot_id: WorldRobotID) -> None: ...
-
-
-@runtime_checkable
 class PlanningBackend(Protocol):
     """Coarse active planning backend boundary for ManipulationModule."""
 
@@ -272,8 +253,6 @@ class PlanningBackend(Protocol):
     def scene(self) -> SceneFacade: ...
 
     def planner(self) -> PlannerFacade: ...
-
-    def visualization(self) -> VisualizationFacade | None: ...
 
     def capabilities(self) -> BackendCapabilities: ...
 

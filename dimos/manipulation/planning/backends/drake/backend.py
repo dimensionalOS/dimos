@@ -28,7 +28,6 @@ from dimos.manipulation.planning.backends.base import (
 from dimos.manipulation.planning.factory import create_kinematics, create_planner
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.models import IKResult, PlanningResult, WorldRobotID
-from dimos.manipulation.planning.utils.path_utils import interpolate_path
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
@@ -61,7 +60,6 @@ class DrakePlanningBackend:
     def __init__(
         self,
         *,
-        enable_viz: bool = False,
         planner_name: str = "rrt_connect",
         kinematics_name: str = "jacobian",
         options: dict[str, Any] | None = None,
@@ -70,7 +68,7 @@ class DrakePlanningBackend:
         world_kwargs = dict(self._options.get("world", {}))
         self._world_monitor = WorldMonitor(
             backend="drake",
-            enable_viz=enable_viz,
+            enable_viz=False,
             **world_kwargs,
         )
         self._planner = create_planner(name=planner_name, **self._options.get("planner", {}))
@@ -89,8 +87,6 @@ class DrakePlanningBackend:
             distance_query=True,
             primitive_obstacles=True,
             mesh_obstacles=True,
-            visualization=enable_viz,
-            path_preview=enable_viz,
             drake_native_access=True,
         )
         self._diagnostics = BackendDiagnostics(backend_name=self.name)
@@ -99,9 +95,6 @@ class DrakePlanningBackend:
         return self
 
     def planner(self) -> DrakePlanningBackend:
-        return self
-
-    def visualization(self) -> DrakePlanningBackend:
         return self
 
     def capabilities(self) -> BackendCapabilities:
@@ -334,25 +327,6 @@ class DrakePlanningBackend:
         self, robot_id: WorldRobotID, path: JointPath, step_size: float = 0.05
     ) -> bool:
         return self.is_path_valid(robot_id, path, step_size)
-
-    def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
-        self._world_monitor.start_visualization_thread(rate_hz=rate_hz)
-
-    def get_visualization_url(self) -> str | None:
-        return self._world_monitor.get_visualization_url()
-
-    def publish_visualization(self) -> None:
-        self._world_monitor.publish_visualization()
-
-    def preview_path(self, robot_id: WorldRobotID, path: JointPath, duration: float = 3.0) -> bool:
-        interpolated = interpolate_path(path, resolution=0.1)
-        self.world.animate_path(robot_id, interpolated, duration)
-        return True
-
-    def dismiss_preview(self, robot_id: WorldRobotID) -> None:
-        if hasattr(self.world, "hide_preview"):
-            self.world.hide_preview(robot_id)
-            self.world.publish_visualization()
 
 
 def _planning_failure(message: str) -> PlanningResult:

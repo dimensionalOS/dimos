@@ -74,13 +74,11 @@ class RoboPlanPlanningBackend:
     def __init__(
         self,
         *,
-        enable_viz: bool = False,
         planner_name: str = "rrt_connect",
         kinematics_name: str = "jacobian",
         options: dict[str, Any] | None = None,
     ) -> None:
         self._options = extract_roboplan_options(options)
-        self._enable_viz = enable_viz
         self._planner_name = planner_name
         self._kinematics_name = kinematics_name
         self._diagnostics = BackendDiagnostics(backend_name=self.name)
@@ -105,9 +103,6 @@ class RoboPlanPlanningBackend:
 
     def planner(self) -> RoboPlanPlanningBackend:
         return self
-
-    def visualization(self) -> None:
-        return None
 
     def capabilities(self) -> BackendCapabilities:
         return self._capabilities
@@ -186,8 +181,6 @@ class RoboPlanPlanningBackend:
             mesh_obstacles=config.scene.mesh_obstacles,
             pointcloud_layers=config.scene.pointcloud_layers,
             attached_objects=config.scene.attached_objects,
-            visualization=False,
-            path_preview=False,
             drake_native_access=False,
         )
         self._diagnostics.add("scene", "ready", "RoboPlan scene and planner initialized")

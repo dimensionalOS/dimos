@@ -5,7 +5,7 @@
   - startup-time backend selection and the lack of runtime switching in this change;
   - supported backends: default Drake and optional MPlib;
   - the fact that execution still routes through existing `ControlCoordinator` trajectory tasks;
-  - planning to joints, planning to poses, preview behavior, and backend capability diagnostics;
+  - planning to joints, planning to poses, Viser path review behavior, and backend capability diagnostics;
   - perception obstacle behavior: current object detections become box obstacles by default, optional convex-hull mesh obstacles remain derived from object pointclouds, and raw MPlib pointcloud collision is an explicit backend option rather than the current default.
 - Update or add manipulation planning docs under `docs/capabilities/manipulation/` or `docs/usage/` for MPlib configuration:
   - required URDF/SRDF/package-path/move-group fields;

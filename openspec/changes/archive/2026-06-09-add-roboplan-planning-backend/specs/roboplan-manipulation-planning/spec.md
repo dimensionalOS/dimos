@@ -49,7 +49,7 @@ DimOS SHALL support RoboPlan-backed joint-space planning where RoboPlan planning
 - **GIVEN** a RoboPlan-selected manipulation stack with current robot joint state available
 - **WHEN** a caller requests planning to a collision-free joint target through the existing manipulation planning surface
 - **THEN** DimOS returns a successful planning result
-- **AND** stores a normalized planned path and trajectory that can be previewed or executed through existing manipulation flows.
+- **AND** stores a normalized planned path and trajectory that can be rendered by Viser or executed through existing manipulation flows.
 
 #### Scenario: Current state is unavailable
 - **GIVEN** a RoboPlan-selected manipulation stack with no current joint state for the requested robot
@@ -70,7 +70,7 @@ DimOS SHALL support RoboPlan-backed pose planning where available and SHALL repo
 - **GIVEN** a RoboPlan-selected manipulation stack whose selected RoboPlan configuration supports pose planning or IK for the end effector
 - **WHEN** a caller requests planning to a reachable target pose through the existing manipulation surface
 - **THEN** DimOS returns a successful planning result
-- **AND** the resulting path and trajectory are normalized for existing preview and execution flows.
+- **AND** the resulting path and trajectory are normalized for Viser rendering and existing execution flows.
 
 #### Scenario: Pose planning unsupported
 - **GIVEN** a RoboPlan-selected manipulation stack whose RoboPlan capability report does not support pose planning or IK
@@ -101,7 +101,7 @@ DimOS SHALL project supported DimOS planning obstacles into the RoboPlan scene a
 
 #### Scenario: Path collision validation uses RoboPlan state
 - **GIVEN** a RoboPlan-selected manipulation stack with a planned path and active scene obstacles
-- **WHEN** DimOS validates the path before storing, previewing, or executing it
+- **WHEN** DimOS validates the path before storing or executing it
 - **THEN** validation uses the RoboPlan-backed active scene state
 - **AND** invalid paths are rejected without robot execution.
 
@@ -112,10 +112,10 @@ DimOS SHALL expose RoboPlan planning capabilities and diagnostics through existi
 - **GIVEN** a RoboPlan-selected manipulation stack after startup
 - **WHEN** a caller inspects backend capabilities or receives planning diagnostics
 - **THEN** the report identifies RoboPlan as the active backend
-- **AND** indicates support status for joint planning, pose planning or IK, collision checking, FK/Jacobian/distance queries where exposed, obstacle classes, retiming, and visualization/preview.
+- **AND** indicates support status for joint planning, pose planning or IK, collision checking, FK/Jacobian/distance queries where exposed, obstacle classes, and retiming.
 
 #### Scenario: Unsupported optional feature remains non-fatal
-- **GIVEN** a RoboPlan-selected manipulation stack where an optional RoboPlan feature such as TOPPRA retiming, mesh obstacles, pointcloud layers, attached objects, FK, Jacobian, distance query, or visualization is unavailable
+- **GIVEN** a RoboPlan-selected manipulation stack where an optional RoboPlan feature such as TOPPRA retiming, mesh obstacles, pointcloud layers, attached objects, FK, Jacobian, or distance query is unavailable
 - **WHEN** the unavailable feature is not required by the selected request or configuration
 - **THEN** the stack can still start and use supported RoboPlan features
 - **AND** diagnostics identify the unavailable feature without failing unrelated planning behavior.
@@ -127,7 +127,7 @@ DimOS SHALL expose RoboPlan planning capabilities and diagnostics through existi
 - **AND** DimOS does not fall back silently to a different backend or different feature semantics.
 
 ### Requirement: RoboPlan trajectory execution compatibility
-DimOS SHALL preserve existing manipulation trajectory storage, preview, and execution behavior for RoboPlan-planned motions.
+DimOS SHALL preserve existing manipulation trajectory storage and execution behavior for RoboPlan-planned motions.
 
 #### Scenario: Execute RoboPlan-planned trajectory
 - **GIVEN** a successful RoboPlan planning result stored by the manipulation module
@@ -135,11 +135,11 @@ DimOS SHALL preserve existing manipulation trajectory storage, preview, and exec
 - **THEN** DimOS sends a normalized trajectory through the existing coordinator execution path
 - **AND** RoboPlan does not bypass coordinator task ownership, joint-name translation, or execution state handling.
 
-#### Scenario: Preview unsupported but planning remains usable
-- **GIVEN** a successful RoboPlan planning result and a RoboPlan configuration without path preview support
-- **WHEN** a caller requests preview
-- **THEN** DimOS reports that preview is unsupported or unavailable for the active backend
-- **AND** the stored plan remains available for normal validation or execution if otherwise safe.
+#### Scenario: Viser renders stored path data
+- **GIVEN** a successful RoboPlan planning result stored by the manipulation module
+- **WHEN** an operator opens the manipulation Viser panel
+- **THEN** the panel can render the stored path through manipulation path-query APIs
+- **AND** the RoboPlan backend is not required to provide native preview or visualization APIs.
 
 #### Scenario: Invalid or failed plan is not executable
 - **GIVEN** a RoboPlan planning request that failed or produced an invalid path

@@ -15,7 +15,7 @@
 """Manipulation Module - Motion planning with ControlCoordinator execution.
 
 Base module providing core manipulation infrastructure:
-- @rpc: Low-level building blocks (plan_to_pose, plan_to_joints, preview_path, execute)
+- @rpc: Low-level building blocks (plan_to_pose, plan_to_joints, execute)
 - @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home, go_init)
 
 Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integration
@@ -172,7 +172,6 @@ class ManipulationModule(Module):
 
         self._planning_backend = create_planning_backend(
             name=self.config.planning_backend,
-            enable_viz=self.config.enable_viz,
             planner_name=self.config.planner_name,
             kinematics_name=self.config.kinematics_name,
             options=self.config.planning_backend_options,
@@ -215,13 +214,6 @@ class ManipulationModule(Module):
 
         for _, (robot_id, _, _) in self._robots.items():
             scene.start_state_monitor(robot_id)
-
-        if self.config.enable_viz:
-            visualization = self._planning_backend.visualization()
-            if visualization is not None:
-                visualization.start_visualization_thread(rate_hz=10.0)
-                if url := visualization.get_visualization_url():
-                    logger.info(f"Visualization: {url}")
 
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):
@@ -461,17 +453,9 @@ class ManipulationModule(Module):
         self._error_message = msg
         return False
 
-    def _dismiss_preview(self, robot_id: WorldRobotID) -> None:
-        """Hide the preview ghost if the active backend supports it."""
-        if self._planning_backend is None:
-            return
-        visualization = self._planning_backend.visualization()
-        if visualization is not None:
-            visualization.dismiss_preview(robot_id)
-
     @rpc
     def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
-        """Plan motion to pose. Use preview_path() then execute().
+        """Plan motion to pose. Use Viser or get_planned_path() to inspect before execute().
 
         Args:
             pose: Target end-effector pose
@@ -509,7 +493,7 @@ class ManipulationModule(Module):
 
     @rpc
     def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
-        """Plan motion to joint config. Use preview_path() then execute().
+        """Plan motion to joint config. Use Viser or get_planned_path() to inspect before execute().
 
         Args:
             joints: Target joint state (names + positions)
@@ -526,7 +510,6 @@ class ManipulationModule(Module):
     ) -> bool:
         """Plan path from current position to goal, store result."""
         assert self._planning_backend  # guaranteed by _begin_planning
-        self._dismiss_preview(robot_id)
         _, _, traj_gen = self._robots[robot_name]
         result = self._planning_backend.planner().plan_to_joints(
             robot_id=robot_id,
@@ -546,32 +529,6 @@ class ManipulationModule(Module):
 
         self._state = ManipulationState.COMPLETED
         return True
-
-    @rpc
-    def preview_path(self, duration: float = 3.0, robot_name: RobotName | None = None) -> bool:
-        """Preview the planned path in the visualizer.
-
-        Args:
-            duration: Total animation duration in seconds
-            robot_name: Robot to preview (required if multiple robots configured)
-        """
-        if self._planning_backend is None:
-            return False
-
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            return False
-        robot_name, robot_id, _, _ = robot
-
-        planned_path = self._planned_paths.get(robot_name)
-        if planned_path is None or len(planned_path) == 0:
-            logger.warning(f"No planned path to preview for {robot_name}")
-            return False
-
-        visualization = self._planning_backend.visualization()
-        return visualization is not None and visualization.preview_path(
-            robot_id, planned_path, duration
-        )
 
     @rpc
     def has_planned_path(self) -> bool:
@@ -622,18 +579,6 @@ class ManipulationModule(Module):
             return None
         poses = [scene.get_ee_pose(robot_id, joint_state=waypoint) for waypoint in path]
         return [pose for pose in poses if pose is not None]
-
-    @rpc
-    def get_visualization_url(self) -> str | None:
-        """Get the visualization URL.
-
-        Returns:
-            URL string or None if visualization not enabled
-        """
-        if self._planning_backend is None:
-            return None
-        visualization = self._planning_backend.visualization()
-        return visualization.get_visualization_url() if visualization is not None else None
 
     @rpc
     def clear_planned_path(self) -> bool:
@@ -1240,20 +1185,16 @@ class ManipulationModule(Module):
                 "PLANNING_FAILED",
                 f"Failed to plan lift from z={ee.position.z:.3f}",
             )
-        return self._preview_execute_wait(robot_name)
+        return self._execute_wait(robot_name)
 
-    def _preview_execute_wait(
-        self, robot_name: RobotName | None = None, preview_duration: float = 0.5
+    def _execute_wait(
+        self, robot_name: RobotName | None = None
     ) -> SkillResult[ManipulationSkillError]:
-        """Preview planned path, execute, and wait for completion.
+        """Execute planned path and wait for completion.
 
         Args:
             robot_name: Robot to operate on
-            preview_duration: Duration to animate the preview in Meshcat (seconds)
         """
-        logger.info("Previewing trajectory...")
-        self.preview_path(preview_duration, robot_name)
-
         logger.info("Executing trajectory...")
         if not self.execute(robot_name):
             return SkillResult.fail("EXECUTION_FAILED", "Trajectory execution failed")
@@ -1357,7 +1298,7 @@ class ManipulationModule(Module):
                 f"Pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision",
             )
 
-        exec_result = self._preview_execute_wait(robot_name)
+        exec_result = self._execute_wait(robot_name)
         if not exec_result.is_success():
             return exec_result
 
@@ -1398,7 +1339,7 @@ class ManipulationModule(Module):
                 "Joint configuration may be unreachable or in collision",
             )
 
-        exec_result = self._preview_execute_wait(robot_name)
+        exec_result = self._execute_wait(robot_name)
         if not exec_result.is_success():
             return exec_result
 
@@ -1433,7 +1374,7 @@ class ManipulationModule(Module):
         if not self.plan_to_joints(goal, rname):
             return SkillResult.fail("PLANNING_FAILED", "Failed to plan path to home position")
 
-        exec_result = self._preview_execute_wait(robot_name)
+        exec_result = self._execute_wait(robot_name)
         if not exec_result.is_success():
             return exec_result
 
@@ -1480,7 +1421,7 @@ class ManipulationModule(Module):
                     init_ee.orientation,
                 )
                 if self.plan_to_pose(wp, robot_name):
-                    wp_result = self._preview_execute_wait(robot_name)
+                    wp_result = self._execute_wait(robot_name)
                     if not wp_result.is_success():
                         return wp_result
                 else:
@@ -1492,7 +1433,7 @@ class ManipulationModule(Module):
         if not self.plan_to_joints(init, robot_name):
             return SkillResult.fail("PLANNING_FAILED", "Failed to plan path to init position")
 
-        exec_result = self._preview_execute_wait(robot_name)
+        exec_result = self._execute_wait(robot_name)
         if not exec_result.is_success():
             return exec_result
 

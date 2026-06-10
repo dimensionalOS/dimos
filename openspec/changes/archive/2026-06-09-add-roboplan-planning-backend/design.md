@@ -2,7 +2,7 @@
 
 DimOS manipulation planning now has an active backend boundary under `dimos/manipulation/planning/backends/`. `ManipulationModuleConfig` already exposes `planning_backend: str = "drake"` and `planning_backend_options: dict[str, Any]`, and `ManipulationModule` initializes one backend through `create_planning_backend()`, registers configured `RobotModelConfig` values, finalizes the backend scene, routes `joint_state: In[JointState]` updates into the active `SceneFacade`, and executes normalized trajectories through the existing `ControlCoordinator` task RPC path.
 
-The current registry only accepts `"drake"`. `DrakePlanningBackend` is a compatibility wrapper around `WorldMonitor`, current Drake world behavior, RRT planning, IK, Meshcat visualization, perception obstacle caches, and legacy `WorldSpec`/`PlannerSpec`/`KinematicsSpec` escape hatches. The public backend Protocols already define the intended adapter seam: `PlanningBackend`, `SceneFacade`, `PlannerFacade`, `VisualizationFacade`, `BackendCapabilities`, `BackendDiagnostics`, `SceneUpdateResult`, and `PlannedMotion`.
+The current registry only accepts `"drake"`. `DrakePlanningBackend` is a compatibility wrapper around `WorldMonitor`, current Drake world behavior, RRT planning, IK, perception obstacle caches, and legacy `WorldSpec`/`PlannerSpec`/`KinematicsSpec` escape hatches. The public backend Protocols already define the intended adapter seam: `PlanningBackend`, `SceneFacade`, `PlannerFacade`, `BackendCapabilities`, `BackendDiagnostics`, `SceneUpdateResult`, and `PlannedMotion`.
 
 RoboPlan should be added as a sibling active backend, not as a Drake subcomponent and not as an MPlib-shaped adapter. RoboPlan owns its native `roboplan.core.Scene` plus planner/IK/retiming objects such as `roboplan.rrt.RRT`, `roboplan.simple_ik.SimpleIk`, and optional `roboplan.toppra.PathParameterizerTOPPRA`. The integration must preserve existing manipulation RPCs, skills, trajectory storage, and coordinator execution behavior while making RoboPlan import/config errors visible only when users select `planning_backend="roboplan"`.
 
@@ -48,7 +48,7 @@ dimos/manipulation/planning/backends/
 │   └── backend.py
 └── roboplan/
     ├── __init__.py
-    ├── backend.py          # PlanningBackend, SceneFacade, PlannerFacade, optional VisualizationFacade
+    ├── backend.py          # PlanningBackend, SceneFacade, PlannerFacade
     ├── conversion.py       # Joint/Pose/trajectory/result conversion helpers
     └── config.py           # RoboPlan option parsing and validation helpers, if needed
 ```
@@ -64,7 +64,6 @@ RoboPlanPlanningBackend
   name = "roboplan"
   scene() -> RoboPlanPlanningBackend
   planner() -> RoboPlanPlanningBackend
-  visualization() -> VisualizationFacade | None
   capabilities() -> BackendCapabilities
   diagnostics() -> BackendDiagnostics
   stop() -> None
@@ -155,7 +154,6 @@ The default should be documented. If TOPPRA is unavailable but selected, initial
 - `joint_planning=True` only when `roboplan.rrt` is importable and an RRT object can be constructed.
 - `pose_planning` and `inverse_kinematics` depend on available RoboPlan IK/pose APIs.
 - `forward_kinematics`, `jacobian`, `distance_query`, `primitive_obstacles`, `mesh_obstacles`, `pointcloud_layers`, and `attached_objects` should reflect actual bound methods/features, not desired parity.
-- `visualization` and `path_preview` should be false unless a real backend-neutral or native visualization path is implemented.
 - `drake_native_access=False`; `world`, `world_monitor`, `legacy_planner`, and `legacy_kinematics` return `None` for RoboPlan.
 
 Diagnostics should be RPC-friendly through `BackendDiagnostics.as_dict()`. Use diagnostics for missing optional features, unsupported geometry, import failures, invalid robot config, joint-order mismatch, no current state, failed collision validation, no solution, timeout, and retiming failures.
@@ -210,7 +208,7 @@ RoboPlan should implement every stable native feature DimOS can map safely, but 
 
 Hardware execution remains routed through existing `ControlCoordinator` trajectory tasks, coordinator task names, joint-name translation, and current execution state machines. RoboPlan must not send commands directly to robot SDKs.
 
-Default blueprints remain Drake-backed unless explicitly configured otherwise. RoboPlan should first be validated with mock or simulated manipulator flows that exercise initialization, state ingestion, joint planning, pose planning or IK+planning, obstacle projection, path validation, trajectory normalization, preview/diagnostic surfaces, and execute-through-coordinator behavior. Real hardware RoboPlan blueprints should not become defaults and should require the same supervised hardware configuration as current xArm/Piper coordinator flows.
+Default blueprints remain Drake-backed unless explicitly configured otherwise. RoboPlan should first be validated with mock or simulated manipulator flows that exercise initialization, state ingestion, joint planning, pose planning or IK+planning, obstacle projection, path validation, trajectory normalization, Viser path rendering or diagnostics, and execute-through-coordinator behavior. Real hardware RoboPlan blueprints should not become defaults and should require the same supervised hardware configuration as current xArm/Piper coordinator flows.
 
 Replay behavior is limited to manipulation stacks that select RoboPlan and feed recorded joint/object streams. Recorded joint states should populate the RoboPlan backend state cache exactly as live states do. Unsupported recorded scene features should produce diagnostics rather than silent unsafe planning.
 
@@ -218,7 +216,7 @@ Manual QA surface for implementation:
 
 - `dimos run` a mock/sim manipulation blueprint with `planning_backend="drake"` and confirm current joint planning still works.
 - `dimos run` a mock/sim RoboPlan blueprint or driver config and confirm backend initialization reports RoboPlan capabilities.
-- Drive `plan_to_joints`, `plan_to_pose` or documented unsupported pose planning, `preview_path` or documented no-preview behavior, `execute`, and one invalid target/blocked path through the public RPC/skill surface.
+- Drive `plan_to_joints`, `plan_to_pose` or documented unsupported pose planning, stored path inspection through the public RPC/Viser surface, `execute`, and one invalid target/blocked path through the public RPC/skill surface.
 - Verify missing RoboPlan modules/config fail only when RoboPlan is selected and produce actionable messages.
 
 ## Risks / Trade-offs
@@ -229,7 +227,7 @@ Manual QA surface for implementation:
 - **Scene projection mismatch**: DimOS obstacle types may not map perfectly to RoboPlan collision geometry. Mitigation: capability probing and `SceneUpdateResult`/diagnostics for unsupported or approximated updates.
 - **Timing inconsistency**: RoboPlan TOPPRA and DimOS `JointTrajectoryGenerator` may produce different timing. Mitigation: explicit `retiming` mode and explicit TOPPRA grid/discretization settings when TOPPRA is selected.
 - **Facade pressure**: RoboPlan may expose useful APIs not currently represented by `SceneFacade`/`PlannerFacade`. Mitigation: add narrowly scoped facade fields only when required by observable behavior; keep RoboPlan-specific details behind backend options and diagnostics.
-- **Visualization parity**: RoboPlan may not provide Meshcat-equivalent preview. Mitigation: preserve existing no-preview-safe RPC behavior and add backend-neutral summaries before claiming visualization support.
+- **Visualization parity**: RoboPlan does not provide backend-native preview through the planning backend abstraction. Mitigation: keep preview/review in the Viser panel and expose backend-neutral planned path data for rendering.
 
 ## Migration / Rollout
 

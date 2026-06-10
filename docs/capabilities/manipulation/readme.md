@@ -1,6 +1,6 @@
 # Manipulation
 
-Motion planning and teleoperation for robotic manipulators. Drake is the default planning backend for physics simulation and Meshcat visualization; RoboPlan can be selected as an optional manipulation planning backend for RoboPlan-native scene loading, RRT planning, IK, and optional TOPPRA timing.
+Motion planning and teleoperation for robotic manipulators. Drake is the default planning backend for physics simulation and collision checking; RoboPlan can be selected as an optional manipulation planning backend for RoboPlan-native scene loading, RRT planning, IK, and optional TOPPRA timing. Viser owns manipulation path preview and review.
 
 ## Quick Start
 
@@ -42,7 +42,7 @@ Keyboard controls:
 # Terminal 1: Mock coordinator
 dimos run coordinator-mock
 
-# Terminal 2: Planner with Drake visualization
+# Terminal 2: Planner
 dimos run xarm7-planner-coordinator
 ```
 
@@ -55,7 +55,7 @@ python -m dimos.manipulation.planning.examples.manipulation_client
 ```python skip
 joints()                # Get current joints
 plan([0.1] * 7)         # Plan to target
-preview()               # Preview in Meshcat
+get_planned_path()      # Inspect stored path data; use Viser for visual preview
 execute()               # Execute via coordinator
 ```
 
@@ -122,7 +122,7 @@ XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 
 ```
 KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
-  (pygame UI)              (100Hz tick loop)      (Drake + Meshcat)
+  (pygame UI)              (100Hz tick loop)      (planning backend)
        │                        │                       │
   PoseStamped            CartesianIK task         RRT planner
   commands               (Pinocchio IK)           JacobianIK
@@ -132,11 +132,11 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 
 - **KeyboardTeleopModule** — Pygame UI publishing cartesian pose commands
 - **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
-- **ManipulationModule** — Drake physics, Meshcat viz, RRT motion planning, obstacle management
+- **ManipulationModule** — planning backend selection, RRT motion planning, obstacle management, coordinator execution
 
 ## Optional RoboPlan Backend
 
-Manipulation stacks can opt into RoboPlan without changing the public RPC, skill, preview, or execute method names:
+Manipulation stacks can opt into RoboPlan without changing the public RPC, skill, path inspection, or execute method names:
 
 ```python skip
 ManipulationModule(

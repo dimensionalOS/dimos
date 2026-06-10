@@ -391,11 +391,6 @@ class PickAndPlaceModule(ManipulationModule):
         else:
             lines.append("Detected objects: none")
 
-        # Visualization
-        url = self.get_visualization_url()
-        if url:
-            lines.append(f"Visualization: {url}")
-
         # State
         lines.append(f"State: {self.get_state()}")
 
@@ -524,7 +519,7 @@ then refreshes perception obstacles.
             time.sleep(0.5)
 
             # 4. Execute approach to pre-grasp
-            exec_result = self._preview_execute_wait(rname)
+            exec_result = self._execute_wait(rname)
             if not exec_result.is_success():
                 return exec_result
 
@@ -532,7 +527,7 @@ then refreshes perception obstacles.
             logger.info("Moving to grasp position...")
             if not self.plan_to_pose(grasp_pose, rname):
                 return SkillResult.fail("PLANNING_FAILED", "Grasp pose planning failed")
-            exec_result = self._preview_execute_wait(rname)
+            exec_result = self._execute_wait(rname)
             if not exec_result.is_success():
                 return exec_result
 
@@ -545,7 +540,7 @@ then refreshes perception obstacles.
             logger.info("Retracting with object...")
             if not self.plan_to_pose(pre_grasp_pose, rname):
                 return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
-            exec_result = self._preview_execute_wait(rname)
+            exec_result = self._execute_wait(rname)
             if not exec_result.is_success():
                 return exec_result
 
@@ -615,7 +610,7 @@ then refreshes perception obstacles.
         if not self.plan_to_pose(pre_place_pose, rname):
             return SkillResult.fail("PLANNING_FAILED", "Pre-place approach planning failed")
 
-        exec_result = self._preview_execute_wait(rname)
+        exec_result = self._execute_wait(rname)
         if not exec_result.is_success():
             return exec_result
 
@@ -623,7 +618,7 @@ then refreshes perception obstacles.
         logger.info("Lowering to place position...")
         if not self.plan_to_pose(place_pose, rname):
             return SkillResult.fail("PLANNING_FAILED", "Place pose planning failed")
-        exec_result = self._preview_execute_wait(rname)
+        exec_result = self._execute_wait(rname)
         if not exec_result.is_success():
             return exec_result
 
@@ -636,7 +631,7 @@ then refreshes perception obstacles.
         logger.info("Retracting...")
         if not self.plan_to_pose(pre_place_pose, rname):
             return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
-        exec_result = self._preview_execute_wait(rname)
+        exec_result = self._execute_wait(rname)
         if not exec_result.is_success():
             return exec_result
 

@@ -1,17 +1,17 @@
 ## 1. Milestone 1: Planning backend abstraction with full Drake support
 
-- [x] 1.1 Create `dimos/manipulation/planning/backends/` with backend-facing protocols/models for active backend lifecycle, scene facade, planner facade, visualization facade, capabilities, diagnostics, planning results, IK results, and scene update results.
+- [x] 1.1 Create `dimos/manipulation/planning/backends/` with backend-facing protocols/models for active backend lifecycle, scene facade, planner facade, capabilities, diagnostics, planning results, IK results, and scene update results.
 - [x] 1.2 Add startup-time backend selection config to manipulation planning with Drake as the default and no runtime backend-switching API.
-- [x] 1.3 Implement a `DrakePlanningBackend` compatibility layer that wraps the current `WorldMonitor`, `DrakeWorld`, RRT planner, Jacobian IK, Drake optimization IK, trajectory generation, and Meshcat visualization surfaces.
+- [x] 1.3 Implement a `DrakePlanningBackend` compatibility layer that wraps the current `WorldMonitor`, `DrakeWorld`, RRT planner, Jacobian IK, Drake optimization IK, and trajectory generation surfaces.
 - [x] 1.4 Refactor `ManipulationModule` initialization to construct one active backend, register robots once, finalize/prepare the scene once, and keep existing public RPCs and skills unchanged.
 - [x] 1.5 Route joint-state sync through the active backend scene while preserving current joint-name mapping, init-joint capture, stale-state behavior, and multi-robot splitting.
-- [x] 1.6 Route `plan_to_joints`, `plan_to_pose`, stored paths, preview, hide preview, trajectory generation, and execute through backend facades while preserving the current Drake-backed behavior and coordinator execution path.
+- [x] 1.6 Route `plan_to_joints`, `plan_to_pose`, stored paths, trajectory generation, and execute through backend facades while preserving the current Drake-backed behavior and coordinator execution path.
 - [x] 1.7 Route current scene APIs through the active backend: add/remove/update/clear/list obstacles, floor obstacle startup behavior, collision checks, path validation, minimum distance, current joint state, end-effector pose, arbitrary link pose, and Jacobian access.
 - [x] 1.8 Refactor perception obstacle integration to target the scene facade while preserving current semantics: ObjectDB objects are cached by stable ID, `refresh_obstacles()` adds box obstacles by default, optional convex-hull mesh obstacles remain pointcloud-derived only when enabled, and clear/list/status methods keep the same observable behavior.
-- [x] 1.9 Preserve Drake-specific behavior behind the Drake backend for scratch contexts, Drake optimization IK, dynamic-obstacle visualization caveats, Meshcat URL publishing, path preview animation, preview hiding, and TF extra-link publishing.
+- [x] 1.9 Preserve Drake-specific behavior behind the Drake backend for scratch contexts, Drake optimization IK, dynamic-obstacle caveats, and TF extra-link publishing.
 - [x] 1.10 Add backend capability and diagnostic reporting for unsupported, approximated, failed, or backend-specific scene/planning operations without changing existing successful Drake user flows.
 - [x] 1.11 Add focused tests proving the default backend is Drake, existing Drake planning paths still work through the new abstraction, and current Drake-only features remain reachable after the refactor.
-- [x] 1.12 Manually QA milestone 1 by running a Drake-backed mock/sim manipulation surface such as `dimos run xarm7-planner-coordinator` with the interactive manipulation client to plan, preview, add/remove an obstacle, query state/pose, and execute through the coordinator path.
+- [x] 1.12 Manually QA milestone 1 by running a Drake-backed mock/sim manipulation surface such as `dimos run xarm7-planner-coordinator` with the interactive manipulation client to plan, inspect the stored path, add/remove an obstacle, query state/pose, and execute through the coordinator path.
 
 ## 2. Milestone 2: MPlib integration on the stable backend surface
 

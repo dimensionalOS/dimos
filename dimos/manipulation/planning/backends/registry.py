@@ -24,7 +24,6 @@ from dimos.manipulation.planning.backends.base import PlanningBackend
 def create_planning_backend(
     name: str = "drake",
     *,
-    enable_viz: bool = False,
     planner_name: str = "rrt_connect",
     kinematics_name: str = "jacobian",
     options: dict[str, Any] | None = None,
@@ -34,7 +33,6 @@ def create_planning_backend(
         from dimos.manipulation.planning.backends.drake.backend import DrakePlanningBackend
 
         return DrakePlanningBackend(
-            enable_viz=enable_viz,
             planner_name=planner_name,
             kinematics_name=kinematics_name,
             options=options or {},
@@ -43,7 +41,6 @@ def create_planning_backend(
         from dimos.manipulation.planning.backends.roboplan.backend import RoboPlanPlanningBackend
 
         return RoboPlanPlanningBackend(
-            enable_viz=enable_viz,
             planner_name=planner_name,
             kinematics_name=kinematics_name,
             options=options or {},

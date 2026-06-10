@@ -24,13 +24,13 @@ The MPlib backend SHALL support joint-space planning through MPlib's native join
 - **GIVEN** MPlib is the active backend with a current start state and a valid target joint state
 - **WHEN** a caller requests a plan to joints
 - **THEN** DimOS calls the native MPlib joint planner and returns a successful planning result when MPlib succeeds
-- **AND** the returned path is expressed in the DimOS robot joint order expected by preview and execution callers.
+- **AND** the returned path is expressed in the DimOS robot joint order expected by Viser path review and execution callers.
 
 #### Scenario: MPlib joint ordering differs from DimOS ordering
 - **GIVEN** MPlib requires a configured joint order that differs from the DimOS robot joint order
 - **WHEN** a plan request is sent to MPlib and a path is returned
 - **THEN** DimOS maps start and goal values into MPlib order before planning
-- **AND** maps returned waypoints back into DimOS robot joint order before storing, previewing, or executing the path.
+- **AND** maps returned waypoints back into DimOS robot joint order before storing, rendering through Viser, or executing the path.
 
 ### Requirement: MPlib pose planning
 The MPlib backend SHALL support pose planning through MPlib's native pose planning surface when the installed MPlib package exposes it.
@@ -39,7 +39,7 @@ The MPlib backend SHALL support pose planning through MPlib's native pose planni
 - **GIVEN** MPlib is the active backend with a current start state and a target end-effector pose in the planning frame
 - **WHEN** a caller requests a plan to pose
 - **THEN** DimOS uses MPlib's native pose planning behavior when available
-- **AND** returns a normalized DimOS planning result that can be previewed and executed through the existing trajectory path.
+- **AND** returns a normalized DimOS planning result that can be rendered through Viser and executed through the existing trajectory path.
 
 #### Scenario: Native pose planning is unavailable
 - **GIVEN** MPlib is the active backend but the installed MPlib package does not expose usable native pose planning for the configured robot

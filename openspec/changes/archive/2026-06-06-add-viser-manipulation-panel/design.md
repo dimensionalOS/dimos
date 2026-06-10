@@ -79,7 +79,7 @@ The panel should call these existing `ManipulationModule` RPCs:
 | Check target joints | `is_collision_free(joints, robot_name)` |
 | Plan Cartesian target | `plan_to_pose(pose, robot_name)` |
 | Plan joint target | `plan_to_joints(joint_state, robot_name)` |
-| Trigger backend preview | `preview_path(duration, robot_name)` |
+| Read stored plan for preview | `get_planned_path(robot_name)` |
 | Check if a plan exists | `has_planned_path()` |
 | Clear current plan | `clear_planned_path()` |
 | Execute stored plan | `execute(robot_name)` |
@@ -99,7 +99,7 @@ Phase 1/2 needs data not fully exposed by the current RPC surface. Add compatibi
 
 2. `get_planned_path(robot_name: str | None = None) -> list[JointState] | None`
    - Returns the currently stored planned joint path for preview rendering.
-   - Purpose: draw Viser path ghosts/scrubber without relying on Meshcat-only `preview_path()`.
+   - Purpose: draw Viser path ghosts/scrubber without relying on backend-native preview.
 
 3. `solve_ik_preview(pose: Pose, robot_name: str | None = None) -> dict[str, Any]`
    - Computes IK for the candidate end-effector pose without planning, storing, previewing, or executing a path.
@@ -214,8 +214,7 @@ There is no target mode switch. Cartesian and joint controls are both always vis
   - On failure: call `get_error`, show failure message, keep `Preview`/`Execute` disabled.
 
 - **Preview button**
-  - Calls `preview_path(preview_duration, selected_robot)` so existing Meshcat/Drake preview behavior still works.
-  - Also re-renders the local Viser path from `get_planned_path` when available.
+  - Re-renders the local Viser path from `get_planned_path` when available.
   - Does not execute motion.
 
 - **Execute button**
@@ -349,7 +348,7 @@ Plan freshness is local and conservative. Any target edit, robot change, reset, 
 - **Missing model resources:** Viser URDF loading may fail if package paths or meshes are unavailable. Mitigation: show clear model-load errors and keep status/RPC controls available.
 - **Blocking RPC callbacks:** Planning and preview can block. Mitigation: run long RPCs in a worker thread or background task queue and keep the Viser event loop responsive.
 - **Dependency weight:** Viser and URDF extras add optional dependencies. Mitigation: add them to an optional extra and keep existing manipulation installs working without the panel.
-- **Dual visualization confusion:** Meshcat preview and Viser preview may both exist. Mitigation: label Viser preview as the operator panel preview and keep `preview_path` as backend visualizer preview.
+- **Dual visualization confusion:** Multiple preview concepts can confuse operators. Mitigation: label Viser preview as the operator panel preview and keep backend-native preview out of the planning backend abstraction.
 
 ## Migration / Rollout
 

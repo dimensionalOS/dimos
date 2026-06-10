@@ -28,10 +28,8 @@ Available functions:
     state()               Get module state (IDLE, PLANNING, EXECUTING, ...)
     plan(joints)          Plan to joint configuration, e.g. plan([0.1]*7)
     plan_pose(x,y,z)      Plan to Cartesian pose
-    preview(duration)     Preview planned path in Meshcat
     execute()             Execute planned trajectory via coordinator
     home()                Move to home position
-    url()                 Get Meshcat visualization URL
     robots()              List configured robots
     info(robot)           Get robot config details
     gripper(pos)          Set gripper position (0.0=closed, 0.85=open)
@@ -99,11 +97,6 @@ def plan_pose(
     return _client.plan_to_pose(target, robot_name)
 
 
-def preview(duration: float = 3.0, robot_name: str | None = None) -> bool:
-    """Preview planned path in Meshcat."""
-    return _client.preview_path(duration, robot_name)
-
-
 def execute(robot_name: str | None = None) -> bool:
     """Execute planned trajectory via coordinator."""
     return _client.execute(robot_name)
@@ -118,11 +111,6 @@ def home(robot_name: str | None = None) -> bool:
     if success:
         return _client.execute(robot_name)
     return False
-
-
-def url() -> str | None:
-    """Get Meshcat visualization URL."""
-    return _client.get_visualization_url()
 
 
 def robots() -> list[str]:
@@ -189,4 +177,4 @@ def stop() -> None:
 if __name__ == "__main__":
     print("Manipulation RPC client ready.")
     print("Type commands() for available functions.")
-    print("Try: joints(), plan([0.1]*7), preview(), execute()")
+    print("Try: joints(), plan([0.1]*7), execute()")

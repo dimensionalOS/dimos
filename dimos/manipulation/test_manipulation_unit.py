@@ -131,7 +131,6 @@ class TestPlanningBackendSelection:
         )
         backend = MagicMock()
         backend.scene.return_value = scene
-        backend.visualization.return_value = MagicMock()
 
         with patch(
             "dimos.manipulation.manipulation_module.create_planning_backend",
@@ -141,7 +140,6 @@ class TestPlanningBackendSelection:
 
         create_backend.assert_called_once_with(
             name="drake",
-            enable_viz=False,
             planner_name="rrt_connect",
             kinematics_name="jacobian",
             options={},

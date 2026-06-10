@@ -60,7 +60,6 @@ PlanningBackend
   planner() -> PlannerFacade
   capabilities() -> BackendCapabilities
   diagnostics() -> BackendDiagnostics
-  visualization() -> VisualizationFacade | None
 ```
 
 ```text
@@ -127,8 +126,7 @@ The facades are capability-aware. A backend may report unsupported methods throu
 | Mesh/convex hull obstacles | `add_obstacle` with capability diagnostics | Drake uses convex mesh. MPlib should use all native mesh, primitive, and pointcloud collision APIs available in the installed package and diagnose only unsupported geometry. |
 | Pointcloud-derived obstacles | `add_obstacle` with `BOX`/`MESH`, plus optional `update_pointcloud_layer` | Preserve current behavior: perception objects become boxes by default, or convex-hull mesh obstacles when mesh conversion is enabled. MPlib should additionally support native pointcloud collision through `update_point_cloud` when a backend config explicitly enables raw pointcloud layers and the layer frame is compatible. |
 | Attached objects | `attach_object`, `detach_object`, attached-object diagnostics | MPlib should support native attached-object APIs when exposed by the installed package. If unavailable, return explicit unsupported diagnostics rather than silently dropping the attachment. |
-| Visualization URL/publish/thread | `VisualizationFacade` | Drake supports Meshcat. MPlib should still provide backend-neutral scene/path summaries for DimOS visualization even if it has no native viewer URL. |
-| Preview animation/hide preview | `VisualizationFacade.preview_path`, `hide_preview` | Drake implements current yellow ghost. MPlib should preview normalized paths through backend-neutral visualization when available and report no native Meshcat preview otherwise. |
+| Path rendering data | Stored planning result/path APIs | Viser owns preview/review. Planning backends return normalized path data and do not expose native preview or viewer APIs through the backend abstraction. |
 | Direct `.world`, `.plant`, `.scene_graph` access | Backend-native debug handle only | Keep as compatibility/internal escape hatch for Drake-specific code during migration, not a general API. |
 | Trajectory generation/execution | `PlannerFacade` result normalization + existing `JointTrajectoryGenerator`/MPlib timing | Preserve execution through ControlCoordinator. MPlib time-parameterized outputs can be converted directly when suitable. |
 
@@ -236,7 +234,7 @@ Default blueprints should remain Drake/RRT unless explicitly configured otherwis
 
 Manual QA should exercise:
 
-- Existing Drake-backed xArm planner/coordinator flow still plans, previews where supported, and executes mock trajectories.
+- Existing Drake-backed xArm planner/coordinator flow still plans, exposes stored path data for Viser, and executes mock trajectories.
 - Existing manipulation skills continue to expose the same user-facing behavior.
 - MPlib backend initializes once and plans to a joint target without reconstructing per plan.
 - MPlib backend plans to a pose using its native pose planning path.
@@ -259,7 +257,7 @@ Replay impact is limited to manipulation stacks that use recorded joint/object s
 - **Scene mutation mismatch**: Drake and MPlib differ in dynamic obstacle semantics. Mitigation: `SceneUpdateResult` reports `applied_live`, `requires_readd`, `approximated`, or `unsupported`.
 - **Trajectory timing differences**: MPlib can return time-parameterized paths; current DimOS also has `JointTrajectoryGenerator`. Mitigation: design a normalization path that can either preserve backend timing or fall back to existing trajectory generation consistently.
 - **Dependency footprint**: Adding MPlib to the manipulation extra may affect install reliability. Mitigation: keep backend selection explicit and surface import/config errors only when MPlib is selected.
-- **Visualization parity**: Drake Meshcat preview may not exist for MPlib. Mitigation: expose backend-neutral path/scene summaries for visualization and expose native diagnostics/URLs through `VisualizationFacade` only when supported.
+- **Visualization parity**: Drake Meshcat preview is no longer part of the backend abstraction. Mitigation: expose backend-neutral path data for Viser rendering and keep native viewer details out of planning backends.
 
 ## Migration / Rollout
 

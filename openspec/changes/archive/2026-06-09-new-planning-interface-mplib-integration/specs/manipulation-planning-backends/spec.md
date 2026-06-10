@@ -7,7 +7,7 @@ DimOS manipulation planning SHALL select exactly one active planning backend whe
 - **GIVEN** an existing manipulation or xArm planner blueprint with no explicit backend selection
 - **WHEN** the blueprint starts
 - **THEN** the planning stack uses the current Drake-backed behavior by default
-- **AND** existing user-facing planning, preview, obstacle, and execution commands remain available.
+- **AND** existing user-facing planning, Viser path review, obstacle, and execution commands remain available.
 
 #### Scenario: Runtime backend switching is not supported
 - **GIVEN** a manipulation planning module has already started with an active backend
@@ -41,23 +41,23 @@ The first implementation milestone SHALL deliver a running refactored structure 
 
 #### Scenario: Drake-backed planning still supports current planning surfaces
 - **GIVEN** the active backend is Drake
-- **WHEN** a caller plans to joints, plans to a pose, previews a path, queries current joints, queries end-effector pose, or executes a stored trajectory
+- **WHEN** a caller plans to joints, plans to a pose, reviews stored path data through Viser, queries current joints, queries end-effector pose, or executes a stored trajectory
 - **THEN** the behavior matches the pre-refactor Drake-backed manipulation behavior
 - **AND** trajectories still execute through existing coordinator trajectory tasks.
 
 #### Scenario: Drake-backed scene queries remain available
 - **GIVEN** the active backend is Drake
-- **WHEN** a caller or skill needs collision checks, path validation, FK, link poses for TF publishing, Jacobian IK, Drake optimization IK, visualization URL, preview hiding, or obstacle inspection
+- **WHEN** a caller or skill needs collision checks, path validation, FK, link poses for TF publishing, Jacobian IK, Drake optimization IK, or obstacle inspection
 - **THEN** the refactored backend surface supports those current behaviors
 - **AND** no current Drake feature is dropped as part of the abstraction milestone.
 
 ### Requirement: Backend planning results are normalized for manipulation callers
-The active backend planner SHALL return planning outcomes in a DimOS-observable form that existing callers can preview, store, and execute.
+The active backend planner SHALL return planning outcomes in a DimOS-observable form that existing callers can store, render through Viser, and execute.
 
 #### Scenario: Successful plan returns a storable path and executable trajectory
 - **GIVEN** a backend can find a path for a valid target
 - **WHEN** a caller requests a plan through a manipulation planning RPC or skill path
-- **THEN** DimOS stores the planned joint path for preview and execution
+- **THEN** DimOS stores the planned joint path for Viser rendering and execution
 - **AND** DimOS can convert or preserve timing into a `JointTrajectory` suitable for the existing coordinator execution path.
 
 #### Scenario: Failed plan reports actionable status
@@ -70,13 +70,13 @@ The active backend planner SHALL return planning outcomes in a DimOS-observable 
 DimOS SHALL expose backend capability and diagnostic information for behavior that differs between planning backends.
 
 #### Scenario: Unsupported feature is requested
-- **GIVEN** the active backend does not support a requested scene, query, visualization, or planning feature
+- **GIVEN** the active backend does not support a requested scene, query, or planning feature
 - **WHEN** a caller requests that feature
 - **THEN** DimOS reports that the feature is unsupported by the active backend
 - **AND** the report names the relevant backend and feature rather than pretending the operation succeeded.
 
 #### Scenario: Backend-specific approximation is used
-- **GIVEN** an obstacle, pointcloud, attached object, or visualization request must be approximated for the active backend
+- **GIVEN** an obstacle, pointcloud, or attached object request must be approximated for the active backend
 - **WHEN** DimOS applies the approximation
 - **THEN** the resulting diagnostics report that the operation was approximated
 - **AND** planning continues only against the scene representation that was actually applied.

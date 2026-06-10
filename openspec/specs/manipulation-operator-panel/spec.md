@@ -123,9 +123,9 @@ The system SHALL keep the Viser manipulation panel optional and compatible with 
 
 #### Scenario: Use manipulation without panel
 - **GIVEN** a user installs or runs an existing manipulation workflow without the Viser panel dependencies
-- **WHEN** the user runs existing manipulation planning, preview, or execution flows
+- **WHEN** the user runs existing manipulation planning or execution flows
 - **THEN** those existing flows continue to work without requiring the panel
-- **AND** existing Meshcat, Rerun, and Python/RPC workflows remain valid
+- **AND** existing Rerun and Python/RPC workflows remain valid
 
 #### Scenario: Panel does not add agent tools
 - **GIVEN** the manipulation operator panel is enabled

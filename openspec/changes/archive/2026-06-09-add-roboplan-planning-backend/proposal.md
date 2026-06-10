@@ -8,7 +8,7 @@ This change adds RoboPlan as a first-class optional manipulation planning backen
 
 - Add RoboPlan as a selectable active manipulation planning backend alongside existing backend choices.
 - Add behavior for configuring RoboPlan robot planning assets, including URDF, SRDF, package paths, planning group, joint ordering, base frame, and end-effector frame requirements.
-- Add RoboPlan-backed joint-space planning, pose planning where supported, collision/path validation, FK/Jacobian queries where supported, and normalized planning results that can be stored, previewed, and executed through existing DimOS manipulation flows.
+- Add RoboPlan-backed joint-space planning, pose planning where supported, collision/path validation, FK/Jacobian queries where supported, and normalized planning results that can be stored, rendered by Viser, and executed through existing DimOS manipulation flows.
 - Add RoboPlan scene projection behavior for DimOS obstacles and diagnostics for unsupported or approximated scene features.
 - Add clear availability, dependency, and configuration errors that trigger only when RoboPlan is selected.
 - Preserve existing Drake/default manipulation behavior and existing ControlCoordinator trajectory execution semantics.
