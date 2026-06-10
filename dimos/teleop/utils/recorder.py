@@ -30,6 +30,7 @@ Compose at the CLI::
 from datetime import datetime
 from pathlib import Path
 
+from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.memory2.module import Recorder, RecorderConfig
@@ -44,10 +45,10 @@ logger = setup_logger()
 
 
 class TeleopRecorderConfig(RecorderConfig):
-    # Default path is a stem — TeleopRecorder.start() appends a per-run
-    # timestamp so successive runs don't clobber each other. Pass an absolute
-    # path with ``.db`` to opt out of timestamping.
-    db_path: str | Path = "recording_teleop.db"
+    # Default lands under STATE_DIR (not the CWD). The filename is a stem —
+    # TeleopRecorder.start() appends a per-run timestamp so successive runs
+    # don't clobber each other.
+    db_path: str | Path = STATE_DIR / "teleop_recordings" / "recording_teleop.db"
 
     # If True (default), generate a transport-stats report next to the .db on
     # stop. Set False for a pure recording-only run (skips matplotlib import +

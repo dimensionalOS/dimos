@@ -16,10 +16,10 @@
 
 from pathlib import Path
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import STATE_DIR
 from dimos.teleop.utils.recorder import TeleopRecorder, TeleopRecorderConfig
 
-HOSTED_RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "data/hosted_teleop/recordings"
+HOSTED_RECORDINGS_DIR = STATE_DIR / "hosted_teleop" / "recordings"
 
 
 class HostedTeleopRecorderConfig(TeleopRecorderConfig):
