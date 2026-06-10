@@ -17,9 +17,9 @@
 
 Two flavors live here:
 
-* **Pure functions** (`pcts`, `loss_pct`, `reorder_count`, `classify_e2e`) —
-  shared by the post-hoc report writer (``teleop/utils/report.py``) and any
-  live stats consumer.
+* **Pure functions** (`pcts`, `loss_pct`, `reorder_count`) — shared by the
+  post-hoc report writer (``teleop/utils/report.py``) and any live stats
+  consumer.
 * **`LiveStreamStats`** — a rolling-window class for always-on consumers that
   only need a recent snapshot (e.g. the operator HUD's command-plane telemetry).
 """
@@ -76,28 +76,6 @@ def reorder_count(seqs: Sequence[int]) -> int:
     return count
 
 
-def classify_e2e(
-    p50_ms: float,
-    bands: Sequence[tuple[float, str]] = (
-        (50.0, "excellent"),
-        (100.0, "good"),
-        (150.0, "usable"),
-    ),
-) -> str:
-    """Map an E2E p50 latency to an acceptance band label.
-
-    ``bands`` is an ascending list of (threshold_ms, label) pairs; anything past
-    the last threshold falls into ``"degraded"``. A negative p50 (operator/robot
-    clocks not synced) returns ``"clock skew"``.
-    """
-    if p50_ms < 0:
-        return "clock skew"
-    for threshold, label in bands:
-        if p50_ms < threshold:
-            return label
-    return "degraded"
-
-
 class LiveStreamStats:
     """Rolling-window health for an always-on stream consumer.
 
@@ -146,4 +124,4 @@ class LiveStreamStats:
         }
 
 
-__all__ = ["LiveStreamStats", "classify_e2e", "loss_pct", "pcts", "reorder_count"]
+__all__ = ["LiveStreamStats", "loss_pct", "pcts", "reorder_count"]
