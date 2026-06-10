@@ -49,19 +49,15 @@ from dimos.teleop.quest.quest_types import Buttons
 _DEFAULT_POLICY = "data/2026-05-28_11-42-04/model_1200.pt"
 _DEFAULT_MJCF = "data/go2_mjlab/xmls/scene_go2.xml"
 
-# PD gains from training env (hip=20/1, thigh=20/1, calf=40/2).
-_KP = (20.0, 20.0, 40.0, 20.0, 20.0, 40.0, 20.0, 20.0, 40.0, 20.0, 20.0, 40.0)
-_KD = (1.0, 1.0, 2.0, 1.0, 1.0, 2.0, 1.0, 1.0, 2.0, 1.0, 1.0, 2.0)
+# Training env PD gains per leg (hip, thigh, calf).
+_KP = (20.0, 20.0, 40.0) * 4
+_KD = (1.0, 1.0, 2.0) * 4
 
 _HW = "go2"
 _joints = [f"{_HW}/{j}" for j in GO2_JOINT_ORDER]
-
-# FR leg's three joints (in mjlab/training order). These are owned by the
-# Quest teleop task; the RL policy masks them.
 _FR_JOINTS = [f"{_HW}/FR_hip", f"{_HW}/FR_thigh", f"{_HW}/FR_calf"]
 
-# Task name the Quest module stamps into right-controller PoseStamped frame_id.
-# The coordinator routes the PoseStamped to the task with this exact name.
+# Quest stamps this name into right-controller PoseStamped frame_id for routing.
 _FR_TASK_NAME = "fr_teleop"
 
 
@@ -82,7 +78,6 @@ go2_tripod_sim = autoconnect(
             ),
         ],
         tasks=[
-            # RL walking policy - masks FR so the FR teleop task owns it.
             TaskConfig(
                 name="rl_walk_go2",
                 type="rl_policy_go2",
@@ -95,28 +90,12 @@ go2_tripod_sim = autoconnect(
                     "inference_period": 0.02,
                     "mask_fr": True,
                     "device": "cpu",
-                    # Three-phase lifecycle after arm():
-                    #   pre_ramp_hold  - hold ramp_origin (the pose at arm time)
-                    #   activation_ramp - blend ramp_origin -> policy target
-                    #   post_ramp_hold - hold at end-of-ramp target
-                    #   (then live policy execution each tick)
-                    # Sim spawns at the "lie" keyframe (belly-down, base_z=0.105);
-                    # the ramp does the lie -> stand transition. Holds are short
-                    # for sim; bump up for hardware bring-up so the operator can
-                    # observe each phase.
+                    # Ramps from MJCF "lie" keyframe to standing.
                     "pre_ramp_hold_seconds": 0.0,
                     "activation_ramp_seconds": 2.5,
                     "post_ramp_hold_seconds": 0.0,
                 },
             ),
-            # FR-leg teleop. Same TeleopIKTask the manipulator arms use, with
-            # `translation_only=True` (3-DOF leg can't realize 6-DOF poses) and
-            # `hand=None` (engagement gating is upstream — the Quest module
-            # only publishes right_controller_output while A is held, so we
-            # just listen for fresh pose deltas and time out when they stop).
-            # Receives PoseStamped via the coordinator's cartesian_command
-            # routing (frame_id matches this task name). Higher priority than
-            # rl_walk_go2 so it wins per-joint arbitration on FR_*.
             TaskConfig(
                 name=_FR_TASK_NAME,
                 type="teleop_ik",
@@ -124,14 +103,10 @@ go2_tripod_sim = autoconnect(
                 priority=20,
                 auto_start=True,
                 params={
-                    # FR-leg URDF (base_link -> FR_hip -> FR_thigh -> FR_calf
-                    # -> FR_foot). ee_joint_id=3 is FR_calf_joint, the last
-                    # movable joint; the foot is a fixed offset that cancels
-                    # in delta math.
                     "model_path": "data/go2_mjlab/go2_fr_leg.urdf",
                     "ee_joint_id": 3,
-                    "hand": None,  # upstream gating
-                    "translation_only": True,  # 3-DOF chain
+                    "hand": None,
+                    "translation_only": True,
                     "timeout": 0.3,
                     "max_joint_delta_deg": 30.0,
                 },
@@ -141,18 +116,14 @@ go2_tripod_sim = autoconnect(
     JoystickTwistTeleopModule.blueprint(
         linear_speed=1.0,
         angular_speed=0.8,
-        # Route the right controller PoseStamped to the FR task.
         task_names={"right": _FR_TASK_NAME},
     ),
 ).transports(
     {
-        # Joystick twist -> coordinator twist_command -> RLPolicyTask.set_velocity_command.
         ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
         ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-        # Right controller pose -> coordinator cartesian_command -> FR teleop task.
         ("cartesian_command", PoseStamped): LCMTransport("/cartesian_command", PoseStamped),
         ("right_controller_output", PoseStamped): LCMTransport("/cartesian_command", PoseStamped),
-        # Buttons - coordinator forwards to all tasks.
         ("buttons", Buttons): LCMTransport("/buttons", Buttons),
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }

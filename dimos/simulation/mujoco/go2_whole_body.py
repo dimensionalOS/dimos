@@ -40,7 +40,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-# Vendored MJCF under data/. Fixed at repo root - users override via config.
 _DEFAULT_MJCF: Path = (
     Path(__file__).resolve().parents[3] / "data" / "go2_mjlab" / "xmls" / "scene_go2.xml"
 )
@@ -48,22 +47,14 @@ _DEFAULT_MJCF: Path = (
 
 @dataclass
 class MujocoGo2Config:
-    """Configuration for `MujocoGo2WholeBody`."""
-
     mjcf_path: Path = _DEFAULT_MJCF
-    step_period: float = 0.005  # 200 Hz, matches training sim
-    # Spawn pose. "lie" puts the robot in a folded sit pose on the ground,
-    # mirroring the real-hardware workflow (Unitree _targetPos_2). The RL
-    # policy task's activation ramp drives lie -> standing -> walking when
-    # armed. "home" is the upright spawn used by other consumers of this MJCF
-    # (e.g. mjlab training) and will collapse under gravity without active PD.
+    step_period: float = 0.005  # 200Hz matches training sim
     keyframe_name: str = "lie"
     render: bool = False
 
 
-# Wire / DimOS canonical joint order: matches make_quadruped_joints("go2") and
-# Unitree's LowCmd_.motor_cmd[0..11] indexing. Short names (no '_joint' suffix);
-# connect() appends '_joint' when resolving MJCF joint ids.
+# Wire order (matches Unitree LowCmd_.motor_cmd[0..11]). Short names; connect()
+# appends '_joint' for MJCF joint lookups.
 GO2_ACTUATOR_ORDER: tuple[str, ...] = (
     "FR_hip",
     "FR_thigh",
@@ -116,10 +107,6 @@ class MujocoGo2WholeBody(WholeBodyAdapter):
         self._mj_model = mujoco.MjModel.from_xml_path(str(path))
         self._mj_data = mujoco.MjData(self._mj_model)
 
-        # Resolve actuator + joint ids for the 12 motors, in our canonical
-        # (wire) order. GO2_ACTUATOR_ORDER uses short names (no _joint suffix);
-        # the MJCF actuator names match those directly, while MJCF joint
-        # names need the "_joint" suffix appended.
         for short_name in GO2_ACTUATOR_ORDER:
             act_id = mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_ACTUATOR, short_name)
             if act_id < 0:
@@ -134,7 +121,6 @@ class MujocoGo2WholeBody(WholeBodyAdapter):
             self._qpos_ids.append(int(self._mj_model.jnt_qposadr[jnt_id]))
             self._qvel_ids.append(int(self._mj_model.jnt_dofadr[jnt_id]))
 
-        # IMU sensors from scene_go2.xml: imu_quat, imu_gyro, imu_acc.
         for s in ("imu_quat", "imu_gyro", "imu_acc"):
             sid = mujoco.mj_name2id(self._mj_model, mujoco.mjtObj.mjOBJ_SENSOR, s)
             if sid < 0:
@@ -142,36 +128,21 @@ class MujocoGo2WholeBody(WholeBodyAdapter):
                 return False
             self._imu_sensor_ids[s] = sid
 
-        # Reset to defaults (uses each body's <body pos="..."> for free joints).
-        # Then overlay the keyframe's robot qpos on top, so scene objects
-        # added to the MJCF spawn at their declared positions instead of being
-        # zeroed by the keyframe's short qpos vector.
         mujoco.mj_resetData(self._mj_model, self._mj_data)
         key_id = mujoco.mj_name2id(
             self._mj_model, mujoco.mjtObj.mjOBJ_KEY, self.config.keyframe_name
         )
         if key_id >= 0:
             n = int(self._mj_model.key_qpos.shape[1])
-            # Keyframe stores the full qpos length; we want only the robot's
-            # leading 7 freejoint + 12 leg DOFs = 19. Anything beyond that is
-            # scene objects, which should keep their <body pos> defaults.
+            # Robot freejoint (7) + 12 leg DOFs; rest of qpos is scene objects.
             robot_qpos_len = min(19, n)
             self._mj_data.qpos[:robot_qpos_len] = self._mj_model.key_qpos[key_id, :robot_qpos_len]
-            # Seed the PD command with the keyframe's joint targets so the
-            # step loop actively HOLDS the spawn pose from the very first
-            # tick, before any caller has written a real command. Without
-            # this, the robot collapses during the ~1s between connect()
-            # and the first task.compute() emission.
-            #
-            # Gains match Unitree's go2_stand_example.cpp (kp=50, kd=3.5):
-            # high enough to track the held pose against gravity, will be
-            # overridden by the caller's real kp/kd on the first command.
+            # Seed PD with the keyframe's targets so the step loop holds spawn
+            # pose from tick 0; caller's first command overrides kp/kd.
             if (
                 self._mj_model.key_ctrl is not None
                 and self._mj_model.key_ctrl.shape[1] >= self._mj_model.nu
             ):
-                # key_ctrl is in MJCF actuator order, our _latest_cmd matches
-                # because _actuator_ids was resolved in GO2_ACTUATOR_ORDER.
                 for i, act_id in enumerate(self._actuator_ids):
                     self._latest_cmd[i] = MotorCommand(
                         q=float(self._mj_model.key_ctrl[key_id, act_id]),
@@ -183,7 +154,6 @@ class MujocoGo2WholeBody(WholeBodyAdapter):
         else:
             logger.warning(f"Keyframe {self.config.keyframe_name!r} missing - using default qpos")
 
-        # Step once to populate sensors/qfrc_actuator so the first read is valid.
         mujoco.mj_forward(self._mj_model, self._mj_data)
         self._has_states = True
         logger.info(
@@ -303,8 +273,7 @@ class MujocoGo2WholeBody(WholeBodyAdapter):
             with self._lock:
                 if self._mj_data is None:
                     break
-                # Apply PD: tau = kp*(q_des - q) + kd*(dq_des - dq) + tau_ff.
-                # POS_STOP/VEL_STOP sentinels mean "no command" -> ctrl=0.
+                # tau = kp*(q_des - q) + kd*(dq_des - dq) + tau_ff.
                 from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
 
                 for i, cmd in enumerate(self._latest_cmd):

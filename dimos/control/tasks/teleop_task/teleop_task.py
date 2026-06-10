@@ -241,10 +241,7 @@ class TeleopIKTask(BaseControlTask):
             with self._lock:
                 self._initial_ee_pose = initial_pose
 
-        # Apply delta to initial pose: target = initial + delta.
-        # For short chains (e.g. 3-DOF leg), translation_only keeps EE
-        # orientation fixed at the engage-time snapshot — controller rotation
-        # is ignored because the chain can't physically realize 6-DOF poses.
+        # target = initial + delta; translation_only freezes rotation at engage time.
         with self._lock:
             if self._initial_ee_pose is None:
                 return None
@@ -318,9 +315,7 @@ class TeleopIKTask(BaseControlTask):
     def on_buttons(self, msg: Buttons) -> bool:
         """Press-and-hold engage: hold primary button to track, release to stop.
 
-        If `hand is None` (stream-only mode), the task does not own engagement
-        — the upstream Quest module is responsible for gating which pose
-        deltas reach us. on_buttons does nothing in that mode.
+        No-op when `hand is None` (engagement gated upstream).
         """
         if self._config.hand is None:
             return True

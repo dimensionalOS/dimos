@@ -206,19 +206,10 @@ class JoystickTwistTeleopConfig(ArmTeleopConfig):
 class JoystickTwistTeleopModule(ArmTeleopModule):
     """ArmTeleop + an extra Twist outlet driven by both thumbsticks.
 
-    Use case: Go2 tripod blueprint. Right A (primary) engages the FR-leg
-    pose track (inherited engage behavior). Joysticks always publish twist
-    so the operator can drive the quadruped at the same time.
-
-    Twist mapping (mirrors the snippet the user requested):
+    Mapping (all deadzoned, scaled by linear_speed / angular_speed):
         left thumbstick Y  -> linear.x  (forward / back)
         left thumbstick X  -> linear.y  (strafe)
         right thumbstick X -> angular.z (yaw)
-    All inputs deadzoned, scaled by linear_speed / angular_speed.
-
-    Outputs:
-        - cmd_vel: Twist (new)
-        - left_controller_output / right_controller_output / buttons (inherited)
     """
 
     config: JoystickTwistTeleopConfig
@@ -244,9 +235,6 @@ class JoystickTwistTeleopModule(ArmTeleopModule):
         twist.linear = Vector3(0.0, 0.0, 0.0)
         twist.angular = Vector3(0.0, 0.0, 0.0)
         if left is not None:
-            # Quest thumbstick y is forward-positive on the controller; Twist
-            # linear.x convention is forward-positive in body frame. Sign flips
-            # match the user's snippet.
             twist.linear.x = -self._deadzone(left.thumbstick.y) * self.config.linear_speed
             twist.linear.y = -self._deadzone(left.thumbstick.x) * self.config.linear_speed
         if right is not None:

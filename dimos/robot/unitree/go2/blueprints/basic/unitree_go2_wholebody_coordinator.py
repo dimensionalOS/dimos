@@ -38,7 +38,6 @@ _go2_joints = make_quadruped_joints("go2")
 _KP = (20.0, 60.0, 40.0) * 4
 _KD = (1.0, 3.0, 2.0) * 4
 
-# ROBOT_INTERFACE pins cyclonedds to a NIC; required on multi-NIC hosts.
 unitree_go2_wholebody_coordinator = (
     autoconnect(
         Go2WholeBodyConnection.blueprint(
@@ -65,10 +64,7 @@ unitree_go2_wholebody_coordinator = (
                 ),
             ],
         ),
-    )
-    # No remappings: Module stream names (motor_states/imu/motor_command) don't
-    # collide with ControlCoordinator's (joint_state/joint_command/...).
-    .transports(
+    ).transports(
         {
             ("motor_states", JointState): LCMTransport("/go2/motor_states", JointState),
             ("imu", Imu): LCMTransport("/go2/imu", Imu),
