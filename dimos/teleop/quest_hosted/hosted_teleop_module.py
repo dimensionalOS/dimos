@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 from enum import IntEnum
 import json
-import os
 import threading
 import time
 from typing import Any
@@ -64,10 +63,10 @@ class Hand(IntEnum):
 class HostedTeleopConfig(ModuleConfig):
     control_loop_hz: float = 50.0
 
-    broker_url: str = os.getenv("TELEOP_BROKER_URL", "https://teleop.dimensionalos.com")
-    broker_api_key: str = os.getenv("TELEOP_API_KEY", "")
-    robot_id: str = os.getenv("TELEOP_ROBOT_ID", "")
-    robot_name: str = os.getenv("TELEOP_ROBOT_NAME", "")
+    broker_url: str = "https://teleop.dimensionalos.com"
+    broker_api_key: str = ""
+    robot_id: str = ""
+    robot_name: str = ""
 
     stun_urls: list[str] = ["stun:stun.cloudflare.com:3478"]
     turn_urls: list[str] = []

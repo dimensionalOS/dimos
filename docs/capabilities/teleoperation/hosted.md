@@ -9,11 +9,23 @@ router, on Wi-Fi, or wired LAN.
 ## Quick Start
 
 ```bash
-TELEOP_API_KEY=dtk_live_... \
-TELEOP_ROBOT_ID=my-robot \
-TELEOP_ROBOT_NAME="Lab Go2" \
-dimos run teleop-hosted-go2
+dimos run teleop-hosted-go2 \
+  -o hostedtwistteleopmodule.broker_api_key=dtk_live_... \
+  -o hostedtwistteleopmodule.robot_id=my-robot \
+  -o hostedtwistteleopmodule.robot_name="Lab Go2"
 ```
+
+The settings are plain config fields, so you can also keep them in a `.env`
+file (loaded automatically) instead of repeating them on the command line:
+
+```bash
+# .env
+HOSTEDTWISTTELEOPMODULE__BROKER_API_KEY=dtk_live_...
+HOSTEDTWISTTELEOPMODULE__ROBOT_ID=my-robot
+HOSTEDTWISTTELEOPMODULE__ROBOT_NAME=Lab Go2
+```
+
+(For `teleop-hosted-xarm7`, the module is `hostedarmteleopmodule`.)
 
 The robot registers with the broker. Open
 [teleop.dimensionalos.com](https://teleop.dimensionalos.com), log in, and your
@@ -30,7 +42,7 @@ robot appears under **Available Robots**. Click **Connect** and you're driving.
 
 1. Visit [teleop.dimensionalos.com](https://teleop.dimensionalos.com) and sign up.
 2. On the dashboard, **API Keys → + New Key**.
-3. Copy the key (shown once) and pass it as `TELEOP_API_KEY` when launching the blueprint.
+3. Copy the key (shown once) and pass it as `broker_api_key` when launching the blueprint.
 
 The key is per-robot; one key authenticates one robot. The same user account can
 manage many keys for different robots.
@@ -90,10 +102,10 @@ fold them into `report.md`.
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `broker_url` | `https://teleop.dimensionalos.com` | Override with `TELEOP_BROKER_URL` to point at a self-hosted broker |
-| `broker_api_key` | `""` | Required. Env: `TELEOP_API_KEY` |
-| `robot_id` | `""` | Required, identifies this robot. Env: `TELEOP_ROBOT_ID` |
-| `robot_name` | `""` | Display name shown in the dashboard. Env: `TELEOP_ROBOT_NAME` |
+| `broker_url` | `https://teleop.dimensionalos.com` | Override to point at a self-hosted broker |
+| `broker_api_key` | `""` | Required |
+| `robot_id` | `""` | Required, identifies this robot |
+| `robot_name` | `""` | Display name shown in the dashboard |
 | `control_loop_hz` | `50.0` | Per-hand publish + button-state cycle |
 | `heartbeat_hz` | `1.0` | HTTP heartbeat to the broker (also drives channel-id sync) |
 | `telemetry_hz` | `3.0` | Robot → operator HUD command-plane stats |
