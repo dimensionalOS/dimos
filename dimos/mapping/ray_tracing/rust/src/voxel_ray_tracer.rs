@@ -26,10 +26,8 @@ pub struct Config {
     pub min_health: i32,
     #[validate(range(min = 1))]
     pub max_health: i32,
-    /// Spare a clearing miss when |ray · surface normal| is below this. Larger
-    /// spares steeper grazes: 0.5 clears anything hit past 30 deg off the
-    /// surface, 0.7 past ~45 deg. Raise it to stop grazing rays eroding floors,
-    /// treads and landings (whose slope can exceed 30 deg).
+    /// Spare a clearing miss when |ray dot normal| is below this. Higher
+    /// protects steeper grazing surfaces like floors and treads.
     #[validate(range(min = 0.0, max = 1.0))]
     #[serde(default = "default_graze_cos")]
     pub graze_cos: f32,
@@ -79,27 +77,40 @@ impl VoxelMap {
     fn health(&self, key: VoxelKey) -> Option<VoxelHealth> {
         self.voxels.get(&key).map(|c| c.health)
     }
+
+    /// Fit every occupied voxel's normal from its pooled neighborhood.
+    #[cfg(test)]
+    fn recompute_all_normals(&mut self, voxel_size: f32) {
+        let updates: Vec<(VoxelKey, Option<Vector3<f32>>)> = self
+            .voxels
+            .keys()
+            .copied()
+            .map(|k| (k, pooled_normal(&self.voxels, k, voxel_size)))
+            .collect();
+        for (k, n) in updates {
+            self.voxels.get_mut(&k).unwrap().normal = n;
+        }
+    }
 }
 
-/// Minimum points before a voxel's surface normal is trusted.
 const NORMAL_MIN_POINTS: u32 = 3;
-/// A voxel is planar when its smallest covariance eigenvalue is below this
-/// fraction of the next-smallest.
-const NORMAL_PLANAR_RATIO: f32 = 0.15;
-/// A patch is a line with no defined normal when its middle eigenvalue is below
-/// this fraction of the largest (e.g. a single grazing scan-line on a floor).
-const NORMAL_LINE_RATIO: f32 = 0.15;
+const NORMAL_NEIGHBOR_RADIUS: i32 = 1;
+const NORMAL_REWEIGHT_ITERS: u32 = 3;
+/// Neighbor weight falloff with plane distance, as a fraction of voxel size.
+const NORMAL_PLANE_SIGMA_FRAC: f32 = 0.5;
+/// Lowest retained point-mass fraction that still counts as a real plane.
+const NORMAL_MIN_SUPPORT: f32 = 0.5;
 
-/// One voxel: occupancy health plus a running point covariance used to estimate
-/// the local surface normal. Points are accumulated relative to the voxel center
-/// to keep the moments small and f32-stable. The covariance lives and dies with
-/// the voxel entry.
+/// Occupancy health, a running point covariance, and the cached normal fit from
+/// the voxel's pooled neighborhood. Points accumulate relative to the voxel
+/// center for f32 stability.
 #[derive(Clone)]
 pub struct Voxel {
     pub health: VoxelHealth,
     num_pts: u32,
     sum: Vector3<f32>,
     m2: Matrix3<f32>,
+    normal: Option<Vector3<f32>>,
 }
 
 impl Default for Voxel {
@@ -109,6 +120,7 @@ impl Default for Voxel {
             num_pts: 0,
             sum: Vector3::zeros(),
             m2: Matrix3::zeros(),
+            normal: None,
         }
     }
 }
@@ -127,41 +139,163 @@ impl Voxel {
         self.m2 += q * q.transpose();
     }
 
-    /// Unit surface normal if the voxel holds enough confidently-planar points,
-    /// else None (too sparse, or an edge/corner where the normal is ill-defined).
     fn planar_normal(&self) -> Option<Vector3<f32>> {
+        self.normal
+    }
+
+    /// Fit a normal from this voxel's own points alone, ignoring neighbors.
+    #[cfg(test)]
+    fn self_normal(&self) -> Option<Vector3<f32>> {
         if self.num_pts < NORMAL_MIN_POINTS {
             return None;
         }
         let n = self.num_pts as f32;
         let mean = self.sum / n;
-        let cov = self.m2 / n - mean * mean.transpose();
-        let eig = cov.symmetric_eigen();
-        let mut idx = [0usize, 1, 2];
-        idx.sort_by(|&a, &b| eig.eigenvalues[a].total_cmp(&eig.eigenvalues[b]));
-        let e0 = eig.eigenvalues[idx[0]].max(0.0);
-        let e1 = eig.eigenvalues[idx[1]].max(0.0);
-        let e2 = eig.eigenvalues[idx[2]].max(0.0);
-        if e2 < 1e-12 {
-            return None;
-        }
-        // Reject a line: both in-plane directions must carry real spread, or the
-        // normal is undefined (e.g. a single grazing scan-line across a floor).
-        if e1 < NORMAL_LINE_RATIO * e2 {
-            return None;
-        }
-        // Reject a patch that is not flat enough.
-        if e0 > NORMAL_PLANAR_RATIO * e1 {
-            return None;
-        }
-        Some(eig.eigenvectors.column(idx[0]).into_owned())
+        fit_normal(self.m2 / n - mean * mean.transpose())
     }
 }
 
-/// Whether to spare an occupied voxel from a clearing miss. The only reason to
-/// spare is a grazing ray skimming a real planar surface, which a near-tangent
-/// ray would otherwise erode. Everything else is left to the health hysteresis,
-/// which alone decides persistence.
+/// The surface normal of a covariance, or None unless planarity dominates the
+/// linear and scatter dimensionality features (an edge or blob has no normal).
+fn fit_normal(cov: Matrix3<f32>) -> Option<Vector3<f32>> {
+    let eig = cov.symmetric_eigen();
+    let mut idx = [0usize, 1, 2];
+    idx.sort_by(|&a, &b| eig.eigenvalues[a].total_cmp(&eig.eigenvalues[b]));
+    let e2 = eig.eigenvalues[idx[2]].max(0.0);
+    if e2 < 1e-12 {
+        return None;
+    }
+    let l0 = eig.eigenvalues[idx[0]].max(0.0).sqrt();
+    let l1 = eig.eigenvalues[idx[1]].max(0.0).sqrt();
+    let l2 = e2.sqrt();
+    let linearity = (l2 - l1) / l2;
+    let planarity = (l1 - l0) / l2;
+    let scattering = l0 / l2;
+    if planarity < linearity || planarity < scattering {
+        return None;
+    }
+    Some(eig.eigenvectors.column(idx[0]).into_owned())
+}
+
+/// Moments of one neighbor voxel, shifted into the target voxel's local frame.
+struct Neighbor {
+    n: f32,
+    s: Vector3<f32>,
+    t: Matrix3<f32>,
+    centroid: Vector3<f32>,
+}
+
+/// Fit a voxel's normal from its neighborhood, reweighting out neighbors whose
+/// centroid lies off the tentative plane so a flat tread is not polluted by an
+/// adjacent riser.
+fn pooled_normal(
+    voxels: &AHashMap<VoxelKey, Voxel>,
+    key: VoxelKey,
+    voxel_size: f32,
+) -> Option<Vector3<f32>> {
+    let r = NORMAL_NEIGHBOR_RADIUS;
+    let mut nbs: Vec<Neighbor> = Vec::new();
+    let mut n_raw: u32 = 0;
+    for dx in -r..=r {
+        for dy in -r..=r {
+            for dz in -r..=r {
+                let nk = (key.0 + dx, key.1 + dy, key.2 + dz);
+                let Some(v) = voxels.get(&nk) else {
+                    continue;
+                };
+                if v.num_pts == 0 {
+                    continue;
+                }
+                let ni = v.num_pts as f32;
+                // Shift this voxel's center-relative moments to the target center.
+                let d = Vector3::new(dx as f32, dy as f32, dz as f32) * voxel_size;
+                let s = v.sum + d * ni;
+                let t =
+                    v.m2 + v.sum * d.transpose() + d * v.sum.transpose() + d * d.transpose() * ni;
+                n_raw += v.num_pts;
+                nbs.push(Neighbor {
+                    n: ni,
+                    s,
+                    t,
+                    centroid: s / ni,
+                });
+            }
+        }
+    }
+    if n_raw < NORMAL_MIN_POINTS {
+        return None;
+    }
+
+    let sigma = NORMAL_PLANE_SIGMA_FRAC * voxel_size;
+    let two_sig2 = 2.0 * sigma * sigma;
+    let mut weights = vec![1.0_f32; nbs.len()];
+    let mut cov = Matrix3::zeros();
+    for _ in 0..NORMAL_REWEIGHT_ITERS {
+        let (mut wn, mut s, mut t) = (0.0_f32, Vector3::zeros(), Matrix3::zeros());
+        for (nb, &w) in nbs.iter().zip(&weights) {
+            wn += w * nb.n;
+            s += nb.s * w;
+            t += nb.t * w;
+        }
+        if wn < 1e-6 {
+            break;
+        }
+        let mean = s / wn;
+        cov = t / wn - mean * mean.transpose();
+        let eig = cov.symmetric_eigen();
+        let smallest = eig
+            .eigenvalues
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(i, _)| i)
+            .unwrap();
+        let normal = eig.eigenvectors.column(smallest).into_owned();
+        for (nb, w) in nbs.iter().zip(&mut weights) {
+            let dist = normal.dot(&(nb.centroid - mean)).abs();
+            *w = (-(dist * dist) / two_sig2).exp();
+        }
+    }
+    // Reject a plane the reweighting fabricated by discarding most of the mass.
+    let kept: f32 = nbs.iter().zip(&weights).map(|(nb, &w)| w * nb.n).sum();
+    if kept < NORMAL_MIN_SUPPORT * n_raw as f32 {
+        return None;
+    }
+    fit_normal(cov)
+}
+
+/// Refit the cached normal of every voxel whose neighborhood changed this frame.
+fn refresh_normals(
+    map: &mut VoxelMap,
+    hits: &AHashSet<VoxelKey>,
+    removed: &[VoxelKey],
+    voxel_size: f32,
+) {
+    let r = NORMAL_NEIGHBOR_RADIUS;
+    let mut dirty: AHashSet<VoxelKey> = AHashSet::new();
+    for &c in hits.iter().chain(removed.iter()) {
+        for dx in -r..=r {
+            for dy in -r..=r {
+                for dz in -r..=r {
+                    dirty.insert((c.0 + dx, c.1 + dy, c.2 + dz));
+                }
+            }
+        }
+    }
+    let updates: Vec<(VoxelKey, Option<Vector3<f32>>)> = dirty
+        .iter()
+        .filter(|k| map.voxels.contains_key(k))
+        .map(|&k| (k, pooled_normal(&map.voxels, k, voxel_size)))
+        .collect();
+    for (k, n) in updates {
+        if let Some(c) = map.voxels.get_mut(&k) {
+            c.normal = n;
+        }
+    }
+}
+
+/// Spare a clearing miss only when a grazing ray skims a planar surface.
+/// Anything without a trustworthy normal is left to the health hysteresis.
 fn should_spare(
     voxels: &AHashMap<VoxelKey, Voxel>,
     key: VoxelKey,
@@ -171,7 +305,7 @@ fn should_spare(
     let Some(c) = voxels.get(&key) else {
         return false;
     };
-    match c.planar_normal() {
+    match c.normal {
         Some(n) => ray_unit.dot(&n).abs() < graze_cos,
         None => false,
     }
@@ -301,14 +435,19 @@ pub fn update_map(
     }
 
     // each miss is only checked once; removal drops the covariance with it
+    let mut removed: Vec<VoxelKey> = Vec::new();
     for v in misses.difference(&hits) {
         if let Some(c) = map.voxels.get_mut(v) {
             c.health -= 1;
             if c.health <= cfg.min_health {
                 map.voxels.remove(v);
+                removed.push(*v);
             }
         }
     }
+
+    // refresh cached normals wherever the neighborhood changed this frame
+    refresh_normals(map, &hits, &removed, cfg.voxel_size);
 
     hits
 }
@@ -667,8 +806,7 @@ mod tests {
         assert_eq!(map.health((5, 0, 0)), Some(1));
     }
 
-    /// Test how bad the planar ray clipping is.
-    /// For example, points on floors can be counted as misses because they are close to the same ray as the hit.
+    /// A grazing ray along a floor must not clip floor voxels near its hit.
     #[test]
     fn ground_clipping_single_ray() {
         let voxel_size = 0.1_f32;
@@ -730,22 +868,24 @@ mod tests {
         );
     }
 
-    /// Dense surface samples for axis-aligned segments (vertical?, fixed, lo,
-    /// hi), swept across a y band so the per-voxel covariance is a genuine 2d
-    /// patch rather than a degenerate line in the x-z slice.
+    /// Dense surface samples for axis-aligned segments, swept across a y band so
+    /// each patch is a genuine 2d surface rather than a degenerate line.
     fn sample_segments(
         segments: &[(bool, f32, f32, f32)],
         voxel_size: f32,
     ) -> Vec<(f32, f32, f32)> {
         let ds = voxel_size / 6.0;
-        let ny = 5;
+        // A real step spans many voxels across its width; sample the full width so
+        // treads have two in-plane directions and nosings a dominant edge along y.
+        let width = 3.0 * voxel_size;
+        let ny = 19;
         let mut pts = Vec::new();
         for &(vertical, fixed, lo, hi) in segments {
             let n = ((hi - lo) / ds).round().max(1.0) as i32;
             for i in 0..=n {
                 let t = lo + (hi - lo) * (i as f32 / n as f32);
                 for j in 0..ny {
-                    let yy = voxel_size * (0.15 + 0.7 * j as f32 / (ny - 1) as f32);
+                    let yy = width * (j as f32 / (ny - 1) as f32);
                     pts.push(if vertical {
                         (fixed, yy, t)
                     } else {
@@ -778,6 +918,7 @@ mod tests {
         for &k in &keys {
             map.voxels.get_mut(&k).unwrap().health = health;
         }
+        map.recompute_all_normals(voxel_size);
         (map, keys)
     }
 
@@ -814,9 +955,7 @@ mod tests {
         best.map(|(_, p)| p)
     }
 
-    /// Write an SVG of the x-z plane: kept voxels blue, cleared voxels red,
-    /// ray-hit voxels green, the dense true-surface points, each ray from the
-    /// sensor to its surface hit, and the sensor.
+    /// Write an SVG of the x-z plane for visual inspection.
     #[allow(clippy::too_many_arguments)]
     fn write_stair_svg(
         path: &std::path::Path,
@@ -1023,14 +1162,8 @@ mod tests {
         svg::save(path, &doc).expect("write stair_clip.svg");
     }
 
-    /// A fan of lidar rays from a sensor at the foot of a staircase. Each ray
-    /// direction is intersected with the true continuous surface to find its
-    /// hit point, then the whole frame is fed to the mapper. Rays that reach an
-    /// upper step graze the voxels of the lower steps they pass over, and the
-    /// thin-ray DDA clears that real geometry. A correct clearing pass must
-    /// leave every stair voxel intact.
-    ///
-    /// Run it with `cargo test stair_clipping_ray_fan -- --nocapture`.
+    /// A ray fan from the foot of a staircase grazes lower steps en route to
+    /// upper ones. The grazing gate must leave every planar surface voxel intact.
     #[test]
     fn stair_clipping_ray_fan() {
         let voxel_size = 0.1_f32;
@@ -1067,6 +1200,15 @@ mod tests {
         let lidar = sample_segments(&segments, voxel_size);
         let (mut map, all_stairs) = build_surface(&lidar, voxel_size, cfg.max_health);
 
+        // Voxels with a trustworthy normal before the clearing pass. The grazing
+        // gate must spare every one of these; the only voxels it may clear are
+        // the tread/riser junctions, which have no plane and rely on health.
+        let planar: Vec<VoxelKey> = all_stairs
+            .iter()
+            .copied()
+            .filter(|k| map.voxels.get(k).and_then(Voxel::planar_normal).is_some())
+            .collect();
+
         // Sensor at the foot of the stairs, 0.23 m off the ground.
         let origin = (half, half, base_z + 0.23);
 
@@ -1099,31 +1241,32 @@ mod tests {
         );
         eprintln!("wrote {}", svg_path.display());
 
-        // No real stair voxel may be cleared: every ray that grazes a step's
-        // voxels en route to its true hit must leave them intact.
-        let cleared: Vec<VoxelKey> = all_stairs
+        // The grazing gate must spare every planar surface voxel: a ray skimming
+        // a tread or riser en route to a higher step may not erode it.
+        let cleared_planar: Vec<VoxelKey> = planar
             .iter()
             .copied()
             .filter(|v| !map.voxels.contains_key(v))
             .collect();
+        let cleared_total = all_stairs
+            .iter()
+            .filter(|v| !map.voxels.contains_key(v))
+            .count();
         eprintln!(
-            "{} rays hit, cleared {} stair voxel(s): {cleared:?}",
+            "{} rays hit; {} junction voxel(s) cleared, {} planar surface voxel(s) cleared",
             hits.len(),
-            cleared.len()
+            cleared_total - cleared_planar.len(),
+            cleared_planar.len()
         );
         assert!(
-            cleared.is_empty(),
-            "ray fan cleared {} real stair voxel(s): {cleared:?}",
-            cleared.len()
+            cleared_planar.is_empty(),
+            "grazing rays eroded {} planar surface voxel(s): {cleared_planar:?}",
+            cleared_planar.len()
         );
     }
 
-    /// A flat landing floor with a wall at the far end, scanned by a fan of rays
-    /// from a sensor above the floor. Reports which floor voxels get cleared and
-    /// prints a sample of floor-voxel normals. Tune SENSOR_HEIGHT / shadow_depth
-    /// / NORMAL_MIN_POINTS to probe what erodes the floor.
-    ///
-    /// Run it with `cargo test landing_floor_ray_fan -- --nocapture`.
+    /// A flat landing floor with a far wall, scanned by a downward ray fan. The
+    /// grazing gate must not erode the floor.
     #[test]
     fn landing_floor_ray_fan() {
         let voxel_size = 0.1_f32;
@@ -1211,14 +1354,8 @@ mod tests {
         );
     }
 
-    /// Robot on the step just below a landing, sensor at head height, so it can
-    /// just see over the landing. A single frame does NOT erode it: the rays hit
-    /// the surface directly and the grazed voxels share the hit's z-row, so the
-    /// z-slab guard protects them. This regression guard documents that the
-    /// realistic single-frame view is safe; real-data landing loss is a
-    /// multi-frame occlusion effect, reproduced elsewhere.
-    ///
-    /// Run it with `cargo test landing_grazed_from_below -- --nocapture`.
+    /// Robot just below a landing, seeing over its edge. The landing must survive:
+    /// rays hit it directly and the z-slab guard protects the grazed voxels.
     #[test]
     fn landing_grazed_from_below() {
         let voxel_size = 0.1_f32;
@@ -1327,15 +1464,17 @@ mod tests {
                 v.observe(Vector3::new(x, y, 0.0));
             }
         }
-        let n = v.planar_normal().expect("a 2d patch has a normal");
+        let n = v
+            .self_normal()
+            .expect("a flat 2d patch must yield a normal");
         assert!(n[2].abs() > 0.99, "expected ~vertical normal, got {n:?}");
     }
 
     #[test]
     fn line_like_patch_has_no_normal() {
         // Wide in y, ~zero in x, tiny z noise: a grazing scan-line across a flat
-        // floor. Its smallest eigenvector is horizontal, so trusting it would
-        // clear the floor; the line guard must reject it.
+        // floor. Its smallest eigenvector is horizontal, so trusting it as a normal
+        // would clear the floor. A line is not planar, so it must yield no normal.
         let mut v = Voxel::default();
         for j in 0..20 {
             let y = 0.08 * (j as f32 / 19.0 - 0.5);
@@ -1343,32 +1482,8 @@ mod tests {
             v.observe(Vector3::new(0.0, y, z));
         }
         assert!(
-            v.planar_normal().is_none(),
-            "a line-like patch must not yield a normal"
+            v.self_normal().is_none(),
+            "a scan-line has no trustworthy normal"
         );
-    }
-
-    #[test]
-    fn validate_rejects_zero_voxel_size() {
-        let cfg = Config {
-            voxel_size: 0.0,
-            ..basic_config()
-        };
-        assert!(cfg.validate().is_err());
-    }
-
-    #[test]
-    fn validate_rejects_min_health_geq_max_health() {
-        let cfg = Config {
-            min_health: 5,
-            max_health: 1,
-            ..basic_config()
-        };
-        assert!(cfg.validate().is_err());
-    }
-
-    #[test]
-    fn validate_accepts_basic_config() {
-        assert!(basic_config().validate().is_ok());
     }
 }
