@@ -25,7 +25,7 @@ from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.hardware.sensors.camera.zed import compat as zed
-from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.costmapper import CostMapper, costmap_to_rerun
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -47,15 +47,6 @@ def _convert_camera_info(camera_info: Any) -> Any:
     return camera_info.to_rerun(
         image_topic="/world/color_image",
         optical_frame="camera_optical",
-    )
-
-
-def _convert_navigation_costmap(grid: Any) -> Any:
-    return grid.to_rerun(
-        colormap="Accent",
-        z_offset=0.015,
-        opacity=0.2,
-        background="#484981",
     )
 
 
@@ -95,7 +86,7 @@ rerun_config = {
     "blueprint": _g1_rerun_blueprint,
     "visual_override": {
         "world/camera_info": _convert_camera_info,
-        "world/navigation_costmap": _convert_navigation_costmap,
+        "world/navigation_costmap": costmap_to_rerun,
     },
     "static": {
         "world/tf/base_link": _static_base_link,
@@ -130,7 +121,7 @@ _camera = (
     else autoconnect()
 )
 
-uintree_g1_primitive_no_nav = (
+unitree_g1_primitive_no_nav = (
     autoconnect(
         _with_vis,
         _camera,
@@ -163,4 +154,4 @@ uintree_g1_primitive_no_nav = (
     )
 )
 
-__all__ = ["uintree_g1_primitive_no_nav"]
+__all__ = ["unitree_g1_primitive_no_nav"]
