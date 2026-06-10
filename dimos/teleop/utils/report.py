@@ -40,7 +40,7 @@ from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.teleop.quest.quest_types import Buttons
-from dimos.teleop.utils.stream_stats import classify_e2e, loss_pct, pcts, reorder_count
+from dimos.teleop.utils.stream_stats import loss_pct, pcts, reorder_count
 from dimos.teleop.utils.video_stats import VideoStats
 from dimos.utils.logging_config import setup_logger
 
@@ -162,9 +162,6 @@ def _summary(records: list[Any], stall_factor: float = 3.0) -> dict[str, Any]:
         "reorder_count": reorder_count(seqs),
         "stall_count": len(stalls),
         "stall_total_s": sum(stalls) / 1000.0,
-        # No wall-arrival stored, so report .ts-based span as E2E is moot
-        # here. The live HUD has the real E2E (it knows wall − sender ts).
-        "e2e_ms": None,
     }
 
 
@@ -283,9 +280,6 @@ def _format_report(
         checks: list[str] = []
         if loss is not None:
             checks.append(f"loss {'PASS' if loss < _LOSS_THRESHOLD_PCT else 'WARN'} ({loss:.2f}%)")
-        e2e = s["e2e_ms"]
-        if e2e is not None:
-            checks.append(f"E2E {classify_e2e(e2e['p50'])} (p50 {e2e['p50']:.0f}ms)")
 
         loss_line = f"{loss:.2f}%" if loss is not None else "n/a (no seq)"
         jitter_line = (
