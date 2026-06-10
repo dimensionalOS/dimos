@@ -330,8 +330,7 @@ class Recorder(MemoryModule):
         warned_frames: set[str] = set()
 
         def on_msg(msg: Any) -> None:
-            recv_ts = time.time()
-            ts = getattr(msg, "ts", None) or recv_ts
+            ts = getattr(msg, "ts", None) or time.time()
             frame_id = getattr(msg, "frame_id", None) or default_frame_id
             transform = self.tf.get("world", frame_id, time_point=ts, time_tolerance=tf_tolerance)
             pose = transform.to_pose() if transform is not None else None
@@ -344,6 +343,6 @@ class Recorder(MemoryModule):
                     name,
                     frame_id,
                 )
-            stream.append(msg, ts=ts, pose=pose, tags={"recv_ts": recv_ts})
+            stream.append(msg, ts=ts, pose=pose)
 
         self.register_disposable(Disposable(input_topic.subscribe(on_msg)))
