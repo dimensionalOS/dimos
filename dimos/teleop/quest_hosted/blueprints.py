@@ -20,7 +20,6 @@ from pathlib import Path
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.control.blueprints.teleop import coordinator_teleop_xarm7
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
@@ -31,20 +30,24 @@ from dimos.teleop.quest_hosted.hosted_extensions import (
 )
 from dimos.teleop.utils.recorder import TeleopRecorder, TeleopRecorderConfig
 
-global_config.rerun_open = "none"
-
 # Single XArm7 teleop via the hosted (WebRTC) client. Pass `--simulation` to
 # run the coordinator inside MuJoCo, omit it for real hardware.
-teleop_hosted_xarm7 = autoconnect(
-    HostedArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
-    coordinator_teleop_xarm7,
-).transports(
-    {
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
+# rerun_open="none" suppresses the robot-side rerun window (operator gets video
+# over WebRTC).
+teleop_hosted_xarm7 = (
+    autoconnect(
+        HostedArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
+        coordinator_teleop_xarm7,
+    )
+    .transports(
+        {
+            ("right_controller_output", PoseStamped): LCMTransport(
+                "/coordinator/cartesian_command", PoseStamped
+            ),
+            ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+        }
+    )
+    .global_config(rerun_open="none")
 )
 
 
