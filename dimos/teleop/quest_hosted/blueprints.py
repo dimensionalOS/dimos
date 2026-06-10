@@ -15,9 +15,6 @@
 
 """Hosted teleop blueprints (WebRTC transport)."""
 
-from pathlib import Path
-
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.control.blueprints.teleop import coordinator_teleop_xarm7
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
@@ -28,7 +25,6 @@ from dimos.teleop.quest_hosted.hosted_extensions import (
     HostedArmTeleopModule,
     HostedTwistTeleopModule,
 )
-from dimos.teleop.utils.recorder import TeleopRecorder, TeleopRecorderConfig
 
 # Single XArm7 teleop via the hosted (WebRTC) client. Pass `--simulation` to
 # run the coordinator inside MuJoCo, omit it for real hardware.
@@ -59,30 +55,7 @@ teleop_hosted_go2 = autoconnect(
 ).global_config(n_workers=8, viewer="none")
 
 
-HOSTED_RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "data/hosted_teleop/recordings"
-
-
-class HostedTeleopRecorderConfig(TeleopRecorderConfig):
-    # Same generic recorder, just defaulting recordings into the hosted dir.
-    db_path: str | Path = HOSTED_RECORDINGS_DIR / "recording_hosted.db"
-
-
-class HostedTeleopRecorder(TeleopRecorder):
-    """Generic ``TeleopRecorder`` defaulting to the hosted recordings dir.
-
-    Ports + per-run timestamping are inherited; this only changes the default
-    output path. Compose at the CLI::
-
-        dimos run teleop-hosted-xarm7 hosted-teleop-recorder
-        dimos run teleop-hosted-go2   hosted-teleop-recorder
-    """
-
-    config: HostedTeleopRecorderConfig
-
-
 __all__ = [
-    "HostedTeleopRecorder",
-    "HostedTeleopRecorderConfig",
     "teleop_hosted_go2",
     "teleop_hosted_xarm7",
 ]
