@@ -109,9 +109,6 @@ class HostedTeleopModule(Module):
         }
         self._lock = threading.RLock()
 
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._loop_thread: threading.Thread | None = None
-
         self._pc: RTCPeerConnection | None = None
         self._http: httpx.AsyncClient | None = None
         self._session_id: str | None = None
@@ -145,7 +142,6 @@ class HostedTeleopModule(Module):
         self._stop_event.clear()
         unsub = self.color_image.subscribe(self._video_track.set_latest)
         self.register_disposable(Disposable(unsub))
-        self._start_event_loop()
         self._connect_blocking()
         self._start_heartbeat()
         self._start_telemetry()
@@ -169,29 +165,7 @@ class HostedTeleopModule(Module):
                 asyncio.run_coroutine_threadsafe(self._disconnect(), self._loop).result(timeout=5.0)
             except Exception:
                 logger.exception("Error during disconnect")
-        self._stop_event_loop()
         super().stop()
-
-    def _start_event_loop(self) -> None:
-        ready = threading.Event()
-
-        def runner() -> None:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            ready.set()
-            self._loop.run_forever()
-
-        self._loop_thread = threading.Thread(target=runner, daemon=True, name="HostedTeleopLoop")
-        self._loop_thread.start()
-        ready.wait()
-
-    def _stop_event_loop(self) -> None:
-        if self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._loop.stop)
-        if self._loop_thread is not None:
-            self._loop_thread.join(timeout=2.0)
-            self._loop_thread = None
-        self._loop = None
 
     def _connect_blocking(self) -> None:
         assert self._loop is not None
