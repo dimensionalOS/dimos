@@ -117,17 +117,22 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Install dependency for pyaudio
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev
       - name: Build and test PyO3 bindings
         run: |
-          uv venv
-          uv pip install maturin numpy pytest
+          uv sync --group tests --frozen
           source .venv/bin/activate
           maturin develop -m dimos/mapping/ray_tracing/rust/Cargo.toml
           maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/Cargo.toml
           python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
           python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
             dimos/mapping/ray_tracing/test_voxel_map.py \
-            dimos/navigation/nav_3d/mls_planner/test_mls_planner.py
+            dimos/mapping/ray_tracing/test_transformer.py \
+            dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
+            dimos/navigation/nav_3d/mls_planner/test_transformer.py
 
   md-babel:
     timeout-minutes: 15
