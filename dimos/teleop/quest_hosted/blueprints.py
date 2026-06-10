@@ -16,7 +16,7 @@
 
 from pathlib import Path
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.constants import STATE_DIR
 from dimos.control.blueprints.teleop import coordinator_teleop_xarm7
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
@@ -56,7 +56,7 @@ teleop_hosted_go2 = autoconnect(
 ).global_config(n_workers=8, viewer="none")
 
 
-HOSTED_RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "data/hosted_teleop/recordings"
+HOSTED_RECORDINGS_DIR = STATE_DIR / "hosted_teleop" / "recordings"
 
 
 class HostedTeleopRecorderConfig(TeleopRecorderConfig):
