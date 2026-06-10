@@ -205,6 +205,7 @@ class SemanticSearch(MemoryModule):
 
         embedding_cls = self.config.embedding_model
         if embedding_cls is None:
+            # Lazy: CLIPModel pulls in torch + transformers (heavy).
             from dimos.models.embedding.clip import CLIPModel
 
             embedding_cls = CLIPModel
