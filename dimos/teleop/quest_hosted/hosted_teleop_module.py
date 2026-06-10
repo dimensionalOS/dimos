@@ -314,7 +314,7 @@ class HostedTeleopModule(Module):
                     )
                 )
             except Exception:
-                logger.debug("telemetry send failed", exc_info=True)
+                logger.warning("telemetry send failed", exc_info=True)
 
         def runner() -> None:
             interval = 1.0 / max(self.config.telemetry_hz, 0.1)
@@ -343,7 +343,8 @@ class HostedTeleopModule(Module):
 
         try:
             data = resp.json()
-        except Exception:
+        except json.JSONDecodeError:
+            logger.warning("Heartbeat response was not valid JSON")
             return
 
         sub_id = data.get("cmd_channel_subscriber_id")
@@ -398,7 +399,7 @@ class HostedTeleopModule(Module):
             try:
                 self._cmd_channel.close()
             except Exception:
-                pass
+                logger.warning("Failed to close cmd channel", exc_info=True)
             self._cmd_channel = None
 
     def _open_state_channel(self, sctp_id: int) -> None:
@@ -424,7 +425,7 @@ class HostedTeleopModule(Module):
             try:
                 self._state_channel.close()
             except Exception:
-                pass
+                logger.warning("Failed to close state channel", exc_info=True)
             self._state_channel = None
 
     def _open_state_back_channel(self, sctp_id: int) -> None:
@@ -445,7 +446,7 @@ class HostedTeleopModule(Module):
             try:
                 self._state_back_channel.close()
             except Exception:
-                pass
+                logger.warning("Failed to close state-back channel", exc_info=True)
             self._state_back_channel = None
 
     def _on_state_message(self, data: Any) -> None:
@@ -458,7 +459,7 @@ class HostedTeleopModule(Module):
                 return
         try:
             msg = json.loads(data)
-        except Exception:
+        except json.JSONDecodeError:
             logger.warning(f"state_reliable: malformed JSON: {data[:80]!r}")
             return
 
