@@ -98,11 +98,3 @@ def test_carrier_is_lcm_joy() -> None:
     for got, want in zip(j.axes, expected, strict=True):
         assert abs(got - want) < 1e-5, f"axis mismatch: {got} vs {want}"
     assert j.header.frame_id == "video"
-
-
-if __name__ == "__main__":
-    test_lcm_roundtrip_preserves_all_fields()
-    test_from_dict_matches_browser_payload_shape()
-    test_decode_pads_short_axes_for_forward_compat()
-    test_carrier_is_lcm_joy()
-    print("all OK")
