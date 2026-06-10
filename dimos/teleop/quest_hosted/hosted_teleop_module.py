@@ -484,7 +484,13 @@ class HostedTeleopModule(Module):
                 float(off) if off is not None else float("nan"),
             )
         elif kind == "video_stats":
-            stats = VideoStats.from_dict(msg)
+            # Browser getStats() payload is untrusted; never let a parse error
+            # escape into the datachannel callback and stall ping/clock-sync.
+            try:
+                stats = VideoStats.from_dict(msg)
+            except (TypeError, ValueError):
+                logger.warning("state_reliable: malformed video_stats, dropping")
+                return
             logger.info("video: %s", stats)
             self.video_stats.publish(stats)
         else:

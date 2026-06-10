@@ -110,19 +110,24 @@ class VideoStats(Timestamped):
 
     @classmethod
     def from_dict(cls, d: dict[str, float | int]) -> VideoStats:
-        """Build from the JSON payload the browser ships (over state_reliable)."""
+        """Build from the JSON payload the browser ships (over state_reliable).
+
+        ``getStats()`` fields can be ``null`` before they populate, so use
+        ``or default`` (not ``dict.get`` defaults) — a present-but-null value
+        coerces to the default instead of raising in ``int()``/``float()``.
+        """
         return cls(
-            ts=float(d.get("ts", 0.0)),
-            frame_id=str(d.get("frame_id", "video")),
-            fps=float(d.get("fps", 0.0)),
-            kbps=float(d.get("kbps", 0.0)),
-            width=int(d.get("width", 0)),
-            height=int(d.get("height", 0)),
-            loss_pct=float(d.get("loss_pct", 0.0)),
-            jitter_buffer_ms=float(d.get("jitter_buffer_ms", 0.0)),
-            decode_ms=float(d.get("decode_ms", 0.0)),
-            frames_dropped=int(d.get("frames_dropped", 0)),
-            freezes=int(d.get("freezes", 0)),
+            ts=float(d.get("ts") or 0.0),
+            frame_id=str(d.get("frame_id") or "video"),
+            fps=float(d.get("fps") or 0.0),
+            kbps=float(d.get("kbps") or 0.0),
+            width=int(d.get("width") or 0),
+            height=int(d.get("height") or 0),
+            loss_pct=float(d.get("loss_pct") or 0.0),
+            jitter_buffer_ms=float(d.get("jitter_buffer_ms") or 0.0),
+            decode_ms=float(d.get("decode_ms") or 0.0),
+            frames_dropped=int(d.get("frames_dropped") or 0),
+            freezes=int(d.get("freezes") or 0),
         )
 
     def _as_axes(self) -> list[float]:
