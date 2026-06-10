@@ -32,12 +32,18 @@ from dimos.teleop.quest_hosted.hosted_teleop_module import HostedTeleopModule
 
 @pytest.fixture
 def module():
-    """Bare ``HostedTeleopModule`` with a mocked open state-back channel."""
-    m = HostedTeleopModule.__new__(HostedTeleopModule)
+    """A real ``HostedTeleopModule`` with a mocked open state-back channel.
+
+    Instantiated normally (no WebRTC connect happens until ``start()``); we only
+    swap in a mock for the one channel ``_on_state_message`` writes to.
+    """
+    m = HostedTeleopModule()
     m._state_back_channel = MagicMock()
     m._state_back_channel.readyState = "open"
-    m._state_channel = None
-    return m
+    try:
+        yield m
+    finally:
+        m.stop()
 
 
 def _sent_payload(module) -> dict:
