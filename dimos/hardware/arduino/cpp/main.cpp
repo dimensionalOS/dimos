@@ -45,14 +45,7 @@
 /* DSP protocol constants + CRC */
 #include "dsp_protocol.h"
 
-/* ======================================================================
- * Bridge state
- *
- * One Bridge per process.  All state the threads and signal handler touch
- * lives here so the signal handler only needs a single pointer and so the
- * relationship between "user asked us to quit" (`running`) and "serial link
- * is up" (`serial_connected`) is explicit.
- * ====================================================================== */
+/* Bridge state — one per process. */
 
 /* Topic mapping — owned via unique_ptr so that raw pointers stored in the
  * lookup maps (and in RawHandler::tm) are never invalidated by reallocation
@@ -67,15 +60,12 @@ struct TopicMapping {
 class RawHandler;
 
 struct Bridge {
-    /* Shutdown: user hit ^C or sent SIGTERM.  Process-lifetime. */
+    /* Cleared by signal handler on ^C/SIGTERM. */
     std::atomic<bool> running{true};
-    /* Serial link currently open and threads may use g_serial_fd.  Cycles
-     * per reconnect. */
+    /* Serial link open; cycles per reconnect. */
     std::atomic<bool> serial_connected{false};
-    /* Set by `lcm_handler_thread` when `handleTimeout` returns an error
-     * before clearing `running`.  The main loop reads this after its
-     * join()s so we can exit(1) — letting the coordinator restart the
-     * bridge — instead of reporting a clean shutdown. */
+    /* Set by lcm_handler_thread on LCM error so main can exit(1) and let the
+     * coordinator restart the bridge instead of reporting a clean shutdown. */
     std::atomic<bool> lcm_failed{false};
 
     int serial_fd{-1};
@@ -96,13 +86,10 @@ struct Bridge {
     float reconnect_interval{2.0f};
 };
 
-/* Single process-global pointer the signal handler touches.  All other
- * code takes the Bridge by reference. */
+/* Process-global pointer the signal handler touches; all other code uses a ref. */
 static Bridge *g_bridge = nullptr;
 
-/* ======================================================================
- * CLI Parsing
- * ====================================================================== */
+/* CLI parsing */
 
 /* Returns the termios speed constant for `baud`, or B0 with *ok=false on
  * unsupported rates.
@@ -204,19 +191,12 @@ static void parse_args(Bridge &b, int argc, char **argv)
     }
 }
 
-/* ======================================================================
- * LCM Fingerprint Hash Registry
+/* LCM fingerprint hash registry.
  *
- * The 2-byte topic DSP protocol includes the 8-byte LCM fingerprint
- * INSIDE the DSP payload, so the bridge is a pure passthrough — no
- * prepending or stripping needed.  We keep the hash registry for
- * validation and logging purposes.
- * ====================================================================== */
+ * The DSP payload already carries the 8-byte LCM fingerprint, so the bridge
+ * is a pure passthrough; the registry exists only for validation/logging. */
 
-/*
- * Include all LCM C++ message headers we support.
- * The fingerprint hash is available via Type::getHash().
- */
+/* LCM message headers we support; fingerprint hash via Type::getHash(). */
 #include "std_msgs/Time.hpp"
 #include "std_msgs/Bool.hpp"
 #include "std_msgs/Int32.hpp"
@@ -240,9 +220,7 @@ static void parse_args(Bridge &b, int argc, char **argv)
 
 static void init_hash_registry(Bridge &b)
 {
-    /* Register all known types.
-     *
-     * NOTE: this list is kept in sync with three other places and there is
+    /* NOTE: this list is kept in sync with three other places and there is
      * a Python test (`test_arduino_msg_registry_sync`) that fails CI if any
      * of them drift:
      *   - dimos/core/arduino_module.py :: _KNOWN_TYPE_HEADERS
@@ -304,9 +282,7 @@ static bool validate_topic_types(Bridge &b)
     return true;
 }
 
-/* ======================================================================
- * Serial Port
- * ====================================================================== */
+/* Serial port */
 
 static int serial_open(const std::string &port, int baud)
 {
@@ -335,8 +311,7 @@ static int serial_open(const std::string &port, int baud)
     tio.c_cflag &= ~CRTSCTS;
     tio.c_iflag &= ~(IXON | IXOFF | IXANY);
 
-    /* Set baud — parse_args already validated this, so `ok` should always be
-     * true here.  Assert to be safe. */
+    /* parse_args already validated baud, so `ok` should always be true here. */
     bool speed_ok;
     speed_t speed = baud_to_speed(baud, &speed_ok);
     if (!speed_ok) {
@@ -362,26 +337,20 @@ static void serial_close(int fd)
     if (fd >= 0) close(fd);
 }
 
-/* ======================================================================
- * Serial → LCM (reader thread)
- * ====================================================================== */
+/* Serial → LCM (reader thread) */
 
 static void serial_reader_thread(Bridge &b)
 {
-    /* Framing state lives entirely inside `dsp_parser` — shared with the
-     * AVR side via `dsp_protocol.h`.  One implementation, one place to
-     * change when the wire format evolves.  Reads bytes in small chunks
-     * to amortize the `read()` syscall (VMIN=0/VTIME=1 already gives us
-     * a bounded blocking read, so bulk reads are safe). */
+    /* Framing state lives in `dsp_parser`, shared with the AVR side via
+     * dsp_protocol.h.  Bulk reads are safe since VMIN=0/VTIME=1 bounds the
+     * blocking read. */
     struct dsp_parser parser;
     dsp_parser_init(&parser);
 
     uint8_t chunk[64];
 
-    /* Exit on either global shutdown or a serial disconnect flagged by the
-     * writer path.  `serial_connected` being a separate atomic means that
-     * `signal_handler` flipping `running` to false and the writer flipping
-     * `serial_connected` to false don't race each other's meaning. */
+    /* Separate atomics so signal_handler clearing `running` and the writer
+     * clearing `serial_connected` don't race each other's meaning. */
     while (b.running.load() && b.serial_connected.load()) {
         int n = read(b.serial_fd, chunk, sizeof(chunk));
         if (n < 0) {
@@ -406,9 +375,7 @@ static void serial_reader_thread(Bridge &b)
             }
             if (ev != DSP_PARSE_MESSAGE) continue;
 
-            /* Handle frame */
             if (parser.rx_topic == DSP_TOPIC_DEBUG) {
-                /* Debug: print to stdout */
                 fwrite(parser.rx_buf, 1, parser.rx_len, stdout);
                 fflush(stdout);
             } else {
@@ -426,15 +393,11 @@ static void serial_reader_thread(Bridge &b)
     }
 }
 
-/* ======================================================================
- * LCM → Serial (subscription handler)
- * ====================================================================== */
+/* LCM → Serial (subscription handler) */
 
-/* write_all — loop until `len` bytes are written or a hard error occurs.
- *
- * On EINTR we retry; on any other error we return false so the caller can
- * flag the serial link down and let the reconnect loop run.  A partial
- * write on a dying USB device would otherwise corrupt the DSP frame. */
+/* Loop until `len` bytes are written or a hard error occurs.  On EINTR retry;
+ * otherwise return false so the caller flags the link down — a partial write
+ * on a dying USB device would corrupt the DSP frame. */
 static bool write_all(int fd, const void *buf, size_t len)
 {
     const uint8_t *p = static_cast<const uint8_t *>(buf);
@@ -485,7 +448,7 @@ static void send_lcm_to_serial(Bridge &b,
     }
     uint16_t payload_len = (uint16_t)payload_len_raw;
 
-    /* Build DSP frame header: START + TOPIC(2B LE) + LENGTH(2B LE) */
+    /* DSP frame header: START + TOPIC(2B LE) + LENGTH(2B LE) */
     uint8_t header[DSP_HEADER_SIZE];
     header[0] = DSP_START_BYTE;
     header[1] = (uint8_t)(tm->topic_id & 0xFF);
@@ -503,12 +466,8 @@ static void send_lcm_to_serial(Bridge &b,
         crc = _dsp_crc8_table[crc ^ payload[k]];
     }
 
-    /* Write to serial (thread-safe w.r.t. other writers).
-     *
-     * If any write fails (USB disconnect, short write on a dead fd, etc.)
-     * we flag `serial_connected` false so the reader thread bails and the
-     * reconnect loop takes over.  Dropping a partial frame is strictly
-     * better than continuing to corrupt the outbound stream. */
+    /* On write failure flag the link down so the reader bails and the
+     * reconnect loop takes over, rather than corrupting the outbound stream. */
     std::lock_guard<std::mutex> lock(b.serial_write_mutex);
     if (!b.serial_connected.load()) return;
     bool ok = write_all(b.serial_fd, header, DSP_HEADER_SIZE);
@@ -531,13 +490,10 @@ static void lcm_handler_thread(Bridge &b)
     while (b.running.load() && b.serial_connected.load()) {
         int ret = b.lcm->handleTimeout(100);  /* 100ms timeout */
         if (ret < 0) {
-            /* LCM is sick (multicast group went away, kernel socket
-             * broke, etc.) — cycling the serial port would not help and
-             * would unnecessarily discard in-flight data on a link that
-             * is still perfectly healthy.  Instead, clear `running` so
-             * the main loop exits with a non-zero status and the
-             * coordinator can restart the whole bridge subprocess on a
-             * fresh LCM instance. */
+            /* LCM is sick — cycling the serial port would not help and would
+             * discard in-flight data on a still-healthy link.  Clear `running`
+             * so main exits non-zero and the coordinator restarts the whole
+             * bridge on a fresh LCM instance. */
             fprintf(stderr, "[bridge] LCM handle error — exiting so coordinator can restart\n");
             b.lcm_failed.store(true);
             b.running.store(false);
@@ -546,9 +502,7 @@ static void lcm_handler_thread(Bridge &b)
     }
 }
 
-/* ======================================================================
- * Signal handling
- * ====================================================================== */
+/* Signal handling */
 
 static void signal_handler(int /*sig*/)
 {
@@ -567,9 +521,7 @@ static void interruptible_sleep(Bridge &b, float seconds)
     }
 }
 
-/* ======================================================================
- * Main
- * ====================================================================== */
+/* Main */
 
 int main(int argc, char **argv)
 {
@@ -584,14 +536,13 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* Initialize hash registry and validate topic message types */
     init_hash_registry(bridge);
     if (!validate_topic_types(bridge)) {
         return 1;
     }
 
-    /* Build lookup maps — use the unique_ptr-owned storage so raw pointers
-     * into the vector remain valid. */
+    /* Build lookup maps from unique_ptr-owned storage so the raw pointers
+     * into the vector stay valid. */
     for (auto &tm : bridge.topics) {
         if (tm->is_output) {
             bridge.topic_out_map[tm->topic_id] = tm.get();
@@ -600,11 +551,9 @@ int main(int argc, char **argv)
         }
     }
 
-    /* Signal handlers */
     signal(SIGTERM, signal_handler);
     signal(SIGINT, signal_handler);
 
-    /* Init LCM */
     lcm::LCM lcm;
     if (!lcm.good()) {
         fprintf(stderr, "[bridge] LCM init failed\n");
@@ -612,7 +561,7 @@ int main(int argc, char **argv)
     }
     bridge.lcm = &lcm;
 
-    /* Subscribe to inbound LCM topics */
+    /* Subscribe to inbound LCM topics. */
     for (auto &tm : bridge.topics) {
         if (!tm->is_output) {
             auto handler = std::make_unique<RawHandler>(&bridge, tm.get());
@@ -626,7 +575,6 @@ int main(int argc, char **argv)
         }
     }
 
-    /* Open serial port */
     printf("[bridge] Opening %s at %d baud\n", bridge.serial_port.c_str(), bridge.baudrate);
 
     while (bridge.running.load()) {
@@ -641,14 +589,12 @@ int main(int argc, char **argv)
         printf("[bridge] Serial port opened (fd=%d)\n", bridge.serial_fd);
         bridge.serial_connected.store(true);
 
-        /* Start threads */
         std::thread reader([&bridge] { serial_reader_thread(bridge); });
         std::thread lcm_thread([&bridge] { lcm_handler_thread(bridge); });
 
-        /* Wait for reader to exit (serial disconnect or shutdown) */
+        /* Reader exits on serial disconnect or shutdown. */
         reader.join();
 
-        /* Reader bailed — ensure connectivity flag is false and join LCM. */
         bridge.serial_connected.store(false);
         lcm_thread.join();
 

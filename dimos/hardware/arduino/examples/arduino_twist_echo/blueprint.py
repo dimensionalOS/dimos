@@ -12,14 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Blueprint: virtual Arduino ArduinoTwistEcho + a test publisher.
-
-Run with:
-    dimos run arduino-twist-echo-virtual
-
-Or, since this lives outside the auto-discovery path, run by importing
-this module's variable from a script.
-"""
+"""Blueprint: virtual ArduinoTwistEcho wired to a test publisher."""
 
 from __future__ import annotations
 

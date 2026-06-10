@@ -36,8 +36,7 @@ class TestPublisherConfig(ModuleConfig):
 
 
 class TestPublisher(Module):
-    """Publishes a Twist on ``cmd_out`` every publish_period_s, prints any echo
-    received on ``echo_in``."""
+    """Publishes a Twist on cmd_out every publish_period_s, prints any echo."""
 
     config: TestPublisherConfig
 
@@ -66,12 +65,8 @@ class TestPublisher(Module):
 
     @rpc
     def echo_count(self) -> int:
-        """Return the number of echoes received since start().
-
-        Exposed as an RPC so e2e tests running in the host process can
-        observe progress of the QEMU-backed round-trip without having to
-        subscribe to LCM directly.
-        """
+        # RPC so e2e tests in the host process can observe round-trip
+        # progress without subscribing to LCM directly.
         if self._echo_lock is None:
             return 0
         with self._echo_lock:

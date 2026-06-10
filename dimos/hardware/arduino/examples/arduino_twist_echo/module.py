@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Example ArduinoModule: receives Twist commands, echoes them back.
-
-Demonstrates bidirectional communication between DimOS and an Arduino.
-The Arduino receives Twist commands on ``twist_in`` and echoes them
-back on ``twist_echo_out``.
-"""
+"""Example ArduinoModule demonstrating bidirectional DimOS<->Arduino comms."""
 
 from __future__ import annotations
 
@@ -31,17 +26,12 @@ class ArduinoTwistEchoConfig(ArduinoModuleConfig):
     board_fqbn: str = "arduino:avr:uno"
     baudrate: int = 115200
 
-    # Custom config value — embedded as #define DIMOS_ECHO_DELAY_MS 50
+    # embedded as #define DIMOS_ECHO_DELAY_MS 50
     echo_delay_ms: int = 50
 
 
 class ArduinoTwistEcho(ArduinoModule):
-    """Arduino that echoes received Twist commands back."""
-
     config: ArduinoTwistEchoConfig
 
-    # DimOS sends Twist commands to the Arduino
     twist_in: In[Twist]
-
-    # Arduino echoes them back
     twist_echo_out: Out[Twist]

@@ -14,8 +14,7 @@
 
 """Multi-type echo ArduinoModule for hardware round-trip testing.
 
-Echoes Bool, Int32, Vector3, and Quaternion messages to validate
-serialization correctness and float64→float32 precision on AVR.
+Validates serialization and float64->float32 precision on AVR.
 """
 
 from __future__ import annotations
@@ -35,8 +34,6 @@ class ArduinoMultiEchoConfig(ArduinoModuleConfig):
 
 
 class ArduinoMultiEcho(ArduinoModule):
-    """Arduino that echoes multiple message types back."""
-
     config: ArduinoMultiEchoConfig
 
     bool_in: In[Bool]

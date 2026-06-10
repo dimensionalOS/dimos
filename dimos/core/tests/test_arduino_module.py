@@ -14,15 +14,8 @@
 
 """Unit tests for dimos.core.arduino_module.
 
-Covers the pure/host-side logic — header generation, topic enum
-assignment, the three-way registry sync, port detection with mocked
-arduino-cli, and QEMU cleanup paths.  No real Arduino or QEMU needed.
-
-The Python<->C++ hash-registry sync check reads ``main.cpp`` directly and
-runs in the normal lane.  The two registry-header checks that need the
-nix-built ``arduino_msgs`` headers shell out to ``nix build`` and are
-marked ``slow``+``tool`` so they run in the self-hosted lane (which has
-nix) instead of silently skipping.
+Host-side logic only — header generation, topic enum, registry sync, port
+detection (mocked arduino-cli), QEMU cleanup. No real Arduino or QEMU.
 """
 
 from __future__ import annotations
@@ -37,10 +30,8 @@ from unittest import mock
 
 import pytest
 
-# Captured at import time — the autouse fixture below patches the module
-# attribute for every test, so tests that want to exercise the *real*
-# resolver (e.g. its FileNotFoundError handling) reach it through this
-# unpatched reference.
+# Captured at import time — the autouse fixture patches the module attribute,
+# so tests exercising the *real* resolver reach it through this unpatched ref.
 from dimos.core.arduino_module import (
     _ARDUINO_HW_DIR,
     _KNOWN_TYPE_HEADERS,
@@ -52,23 +43,10 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.Twist import Twist
 
-# Fixtures / helpers
-
 
 @pytest.fixture(autouse=True)
 def _fake_arduino_tools_bin_dir(tmp_path_factory):
-    """Short-circuit ``_arduino_tools_bin_dir`` for every test in this file.
-
-    Without this, every helper that shells out to ``arduino-cli`` /
-    ``qemu-system-avr`` (``_detect_port``, ``_ensure_core_installed``,
-    ``_compile_sketch``, ``_start_qemu``, ``_flash``) would first invoke
-    the resolver, which runs ``nix build .#dimos_arduino_tools``.  The
-    unit tests are *unit* tests — they have no business touching the
-    Nix store — so we replace the resolver with a fixed fake ``bin/``
-    directory.  Tests that mock ``subprocess.run`` will then see calls
-    routed through absolute paths under this fake dir, which is fine
-    because the mocks don't care what the argv's first element is.
-    """
+    """Short-circuit ``_arduino_tools_bin_dir`` so unit tests never run ``nix build``."""
     fake_bin = tmp_path_factory.mktemp("fake_arduino_tools") / "bin"
     fake_bin.mkdir()
     with mock.patch(
@@ -88,7 +66,6 @@ class _ExampleConfig(ArduinoModuleConfig):
     auto_flash: bool = False
     virtual: bool = False
     port: str | None = "/dev/ttyACM0"
-    # Custom config field that should end up in the generated header.
     greeting: str = 'he said "hi"'
     tick_rate_hz: int = 50
 
@@ -112,13 +89,7 @@ def _close_created_modules():
 
 
 def _make_module(module_cls=_ExampleModule, config=None):
-    """Construct a real ArduinoModule via its normal ``__init__``.
-
-    The base ``__init__`` auto-instantiates the declared ``In``/``Out``
-    streams, so there is no reason to bypass construction. The autouse
-    ``_close_created_modules`` fixture closes each instance afterward so the
-    RPC loop thread does not leak. Pass ``config`` to override the default.
-    """
+    """Construct a real ArduinoModule via its normal ``__init__``."""
     module = module_cls()
     if config is not None:
         module.config = config
@@ -126,21 +97,15 @@ def _make_module(module_cls=_ExampleModule, config=None):
     return module
 
 
-# _build_topic_enum
-
-
 def test_build_topic_enum_assigns_1_based_alphabetical() -> None:
     mod = _make_module()
     enum = mod._build_topic_enum()
-    # Alphabetical order, topic 0 reserved for debug.
+    # Topic 0 reserved for debug.
     assert enum == {"twist_echo_out": 1, "twist_in": 2}
 
 
 def test_build_full_config_combines_connection_and_topics() -> None:
-    """The bridge reads one --full-config JSON arg; this is its schema.
-
-    Keep in sync with parse_args() in dimos/hardware/arduino/cpp/main.cpp.
-    """
+    """Keep in sync with parse_args() in dimos/hardware/arduino/cpp/main.cpp."""
     mod = _with_topics(
         _make_module(),
         {
@@ -157,27 +122,15 @@ def test_build_full_config_combines_connection_and_topics() -> None:
     assert cfg["baudrate"] == 115200
     assert cfg["reconnect"] is False
     assert cfg["reconnect_interval"] == 1.5
-    # IDs come from the real _build_topic_enum (1-based, alphabetical by stream
-    # name) → twist_echo_out=1, twist_in=2; channels come from the transports.
     assert cfg["topics"] == [
         {"id": 1, "channel": "echo#geometry_msgs.Twist", "is_output": True},
         {"id": 2, "channel": "cmd#geometry_msgs.Twist", "is_output": False},
     ]
-    # The wire format is JSON — the whole config must serialize cleanly.
     assert json.loads(json.dumps(cfg)) == cfg
 
 
-# _generate_header — config embedding & escaping
-
-
 def _patch_sketch_and_build_dirs(mod, tmp_path):
-    """Redirect ``_resolve_sketch_dir`` and ``_build_dir`` into ``tmp_path``.
-
-    ``_generate_header`` writes the header into the sketch dir (so
-    arduino-cli's sketch preprocessor can find it) and also wipes +
-    recreates the build dir.  Tests need both paths diverted away from
-    the real repo.
-    """
+    """Redirect ``_resolve_sketch_dir`` and ``_build_dir`` into ``tmp_path``."""
     sketch_dir = tmp_path
     build_dir = tmp_path / "build"
     sketch_patch = mock.patch.object(mod, "_resolve_sketch_dir", return_value=sketch_dir)
@@ -193,9 +146,6 @@ def test_generate_header_escapes_quoted_strings(tmp_path: Path) -> None:
         mod._generate_header()
     text = (tmp_path / "dimos_arduino.h").read_text()
 
-    # The greeting contains an embedded double-quote.  If the header
-    # generator naively interpolated it, the resulting C file would have
-    # an unterminated string literal.  `json.dumps` escapes it to \".
     assert r'#define DIMOS_GREETING "he said \"hi\""' in text
     assert "#define DIMOS_BAUDRATE 115200" in text
     assert "#define DIMOS_TICK_RATE_HZ 50" in text
@@ -214,9 +164,7 @@ def test_generate_header_includes_topic_enum_and_message_header(
     assert "DIMOS_TOPIC_DEBUG = 0" in text
     assert "DIMOS_TOPIC__TWIST_ECHO_OUT = 1" in text
     assert "DIMOS_TOPIC__TWIST_IN = 2" in text
-    # Twist → geometry_msgs/Twist.h
     assert '#include "geometry_msgs/Twist.h"' in text
-    # LCM pubsub layer and serial adapter always pulled in.
     assert '#include "dimos_lcm_pubsub.h"' in text
     assert '#include "dimos_lcm_serial.h"' in text
 
@@ -246,8 +194,6 @@ def test_generate_header_rejects_unembeddable_type(tmp_path: Path) -> None:
 
 
 def test_generate_header_includes_arduino_defines(tmp_path: Path) -> None:
-    """arduino_defines config values appear as #define in the header."""
-
     class _DefinesConfig(_ExampleConfig):
         arduino_defines: dict[str, int | float | str | bool] = {
             "MOTOR_PIN": 13,
@@ -271,8 +217,6 @@ def test_generate_header_includes_arduino_defines(tmp_path: Path) -> None:
 
 
 def test_generate_header_rejects_invalid_define_name(tmp_path: Path) -> None:
-    """arduino_defines keys must be valid C identifiers."""
-
     class _BadDefConfig(_ExampleConfig):
         arduino_defines: dict[str, int | float | str | bool] = {"123bad": 1}
 
@@ -282,9 +226,6 @@ def test_generate_header_rejects_invalid_define_name(tmp_path: Path) -> None:
     with sketch_patch, build_patch:
         with pytest.raises(ValueError, match="not a valid C identifier"):
             mod._generate_header()
-
-
-# _detect_port — mocked arduino-cli
 
 
 def _run_result(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess[str]:
@@ -336,13 +277,7 @@ def test_detect_port_wraps_invalid_json() -> None:
 
 
 def test_arduino_tools_bin_dir_raises_on_missing_nix() -> None:
-    """The resolver surfaces a clean RuntimeError (not a bare
-    FileNotFoundError) when ``nix`` itself is missing from PATH.  That is
-    the only failure mode of the toolchain resolver now that
-    ``arduino-cli`` / ``avrdude`` / ``qemu-system-avr`` are packaged as
-    a flake output and come from a ``nix build`` rather than from
-    ``$PATH``.
-    """
+    """Resolver surfaces a clean RuntimeError (not bare FileNotFoundError) when nix is absent."""
     # Clear the lru_cache so we re-enter the function body, and clear it again
     # in `finally` so a failure here can't leave a poisoned cache for later tests.
     _real_arduino_tools_bin_dir.cache_clear()
@@ -369,12 +304,8 @@ def test_detect_port_wraps_non_zero_exit() -> None:
             mod._detect_port()
 
 
-# _cleanup_qemu — idempotency + leak sealing
-
-
 def test_cleanup_qemu_is_idempotent_on_unstarted_module() -> None:
     mod = _make_module()
-    # Never started — all slots None.  Must not raise.
     mod._cleanup_qemu()
     mod._cleanup_qemu()
     assert mod._qemu_proc is None
@@ -390,7 +321,7 @@ def test_cleanup_qemu_closes_log_fd_and_removes_log_file(tmp_path: Path) -> None
     mod._qemu_log_path = str(log_path)
     fd = open(log_path, "wb")
     mod._qemu_log_fd = fd
-    mod._qemu_proc = None  # no process — just the fd + file
+    mod._qemu_proc = None
 
     mod._cleanup_qemu()
 
@@ -403,7 +334,6 @@ def test_cleanup_qemu_closes_log_fd_and_removes_log_file(tmp_path: Path) -> None
 def test_cleanup_qemu_terminates_live_process() -> None:
     mod = _make_module()
     proc = mock.Mock(spec=subprocess.Popen)
-    # poll() returns None while alive, then 0 after wait.
     proc.poll.side_effect = [None]
     proc.wait.return_value = 0
     mod._qemu_proc = proc
@@ -430,16 +360,8 @@ def test_cleanup_qemu_kills_on_terminate_timeout() -> None:
     assert mod._qemu_proc is None
 
 
-# Registry sync — _KNOWN_TYPE_HEADERS vs arduino_msgs/ vs main.cpp
-
-
 def _arduino_common_dir() -> Path:
-    """Resolve Arduino message headers from dimos-lcm via nix.
-
-    These headers now live in dimos-lcm (not vendored in dimos4), so we
-    resolve them through `nix build` the same way ArduinoModule does at
-    runtime.  Skips if nix is not available.
-    """
+    """Resolve Arduino message headers (in dimos-lcm) via nix; skips if nix is absent."""
     if shutil.which("nix") is None:
         pytest.skip("nix not available — cannot resolve Arduino message headers")
 
@@ -484,9 +406,8 @@ def test_registry_headers_exist_on_disk() -> None:
 
 
 def test_registry_matches_main_cpp_hash_registry() -> None:
-    """Every type in `_KNOWN_TYPE_HEADERS` must also appear in the C++
-    bridge's `init_hash_registry()` and vice versa.  Either half is a
-    silent wire-format bug waiting to happen."""
+    """_KNOWN_TYPE_HEADERS and main.cpp::init_hash_registry must agree both ways —
+    a mismatch is a silent wire-format bug waiting to happen."""
     main_cpp = _main_cpp_path().read_text()
 
     # The C++ side stores keys as "std_msgs.Time" etc.
@@ -508,12 +429,8 @@ def test_registry_matches_main_cpp_hash_registry() -> None:
     )
 
 
-# _resolve_topics — validates LCM-typed channel strings
-
-
 class _FakeTransport:
-    """Transport stand-in for tests: carries a topic; ``stop()`` is a no-op
-    (called by ``Stream.stop()`` when the module is closed)."""
+    """Transport stand-in: carries a topic; ``stop()`` is a no-op."""
 
     def __init__(self, topic: str) -> None:
         self.topic = topic
@@ -523,9 +440,7 @@ class _FakeTransport:
 
 
 def _with_topics(mod, topics):
-    """Attach fake transports (carrying typed channel strings) to the module's
-    real streams via the public ``set_transport`` API. Streams left without a
-    transport are simply skipped by ``_collect_topics``."""
+    """Attach fake transports to the module's real streams via ``set_transport``."""
     for name, topic in topics.items():
         mod.set_transport(name, _FakeTransport(topic))
     return mod
@@ -542,14 +457,9 @@ def test_resolve_topics_rejects_bare_channel_names() -> None:
         mod._resolve_topics()
 
 
-# _validate_inbound_payload_sizes — AVR SRAM guard
-
-
-# Module-scope classes for the payload-size tests.  They must live at
-# module level (not inside the test functions) because
-# ``_get_stream_types`` uses ``get_type_hints`` which re-evaluates the
-# string annotations via ``eval(..., globals=module.__dict__, ...)``
-# and can't see locals of a test function.
+# Payload-size test classes must live at module level (not inside the test
+# functions) because ``_get_stream_types`` uses ``get_type_hints``, which
+# re-evaluates the string annotations against module globals, not test locals.
 
 
 class _BigInboundModule(ArduinoModule):
@@ -574,7 +484,6 @@ class _Esp32Module(ArduinoModule):
 def test_validate_inbound_payload_sizes_passes_for_small_inbound() -> None:
     """Twist is 56 bytes on the wire (8B fingerprint + 48B data) — well under the 256 AVR limit."""
     mod = _make_module()
-    # twist_in is declared as In[Twist] — 48 bytes, passes.
     mod._validate_inbound_payload_sizes(mod._get_stream_types())
 
 
