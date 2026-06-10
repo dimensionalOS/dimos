@@ -67,17 +67,10 @@ class TeleopIKTaskConfig:
         priority: Priority for arbitration (higher wins)
         timeout: If no command received for this many seconds, go inactive (0 = never)
         max_joint_delta_deg: Maximum allowed joint change per tick (safety limit)
-        hand: "left" or "right" — which controller's primary button to listen to.
-            None means the task does not own engagement; activation is purely
-            stream-driven (target arrives via on_cartesian_command, times out
-            via `timeout`). Used when the upstream Quest module only publishes
-            pose deltas while the operator's engage button is held (see
-            JoystickTwistTeleopModule + task_names routing).
-        translation_only: If True, ignore controller orientation when applying
-            the delta. Useful for short chains (e.g. a 3-DOF leg) where
-            reaching arbitrary 6-DOF poses isn't physically possible — the
-            task tracks position only and the EE orientation stays at its
-            engage-time snapshot.
+        hand: "left" or "right" — which controller's primary button engages
+            the task. None = engagement gated upstream (stream-driven only).
+        translation_only: If True, ignore controller rotation; EE orientation
+            stays at the engage-time snapshot.
         gripper_joint: Optional joint name for the gripper (e.g. "arm/gripper").
         gripper_open_pos: Gripper position (adapter units) at trigger value 0.0 (no press).
         gripper_closed_pos: Gripper position (adapter units) at trigger value 1.0 (full press).
