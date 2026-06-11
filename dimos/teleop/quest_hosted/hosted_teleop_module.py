@@ -37,6 +37,7 @@ from dimos_lcm.sensor_msgs import Joy as LCMJoy
 import httpx
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -151,13 +152,13 @@ class HostedTeleopModule(Module):
     def stop(self) -> None:
         self._stop_event.set()
         if self._control_loop_thread is not None:
-            self._control_loop_thread.join(timeout=1.0)
+            self._control_loop_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._control_loop_thread = None
         if self._heartbeat_thread is not None:
-            self._heartbeat_thread.join(timeout=2.0)
+            self._heartbeat_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._heartbeat_thread = None
         if self._telemetry_thread is not None:
-            self._telemetry_thread.join(timeout=2.0)
+            self._telemetry_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._telemetry_thread = None
         if self._loop is not None and self._loop.is_running():
             try:
