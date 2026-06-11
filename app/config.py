@@ -11,10 +11,11 @@ class Settings(BaseSettings):
     cf_teleop_app_secret: str = ""
     cf_sfu_base_url: str = "https://rtc.live.cloudflare.com/v1/apps"
 
-    # Auth
-    jwt_secret: str = ""
-    jwt_algorithm: str = "HS256"
-    jwt_expire_hours: int = 24
+    # Cognito (operator auth). The broker only verifies tokens; sign-in
+    # happens between the SPA and Cognito directly.
+    cognito_region: str = "us-east-2"
+    cognito_user_pool_id: str = ""
+    cognito_client_id: str = ""
 
     # CORS
     public_origin: str = "https://teleop.dimensionalos.com"
@@ -28,12 +29,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_secrets(self) -> "Settings":
-        """Refuse to start with default secrets in production."""
+        """Refuse to start misconfigured in production."""
         if self.environment != "dev":
-            if not self.jwt_secret or self.jwt_secret == "change-me":
+            if not self.cognito_user_pool_id or not self.cognito_client_id:
                 raise ValueError(
-                    "JWT_SECRET must be set in production. "
-                    'Generate one with: python3 -c "import secrets; print(secrets.token_hex(32))"'
+                    "COGNITO_USER_POOL_ID and COGNITO_CLIENT_ID must be set in production "
+                    "(see terraform outputs cognito_user_pool_id / cognito_client_id)."
                 )
             if not self.cf_teleop_app_secret:
                 raise ValueError("CF_TELEOP_APP_SECRET must be set in production.")
@@ -43,12 +44,14 @@ class Settings(BaseSettings):
     def cf_api_url(self) -> str:
         return f"{self.cf_sfu_base_url}/{self.cf_teleop_app_id}"
 
+    @property
+    def cognito_issuer(self) -> str:
+        return (
+            f"https://cognito-idp.{self.cognito_region}.amazonaws.com/"
+            f"{self.cognito_user_pool_id}"
+        )
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
 settings = Settings()
-
-if settings.environment == "prod" and len(settings.jwt_secret) < 32:
-    raise RuntimeError(
-        "JWT_SECRET must be set to a random string of >=32 chars in prod"
-    )

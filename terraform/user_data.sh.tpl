@@ -32,13 +32,40 @@ cd $APP_DIR
 cat > .env << 'ENVEOF'
 CF_TELEOP_APP_ID=${cf_teleop_app_id}
 CF_TELEOP_APP_SECRET=${cf_teleop_app_secret}
-JWT_SECRET=${jwt_secret}
+COGNITO_REGION=${cognito_region}
+COGNITO_USER_POOL_ID=${cognito_user_pool_id}
+COGNITO_CLIENT_ID=${cognito_client_id}
 DATABASE_URL=sqlite+aiosqlite:///./teleop.db
 HOST=127.0.0.1
 PORT=${app_port}
 ENVEOF
 
 chmod 600 .env
+
+# ─── Litestream: restore DB from S3, then replicate continuously ─────
+
+curl -sL https://github.com/benbjohnson/litestream/releases/download/v0.3.13/litestream-v0.3.13-linux-amd64.deb \
+  -o /tmp/litestream.deb
+dpkg -i /tmp/litestream.deb
+
+cat > /etc/litestream.yml << 'LSEOF'
+dbs:
+  - path: /opt/dimos-teleop/app/teleop.db
+    replicas:
+      - type: s3
+        bucket: dimos-teleop-db-backup
+        path: teleop.db
+        region: us-east-2
+LSEOF
+
+# On a fresh instance, pull the latest replicated DB (no-op if none exists).
+# Runs before the app ever starts, so API keys/sessions survive a re-pave.
+mkdir -p $APP_DIR/app
+litestream restore -if-replica-exists -if-db-not-exists \
+  -o $APP_DIR/app/teleop.db s3://dimos-teleop-db-backup/teleop.db
+
+systemctl enable litestream
+systemctl start litestream
 
 # ─── Python venv ─────────────────────────────────────────────────────
 
@@ -52,8 +79,6 @@ pip install \
   pydantic==2.11.3 \
   pydantic-settings==2.9.1 \
   'python-jose[cryptography]==3.4.0' \
-  'passlib[bcrypt]==1.7.4' \
-  'bcrypt<4.0' \
   sqlalchemy==2.0.41 \
   aiosqlite==0.21.0 \
   python-multipart==0.0.20

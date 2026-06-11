@@ -1,8 +1,9 @@
 // Shared mutable state — every other module imports from here.
 
 export const state = {
-    // Auth
+    // Auth (Cognito ID + refresh tokens)
     token: localStorage.getItem('teleop_token') || '',
+    refreshToken: localStorage.getItem('teleop_refresh') || '',
     userEmail: localStorage.getItem('teleop_email') || '',
     brokerOverride: new URLSearchParams(window.location.search).get('broker') || '',
 
