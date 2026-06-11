@@ -25,6 +25,7 @@ tracing = "0.1"
 pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
 numpy = "0.25"
 validator = { version = "0.20", features = ["derive"] }
+nalgebra = "0.35.0"
 
 [profile.release]
 lto = "thin"

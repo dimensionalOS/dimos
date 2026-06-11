@@ -53,14 +53,12 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         last_obs: Observation[PointCloud2],
         count: int,
     ) -> Observation[PointCloud2]:
+        tags = {**last_obs.tags, "frame_count": count}
         positions = mapper.global_map()
         pcd = o3d.t.geometry.PointCloud()
         pcd.point["positions"] = o3c.Tensor.from_numpy(positions)
         cloud = PointCloud2(pointcloud=pcd, frame_id="world", ts=last_obs.ts)
-        return last_obs.derive(
-            data=cloud,
-            tags={**last_obs.tags, "frame_count": count},
-        )
+        return last_obs.derive(data=cloud, tags=tags)
 
     def __call__(
         self,
