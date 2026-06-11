@@ -118,13 +118,14 @@ async def create_session(
 ):
     """Robot registers itself. Creates Cloudflare SFU session.
 
-    The canonical robot_id comes from the API key; a robot_id in the body is
-    optional and only validated for consistency when present.
+    The canonical robot_id comes from the API key. A robot_id in the body is
+    legacy (older clients echo their TELEOP_ROBOT_ID env) and carries no
+    authority — mismatches are logged, never rejected, since a stale env var
+    on the robot must not block a validly-keyed connection.
     """
     if body.robot_id is not None and body.robot_id != robot_id:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Robot ID mismatch: key is bound to '{robot_id}'",
+        log.warning(
+            "Ignoring body robot_id %r; key is bound to %r", body.robot_id, robot_id
         )
 
     # Close existing session for this robot if any
