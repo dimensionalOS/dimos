@@ -42,6 +42,31 @@ ENVEOF
 
 chmod 600 .env
 
+# ─── Litestream: restore DB from S3, then replicate continuously ─────
+
+curl -sL https://github.com/benbjohnson/litestream/releases/download/v0.3.13/litestream-v0.3.13-linux-amd64.deb \
+  -o /tmp/litestream.deb
+dpkg -i /tmp/litestream.deb
+
+cat > /etc/litestream.yml << 'LSEOF'
+dbs:
+  - path: /opt/dimos-teleop/app/teleop.db
+    replicas:
+      - type: s3
+        bucket: dimos-teleop-db-backup
+        path: teleop.db
+        region: us-east-2
+LSEOF
+
+# On a fresh instance, pull the latest replicated DB (no-op if none exists).
+# Runs before the app ever starts, so API keys/sessions survive a re-pave.
+mkdir -p $APP_DIR/app
+litestream restore -if-replica-exists -if-db-not-exists \
+  -o $APP_DIR/app/teleop.db s3://dimos-teleop-db-backup/teleop.db
+
+systemctl enable litestream
+systemctl start litestream
+
 # ─── Python venv ─────────────────────────────────────────────────────
 
 python3.11 -m venv .venv

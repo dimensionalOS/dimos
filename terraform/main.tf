@@ -103,6 +103,7 @@ resource "aws_instance" "teleop" {
   key_name               = var.key_name
   subnet_id              = var.subnet_id != "" ? var.subnet_id : data.aws_subnets.available.ids[0]
   vpc_security_group_ids = [aws_security_group.teleop.id]
+  iam_instance_profile   = aws_iam_instance_profile.teleop.name
 
   root_block_device {
     volume_size = 20
