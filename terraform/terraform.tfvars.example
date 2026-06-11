@@ -3,4 +3,3 @@ instance_type        = "t3.small"
 key_name             = "daneel-local"
 cf_teleop_app_id     = "your-app-id-here"
 cf_teleop_app_secret = "your-secret-here"
-# jwt_secret         = ""  # Leave empty to auto-generate

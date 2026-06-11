@@ -32,7 +32,9 @@ cd $APP_DIR
 cat > .env << 'ENVEOF'
 CF_TELEOP_APP_ID=${cf_teleop_app_id}
 CF_TELEOP_APP_SECRET=${cf_teleop_app_secret}
-JWT_SECRET=${jwt_secret}
+COGNITO_REGION=${cognito_region}
+COGNITO_USER_POOL_ID=${cognito_user_pool_id}
+COGNITO_CLIENT_ID=${cognito_client_id}
 DATABASE_URL=sqlite+aiosqlite:///./teleop.db
 HOST=127.0.0.1
 PORT=${app_port}
@@ -52,8 +54,6 @@ pip install \
   pydantic==2.11.3 \
   pydantic-settings==2.9.1 \
   'python-jose[cryptography]==3.4.0' \
-  'passlib[bcrypt]==1.7.4' \
-  'bcrypt<4.0' \
   sqlalchemy==2.0.41 \
   aiosqlite==0.21.0 \
   python-multipart==0.0.20

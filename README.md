@@ -12,7 +12,7 @@ After session setup, real-time data flows direct:
 Operator ←──WebRTC──→ Cloudflare Edge ←──WebRTC──→ Robot
 ```
 
-The microservice is only in the path for session setup (login, create, join, leave). All video and command data flows directly through Cloudflare's WebRTC SFU.
+The microservice is only in the path for session setup (create, join, leave); operator login happens directly against Cognito and the broker just verifies the resulting tokens. All video and command data flows directly through Cloudflare's WebRTC SFU.
 
 ## Quick Start (Local Dev)
 
@@ -67,5 +67,7 @@ See `docs/api.md` for the full API spec.
 |----------|-------------|
 | `CF_TELEOP_APP_ID` | Cloudflare Realtime SFU App ID |
 | `CF_TELEOP_APP_SECRET` | Cloudflare Realtime SFU App Secret |
-| `JWT_SECRET` | Secret for signing session tokens |
+| `COGNITO_REGION` | Cognito region (default `us-east-2`) |
+| `COGNITO_USER_POOL_ID` | Cognito user pool (terraform output `cognito_user_pool_id`) |
+| `COGNITO_CLIENT_ID` | Cognito SPA app client (terraform output `cognito_client_id`) |
 | `DATABASE_URL` | SQLite or Postgres connection string |

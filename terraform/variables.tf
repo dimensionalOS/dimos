@@ -33,9 +33,3 @@ variable "cf_teleop_app_secret" {
   description = "Cloudflare Realtime SFU App Secret"
   sensitive   = true
 }
-
-variable "jwt_secret" {
-  description = "JWT signing secret"
-  sensitive   = true
-  default     = ""
-}

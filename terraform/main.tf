@@ -113,7 +113,9 @@ resource "aws_instance" "teleop" {
     app_port             = var.app_port
     cf_teleop_app_id     = var.cf_teleop_app_id
     cf_teleop_app_secret = var.cf_teleop_app_secret
-    jwt_secret           = var.jwt_secret != "" ? var.jwt_secret : "auto-${random_id.jwt.hex}"
+    cognito_region       = var.aws_region
+    cognito_user_pool_id = aws_cognito_user_pool.teleop.id
+    cognito_client_id    = aws_cognito_user_pool_client.spa.id
   })
 
   tags = {
@@ -124,10 +126,6 @@ resource "aws_instance" "teleop" {
   lifecycle {
     ignore_changes = [ami, user_data]
   }
-}
-
-resource "random_id" "jwt" {
-  byte_length = 32
 }
 
 # ─── Elastic IP ──────────────────────────────────────────────────────

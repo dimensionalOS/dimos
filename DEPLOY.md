@@ -15,7 +15,7 @@ Set these as GitHub repository secrets (Settings → Secrets → Actions) for CI
 |--------|-------------|
 | `CF_TELEOP_APP_ID` | Cloudflare Realtime SFU App ID |
 | `CF_TELEOP_APP_SECRET` | Cloudflare Realtime SFU App Secret |
-| `JWT_SECRET` | Random string for signing auth tokens (auto-generated if omitted) |
+| — | Operator auth uses the Cognito pool created by terraform (no auth secret to manage) |
 
 Find CF credentials in the Cloudflare dashboard: [Realtime SFU](https://dash.cloudflare.com/?to=/:account/realtime/sfu) → `hosted-teleop-dev-0` app.
 
@@ -68,7 +68,7 @@ Create an A record pointing `teleop.dimensionalos.com` to the Elastic IP.
 ## Step 3: Deploy App Code
 
 `user_data.sh.tpl` already creates `/opt/dimos-teleop`, the venv with deps,
-the `.env` (from your CF/JWT terraform vars), the systemd unit, and Caddy.
+the `.env` (from your CF terraform vars + the Cognito pool IDs), the systemd unit, and Caddy.
 The only missing piece on a fresh instance is the app source — the repo is
 private, so we don't `git clone` on the box. Instead, rsync the local clone
 in via the deploy script:
@@ -116,17 +116,17 @@ curl https://teleop.dimensionalos.com/health
 # API docs (Swagger UI)
 open https://teleop.dimensionalos.com/docs
 
-# Register a test operator
-curl -X POST https://teleop.dimensionalos.com/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@dimensional.io","password":"testpass"}'
+# Operator accounts: sign up through the web UI (open self-signup, emailed
+# verification code), or create one non-interactively:
+#   aws cognito-idp admin-create-user --user-pool-id <pool> --username you@example.com ...
+# The broker itself has no register/login endpoints — it only verifies Cognito tokens.
 ```
 
 ## Architecture
 
 ```
 This microservice handles ONLY:
-  - Auth (login, register, robot API keys)
+  - Auth (Cognito token verification, robot API keys)
   - Session lifecycle (create, join, leave, list, heartbeat)
   - SDP exchange with Cloudflare Realtime SFU API
 
