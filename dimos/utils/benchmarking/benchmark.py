@@ -387,17 +387,21 @@ def _run_ladder(
     gate_input: Callable[[str], str] = input,
     gate_keys_label: str = "ENTER=run  s=skip  q=quit",
     k_angular_values: list[float] | None = None,
-    lookahead_dist: float | None = None,
+    lookahead_values: list[float | None] | None = None,
 ) -> tuple[list[OperatingPoint], list[dict]]:
     # Bare stock baseline by default: this is the physical-limit
     # measurement. FF / velocity profile / RG are opt-in comparison arms.
     ff = cfg.feedforward.to_runtime() if use_ff else None
-    # k_angular can be a single value or a sweep: each (path, speed) runs
-    # once per k_angular value, gated separately (k_angular is set at
-    # configure() time, so it can't be a live keyboard input like e_max).
+    # k_angular and lookahead_dist can each be a single value or a sweep:
+    # every (path, speed, k_angular, lookahead) combo runs once, gated
+    # separately (both are set at configure() time, so neither can be a live
+    # keyboard input like e_max).
     if not k_angular_values:
         k_angular_values = [float(cfg.recommended_controller.params.get("k_angular", 0.5))]
+    if not lookahead_values:
+        lookahead_values = [None]  # None ⟹ follower's built-in 0.5 m default
     sweep_k = len(k_angular_values) > 1
+    sweep_l = len(lookahead_values) > 1
 
     # The RG arm runs against the precision_follower task — a path-follower
     # subclass that owns its own solve_profile() recompute on e_max
@@ -412,60 +416,63 @@ def _run_ladder(
                 cfg.velocity_profile.to_runtime(max_linear_speed=speed) if use_profile else None
             )
             for k_angular in k_angular_values:
-                ktag = f" k={k_angular:g}" if sweep_k else ""
-                if mode == "hw":
-                    resp = (
-                        gate_input(
-                            f"\n[{name} v={speed:.2f}{ktag}] reposition+aim robot, "
-                            f"{gate_keys_label}: "
+                for lookahead in lookahead_values:
+                    ktag = f" k={k_angular:g}" if sweep_k else ""
+                    ltag = f" L={lookahead:g}" if sweep_l and lookahead is not None else ""
+                    tag = f"{ktag}{ltag}"
+                    if mode == "hw":
+                        resp = (
+                            gate_input(
+                                f"\n[{name} v={speed:.2f}{tag}] reposition+aim robot, "
+                                f"{gate_keys_label}: "
+                            )
+                            .strip()
+                            .lower()
                         )
-                        .strip()
-                        .lower()
+                        if resp == "q":
+                            raise KeyboardInterrupt
+                        if resp == "s":
+                            print("  skipped")
+                            continue
+                    traj, ref = _run_baseline(
+                        profile,
+                        coord_rpc,
+                        recorder,
+                        path,
+                        speed,
+                        k_angular,
+                        ff,
+                        prof_cfg,
+                        timeout_s,
+                        f"{name}@{speed:.2f}{tag}",
+                        task_name=task_name,
+                        lookahead_dist=lookahead,
                     )
-                    if resp == "q":
-                        raise KeyboardInterrupt
-                    if resp == "s":
-                        print("  skipped")
-                        continue
-                traj, ref = _run_baseline(
-                    profile,
-                    coord_rpc,
-                    recorder,
-                    path,
-                    speed,
-                    k_angular,
-                    ff,
-                    prof_cfg,
-                    timeout_s,
-                    f"{name}@{speed:.2f}{ktag}",
-                    task_name=task_name,
-                    lookahead_dist=lookahead_dist,
-                )
-                # Score/plot against the executed-frame reference (anchored path).
-                s = score_run(ref, traj)
-                points.append(
-                    OperatingPoint(
-                        path=name,
-                        speed=speed,
-                        cte_max=s.cte_max,
-                        cte_rms=s.cte_rms,
-                        arrived=s.arrived,
+                    # Score/plot against the executed-frame reference (anchored path).
+                    s = score_run(ref, traj)
+                    points.append(
+                        OperatingPoint(
+                            path=name,
+                            speed=speed,
+                            cte_max=s.cte_max,
+                            cte_rms=s.cte_rms,
+                            arrived=s.arrived,
+                        )
                     )
-                )
-                runs.append(
-                    {
-                        "path": name,
-                        "speed": speed,
-                        "cte_max": s.cte_max,
-                        "arrived": s.arrived,
-                        "ref": [(p.position.x, p.position.y) for p in ref.poses],
-                        "exec": [(tk.pose.position.x, tk.pose.position.y) for tk in traj.ticks],
-                    }
-                )
-                print(
-                    f"  {name:14} v={speed:.2f}{ktag}  cte_max={s.cte_max * 100:6.1f}cm  "
-                    f"cte_rms={s.cte_rms * 100:6.1f}cm  arrived={s.arrived}"
-                )
+                    runs.append(
+                        {
+                            "path": name,
+                            "speed": speed,
+                            "cte_max": s.cte_max,
+                            "arrived": s.arrived,
+                            "ref": [(p.position.x, p.position.y) for p in ref.poses],
+                            "exec": [(tk.pose.position.x, tk.pose.position.y) for tk in traj.ticks],
+                        }
+                    )
+                    print(
+                        f"  {name:14} v={speed:.2f}{tag}  cte_max={s.cte_max * 100:6.1f}cm  "
+                        f"cte_rms={s.cte_rms * 100:6.1f}cm  arrived={s.arrived}"
+                    )
     return points, runs
 
 
@@ -624,6 +631,10 @@ class BenchmarkerConfig(ModuleConfig):
     # runs once per value, gated separately. Overrides `k_angular` when set.
     # e.g. -o benchmarker.k_angular_sweep=0.5,1.0,1.5,2.0
     k_angular_sweep: str = ""
+    # Comma-separated lookahead_dist values (m) to sweep in ONE run — each
+    # path/speed runs once per value, gated separately. Overrides
+    # `lookahead_dist`. e.g. -o benchmarker.lookahead_sweep=0.5,0.35,0.25,0.15
+    lookahead_sweep: str = ""
 
 
 class Benchmarker(Module):
@@ -718,11 +729,15 @@ class Benchmarker(Module):
         else:
             k_angular_values = [float(artifact.recommended_controller.params.get("k_angular", 0.5))]
             k_angular_note = " (from artifact)"
-        lookahead_note = (
-            f"  lookahead_dist={cfg.lookahead_dist} (override)"
-            if cfg.lookahead_dist is not None
-            else "  lookahead_dist=0.5 (default)"
-        )
+        if cfg.lookahead_sweep:
+            lookahead_values = [float(x) for x in cfg.lookahead_sweep.split(",")]
+            lookahead_note = f"  lookahead SWEEP {lookahead_values}"
+        elif cfg.lookahead_dist is not None:
+            lookahead_values = [cfg.lookahead_dist]
+            lookahead_note = f"  lookahead_dist={cfg.lookahead_dist} (override)"
+        else:
+            lookahead_values = [None]
+            lookahead_note = "  lookahead_dist=0.5 (default)"
         k_angular_show = k_angular_values[0] if len(k_angular_values) == 1 else k_angular_values
         print(
             f"{profile.name} {cfg.mode} speed ladder {speeds} over {len(_path_set())} paths\n"
@@ -758,7 +773,7 @@ class Benchmarker(Module):
                 gate_input=gate_input,
                 gate_keys_label=gate_keys_label,
                 k_angular_values=k_angular_values,
-                lookahead_dist=cfg.lookahead_dist,
+                lookahead_values=lookahead_values,
             )
         except KeyboardInterrupt:
             points, runs = [], []
