@@ -87,12 +87,6 @@ the call sites but the *why* lives here:
   Quest — `await gl.makeXRCompatible()` is required before building the
   `XRWebGLLayer`.
 
-## Sidecar files
-
-- **`/tmp/dimos_netem_profile`** — written by `data/notes/benchmarks/netem/apply.sh`
-  before a run; `TeleopRecorder`'s report writer reads it for the report
-  header so the netem profile is part of the artifact. We don't touch it.
-
 ## Threads (the runtime)
 
 - **Event loop thread** — the base `Module`'s asyncio loop (`self._loop`), used

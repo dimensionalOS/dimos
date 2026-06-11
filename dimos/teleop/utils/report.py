@@ -192,21 +192,12 @@ def _format_report(
     active: dict[str, dict[str, Any]],
     video: dict[str, Any] | None,
 ) -> str:
-    # If an external tool (e.g. data/notes/benchmarks/netem/apply.sh) left a
-    # profile name at this path, record it in the report header.
-    netem_profile: str | None = None
-    try:
-        netem_profile = Path("/tmp/dimos_netem_profile").read_text().strip() or None
-    except OSError:
-        pass
-
     lines = [
         "# Hosted Teleop Recording Report",
         "",
         f"- **Timestamp:** {timestamp}",
         f"- **Duration:** {duration_s:.1f} s",
         f"- **Active streams:** {len(active)}",
-        *([f"- **netem profile:** {netem_profile}"] if netem_profile else []),
         "",
         "> Generated from the recording's `.db` at session stop. Stream stats "
         "are computed from each message's sender timestamp (clock-sync "
