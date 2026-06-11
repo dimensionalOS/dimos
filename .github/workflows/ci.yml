@@ -396,6 +396,33 @@ jobs:
             echo "ROS_VERSION=$ROS_VERSION"
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
+      - name: Install Nix (with Cachix substituter)
+        # Tells Nix to query Cachix before building locally, and tells it which
+        # public key to trust for Cachix-signed derivations. install-nix.sh
+        # forwards INPUT_EXTRA_NIX_CONFIG into the daemon's nix.conf.
+        # Gated on `skipif_no_ros`: the native binaries we're about to build
+        # only matter for *_rosbag.py tests, which depend on ROS.
+        if: contains(matrix.markers, 'skipif_no_ros')
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:<PUBKEY-FROM-STAGE-3>
+        run: bash docker/ros/install-nix.sh
+      - name: Authenticate Cachix
+        # Lets cachix-action push successful builds back to the cache. Reads
+        # are public; only writes need the auth token.
+        if: contains(matrix.markers, 'skipif_no_ros')
+        uses: cachix/cachix-action@v15
+        with:
+          name: dimensionalos
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Build nav_stack native modules
+        # Each module's *_rosbag.py test pre-flights its binary's existence
+        # and pytest.skip()s if absent. Build each NativeModuleConfig's
+        # binary now so they're at result/bin/<name> by test time. The
+        # Cachix substituter installed above makes a warm cache near-instant.
+        if: contains(matrix.markers, 'skipif_no_ros')
+        run: uv run bin/build-nav-stack-natives
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not (tool or mujoco)'
       - name: Re-run the failing tests with maximum verbosity
