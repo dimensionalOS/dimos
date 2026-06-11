@@ -305,9 +305,16 @@ single vehicle with a `×N` count. Keys: `space` pause, `s` cycle sort
 (arrival/traffic/name), `q` quit.
 
 ```bash
-lcmflow        # native TUI
-lcmflow web    # serve the same TUI in a browser
+lcmflow                 # native TUI
+lcmflow web             # serve the same TUI in a browser
+lcmflow dashboard       # "constellation" web dashboard (requires deno)
+lcmflow dashboard stop  # stop running dashboard servers
 ```
+
+`lcmflow dashboard` serves a high-definition module-graph visualization at
+`http://localhost:8090`: modules are nodes in a force-directed spiderweb,
+packets fly between them as comets, and large bursts ring out as
+supernova shockwaves. See `dimos/web/lcmflow/README.md`.
 
 ### `agentspy`
 

@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<!--
+Copyright 2025-2026 Dimensional Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dimensional · Transport Flow</title>
+<style>
+  :root {
+    --bg: #07090a;
+    --cyan: #00eeee;
+    --line: rgba(0, 238, 238, 0.16);
+    --text: #c9e8f2;
+    --mut: #5d7e8a;
+    --dim: #31464e;
+  }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden;
+               font-family: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+               font-variant-numeric: tabular-nums; }
+  canvas#view { display: block; position: fixed; inset: 0; }
+
+  .panel {
+    position: fixed; background: rgba(7, 10, 11, 0.88); border: 1px solid var(--line);
+    color: var(--text); font-size: 11px; padding: 0;
+  }
+  .panel h2 {
+    margin: 0; font-size: 9px; font-weight: 600; letter-spacing: 2.5px; color: var(--mut);
+    padding: 8px 12px 7px; border-bottom: 1px solid var(--line);
+  }
+  .panel h2 b { color: var(--cyan); font-weight: 600; }
+  .panel .body { padding: 6px 12px 9px; }
+
+  #topbar {
+    top: 0; left: 0; right: 0; height: 38px; display: flex; align-items: center;
+    gap: 28px; padding: 0 16px; border-left: none; border-right: none; border-top: none;
+    font-size: 11px;
+  }
+  #topbar .brand { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+  #topbar .brand img { height: 13px; width: auto; opacity: 0.92; display: block; }
+  #topbar .logo { font-size: 12px; font-weight: 700; letter-spacing: 3px; color: var(--cyan); white-space: nowrap; }
+  #topbar .logo span { color: var(--dim); font-weight: 400; letter-spacing: 2px; }
+  #topbar .sep { color: var(--line); }
+  .readout { color: var(--mut); white-space: nowrap; }
+  .readout b { color: var(--text); font-weight: 600; }
+  #topbar .spacer { flex: 1; }
+  #idle { display: none; color: #ffcc00; letter-spacing: 1px; }
+  #clock { color: var(--mut); letter-spacing: 1px; }
+  #conn { letter-spacing: 1px; color: #6a4a4a; }
+  #conn.live { color: var(--cyan); }
+
+  #modules { top: 52px; left: 14px; width: 256px; }
+  #topics  { top: 52px; right: 14px; width: 320px; }
+  .panel .body { overflow: hidden; }
+  /* flexbox rows that shrink the name column instead of overflowing */
+  .row { display: flex; align-items: baseline; gap: 8px; font-size: 11px; padding: 2px 0 1px; }
+  .row .name { flex: 1 1 auto; min-width: 0; color: var(--text);
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .mark { flex: 0 0 auto; color: var(--dim); }
+  .row .hz  { flex: 0 0 56px; text-align: right; color: var(--mut); white-space: nowrap; }
+  .row .bps { flex: 0 0 70px; text-align: right; color: var(--mut); white-space: nowrap; }
+  .row .hz b, .row .bps b { color: var(--cyan); font-weight: 600; }
+  .meter { height: 2px; margin: 1px 0 4px; background: rgba(0, 238, 238, 0.07); }
+  .meter i { display: block; height: 100%; background: var(--cyan); opacity: 0.75; }
+  .empty { color: var(--dim); font-size: 11px; padding: 4px 0; }
+
+  #bottombar { bottom: 14px; left: 50%; transform: translateX(-50%);
+               display: flex; align-items: center; gap: 14px; padding: 7px 14px; }
+  #spark { width: 300px; height: 34px; display: block; }
+
+  #help { position: fixed; bottom: 16px; left: 16px; color: var(--dim); font-size: 10px; letter-spacing: 1.5px; user-select: none; }
+
+  #tooltip {
+    display: none; position: fixed; z-index: 10; pointer-events: none;
+    max-width: 420px; font-size: 11px; line-height: 1.75; padding: 8px 12px;
+  }
+  #tooltip .tname { color: var(--cyan); font-weight: 600; }
+  #tooltip .trow { color: var(--mut); }
+  #tooltip .trow b { color: var(--text); font-weight: 500; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div class="panel" id="topbar">
+  <div class="brand">
+    <img id="brandlogo" alt="Dimensional" src="data:image/png;base64,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">
+    <span class="sep">|</span>
+    <span class="logo">TRANSPORT FLOW <span>/ CONSTELLATION</span></span>
+  </div>
+  <div class="readout" id="r-graph"><b>0</b> MOD · <b>0</b> TOP</div>
+  <div class="readout" id="r-rate"><b>0.0</b> Hz · <b>0 B</b>/s</div>
+  <div class="readout" id="r-total">Σ <b>0</b> · <b>0 B</b></div>
+  <div class="readout" id="idle">▲ BUS IDLE</div>
+  <div class="spacer"></div>
+  <div class="readout" id="r-fps" style="display:none"></div>
+  <div id="clock">--:--:--</div>
+  <div id="conn">○ OFFLINE</div>
+</div>
+
+<div class="panel" id="modules">
+  <h2>MODULES <b id="modcount"></b></h2>
+  <div class="body" id="modlist"></div>
+</div>
+
+<div class="panel" id="topics">
+  <h2>TOPICS <b id="topcount"></b> <span style="float:right; letter-spacing:1px">5s WINDOW</span></h2>
+  <div class="body" id="topiclist"></div>
+</div>
+
+<div class="panel" id="bottombar">
+  <canvas id="spark" width="600" height="68"></canvas>
+  <div class="readout" id="r-spark"><b>0 B</b>/s</div>
+</div>
+
+<div class="panel" id="tooltip"></div>
+<div id="help">DRAG NODES · HOVER INSPECT · SPACE PAUSE · T TOPICS · M MODULES · F FPS</div>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------- palette --
+const TYPE_COLORS = {
+  Image: "#ffcc00", CompressedImage: "#f2ea8c", CameraInfo: "#f2ea8c",
+  PointCloud2: "#b06bff", LaserScan: "#c890ff",
+  OccupancyGrid: "#5c9ff0", Path: "#8cbdf2",
+  Odometry: "#00eeee", PoseStamped: "#00eeee", Twist: "#00eeee",
+  TFMessage: "#88ff88", Bool: "#b5e4f4", String: "#b5e4f4",
+};
+const PKG_COLORS = {
+  sensor_msgs: "#ffcc00", geometry_msgs: "#00eeee", nav_msgs: "#5c9ff0",
+  tf2_msgs: "#88ff88", vision_msgs: "#c890ff", std_msgs: "#b5e4f4",
+};
+const PALETTE = ["#00eeee", "#ffcc00", "#5c9ff0", "#b06bff", "#88ff88", "#f2ea8c", "#8cbdf2", "#c890ff"];
+
+function colorFor(channel) {
+  const hash = [...channel].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const m = channel.split("#")[1];
+  if (m) {
+    const msg = m.split(".").pop();
+    if (TYPE_COLORS[msg]) return TYPE_COLORS[msg];
+    const pkg = m.split(".")[0];
+    if (PKG_COLORS[pkg]) return PKG_COLORS[pkg];
+  }
+  if (channel.startsWith("/rpc")) return "#8cbdf2";
+  return PALETTE[hash % PALETTE.length];
+}
+
+function withAlpha(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+// ------------------------------------------------------------------ graph --
+const nodes = new Map();
+const edges = [];
+const edgeIndex = new Map();
+const routes = new Map();
+
+function makeNode(id, kind, label) {
+  return {
+    id, kind, label,
+    x: innerWidth / 2, y: innerHeight / 2, vx: 0, vy: 0,
+    r: kind === "module" ? 13 : 3.5,
+    glow: 0, color: kind === "module" ? "#00eeee" : colorFor(id),
+    bytes: 0, msgs: 0, fixed: false, placed: false,
+  };
+}
+
+function ensureNode(id, kind, label) {
+  let n = nodes.get(id);
+  if (!n) { n = makeNode(id, kind, label); nodes.set(id, n); }
+  return n;
+}
+
+function addEdge(fromId, toId, channel, directed) {
+  const key = fromId + "|" + toId;
+  let e = edgeIndex.get(key);
+  if (!e) {
+    e = { from: fromId, to: toId, channel, directed, flow: 0 };
+    edges.push(e); edgeIndex.set(key, e);
+  }
+  return e;
+}
+
+function applyTopology(topo) {
+  for (const t of topo.edges) {
+    if (!t.topic || t.topic === "None") continue;
+    const mod = ensureNode("m:" + t.module, "module", t.module);
+    const hub = ensureNode(t.topic, "topic", t.topic.split("#")[0]);
+    hub.transport = t.transport; hub.msgType = (t.type || "").split(".").pop();
+    let route = routes.get(t.topic);
+    if (!route) { route = { pubs: new Set(), subs: new Set() }; routes.set(t.topic, route); }
+    if (t.direction === "out") { route.pubs.add(mod.id); addEdge(mod.id, hub.id, t.topic, true); }
+    else if (t.direction === "in") { route.subs.add(mod.id); addEdge(hub.id, mod.id, t.topic, true); }
+    else { route.subs.add(mod.id); addEdge(mod.id, hub.id, t.topic, false); }
+  }
+  layout();
+}
+
+function layout() {
+  const all = [...nodes.values()].filter((n) => n.kind === "module");
+  const cx = innerWidth / 2, cy = innerHeight / 2 + 10;
+  const R = Math.min(innerWidth - 700, innerHeight - 160) * 0.42;
+  all.sort((a, b) => a.label.localeCompare(b.label));
+  all.forEach((n, i) => {
+    if (n.placed) return;
+    const a = (i / all.length) * Math.PI * 2 - Math.PI / 2;
+    n.x = cx + Math.cos(a) * R;
+    n.y = cy + Math.sin(a) * R * 0.85;
+    n.placed = true;
+  });
+  for (const [topic, route] of routes) {
+    const hub = nodes.get(topic);
+    if (!hub || hub.placed) continue;
+    const attached = [...route.pubs, ...route.subs].map((id) => nodes.get(id)).filter(Boolean);
+    if (attached.length) {
+      hub.x = attached.reduce((s, m) => s + m.x, 0) / attached.length + (Math.random() - 0.5) * 50;
+      hub.y = attached.reduce((s, m) => s + m.y, 0) / attached.length + (Math.random() - 0.5) * 50;
+    } else {
+      const a = Math.random() * Math.PI * 2;
+      hub.x = cx + Math.cos(a) * R * 0.45;
+      hub.y = cy + Math.sin(a) * R * 0.45;
+    }
+    hub.placed = true;
+  }
+  for (let i = 0; i < 260; i++) stepPhysics(1);
+}
+
+// --------------------------------------------------------------- particles --
+const particles = [], shockwaves = [];
+const MAX_PARTICLES = 3000;
+let lastPacketAt = 0;
+
+// Spawn `n` comets along an edge a -> b. The first comet may carry a `relay`
+// payload: when it reaches `b` (the topic hub) it triggers the fan-out to
+// subscribers, so the flow reads as publisher -> topic -> subscribers in
+// causal order rather than the hub radiating in all directions at once.
+function spawnLeg(a, b, color, size, n, relayMeta) {
+  if (!a || !b || particles.length >= MAX_PARTICLES) return;
+  const e = edgeIndex.get(a.id + "|" + b.id);
+  if (e) e.flow = Math.min(1.5, e.flow + 0.4);
+  for (let i = 0; i < n; i++) {
+    particles.push({
+      from: a, to: b, t: -i * 0.1,
+      speed: 1.0 + Math.random() * 0.4 - size * 0.05,
+      size, color, trail: [],
+      relay: i === 0 ? relayMeta : null,
+    });
+  }
+}
+
+// A publisher comet arrived at the topic hub: flash the hub and fan out to
+// every subscriber.
+function fanOut(meta) {
+  const hub = nodes.get(meta.channel);
+  const route = routes.get(meta.channel);
+  if (!hub || !route) return;
+  hub.glow = Math.min(1.9, hub.glow + 0.6);
+  shockwaves.push({ x: hub.x, y: hub.y, r: hub.r + 2, alpha: 0.45, color: meta.color });
+  for (const s of route.subs) spawnLeg(hub, nodes.get(s), meta.color, meta.size, meta.n, null);
+  if (meta.bytes > 1_000_000) {
+    shockwaves.push({ x: hub.x, y: hub.y, r: hub.r + 5, alpha: 0.7, color: meta.color });
+  }
+}
+
+function spawnParticles(channel, count, bytes) {
+  const hub = nodes.get(channel) ?? ensureNode(channel, "topic", channel.split("#")[0]);
+  if (!hub.placed) layout();
+  hub.bytes += bytes; hub.msgs += count;
+
+  const route = routes.get(channel);
+  const size = Math.max(1.4, Math.min(3.6, Math.log2(1 + bytes / Math.max(1, count)) * 0.28));
+  const color = colorFor(channel);
+  const n = Math.min(count, 8);
+  const meta = { channel, size, color, bytes, n };
+
+  if (route && route.pubs.size) {
+    // publisher -> hub; the relay comet fans out on arrival (see fanOut)
+    for (const p of route.pubs) {
+      const pub = nodes.get(p);
+      if (pub) {
+        pub.glow = Math.min(1.8, pub.glow + 0.45); // the source pulses brightest
+        spawnLeg(pub, hub, color, size, n, meta);
+      }
+    }
+  } else if (route && route.subs.size) {
+    // no known publisher (e.g. external producer): radiate from the hub
+    hub.glow = Math.min(1.6, hub.glow + 0.4);
+    for (const s of route.subs) spawnLeg(hub, nodes.get(s), color, size, n, null);
+    if (bytes > 1_000_000) shockwaves.push({ x: hub.x, y: hub.y, r: hub.r + 5, alpha: 0.7, color });
+  } else {
+    hub.glow = Math.min(1.6, hub.glow + 0.4);
+  }
+}
+
+// ------------------------------------------------------------------ stats --
+let totalMsgs = 0, totalBytes = 0;
+const windowEvents = [];
+const perTopic = new Map();
+const sparkSamples = new Array(150).fill(0);
+let sparkAccum = 0;
+
+function noteTraffic(channel, count, bytes) {
+  totalMsgs += count; totalBytes += bytes; sparkAccum += bytes;
+  lastPacketAt = performance.now();
+  const now = lastPacketAt;
+  windowEvents.push([now, count, bytes]);
+  let t = perTopic.get(channel);
+  if (!t) { t = { msgs: 0, bytes: 0, win: [] }; perTopic.set(channel, t); }
+  t.msgs += count; t.bytes += bytes; t.win.push([now, count, bytes]);
+}
+
+setInterval(() => { sparkSamples.push(sparkAccum * 2); sparkSamples.shift(); sparkAccum = 0; }, 500);
+
+function rollWindow(arr, now) { while (arr.length && now - arr[0][0] > 5000) arr.shift(); }
+
+function human(bytes) {
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let u = 0;
+  while (bytes >= 1024 && u < units.length - 1) { bytes /= 1024; u++; }
+  return bytes.toFixed(u ? 1 : 0) + " " + units[u];
+}
+
+// -------------------------------------------------------------- websocket --
+const connEl = document.getElementById("conn");
+let paused = false, showTopics = true, showModules = true, showFps = false;
+
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/`);
+  ws.onopen = () => { connEl.textContent = "▮ LIVE"; connEl.className = "live"; };
+  ws.onclose = () => {
+    connEl.textContent = "○ RECONNECTING"; connEl.className = "";
+    setTimeout(connect, 1500);
+  };
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.kind === "topology") applyTopology(msg);
+    else if (msg.kind === "packets") {
+      for (const [channel, count, bytes] of msg.events) {
+        noteTraffic(channel, count, bytes);
+        if (!paused) spawnParticles(channel, count, bytes);
+      }
+    }
+  };
+}
+connect();
+
+// ---------------------------------------------------------------- physics --
+function stepPhysics(dt) {
+  const ns = [...nodes.values()];
+  const cx = innerWidth / 2, cy = innerHeight / 2 + 10;
+  for (let i = 0; i < ns.length; i++) {
+    const a = ns[i];
+    if (a.fixed) continue;
+    let fx = (cx - a.x) * 0.013, fy = (cy - a.y) * 0.013;
+    for (let j = 0; j < ns.length; j++) {
+      if (i === j) continue;
+      const b = ns[j];
+      const dx = a.x - b.x, dy = a.y - b.y;
+      const d2 = dx * dx + dy * dy + 60;
+      const rep = (a.kind === "module" && b.kind === "module" ? 26000 : 5200) / d2;
+      const d = Math.sqrt(d2);
+      fx += (dx / d) * rep; fy += (dy / d) * rep;
+    }
+    a.vx = (a.vx + fx * dt) * 0.84;
+    a.vy = (a.vy + fy * dt) * 0.84;
+  }
+  for (const e of edges) {
+    const a = nodes.get(e.from), b = nodes.get(e.to);
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const f = (d - 140) * 0.004;
+    const fx = (dx / d) * f, fy = (dy / d) * f;
+    if (!a.fixed) { a.vx += fx; a.vy += fy; }
+    if (!b.fixed) { b.vx -= fx; b.vy -= fy; }
+  }
+  for (const n of ns) {
+    if (n.fixed) continue;
+    n.x += n.vx; n.y += n.vy;
+    n.x = Math.max(300, Math.min(innerWidth - 370, n.x));
+    n.y = Math.max(72, Math.min(innerHeight - 76, n.y));
+  }
+}
+
+// ----------------------------------------------------------------- canvas --
+const canvas = document.getElementById("view");
+const ctx = canvas.getContext("2d");
+let dpr = 1;
+let gridLayer = null;
+
+function buildGrid() {
+  gridLayer = document.createElement("canvas");
+  gridLayer.width = innerWidth * dpr;
+  gridLayer.height = innerHeight * dpr;
+  const g = gridLayer.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // dot lattice
+  g.fillStyle = "rgba(0, 238, 238, 0.05)";
+  for (let x = 14; x < innerWidth; x += 28) {
+    for (let y = 14; y < innerHeight; y += 28) g.fillRect(x, y, 1, 1);
+  }
+  const cx = innerWidth / 2, cy = innerHeight / 2 + 10;
+  g.strokeStyle = "rgba(0, 238, 238, 0.05)";
+  g.lineWidth = 1;
+  for (const r of [170, 340, 510]) {
+    g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+  }
+  return gridLayer;
+}
+
+function resize() {
+  dpr = Math.min(devicePixelRatio || 1, 3);
+  canvas.width = innerWidth * dpr;
+  canvas.height = innerHeight * dpr;
+  canvas.style.width = innerWidth + "px";
+  canvas.style.height = innerHeight + "px";
+  buildGrid();
+}
+addEventListener("resize", resize);
+resize();
+
+function bezierPt(a, b, t, bow = 0.08) {
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  const cx = mx - (b.y - a.y) * bow, cy = my + (b.x - a.x) * bow;
+  const u = 1 - t;
+  return { x: u * u * a.x + 2 * u * t * cx + t * t * b.x,
+           y: u * u * a.y + 2 * u * t * cy + t * t * b.y };
+}
+
+function strokeCurve(a, b) {
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.quadraticCurveTo(mx - (b.y - a.y) * 0.08, my + (b.x - a.x) * 0.08, b.x, b.y);
+  ctx.stroke();
+}
+
+function polygon(x, y, r, sides, rot) {
+  ctx.beginPath();
+  for (let k = 0; k <= sides; k++) {
+    const a = (k / sides) * Math.PI * 2 + rot;
+    k ? ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r)
+      : ctx.moveTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+  }
+}
+
+// Crisp label with dark halo so it stays readable over strands.
+function label(text, x, y, font, color, align = "center") {
+  ctx.font = font;
+  ctx.textAlign = align;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(7, 9, 10, 0.9)";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+}
+
+let lastFrame = performance.now(), fps = 60, hovered = null, focusIds = null;
+let dashOffset = 0;
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - lastFrame) / 1000);
+  fps = fps * 0.95 + (1 / Math.max(dt, 1e-3)) * 0.05;
+  lastFrame = now;
+  if (!paused) { stepPhysics(dt * 60); dashOffset -= dt * 30; }
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, innerWidth, innerHeight);
+  ctx.fillStyle = "#07090a";
+  ctx.fillRect(0, 0, innerWidth, innerHeight);
+  ctx.drawImage(gridLayer, 0, 0, innerWidth, innerHeight);
+
+  // ---- edges: graphite hairlines; active edges carry colored dash flow
+  for (const e of edges) {
+    const a = nodes.get(e.from), b = nodes.get(e.to);
+    if (!paused) e.flow *= Math.pow(0.3, dt);
+    const hub = a.kind === "topic" ? a : b;
+    const hot = Math.min(1, e.flow + hub.glow * 0.25);
+    const isHover = hovered && (e.from === hovered.id || e.to === hovered.id);
+    ctx.globalAlpha = focusIds && !isHover ? 0.12 : 1; // dim non-focused edges
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = `rgba(70, 110, 120, ${isHover ? 0.6 : 0.13})`;
+    strokeCurve(a, b);
+    if (hot > 0.03 || isHover) {
+      ctx.strokeStyle = withAlpha(hub.color, Math.min(0.9, 0.15 + hot * 0.7 + (isHover ? 0.3 : 0)));
+      ctx.setLineDash([3, 9]);
+      ctx.lineDashOffset = e.directed ? dashOffset : 0;
+      strokeCurve(a, b);
+      ctx.setLineDash([]);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---- particles: tracers with thin tails
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    if (!paused) p.t += dt * p.speed;
+    if (p.t >= 1) {
+      // arrival: publisher comet fans out at the hub; subscriber comet
+      // pulses the module that just received the message.
+      if (p.relay) fanOut(p.relay);
+      else if (p.to && p.to.kind === "module") p.to.glow = Math.min(1.4, p.to.glow + 0.3);
+      particles.splice(i, 1);
+      continue;
+    }
+    if (p.t < 0) continue;
+    const pos = bezierPt(p.from, p.to, p.t);
+    p.trail.push(pos);
+    if (p.trail.length > 6) p.trail.shift();
+    if (p.trail.length > 1) {
+      for (let k = 1; k < p.trail.length; k++) {
+        ctx.strokeStyle = withAlpha(p.color, 0.5 * (k / p.trail.length));
+        ctx.lineWidth = Math.max(0.6, p.size * 0.5 * (k / p.trail.length));
+        ctx.beginPath();
+        ctx.moveTo(p.trail[k - 1].x, p.trail[k - 1].y);
+        ctx.lineTo(p.trail[k].x, p.trail[k].y);
+        ctx.stroke();
+      }
+    }
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 7;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // ---- shockwaves: single hairline rings
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const s = shockwaves[i];
+    if (!paused) { s.r += 120 * dt; s.alpha -= 1.1 * dt; }
+    if (s.alpha <= 0) { shockwaves.splice(i, 1); continue; }
+    ctx.strokeStyle = withAlpha(s.color, s.alpha * 0.55);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  // ---- topic nodes: small squares + always-on small labels
+  for (const n of nodes.values()) {
+    if (n.kind !== "topic") continue;
+    if (!paused) n.glow *= Math.pow(0.25, dt);
+    const isHover = hovered === n;
+    ctx.globalAlpha = focusIds && !focusIds.has(n.id) ? 0.2 : 1;
+    const route = routes.get(n.id);
+    // Published but consumed by no module in this blueprint: dangling stream.
+    const orphan = route && route.pubs.size > 0 && route.subs.size === 0;
+    const r = n.r + Math.min(2.5, n.glow * 2) + (isHover ? 1.5 : 0);
+    if (n.glow > 0.02) {
+      ctx.shadowColor = n.color; ctx.shadowBlur = 9;
+    }
+    ctx.strokeStyle = withAlpha(n.color, 0.45 + Math.min(0.55, n.glow * 0.7) + (isHover ? 0.3 : 0));
+    ctx.lineWidth = 1;
+    if (orphan) ctx.setLineDash([2.5, 2.5]);
+    polygon(n.x, n.y, r, 4, Math.PI / 4);
+    ctx.stroke();
+    if (orphan) {
+      ctx.setLineDash([]);
+      if (n.glow > 0.05) {
+        ctx.strokeStyle = withAlpha("#ffcc00", Math.min(0.5, n.glow * 0.4));
+        polygon(n.x, n.y, r + 3.5, 4, Math.PI / 4);
+        ctx.stroke();
+      }
+    }
+    ctx.fillStyle = withAlpha(n.color, 0.25 + Math.min(0.75, n.glow));
+    ctx.fillRect(n.x - 1, n.y - 1, 2, 2);
+    ctx.shadowBlur = 0;
+    label(n.label, n.x, n.y - r - 5, "9px ui-monospace, monospace",
+          isHover ? "#d7f3fa" : withAlpha("#7da7b3", 0.5 + Math.min(0.5, n.glow)));
+    ctx.globalAlpha = 1;
+  }
+
+  // ---- module nodes: hex outline, core, clean uppercase label
+  // When a topic is hovered, its single publisher is tagged SOURCE.
+  const hoveredRoute = hovered && hovered.kind === "topic" ? routes.get(hovered.id) : null;
+  for (const n of nodes.values()) {
+    if (n.kind !== "module") continue;
+    if (!paused) n.glow *= Math.pow(0.25, dt);
+    const isHover = hovered === n;
+    ctx.globalAlpha = focusIds && !focusIds.has(n.id) ? 0.2 : 1;
+    const isSource = hoveredRoute && hoveredRoute.pubs.has(n.id);
+    const r = n.r + (isHover ? 1.5 : 0);
+    ctx.strokeStyle = withAlpha("#00eeee", 0.75);
+    ctx.lineWidth = 1.2;
+    polygon(n.x, n.y, r, 6, Math.PI / 6);
+    ctx.stroke();
+    if (n.glow > 0.03) {
+      ctx.strokeStyle = withAlpha("#00eeee", Math.min(0.5, n.glow * 0.5));
+      ctx.lineWidth = 1;
+      polygon(n.x, n.y, r + 3.5, 6, Math.PI / 6);
+      ctx.stroke();
+    }
+    ctx.shadowColor = "#00eeee"; ctx.shadowBlur = isHover ? 10 : 6;
+    ctx.fillStyle = withAlpha("#00eeee", 0.85);
+    ctx.beginPath(); ctx.arc(n.x, n.y, 2.2, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    label(n.label, n.x, n.y + r + 14, "600 10px ui-monospace, monospace",
+          isHover || isSource ? "#ffffff" : "#c9e8f2");
+    if (isSource) {
+      label("◆ SOURCE", n.x, n.y - r - 8, "700 9px ui-monospace, monospace", "#ffcc00");
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  drawSpark();
+  updateHud(now);
+}
+requestAnimationFrame(frame);
+
+// --------------------------------------------------------------- sparkline --
+const sparkEl = document.getElementById("spark");
+const sparkCtx = sparkEl.getContext("2d");
+sparkCtx.scale(2, 2);
+
+function drawSpark() {
+  const w = 300, h = 34;
+  sparkCtx.clearRect(0, 0, w, h);
+  const max = Math.max(...sparkSamples, 1);
+  sparkCtx.strokeStyle = "rgba(0, 238, 238, 0.12)";
+  sparkCtx.lineWidth = 1;
+  for (const f of [0.25, 0.5, 0.75]) {
+    sparkCtx.beginPath();
+    sparkCtx.moveTo(0, h * f); sparkCtx.lineTo(w, h * f);
+    sparkCtx.stroke();
+  }
+  sparkCtx.beginPath();
+  sparkSamples.forEach((v, i) => {
+    const x = (i / (sparkSamples.length - 1)) * w, y = h - 2 - (v / max) * (h - 6);
+    i ? sparkCtx.lineTo(x, y) : sparkCtx.moveTo(x, y);
+  });
+  sparkCtx.strokeStyle = "#00eeee";
+  sparkCtx.lineWidth = 1;
+  sparkCtx.stroke();
+}
+
+// -------------------------------------------------------------------- hud --
+const els = {
+  graph: document.getElementById("r-graph"),
+  rate: document.getElementById("r-rate"),
+  total: document.getElementById("r-total"),
+  fps: document.getElementById("r-fps"),
+  idle: document.getElementById("idle"),
+  clock: document.getElementById("clock"),
+  spark: document.getElementById("r-spark"),
+  modlist: document.getElementById("modlist"),
+  topiclist: document.getElementById("topiclist"),
+  modcount: document.getElementById("modcount"),
+  topcount: document.getElementById("topcount"),
+  modules: document.getElementById("modules"),
+  topics: document.getElementById("topics"),
+  tooltip: document.getElementById("tooltip"),
+};
+let lastHud = 0;
+
+function topicWindowStats(pnow) {
+  const out = new Map();
+  for (const [ch, t] of perTopic) {
+    rollWindow(t.win, pnow);
+    let m = 0, b = 0;
+    for (const [, c, bb] of t.win) { m += c; b += bb; }
+    out.set(ch, { hz: m / 5, bps: b / 5, total: t.bytes });
+  }
+  return out;
+}
+
+function updateHud(now) {
+  if (now - lastHud < 300) return;
+  lastHud = now;
+  const pnow = performance.now();
+  rollWindow(windowEvents, pnow);
+  let wMsgs = 0, wBytes = 0;
+  for (const [, c, b] of windowEvents) { wMsgs += c; wBytes += b; }
+  const mods = [...nodes.values()].filter((n) => n.kind === "module");
+  const tops = [...nodes.values()].filter((n) => n.kind === "topic");
+
+  els.graph.innerHTML = `<b>${mods.length}</b> MOD · <b>${tops.length}</b> TOP` +
+    (paused ? ' · <b style="color:#ffcc00">⏸ PAUSED</b>' : "");
+  els.rate.innerHTML = `<b>${(wMsgs / 5).toFixed(1)}</b> Hz · <b>${human(wBytes / 5)}</b>/s`;
+  els.total.innerHTML = `Σ <b>${totalMsgs.toLocaleString()}</b> · <b>${human(totalBytes)}</b>`;
+  els.clock.textContent = new Date().toISOString().slice(11, 19) + " UTC";
+  els.fps.style.display = showFps ? "" : "none";
+  if (showFps) els.fps.innerHTML = `<b>${fps.toFixed(0)}</b> FPS · <b>${particles.length}</b> PTC`;
+  els.spark.innerHTML = `<b>${human(wBytes / 5)}</b>/s`;
+
+  const idleFor = lastPacketAt ? (pnow - lastPacketAt) / 1000 : Infinity;
+  els.idle.style.display = idleFor > 3 ? "" : "none";
+  els.idle.textContent = lastPacketAt
+    ? `▲ BUS IDLE ${Math.floor(idleFor)}s`
+    : "▲ NO TRAFFIC — is a stack running?";
+
+  const stats = topicWindowStats(pnow);
+
+  els.modules.style.display = showModules ? "" : "none";
+  els.modcount.textContent = mods.length;
+  if (showModules) {
+    const perModule = new Map(mods.map((m) => [m.id, { hz: 0, bps: 0 }]));
+    for (const [topic, route] of routes) {
+      const s = stats.get(topic);
+      if (!s) continue;
+      for (const id of [...route.pubs, ...route.subs]) {
+        const acc = perModule.get(id);
+        if (acc) { acc.hz += s.hz; acc.bps += s.bps; }
+      }
+    }
+    const maxBps = Math.max(1, ...[...perModule.values()].map((v) => v.bps));
+    els.modlist.innerHTML = mods
+      .sort((a, b) => (perModule.get(b.id)?.bps ?? 0) - (perModule.get(a.id)?.bps ?? 0))
+      .map((m) => {
+        const v = perModule.get(m.id) ?? { hz: 0, bps: 0 };
+        return `<div class="row"><span class="name">${m.label}</span>` +
+          `<span class="hz"><b>${v.hz.toFixed(1)}</b> Hz</span>` +
+          `<span class="bps">${human(v.bps)}/s</span></div>` +
+          `<div class="meter"><i style="width:${Math.min(100, (v.bps / maxBps) * 100)}%"></i></div>`;
+      })
+      .join("");
+  }
+
+  els.topics.style.display = showTopics ? "" : "none";
+  els.topcount.textContent = tops.length;
+  if (showTopics) {
+    const rows = [...stats.entries()]
+      .filter(([, s]) => s.bps > 0 || s.total > 0)
+      .sort((a, b) => b[1].bps - a[1].bps)
+      .slice(0, 16);
+    els.topiclist.innerHTML = rows
+      .map(([ch, s]) =>
+        `<div class="row"><span class="mark" style="color:${colorFor(ch)}">◆</span>` +
+        `<span class="name">${ch.split("#")[0]}</span>` +
+        `<span class="hz"><b>${s.hz.toFixed(1)}</b> Hz</span>` +
+        `<span class="bps">${human(s.bps)}/s</span></div>`)
+      .join("") || '<div class="empty">no traffic yet</div>';
+  }
+}
+
+// ------------------------------------------------------------ interaction --
+let dragging = null;
+
+function nodeAt(x, y) {
+  let best = null, bestD = 1e9;
+  for (const n of nodes.values()) {
+    const d = Math.hypot(x - n.x, y - n.y);
+    if (d < n.r + 12 && d < bestD) { best = n; bestD = d; }
+  }
+  return best;
+}
+
+canvas.addEventListener("mousedown", (ev) => {
+  const n = nodeAt(ev.clientX, ev.clientY);
+  if (n) { dragging = n; n.fixed = true; }
+});
+function computeFocus(node) {
+  if (!node) return null;
+  const ids = new Set([node.id]);
+  for (const e of edges) {
+    if (e.from === node.id) ids.add(e.to);
+    if (e.to === node.id) ids.add(e.from);
+  }
+  return ids;
+}
+
+addEventListener("mousemove", (ev) => {
+  if (dragging) { dragging.x = ev.clientX; dragging.y = ev.clientY; return; }
+  hovered = nodeAt(ev.clientX, ev.clientY);
+  focusIds = computeFocus(hovered);
+  if (hovered) {
+    const s = topicWindowStats(performance.now()).get(hovered.id);
+    const tip = els.tooltip;
+    tip.style.display = "block";
+    tip.style.left = Math.min(innerWidth - 440, ev.clientX + 16) + "px";
+    tip.style.top = ev.clientY + 14 + "px";
+    if (hovered.kind === "topic") {
+      const route = routes.get(hovered.id);
+      const orphan = route && route.pubs.size > 0 && route.subs.size === 0;
+      tip.innerHTML = `<div class="tname">${hovered.id}</div>` +
+        `<div class="trow">type <b>${hovered.msgType ?? "?"}</b> · transport <b>${hovered.transport ?? "?"}</b></div>` +
+        (s ? `<div class="trow"><b>${s.hz.toFixed(1)}</b> Hz · <b>${human(s.bps)}</b>/s · Σ <b>${human(s.total)}</b></div>` : "") +
+        (route ? `<div class="trow">pub <b>${[...route.pubs].map((p) => p.slice(2)).join(", ") || "?"}</b></div>` +
+                 `<div class="trow">sub <b>${[...route.subs].map((p) => p.slice(2)).join(", ") || "—"}</b></div>` : "") +
+        (orphan ? `<div class="trow" style="color:#ffcc00">▲ published but no module subscribes in this blueprint</div>` : "");
+    } else {
+      const attached = [...routes.entries()].filter(([, r]) => r.pubs.has(hovered.id) || r.subs.has(hovered.id));
+      tip.innerHTML = `<div class="tname">${hovered.label}</div>` +
+        `<div class="trow"><b>${attached.length}</b> streams</div>` +
+        attached.slice(0, 12).map(([t, r]) =>
+          `<div class="trow">${r.pubs.has(hovered.id) ? "▸ out" : "◂ in"} <b>${t.split("#")[0]}</b></div>`).join("");
+    }
+  } else {
+    els.tooltip.style.display = "none";
+  }
+});
+addEventListener("mouseup", () => {
+  if (dragging) { dragging.fixed = false; dragging = null; }
+});
+addEventListener("keydown", (ev) => {
+  if (ev.key === " ") { paused = !paused; ev.preventDefault(); }
+  if (ev.key === "t") showTopics = !showTopics;
+  if (ev.key === "m") showModules = !showModules;
+  if (ev.key === "f") showFps = !showFps;
+});
+</script>
+</body>
+</html>

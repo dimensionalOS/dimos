@@ -20,6 +20,7 @@ clouds are long slow trucks. Run alongside any DimOS stack:
 
     lcmflow            # native TUI
     lcmflow web        # serve the TUI in a browser
+    lcmflow dashboard  # module-graph "constellation" web dashboard (deno)
     dimos lcmflow      # same, via the dimos CLI
 """
 
@@ -321,10 +322,70 @@ class LCMFlowApp(App):  # type: ignore[type-arg]
         self.view.cycle_sort()
 
 
+def _stop_dashboard() -> None:
+    """Terminate any running lcmflow dashboard servers."""
+    import psutil
+
+    stopped = 0
+    for proc in psutil.process_iter(["cmdline"]):
+        try:
+            cmdline = " ".join(proc.info["cmdline"] or [])
+            if "web/lcmflow/server.ts" in cmdline:
+                proc.terminate()
+                stopped += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    print(f"stopped {stopped} dashboard server(s)" if stopped else "no dashboard running")
+
+
+def _run_dashboard(extra_args: list[str]) -> None:
+    """Exec the deno-based constellation dashboard (dimos/web/lcmflow)."""
+    import os
+    import shutil
+    import sys
+
+    import dimos
+
+    if extra_args and extra_args[0] in ("stop", "--stop"):
+        _stop_dashboard()
+        return
+
+    deno = shutil.which("deno")
+    if deno is None:
+        print("lcmflow dashboard requires deno: https://docs.deno.com/runtime/")
+        print("  curl -fsSL https://deno.land/install.sh | sh")
+        raise SystemExit(1)
+    server_ts = os.path.join(os.path.dirname(dimos.__file__), "web", "lcmflow", "server.ts")
+    # Pass this venv's python so the server can shell out to the direction
+    # sidecar (dimos.utils.cli.lcmflow.topology) — that's how arrow direction
+    # is recovered without changing the coordinator. --allow-run is unscoped
+    # because Deno rejects path-scoped run permission once LD_LIBRARY_PATH is
+    # inherited; the only thing spawned is this same interpreter.
+    python = sys.executable
+    os.execv(
+        deno,
+        [
+            deno,
+            "run",
+            "--allow-net",
+            "--allow-read",
+            "--allow-env",
+            "--allow-run",
+            "--unstable-net",
+            server_ts,
+            "--python",
+            python,
+            *extra_args,
+        ],
+    )
+
+
 def main() -> None:
     import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == "web":
+    if len(sys.argv) > 1 and sys.argv[1] == "dashboard":
+        _run_dashboard(sys.argv[2:])
+    elif len(sys.argv) > 1 and sys.argv[1] == "web":
         import os
 
         from textual_serve.server import Server  # type: ignore[import-not-found]
