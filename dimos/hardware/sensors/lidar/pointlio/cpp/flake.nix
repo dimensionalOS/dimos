@@ -13,7 +13,7 @@
       flake = false;
     };
     fast-lio = {
-      url = "github:dimensionalOS/dimos-module-fastlio2/pointlio";
+      url = "path:/home/dimos/repos/dimos-module-fastlio2";
       flake = false;
     };
     lcm-extended = {
