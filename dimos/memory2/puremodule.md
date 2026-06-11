@@ -72,8 +72,23 @@ Your "at what state do we call the module" examples translate as:
 - reserved names: `ts: float` is the tick time; `state` (first parameter)
   makes the module a Mealy machine.
 
-Outputs: one `Out` port — return the value, or `None` to emit nothing
-(ticks double as filters); several — return `{port_name: value}`.
+## Outputs
+
+- **One `Out` port** — `step` returns the value; returning `None` emits
+  nothing, so ticks double as filters.
+- **Several `Out` ports** — return `{port_name: value}`. A *partial* dict
+  is allowed (omitted ports stay quiet that tick — e.g. a command every
+  tick, an alert occasionally); unknown keys raise `TypeError`.
+- **No `Out` ports** — the return value is ignored.
+
+Where outputs land differs by mode: **live**, every dict entry publishes
+to its own port (and is appended to that port's stream in the module
+store); **offline**, `over()` yields one observation per tick — the bare
+value for single-output modules, the `{port: value}` dict for
+multi-output ones (slice one output back out with
+`.filter(lambda o: "alerts" in o.data).map_data(lambda o: o.data["alerts"])`).
+That dict-row asymmetry is a known open point — the planned alternative
+is a run handle exposing one store-backed stream per output.
 
 ## Offline: develop on recorded memory
 
@@ -89,7 +104,7 @@ out = Follower.over(image=db.streams.image, pose=db.streams.pose,
                     imu=db.streams.imu)
 
 out.to_list()                                  # run it
-out.map_data(lambda t: t.linear.x).to_list()   # poke at results
+out.map_data(lambda o: o.data.linear.x).to_list()  # poke at results
 out.save(db.stream("cmd_vel_v2")).drain()      # or persist them
 ```
 

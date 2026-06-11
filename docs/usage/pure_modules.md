@@ -234,6 +234,54 @@ value rather than attributes on `self`, a snapshot of it *is* the module's
 full resume point — which is what makes restarts, migration, and
 time-rewind mechanical.
 
+## Multiple outputs
+
+Declare several `Out` ports and return a dict keyed by port name. Emitting
+a **subset** is allowed — each port fires independently, so a module can
+publish a command every tick and an alert only sometimes:
+
+```python session=pure ansi=false
+class Navigator(PureModule):
+    pose: In[Pose] = tick()
+
+    cmd: Out[str]
+    alerts: Out[str]
+
+    def step(self, pose: Pose, ts: float) -> dict:
+        outs = {"cmd": f"forward x={pose.position.x:.2f}"}
+        if pose.position.x > 1.8:
+            outs["alerts"] = f"approaching boundary at t={ts:.2f}"
+        return outs
+
+rows = Navigator.over(pose=pose).to_list()
+fired = [r for r in rows if "alerts" in r.data]
+print(f"{len(rows)} ticks; alerts on {len(fired)}; last: {rows[-1].data}")
+```
+
+```results
+51 ticks; alerts on 5; last: {'cmd': 'forward x=2.00', 'alerts': 'approaching boundary at t=2.00'}
+```
+
+The rules: one `Out` port → return the bare value (`None` emits nothing);
+several → return `{port: value}` (missing keys stay quiet, unknown keys
+raise). Deployed live, each entry publishes to its own port. Offline,
+`over()` yields one observation per tick whose data is the dict — slice a
+single output back out with a map:
+
+```python session=pure ansi=false
+boundary_alerts = Navigator.over(pose=pose) \
+    .filter(lambda o: "alerts" in o.data) \
+    .map_data(lambda o: o.data["alerts"])
+print(boundary_alerts.last().data)
+```
+
+```results
+approaching boundary at t=2.00
+```
+
+(That dict-row shape is a known asymmetry with the live per-port streams —
+a run handle with one stream per output is on the design table.)
+
 ## Modules compose like streams
 
 A module's output stream is a normal memory2 stream, so modules chain into
