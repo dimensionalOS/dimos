@@ -23,21 +23,30 @@ navigation. The map, paths, and robot pose all live in fastlio's world frame.
 import os
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
+from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.05
 # Height of the head-mounted lidar above the ground while standing.
 go2_lidar_height = 0.5
+camera_hz = 1.0
+
+_nav_rerun_config = {
+    **rerun_config,
+    "max_hz": {**rerun_config["max_hz"], "world/color_image": camera_hz},
+}
 
 unitree_go2_nav_3d = autoconnect(
-    unitree_go2_basic.remappings(
+    vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
+    GO2Connection.blueprint().remappings(
         [
             (GO2Connection, "lidar", "lidar_l1"),
             (GO2Connection, "odom", "odom_go2"),
