@@ -146,7 +146,6 @@ class HostedTeleopModule(Module):
         self._start_heartbeat()
         self._start_telemetry()
         self._start_control_loop()
-        logger.info("HostedTeleopModule started")
 
     @rpc
     def stop(self) -> None:
