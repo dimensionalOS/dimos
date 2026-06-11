@@ -33,6 +33,7 @@ from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.memory2.module import Recorder, RecorderConfig
+from dimos.memory2.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.teleop.quest.quest_types import Buttons
@@ -64,25 +65,23 @@ class TeleopRecorder(Recorder):
     cmd_vel_stamped: In[TwistStamped]
     video_stats: In[VideoStats]
     config: TeleopRecorderConfig
+    # Per-run path (stem + timestamp), held here so we don't mutate config.
+    _db_path: Path | None = None
 
     @rpc
     def start(self) -> None:
-        # Append a per-run timestamp to the stem so each run is its own file.
-        base = getattr(self, "_db_path_base", None)
-        if base is None:
-            base = Path(self.config.db_path)
-            self._db_path_base = base
+        base = Path(self.config.db_path)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.config.db_path = base.with_name(f"{base.stem}_{timestamp}{base.suffix}")
-        # SqliteStore (sqlite3.connect) won't create the parent dir — ensure it.
-        self.config.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db_path = base.with_name(f"{base.stem}_{timestamp}{base.suffix}")
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Open the store ourselves so the base Recorder records into our path.
+        self._store = self.register_disposable(SqliteStore(path=str(self._db_path)))
+        self._store.start()
         super().start()
 
     @rpc
     def stop(self) -> None:
-        # Snapshot the db_path before super().stop() closes the store — once
-        # closed, we still want to point the report writer at the same file.
-        db_path = Path(self.config.db_path) if self.config.generate_report else None
+        db_path = self._db_path if self.config.generate_report else None
         super().stop()
         if db_path is not None:
             try:
