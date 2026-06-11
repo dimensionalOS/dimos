@@ -27,8 +27,7 @@ pub struct Config {
     #[validate(range(min = 1))]
     pub max_health: i32,
     /// Don't clear a miss when abs of ray dot normal is below this, clear it when above.
-    /// Higher value means points are only cleared with direct hits. Low values means
-    /// even slight grazes will clear points.
+    /// Higher clears only on direct hits, lower clears on slight grazes too.
     #[validate(range(min = 0.0, max = 1.0))]
     pub graze_cos: f32,
     /// Only spare a voxel whose neighborhood was hit within this many frames.
@@ -54,7 +53,7 @@ impl VoxelMap {
         self.voxels.values().filter(|c| c.health > 0).count()
     }
 
-    /// Update or add voxel on a hit. Updates covariance and hit count for normal calculation.
+    /// Add a return to its voxel's accumulated moments.
     fn accumulate(&mut self, point: (f32, f32, f32), voxel_size: f32) {
         let key = world_to_voxel(point.0, point.1, point.2, 1.0 / voxel_size);
         let center = Vector3::new(
@@ -62,8 +61,6 @@ impl VoxelMap {
             (key.1 as f32 + 0.5) * voxel_size,
             (key.2 as f32 + 0.5) * voxel_size,
         );
-
-        // update or add voxel with new info
         self.voxels
             .entry(key)
             .or_default()
@@ -95,9 +92,7 @@ impl VoxelMap {
     }
 }
 
-/// Number of required points to assign a normal
 const NORMAL_MIN_POINTS: u32 = 3;
-/// Consider points within this voxel radius when calculating normal
 const NORMAL_NEIGHBOR_RADIUS: i32 = 1;
 const NORMAL_REWEIGHT_ITERS: u32 = 3;
 /// Neighbor weight falloff with plane distance, as a fraction of voxel size.
@@ -105,16 +100,13 @@ const NORMAL_PLANE_SIGMA_FRAC: f32 = 0.5;
 /// Fraction of points that must be kept after the IRLS to count as a real plane
 const NORMAL_MIN_SUPPORT: f32 = 0.5;
 
-/// Voxel stats, such as health, accumulate hit count, running covariance, and cached normal.
-/// Normal is determined from all points in a neighborhood of voxel.
+/// Occupancy health, accumulated point moments about the voxel center, and the
+/// normal fit from the voxel's neighborhood.
 #[derive(Clone)]
 pub struct Voxel {
     pub health: VoxelHealth,
-    /// Number of accumulated hits in this voxel
     num_pts: u32,
-    /// Sum of all hit points within voxel
     sum: Vector3<f32>,
-    /// Covariance of accumulated hits
     m2: Matrix3<f32>,
     normal: Option<Vector3<f32>>,
     last_hit: u32,
@@ -144,7 +136,7 @@ impl Voxel {
         }
     }
 
-    /// Update accumulation info on this voxel so we can calculate the normal
+    /// Fold a centered point into the running moments.
     fn observe(&mut self, q: Vector3<f32>) {
         self.num_pts += 1;
         self.sum += q;
@@ -168,7 +160,7 @@ impl Voxel {
     }
 }
 
-/// The surface normal of a covariance, or None unless there is a strong planarity feature. Lines and scattered blobs shouldn't get a normal.
+/// The surface normal of a covariance, or None unless it is clearly planar.
 fn fit_normal(cov: Matrix3<f32>) -> Option<Vector3<f32>> {
     let eig = cov.symmetric_eigen();
     let mut idx = [0usize, 1, 2];
@@ -189,13 +181,10 @@ fn fit_normal(cov: Matrix3<f32>) -> Option<Vector3<f32>> {
     Some(eig.eigenvectors.column(idx[0]).into_owned())
 }
 
-/// Moments of one neighbor voxel.
+/// Moments of one neighbor voxel: count, sum, sum of outer products, centroid.
 struct Neighbor {
-    /// Number of points, zeroth moment
     n: f32,
-    /// Sum of points, first moment
     s: Vector3<f32>,
-    /// Sum of outer prods, second moment
     t: Matrix3<f32>,
     centroid: Vector3<f32>,
 }
@@ -475,12 +464,10 @@ pub fn update_map(
         c.last_hit = frame;
     }
 
-    // accumulate each return into its voxel's covariance
     for &p in points {
         map.accumulate(p, cfg.voxel_size);
     }
 
-    // each miss is only checked once. removal drops the covariance with it
     let mut removed: Vec<VoxelKey> = Vec::new();
     for v in misses.difference(&hits) {
         if let Some(c) = map.voxels.get_mut(v) {
