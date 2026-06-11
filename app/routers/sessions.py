@@ -37,7 +37,9 @@ _robot_channel_ids: dict[str, dict[str, int]] = {}
 
 
 class CreateSessionRequest(BaseModel):
-    robot_id: str
+    # Optional: the broker derives the canonical robot_id from the API key.
+    # When provided it must match (guards against misconfigured robots).
+    robot_id: str | None = None
     robot_name: str
     sdp_offer: str
 
@@ -114,10 +116,16 @@ async def create_session(
     robot_id: str = Depends(get_robot_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Robot registers itself. Creates Cloudflare SFU session."""
-    # Verify robot_id matches the authenticated key
-    if body.robot_id != robot_id:
-        raise HTTPException(status_code=403, detail="Robot ID mismatch")
+    """Robot registers itself. Creates Cloudflare SFU session.
+
+    The canonical robot_id comes from the API key; a robot_id in the body is
+    optional and only validated for consistency when present.
+    """
+    if body.robot_id is not None and body.robot_id != robot_id:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Robot ID mismatch: key is bound to '{robot_id}'",
+        )
 
     # Close existing session for this robot if any
     existing = await db.execute(
