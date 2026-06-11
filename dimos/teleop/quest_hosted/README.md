@@ -32,7 +32,7 @@ broker repo (`web/`), not here.
 5. Once `pc.connectionState == "connected"`, `CameraVideoTrack.arm()` starts
    delivering frames (drops everything before the operator was actually able
    to receive).
-6. Telemetry thread pushes command-plane stats (latency / jitter / loss / rate
+6. Telemetry thread pushes command-plane stats (latency / jitter / rate
    from the inbound twist stream) on `state_reliable_back` at `telemetry_hz`,
    so the operator HUD can show what *arrived* — the operator only knows what
    it *sent*.
@@ -86,20 +86,6 @@ the call sites but the *why* lives here:
   worth knowing: `xrCompatible: true` at context creation is not enough on
   Quest — `await gl.makeXRCompatible()` is required before building the
   `XRWebGLLayer`.
-
-## Threads (the runtime)
-
-- **Event loop thread** — the base `Module`'s asyncio loop (`self._loop`), used
-  for aiortc + httpx; coroutines are scheduled onto it via `self.spawn(...)`.
-  Datachannel `send()` calls **must** happen here (aiortc datachannels aren't
-  thread-safe). The pong path is already on the loop (it fires from the
-  channel's `message` callback); the telemetry thread uses
-  `loop.call_soon_threadsafe` for the same reason.
-- **Heartbeat thread** — HTTP polls the broker; reacts to channel-id changes.
-- **Telemetry thread** — pushes `robot_telemetry` JSON on `state_reliable_back`
-  at `telemetry_hz` (default 3 Hz).
-- **Control loop** — `control_loop_hz` (default 50 Hz). Calls the
-  subclass-overridable engage / publish hooks.
 
 ## Reconnect
 

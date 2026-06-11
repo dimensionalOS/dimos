@@ -48,8 +48,8 @@ Pair with the recorder to log a session and emit a transport-stats report:
 dimos run teleop-hosted-go2 teleop-recorder
 ```
 
-This writes `recording_teleop_<ts>.db` plus a `report.md` + jitter PNG next to
-it on disconnect. Reports can also be regenerated from an existing .db:
+This writes `recording_teleop_<ts>.db` plus a `report.md` next to it on
+disconnect. Reports can also be regenerated from an existing .db:
 
 ```bash
 python -m dimos.teleop.utils.report path/to/recording.db
@@ -79,10 +79,10 @@ video and command-plane health:
 |--------|--------|
 | `fps`, `bitrate`, `loss`, `jitter buffer`, `decode time`, `freezes` | Operator's `getStats()` on the inbound video track |
 | `RTT` | NTP-style min-RTT clock sync over the reliable datachannel |
-| `cmd latency`, `jitter`, `loss`, `rate` | Robot-measured from the inbound twist stream — what *actually arrived*, sent back over `state_reliable_back` |
+| `cmd latency`, `jitter`, `rate` | Robot-measured from the inbound twist stream — what *actually arrived*, sent back over `state_reliable_back` |
 
-The robot also logs the same metrics to `journalctl`/stdout; benchmark runs
-fold them into `report.md`.
+The recorder captures these to the session `.db` and summarizes them in
+`report.md`.
 
 ## Configuration
 
@@ -90,7 +90,7 @@ fold them into `report.md`.
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `broker_url` | `https://teleop.dimensionalos.com` | Override with `TELEOP_BROKER_URL` to point at a self-hosted broker |
+| `broker_url` | `https://teleop.dimensionalos.com` | Override via `-o` / config to point at a self-hosted broker |
 | `broker_api_key` | `""` | Required. Env: `TELEOP_API_KEY` |
 | `robot_id` | `""` | Required, identifies this robot. Env: `TELEOP_ROBOT_ID` |
 | `robot_name` | `""` | Display name shown in the dashboard. Env: `TELEOP_ROBOT_NAME` |

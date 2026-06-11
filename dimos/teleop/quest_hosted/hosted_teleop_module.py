@@ -318,6 +318,8 @@ class HostedTeleopModule(Module):
         def runner() -> None:
             interval = 1.0 / max(self.config.telemetry_hz, 0.1)
             while not self._stop_event.is_set():
+                # aiortc datachannels aren't thread-safe, so the actual send()
+                # must run on the event loop, not this timer thread.
                 if self._loop is not None and self._loop.is_running():
                     self._loop.call_soon_threadsafe(send_telemetry)
                 self._stop_event.wait(interval)
