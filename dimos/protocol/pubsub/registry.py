@@ -22,13 +22,13 @@ URI grammar::
 
     <proto>:<topic>[#<msg_type>]
 
-- ``<proto>``: registry key, e.g. ``lcm``, ``jpeg_lcm``, ``plcm``, ``pshm``,
-  ``shm``, ``jpeg_shm``.
+- ``<proto>``: registry key, e.g. ``lcm``, ``jpeg_lcm``, ``h264_lcm``,
+  ``plcm``, ``pshm``, ``shm``, ``jpeg_shm``.
 - ``<topic>``: channel/key, passed verbatim to the transport constructor.
 - ``<msg_type>``: optional ``module.ClassName`` resolved via
   ``dimos.msgs.helpers.resolve_msg_type`` (e.g. ``sensor_msgs.Image``).
 
-Typed protos (``lcm``, ``jpeg_lcm``) require a message type — either from the
+Typed protos (``lcm``, ``jpeg_lcm``, ``h264_lcm``) require a message type — either from the
 ``#``-suffix or the ``msg_type`` kwarg. Pickled / self-describing protos
 (``plcm``, ``pshm``, ``shm``, ``jpeg_shm``) don't.
 """
@@ -59,6 +59,16 @@ def _make_jpeg_lcm(topic: str, msg_type: type | None) -> Any:
     from dimos.core.transport import JpegLcmTransport
 
     return JpegLcmTransport(topic, msg_type)
+
+
+def _make_h264_lcm(topic: str, msg_type: type | None) -> Any:
+    if msg_type is None:
+        raise ValueError(
+            "proto 'h264_lcm' requires a message type (URI '#suffix' or msg_type kwarg)"
+        )
+    from dimos.core.transport import H264LcmTransport
+
+    return H264LcmTransport(topic, msg_type)
 
 
 def _make_plcm(topic: str, msg_type: type | None) -> Any:
@@ -92,6 +102,7 @@ def _make_jpeg_shm(topic: str, msg_type: type | None) -> Any:
 _REGISTRY: dict[str, Callable[[str, type | None], Any]] = {
     "lcm": _make_lcm,
     "jpeg_lcm": _make_jpeg_lcm,
+    "h264_lcm": _make_h264_lcm,
     "plcm": _make_plcm,
     "pshm": _make_pshm,
     "shm": _make_shm,

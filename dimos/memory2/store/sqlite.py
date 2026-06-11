@@ -66,12 +66,23 @@ class SqliteStore(Store):
     def _assemble_backend(self, name: str, stored: dict[str, Any]) -> Backend[Any]:
         """Reconstruct a Backend from a stored config dict."""
         from dimos.memory2.codecs.base import _resolve_payload_type, codec_from_id
+        from dimos.memory2.codecs.pickle import PickleCodec
+        from dimos.memory2.video.h264 import (
+            H264FrameIndexStore,
+            H264ImageBackend,
+            storage_config_from_any,
+        )
 
         payload_module = stored["payload_module"]
-        codec = codec_from_id(stored["codec_id"], payload_module)
         data_type = _resolve_payload_type(payload_module)
         eager_blobs = stored.get("eager_blobs", False)
         page_size = stored.get("page_size", self.config.page_size)
+        image_storage = storage_config_from_any(stored.get("image_storage"))
+        codec = (
+            PickleCodec()
+            if image_storage is not None
+            else codec_from_id(stored["codec_id"], payload_module)
+        )
 
         backend_conn = self._open_connection()
 
@@ -113,15 +124,26 @@ class SqliteStore(Store):
             blob_store_conn_match=blob_store_conn_match and eager_blobs,
             page_size=page_size,
         )
-        backend: Backend[Any] = Backend(
-            metadata_store=metadata_store,
-            codec=codec,
-            data_type=data_type,
-            blob_store=bs,
-            vector_store=vs,
-            notifier=notifier,
-            eager_blobs=eager_blobs,
-        )
+        if image_storage is not None:
+            backend = H264ImageBackend(
+                metadata_store=metadata_store,
+                blob_store=bs,
+                frame_index=H264FrameIndexStore(backend_conn),
+                storage_config=image_storage,
+                vector_store=vs,
+                notifier=notifier,
+                eager_blobs=eager_blobs,
+            )
+        else:
+            backend = Backend(
+                metadata_store=metadata_store,
+                codec=codec,
+                data_type=data_type,
+                blob_store=bs,
+                vector_store=vs,
+                notifier=notifier,
+                eager_blobs=eager_blobs,
+            )
         return backend
 
     @staticmethod
@@ -135,6 +157,9 @@ class SqliteStore(Store):
             "eager_blobs": backend.eager_blobs,
             "page_size": page_size,
         }
+        if hasattr(backend, "storage_config"):
+            cfg["codec_id"] = "h264"
+            cfg["image_storage"] = backend.storage_config.serialize()
         if backend.blob_store is not None:
             cfg["blob_store"] = backend.blob_store.serialize()
         if backend.vector_store is not None:
@@ -166,14 +191,26 @@ class SqliteStore(Store):
 
         backend_conn = self._open_connection()
 
+        image_storage = config.get("image_storage")
+
         # Inject conn-shared instances unless user provided overrides
         if not isinstance(config.get("blob_store"), BlobStore):
             config["blob_store"] = SqliteBlobStore(conn=backend_conn)
         if not isinstance(config.get("vector_store"), VectorStore):
             config["vector_store"] = SqliteVectorStore(conn=backend_conn)
 
-        # Resolve codec early — needed for SqliteObservationStore
-        codec = self._resolve_codec(payload_type, config.get("codec"))
+        # Resolve codec early — needed for SqliteObservationStore. H.264 image
+        # streams own blob decoding in H264ImageBackend, so keep sqlite eager
+        # joins disabled and use a harmless metadata-store codec.
+        if image_storage is not None:
+            from dimos.memory2.codecs.pickle import PickleCodec
+            from dimos.memory2.video.h264 import H264FrameIndexStore
+
+            codec = PickleCodec()
+            config["frame_index"] = H264FrameIndexStore(backend_conn)
+            config["eager_blobs"] = False
+        else:
+            codec = self._resolve_codec(payload_type, config.get("codec"))
         config["codec"] = codec
 
         # Create SqliteObservationStore with conn-sharing

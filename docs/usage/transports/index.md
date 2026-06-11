@@ -114,6 +114,50 @@ ros = nav.transports(
 )
 ```
 
+### H.264 image transport
+
+Use `H264LcmTransport` when a high-rate `Image` stream needs video compression
+over LCM. The module API stays the same: publishers still call
+`Out[Image].publish(image)`, and subscribers still receive `Image` values. The
+transport encodes each source frame as one H.264 Annex B access unit on the wire
+and decodes it at the subscriber.
+
+```python skip
+from dimos.core.transport import H264LcmTransport
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.video.h264 import H264Config
+
+blueprint = blueprint.transports(
+    {
+        ("color_image", Image): H264LcmTransport(
+            "/camera/color_image",
+            Image,
+            config=H264Config(
+                bitrate=2_000_000,
+                target_fps=30,
+                keyframe_interval=30,
+            ),
+        )
+    }
+)
+```
+
+H.264 transport is opt-in. The default image paths remain unchanged: normal LCM
+uses the `Image` LCM encoding, and memory2 still stores images with the default
+JPEG codec unless configured otherwise.
+
+H.264 is stateful. Keyframes bootstrap late subscribers and recovery after packet
+loss. If an LCM subscriber detects a sequence gap in the middle of a GOP, it
+suppresses decoded output until the next keyframe. Keyframes include decoder
+parameter data, such as SPS/PPS, so a new subscriber can start decoding at a
+keyframe.
+
+The first H.264 image path supports uint8 RGB, BGR, and grayscale images. It
+raises an explicit error for depth, 16-bit, alpha, or other unsupported image
+formats instead of silently converting pixels. Selecting H.264 requires the video
+dependencies used by `aiortc`, PyAV, FFmpeg, and libx264; projects that do not
+select H.264 do not need those dependencies at runtime.
+
 ---
 
 ## Using transports with modules
@@ -473,6 +517,7 @@ python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_b
 | `Memory`       | Testing only, single process        | No            | No      | Minimal reference impl               |
 | `SharedMemory` | Multi-process on same machine       | Yes           | No      | Highest throughput (IPC)             |
 | `LCM`          | Robot LAN broadcast (UDP multicast) | Yes           | Yes     | Best-effort; can drop packets on LAN |
+| `H264LCM`      | Opt-in compressed `Image` streams    | Yes           | Yes     | H.264 Annex B access units over LCM   |
 | `Redis`        | Network pubsub via Redis server     | Yes           | Yes     | Central broker; adds hop             |
 | `ROS`          | ROS 2 topic communication           | Yes           | Yes     | Integrates with RViz/ROS tools       |
 | `DDS`          | Cyclone DDS without ROS (WIP)       | Yes           | Yes     | WIP                                  |

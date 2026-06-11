@@ -163,6 +163,28 @@ base_blueprint = base_blueprint.transports({
 
 Note: `expanded_blueprint` does not get the transport overrides because it's created from the initial value of `base_blueprint`, not the second.
 
+For compressed camera streams, opt into H.264 on the image edge while keeping the
+module stream type as `Image`:
+
+```python skip
+from dimos.core.transport import H264LcmTransport
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.video.h264 import H264Config
+
+camera_blueprint = camera_blueprint.transports(
+    {
+        ("color_image", Image): H264LcmTransport(
+            "/camera/color_image",
+            Image,
+            config=H264Config(bitrate=2_000_000, keyframe_interval=30),
+        )
+    }
+)
+```
+
+`H264LcmTransport` publishes one complete H.264 Annex B packet per source frame.
+Downstream modules still receive decoded `Image` values.
+
 ## Remapping connections
 
 Sometimes you need to rename a connection to match what other modules expect. You can use `remappings` to rename module connections:

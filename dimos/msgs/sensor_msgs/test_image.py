@@ -69,6 +69,63 @@ def test_opencv_conversion(img: Image) -> None:
     assert decoded_img == img
 
 
+def test_lazy_image_metadata_does_not_materialize_pixels() -> None:
+    calls = 0
+
+    def load() -> np.ndarray:
+        nonlocal calls
+        calls += 1
+        return np.ones((3, 4, 3), dtype=np.uint8)
+
+    img = Image.lazy(
+        pixel_loader=load,
+        height=3,
+        width=4,
+        channels=3,
+        dtype=np.uint8,
+        format=ImageFormat.RGB,
+        frame_id="cam",
+        ts=10.0,
+    )
+
+    assert img.height == 3
+    assert img.width == 4
+    assert img.channels == 3
+    assert img.shape == (3, 4, 3)
+    assert img.dtype == np.dtype(np.uint8)
+    assert img.format == ImageFormat.RGB
+    assert img.frame_id == "cam"
+    assert img.ts == 10.0
+    assert calls == 0
+
+
+def test_lazy_image_data_materializes_once() -> None:
+    calls = 0
+
+    def load() -> np.ndarray:
+        nonlocal calls
+        calls += 1
+        return np.ones((3, 4, 3), dtype=np.uint8)
+
+    img = Image.lazy(pixel_loader=load, height=3, width=4, channels=3, dtype=np.uint8)
+
+    assert img.data.sum() == 36
+    assert img.data.sum() == 36
+    assert calls == 1
+
+
+def test_eager_image_compatibility_after_lazy_support() -> None:
+    data = np.ones((2, 3, 3), dtype=np.uint8)
+    img = Image(data=data, format=ImageFormat.BGR, frame_id="cam", ts=11.0)
+
+    assert img.data is data
+    assert img.height == 2
+    assert img.width == 3
+    assert img.channels == 3
+    assert img.shape == (2, 3, 3)
+    assert img.dtype == np.dtype(np.uint8)
+
+
 @pytest.mark.tool
 def test_sharpness_stream() -> None:
     get_data("unitree_office_walk")  # Preload data for testing

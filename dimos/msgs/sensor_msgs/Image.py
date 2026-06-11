@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
@@ -37,6 +37,16 @@ if TYPE_CHECKING:
     import os
 
     from reactivex.observable import Observable
+
+
+_DEFAULT_IMAGE_DATA = object()
+
+
+class _LazyPixelData:
+    pass
+
+
+_UNLOADED_PIXELS = _LazyPixelData()
 
 
 class ImageFormat(Enum):
@@ -82,24 +92,92 @@ class AgentImageMessage(TypedDict):
     data: str  # Base64 encoded image data
 
 
-@dataclass
+@dataclass(init=False)
 class Image(Timestamped):
     """Simple NumPy-based image container."""
 
     msg_name = "sensor_msgs.Image"
 
-    data: np.ndarray[Any, np.dtype[Any]] = field(
-        default_factory=lambda: np.zeros((1, 1, 3), dtype=np.uint8)
-    )
-    format: ImageFormat = field(default=ImageFormat.BGR)
-    frame_id: str = field(default="")
-    ts: float = field(default_factory=time.time)
+    def __init__(
+        self,
+        data: Any = _DEFAULT_IMAGE_DATA,
+        format: ImageFormat = ImageFormat.BGR,
+        frame_id: str = "",
+        ts: float | None = None,
+        *,
+        pixel_loader: Callable[[], np.ndarray[Any, np.dtype[Any]]] | None = None,
+        height: int | None = None,
+        width: int | None = None,
+        channels: int | None = None,
+        dtype: np.dtype[Any] | type[Any] | None = None,
+    ) -> None:
+        self.format = format
+        self.frame_id = frame_id
+        self.ts = ts if ts is not None else time.time()
+        self._pixel_loader = pixel_loader
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.data, np.ndarray):
-            self.data = np.asarray(self.data)
-        if self.data.ndim < 2:
+        if pixel_loader is None:
+            if data is _DEFAULT_IMAGE_DATA:
+                data = np.zeros((1, 1, 3), dtype=np.uint8)
+            self.data = data
+            return
+
+        if height is None or width is None or dtype is None:
+            raise ValueError("Lazy Image construction requires height, width, and dtype metadata")
+        if height <= 0 or width <= 0:
+            raise ValueError("Lazy Image height and width must be positive")
+        self._data: np.ndarray[Any, np.dtype[Any]] | _LazyPixelData = _UNLOADED_PIXELS
+        self._height = int(height)
+        self._width = int(width)
+        self._channels = int(channels or 1)
+        self._dtype = np.dtype(dtype)
+
+    @classmethod
+    def lazy(
+        cls,
+        *,
+        pixel_loader: Callable[[], np.ndarray[Any, np.dtype[Any]]],
+        height: int,
+        width: int,
+        format: ImageFormat = ImageFormat.BGR,
+        frame_id: str = "",
+        ts: float | None = None,
+        channels: int | None = None,
+        dtype: np.dtype[Any] | type[Any] = np.uint8,
+    ) -> Image:
+        """Construct an image whose pixels are materialized on first data access."""
+
+        return cls(
+            format=format,
+            frame_id=frame_id,
+            ts=ts,
+            pixel_loader=pixel_loader,
+            height=height,
+            width=width,
+            channels=channels,
+            dtype=dtype,
+        )
+
+    @property
+    def data(self) -> np.ndarray[Any, np.dtype[Any]]:
+        if isinstance(self._data, _LazyPixelData):
+            if self._pixel_loader is None:
+                raise ValueError("Lazy Image has no pixel loader")
+            self.data = self._pixel_loader()
+            self._pixel_loader = None
+        return self._data
+
+    @data.setter
+    def data(self, value: Any) -> None:
+        arr = value if isinstance(value, np.ndarray) else np.asarray(value)
+        if arr.ndim < 2:
             raise ValueError("Image requires a 2D/3D NumPy array")
+        self._data = arr
+        self._height = int(arr.shape[0])
+        self._width = int(arr.shape[1])
+        self._channels = 1 if arr.ndim == 2 else int(arr.shape[2])
+        self._dtype = arr.dtype
+        self._pixel_loader = None
 
     def __str__(self) -> str:
         return (
@@ -134,27 +212,25 @@ class Image(Timestamped):
 
     @property
     def height(self) -> int:
-        return int(self.data.shape[0])
+        return self._height
 
     @property
     def width(self) -> int:
-        return int(self.data.shape[1])
+        return self._width
 
     @property
     def channels(self) -> int:
-        if self.data.ndim == 2:
-            return 1
-        if self.data.ndim == 3:
-            return int(self.data.shape[2])
-        raise ValueError("Invalid image dimensions")
+        return self._channels
 
     @property
     def shape(self) -> tuple[int, ...]:
-        return tuple(self.data.shape)
+        if self.channels == 1:
+            return (self.height, self.width)
+        return (self.height, self.width, self.channels)
 
     @property
     def dtype(self) -> np.dtype[Any]:
-        return self.data.dtype
+        return self._dtype
 
     def copy(self) -> Image:
         return Image(data=self.data.copy(), format=self.format, frame_id=self.frame_id, ts=self.ts)

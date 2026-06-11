@@ -157,6 +157,49 @@ class Store(Configurable, CompositeResource):
         self, name: str, payload_type: type[Any] | None = None, **config: Any
     ) -> Backend[Any]:
         """Create a Backend for the named stream. Called once per stream name."""
+        image_storage = config.pop("image_storage", None)
+        if image_storage is not None:
+            from dimos.memory2.video.h264 import (
+                H264FrameIndexStore,
+                H264ImageBackend,
+                storage_config_from_any,
+            )
+            from dimos.msgs.sensor_msgs.Image import Image
+
+            storage_config = storage_config_from_any(image_storage)
+            if (
+                storage_config is not None
+                and payload_type is not None
+                and issubclass(payload_type, Image)
+            ):
+                bs = config.pop("blob_store", self.config.blob_store)
+                if bs is None:
+                    raise TypeError("H.264 image storage requires a blob_store")
+                if isinstance(bs, type):
+                    bs = bs()
+                obs = config.pop("observation_store", self.config.observation_store)
+                if obs is None or isinstance(obs, type):
+                    obs = (obs or ListObservationStore)(name=name)
+                vs = config.pop("vector_store", self.config.vector_store)
+                if isinstance(vs, type):
+                    vs = vs()
+                notifier = config.pop("notifier", self.config.notifier)
+                if notifier is None or isinstance(notifier, type):
+                    notifier = (notifier or SubjectNotifier)()
+                frame_index = config.pop("frame_index", None)
+                if frame_index is None:
+                    raise TypeError("H.264 image storage requires a frame_index")
+                if not isinstance(frame_index, H264FrameIndexStore):
+                    raise TypeError("H.264 image storage frame_index must be H264FrameIndexStore")
+                return H264ImageBackend(
+                    metadata_store=obs,
+                    blob_store=bs,
+                    frame_index=frame_index,
+                    storage_config=storage_config,
+                    vector_store=vs,
+                    notifier=notifier,
+                    eager_blobs=config.get("eager_blobs", False),
+                )
         codec = self._resolve_codec(payload_type, config.pop("codec", None))
 
         # Instantiate or use provided instances
