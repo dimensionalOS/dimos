@@ -25,11 +25,11 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 from __future__ import annotations
 
 from enum import Enum
-import math
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+import numpy as np
 from pydantic import Field
 
 from dimos.agents.annotation import skill
@@ -549,12 +549,8 @@ class ManipulationModule(Module):
         Args:
             duration: Total animation duration in seconds. Uses trajectory duration if None.
             robot_name: Robot to preview (required if multiple robots configured)
-            target_fps: Minimum nominal preview update rate. Set <= 0 to disable the FPS floor.
+            target_fps: Nominal preview update rate. Set <= 0 to use planned waypoints directly.
         """
-        from dimos.manipulation.planning.utils.path_utils import (
-            interpolate_path_by_interval_count,
-        )
-
         if self._world_monitor is None:
             return False
 
@@ -572,18 +568,29 @@ class ManipulationModule(Module):
             trajectory = self._planned_trajectories.get(robot_name)
             animation_duration = trajectory.duration if trajectory is not None else 3.0
         else:
+            trajectory = self._planned_trajectories.get(robot_name)
             animation_duration = duration
 
-        min_intervals = None
-        if target_fps > 0 and animation_duration > 0:
-            min_intervals = max(1, math.ceil(animation_duration * target_fps))
-
-        # Interpolate and animate so short paths still have enough displayed frames.
-        interpolated = (
-            interpolate_path_by_interval_count(planned_path, min_intervals)
-            if min_intervals is not None
-            else list(planned_path)
-        )
+        interpolated = list(planned_path)
+        if trajectory is not None and target_fps > 0 and animation_duration > 0:
+            times = np.array(
+                [point.time_from_start for point in trajectory.points], dtype=np.float64
+            )
+            positions = np.array([point.positions for point in trajectory.points], dtype=np.float64)
+            if len(times) > 1 and positions.ndim == 2 and times[-1] > times[0]:
+                frame_count = int(np.ceil(animation_duration * target_fps)) + 1
+                sample_times = np.linspace(times[0], times[-1], frame_count)
+                joint_names = trajectory.joint_names or planned_path[0].name
+                sampled_positions = np.column_stack(
+                    [
+                        np.interp(sample_times, times, positions[:, joint])
+                        for joint in range(positions.shape[1])
+                    ]
+                )
+                interpolated = [
+                    JointState(name=joint_names, position=position.tolist())
+                    for position in sampled_positions
+                ]
         self._world_monitor.animate_path(robot_id, interpolated, animation_duration)
         return True
 
