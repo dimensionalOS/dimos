@@ -98,3 +98,6 @@ recording*.db
 *.rrd
 
 /misc/fresh-ubuntu-tests/cache
+
+# openspec
+/openspec/changes/archive/

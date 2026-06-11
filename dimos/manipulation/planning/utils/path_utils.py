@@ -87,6 +87,56 @@ def interpolate_path(
     return interpolated
 
 
+def interpolate_path_by_interval_count(
+    path: JointPath,
+    min_intervals: int,
+) -> JointPath:
+    """Interpolate path to have at least a target number of displayed intervals.
+
+    Segment interpolation counts are distributed in proportion to each segment's
+    maximum joint-space delta. This is intended for visualization frame-rate
+    control, not collision checking or execution timing.
+
+    Args:
+        path: Original path (list of JointState waypoints)
+        min_intervals: Minimum number of intervals in the interpolated path
+
+    Returns:
+        Interpolated path with at least `min_intervals` intervals when the path
+        has non-zero length.
+    """
+    if len(path) <= 1 or min_intervals <= len(path) - 1:
+        return list(path)
+
+    joint_names = path[0].name
+    segment_deltas: list[float] = []
+    for i in range(len(path) - 1):
+        q_start = np.array(path[i].position, dtype=np.float64)
+        q_end = np.array(path[i + 1].position, dtype=np.float64)
+        segment_deltas.append(float(np.max(np.abs(q_end - q_start))))
+
+    total_delta = sum(segment_deltas)
+    if total_delta <= 0:
+        return list(path)
+
+    interpolated: list[JointState] = [path[0]]
+    for i, segment_delta in enumerate(segment_deltas):
+        q_start = np.array(path[i].position, dtype=np.float64)
+        q_end = np.array(path[i + 1].position, dtype=np.float64)
+        diff = q_end - q_start
+
+        num_steps = 1
+        if segment_delta > 0:
+            num_steps = max(1, int(np.ceil((segment_delta / total_delta) * min_intervals)))
+
+        for step in range(1, num_steps + 1):
+            alpha = step / num_steps
+            q_interp = q_start + alpha * diff
+            interpolated.append(JointState(name=joint_names, position=q_interp.tolist()))
+
+    return interpolated
+
+
 def interpolate_segment(
     start: JointState,
     end: JointState,

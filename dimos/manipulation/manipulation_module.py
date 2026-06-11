@@ -25,6 +25,7 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 from __future__ import annotations
 
 from enum import Enum
+import math
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -440,10 +441,8 @@ class ManipulationModule(Module):
         """Hide the preview ghost if the world supports it."""
         if self._world_monitor is None:
             return
-        world = self._world_monitor.world
-        if hasattr(world, "hide_preview"):
-            world.hide_preview(robot_id)
-            world.publish_visualization()
+        self._world_monitor.hide_preview(robot_id)
+        self._world_monitor.publish_visualization()
 
     @rpc
     def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
@@ -539,14 +538,22 @@ class ManipulationModule(Module):
         return True
 
     @rpc
-    def preview_path(self, duration: float = 3.0, robot_name: RobotName | None = None) -> bool:
+    def preview_path(
+        self,
+        duration: float | None = None,
+        robot_name: RobotName | None = None,
+        target_fps: float = 30.0,
+    ) -> bool:
         """Preview the planned path in the visualizer.
 
         Args:
-            duration: Total animation duration in seconds
+            duration: Total animation duration in seconds. Uses trajectory duration if None.
             robot_name: Robot to preview (required if multiple robots configured)
+            target_fps: Minimum nominal preview update rate. Set <= 0 to disable the FPS floor.
         """
-        from dimos.manipulation.planning.utils.path_utils import interpolate_path
+        from dimos.manipulation.planning.utils.path_utils import (
+            interpolate_path_by_interval_count,
+        )
 
         if self._world_monitor is None:
             return False
@@ -561,9 +568,23 @@ class ManipulationModule(Module):
             logger.warning(f"No planned path to preview for {robot_name}")
             return False
 
-        # Interpolate and animate
-        interpolated = interpolate_path(planned_path, resolution=0.1)
-        self._world_monitor.world.animate_path(robot_id, interpolated, duration)
+        if duration is None:
+            trajectory = self._planned_trajectories.get(robot_name)
+            animation_duration = trajectory.duration if trajectory is not None else 3.0
+        else:
+            animation_duration = duration
+
+        min_intervals = None
+        if target_fps > 0 and animation_duration > 0:
+            min_intervals = max(1, math.ceil(animation_duration * target_fps))
+
+        # Interpolate and animate so short paths still have enough displayed frames.
+        interpolated = (
+            interpolate_path_by_interval_count(planned_path, min_intervals)
+            if min_intervals is not None
+            else list(planned_path)
+        )
+        self._world_monitor.animate_path(robot_id, interpolated, animation_duration)
         return True
 
     @rpc
