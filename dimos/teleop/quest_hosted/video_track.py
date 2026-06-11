@@ -21,7 +21,6 @@ focused on session lifecycle rather than media plumbing.
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
 
 from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTrack
@@ -49,45 +48,61 @@ class CameraVideoTrack(VideoStreamTrack):
 
     def __init__(self) -> None:
         super().__init__()
-        self._lock = threading.Lock()
+        # All state below is only mutated on the event loop (set_latest marshals
+        # onto it via call_soon_threadsafe), so no lock is needed.
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._latest: Image | None = None
         self._frame_seq = 0
         self._consumed_seq = 0
         self._armed = False
-        self._first_wall: float | None = None
+        self._first_mono: float | None = None
+        self._new_frame = asyncio.Event()
 
     def arm(self) -> None:
         """Discard buffered frames; start delivering from now.
 
-        Called once the PC is ``connected`` so the operator's video starts at
-        "this instant", not "whenever the robot booted".
+        Called on the event loop once the PC is ``connected`` so the operator's
+        video starts at "this instant", not "whenever the robot booted".
         """
-        with self._lock:
-            self._consumed_seq = self._frame_seq
-            self._armed = True
+        self._consumed_seq = self._frame_seq
+        self._armed = True
 
     def set_latest(self, img: Image) -> None:
-        with self._lock:
+        """Publish the latest frame. Called from the producer (stream) thread.
+
+        aiortc / asyncio.Event aren't thread-safe, so marshal the swap +
+        notification onto the loop instead of locking it from this thread.
+        """
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            return  # recv hasn't bound the loop yet; pre-arm frames are dropped anyway
+
+        def _set() -> None:
             self._latest = img
             self._frame_seq += 1
+            self._new_frame.set()
+
+        loop.call_soon_threadsafe(_set)
 
     async def recv(self) -> av.VideoFrame:
-        while True:
-            with self._lock:
-                if (
-                    self._armed
-                    and self._latest is not None
-                    and self._frame_seq > self._consumed_seq
-                ):
-                    img = self._latest
-                    self._consumed_seq = self._frame_seq
-                    break
-            await asyncio.sleep(0.005)
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
 
-        now = time.time()
-        if self._first_wall is None:
-            self._first_wall = now
-        pts = int((now - self._first_wall) * VIDEO_CLOCK_RATE)
+        # Wait (no busy-poll) for a fresh, post-arm frame.
+        while True:
+            await self._new_frame.wait()
+            self._new_frame.clear()
+            if self._armed and self._latest is not None and self._frame_seq > self._consumed_seq:
+                img = self._latest
+                self._consumed_seq = self._frame_seq
+                break
+
+        # Monotonic (not wall) clock so PTS never goes backward on an NTP/clock
+        # step — aiortc requires non-decreasing PTS.
+        now = time.monotonic()
+        if self._first_mono is None:
+            self._first_mono = now
+        pts = int((now - self._first_mono) * VIDEO_CLOCK_RATE)
 
         frame = av.VideoFrame.from_ndarray(img.data, format=_AV_FORMAT_MAP.get(img.format, "bgr24"))
         frame.pts = pts
