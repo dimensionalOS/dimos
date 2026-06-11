@@ -92,17 +92,45 @@ pub fn plan(
     node_step_threshold_m: f32,
     node_wall_buffer_m: f32,
 ) -> Option<Vec<(f32, f32, f32)>> {
-    let start_coord =
-        snap_pose_to_cell(&plg.surface_lookup, start_pose, voxel_size, z_tolerance_m)?;
-    let goal_coord = snap_pose_to_cell(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)?;
-    let start_cell = plg.cells.id(start_coord)?;
-    let goal_cell = plg.cells.id(goal_coord)?;
+    let Some(start_coord) =
+        snap_pose_to_cell(&plg.surface_lookup, start_pose, voxel_size, z_tolerance_m)
+    else {
+        tracing::warn!(
+            ?start_pose,
+            "plan failed: start does not snap to any surface cell"
+        );
+        return None;
+    };
+    let Some(goal_coord) =
+        snap_pose_to_cell(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)
+    else {
+        tracing::warn!(
+            ?goal_pose,
+            "plan failed: goal does not snap to any surface cell"
+        );
+        return None;
+    };
+    let Some(start_cell) = plg.cells.id(start_coord) else {
+        tracing::warn!(?start_coord, "plan failed: start cell is not in the graph");
+        return None;
+    };
+    let Some(goal_cell) = plg.cells.id(goal_coord) else {
+        tracing::warn!(?goal_coord, "plan failed: goal cell is not in the graph");
+        return None;
+    };
 
     let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
 
     let goal_segment = walk_preds(&plg.cell_state, goal_cell);
-    let goal_node = *goal_segment.last()?;
+    let Some(&goal_node) = goal_segment.last() else {
+        tracing::warn!(?goal_coord, "plan failed: goal has no predecessor chain");
+        return None;
+    };
     if !node_cells.contains(&goal_node) {
+        tracing::warn!(
+            ?goal_coord,
+            "plan failed: goal region does not reach a graph node"
+        );
         return None;
     }
 
@@ -110,7 +138,7 @@ pub fn plan(
     let (cost_to_go, pred_to_goal) = node_dijkstra(plg, goal_node);
 
     let radius = (node_spacing_m * CANDIDATE_RADIUS_FACTOR).max(voxel_size);
-    let (lead_in, node_seq) = select_entry(
+    let Some((lead_in, node_seq)) = select_entry(
         plg,
         start_cell,
         goal_node,
@@ -118,7 +146,15 @@ pub fn plan(
         &pred_to_goal,
         &node_cells,
         radius,
-    )?;
+    ) else {
+        tracing::warn!(
+            ?start_coord,
+            reachable_nodes = cost_to_go.len(),
+            total_nodes = plg.nodes.len(),
+            "plan failed: no entry node connects the start to the goal component",
+        );
+        return None;
+    };
 
     // Shortcut height tolerance in cells, tied to the traversable step.
     let smooth_tol_cells = ((node_step_threshold_m / voxel_size).round() as i32).max(1);
