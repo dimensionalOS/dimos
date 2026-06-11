@@ -346,18 +346,24 @@ Two deployment choices matter:
 ## Contracts, not log spam
 
 Health is judged against declared contracts — input rates, output rate —
-and reported as state transitions, not per-drop warnings. The monitor is
-plain bookkeeping, so we can drive a fake deployment right here with a
-fake clock:
+and reported as state transitions, not per-drop warnings. You never build
+a monitor yourself: when a module starts, it constructs one from its own
+config (`min_output_hz`, `expected_hz`, ...) and feeds it from the tick
+loop; it lives at `module.health_monitor` and its snapshots land in the
+`_health` stream. But since it's plain bookkeeping with an injectable
+clock, we can hand-feed a detached one right here and watch the exact
+messages a deployed `Follower` would produce — the first argument is just
+the module name stamped on them:
 
 ```python session=pure ansi=false
 from dimos.memory2.health import HealthMonitor
 
+# what Follower's start() builds internally, driven by hand:
 t = 0.0
 monitor = HealthMonitor("follower", min_output_hz=10.0, warmup_s=0.0,
                         interval_s=1.0, clock=lambda: t)
 
-for _ in range(3):  # a bad second: only 3 outputs against a 10 Hz contract
+for _ in range(3):  # a bad second: step emitted only 3 outputs vs the 10 Hz contract
     monitor.on_step(duration_s=0.12, ages={}, emitted=True)
 t += 1.0
 health = monitor.maybe_report()
