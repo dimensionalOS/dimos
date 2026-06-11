@@ -63,12 +63,10 @@ def generate_report(db_path: Path, out_dir: Path | None = None) -> Path:
     Output lands in *out_dir* if given, else next to the .db. Returns the
     written report.md path. Raises if the .db is missing or unreadable.
     """
-    db_path = Path(db_path)
     if not db_path.exists():
         raise FileNotFoundError(f"Recording not found: {db_path}")
     if out_dir is None:
         out_dir = db_path.parent
-    out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Pull each stream's rows out of the SqliteStore + decode by typed schema.
