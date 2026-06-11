@@ -15,7 +15,7 @@ SSH_OPTS="-i $KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o
 echo "Deploying to $IP..."
 
 rsync -avz --delete \
-  --exclude __pycache__ --exclude '*.pyc' --exclude .venv --exclude '*.db' --exclude .env \
+  --exclude __pycache__ --exclude '*.pyc' --exclude .venv --exclude '*.db' --exclude '*.db-wal' --exclude '*.db-shm' --exclude '.*-litestream' --exclude .env \
   -e "ssh $SSH_OPTS" \
   app/ ubuntu@$IP:/opt/dimos-teleop/app/
 
