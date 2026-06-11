@@ -219,6 +219,7 @@ class PrecisionPathFollowerTaskParams(BaseConfig):
     goal_tolerance: float = 0.2
     orientation_tolerance: float = 0.1
     k_angular: float = 0.5
+    lookahead_dist: float = 0.5
     e_max_default: float = 0.2
     v_max_override: float | None = None
 
@@ -235,6 +236,7 @@ def create_task(cfg: Any, hardware: Any) -> PrecisionPathFollowerTask:
             goal_tolerance=params.goal_tolerance,
             orientation_tolerance=params.orientation_tolerance,
             k_angular=params.k_angular,
+            lookahead_dist=params.lookahead_dist,
         ),
         global_config=_gc,
         artifact_path=params.artifact_path,

@@ -86,6 +86,11 @@ class PathFollowerTaskConfig:
     # PController outer-loop angular gain. Default 0.5 matches production
     # LocalPlanner; sweep on circle_R1.0 found 1.0 gives ~9x lower CTE.
     k_angular: float = 0.5
+    # Pure-pursuit lookahead distance (m). Default 0.5 matches production
+    # LocalPlanner. Smaller → tighter curve tracking: the steady-state
+    # inside-offset on a circle is ~lookahead²/(2·R), so dropping it cuts the
+    # circle/corner error roughly with the square — but too small wobbles.
+    lookahead_dist: float = 0.5
     # Optional inner-loop velocity-tracking PID. None ⟹ no closed loop.
     # Mutually exclusive with ff_config (PI takes precedence if both set).
     pid_config: VelocityTrackingConfig | None = None
@@ -330,6 +335,7 @@ class PathFollowerTask(BaseControlTask):
         self,
         speed: float | None = None,
         k_angular: float | None = None,
+        lookahead_dist: float | None = None,
         ff_config: FeedforwardGainConfig | None | object = _UNSET,
         velocity_profile_config: VelocityProfileConfig | None | object = _UNSET,
         external_profile_cap: PathSpeedCapProtocol | None | object = _UNSET,
@@ -354,6 +360,9 @@ class PathFollowerTask(BaseControlTask):
         if k_angular is not None:
             self._config.k_angular = k_angular
             self._controller._k_angular = k_angular
+        if lookahead_dist is not None:
+            # Takes effect when the next start_path() rebuilds the PathDistancer.
+            self._config.lookahead_dist = lookahead_dist
         if ff_config is not _UNSET:
             self._config.ff_config = ff_config  # type: ignore[assignment]
             self._ff = FeedforwardGainCompensator(ff_config) if ff_config is not None else None
@@ -381,7 +390,7 @@ class PathFollowerTask(BaseControlTask):
             logger.warning(f"PathFollowerTask '{self._name}': invalid path")
             return False
         self._path = path
-        self._distancer = PathDistancer(path)
+        self._distancer = PathDistancer(path, self._config.lookahead_dist)
         self._current_odom = current_odom
         self._max_progress_idx = 0
         self._controller.reset_errors()
@@ -455,6 +464,7 @@ class PathFollowerTaskParams(BaseConfig):
     goal_tolerance: float = 0.2
     orientation_tolerance: float = 0.35
     k_angular: float = 0.5
+    lookahead_dist: float = 0.5
 
 
 def create_task(cfg: Any, hardware: Any) -> PathFollowerTask:
@@ -469,6 +479,7 @@ def create_task(cfg: Any, hardware: Any) -> PathFollowerTask:
             goal_tolerance=params.goal_tolerance,
             orientation_tolerance=params.orientation_tolerance,
             k_angular=params.k_angular,
+            lookahead_dist=params.lookahead_dist,
         ),
         global_config=_gc,
     )

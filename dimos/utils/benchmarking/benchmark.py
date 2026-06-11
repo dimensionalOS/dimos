@@ -294,6 +294,7 @@ def _run_baseline(
     timeout_s: float,
     label: str,
     task_name: str,
+    lookahead_dist: float | None = None,
 ) -> tuple[ExecutedTrajectory, NavPath]:
     """Send a path to the operator coord's path-follower task (selected
     by ``task_name`` — ``"path_follower"`` for the bare/ff/profile arms,
@@ -320,6 +321,7 @@ def _run_baseline(
         "configure",
         speed=speed,
         k_angular=k_angular,
+        lookahead_dist=lookahead_dist,
         ff_config=ff_config,
         velocity_profile_config=profile_config,
     ):
@@ -384,11 +386,17 @@ def _run_ladder(
     use_rg: bool = False,
     gate_input: Callable[[str], str] = input,
     gate_keys_label: str = "ENTER=run  s=skip  q=quit",
+    k_angular_override: float | None = None,
+    lookahead_dist: float | None = None,
 ) -> tuple[list[OperatingPoint], list[dict]]:
     # Bare stock baseline by default: this is the physical-limit
     # measurement. FF / velocity profile / RG are opt-in comparison arms.
     ff = cfg.feedforward.to_runtime() if use_ff else None
-    k_angular = float(cfg.recommended_controller.params.get("k_angular", 0.5))
+    k_angular = (
+        k_angular_override
+        if k_angular_override is not None
+        else float(cfg.recommended_controller.params.get("k_angular", 0.5))
+    )
 
     # The RG arm runs against the precision_follower task — a path-follower
     # subclass that owns its own solve_profile() recompute on e_max
@@ -427,6 +435,7 @@ def _run_ladder(
                 timeout_s,
                 f"{name}@{speed:.2f}",
                 task_name=task_name,
+                lookahead_dist=lookahead_dist,
             )
             # Score/plot against the executed-frame reference (anchored path).
             s = score_run(ref, traj)
@@ -601,6 +610,12 @@ class BenchmarkerConfig(ModuleConfig):
     # input config artifact augmentation always lands at args.config).
     out_dir: str | None = None
     gate_source: Literal["stdin", "stream"] = "stdin"
+    # OPT-IN geometric-tuning overrides — sweep these WITHOUT mutating the
+    # plant artifact. None ⟹ use the artifact's recommended_controller
+    # k_angular and the follower's built-in 0.5 m lookahead. Both apply to
+    # whichever arm runs (bare path_follower or rg precision_follower).
+    k_angular: float | None = None
+    lookahead_dist: float | None = None
 
 
 class Benchmarker(Module):
@@ -686,10 +701,21 @@ class Benchmarker(Module):
             if arm == "bare"
             else f"baseline + {arm} (comparison arm, vs the bare physical limit)"
         )
+        eff_k_angular = (
+            cfg.k_angular
+            if cfg.k_angular is not None
+            else artifact.recommended_controller.params.get("k_angular")
+        )
+        k_angular_note = " (override)" if cfg.k_angular is not None else ""
+        lookahead_note = (
+            f"  lookahead_dist={cfg.lookahead_dist} (override)"
+            if cfg.lookahead_dist is not None
+            else "  lookahead_dist=0.5 (default)"
+        )
         print(
             f"{profile.name} {cfg.mode} speed ladder {speeds} over {len(_path_set())} paths\n"
             f"  controller: {arm_desc}\n"
-            f"  k_angular={artifact.recommended_controller.params.get('k_angular')}"
+            f"  k_angular={eff_k_angular}{k_angular_note}{lookahead_note}"
         )
         coord_rpc: RPCClient = RPCClient(None, ControlCoordinator)
         joints = make_twist_base_joints(profile.joints_prefix)
@@ -719,6 +745,8 @@ class Benchmarker(Module):
                 use_rg=cfg.rg,
                 gate_input=gate_input,
                 gate_keys_label=gate_keys_label,
+                k_angular_override=cfg.k_angular,
+                lookahead_dist=cfg.lookahead_dist,
             )
         except KeyboardInterrupt:
             points, runs = [], []
