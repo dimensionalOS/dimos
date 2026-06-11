@@ -39,13 +39,11 @@ class TwistStamped(Twist, Timestamped):
     msg_name = "geometry_msgs.TwistStamped"
     ts: float
     frame_id: str
-    seq: int
 
     @dispatch
-    def __init__(self, ts: float = 0.0, frame_id: str = "", seq: int = 0, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, ts: float = 0.0, frame_id: str = "", **kwargs) -> None:  # type: ignore[no-untyped-def]
         self.frame_id = frame_id
         self.ts = ts if ts != 0 else time.time()
-        self.seq = seq
         super().__init__(**kwargs)
 
     def lcm_encode(self) -> bytes:
@@ -53,7 +51,6 @@ class TwistStamped(Twist, Timestamped):
         lcm_msg.twist = self
         [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)  # type: ignore[no-untyped-call]
         lcm_msg.header.frame_id = self.frame_id
-        lcm_msg.header.seq = self.seq
         return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
@@ -62,7 +59,6 @@ class TwistStamped(Twist, Timestamped):
         return cls(
             ts=lcm_msg.header.stamp.sec + (lcm_msg.header.stamp.nsec / 1_000_000_000),
             frame_id=lcm_msg.header.frame_id,
-            seq=lcm_msg.header.seq,
             linear=[lcm_msg.twist.linear.x, lcm_msg.twist.linear.y, lcm_msg.twist.linear.z],
             angular=[lcm_msg.twist.angular.x, lcm_msg.twist.angular.y, lcm_msg.twist.angular.z],
         )
