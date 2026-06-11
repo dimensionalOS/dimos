@@ -160,11 +160,12 @@ class HostedTeleopModule(Module):
         if self._telemetry_thread is not None:
             self._telemetry_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._telemetry_thread = None
-        if self._loop is not None and self._loop.is_running():
-            try:
-                self.spawn(self._disconnect()).result(timeout=5.0)
-            except Exception:
-                logger.exception("Error during disconnect")
+        try:
+            self.spawn(self._disconnect()).result(timeout=5.0)
+        except RuntimeError:
+            pass
+        except Exception:
+            logger.exception("Error during disconnect")
         # The base Module owns the event loop; it's torn down on module close.
         super().stop()
 
