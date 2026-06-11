@@ -29,6 +29,7 @@ from dimos.manipulation.manipulation_module import (
 )
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.manipulation.planning.utils.path_utils import interpolate_path_by_interval_count
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -308,17 +309,12 @@ def _make_path(*points: list[float]) -> list[JointState]:
 
 
 def _make_world_monitor_with_viz(viz: object | None) -> WorldMonitor:
-    monitor = WorldMonitor.__new__(WorldMonitor)
-    monitor._visualization = viz
-    monitor._viz_thread = None
-    monitor._viz_stop_event = threading.Event()
-    monitor._viz_rate_hz = 10.0
-    monitor._lock = threading.RLock()
-    monitor._robot_joints = {}
-    monitor._state_monitors = {}
-    monitor._obstacle_monitor = None
-    monitor._world = MagicMock()
-    return monitor
+    world = viz if viz is not None else object()
+    with patch(
+        "dimos.manipulation.planning.monitor.world_monitor.create_world",
+        return_value=world,
+    ):
+        return WorldMonitor(enable_viz=viz is not None)
 
 
 class TestOnJointState:
@@ -482,7 +478,7 @@ class TestPathInterpolation:
 
 class TestWorldMonitorVisualization:
     def test_visualization_routing_and_stop_all_monitors(self):
-        viz = MagicMock()
+        viz = MagicMock(spec=VisualizationSpec)
         viz.get_visualization_url.return_value = 123
         monitor = _make_world_monitor_with_viz(viz)
         state_monitor = MagicMock()
