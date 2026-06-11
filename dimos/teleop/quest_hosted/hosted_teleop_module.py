@@ -166,7 +166,6 @@ class HostedTeleopModule(Module):
             pass
         except Exception:
             logger.exception("Error during disconnect")
-        # The base Module owns the event loop; it's torn down on module close.
         super().stop()
 
     def _connect_blocking(self) -> None:
@@ -194,7 +193,9 @@ class HostedTeleopModule(Module):
             )
         )
         self._pc.addTrack(self._video_track)
-        sctp_init = self._pc.createDataChannel("_sctp_init", negotiated=True, id=0)
+        # Throwaway negotiated channel on id=0 to bring up SCTP; intentionally
+        # left open (CF/aiortc workaround — see README).
+        self._pc.createDataChannel("_sctp_init", negotiated=True, id=0)
 
         @self._pc.on("connectionstatechange")
         async def _on_state() -> None:
@@ -240,8 +241,6 @@ class HostedTeleopModule(Module):
 
         answer_sdp = propagate_bundle_candidates(data["sdp_answer"])
         await self._pc.setRemoteDescription(RTCSessionDescription(sdp=answer_sdp, type="answer"))
-
-        _ = sctp_init  # intentionally left open
 
         logger.info(
             f"Registered with broker: session_id={self._session_id}, "
@@ -492,10 +491,10 @@ class HostedTeleopModule(Module):
             except (TypeError, ValueError):
                 logger.warning("state_reliable: malformed video_stats, dropping")
                 return
-            logger.info("video: %s", stats)
+            logger.debug("video: %s", stats)
             self.video_stats.publish(stats)
         else:
-            logger.debug(f"state_reliable: unknown message type {kind!r}")
+            logger.warning(f"state_reliable: unknown message type {kind!r}")
 
     def _dispatch_bytes(self, data: bytes) -> None:
         decoder = self._decoders.get(data[:8])
