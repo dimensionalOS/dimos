@@ -58,6 +58,10 @@ class RobotModelConfig(ModuleConfig):
     joint_names: list[str]
     end_effector_link: str
     base_link: str = "base_link"
+    # Mesh directory for MJCF models whose <compiler meshdir> is unset or
+    # relative (e.g. the G1 MJCF keeps its STLs in data/g1_urdf/meshes).
+    # Same role as MujocoSimModule's robot_meshdir. Ignored for URDF.
+    model_meshdir: Path | None = None
     # When True (default), the base_link is welded to the world at base_pose.
     # When False, the base is left as a 6-DOF floating body (Drake auto-adds
     # the floating joint at Finalize).  Use False for legged robots whose

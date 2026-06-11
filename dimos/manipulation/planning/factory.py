@@ -27,13 +27,17 @@ def create_world(
     enable_viz: bool = False,
     **kwargs: Any,
 ) -> WorldSpec:
-    """Create a world instance. backend='drake', enable_viz for Meshcat."""
+    """Create a world instance. backend='drake'|'mujoco', enable_viz for Meshcat (drake only)."""
     if backend == "drake":
         from dimos.manipulation.planning.world.drake_world import DrakeWorld
 
         return DrakeWorld(enable_viz=enable_viz, **kwargs)
+    elif backend == "mujoco":
+        from dimos.manipulation.planning.world.mujoco_world import MujocoWorld
+
+        return MujocoWorld(enable_viz=enable_viz, **kwargs)
     else:
-        raise ValueError(f"Unknown backend: {backend}. Available: ['drake']")
+        raise ValueError(f"Unknown backend: {backend}. Available: ['drake', 'mujoco']")
 
 
 def create_kinematics(
