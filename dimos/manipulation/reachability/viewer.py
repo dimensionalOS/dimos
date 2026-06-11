@@ -383,6 +383,9 @@ def serve(maps: dict[str, CapabilityMap], port: int = 8082) -> None:
             ),
         )
         style = server.gui.add_dropdown("style", ("points", "voxels"), initial_value="points")
+        point_size = server.gui.add_slider(
+            "point size [mm]", min=5, max=60, step=1, initial_value=35
+        )
         dexterity_pct = server.gui.add_slider(
             "min dexterity [%]", min=0, max=60, step=1, initial_value=0
         )
@@ -438,7 +441,7 @@ def serve(maps: dict[str, CapabilityMap], port: int = 8082) -> None:
                         "/reachability/points",
                         points=points.astype(np.float32),
                         colors=score_colors(dexterity, vmax=max(float(dexterity.max()), 1e-9)),
-                        point_size=0.022,
+                        point_size=point_size.value / 1000.0,
                         point_shape="circle",
                     )
             if shell.value:
@@ -464,7 +467,7 @@ def serve(maps: dict[str, CapabilityMap], port: int = 8082) -> None:
                     "/reachability/points",
                     points=points.astype(np.float32),
                     colors=score_colors(scores),
-                    point_size=0.02,
+                    point_size=point_size.value / 1000.0,
                     point_shape="circle",
                 )
 
@@ -554,7 +557,17 @@ def serve(maps: dict[str, CapabilityMap], port: int = 8082) -> None:
                     cfg[i] = joints[name]
             viser_urdf.update_cfg(cfg)
 
-    for control in (side, mode, style, dexterity_pct, shell, min_score, theta_lo, theta_hi):
+    for control in (
+        side,
+        mode,
+        style,
+        point_size,
+        dexterity_pct,
+        shell,
+        min_score,
+        theta_lo,
+        theta_hi,
+    ):
         control.on_update(refresh_volume)
     for control in (side, show_yaw_slice, yaw_slice, show_z_slice, z_slice):
         control.on_update(refresh_slices)
