@@ -11,7 +11,7 @@ import dimos.navigation.nav_stack.modules as modules_pkg
 MODULES_DIR = Path(modules_pkg.__path__[0])
 
 
-def discover() -> tuple[type[NativeModuleConfig]]:
+def discover() -> tuple[type[NativeModuleConfig], ...]:
     found: list[type[NativeModuleConfig]] = []
     for pkg_dir in sorted(MODULES_DIR.iterdir()):
         if not pkg_dir.is_dir():
