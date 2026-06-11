@@ -42,7 +42,6 @@ import numpy as np
 from dimos.manipulation.reachability.capability_map import (
     CapabilityMap,
     MapParams,
-    canonical_values,
     model_id_for,
 )
 from dimos.utils.logging_config import setup_logger
@@ -164,13 +163,13 @@ class _ArmSampler:
         return positions[:kept], rotations[:kept], rejected
 
 
-def _worker(args: tuple[ConstructionSpec, int, int]) -> tuple[np.ndarray, np.ndarray, int]:
+def _worker(args: tuple[ConstructionSpec, int, int]) -> tuple[CapabilityMap, int]:
     spec, n_samples, seed = args
     sampler = _ArmSampler(spec)
+    # Per-worker uint8 saturation is exact under the merge's final clip-255:
+    # a cell only loses information when its per-worker count would exceed
+    # 255, and the merged value is clipped there anyway.
     cap = CapabilityMap(spec.params, side=spec.side)
-    # Wider per-worker counters so the merge can sum without wrapping.
-    counts = np.zeros(cap.counts.shape, dtype=np.uint16)
-    hint = np.zeros(cap.heading_hint.shape, dtype=np.uint8)
     rng = np.random.default_rng(seed)
     rejected = 0
     done = 0
@@ -179,14 +178,9 @@ def _worker(args: tuple[ConstructionSpec, int, int]) -> tuple[np.ndarray, np.nda
         positions, rotations, rej = sampler.sample_chunk(n, rng)
         rejected += rej
         done += n
-        if len(positions) == 0:
-            continue
-        p_z, theta, x_star, y_star, gamma, psi = canonical_values(positions, rotations)
-        iz, it, ix, iy, ig, valid = cap.indices(p_z, theta, x_star, y_star, gamma)
-        iz, it, ix, iy, ig = (a[valid] for a in (iz, it, ix, iy, ig))
-        np.add.at(counts, (iz, it, ix, iy, ig), 1)
-        np.bitwise_or.at(hint, (iz, it, ix, iy), cap.heading_bins(psi[valid]))
-    return counts, hint, rejected
+        if len(positions):
+            cap.record_batch(positions, rotations)
+    return cap, rejected
 
 
 def construct(
@@ -206,12 +200,17 @@ def construct(
         with get_context("spawn").Pool(workers) as pool:
             results = pool.map(_worker, jobs)
 
-    total_counts = np.zeros(results[0][0].shape, dtype=np.uint32)
-    total_hint = np.zeros(results[0][1].shape, dtype=np.uint8)
+    first = results[0][0]
+    total_counts = np.zeros(first.counts.shape, dtype=np.uint32)
+    total_body = np.zeros(first.body_counts.shape, dtype=np.uint32)
+    total_hint = np.zeros(first.heading_hint.shape, dtype=np.uint8)
+    total_theta_mask = np.zeros(first.body_theta_mask.shape, dtype=np.uint64)
     rejected = 0
-    for counts, hint, rej in results:
-        total_counts += counts
-        total_hint |= hint
+    for worker_cap, rej in results:
+        total_counts += worker_cap.counts
+        total_body += worker_cap.body_counts
+        total_hint |= worker_cap.heading_hint
+        total_theta_mask |= worker_cap.body_theta_mask
         rejected += rej
 
     cap = CapabilityMap(
@@ -220,6 +219,8 @@ def construct(
         model_id=model_id_for(spec.model_path),
         counts=np.minimum(total_counts, 255).astype(np.uint8),
         heading_hint=total_hint,
+        body_counts=np.minimum(total_body, 255).astype(np.uint8),
+        body_theta_mask=total_theta_mask,
     )
     elapsed = time.time() - t0
     n_total = per_worker * max(workers, 1)

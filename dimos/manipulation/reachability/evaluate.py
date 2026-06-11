@@ -152,7 +152,10 @@ class _MinkOracle:
             q = sampler._q_base.copy()
             q[sampler.qpos_adr] = self._rng.uniform(sampler.lower, sampler.upper)
             self._configuration.update(q)
-            for _ in range(80):
+            # ~×(1 − gain·dt) error decay per iteration: 300 steps reach
+            # sub-mm residuals; fewer leave a systematic offset that turns
+            # truly-reachable ground-truth poses into false negatives.
+            for _ in range(300):
                 velocity = (
                     mink.solve_ik(
                         self._configuration, self._tasks, 0.05, "daqp", limits=self._limits

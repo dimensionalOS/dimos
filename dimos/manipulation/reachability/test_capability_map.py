@@ -194,6 +194,80 @@ def test_viewer_cloud_functions() -> None:
     assert colors.dtype == np.uint8
 
 
+def test_body_frame_volume() -> None:
+    """The body-frame companions record the raw TCP positions (no heading
+    quotient) — recorded positions index occupied cells with dexterity > 0."""
+    rng = np.random.default_rng(10)
+    cap = CapabilityMap(MapParams())
+    positions, rotations = _random_poses(1000, rng)
+    cap.record_batch(positions, rotations)
+
+    iz, ix, iy, valid = cap.body_indices(positions)
+    assert np.all(valid)
+    assert np.all(cap.body_counts[iz, ix, iy] >= 1)
+    dexterity = cap.body_dexterity()
+    assert np.all(dexterity[iz, ix, iy] > 0.0)
+    assert dexterity.max() <= 1.0
+
+    # Mirror flips the body volume across y.
+    mirrored = cap.mirrored()
+    flipped = positions * np.array([1.0, -1.0, 1.0])
+    mz, mx, my, mvalid = mirrored.body_indices(flipped)
+    assert np.all(mvalid)
+    assert np.all(mirrored.body_counts[mz, mx, my] >= 1)
+
+
+def test_body_voxel_mesh_and_slices() -> None:
+    pytest.importorskip("trimesh")
+    pytest.importorskip("matplotlib")
+    from dimos.manipulation.reachability.viewer import (
+        body_voxel_mesh,
+        slice_image_height,
+        slice_image_yaw,
+    )
+
+    rng = np.random.default_rng(11)
+    cap = CapabilityMap(MapParams())
+    positions, rotations = _random_poses(3000, rng)
+    cap.record_batch(positions, rotations)
+
+    mesh, n_voxels = body_voxel_mesh(cap, min_dexterity=0.0)
+    assert mesh is not None and n_voxels > 0
+    assert len(mesh.faces) == n_voxels * 12  # 12 triangles per box
+    # A dexterity threshold prunes voxels.
+    _, n_core = body_voxel_mesh(cap, min_dexterity=0.05)
+    assert n_core < n_voxels
+    none_mesh, n_none = body_voxel_mesh(cap, min_dexterity=1.1)
+    assert none_mesh is None and n_none == 0
+
+    image, width, height = slice_image_yaw(cap, 30.0)
+    assert image.ndim == 3 and image.shape[2] == 3 and image.dtype == np.uint8
+    assert width > 0 and height > 0
+    image_h, _, _ = slice_image_height(cap, 0.9)
+    assert image_h.ndim == 3 and image_h.dtype == np.uint8
+
+
+@pytest.mark.skipif(not _G1_MJCF.exists(), reason="G1 MJCF assets not present")
+def test_arm_ik_reaches_fk_pose() -> None:
+    pytest.importorskip("mink")
+    pytest.importorskip("mujoco")
+    from dimos.manipulation.reachability.construct import _ArmSampler, g1_spec
+    from dimos.manipulation.reachability.viewer import ArmIK
+
+    sampler = _ArmSampler(g1_spec("left"))
+    rng = np.random.default_rng(12)
+    positions, rotations, _ = sampler.sample_chunk(5, rng)
+
+    import mujoco
+
+    solver = ArmIK("left")
+    wxyz = np.empty(4)
+    mujoco.mju_mat2Quat(wxyz, np.ascontiguousarray(rotations[0]).reshape(9))
+    joints, reached, error = solver.solve(positions[0], wxyz)
+    assert reached, f"IK failed with error {error * 1000:.1f} mm"
+    assert set(joints) == set(solver.joint_names)
+
+
 def test_plots_smoke(tmp_path: Path) -> None:
     pytest.importorskip("matplotlib")
     from dimos.manipulation.reachability.plots import render_all

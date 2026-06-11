@@ -167,19 +167,35 @@ class CapabilityMap:
         model_id: str = "",
         counts: NDArray[np.uint8] | None = None,
         heading_hint: NDArray[np.uint8] | None = None,
+        body_counts: NDArray[np.uint8] | None = None,
+        body_theta_mask: NDArray[np.uint64] | None = None,
     ) -> None:
         self.params = params
         self.side = side
         self.model_id = model_id
         shape5 = (params.n_z, params.n_theta, params.n_xy, params.n_xy, params.n_inplane)
+        shape_body = (params.n_z, params.n_xy, params.n_xy)
         self.counts: NDArray[np.uint8] = (
             counts if counts is not None else np.zeros(shape5, dtype=np.uint8)
         )
         self.heading_hint: NDArray[np.uint8] = (
             heading_hint if heading_hint is not None else np.zeros(shape5[:4], dtype=np.uint8)
         )
+        # Body-frame companions for visualization: where the TCP actually was
+        # in pelvis coordinates (no heading quotient — the asymmetric blob a
+        # human expects to see), and which approach angles were seen there.
+        self.body_counts: NDArray[np.uint8] = (
+            body_counts if body_counts is not None else np.zeros(shape_body, dtype=np.uint8)
+        )
+        self.body_theta_mask: NDArray[np.uint64] = (
+            body_theta_mask
+            if body_theta_mask is not None
+            else np.zeros(shape_body, dtype=np.uint64)
+        )
         if self.counts.shape != shape5:
             raise ValueError(f"counts shape {self.counts.shape} != params shape {shape5}")
+        if params.n_theta > 64:
+            raise ValueError("n_theta > 64 does not fit the body theta bitmask")
 
     # ------------------------------------------------------------------
     # Indexing
@@ -217,20 +233,54 @@ class CapabilityMap:
     # ------------------------------------------------------------------
     # Construction
 
+    def body_indices(
+        self, positions: NDArray
+    ) -> tuple[NDArray[np.intp], NDArray[np.intp], NDArray[np.intp], NDArray]:
+        """(iz, ix, iy, valid) for body-frame TCP positions."""
+        params = self.params
+        p = np.atleast_2d(np.asarray(positions, dtype=np.float64))
+        iz = np.floor((p[:, 2] - params.z_min) / params.cell).astype(np.intp)
+        ix = np.floor((p[:, 0] + params.r_xy) / params.cell).astype(np.intp)
+        iy = np.floor((p[:, 1] + params.r_xy) / params.cell).astype(np.intp)
+        valid = (
+            (iz >= 0)
+            & (iz < params.n_z)
+            & (ix >= 0)
+            & (ix < params.n_xy)
+            & (iy >= 0)
+            & (iy < params.n_xy)
+        )
+        return iz, ix, iy, valid
+
     def record_batch(self, positions: NDArray, rotations: NDArray) -> int:
         """Mark a batch of reachable TCP poses (map-frame). Returns in-bounds count."""
         p_z, theta, x_star, y_star, gamma, psi = canonical_values(positions, rotations)
         iz, it, ix, iy, ig, valid = self.indices(p_z, theta, x_star, y_star, gamma)
-        iz, it, ix, iy, ig = (a[valid] for a in (iz, it, ix, iy, ig))
+        iz, it_v, ix, iy, ig = (a[valid] for a in (iz, it, ix, iy, ig))
 
         # Saturating add (np.add.at on uint8 would wrap).
-        flat = np.ravel_multi_index((iz, it, ix, iy, ig), self.counts.shape)
+        flat = np.ravel_multi_index((iz, it_v, ix, iy, ig), self.counts.shape)
         unique, add = np.unique(flat, return_counts=True)
         current = self.counts.reshape(-1)[unique].astype(np.uint32)
         self.counts.reshape(-1)[unique] = np.minimum(current + add, 255).astype(np.uint8)
 
-        np.bitwise_or.at(self.heading_hint, (iz, it, ix, iy), self.heading_bins(psi[valid]))
+        np.bitwise_or.at(self.heading_hint, (iz, it_v, ix, iy), self.heading_bins(psi[valid]))
+
+        # Body-frame companions (construction frame == body frame).
+        bz, bx, by, bvalid = self.body_indices(positions)
+        bz, bx, by = bz[bvalid], bx[bvalid], by[bvalid]
+        bflat = np.ravel_multi_index((bz, bx, by), self.body_counts.shape)
+        bunique, badd = np.unique(bflat, return_counts=True)
+        bcur = self.body_counts.reshape(-1)[bunique].astype(np.uint32)
+        self.body_counts.reshape(-1)[bunique] = np.minimum(bcur + badd, 255).astype(np.uint8)
+        theta_bits = (np.uint64(1) << it[bvalid].astype(np.uint64)).astype(np.uint64)
+        np.bitwise_or.at(self.body_theta_mask, (bz, bx, by), theta_bits)
         return int(valid.sum())
+
+    def body_dexterity(self) -> NDArray[np.float64]:
+        """Fraction of approach-angle bins observed per body-frame cell —
+        Zacharias-style reachability index in [0, 1]."""
+        return np.bitwise_count(self.body_theta_mask).astype(np.float64) / self.params.n_theta
 
     # ------------------------------------------------------------------
     # Queries (heading-free: "reachable from here, possibly after turning")
@@ -322,6 +372,8 @@ class CapabilityMap:
             model_id=self.model_id,
             counts=counts,
             heading_hint=reversed_hint,
+            body_counts=self.body_counts[:, :, ::-1].copy(),
+            body_theta_mask=self.body_theta_mask[:, :, ::-1].copy(),
         )
 
     # ------------------------------------------------------------------
@@ -334,6 +386,8 @@ class CapabilityMap:
             path,
             counts=self.counts,
             heading_hint=self.heading_hint,
+            body_counts=self.body_counts,
+            body_theta_mask=self.body_theta_mask,
             params=np.frombuffer(json.dumps(asdict(self.params)).encode(), dtype=np.uint8),
             meta=np.frombuffer(
                 json.dumps({"side": self.side, "model_id": self.model_id}).encode(),
@@ -354,6 +408,9 @@ class CapabilityMap:
             model_id=meta.get("model_id", ""),
             counts=data["counts"],
             heading_hint=data["heading_hint"],
+            # Absent in maps built before the body-frame companions existed.
+            body_counts=data["body_counts"] if "body_counts" in data else None,
+            body_theta_mask=data["body_theta_mask"] if "body_theta_mask" in data else None,
         )
 
     @property
