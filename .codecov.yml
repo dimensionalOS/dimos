@@ -15,6 +15,8 @@ flag_management:
       carryforward: true
     - name: SelfHosted-macos
       carryforward: true
+    - name: SelfHosted-Large
+      carryforward: true
 
 comment:
   layout: "newheader, diff, flags, components, files, newfooter"

@@ -386,7 +386,7 @@ jobs:
         if: matrix.os == 'Linux'
         shell: bash
         run: |
-          source /opt/ros/humble/setup.bash
+          source /opt/ros/${ROS_DISTRO}/setup.bash
           {
             echo "PYTHONPATH=$PYTHONPATH"
             echo "AMENT_PREFIX_PATH=$AMENT_PREFIX_PATH"
