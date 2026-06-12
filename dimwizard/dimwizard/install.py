@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
 import platform
 import shlex
+import socket
 import subprocess
 import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
+
+_DEFAULT_LCM_URL = "udpm://239.255.76.67:7667?ttl=1"
 
 _LABEL = "com.dimensional.dimwizard"
 _PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{_LABEL}.plist"
@@ -22,6 +26,24 @@ def is_installed() -> bool:
         return _PLIST_PATH.exists()
     if platform.system() == "Linux":
         return _SYSTEMD_PATH.exists()
+    return False
+
+
+def is_running() -> bool:
+    if platform.system() == "Darwin":
+        result = subprocess.run(
+            ["launchctl", "list", _LABEL],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0 and '"PID"' in result.stdout
+    if platform.system() == "Linux":
+        result = subprocess.run(
+            ["systemctl", "--user", "is-active", "dimwizard"],
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip() == "active"
     return False
 
 
@@ -46,6 +68,9 @@ def _install_mac() -> bool:
     _PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+    robot_name = os.environ.get("DIMENSIONAL_ROBOT_NAME", socket.gethostname().split(".")[0])
+    lcm_url = os.environ.get("LCM_DEFAULT_URL", _DEFAULT_LCM_URL)
+
     executable = _find_executable()
     plist_args = "\n".join(f"        <string>{escape(a)}</string>" for a in executable)
     log_path = escape(str(_LOG_PATH))
@@ -62,6 +87,13 @@ def _install_mac() -> bool:
     <array>
 {plist_args}
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DIMENSIONAL_ROBOT_NAME</key>
+        <string>{escape(robot_name)}</string>
+        <key>LCM_DEFAULT_URL</key>
+        <string>{escape(lcm_url)}</string>
+    </dict>
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
@@ -105,6 +137,9 @@ def _uninstall_mac() -> None:
 def _install_linux() -> bool:
     _SYSTEMD_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+    robot_name = os.environ.get("DIMENSIONAL_ROBOT_NAME", socket.gethostname().split(".")[0])
+    lcm_url = os.environ.get("LCM_DEFAULT_URL", _DEFAULT_LCM_URL)
+
     exec_start = " ".join(shlex.quote(a) for a in _find_executable())
 
     unit = f"""\
@@ -118,6 +153,8 @@ ExecStart={exec_start}
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment="DIMENSIONAL_ROBOT_NAME={robot_name}"
+Environment="LCM_DEFAULT_URL={lcm_url}"
 
 [Install]
 WantedBy=default.target

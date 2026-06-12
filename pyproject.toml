@@ -134,6 +134,7 @@ dependencies = [
     "lz4>=4.4.5",
     "bleak>=3.0.2",
     "cryptography>=46.0.5",
+    "dimwizard",
 ]
 
 
@@ -153,9 +154,6 @@ Issues = "https://github.com/dimensionalOS/dimos/issues"
 Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
-discovery = [
-    "dimwizard",
-]
 misc = [
     # Core requirements
     "cerebras-cloud-sdk",

@@ -40,7 +40,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-05T20:28:04.667528Z"
+exclude-newer = "2026-06-05T21:43:24.474853Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1858,6 +1858,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "dimos-lcm" },
     { name = "dimos-viewer" },
+    { name = "dimwizard" },
     { name = "lazy-loader" },
     { name = "llvmlite" },
     { name = "lz4" },
@@ -2034,9 +2035,6 @@ cuda = [
 ]
 dds = [
     { name = "cyclonedds" },
-]
-discovery = [
-    { name = "dimwizard" },
 ]
 drone = [
     { name = "pymavlink" },
@@ -2355,7 +2353,7 @@ requires-dist = [
     { name = "dimos-lcm", specifier = ">=0.1.3" },
     { name = "dimos-viewer", specifier = "==0.32.0a1" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a1" },
-    { name = "dimwizard", marker = "extra == 'discovery'", editable = "dimwizard" },
+    { name = "dimwizard", editable = "dimwizard" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'manipulation'", specifier = "==1.45.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin' and extra == 'manipulation'", specifier = ">=1.40.0" },
     { name = "edgetam-dimos", marker = "extra == 'misc'" },
@@ -2459,7 +2457,7 @@ requires-dist = [
     { name = "xformers", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
-provides-extras = ["discovery", "misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "psql", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
+provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "psql", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
