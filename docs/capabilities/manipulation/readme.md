@@ -59,6 +59,54 @@ preview()               # Preview in Meshcat
 execute()               # Execute via coordinator
 ```
 
+### Pink IK Simulation QA
+
+Pink IK is an optional planning backend selectable with `kinematics_name="pink"`.
+It uses the `pin-pink` package (import name `pink`) plus a `qpsolvers` backend,
+and is local/differential IK rather than a global optimizer.
+
+```bash
+# Install optional Pink + ProxQP solver support
+uv sync --extra all --extra pink
+
+# Terminal 1: simulation-only XArm perception stack with Pink IK override
+uv run dimos --simulation run xarm-perception-sim \
+  -o pickandplacemodule.kinematics_name=pink
+
+# Terminal 2: manipulation client
+uv run python -i -m dimos.manipulation.planning.examples.manipulation_client
+```
+
+In the client:
+
+```python skip
+robots()
+joints()
+ee()
+ik_pose(0.45, 0.0, 0.25)  # IK only, no path planning
+ik_pose(0.45, 0.0, 0.25, seed_joints=[0.0] * 7)  # optional local-IK seed
+plan_pose(0.45, 0.0, 0.25)
+preview()
+```
+
+`ik_pose(...)` is a client wrapper that builds the RPC `Pose` for you. Pass
+`seed_joints` to initialize local IK backends such as Pink from a known joint
+configuration; omit it to seed from the current robot state.
+
+For baseline comparison, stop the Pink stack, start the default Jacobian stack,
+and repeat the same client calls:
+
+```bash
+uv run dimos --simulation run xarm-perception-sim
+```
+
+This is a simulation QA flow. Do not call `execute()` on hardware as part of the
+Pink smoke test.
+
+For blueprints that instantiate `ManipulationModule` directly rather than
+`PickAndPlaceModule`, use the matching CLI override prefix, for example
+`-o manipulationmodule.kinematics_name=pink`.
+
 ### Perception + Agent
 
 ```bash
@@ -100,6 +148,7 @@ visualization backend.
 | `dual-xarm6-planner` | Dual XArm6 planning |
 | `xarm-perception` | XArm7 + RealSense camera for perception |
 | `xarm-perception-agent` | XArm7 perception + LLM agent |
+| `xarm-perception-sim` | XArm7 simulation perception stack |
 
 ## Supported Robots
 

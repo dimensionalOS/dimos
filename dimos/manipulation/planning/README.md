@@ -79,7 +79,7 @@ module = ManipulationModule(
     planning_timeout=10.0,
     enable_viz=True,
     planner_name="rrt_connect",           # Only option
-    kinematics_name="drake_optimization", # Or "jacobian"
+    kinematics_name="drake_optimization", # Or "jacobian" / "pink"
 )
 module.start()
 module.plan_to_joints([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
@@ -117,6 +117,14 @@ module.execute()  # Sends to coordinator
 |--------|------|-------------|
 | `JacobianIK` | Backend-agnostic | Iterative damped least-squares |
 | `DrakeOptimizationIK` | Drake-specific | Full nonlinear optimization |
+| `PinkIK` | Pinocchio/Pink | Local differential IK with task QP composition |
+
+`PinkIK` is selectable with `kinematics_name="pink"`. It is an optional backend:
+install it with `uv sync --extra all --extra pink`. The `pink` extra installs the
+PyPI package `pin-pink` (import name `pink`) and a `qpsolvers` backend
+(`proxqp`). Pink is local/differential rather than global IK, so it can converge
+to local minima; collision checks remain enforced by the planning world before a
+candidate is accepted.
 
 ### World Backends
 
@@ -131,6 +139,55 @@ module.execute()  # Sends to coordinator
 | `xarm6_planner_only` | XArm 6-DOF standalone (no coordinator) |
 | `xarm7-planner-coordinator` | XArm 7-DOF with coordinator |
 | `dual-xarm6-planner` | Dual XArm 6-DOF |
+| `xarm-perception-sim` | XArm 7-DOF simulation perception stack |
+
+### Pink IK Manual QA
+
+Run the existing simulation stack with Pink selected by CLI override in one
+terminal:
+
+```bash
+uv sync --extra all --extra pink
+uv run dimos --simulation run xarm-perception-sim \
+  -o pickandplacemodule.kinematics_name=pink
+```
+
+For blueprints that instantiate `ManipulationModule` directly, use the matching
+module prefix instead, for example
+`-o manipulationmodule.kinematics_name=pink`.
+
+In another terminal, open the manipulation client:
+
+```bash
+uv run python -i -m dimos.manipulation.planning.examples.manipulation_client
+```
+
+Then run:
+
+```python
+robots()
+joints()
+ee()
+ik_pose(0.45, 0.0, 0.25)  # IK only, no path planning
+ik_pose(0.45, 0.0, 0.25, seed_joints=[0.0] * 7)  # optional local-IK seed
+plan_pose(0.45, 0.0, 0.25)
+preview()
+```
+
+`ik_pose(...)` is a client convenience wrapper: it builds a `Pose` from xyz/rpy
+arguments and calls the `solve_ik(Pose, ...)` RPC. The optional `seed_joints`
+argument initializes local IK backends such as Pink from a specific joint
+configuration; omit it to use the robot's current joint state.
+
+For a baseline comparison, stop the Pink stack, start the Jacobian-backed
+simulation stack, and repeat the same client calls:
+
+```bash
+uv run dimos --simulation run xarm-perception-sim
+```
+
+This QA path is simulation-only. Do not run `execute()` on physical hardware as
+part of the Pink backend smoke test.
 
 ## Directory Structure
 
@@ -142,7 +199,8 @@ planning/
 │   └── drake_world.py       # DrakeWorld implementation
 ├── kinematics/
 │   ├── jacobian_ik.py       # Backend-agnostic Jacobian IK
-│   └── drake_optimization_ik.py  # Drake nonlinear IK
+│   ├── drake_optimization_ik.py  # Drake nonlinear IK
+│   └── pink_ik.py           # Optional Pink differential IK
 ├── planners/
 │   └── rrt_planner.py       # RRTConnectPlanner
 ├── monitor/                 # WorldMonitor (live state sync)

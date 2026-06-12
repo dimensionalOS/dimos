@@ -40,7 +40,7 @@ def create_kinematics(
     name: str = "jacobian",
     **kwargs: Any,
 ) -> KinematicsSpec:
-    """Create IK solver. name='jacobian'|'drake_optimization'."""
+    """Create IK solver. name='jacobian'|'drake_optimization'|'pink'."""
     if name == "jacobian":
         from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 
@@ -51,9 +51,14 @@ def create_kinematics(
         )
 
         return DrakeOptimizationIK(**kwargs)
+    elif name == "pink":
+        from dimos.manipulation.planning.kinematics.pink_ik import PinkIK
+
+        return PinkIK(**kwargs)
     else:
         raise ValueError(
-            f"Unknown kinematics solver: {name}. Available: ['jacobian', 'drake_optimization']"
+            "Unknown kinematics solver: "
+            f"{name}. Available: ['jacobian', 'drake_optimization', 'pink']"
         )
 
 

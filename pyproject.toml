@@ -273,6 +273,11 @@ manipulation = [
     "pyyaml>=6.0",
 ]
 
+pink = [
+    "pin-pink>=4.2.0",
+    "qpsolvers[proxqp]>=4.12.0",
+]
+
 
 cpu = [
     # CPU inference backends
@@ -534,11 +539,14 @@ module = [
     "nav_msgs.*",
     "open_clip",
     "pinocchio",
+    "pink",
     "piper_sdk.*",
     "plotext",
     "plum.*",
     "portal",
+    "proxsuite",
     "psutil",
+    "qpsolvers",
     "pycuda",
     "pycuda.*",
     "pydrake",
