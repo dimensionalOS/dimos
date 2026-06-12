@@ -92,7 +92,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "dimwizard",
     # Transport Protocols
     "dimos-lcm>=0.1.3",
     "PyTurboJPEG==1.8.2",
@@ -154,6 +153,9 @@ Issues = "https://github.com/dimensionalOS/dimos/issues"
 Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
+discovery = [
+    "dimwizard",
+]
 misc = [
     # Core requirements
     "cerebras-cloud-sdk",

@@ -1,24 +1,33 @@
 from __future__ import annotations
 
 import platform
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 _LABEL = "com.dimensional.dimwizard"
 _PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{_LABEL}.plist"
 _SYSTEMD_PATH = Path.home() / ".config" / "systemd" / "user" / "dimwizard.service"
 _LOG_PATH = Path.home() / "Library" / "Logs" / "dimwizard.log"
-_EXECUTABLE = [sys.executable, "-m", "dimwizard"]
 
 
-def install() -> None:
+def _find_executable() -> list[str]:
+    found = shutil.which("dimwizard")
+    if found:
+        return [found]
+    return [sys.executable, "-m", "dimwizard"]
+
+
+def install() -> bool:
     if platform.system() == "Darwin":
-        _install_mac()
-    elif platform.system() == "Linux":
-        _install_linux()
-    else:
-        print(f"  Unsupported platform: {platform.system()}")
+        return _install_mac()
+    if platform.system() == "Linux":
+        return _install_linux()
+    print(f"  Unsupported platform: {platform.system()}")
+    return False
 
 
 def uninstall() -> None:
@@ -30,11 +39,13 @@ def uninstall() -> None:
 
 # ── macOS ─────────────────────────────────────────────────────────────────────
 
-def _install_mac() -> None:
+def _install_mac() -> bool:
     _PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    plist_args = "\n".join(f"        <string>{a}</string>" for a in _EXECUTABLE)
+    executable = _find_executable()
+    plist_args = "\n".join(f"        <string>{escape(a)}</string>" for a in executable)
+    log_path = escape(str(_LOG_PATH))
 
     plist = f"""\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -49,13 +60,16 @@ def _install_mac() -> None:
 {plist_args}
     </array>
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>{_LOG_PATH}</string>
+    <string>{log_path}</string>
     <key>StandardErrorPath</key>
-    <string>{_LOG_PATH}</string>
+    <string>{log_path}</string>
 </dict>
 </plist>
 """
@@ -69,8 +83,9 @@ def _install_mac() -> None:
     )
     if result.returncode != 0:
         print(f"  Warning: launchctl load failed: {result.stderr.strip()}")
-    else:
-        print(f"  dimwizard installed — logs at {_LOG_PATH}")
+        return False
+    print(f"  dimwizard installed — logs at {_LOG_PATH}")
+    return True
 
 
 def _uninstall_mac() -> None:
@@ -84,10 +99,10 @@ def _uninstall_mac() -> None:
 
 # ── Linux ─────────────────────────────────────────────────────────────────────
 
-def _install_linux() -> None:
+def _install_linux() -> bool:
     _SYSTEMD_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    exec_start = " ".join(_EXECUTABLE)
+    exec_start = " ".join(shlex.quote(a) for a in _find_executable())
 
     unit = f"""\
 [Unit]
@@ -97,7 +112,7 @@ After=network.target
 [Service]
 Type=simple
 ExecStart={exec_start}
-Restart=always
+Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 
@@ -110,10 +125,13 @@ WantedBy=default.target
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
         subprocess.run(["systemctl", "--user", "enable", "--now", "dimwizard"], check=True)
         print("  dimwizard installed.")
+        return True
     except FileNotFoundError:
         print(f"  systemctl not found — start manually: {exec_start}")
+        return False
     except subprocess.CalledProcessError as e:
         print(f"  Failed to enable service: {e}")
+        return False
 
 
 def _uninstall_linux() -> None:

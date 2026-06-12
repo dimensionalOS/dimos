@@ -8,9 +8,20 @@ SERVICE_TYPE = "_dimensional._tcp.local."
 
 
 def _local_ip() -> str:
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.connect(("8.8.8.8", 80))
-        return s.getsockname()[0]
+    try:
+        import psutil
+        for addrs in psutil.net_if_addrs().values():
+            for addr in addrs:
+                if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                    return addr.address
+    except ImportError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except OSError:
+        return socket.gethostbyname(socket.gethostname())
 
 
 def _encode_properties(props: dict[str, str]) -> dict[bytes, bytes]:
@@ -21,7 +32,7 @@ class Advertiser:
     """Registers a static mDNS beacon so the harness can discover this robot."""
 
     def __init__(self, robot_name: str, lcm_url: str, port: int) -> None:
-        self._robot_name = robot_name
+        self._robot_name = robot_name.split(".")[0]
         self._lcm_url = lcm_url
         self._zeroconf: Zeroconf | None = None
         self._info: ServiceInfo | None = None

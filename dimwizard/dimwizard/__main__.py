@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import signal
+import sys
 import threading
 
 from dimwizard.advertise import Advertiser
@@ -18,8 +19,6 @@ def _run_beacon(robot_name: str) -> None:
         lcm_url=_lcm_url(),
         port=7667,
     )
-    advertiser.start()
-
     stop_event = threading.Event()
 
     def _handle_signal(sig: int, _frame: object) -> None:
@@ -28,13 +27,20 @@ def _run_beacon(robot_name: str) -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
+    advertiser.start()
     stop_event.wait()
     advertiser.stop()
 
 
 def main() -> None:
-    config = load_config()
-    _run_beacon(config["robot_name"])
+    try:
+        config = load_config()
+        robot_name = config["robot_name"]
+    except (OSError, KeyError, ValueError) as e:
+        print(f"dimwizard: config unavailable, exiting cleanly: {e}", file=sys.stderr)
+        sys.exit(0)
+    _run_beacon(robot_name)
 
 
-main()
+if __name__ == "__main__":
+    main()
