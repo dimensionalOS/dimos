@@ -140,6 +140,10 @@ def _install_linux() -> bool:
     robot_name = os.environ.get("DIMENSIONAL_ROBOT_NAME", socket.gethostname().split(".")[0])
     lcm_url = os.environ.get("LCM_DEFAULT_URL", _DEFAULT_LCM_URL)
 
+    # systemd quoted-string values must have " escaped as \"
+    robot_name_esc = robot_name.replace('"', '\\"')
+    lcm_url_esc = lcm_url.replace('"', '\\"')
+
     exec_start = " ".join(shlex.quote(a) for a in _find_executable())
 
     unit = f"""\
@@ -153,8 +157,8 @@ ExecStart={exec_start}
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
-Environment="DIMENSIONAL_ROBOT_NAME={robot_name}"
-Environment="LCM_DEFAULT_URL={lcm_url}"
+Environment="DIMENSIONAL_ROBOT_NAME={robot_name_esc}"
+Environment="LCM_DEFAULT_URL={lcm_url_esc}"
 
 [Install]
 WantedBy=default.target
