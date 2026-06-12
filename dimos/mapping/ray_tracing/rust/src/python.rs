@@ -7,7 +7,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use validator::Validate;
 
-use crate::voxel_ray_tracer::{iter_global_points, update_map, Config, LocalBounds, VoxelMap};
+use crate::voxel_ray_tracer::{
+    iter_global_normals, iter_global_points, update_map, Config, LocalBounds, VoxelMap,
+};
 
 #[pyclass]
 pub struct VoxelRayMapper {
@@ -27,7 +29,10 @@ impl VoxelRayMapper {
         grace_depth = 0.2,
         min_health = -2,
         max_health = 1,
+        graze_cos = 0.7,
+        recency_window = 15,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         voxel_size: f32,
         max_range: f32,
@@ -36,6 +41,8 @@ impl VoxelRayMapper {
         grace_depth: f32,
         min_health: i32,
         max_health: i32,
+        graze_cos: f32,
+        recency_window: u32,
     ) -> PyResult<Self> {
         let config = Config {
             voxel_size,
@@ -45,6 +52,8 @@ impl VoxelRayMapper {
             grace_depth,
             min_health,
             max_health,
+            graze_cos,
+            recency_window,
         };
         config
             .validate()
@@ -106,6 +115,35 @@ impl VoxelRayMapper {
         Array2::from_shape_vec((n, 3), positions)
             .expect("3 elements pushed per voxel")
             .into_pyarray(py)
+    }
+
+    /// Healthy voxel centers and their surface normals, both (M, 3) float32 in
+    /// matching order. The normal is the zero vector where there is no plane.
+    fn global_map_normals<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> (Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<f32>>) {
+        let voxel_size = self.config.voxel_size;
+        let map = &self.map;
+        let (positions, normals): (Vec<f32>, Vec<f32>) = py.allow_threads(|| {
+            let mut positions: Vec<f32> = Vec::with_capacity(map.voxels.len() * 3);
+            let mut normals: Vec<f32> = Vec::with_capacity(map.voxels.len() * 3);
+            for ((x, y, z), n) in iter_global_normals(map, voxel_size) {
+                positions.push(x);
+                positions.push(y);
+                positions.push(z);
+                normals.extend_from_slice(&n);
+            }
+            (positions, normals)
+        });
+        let m = positions.len() / 3;
+        let positions = Array2::from_shape_vec((m, 3), positions)
+            .expect("3 elements pushed per voxel")
+            .into_pyarray(py);
+        let normals = Array2::from_shape_vec((m, 3), normals)
+            .expect("3 elements pushed per voxel")
+            .into_pyarray(py);
+        (positions, normals)
     }
 
     fn local_map<'py>(

@@ -80,6 +80,7 @@
         "pages": [
           "agents/index",
           "agents/style",
+          "agents/code-quality-rules",
           "agents/testing",
           {
             "group": "Authoring agent docs",
@@ -119,6 +120,12 @@
                   "capabilities/navigation/native/index"
                 ]
               }
+            ]
+          },
+          {
+            "group": "Teleoperation",
+            "pages": [
+              "capabilities/teleoperation/hosted"
             ]
           }
         ]

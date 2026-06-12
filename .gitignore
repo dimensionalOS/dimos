@@ -63,8 +63,11 @@ yolo11n.pt
 # symlink one of .envrc.* if you'd like to use
 .envrc
 .claude
+.opencode/
 **/CLAUDE.md
+.omo/
 .direnv/
+.omo/
 
 /logs
 
@@ -76,6 +79,7 @@ yolo11n.pt
 /results
 results/
 **/cpp/result
+**/rust/result
 
 CLAUDE.MD
 /assets/teleop_certs/
@@ -95,3 +99,6 @@ recording*.db
 *.rrd
 
 /misc/fresh-ubuntu-tests/cache
+
+# openspec
+/openspec/changes/archive/

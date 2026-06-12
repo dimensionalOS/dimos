@@ -28,6 +28,8 @@ class VoxelRayMapper:
         grace_depth: float = 0.2,
         min_health: int = -2,
         max_health: int = 1,
+        graze_cos: float = 0.7,
+        recency_window: int = 15,
     ) -> None: ...
     def add_frame(
         self,
@@ -39,6 +41,13 @@ class VoxelRayMapper:
 
     def global_map(self) -> NDArray[np.float32]:
         """Return the centers of all healthy voxels as (M, 3) float32."""
+        ...
+
+    def global_map_normals(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
+        """Return healthy voxel centers and their surface normals, both (M, 3) float32.
+
+        Matching order. The normal is the zero vector where the voxel has no plane.
+        """
         ...
 
     def local_map(
