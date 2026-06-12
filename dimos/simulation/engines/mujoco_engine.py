@@ -30,6 +30,11 @@ from numpy.typing import NDArray
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.simulation.engines.base import SimulationEngine
+from dimos.simulation.engines.robot_sim_binding import (
+    RobotSimBinding,
+    RobotSimSpec,
+    resolve_robot_sim_binding,
+)
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
@@ -40,6 +45,8 @@ logger = setup_logger()
 
 # Step hook signature: called with the engine instance inside the sim thread.
 StepHook = Callable[["MujocoEngine"], None]
+
+_MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
 
 
 @dataclass
@@ -86,19 +93,39 @@ class MujocoEngine(SimulationEngine):
         cameras: list[CameraConfig] | None = None,
         on_before_step: StepHook | None = None,
         on_after_step: StepHook | None = None,
+        assets: dict[str, bytes] | None = None,
+        robot_sim_spec: RobotSimSpec | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
         self._on_after_step: StepHook | None = on_after_step
 
         xml_path = self._resolve_xml_path(config_path)
-        self._model = mujoco.MjModel.from_xml_path(str(xml_path))
+        if assets is not None:
+            # MJCFs that reference meshes by bare filename (e.g. menagerie
+            # G1) need the mesh bytes injected by name; from_xml_path can't
+            # find them on disk.
+            with open(xml_path) as f:
+                xml_str = f.read()
+            self._model = mujoco.MjModel.from_xml_string(xml_str, assets=assets)
+        else:
+            self._model = mujoco.MjModel.from_xml_path(str(xml_path))
         self._xml_path = xml_path
 
         self._data = mujoco.MjData(self._model)
         self._joint_mappings = build_joint_mappings(self._xml_path, self._model)
+        self._robot_binding: RobotSimBinding | None = None
+        if robot_sim_spec is not None:
+            self._robot_binding = resolve_robot_sim_binding(
+                self._model, robot_sim_spec, self._joint_mappings
+            )
+            self._joint_mappings = list(self._robot_binding.joint_mappings)
         self._joint_names = [mapping.name for mapping in self._joint_mappings]
         self._num_joints = len(self._joint_names)
+        self._root_qpos_adr = self._robot_binding.root_qpos_adr if self._robot_binding else None
+        self._root_qvel_adr = self._robot_binding.root_qvel_adr if self._robot_binding else None
+        if self._root_qpos_adr is None:
+            self._root_qpos_adr, self._root_qvel_adr = self._find_first_freejoint_adrs()
         timestep = float(self._model.opt.timestep)
         self._control_frequency = 1.0 / timestep if timestep > 0.0 else 100.0
 
@@ -125,6 +152,19 @@ class MujocoEngine(SimulationEngine):
         self._camera_frames: dict[str, CameraFrame] = {}
         self._camera_lock = threading.Lock()
 
+    def set_step_hooks(
+        self,
+        before: StepHook | None = None,
+        after: StepHook | None = None,
+    ) -> None:
+        """Install pre/post step hooks after construction.
+
+        Use when the hooks depend on engine state (joint count, gripper
+        index) that isn't known until the model is loaded.
+        """
+        self._on_before_step = before
+        self._on_after_step = after
+
     def _resolve_xml_path(self, config_path: Path) -> Path:
         if config_path is None:
             raise ValueError("config_path is required for MuJoCo simulation loading")
@@ -133,6 +173,11 @@ class MujocoEngine(SimulationEngine):
         if not xml_path.exists():
             raise FileNotFoundError(f"MuJoCo XML not found: {xml_path}")
         return xml_path
+
+    def _find_first_freejoint_adrs(self) -> tuple[int | None, int | None]:
+        if self._model.njnt > 0 and int(self._model.jnt_type[0]) == _MJJNT_FREE:
+            return int(self._model.jnt_qposadr[0]), int(self._model.jnt_dofadr[0])
+        return None, None
 
     def _current_position(self, mapping: JointMapping) -> float:
         if mapping.joint_id is not None and mapping.qpos_adr is not None:
@@ -331,8 +376,32 @@ class MujocoEngine(SimulationEngine):
         return list(self._joint_names)
 
     @property
+    def robot_binding(self) -> RobotSimBinding | None:
+        return self._robot_binding
+
+    @property
+    def has_root_freejoint(self) -> bool:
+        return self._root_qpos_adr is not None
+
+    @property
+    def root_qpos_adr(self) -> int | None:
+        return self._root_qpos_adr
+
+    @property
+    def root_qvel_adr(self) -> int | None:
+        return self._root_qvel_adr
+
+    @property
     def model(self) -> mujoco.MjModel:
         return self._model
+
+    @property
+    def data(self) -> mujoco.MjData:
+        """Live MjData. In-process consumers (sensors, PD hooks) read it
+        directly; physics integration in the sim thread mutates it under
+        ``self._lock`` so reads inside the same MujocoEngine instance are
+        coherent without extra locking."""
+        return self._data
 
     @property
     def joint_positions(self) -> list[float]:
