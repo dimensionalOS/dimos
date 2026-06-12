@@ -44,6 +44,9 @@ logger = setup_logger()
 class G1HighLevelWebRtcConfig(ModuleConfig):
     ip: str | None = None
     connection_mode: str = "ai"
+    # Per-device AES-128 key for G1 firmware >= 1.5.1 (data2=3 WebRTC handshake).
+    # If unset here, UnitreeWebRTCConnection falls back to the UNITREE_AES_128_KEY env var.
+    aes_128_key: str | None = None
 
 
 class G1HighLevelWebRtc(Module, HighLevelG1Spec):
@@ -62,7 +65,11 @@ class G1HighLevelWebRtc(Module, HighLevelG1Spec):
     def start(self) -> None:
         super().start()
         assert self.config.ip is not None, "ip must be set in G1HighLevelWebRtcConfig"
-        self.connection = UnitreeWebRTCConnection(self.config.ip, self.config.connection_mode)
+        self.connection = UnitreeWebRTCConnection(
+            self.config.ip,
+            self.config.connection_mode,
+            aes_128_key=self.config.aes_128_key,
+        )
         self.connection.start()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
