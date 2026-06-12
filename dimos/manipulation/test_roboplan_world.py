@@ -217,7 +217,7 @@ def test_lazy_import_error_has_install_hint(monkeypatch: pytest.MonkeyPatch) -> 
         "dimos.manipulation.planning.world.roboplan_world.import_module", missing_module
     )
 
-    with pytest.raises(RoboPlanImportError, match="uv sync --extra roboplan"):
+    with pytest.raises(RoboPlanImportError, match="uv sync --extra manipulation-roboplan"):
         RoboPlanWorld()
 
 
@@ -361,6 +361,21 @@ def test_native_planner_converts_path(fake_roboplan: None, robot_config: RobotMo
 
     assert result.status == PlanningStatus.SUCCESS
     assert [state.position for state in result.path] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.2]]
+    assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
+
+
+def test_native_planner_names_path_from_robot_config_when_start_is_unnamed(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, robot_id = _make_world(fake_roboplan, robot_config)
+    world.finalize()
+
+    start = JointState(name=[], position=[0.0, 0.0])
+    goal = JointState(name=["joint1", "joint2"], position=[0.4, 0.2])
+    result = world.plan_joint_path(world, robot_id, start, goal, timeout=1.0)
+
+    assert result.status == PlanningStatus.SUCCESS
+    assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
 
 
 def test_collision_exclusion_pairs_are_written_to_generated_srdf(
@@ -371,6 +386,17 @@ def test_collision_exclusion_pairs_are_written_to_generated_srdf(
 
     srdf_path = Path(world._scene.constructor_args[2])
     assert 'disable_collisions link1="a" link2="b"' in srdf_path.read_text()
+
+
+def test_generated_srdf_uses_scoped_temp_directory(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    world, _ = _make_world(fake_roboplan, robot_config)
+
+    srdf_path = Path(world._scene.constructor_args[2])
+    assert srdf_path.parent.name.startswith("dimos_roboplan_srdf_")
+    assert srdf_path.exists()
+    assert world._srdf_tempdirs
 
 
 @pytest.mark.parametrize(

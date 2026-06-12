@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-import hashlib
 from importlib import import_module
 from pathlib import Path
 import tempfile
@@ -52,7 +51,8 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 ROBOPLAN_INSTALL_HINT = (
-    "RoboPlan is not installed. Install the optional backend with `uv sync --extra roboplan`."
+    "RoboPlan is not installed. Install the optional backend with "
+    "`uv sync --extra manipulation-roboplan`."
 )
 
 
@@ -111,6 +111,7 @@ class RoboPlanWorld:
         self._finalized = False
         self._geometry_revision = 0
         self._live_context = RoboPlanContext(geometry_revision=self._geometry_revision)
+        self._srdf_tempdirs: list[tempfile.TemporaryDirectory[str]] = []
 
     # Robot Management
 
@@ -420,8 +421,12 @@ class RoboPlanWorld:
                 planning_time=time.time() - start_time,
                 message=f"RoboPlan-native planning failed: {exc}",
             )
+        robot = self._get_robot(robot_id)
         path = [
-            JointState(name=start.name, position=np.asarray(q).astype(float).tolist())
+            JointState(
+                name=list(robot.config.joint_names),
+                position=np.asarray(q).astype(float).tolist(),
+            )
             for q in path_arrays
         ]
         return PlanningResult(
@@ -473,9 +478,9 @@ class RoboPlanWorld:
 
     def _prepare_robot_srdf(self, config: RobotModelConfig, urdf_path: Path) -> Path:
         srdf = self._generate_srdf(config, urdf_path)
-        cache_key = hashlib.md5(srdf.encode()).hexdigest()[:16]
-        cache_dir = Path(tempfile.gettempdir()) / "dimos_roboplan_srdf" / cache_key
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        srdf_tempdir = tempfile.TemporaryDirectory(prefix="dimos_roboplan_srdf_")
+        self._srdf_tempdirs.append(srdf_tempdir)
+        cache_dir = Path(srdf_tempdir.name)
         srdf_path = cache_dir / f"{config.name}.srdf"
         srdf_path.write_text(srdf)
         return srdf_path

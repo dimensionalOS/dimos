@@ -273,8 +273,9 @@ manipulation = [
     "pyyaml>=6.0",
 ]
 
-roboplan = [
-    "roboplan @ git+ssh://git@github.com/TomCC7/roboplan.git",
+manipulation-roboplan = [
+    "dimos[manipulation]",
+    "roboplan @ git+https://github.com/TomCC7/roboplan.git",
 ]
 
 

@@ -97,13 +97,14 @@ request. For example, `planner_name=roboplan` requires
 `world_backend=roboplan`, and `kinematics_name=drake_optimization` requires
 `world_backend=drake`.
 
-Install RoboPlan separately from the default manipulation dependencies:
+Install RoboPlan together with the default manipulation dependencies:
 
 ```bash
-uv sync --extra roboplan
+uv sync --extra manipulation-roboplan
 ```
 
-The RoboPlan extra uses the root package from `git+ssh://git@github.com/TomCC7/roboplan.git`.
+The RoboPlan manipulation extra includes the default `manipulation` dependencies
+and uses the root package from `git+https://github.com/TomCC7/roboplan.git`.
 PyPI package publication and commit pinning are separate follow-up work.
 
 RoboPlan builds C++ bindings locally. Install system build prerequisites before

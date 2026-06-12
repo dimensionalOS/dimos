@@ -2053,6 +2053,22 @@ manipulation = [
     { name = "xacro" },
     { name = "xarm-python-sdk" },
 ]
+manipulation-roboplan = [
+    { name = "a750-control", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "drake", version = "1.45.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'darwin'" },
+    { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
+    { name = "kaleido" },
+    { name = "matplotlib" },
+    { name = "piper-sdk" },
+    { name = "plotly" },
+    { name = "pycollada" },
+    { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
+    { name = "pyyaml" },
+    { name = "roboplan" },
+    { name = "trimesh" },
+    { name = "xacro" },
+    { name = "xarm-python-sdk" },
+]
 mapping = [
     { name = "gtsam-extended" },
 ]
@@ -2094,9 +2110,6 @@ perception = [
 ]
 psql = [
     { name = "psycopg2-binary" },
-]
-roboplan = [
-    { name = "roboplan" },
 ]
 sim = [
     { name = "mujoco" },
@@ -2351,6 +2364,7 @@ requires-dist = [
     { name = "dimos", extras = ["agents", "apriltag", "base", "cpu", "cuda", "drone", "manipulation", "misc", "perception", "psql", "sim", "unitree", "visualization", "web"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
+    { name = "dimos", extras = ["manipulation"], marker = "extra == 'manipulation-roboplan'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
     { name = "dimos-lcm", specifier = ">=0.1.3" },
     { name = "dimos-viewer", specifier = "==0.32.0a1" },
@@ -2426,7 +2440,7 @@ requires-dist = [
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
     { name = "rerun-sdk", specifier = "==0.32.0a1" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = "==0.32.0a1" },
-    { name = "roboplan", marker = "extra == 'roboplan'", git = "ssh://git@github.com/TomCC7/roboplan.git" },
+    { name = "roboplan", marker = "extra == 'manipulation-roboplan'", git = "https://github.com/TomCC7/roboplan.git" },
     { name = "scikit-learn", marker = "extra == 'misc'" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentence-transformers", marker = "extra == 'misc'" },
@@ -2459,7 +2473,7 @@ requires-dist = [
     { name = "xformers", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
-provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "roboplan", "cpu", "cuda", "psql", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
+provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "manipulation-roboplan", "cpu", "cuda", "psql", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
@@ -9320,7 +9334,7 @@ wheels = [
 [[package]]
 name = "roboplan"
 version = "0.4.0"
-source = { git = "ssh://git@github.com/TomCC7/roboplan.git#d9094cbb3ce9e7221e1b03e60c9e2ce3098a1225" }
+source = { git = "https://github.com/TomCC7/roboplan.git#d9094cbb3ce9e7221e1b03e60c9e2ce3098a1225" }
 dependencies = [
     { name = "matplotlib" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
