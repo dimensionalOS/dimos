@@ -142,3 +142,25 @@ def topic_send(topic: str, message_expr: str) -> None:
 
     transport.broadcast(None, message)
     typer.echo(f"Sent to {topic}: {message}")
+
+
+def topic_monitor(run: str | None, open_browser: bool) -> None:
+    try:
+        from dimos.visualization.rerun.topic_monitor import (
+            PortAllocationError,
+            TopicMonitorDependencyError,
+            run_topic_monitor,
+        )
+    except ImportError as exc:
+        typer.echo(
+            "`dimos topic monitor` requires visualization dependencies. "
+            "Install them with `uv sync --extra visualization`.",
+            err=True,
+        )
+        raise typer.Exit(1) from exc
+
+    try:
+        run_topic_monitor(run=run, open_browser=open_browser)
+    except (TopicMonitorDependencyError, PortAllocationError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc

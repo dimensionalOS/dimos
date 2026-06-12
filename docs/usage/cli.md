@@ -275,6 +275,39 @@ dimos mcp modules
 
 ---
 
+## Topic Commands
+
+### `dimos topic echo`
+
+Print messages from a live topic. The command can infer typed LCM channels when the topic is published with a `#pkg.Type` suffix.
+
+```bash
+dimos topic echo /odometry
+dimos topic echo /goal_request PoseStamped
+```
+
+### `dimos topic send`
+
+Send one message to a topic from a Python expression.
+
+```bash
+dimos topic send /goal_request 'PoseStamped()'
+```
+
+### `dimos topic monitor`
+
+Start an interactive foreground topic monitor sidecar. It observes visible LCM traffic, opens a Reflex selector UI by default, and logs only applied topics to its own Rerun viewer.
+
+```bash
+dimos topic monitor
+dimos topic monitor --no-open
+dimos topic monitor --run latest
+```
+
+If no DimOS run is active, the monitor starts in LCM bus-only mode and can still catalog visible traffic from manual publishers or external tools. Stop it with Ctrl-C.
+
+---
+
 ## Standalone Tools
 
 These are installed as separate entry points and can be run directly without the `dimos` prefix.

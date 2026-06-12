@@ -678,6 +678,26 @@ def send(
     topic_send(topic, message_expr)
 
 
+@topic_app.command()
+def monitor(
+    run: str | None = typer.Option(
+        None,
+        "--run",
+        help="Run id to use as context, or 'latest'. Defaults to latest active run; if none exists, observes the LCM bus only.",
+    ),
+    open_browser: bool = typer.Option(
+        True,
+        "--open/--no-open",
+        help="Open the Topic Monitor web UI automatically.",
+    ),
+) -> None:
+    """Open an interactive live LCM topic monitor sidecar."""
+
+    from dimos.robot.cli.topic import topic_monitor
+
+    topic_monitor(run, open_browser)
+
+
 map_app = typer.Typer(help="Voxel-map tools over recorded sqlite datasets")
 main.add_typer(map_app, name="map")
 map_app.command("global")(_map_main)

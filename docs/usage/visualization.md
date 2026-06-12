@@ -84,6 +84,73 @@ if __name__ == "__main__":
 
 Every LCM stream, such as `color_image` (output by CameraModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the LCM topic as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
 
+## Topic Monitor
+
+Use `dimos topic monitor` when you want an interactive web console for choosing which live LCM topics are logged to a Rerun view:
+
+```bash
+uv run dimos topic monitor
+uv run dimos topic monitor --no-open
+uv run dimos topic monitor --run latest
+```
+
+The monitor is an independent foreground sidecar. It observes the visible LCM bus, owns its own Rerun bridge/viewer and Reflex selector UI, and exits when you press Ctrl-C. If a DimOS run is active, the command prints that run as context; if no run is active, it starts in LCM bus-only mode and can still catalog traffic from manual or external publishers.
+
+The standard `vis_module(...)` path is unchanged: renderable LCM topics are logged automatically by blueprints that include normal visualization. `dimos topic monitor` does not control, disable, or reuse any existing visualization in the running blueprint. Its staged/applied selection affects only the monitor-owned Rerun viewer.
+
+By default the command allocates an isolated set of local ports instead of reusing the fixed Rerun defaults, then prints the actual URLs. It opens the selector page automatically when possible; if browser opening fails, open the printed selector URL manually. Use `--no-open` to skip browser launch.
+
+For a hardware-free demo on a laptop or desktop, run the built-in synthetic publisher:
+
+```bash
+uv run dimos run demo-rerun-topic-selector --daemon
+uv run dimos topic monitor
+```
+
+This demo remains a self-contained hardware-free smoke test for the selector UI. It publishes synthetic typed LCM topics only; `dimos topic monitor` attaches as the independent visualization sidecar. For ordinary robot, simulation, or replay workflows, run the normal stack and then start `dimos topic monitor`.
+
+The monitor provides a Reflex visual console next to the Rerun web viewer. It starts local services for the selector frontend, selector API, Reflex backend websocket/API, Rerun gRPC source, and Rerun web viewer. The exact ports are printed by the CLI because they are allocated per monitor instance.
+
+The selector API is local to the monitor process and forwards UI actions to the monitor-owned selected-only bridge. The Reflex frontend runs as a local `reflex run` subprocess using explicit frontend/backend ports, polls that API, and renders the "DimOS Visual Console" layout:
+
+- a header bar with LCM traffic and Rerun connectivity status chips
+- a fixed-width catalog rail with search, `renderable`/`live`/`heavy`/`selected` filter chips, and a `visible/total` counter
+- a grouped topic table (Perception, Robot state, Navigation, Control, Text / logs, Other) with per-row render badges (`renderable`, `converter`, `unsupported`), rate, bandwidth (heavy topics highlighted in amber), and live/idle status; unsupported decoded topics are visible but disabled
+- current-session staging controls; checking a topic only stages it, and applied topics carry a `LOGGING` badge
+- a bottom selection tray showing staged/logging counts, the staged bandwidth estimate, a heavy-topic warning, and explicit **Clear** / **Apply selection** actions
+- an embedded Rerun viewer panel with a connection toolbar (**Reconnect**, **Open in tab**), an unreachable-viewer error card, and a bridge footer listing the logged topics as entity chips
+
+Reflex builds a small React/Next frontend at runtime and may install or use Node/Bun/npm-managed web assets. Install it through the visualization extra:
+
+```bash
+uv sync --extra visualization
+```
+
+### Selected-only logging
+
+In selector mode, decoded DimOS topics are cataloged first. A renderable topic is not converted to Rerun data or logged merely because it is visible or staged. Subsequent messages are logged only after the staged selection is applied. Clearing the staged selection and applying that empty selection stops selector-managed logging for those topics.
+
+This is useful for high-bandwidth streams such as images, maps, and point clouds: browsing the catalog does not automatically pay the Rerun conversion/logging cost. The monitor still subscribes through DimOS' normal decoded LCM path, so non-decodable/non-DimOS LCM traffic is ignored rather than displayed.
+
+### Unsupported and degraded states
+
+The selector catalog is LCM-only in this first version. It discovers live decodable DimOS LCM channels, such as `/camera/color#sensor_msgs.Image`. Untyped, undecodable, or non-DimOS LCM traffic is ignored.
+
+Topic states include:
+
+- **renderable**: the decoded message has `to_rerun()` support or matches a configured `visual_override` converter
+- **unsupported**: the message type is known but has no Rerun converter, or a visual override suppresses it
+- **live/idle**: traffic freshness based on the catalog freshness window
+- **logging**: the topic is in the applied selector-managed logging set
+
+The page also calls out common degraded states: no decodable LCM data yet (pulsing empty state), no search/filter matches, an unreachable selector API, and an unreachable Rerun viewer (error card with retry). If the embedded viewer is blank, use **Open in tab** or verify that the embedded Rerun URL includes an encoded `url=rerun%2Bhttp...%2Fproxy` query parameter that points at the bridge gRPC proxy.
+
+### v1 scope
+
+The monitor discovers live LCM topics only. SHM, ROS, DDS, coordinator metadata, and stored replay stream catalogs are future work unless those streams are actively bridged to LCM during the run.
+
+To make a topic renderable in monitor mode, prefer a typed LCM channel whose message implements `to_rerun()`. Blueprint-specific `visual_override`, static Rerun scene objects, and custom topic-to-entity mappings are not loaded by `dimos topic monitor` in v1. Avoid using `RerunWebSocketServer` as a catalog API; it remains the viewer-to-robot click/teleop websocket path.
+
 ## Performance Tuning
 
 ### Symptom: Slow Map Updates

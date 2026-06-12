@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import patch
 
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
@@ -24,6 +25,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LcmTopic
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
@@ -77,3 +79,44 @@ def test_detection3darray_bridge_attaches_topic_entity_to_message_frame() -> Non
     transform = mock_log.call_args_list[1].args[1]
     assert isinstance(transform, rr.Transform3D)
     assert transform.parent_frame.as_arrow_array().to_pylist() == ["tf#/world"]
+
+
+class _SelectorRenderableMsg:
+    msg_name = "test.SelectorRenderableMsg"
+    to_rerun_count = 0
+
+    def to_rerun(self) -> Any:
+        type(self).to_rerun_count += 1
+        return rr.TextDocument("selected")
+
+
+def test_selector_managed_bridge_catalogs_decoded_but_logs_only_applied_topics() -> None:
+    bridge = RerunBridgeModule(selector_enabled=True)
+    bridge._min_intervals = {}
+    topic = LcmTopic("/selector/topic", _SelectorRenderableMsg)  # type: ignore[arg-type]
+    _SelectorRenderableMsg.to_rerun_count = 0
+
+    try:
+        with patch("dimos.visualization.rerun.bridge.rr.log") as mock_log:
+            bridge._on_message(_SelectorRenderableMsg(), topic)
+            assert _SelectorRenderableMsg.to_rerun_count == 0
+            assert mock_log.call_count == 0
+
+            [entry] = bridge.get_topic_catalog()
+            assert entry["channel"] == "/selector/topic#test.SelectorRenderableMsg"
+            assert entry["name"] == "/selector/topic"
+            assert entry["renderability"] == "renderable"
+            assert entry["selected"] is False
+            assert entry["logging"] is False
+
+            bridge.stage_topics(["/selector/topic"])
+            bridge.apply_staged_topics()
+            bridge._on_message(_SelectorRenderableMsg(), topic)
+
+            assert _SelectorRenderableMsg.to_rerun_count == 1
+            assert mock_log.call_count == 1
+            [updated] = bridge.get_topic_catalog()
+            assert updated["selected"] is True
+            assert updated["logging"] is True
+    finally:
+        bridge.stop()

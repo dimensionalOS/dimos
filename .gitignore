@@ -44,6 +44,14 @@ package-lock.json
 !docs/package.json
 !docs/package-lock.json
 
+# Reflex generated frontend/runtime artifacts
+**/.web/
+**/.reflex/
+**/.states/
+dimos/visualization/rerun/reflex_selector_app/.gitignore
+dimos/visualization/rerun/reflex_selector_app/reflex.lock/
+dimos/visualization/rerun/reflex_selector_app/requirements.txt
+
 # Ignore build artifacts
 dist/
 build/

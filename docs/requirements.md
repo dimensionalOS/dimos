@@ -42,7 +42,7 @@ pip install 'dimos[base,unitree,manipulation]'       # + Arm control
 | *(core)* | Transport, streams, CLI, blueprints, occupancy maps | dimos-lcm, numpy, scipy, opencv, open3d, numba, Pinocchio, typer, textual | No |
 | `agents` | LLM agent, speech, tool use | langchain, openai, faster-whisper, anthropic | No |
 | `perception` | Object detection, VLMs, tracking | ultralytics, transformers, moondream | **Yes** |
-| `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |
+| `visualization` | Rerun viewer + bridge + topic monitor UI | rerun-sdk, dimos-viewer, Reflex, FastAPI, Uvicorn | No |
 | `web` | FastAPI web interface, audio | fastapi, uvicorn, ffmpeg-python | No |
 | `sim` | MuJoCo simulation | mujoco, playground, pygame | No |
 | `unitree` | Unitree Go2 / G1 support | unitree-webrtc-connect | No |

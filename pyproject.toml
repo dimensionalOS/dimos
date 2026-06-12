@@ -197,6 +197,10 @@ misc = [
 visualization = [
     "rerun-sdk==0.32.0a1",
     "dimos-viewer==0.32.0a1",
+    "fastapi>=0.115.0",
+    "reflex>=0.8.0",
+    "requests>=2.32.0",
+    "uvicorn>=0.30.0",
 ]
 
 agents = [
