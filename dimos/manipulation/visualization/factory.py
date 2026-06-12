@@ -16,33 +16,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Literal, cast, get_args
+from typing import TYPE_CHECKING
 
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.manipulation.visualization.config import ManipulationVisualizationBackend
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
-
-ManipulationVisualizationBackend = Literal["meshcat", "viser", "none"]
-
-
-def resolve_visualization_backend(
-    backend: str | None,
-    *,
-    enable_viz: bool,
-) -> ManipulationVisualizationBackend:
-    """Resolve manipulation visualization backend with enable_viz compatibility."""
-    if backend is None:
-        return "meshcat" if enable_viz else "none"
-
-    if backend not in get_args(ManipulationVisualizationBackend):
-        available = list(get_args(ManipulationVisualizationBackend))
-        raise ValueError(
-            f"Unknown manipulation visualization backend: {backend!r}. Available: {available}"
-        )
-    return cast("ManipulationVisualizationBackend", backend)
 
 
 def create_manipulation_visualization(
@@ -50,7 +32,7 @@ def create_manipulation_visualization(
     *,
     world_monitor: WorldMonitor,
     manipulation_module: ManipulationModule | None = None,
-    options: Mapping[str, object] | None = None,
+    config: ViserVisualizationConfig | None = None,
 ) -> VisualizationSpec | None:
     """Create an optional manipulation visualization backend."""
     if backend == "none":
@@ -63,7 +45,6 @@ def create_manipulation_visualization(
         raise ValueError("meshcat visualization requires a world that implements VisualizationSpec")
 
     if backend == "viser":
-        from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
         from dimos.manipulation.visualization.viser.visualizer import (
             ViserManipulationVisualizer,
         )
@@ -71,10 +52,7 @@ def create_manipulation_visualization(
         return ViserManipulationVisualizer(
             world_monitor=world_monitor,
             manipulation_module=manipulation_module,
-            config=ViserVisualizationConfig.from_options(options),
+            config=config,
         )
 
-    available = list(get_args(ManipulationVisualizationBackend))
-    raise ValueError(
-        f"Unknown manipulation visualization backend: {backend!r}. Available: {available}"
-    )
+    raise AssertionError(f"Unhandled manipulation visualization backend: {backend!r}")

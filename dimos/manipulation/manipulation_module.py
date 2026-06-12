@@ -38,7 +38,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.planning.factory import create_kinematics, create_planner
+from dimos.manipulation.planning.factory import create_planning_specs
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
@@ -48,10 +48,9 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
     JointTrajectoryGenerator,
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
-from dimos.manipulation.visualization.factory import (
-    create_manipulation_visualization,
-    resolve_visualization_backend,
-)
+from dimos.manipulation.visualization.config import ManipulationVisualizationBackend
+from dimos.manipulation.visualization.factory import create_manipulation_visualization
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -95,14 +94,23 @@ class ManipulationModuleConfig(ModuleConfig):
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
-    visualization_backend: str | None = None
-    visualization_options: dict[str, object] = Field(default_factory=dict)
+    visualization_backend: ManipulationVisualizationBackend | None = None
+    visualization_options: ViserVisualizationConfig = Field(
+        default_factory=ViserVisualizationConfig
+    )
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+
+    @property
+    def resolved_visualization_backend(self) -> ManipulationVisualizationBackend:
+        """Resolve legacy enable_viz into the configured visualization backend."""
+        if self.visualization_backend is not None:
+            return self.visualization_backend
+        return "meshcat" if self.enable_viz else "none"
 
 
 class ManipulationModule(Module):
@@ -172,18 +180,20 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
-        visualization_backend = resolve_visualization_backend(
-            self.config.visualization_backend,
-            enable_viz=self.config.enable_viz,
-        )
-        self._world_monitor = WorldMonitor(
+        visualization_backend = self.config.resolved_visualization_backend
+        planning_specs = create_planning_specs(
             enable_viz=visualization_backend == "meshcat",
+            planner_name=self.config.planner_name,
+            kinematics_name=self.config.kinematics_name,
         )
+        self._world_monitor = planning_specs.world_monitor
+        self._planner = planning_specs.planner
+        self._kinematics = planning_specs.kinematics
         visualization = create_manipulation_visualization(
             visualization_backend,
             world_monitor=self._world_monitor,
             manipulation_module=self,
-            options=self.config.visualization_options,
+            config=self.config.visualization_options if visualization_backend == "viser" else None,
         )
 
         for robot_config in self.config.robots:
@@ -224,9 +234,6 @@ class ManipulationModule(Module):
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
             if url := self._world_monitor.get_visualization_url():
                 logger.info(f"Visualization: {url}")
-
-        self._planner = create_planner(name=self.config.planner_name)
-        self._kinematics = create_kinematics(name=self.config.kinematics_name)
 
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):
@@ -500,7 +507,7 @@ class ManipulationModule(Module):
             return self._fail(f"IK failed: {ik.status.name}")
 
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
-        return self._plan_path_only(robot_name, robot_id, ik.joint_state, target_pose)
+        return self._plan_path_only(robot_name, robot_id, ik.joint_state)
 
     @rpc
     def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
@@ -521,7 +528,6 @@ class ManipulationModule(Module):
         robot_name: RobotName,
         robot_id: WorldRobotID,
         goal: JointState,
-        target_pose: PoseStamped | None = None,
     ) -> bool:
         """Plan path from current position to goal, store result."""
         assert self._world_monitor and self._planner  # guaranteed by _begin_planning
@@ -558,11 +564,11 @@ class ManipulationModule(Module):
         logger.info(f"Trajectory: {traj.duration:.3f}s")
 
         final_goal = result.path[-1] if result.path else goal
-        if target_pose is None:
-            try:
-                target_pose = self._world_monitor.get_ee_pose(robot_id, final_goal)
-            except Exception as e:
-                logger.debug(f"Failed to compute planning target pose: {e}")
+        target_pose = None
+        try:
+            target_pose = self._world_monitor.get_ee_pose(robot_id, final_goal)
+        except Exception as e:
+            logger.debug(f"Failed to compute planning target pose: {e}")
         self._world_monitor.set_planning_target(
             robot_id,
             final_goal,

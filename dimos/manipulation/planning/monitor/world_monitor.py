@@ -21,11 +21,10 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
-from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -43,7 +42,6 @@ if TYPE_CHECKING:
         Obstacle,
         WorldRobotID,
     )
-    from dimos.manipulation.planning.spec.protocols import WorldSpec
     from dimos.msgs.vision_msgs.Detection3D import Detection3D
     from dimos.perception.detection.type.detection3d.object import Object
 
@@ -55,19 +53,11 @@ class WorldMonitor:
 
     def __init__(
         self,
-        backend: str = "drake",
-        enable_viz: bool = False,
-        world: WorldSpec | None = None,
+        world: WorldSpec,
         visualization: VisualizationSpec | None = None,
-        **kwargs: Any,
     ) -> None:
-        self._backend = backend
-        self._world: WorldSpec = world or create_world(
-            backend=backend, enable_viz=enable_viz, **kwargs
-        )
-        self._visualization: VisualizationSpec | None = visualization or (
-            self._world if enable_viz and isinstance(self._world, VisualizationSpec) else None
-        )
+        self._world = world
+        self._visualization = visualization
         self._lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
         self._robot_configs: dict[WorldRobotID, RobotModelConfig] = {}

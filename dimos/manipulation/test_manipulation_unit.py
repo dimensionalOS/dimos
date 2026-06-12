@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -319,12 +320,11 @@ def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
 
 
 def _make_world_monitor_with_viz(viz: object | None) -> WorldMonitor:
-    world = viz if viz is not None else object()
-    with patch(
-        "dimos.manipulation.planning.monitor.world_monitor.create_world",
-        return_value=world,
-    ):
-        return WorldMonitor(enable_viz=viz is not None)
+    world = MagicMock()
+    return WorldMonitor(
+        world=world,
+        visualization=cast("VisualizationSpec | None", viz),
+    )
 
 
 class TestOnJointState:

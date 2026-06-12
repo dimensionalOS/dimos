@@ -16,14 +16,25 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
     from dimos.manipulation.planning.spec.protocols import (
         KinematicsSpec,
         PlannerSpec,
         WorldSpec,
     )
+
+
+@dataclass(frozen=True)
+class PlanningSpecs:
+    """Concrete planning specs created from configuration."""
+
+    world_monitor: WorldMonitor
+    kinematics: KinematicsSpec
+    planner: PlannerSpec
 
 
 def create_world(
@@ -38,6 +49,20 @@ def create_world(
         return DrakeWorld(enable_viz=enable_viz, **kwargs)
     else:
         raise ValueError(f"Unknown backend: {backend}. Available: ['drake']")
+
+
+def create_world_monitor(
+    backend: str = "drake",
+    enable_viz: bool = False,
+    **kwargs: Any,
+) -> WorldMonitor:
+    """Create a world and wrap it in a monitor."""
+    from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+    from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+
+    world = create_world(backend=backend, enable_viz=enable_viz, **kwargs)
+    visualization = world if enable_viz and isinstance(world, VisualizationSpec) else None
+    return WorldMonitor(world=world, visualization=visualization)
 
 
 def create_kinematics(
@@ -74,6 +99,19 @@ def create_planner(
         raise ValueError(f"Unknown planner: {name}. Available: ['rrt_connect']")
 
 
+def create_planning_specs(
+    enable_viz: bool = False,
+    planner_name: str = "rrt_connect",
+    kinematics_name: str = "jacobian",
+) -> PlanningSpecs:
+    """Create planning specs from configuration in one place."""
+    return PlanningSpecs(
+        world_monitor=create_world_monitor(backend="drake", enable_viz=enable_viz),
+        kinematics=create_kinematics(name=kinematics_name),
+        planner=create_planner(name=planner_name),
+    )
+
+
 def create_planning_stack(
     robot_config: Any,
     enable_viz: bool = False,
@@ -81,11 +119,14 @@ def create_planning_stack(
     kinematics_name: str = "jacobian",
 ) -> tuple[WorldSpec, KinematicsSpec, PlannerSpec, str]:
     """Create complete planning stack. Returns (world, kinematics, planner, robot_id)."""
-    world = create_world(backend="drake", enable_viz=enable_viz)
-    kinematics = create_kinematics(name=kinematics_name)
-    planner = create_planner(name=planner_name)
+    planning_specs = create_planning_specs(
+        enable_viz=enable_viz,
+        planner_name=planner_name,
+        kinematics_name=kinematics_name,
+    )
+    world = planning_specs.world_monitor.world
 
     robot_id = world.add_robot(robot_config)
     world.finalize()
 
-    return world, kinematics, planner, robot_id
+    return world, planning_specs.kinematics, planning_specs.planner, robot_id

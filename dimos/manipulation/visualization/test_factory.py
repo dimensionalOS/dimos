@@ -17,12 +17,12 @@ from __future__ import annotations
 from typing import Any, cast
 from unittest.mock import MagicMock
 
+from pydantic import ValidationError
+
+from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
-from dimos.manipulation.visualization.factory import (
-    create_manipulation_visualization,
-    resolve_visualization_backend,
-)
+from dimos.manipulation.visualization.factory import create_manipulation_visualization
 
 
 class FakeVisualization:
@@ -126,20 +126,46 @@ class FakeWorld(FakeVisualization):
         return []
 
 
-def test_resolve_visualization_backend() -> None:
-    assert resolve_visualization_backend(None, enable_viz=True) == "meshcat"
-    assert resolve_visualization_backend(None, enable_viz=False) == "none"
-    assert resolve_visualization_backend("meshcat", enable_viz=False) == "meshcat"
-    assert resolve_visualization_backend("viser", enable_viz=False) == "viser"
-    assert resolve_visualization_backend("none", enable_viz=True) == "none"
+def test_config_resolves_legacy_enable_viz() -> None:
+    assert ManipulationModuleConfig(enable_viz=True).resolved_visualization_backend == "meshcat"
+    assert ManipulationModuleConfig(enable_viz=False).resolved_visualization_backend == "none"
+    assert (
+        ManipulationModuleConfig(
+            enable_viz=True,
+            visualization_backend="none",
+        ).resolved_visualization_backend
+        == "none"
+    )
+    assert (
+        ManipulationModuleConfig(
+            enable_viz=False,
+            visualization_backend="viser",
+        ).resolved_visualization_backend
+        == "viser"
+    )
 
 
-def test_resolve_visualization_backend_rejects_unknown() -> None:
+def test_config_rejects_unknown_visualization_backend() -> None:
     try:
-        resolve_visualization_backend("bad", enable_viz=True)
-        raise AssertionError("expected ValueError")
-    except ValueError as exc:
-        assert "Unknown manipulation visualization backend" in str(exc)
+        ManipulationModuleConfig(visualization_backend="bad")
+        raise AssertionError("expected ValidationError")
+    except ValidationError as exc:
+        assert "visualization_backend" in str(exc)
+
+
+def test_config_validates_viser_visualization_options() -> None:
+    config = ManipulationModuleConfig(
+        visualization_backend="viser",
+        visualization_options={
+            "visualization_host": "0.0.0.0",
+            "visualization_port": "8096",
+            "viser_panel_enabled": "false",
+        },
+    )
+
+    assert config.visualization_options.host == "0.0.0.0"
+    assert config.visualization_options.port == 8096
+    assert config.visualization_options.panel_enabled is False
 
 
 def test_create_visualization_none_returns_none() -> None:

@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from dimos.manipulation.planning import factory as planning_factory
 from dimos.manipulation.planning.monitor import world_monitor as world_monitor_module
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
@@ -172,19 +173,11 @@ def _robot_config() -> RobotModelConfig:
     )
 
 
-def test_world_monitor_add_robot_records_scene_without_visualization_probe(monkeypatch) -> None:
+def test_world_monitor_add_robot_records_scene_without_visualization_probe() -> None:
     fake_world = FakeWorld()
     fake_viz = FakeViz()
-    created = {}
 
-    def fake_create_world(*, backend: str = "drake", enable_viz: bool = False, **kwargs):
-        created["world"] = (backend, enable_viz, kwargs)
-        return fake_world
-
-    monkeypatch.setattr(world_monitor_module, "create_world", fake_create_world)
-
-    monitor = world_monitor_module.WorldMonitor(visualization=fake_viz)
-    assert created["world"] == ("drake", False, {})
+    monitor = world_monitor_module.WorldMonitor(world=fake_world, visualization=fake_viz)  # type: ignore[arg-type]
 
     monitor.add_robot(_robot_config())
     assert fake_world.calls[0][0] == "add_robot"
@@ -192,16 +185,11 @@ def test_world_monitor_add_robot_records_scene_without_visualization_probe(monke
     assert monitor.planning_scene_info().robots["robot-1"].name == "arm"
 
 
-def test_world_monitor_syncs_planning_scene_to_visualization(monkeypatch) -> None:
+def test_world_monitor_syncs_planning_scene_to_visualization() -> None:
     fake_world = FakeWorld()
     fake_viz = FakeViz()
 
-    def fake_create_world(*, backend: str = "drake", enable_viz: bool = False, **kwargs):
-        return fake_world
-
-    monkeypatch.setattr(world_monitor_module, "create_world", fake_create_world)
-
-    monitor = world_monitor_module.WorldMonitor(visualization=fake_viz)
+    monitor = world_monitor_module.WorldMonitor(world=fake_world, visualization=fake_viz)  # type: ignore[arg-type]
     monitor.add_robot(_robot_config())
     monitor.sync_visualization_scene()
 
@@ -211,7 +199,7 @@ def test_world_monitor_syncs_planning_scene_to_visualization(monkeypatch) -> Non
     assert scene.robots["robot-1"].name == "arm"
 
 
-def test_world_monitor_enable_viz_uses_world_visualization(monkeypatch) -> None:
+def test_create_world_monitor_enable_viz_uses_world_visualization(monkeypatch) -> None:
     created = {}
     fake_world = FakeWorld()
 
@@ -219,31 +207,23 @@ def test_world_monitor_enable_viz_uses_world_visualization(monkeypatch) -> None:
         created["world"] = (backend, enable_viz)
         return fake_world
 
-    monkeypatch.setattr(world_monitor_module, "create_world", fake_create_world)
+    monkeypatch.setattr(planning_factory, "create_world", fake_create_world)
 
-    monitor = world_monitor_module.WorldMonitor(enable_viz=True)
+    monitor = planning_factory.create_world_monitor(enable_viz=True)
     assert created["world"] == ("drake", True)
     assert monitor.visualization is fake_world
 
 
-def test_world_monitor_delegates_planning_target_updates_to_visualization(monkeypatch) -> None:
-    created = {}
+def test_world_monitor_delegates_planning_target_updates_to_visualization() -> None:
     fake_world = FakeWorld()
     fake_viz = FakeViz()
 
-    def fake_create_world(*, backend: str = "drake", enable_viz: bool = False, **kwargs):
-        created["world"] = (backend, enable_viz)
-        return fake_world
-
-    monkeypatch.setattr(world_monitor_module, "create_world", fake_create_world)
-
-    monitor = world_monitor_module.WorldMonitor(visualization=fake_viz)
+    monitor = world_monitor_module.WorldMonitor(world=fake_world, visualization=fake_viz)  # type: ignore[arg-type]
 
     target = JointState(name=["j1", "j2"], position=[0.1, 0.2])
     monitor.set_planning_target("robot-1", target, feasible=True)
     monitor.clear_planning_target("robot-1")
 
-    assert created["world"] == ("drake", False)
     assert fake_viz.calls[-2:] == [
         ("set_planning_target", "robot-1", target, None, True),
         ("clear_planning_target", "robot-1"),
