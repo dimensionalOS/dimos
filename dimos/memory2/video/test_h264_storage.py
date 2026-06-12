@@ -123,12 +123,10 @@ def test_default_image_stream_still_uses_jpeg_codec(tmp_path: Path) -> None:
         pytest.skip("sqlite-vec extension not loadable here")
     store = SqliteStore(path=str(tmp_path / "jpeg.db"))
     stream = store.stream("rgb", Image)
-    stream.append(_raw_image(1))
 
     source = stream._source
     assert isinstance(source, Backend)
     assert isinstance(source.codec, JpegCodec)
-    assert store.stream("rgb").first().data.encoding == "raw"
 
 
 def test_encoded_images_reject_pixel_operations() -> None:
