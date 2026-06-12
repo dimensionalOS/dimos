@@ -1030,8 +1030,8 @@ class FakeMavlinkConnection(MavlinkConnection):
         # Create fake mavlink object
         class FakeMavlink:
             def __init__(self) -> None:
-                from dimos.memory.timeseries.legacy import LegacyPickleStore
                 from dimos.utils.data import get_data
+                from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
                 get_data("drone")
 

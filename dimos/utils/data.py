@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from datetime import datetime
 from functools import cache
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.logging_config import setup_logger
@@ -116,11 +119,34 @@ def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
     p = Path(s)
     if p.is_absolute() or p.exists():
         return p
+    if (DIMOS_PROJECT_ROOT / p).exists():
+        return DIMOS_PROJECT_ROOT / p
     if suffix and not s.endswith(suffix):
         p = Path(s + suffix)
         if p.is_absolute() or p.exists():
             return p
+        if (DIMOS_PROJECT_ROOT / p).exists():
+            return DIMOS_PROJECT_ROOT / p
     return get_data(p.name)
+
+
+def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:
+    path = Path(path)
+    if not path.exists():
+        return None
+
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    backup = path.with_name(f"{path.stem}.{ts}{path.suffix}")
+    path.rename(backup)
+
+    pattern = re.compile(rf"^{re.escape(path.stem)}\.\d{{14}}{re.escape(path.suffix)}$")
+    backups = sorted(
+        p for p in path.parent.glob(f"{path.stem}.*{path.suffix}") if pattern.match(p.name)
+    )
+    for old in backups[:-keep_last] if keep_last > 0 else backups:
+        old.unlink()
+
+    return backup if backup.exists() else None
 
 
 @cache
@@ -166,23 +192,30 @@ def _is_lfs_pointer_file(file_path: Path) -> bool:
         return False
 
 
-def _lfs_pull(file_path: Path, repo_root: Path) -> None:
-    try:
-        relative_path = file_path.relative_to(repo_root)
+def _lfs_pull(file_path: Path, repo_root: Path, *, retries: int = 2) -> None:
+    relative_path = file_path.relative_to(repo_root)
 
-        env = os.environ.copy()
-        env["GIT_LFS_FORCE_PROGRESS"] = "1"
+    env = os.environ.copy()
+    env["GIT_LFS_FORCE_PROGRESS"] = "1"
 
-        subprocess.run(
-            ["git", "lfs", "pull", "--include", str(relative_path)],
-            cwd=repo_root,
-            check=True,
-            env=env,
-        )
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to pull LFS file {file_path}: {e}")
+    last_err: subprocess.CalledProcessError | None = None
+    for attempt in range(1, retries + 2):  # retries + 1 total attempts
+        try:
+            subprocess.run(
+                ["git", "lfs", "pull", "--include", str(relative_path)],
+                cwd=repo_root,
+                check=True,
+                env=env,
+            )
+            return
+        except subprocess.CalledProcessError as e:
+            last_err = e
+            if attempt <= retries:
+                time.sleep(attempt)  # 1s, 2s backoff
 
-    return None
+    raise RuntimeError(
+        f"Failed to pull LFS file {file_path} after {retries + 1} attempts: {last_err}"
+    )
 
 
 def _decompress_archive(filename: str | Path) -> Path:

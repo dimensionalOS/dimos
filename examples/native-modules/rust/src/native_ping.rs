@@ -52,5 +52,5 @@ async fn main() {
     let transport = LcmTransport::new()
         .await
         .expect("Failed to create transport");
-    run::<Ping, _>(transport).await.expect("ping run failed");
+    run::<Ping, _>(transport).await;
 }

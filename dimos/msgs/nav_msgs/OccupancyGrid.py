@@ -485,6 +485,7 @@ class OccupancyGrid(Timestamped):
         opacity: float = 1.0,
         cost_range: tuple[int, int] | None = None,
         background: str | None = None,
+        color_lookup_table: np.ndarray | None = None,
     ) -> Archetype:
         """Convert to 3D textured mesh overlay on floor plane.
 
@@ -504,8 +505,9 @@ class OccupancyGrid(Timestamped):
             step_w = max(1, grid.shape[1] // max_tex)
             grid = grid[::step_h, ::step_w]
 
-        lut = _build_occupancy_lut(colormap, opacity, background)
-        rgba = np.ascontiguousarray(lut[np.clip(grid + 1, 0, 101)])
+        if color_lookup_table is None:
+            color_lookup_table = _build_occupancy_lut(colormap, opacity, background)
+        rgba = np.ascontiguousarray(color_lookup_table[np.clip(grid + 1, 0, 101)])
 
         # Apply cost_range filter on downsampled grid
         if cost_range is not None:
