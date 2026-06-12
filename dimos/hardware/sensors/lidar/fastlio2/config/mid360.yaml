@@ -15,6 +15,13 @@ mapping:
     gyr_cov: 0.1
     b_acc_cov: 0.0001
     b_gyr_cov: 0.0001
+    # Scan downsampling that feeds the IESKF. The upstream default (0.5 m) is too
+    # sparse on aggressive Go2 motion: the point-to-plane update becomes
+    # ill-conditioned and odometry velocity diverges to km/s. Replaying ruwik2_pt3
+    # shows a sharp threshold between 0.38 m (diverges) and 0.35 m (bounded); 0.1 m
+    # stays bounded with margin. See jhist dimos-fastlio-velocity-spike.md (2026-06-10).
+    filter_size_surf: 0.1
+    filter_size_map: 0.1
     fov_degree:    360
     det_range:     100.0
     extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic
