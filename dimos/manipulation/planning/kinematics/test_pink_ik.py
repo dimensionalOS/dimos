@@ -37,6 +37,7 @@ from dimos.manipulation.planning.kinematics.pink_ik import (
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.models import IKResult
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -157,9 +158,7 @@ def _fake_modules(converge: bool = True) -> _PinkModules:
 
     pink.solve_ik = solve_ik  # type: ignore[attr-defined]
 
-    qpsolvers = ModuleType("qpsolvers")
-    qpsolvers.available_solvers = ["proxqp"]  # type: ignore[attr-defined]
-    return _PinkModules(pink=pink, pinocchio=pinocchio, qpsolvers=qpsolvers)
+    return _PinkModules(pink=pink, pinocchio=pinocchio)
 
 
 def _robot_config() -> RobotModelConfig:
@@ -250,7 +249,26 @@ def test_create_kinematics_pink_missing_dependency_is_actionable(
 
     monkeypatch.setattr(pink_ik.importlib, "import_module", fake_import_module)
 
-    with pytest.raises(PinkIKDependencyError, match="pin-pink"):
+    with pytest.raises(PinkIKDependencyError) as exc_info:
+        create_kinematics("pink")
+    assert "pin-pink" in str(exc_info.value)
+    assert "--extra manipulation" in str(exc_info.value)
+
+
+def test_create_kinematics_pink_unavailable_solver_mentions_manipulation_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dimos.manipulation.planning.kinematics import pink_ik
+
+    def fake_import_module(name: str) -> ModuleType:
+        module = ModuleType(name)
+        if name == "qpsolvers":
+            module.available_solvers = []  # type: ignore[attr-defined]
+        return module
+
+    monkeypatch.setattr(pink_ik.importlib, "import_module", fake_import_module)
+
+    with pytest.raises(PinkIKDependencyError, match="--extra manipulation"):
         create_kinematics("pink")
 
 
@@ -336,3 +354,46 @@ def test_solve_rejects_collision_candidate() -> None:
 
     assert result.status == IKStatus.COLLISION
     assert result.joint_state is None
+
+
+def test_solve_retries_after_joint_limit_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    ik = _pink_ik(converge=True)
+    context = _context()
+    ik._contexts = {"robot": context}
+    calls = 0
+
+    def fake_solve_single(**_: object) -> IKResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return IKResult(
+                status=IKStatus.JOINT_LIMITS,
+                joint_state=None,
+                message="first attempt hit limits",
+            )
+        return IKResult(
+            status=IKStatus.SUCCESS,
+            joint_state=JointState(
+                name=["joint_a", "joint_b", "joint_c"],
+                position=[0.1, 0.2, 0.3],
+            ),
+            position_error=0.0,
+            orientation_error=0.0,
+            iterations=1,
+        )
+
+    monkeypatch.setattr(ik, "_solve_single", fake_solve_single)
+
+    result = ik.solve(
+        world=cast("Any", _FakeWorld(collision_free=True)),
+        robot_id="robot",
+        target_pose=PoseStamped(
+            position=Vector3(0.1, 0.0, 0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        check_collision=True,
+        max_attempts=2,
+    )
+
+    assert calls == 2
+    assert result.status == IKStatus.SUCCESS

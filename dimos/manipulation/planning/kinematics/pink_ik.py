@@ -49,7 +49,9 @@ class PinkIKDependencyError(ImportError):
 class _PinkModules:
     pink: ModuleType
     pinocchio: ModuleType
-    qpsolvers: ModuleType
+
+
+_MANIPULATION_EXTRA_HINT = "Install manipulation dependencies with: uv sync --extra manipulation."
 
 
 @dataclass(frozen=True)
@@ -144,8 +146,7 @@ class PinkIK:
         lower_limits, upper_limits = world.get_joint_limits(robot_id)
         target_model = self._target_in_model_frame(world.get_robot_config(robot_id), target_pose)
 
-        best_result: IKResult | None = None
-        best_error = float("inf")
+        fallback_result: IKResult | None = None
 
         for attempt in range(max_attempts):
             try:
@@ -164,40 +165,21 @@ class PinkIK:
             except Exception as exc:
                 return _failure(IKStatus.NO_SOLUTION, f"Pink IK solver failed: {exc}")
 
-            if result.status == IKStatus.JOINT_LIMITS:
-                return result
             if not result.is_success() or result.joint_state is None:
-                if best_result is None:
-                    best_result = result
+                if fallback_result is None:
+                    fallback_result = result
                 continue
 
             if check_collision and not world.check_config_collision_free(
                 robot_id, result.joint_state
             ):
-                collision_result = IKResult(
-                    status=IKStatus.COLLISION,
-                    joint_state=None,
-                    position_error=result.position_error,
-                    orientation_error=result.orientation_error,
-                    iterations=result.iterations,
-                    message="Pink IK solution rejected by collision check",
-                )
-                best_result = collision_result
+                fallback_result = _collision_failure(result)
                 continue
 
-            total_error = result.position_error + result.orientation_error
-            if total_error < best_error:
-                best_error = total_error
-                best_result = result
+            return result
 
-            if (
-                result.position_error <= position_tolerance
-                and result.orientation_error <= orientation_tolerance
-            ):
-                return result
-
-        if best_result is not None:
-            return best_result
+        if fallback_result is not None:
+            return fallback_result
 
         return _failure(IKStatus.NO_SOLUTION, f"Pink IK failed after {max_attempts} attempts")
 
@@ -366,40 +348,38 @@ class PinkIK:
 
 
 def _load_optional_dependencies(solver: str) -> _PinkModules:
-    try:
-        pink = importlib.import_module("pink")
-    except ImportError as exc:
-        raise PinkIKDependencyError(
-            "Pink IK backend requires the optional Pink dependency. "
-            "Install it with: uv sync --extra pink (or pip install 'dimos[pink]'). "
-            "PyPI package: pin-pink; import name: pink."
-        ) from exc
-
-    try:
-        pinocchio = importlib.import_module("pinocchio")
-    except ImportError as exc:
-        raise PinkIKDependencyError(
-            "Pink IK backend requires Pinocchio (import name 'pinocchio'). "
-            "Install the project dependencies or the Pink extra."
-        ) from exc
-
-    try:
-        qpsolvers = importlib.import_module("qpsolvers")
-    except ImportError as exc:
-        raise PinkIKDependencyError(
-            "Pink IK backend requires qpsolvers plus a QP backend. "
-            "Install with: uv sync --extra pink."
-        ) from exc
+    pink = _import_required_module(
+        "pink",
+        "Pink IK backend requires Pink. "
+        f"{_MANIPULATION_EXTRA_HINT} PyPI package: pin-pink; import name: pink.",
+    )
+    pinocchio = _import_required_module(
+        "pinocchio",
+        f"Pink IK backend requires Pinocchio (import name 'pinocchio'). {_MANIPULATION_EXTRA_HINT}",
+    )
+    qpsolvers = _import_required_module(
+        "qpsolvers",
+        "Pink IK backend requires qpsolvers plus a QP backend such as proxqp. "
+        f"{_MANIPULATION_EXTRA_HINT}",
+    )
 
     available_solvers = set(getattr(qpsolvers, "available_solvers", []))
     if solver not in available_solvers:
         raise PinkIKDependencyError(
             f"Pink IK solver '{solver}' is not available from qpsolvers. "
             f"Available solvers: {sorted(available_solvers)}. "
-            "Install the Pink extra, e.g. uv sync --extra pink, which includes qpsolvers[proxqp]."
+            "Install manipulation dependencies with uv sync --extra manipulation, "
+            "which includes qpsolvers[proxqp]."
         )
 
-    return _PinkModules(pink=pink, pinocchio=pinocchio, qpsolvers=qpsolvers)
+    return _PinkModules(pink=pink, pinocchio=pinocchio)
+
+
+def _import_required_module(name: str, message: str) -> ModuleType:
+    try:
+        return importlib.import_module(name)
+    except ImportError as exc:
+        raise PinkIKDependencyError(message) from exc
 
 
 def _build_joint_mapping(model: Any, config: RobotModelConfig) -> _JointMapping:
@@ -512,6 +492,17 @@ def _success(
 
 def _failure(status: IKStatus, message: str, iterations: int = 0) -> IKResult:
     return IKResult(status=status, joint_state=None, iterations=iterations, message=message)
+
+
+def _collision_failure(result: IKResult) -> IKResult:
+    return IKResult(
+        status=IKStatus.COLLISION,
+        joint_state=None,
+        position_error=result.position_error,
+        orientation_error=result.orientation_error,
+        iterations=result.iterations,
+        message="Pink IK solution rejected by collision check",
+    )
 
 
 __all__ = ["PinkIK", "PinkIKDependencyError"]
