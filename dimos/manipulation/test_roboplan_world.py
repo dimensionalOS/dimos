@@ -41,6 +41,20 @@ class FakeCollisionContext:
         return self.scene.hasCollisions(q)
 
 
+class FakeJointConfiguration:
+    def __init__(
+        self, joint_names: list[str] | None = None, positions: np.ndarray | None = None
+    ) -> None:
+        self.joint_names = joint_names or []
+        self.positions = np.asarray(positions if positions is not None else [], dtype=np.float64)
+
+
+class FakeJointPath:
+    def __init__(self, joint_names: list[str], positions: list[np.ndarray]) -> None:
+        self.joint_names = joint_names
+        self.positions = positions
+
+
 class FakeScene:
     def __init__(self, *args: Any) -> None:
         self.constructor_args = args
@@ -106,9 +120,16 @@ class FakeRRT:
         self.scene = scene
         self.options = options
 
-    def plan(self, q_start: np.ndarray, q_goal: np.ndarray) -> list[np.ndarray]:
-        midpoint = (np.asarray(q_start) + np.asarray(q_goal)) / 2.0
-        return [np.asarray(q_start), midpoint, np.asarray(q_goal)]
+    def plan(
+        self, q_start: FakeJointConfiguration, q_goal: FakeJointConfiguration
+    ) -> FakeJointPath:
+        assert isinstance(q_start, FakeJointConfiguration)
+        assert isinstance(q_goal, FakeJointConfiguration)
+        midpoint = (np.asarray(q_start.positions) + np.asarray(q_goal.positions)) / 2.0
+        return FakeJointPath(
+            q_start.joint_names,
+            [np.asarray(q_start.positions), midpoint, np.asarray(q_goal.positions)],
+        )
 
 
 def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -116,6 +137,7 @@ def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     core = ModuleType("roboplan.core")
     core.Scene = FakeScene  # type: ignore[attr-defined]
     core.CollisionContext = FakeCollisionContext  # type: ignore[attr-defined]
+    core.JointConfiguration = FakeJointConfiguration  # type: ignore[attr-defined]
 
     def has_collisions_along_path(
         scene: FakeScene,

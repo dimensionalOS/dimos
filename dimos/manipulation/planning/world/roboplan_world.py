@@ -813,13 +813,26 @@ class RoboPlanWorld:
             raise ValueError("roboplan.rrt does not expose RRT")
         self._require_scene()
         planner = rrt_cls(self._scene, options) if options is not None else rrt_cls(self._scene)
-        result = planner.plan(q_start, q_goal)
+        start_config = self._to_native_joint_configuration(robot_id, q_start)
+        goal_config = self._to_native_joint_configuration(robot_id, q_goal)
+        result = planner.plan(start_config, goal_config)
+        if result is None:
+            raise ValueError("RoboPlan RRT returned no path")
         return self._extract_native_path(result)
 
+    def _to_native_joint_configuration(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> Any:
+        joint_config_cls = getattr(self._core, "JointConfiguration", None)
+        if joint_config_cls is None:
+            raise ValueError("roboplan.core does not expose JointConfiguration")
+        robot = self._get_robot(robot_id)
+        return joint_config_cls(robot.config.joint_names, np.asarray(q, dtype=np.float64))
+
     def _extract_native_path(self, result: Any) -> list[NDArray[np.float64]]:
+        if result is None:
+            raise ValueError("RoboPlan RRT returned no path")
         if isinstance(result, (list, tuple)):
             return [np.asarray(q, dtype=np.float64) for q in result]
-        for attr in ("path", "joint_path", "waypoints"):
+        for attr in ("positions", "path", "joint_path", "waypoints"):
             value = getattr(result, attr, None)
             if value is not None:
                 return [np.asarray(q, dtype=np.float64) for q in value]
