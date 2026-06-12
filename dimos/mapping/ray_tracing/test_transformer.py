@@ -50,6 +50,11 @@ def test_emit_every_n_yields_on_cadence_and_flushes_remainder() -> None:
     assert [r.tags["frame_count"] for r in results] == [3, 6, 7]
 
 
+def test_negative_emit_every_is_rejected() -> None:
+    with pytest.raises(ValueError, match="emit_every"):
+        RayTraceMap(emit_every=-1)
+
+
 def test_pose_propagates_to_emitted_obs() -> None:
     pose = (1.5, -2.0, 0.5)
     obs = _obs(_cube(), ts=1.0, pose=pose)

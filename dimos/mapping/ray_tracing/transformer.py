@@ -52,6 +52,8 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         emit_local: bool = False,
         region_percentile: float = 95.0,
     ) -> None:
+        if emit_every < 0:
+            raise ValueError(f"emit_every must be >= 0, got {emit_every}")
         self.voxel_size = voxel_size
         self.max_range = max_range
         self.ray_subsample = ray_subsample
