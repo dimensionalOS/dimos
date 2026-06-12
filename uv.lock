@@ -1952,6 +1952,7 @@ all = [
     { name = "openai" },
     { name = "opencv-contrib-python" },
     { name = "pillow" },
+    { name = "pin-pink" },
     { name = "piper-sdk" },
     { name = "playground" },
     { name = "plotly" },
@@ -1963,6 +1964,7 @@ all = [
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "python-multipart" },
     { name = "pyyaml" },
+    { name = "qpsolvers", extra = ["proxqp"] },
     { name = "reportlab" },
     { name = "rerun-sdk" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2044,11 +2046,13 @@ manipulation = [
     { name = "drake", version = "1.49.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform != 'darwin'" },
     { name = "kaleido" },
     { name = "matplotlib" },
+    { name = "pin-pink" },
     { name = "piper-sdk" },
     { name = "plotly" },
     { name = "pycollada" },
     { name = "pyrealsense2-extended", marker = "sys_platform != 'darwin'" },
     { name = "pyyaml" },
+    { name = "qpsolvers", extra = ["proxqp"] },
     { name = "trimesh" },
     { name = "xacro" },
     { name = "xarm-python-sdk" },
@@ -2091,10 +2095,6 @@ perception = [
     { name = "pillow" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
-]
-pink = [
-    { name = "pin-pink" },
-    { name = "qpsolvers", extra = ["proxqp"] },
 ]
 psql = [
     { name = "psycopg2-binary" },
@@ -2404,7 +2404,7 @@ requires-dist = [
     { name = "opencv-python" },
     { name = "pillow", marker = "extra == 'perception'" },
     { name = "pin", specifier = ">=3.3.0" },
-    { name = "pin-pink", marker = "extra == 'pink'", specifier = ">=4.2.0" },
+    { name = "pin-pink", marker = "extra == 'manipulation'", specifier = ">=4.2.0" },
     { name = "piper-sdk", marker = "extra == 'manipulation'" },
     { name = "playground", marker = "extra == 'sim'", specifier = ">=0.0.5" },
     { name = "plotext", specifier = "==5.3.2" },
@@ -2424,7 +2424,7 @@ requires-dist = [
     { name = "python-multipart", marker = "extra == 'misc'", specifier = ">=0.0.27" },
     { name = "pyturbojpeg", specifier = "==1.8.2" },
     { name = "pyyaml", marker = "extra == 'manipulation'", specifier = ">=6.0" },
-    { name = "qpsolvers", extras = ["proxqp"], marker = "extra == 'pink'", specifier = ">=4.12.0" },
+    { name = "qpsolvers", extras = ["proxqp"], marker = "extra == 'manipulation'", specifier = ">=4.12.0" },
     { name = "reactivex" },
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
     { name = "rerun-sdk", specifier = "==0.32.0a1" },
@@ -2461,7 +2461,7 @@ requires-dist = [
     { name = "xformers", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
-provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "pink", "cpu", "cuda", "psql", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
+provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "psql", "sim", "mapping", "drone", "dds", "base", "apriltag", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]

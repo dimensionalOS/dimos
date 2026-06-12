@@ -119,12 +119,12 @@ module.execute()  # Sends to coordinator
 | `DrakeOptimizationIK` | Drake-specific | Full nonlinear optimization |
 | `PinkIK` | Pinocchio/Pink | Local differential IK with task QP composition |
 
-`PinkIK` is selectable with `kinematics_name="pink"`. It is an optional backend:
-install it with `uv sync --extra all --extra pink`. The `pink` extra installs the
-PyPI package `pin-pink` (import name `pink`) and a `qpsolvers` backend
-(`proxqp`). Pink is local/differential rather than global IK, so it can converge
-to local minima; collision checks remain enforced by the planning world before a
-candidate is accepted.
+`PinkIK` is selectable with `kinematics_name="pink"`. It is installed with the
+`manipulation` optional dependencies, which include the PyPI package `pin-pink`
+(import name `pink`) and a `qpsolvers` backend (`proxqp`). Pink is
+local/differential rather than global IK, so it can converge to local minima;
+collision checks remain enforced by the planning world before a candidate is
+accepted.
 
 ### World Backends
 
@@ -140,54 +140,6 @@ candidate is accepted.
 | `xarm7-planner-coordinator` | XArm 7-DOF with coordinator |
 | `dual-xarm6-planner` | Dual XArm 6-DOF |
 | `xarm-perception-sim` | XArm 7-DOF simulation perception stack |
-
-### Pink IK Manual QA
-
-Run the existing simulation stack with Pink selected by CLI override in one
-terminal:
-
-```bash
-uv sync --extra all --extra pink
-uv run dimos --simulation run xarm-perception-sim \
-  -o pickandplacemodule.kinematics_name=pink
-```
-
-For blueprints that instantiate `ManipulationModule` directly, use the matching
-module prefix instead, for example
-`-o manipulationmodule.kinematics_name=pink`.
-
-In another terminal, open the manipulation client:
-
-```bash
-uv run python -i -m dimos.manipulation.planning.examples.manipulation_client
-```
-
-Then run:
-
-```python
-robots()
-joints()
-ee()
-ik_pose(0.45, 0.0, 0.25)  # IK only, no path planning
-ik_pose(0.45, 0.0, 0.25, seed_joints=[0.0] * 7)  # optional local-IK seed
-plan_pose(0.45, 0.0, 0.25)
-preview()
-```
-
-`ik_pose(...)` is a client convenience wrapper: it builds a `Pose` from xyz/rpy
-arguments and calls the `solve_ik(Pose, ...)` RPC. The optional `seed_joints`
-argument initializes local IK backends such as Pink from a specific joint
-configuration; omit it to use the robot's current joint state.
-
-For a baseline comparison, stop the Pink stack, start the Jacobian-backed
-simulation stack, and repeat the same client calls:
-
-```bash
-uv run dimos --simulation run xarm-perception-sim
-```
-
-This QA path is simulation-only. Do not run `execute()` on physical hardware as
-part of the Pink backend smoke test.
 
 ## Directory Structure
 
