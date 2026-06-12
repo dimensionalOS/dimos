@@ -17,7 +17,6 @@ def _run_beacon(robot_name: str) -> None:
     advertiser = Advertiser(
         robot_name=robot_name,
         lcm_url=_lcm_url(),
-        port=7667,
     )
     stop_event = threading.Event()
 

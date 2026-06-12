@@ -5,8 +5,7 @@ import socket
 from zeroconf import ServiceInfo, Zeroconf
 
 SERVICE_TYPE = "_dimensional._tcp.local."
-
-
+_PORT = 7667
 _VIRTUAL_IFACE_PREFIXES = ("docker", "virbr", "lo", "tun", "veth", "br-")
 
 
@@ -37,13 +36,11 @@ def _encode_properties(props: dict[str, str]) -> dict[bytes, bytes]:
 class Advertiser:
     """Registers a static mDNS beacon so the harness can discover this robot."""
 
-    def __init__(self, robot_name: str, lcm_url: str, port: int) -> None:
+    def __init__(self, robot_name: str, lcm_url: str) -> None:
         self._robot_name = robot_name.split(".")[0]
         self._lcm_url = lcm_url
         self._zeroconf: Zeroconf | None = None
         self._info: ServiceInfo | None = None
-        self._server: str = socket.gethostname() + ".local."
-        self._port = port
 
     def start(self) -> None:
         ip = _local_ip()
@@ -52,11 +49,10 @@ class Advertiser:
             SERVICE_TYPE,
             f"{self._robot_name}.{SERVICE_TYPE}",
             addresses=[socket.inet_aton(ip)],
-            port=self._port,
+            port=_PORT,
             properties=_encode_properties({
                 "lcm_url": self._lcm_url,
             }),
-            server=self._server,
         )
         self._zeroconf.register_service(self._info)
 

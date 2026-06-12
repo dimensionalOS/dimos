@@ -49,7 +49,7 @@ def setup_wizard() -> None:
         return
 
     if not install():
-        print("  ✗ Service installation failed — run `dimwizard install` to retry.\n")
+        print("  ✗ Service installation failed — re-run `dimos run` to retry.\n")
         return
     save_config(robot_name)
     print(f"  ✓ {robot_name} is now discoverable on the network\n")
