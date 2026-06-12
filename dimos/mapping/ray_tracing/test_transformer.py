@@ -15,6 +15,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
+
+pytest.importorskip("dimos_voxel_ray_tracing")
 
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
 from dimos.memory2.type.observation import Observation
