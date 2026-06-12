@@ -248,12 +248,14 @@ class Image(Timestamped):
     @property
     def dtype(self) -> np.dtype[Any]:
         if self.is_encoded:
-            return np.dtype(self.codec_metadata.get("dtype", "uint8"))
+            return np.dtype(str(self.codec_metadata.get("dtype", "uint8")))
         return self.require_raw("dtype").dtype
 
     def copy(self) -> Image:
         data: np.ndarray[Any, np.dtype[Any]] | bytes
         if self.is_encoded:
+            if not isinstance(self.data, bytes):
+                raise ValueError("Encoded Image payload must be bytes")
             data = bytes(self.data)
         else:
             data = self.require_raw("copy").copy()

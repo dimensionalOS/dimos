@@ -169,7 +169,7 @@ class H264LcmTransport(LCMTransport):  # type: ignore[type-arg]
         type: type,
         config: Any | None = None,
         decode_images: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:  # type: ignore[no-untyped-def]
         from dimos.protocol.pubsub.impl.h264_lcm import H264LCM
         from dimos.protocol.video.h264 import H264Config

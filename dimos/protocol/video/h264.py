@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import numpy as np
 
@@ -184,7 +184,7 @@ class AiortcH264Codec:
         decoded_frames = self._decoder.decode(frame)
         if not decoded_frames:
             raise VideoDecodeGapError("H.264 decoder produced no frame")
-        return self._from_video_frame(decoded_frames[0], image)
+        return self._from_video_frame(cast("av.VideoFrame", decoded_frames[0]), image)
 
     def _to_video_frame(self, image: Image) -> av.VideoFrame:
         fmt = _av_input_format(image.format)

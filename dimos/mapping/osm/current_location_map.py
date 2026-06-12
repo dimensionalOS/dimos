@@ -74,7 +74,8 @@ class CurrentLocationMap:
 
         assert self._map_image is not None
         assert self._position is not None
-        pil_image = PILImage.fromarray(self._map_image.image.data)
+        map_data = self._map_image.image.require_raw("CurrentLocationMap._fetch_new_map")
+        pil_image = PILImage.fromarray(map_data)
         draw = ImageDraw.Draw(pil_image)
         x, y = self._map_image.latlon_to_pixel(self._position)
         radius = 20
@@ -85,7 +86,7 @@ class CurrentLocationMap:
             width=3,
         )
 
-        self._map_image.image.data[:] = np.array(pil_image)
+        map_data[:] = np.array(pil_image)
 
     def _position_is_too_far_off_center(self) -> bool:
         x, y = self._map_image.latlon_to_pixel(self._position)  # type: ignore[arg-type, union-attr]

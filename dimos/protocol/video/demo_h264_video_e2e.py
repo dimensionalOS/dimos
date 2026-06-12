@@ -153,7 +153,7 @@ class _H264RecorderMixin:
 
         for name, port in recorder.inputs.items():
             stream: Stream[Image]
-            h264_streams = getattr(self, "h264_streams", frozenset())
+            h264_streams: frozenset[str] = getattr(self, "h264_streams", frozenset())
             if name in h264_streams:
                 stream = recorder.store.stream(name, port.type, codec="h264")
             else:
