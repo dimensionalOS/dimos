@@ -38,6 +38,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.manipulation.planning.factory import create_planning_specs, create_world
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
@@ -51,7 +52,7 @@ from dimos.manipulation.visualization.config import (
     ManipulationVisualizationConfig,
     NoManipulationVisualizationConfig,
 )
-from dimos.manipulation.visualization.factory import create_manipulation_runtime_specs
+from dimos.manipulation.visualization.factory import create_manipulation_visualization
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -172,15 +173,21 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
-        runtime_specs = create_manipulation_runtime_specs(
-            self.config,
-            manipulation_module=self,
+        world = create_world(visualization=self.config.visualization)
+        planning_specs = create_planning_specs(
+            world=world,
+            planner_name=self.config.planner_name,
+            kinematics_name=self.config.kinematics_name,
         )
-        planning_specs = runtime_specs.planning
         self._world_monitor = planning_specs.world_monitor
         self._planner = planning_specs.planner
         self._kinematics = planning_specs.kinematics
-        visualization = runtime_specs.visualization
+        visualization = create_manipulation_visualization(
+            self.config.visualization,
+            world=world,
+            world_monitor=self._world_monitor,
+            manipulation_module=self,
+        )
 
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)

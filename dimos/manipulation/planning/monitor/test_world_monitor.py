@@ -199,19 +199,20 @@ def test_world_monitor_syncs_planning_scene_to_visualization() -> None:
     assert scene.robots["robot-1"].name == "arm"
 
 
-def test_create_world_monitor_enable_viz_uses_world_visualization(monkeypatch) -> None:
-    created = {}
+def test_create_planning_specs_wraps_existing_world(monkeypatch) -> None:
     fake_world = FakeWorld()
+    fake_kinematics = object()
+    fake_planner = object()
 
-    def fake_create_world(*, backend: str = "drake", enable_viz: bool = False, **kwargs):
-        created["world"] = (backend, enable_viz)
-        return fake_world
+    monkeypatch.setattr(planning_factory, "create_kinematics", lambda name: fake_kinematics)
+    monkeypatch.setattr(planning_factory, "create_planner", lambda name: fake_planner)
 
-    monkeypatch.setattr(planning_factory, "create_world", fake_create_world)
+    planning_specs = planning_factory.create_planning_specs(world=fake_world)  # type: ignore[arg-type]
 
-    monitor = planning_factory.create_world_monitor(enable_viz=True)
-    assert created["world"] == ("drake", True)
-    assert monitor.visualization is fake_world
+    assert planning_specs.world_monitor.world is fake_world
+    assert planning_specs.world_monitor.visualization is None
+    assert planning_specs.kinematics is fake_kinematics
+    assert planning_specs.planner is fake_planner
 
 
 def test_world_monitor_delegates_planning_target_updates_to_visualization() -> None:

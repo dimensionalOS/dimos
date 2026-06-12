@@ -21,7 +21,7 @@ from pydantic import ValidationError
 
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
-from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.manipulation.visualization.config import (
     MeshcatVisualizationConfig,
     NoManipulationVisualizationConfig,
@@ -172,19 +172,22 @@ def test_config_meshcat_requires_world_visualization() -> None:
 def test_create_visualization_none_returns_none() -> None:
     assert (
         create_manipulation_visualization(
-            NoManipulationVisualizationConfig(), world_monitor=MagicMock()
+            NoManipulationVisualizationConfig(), world=MagicMock(), world_monitor=MagicMock()
         )
         is None
     )
 
 
 def test_create_visualization_meshcat_accepts_structural_world() -> None:
-    fake_world = FakeVisualization()
+    fake_world = FakeWorld()
     assert isinstance(fake_world, VisualizationSpec)
     world_monitor = MagicMock()
-    world_monitor.visualization = fake_world
     assert (
-        create_manipulation_visualization(MeshcatVisualizationConfig(), world_monitor=world_monitor)
+        create_manipulation_visualization(
+            MeshcatVisualizationConfig(),
+            world=cast("WorldSpec", fake_world),
+            world_monitor=world_monitor,
+        )
         is fake_world
     )
 
@@ -192,8 +195,11 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
 def test_create_visualization_meshcat_rejects_non_visualization_world() -> None:
     try:
         world_monitor = MagicMock()
-        world_monitor.visualization = None
-        create_manipulation_visualization(MeshcatVisualizationConfig(), world_monitor=world_monitor)
+        create_manipulation_visualization(
+            MeshcatVisualizationConfig(),
+            world=cast("WorldSpec", object()),
+            world_monitor=world_monitor,
+        )
         raise AssertionError("expected ValueError")
     except ValueError as exc:
         assert "implements VisualizationSpec" in str(exc)

@@ -19,6 +19,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from dimos.manipulation.visualization.config import (
+    ManipulationVisualizationConfig,
+    NoManipulationVisualizationConfig,
+)
+
 if TYPE_CHECKING:
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
     from dimos.manipulation.planning.spec.protocols import (
@@ -39,30 +44,17 @@ class PlanningSpecs:
 
 def create_world(
     backend: str = "drake",
-    enable_viz: bool = False,
+    visualization: ManipulationVisualizationConfig | None = None,
     **kwargs: Any,
 ) -> WorldSpec:
-    """Create a world instance. backend='drake', enable_viz for Meshcat."""
+    """Create a world instance. backend='drake' only for now."""
+    visualization = visualization or NoManipulationVisualizationConfig()
     if backend == "drake":
         from dimos.manipulation.planning.world.drake_world import DrakeWorld
 
-        return DrakeWorld(enable_viz=enable_viz, **kwargs)
+        return DrakeWorld(enable_viz=visualization.requires_world_visualization, **kwargs)
     else:
         raise ValueError(f"Unknown backend: {backend}. Available: ['drake']")
-
-
-def create_world_monitor(
-    backend: str = "drake",
-    enable_viz: bool = False,
-    **kwargs: Any,
-) -> WorldMonitor:
-    """Create a world and wrap it in a monitor."""
-    from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
-    from dimos.manipulation.planning.spec.protocols import VisualizationSpec
-
-    world = create_world(backend=backend, enable_viz=enable_viz, **kwargs)
-    visualization = world if enable_viz and isinstance(world, VisualizationSpec) else None
-    return WorldMonitor(world=world, visualization=visualization)
 
 
 def create_kinematics(
@@ -100,13 +92,15 @@ def create_planner(
 
 
 def create_planning_specs(
-    enable_viz: bool = False,
+    world: WorldSpec,
     planner_name: str = "rrt_connect",
     kinematics_name: str = "jacobian",
 ) -> PlanningSpecs:
-    """Create planning specs from configuration in one place."""
+    """Create planning specs around an already-created world."""
+    from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+
     return PlanningSpecs(
-        world_monitor=create_world_monitor(backend="drake", enable_viz=enable_viz),
+        world_monitor=WorldMonitor(world=world),
         kinematics=create_kinematics(name=kinematics_name),
         planner=create_planner(name=planner_name),
     )
@@ -114,17 +108,17 @@ def create_planning_specs(
 
 def create_planning_stack(
     robot_config: Any,
-    enable_viz: bool = False,
+    visualization: ManipulationVisualizationConfig | None = None,
     planner_name: str = "rrt_connect",
     kinematics_name: str = "jacobian",
 ) -> tuple[WorldSpec, KinematicsSpec, PlannerSpec, str]:
     """Create complete planning stack. Returns (world, kinematics, planner, robot_id)."""
+    world = create_world(visualization=visualization)
     planning_specs = create_planning_specs(
-        enable_viz=enable_viz,
+        world=world,
         planner_name=planner_name,
         kinematics_name=kinematics_name,
     )
-    world = planning_specs.world_monitor.world
 
     robot_id = world.add_robot(robot_config)
     world.finalize()
