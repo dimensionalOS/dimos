@@ -24,6 +24,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
+from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -69,6 +70,7 @@ class WorldMonitor:
         )
         self._lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
+        self._robot_configs: dict[WorldRobotID, RobotModelConfig] = {}
         self._state_monitors: dict[WorldRobotID, RobotStateMonitor] = {}
         self._obstacle_monitor: WorldObstacleMonitor | None = None
         self._viz_thread: threading.Thread | None = None
@@ -82,14 +84,21 @@ class WorldMonitor:
         with self._lock:
             robot_id = self._world.add_robot(config)
             self._robot_joints[robot_id] = config.joint_names
+            self._robot_configs[robot_id] = config
             logger.info(f"Added robot '{config.name}' as '{robot_id}'")
-        register_robot = getattr(self._visualization, "register_robot", None)
-        if callable(register_robot):
-            try:
-                register_robot(robot_id, config)
-            except Exception as e:
-                logger.warning(f"Failed to register robot '{config.name}' with visualization: {e}")
         return robot_id
+
+    def planning_scene_info(self) -> PlanningSceneInfo:
+        """Return a stable metadata snapshot of the initialized planning scene."""
+        with self._lock:
+            return PlanningSceneInfo(robots=dict(self._robot_configs))
+
+    def sync_visualization_scene(self) -> None:
+        """Synchronize startup scene metadata to the attached visualization."""
+        visualization = self._visualization
+        if visualization is None:
+            return
+        visualization.initialize_scene(self.planning_scene_info())
 
     def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs."""

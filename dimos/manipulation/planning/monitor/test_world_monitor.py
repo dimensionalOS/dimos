@@ -19,6 +19,7 @@ from typing import Any
 
 from dimos.manipulation.planning.monitor import world_monitor as world_monitor_module
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -103,6 +104,9 @@ class FakeWorld:
     def get_visualization_url(self):
         return None
 
+    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
+        return None
+
     def publish_visualization(self, ctx=None) -> None:
         return None
 
@@ -132,6 +136,9 @@ class FakeViz:
     def get_visualization_url(self):
         return None
 
+    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
+        self.calls.append(("initialize_scene", scene))
+
     def publish_visualization(self, ctx=None) -> None:
         return None
 
@@ -146,9 +153,6 @@ class FakeViz:
 
     def close(self) -> None:
         self.calls.append(("close", None))
-
-    def register_robot(self, robot_id, config) -> None:
-        self.calls.append(("register_robot", robot_id, config))
 
     def set_planning_target(self, robot_id, joints, pose=None, feasible=None) -> None:
         self.calls.append(("set_planning_target", robot_id, joints, pose, feasible))
@@ -168,7 +172,7 @@ def _robot_config() -> RobotModelConfig:
     )
 
 
-def test_world_monitor_uses_injected_visualization_and_registers_robot(monkeypatch) -> None:
+def test_world_monitor_add_robot_records_scene_without_visualization_probe(monkeypatch) -> None:
     fake_world = FakeWorld()
     fake_viz = FakeViz()
     created = {}
@@ -184,8 +188,27 @@ def test_world_monitor_uses_injected_visualization_and_registers_robot(monkeypat
 
     monitor.add_robot(_robot_config())
     assert fake_world.calls[0][0] == "add_robot"
-    assert fake_viz.calls[0][0] == "register_robot"
-    assert fake_viz.calls[0][1] == "robot-1"
+    assert fake_viz.calls == []
+    assert monitor.planning_scene_info().robots["robot-1"].name == "arm"
+
+
+def test_world_monitor_syncs_planning_scene_to_visualization(monkeypatch) -> None:
+    fake_world = FakeWorld()
+    fake_viz = FakeViz()
+
+    def fake_create_world(*, backend: str = "drake", enable_viz: bool = False, **kwargs):
+        return fake_world
+
+    monkeypatch.setattr(world_monitor_module, "create_world", fake_create_world)
+
+    monitor = world_monitor_module.WorldMonitor(visualization=fake_viz)
+    monitor.add_robot(_robot_config())
+    monitor.sync_visualization_scene()
+
+    assert fake_viz.calls[0][0] == "initialize_scene"
+    scene = fake_viz.calls[0][1]
+    assert isinstance(scene, PlanningSceneInfo)
+    assert scene.robots["robot-1"].name == "arm"
 
 
 def test_world_monitor_enable_viz_uses_world_visualization(monkeypatch) -> None:

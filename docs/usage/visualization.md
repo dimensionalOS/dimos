@@ -195,6 +195,12 @@ methods through a small in-process adapter. GUI callbacks enqueue operations ins
 state/path containers at the read boundary, then updates the Viser scene after manipulation/world
 accessors have returned.
 
+External manipulation visualizers are initialized from a backend-neutral planning-scene snapshot
+after the planning world has added its robots. This snapshot maps world robot IDs to
+`RobotModelConfig` metadata so Viser can prepare current, target, and transient preview robot
+visuals without `WorldMonitor` depending on Viser-specific hooks. Embedded Meshcat visualization
+does not need extra setup because it observes the Drake world directly.
+
 Panel execution is opt-in. Leave `visualization_options={"allow_plan_execute": False}` unless
 the operator intentionally wants the browser panel to call the existing manipulation execution path.
 

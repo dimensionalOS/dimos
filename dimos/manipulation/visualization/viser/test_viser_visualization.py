@@ -20,6 +20,7 @@ from typing import cast
 
 import numpy as np
 
+from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.animation import sampled_joint_path_frames
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -34,6 +35,7 @@ from dimos.manipulation.visualization.viser.state import (
     TargetEvaluationRequest,
     TargetStatus,
 )
+from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
 from dimos.msgs.geometry_msgs.Pose import Pose
 
 
@@ -206,6 +208,28 @@ def test_gui_builds_controls_in_manipulation_panel_folder() -> None:
         assert "plan" in gui._handles
     finally:
         gui.close()
+
+
+def test_visualizer_initializes_all_scene_robots_from_planning_scene() -> None:
+    calls = []
+    fake_scene = SimpleNamespace(
+        register_robot=lambda robot_id, config: calls.append((robot_id, config.name))
+    )
+    fake_gui = SimpleNamespace(refresh=lambda: calls.append(("refresh", "gui")))
+    visualizer = ViserManipulationVisualizer.__new__(ViserManipulationVisualizer)
+    cast("Any", visualizer)._closed = False
+    cast("Any", visualizer)._scene = fake_scene
+    cast("Any", visualizer)._gui = fake_gui
+    scene = PlanningSceneInfo(
+        robots={
+            "robot-1": SimpleNamespace(name="arm1"),
+            "robot-2": SimpleNamespace(name="arm2"),
+        }
+    )
+
+    visualizer.initialize_scene(scene)
+
+    assert calls == [("robot-1", "arm1"), ("robot-2", "arm2"), ("refresh", "gui")]
 
 
 class FakeMesh:

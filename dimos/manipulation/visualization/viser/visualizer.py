@@ -26,8 +26,11 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
-    from dimos.manipulation.planning.spec.config import RobotModelConfig
-    from dimos.manipulation.planning.spec.models import JointPath, WorldRobotID
+    from dimos.manipulation.planning.spec.models import (
+        JointPath,
+        PlanningSceneInfo,
+        WorldRobotID,
+    )
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -67,11 +70,14 @@ class ViserManipulationVisualizer:
         self._closed = False
         logger.info(f"Viser manipulation visualization: {self.get_visualization_url()}")
 
-    def register_robot(self, robot_id: WorldRobotID, config: RobotModelConfig) -> None:
-        """Register robot metadata after the planning world adds the robot."""
+    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
+        """Initialize Viser robot visuals from planning-scene metadata."""
         if self._closed:
             return
-        self._scene.register_robot(str(robot_id), config)
+        for robot_id, config in scene.robots.items():
+            self._scene.register_robot(str(robot_id), config)
+        if self._gui is not None:
+            self._gui.refresh()
 
     def get_visualization_url(self) -> str | None:
         return self._runtime.url

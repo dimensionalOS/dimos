@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any, cast
 from unittest.mock import MagicMock
 
+from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.manipulation.visualization.factory import (
     create_manipulation_visualization,
@@ -25,6 +26,9 @@ from dimos.manipulation.visualization.factory import (
 
 
 class FakeVisualization:
+    def initialize_scene(self, scene: PlanningSceneInfo) -> None:
+        return None
+
     def get_visualization_url(self) -> str | None:
         return None
 

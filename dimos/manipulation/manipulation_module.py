@@ -185,7 +185,6 @@ class ManipulationModule(Module):
             manipulation_module=self,
             options=self.config.visualization_options,
         )
-        self._world_monitor.set_visualization(visualization)
 
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)
@@ -217,6 +216,9 @@ class ManipulationModule(Module):
 
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
+
+        self._world_monitor.set_visualization(visualization)
+        self._world_monitor.sync_visualization_scene()
 
         if self._world_monitor.visualization is not None:
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
