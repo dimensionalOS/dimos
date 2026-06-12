@@ -128,7 +128,7 @@ def _uninstall_mac() -> None:
         print("dimwizard is not installed.")
         return
     subprocess.run(["launchctl", "unload", "-w", str(_PLIST_PATH)], capture_output=True)
-    _PLIST_PATH.unlink()
+    _PLIST_PATH.unlink(missing_ok=True)
     print("  dimwizard removed.")
 
 
@@ -182,6 +182,6 @@ def _uninstall_linux() -> None:
         subprocess.run(["systemctl", "--user", "disable", "--now", "dimwizard"], check=True)
     except subprocess.CalledProcessError:
         pass
-    _SYSTEMD_PATH.unlink()
+    _SYSTEMD_PATH.unlink(missing_ok=True)
     subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
     print("  dimwizard removed.")
