@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import platform
 import shlex
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -15,9 +14,6 @@ _LOG_PATH = Path.home() / "Library" / "Logs" / "dimwizard.log"
 
 
 def _find_executable() -> list[str]:
-    found = shutil.which("dimwizard")
-    if found:
-        return [found]
     return [sys.executable, "-m", "dimwizard"]
 
 
@@ -45,7 +41,6 @@ def uninstall() -> None:
         _uninstall_linux()
 
 
-# ── macOS ─────────────────────────────────────────────────────────────────────
 
 def _install_mac() -> bool:
     _PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -91,6 +86,7 @@ def _install_mac() -> bool:
     )
     if result.returncode != 0:
         print(f"  Warning: launchctl load failed: {result.stderr.strip()}")
+        _PLIST_PATH.unlink(missing_ok=True)
         return False
     print(f"  dimwizard installed — logs at {_LOG_PATH}")
     return True
@@ -105,7 +101,6 @@ def _uninstall_mac() -> None:
     print("  dimwizard removed.")
 
 
-# ── Linux ─────────────────────────────────────────────────────────────────────
 
 def _install_linux() -> bool:
     _SYSTEMD_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -136,9 +131,11 @@ WantedBy=default.target
         return True
     except FileNotFoundError:
         print(f"  systemctl not found — start manually: {exec_start}")
+        _SYSTEMD_PATH.unlink(missing_ok=True)
         return False
     except subprocess.CalledProcessError as e:
         print(f"  Failed to enable service: {e}")
+        _SYSTEMD_PATH.unlink(missing_ok=True)
         return False
 
 

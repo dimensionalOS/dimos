@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import socket
 
 from zeroconf import ServiceInfo, Zeroconf
@@ -29,16 +30,13 @@ def _local_ip() -> str:
     return socket.gethostbyname(socket.gethostname())
 
 
-def _encode_properties(props: dict[str, str]) -> dict[bytes, bytes]:
-    return {k.encode(): v.encode() for k, v in props.items()}
-
 
 class Advertiser:
     """Registers a static mDNS beacon so the harness can discover this robot."""
 
-    def __init__(self, robot_name: str, lcm_url: str) -> None:
-        self._robot_name = robot_name.split(".")[0]
-        self._lcm_url = lcm_url
+    def __init__(self) -> None:
+        self._robot_name = os.environ.get("DIMENSIONAL_ROBOT_NAME", socket.gethostname().split(".")[0])
+        self._lcm_url = os.environ.get("LCM_DEFAULT_URL", "udpm://239.255.76.67:7667?ttl=1")
         self._zeroconf: Zeroconf | None = None
         self._info: ServiceInfo | None = None
 
@@ -50,9 +48,7 @@ class Advertiser:
             f"{self._robot_name}.{SERVICE_TYPE}",
             addresses=[socket.inet_aton(ip)],
             port=_PORT,
-            properties=_encode_properties({
-                "lcm_url": self._lcm_url,
-            }),
+            properties={b"lcm_url": self._lcm_url.encode()},
         )
         self._zeroconf.register_service(self._info)
 
