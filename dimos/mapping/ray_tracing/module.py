@@ -43,6 +43,10 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Bounds for the health of voxels. Positive health means voxel is occupied.
     min_health: int = -2
     max_health: int = 1
+    # Spare a clearing miss when |ray dot surface normal| is below this.
+    graze_cos: float = 0.7
+    # Only spare a voxel whose neighborhood was hit within this many frames.
+    recency_window: int = 15
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
