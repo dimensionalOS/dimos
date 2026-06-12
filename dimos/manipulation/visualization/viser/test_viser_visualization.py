@@ -33,6 +33,7 @@ from dimos.manipulation.visualization.viser.state import (
     PanelPlanState,
     PlanStatus,
     TargetEvaluationRequest,
+    TargetEvaluationWorker,
     TargetStatus,
 )
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
@@ -206,6 +207,7 @@ def test_gui_builds_controls_in_manipulation_panel_folder() -> None:
         assert "status" in gui._handles
         assert "robot" in gui._handles
         assert "plan" in gui._handles
+        assert cast("Any", gui._operation_worker)._timeout_seconds is None
     finally:
         gui.close()
 
@@ -922,6 +924,31 @@ def test_gui_safe_execute_requires_fresh_matching_plan_and_clear_resets_path() -
         gui.close()
 
 
+def test_gui_plan_target_failure_recovers_action_state() -> None:
+    adapter = make_adapter_with_robot()
+    gui = ViserPanelGui(FakeGuiServer(), adapter, ViserVisualizationConfig(panel_enabled=True))
+    gui.start()
+    try:
+        gui._operation_worker.stop()
+        object.__setattr__(
+            gui,
+            "_operation_worker",
+            SimpleNamespace(submit=lambda operation: operation(), stop=lambda: None),
+        )
+        gui.state.selected_robot = "missing"
+        gui.state.target_status = TargetStatus.FEASIBLE
+        gui.state.manipulation_state = "IDLE"
+
+        gui._submit_plan()
+
+        assert gui.state.action_status == ActionStatus.IDLE
+        assert gui.state.plan_state.status == PlanStatus.FAILED
+        assert gui.state.error == "No robot config"
+        assert gui.state.last_result == "plan_to_joints=False"
+    finally:
+        gui.close()
+
+
 def test_operation_worker_coalesces_pending_requests() -> None:
     errors = []
     calls = []
@@ -934,6 +961,17 @@ def test_operation_worker_coalesces_pending_requests() -> None:
 
     assert calls == ["new"]
     assert errors == []
+
+
+def test_target_evaluation_worker_coalesces_pending_requests() -> None:
+    worker = TargetEvaluationWorker(lambda request: {}, lambda request, result: None)
+    old_request = TargetEvaluationRequest(sequence_id=1, source="joints", robot_name="arm")
+    new_request = TargetEvaluationRequest(sequence_id=2, source="joints", robot_name="arm")
+
+    worker.submit(old_request)
+    worker.submit(new_request)
+
+    assert worker._requests.get_nowait() is new_request
 
 
 def test_operation_worker_reports_timeout() -> None:

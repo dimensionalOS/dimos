@@ -150,10 +150,7 @@ class ViserPanelGui:
             self._handle_target_evaluation_request,
             self._apply_target_evaluation_result,
         )
-        self._operation_worker = OperationWorker(
-            self._set_error,
-            timeout_seconds=lambda: self.config.preview_request_timeout,
-        )
+        self._operation_worker = OperationWorker(self._set_error)
 
     def start(self) -> None:
         self._worker.start()
@@ -652,6 +649,7 @@ class ViserPanelGui:
             target = self._target_from_sliders(robot_name)
             if target is None:
                 self.state.plan_state.status = PlanStatus.FAILED
+                self._finish_operation("plan_to_joints=False", clear_error=False)
                 return
             ok = self.adapter.plan_to_joints(target, robot_name)
             if ok:
@@ -724,9 +722,10 @@ class ViserPanelGui:
 
         self._operation_worker.submit(operation)
 
-    def _finish_operation(self, result: str) -> None:
+    def _finish_operation(self, result: str, *, clear_error: bool = True) -> None:
         self.state.action_status = ActionStatus.IDLE
-        self.state.error = ""
+        if clear_error:
+            self.state.error = ""
         self.state.last_result = result
         self.refresh()
 

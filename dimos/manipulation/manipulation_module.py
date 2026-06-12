@@ -654,7 +654,7 @@ class ManipulationModule(Module):
         robot = self._get_robot()
         if robot is None:
             return False
-        robot_name, robot_id, _, _ = robot
+        robot_name, _, _, _ = robot
 
         self._planned_paths.pop(robot_name, None)
         self._planned_trajectories.pop(robot_name, None)

@@ -229,6 +229,7 @@ class TargetEvaluationWorker:
         self._handler = handler
         self._apply_result = apply_result
         self._requests: queue.Queue[TargetEvaluationRequest] = queue.Queue(maxsize=1)
+        self._submit_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -247,15 +248,13 @@ class TargetEvaluationWorker:
         self._thread = None
 
     def submit(self, request: TargetEvaluationRequest) -> None:
-        while True:
-            try:
-                self._requests.get_nowait()
-            except queue.Empty:
-                break
-        try:
+        with self._submit_lock:
+            while True:
+                try:
+                    self._requests.get_nowait()
+                except queue.Empty:
+                    break
             self._requests.put_nowait(request)
-        except queue.Full:
-            pass
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
@@ -283,6 +282,7 @@ class OperationWorker:
         self._on_error = on_error
         self._timeout_seconds = timeout_seconds
         self._requests: queue.Queue[Callable[[], object]] = queue.Queue(maxsize=1)
+        self._submit_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -299,15 +299,13 @@ class OperationWorker:
         self._thread = None
 
     def submit(self, operation: Callable[[], object]) -> None:
-        while True:
-            try:
-                self._requests.get_nowait()
-            except queue.Empty:
-                break
-        try:
+        with self._submit_lock:
+            while True:
+                try:
+                    self._requests.get_nowait()
+                except queue.Empty:
+                    break
             self._requests.put_nowait(operation)
-        except queue.Full:
-            pass
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
