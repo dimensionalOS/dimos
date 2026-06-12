@@ -21,7 +21,11 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.manipulation.planning.factory import create_world
+from dimos.manipulation.planning.factory import (
+    create_visualization,
+    create_world,
+    resolve_visualization_backend,
+)
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
@@ -56,12 +60,27 @@ class WorldMonitor:
         self,
         backend: str = "drake",
         enable_viz: bool = False,
+        visualization_backend: str | None = None,
+        visualization_config: Any | None = None,
+        manipulation_module: Any | None = None,
         **kwargs: Any,
     ) -> None:
         self._backend = backend
-        self._world: WorldSpec = create_world(backend=backend, enable_viz=enable_viz, **kwargs)
-        self._visualization: VisualizationSpec | None = (
-            self._world if isinstance(self._world, VisualizationSpec) else None
+        self._visualization_backend = resolve_visualization_backend(
+            visualization_backend,
+            enable_viz=enable_viz,
+        )
+        self._world: WorldSpec = create_world(
+            backend=backend,
+            enable_viz=self._visualization_backend == "meshcat",
+            **kwargs,
+        )
+        self._visualization: VisualizationSpec | None = create_visualization(
+            self._visualization_backend,
+            world=self._world,
+            world_monitor=self,
+            manipulation_module=manipulation_module,
+            config=visualization_config,
         )
         self._lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
@@ -79,7 +98,13 @@ class WorldMonitor:
             robot_id = self._world.add_robot(config)
             self._robot_joints[robot_id] = config.joint_names
             logger.info(f"Added robot '{config.name}' as '{robot_id}'")
-            return robot_id
+        register_robot = getattr(self._visualization, "register_robot", None)
+        if callable(register_robot):
+            try:
+                register_robot(robot_id, config)
+            except Exception as e:
+                logger.warning(f"Failed to register robot '{config.name}' with visualization: {e}")
+        return robot_id
 
     def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs."""
@@ -467,7 +492,7 @@ class WorldMonitor:
         self._viz_stop_event.clear()
         self._viz_thread = threading.Thread(
             target=self._visualization_loop,
-            name="MeshcatVizThread",
+            name="ManipulationVizThread",
             daemon=True,
         )
         self._viz_thread.start()
@@ -508,6 +533,11 @@ class WorldMonitor:
     def visualization(self) -> VisualizationSpec | None:
         """Get optional visualization backend."""
         return self._visualization
+
+    @property
+    def visualization_backend(self) -> str:
+        """Get resolved manipulation visualization backend."""
+        return self._visualization_backend
 
     def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
         """Get state monitor for a robot (may be None)."""

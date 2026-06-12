@@ -16,10 +16,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 if TYPE_CHECKING:
-    from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec, WorldSpec
+    from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+    from dimos.manipulation.planning.spec.protocols import (
+        KinematicsSpec,
+        PlannerSpec,
+        VisualizationSpec,
+        WorldSpec,
+    )
+
+ManipulationVisualizationBackend = Literal["meshcat", "viser", "none"]
 
 
 def create_world(
@@ -34,6 +42,59 @@ def create_world(
         return DrakeWorld(enable_viz=enable_viz, **kwargs)
     else:
         raise ValueError(f"Unknown backend: {backend}. Available: ['drake']")
+
+
+def resolve_visualization_backend(
+    backend: str | None,
+    *,
+    enable_viz: bool,
+) -> ManipulationVisualizationBackend:
+    """Resolve manipulation visualization backend with enable_viz compatibility."""
+    if backend is None:
+        return "meshcat" if enable_viz else "none"
+
+    if backend not in get_args(ManipulationVisualizationBackend):
+        available = list(get_args(ManipulationVisualizationBackend))
+        raise ValueError(
+            f"Unknown manipulation visualization backend: {backend!r}. Available: {available}"
+        )
+    return backend  # type: ignore[return-value]
+
+
+def create_visualization(
+    backend: ManipulationVisualizationBackend,
+    *,
+    world: WorldSpec,
+    world_monitor: WorldMonitor,
+    manipulation_module: Any | None = None,
+    config: Any | None = None,
+) -> VisualizationSpec | None:
+    """Create an optional manipulation visualization backend."""
+    if backend == "none":
+        return None
+
+    if backend == "meshcat":
+        from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+
+        if isinstance(world, VisualizationSpec):
+            return world
+        raise ValueError("meshcat visualization requires a world that implements VisualizationSpec")
+
+    if backend == "viser":
+        from dimos.manipulation.visualization.viser.visualizer import (
+            ViserManipulationVisualizer,
+        )
+
+        return ViserManipulationVisualizer(
+            world_monitor=world_monitor,
+            manipulation_module=manipulation_module,
+            config=config,
+        )
+
+    available = list(get_args(ManipulationVisualizationBackend))
+    raise ValueError(
+        f"Unknown manipulation visualization backend: {backend!r}. Available: {available}"
+    )
 
 
 def create_kinematics(

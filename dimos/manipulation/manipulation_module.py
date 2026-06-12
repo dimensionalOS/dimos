@@ -27,7 +27,7 @@ from __future__ import annotations
 from enum import Enum
 import threading
 import time
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 import numpy as np
 from pydantic import Field
@@ -90,6 +90,18 @@ class ManipulationModuleConfig(ModuleConfig):
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
+    visualization_backend: Literal["meshcat", "viser", "none"] | None = None
+    visualization_host: str = "127.0.0.1"
+    visualization_port: int = 8095
+    open_visualization: bool = False
+    viser_panel_enabled: bool = True
+    viser_poll_hz: float = 5.0
+    viser_preview_duration: float = 3.0
+    viser_preview_fps: float = 30.0
+    viser_preview_debounce_seconds: float = 0.05
+    viser_preview_request_timeout: float = 5.0
+    viser_current_match_tolerance: float = 0.02
+    allow_plan_execute: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
@@ -165,7 +177,12 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
-        self._world_monitor = WorldMonitor(enable_viz=self.config.enable_viz)
+        self._world_monitor = WorldMonitor(
+            enable_viz=self.config.enable_viz,
+            visualization_backend=self.config.visualization_backend,
+            visualization_config=self.config,
+            manipulation_module=self,
+        )
 
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)
@@ -198,7 +215,7 @@ class ManipulationModule(Module):
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
 
-        if self.config.enable_viz:
+        if self._world_monitor.visualization is not None:
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
             if url := self._world_monitor.get_visualization_url():
                 logger.info(f"Visualization: {url}")
