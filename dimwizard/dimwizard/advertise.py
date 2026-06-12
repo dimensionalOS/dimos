@@ -7,21 +7,27 @@ from zeroconf import ServiceInfo, Zeroconf
 SERVICE_TYPE = "_dimensional._tcp.local."
 
 
+_VIRTUAL_IFACE_PREFIXES = ("docker", "virbr", "lo", "tun", "veth", "br-")
+
+
 def _local_ip() -> str:
-    try:
-        import psutil
-        for addrs in psutil.net_if_addrs().values():
-            for addr in addrs:
-                if addr.family == socket.AF_INET and not addr.address.startswith("127."):
-                    return addr.address
-    except ImportError:
-        pass
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
             return s.getsockname()[0]
     except OSError:
-        return socket.gethostbyname(socket.gethostname())
+        pass
+    try:
+        import psutil
+        for iface, addrs in psutil.net_if_addrs().items():
+            if any(iface.startswith(p) for p in _VIRTUAL_IFACE_PREFIXES):
+                continue
+            for addr in addrs:
+                if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                    return addr.address
+    except ImportError:
+        pass
+    return socket.gethostbyname(socket.gethostname())
 
 
 def _encode_properties(props: dict[str, str]) -> dict[bytes, bytes]:
