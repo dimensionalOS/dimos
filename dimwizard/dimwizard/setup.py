@@ -9,14 +9,14 @@ from dimwizard.install import install, is_installed
 
 
 def setup_wizard() -> None:
-    """Hook for dimos run — runs setup on first invocation, skips on subsequent runs."""
+    """Hook for dimos run - runs setup on invocation, skips if already installed."""
     if is_installed():
         return
 
     robot_name = os.environ.get("DIMENSIONAL_ROBOT_NAME", socket.gethostname().split(".")[0])
     print()
     confirmed = questionary.confirm(
-        "First time running DimOS - set up robot network discovery? (recommended)",
+        "Set up robot network discovery? (recommended)",
         default=True,
     ).ask()
 
