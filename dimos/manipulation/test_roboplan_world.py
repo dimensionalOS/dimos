@@ -27,10 +27,6 @@ import pytest
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import Obstacle
-from dimos.manipulation.planning.world.roboplan_imports import (
-    RoboPlanImportError,
-    import_roboplan_core,
-)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -189,16 +185,18 @@ def _make_world(fake_roboplan: None, robot_config: RobotModelConfig) -> tuple[An
 
 
 def test_lazy_import_error_has_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.manipulation.planning.world.roboplan_world import RoboPlanImportError, RoboPlanWorld
+
     def missing_module(name: str) -> ModuleType:
         _ = name
         raise ImportError("missing")
 
     monkeypatch.setattr(
-        "dimos.manipulation.planning.world.roboplan_imports.import_module", missing_module
+        "dimos.manipulation.planning.world.roboplan_world.import_module", missing_module
     )
 
     with pytest.raises(RoboPlanImportError, match="uv sync --extra roboplan"):
-        import_roboplan_core()
+        RoboPlanWorld()
 
 
 def test_robot_registration_finalization_and_joint_limits(
