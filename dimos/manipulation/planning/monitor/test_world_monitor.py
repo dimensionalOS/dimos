@@ -22,6 +22,7 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class FakeWorld:
@@ -99,6 +100,30 @@ class FakeWorld:
     def get_jacobian(self, ctx, robot_id):
         return []
 
+    def get_visualization_url(self):
+        return None
+
+    def publish_visualization(self, ctx=None) -> None:
+        return None
+
+    def show_preview(self, robot_id) -> None:
+        return None
+
+    def hide_preview(self, robot_id) -> None:
+        return None
+
+    def animate_path(self, robot_id, path, duration: float = 3.0) -> None:
+        return None
+
+    def set_planning_target(self, robot_id, joints, pose=None, feasible=None) -> None:
+        return None
+
+    def clear_planning_target(self, robot_id) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
 
 class FakeViz:
     def __init__(self) -> None:
@@ -125,6 +150,12 @@ class FakeViz:
     def register_robot(self, robot_id, config) -> None:
         self.calls.append(("register_robot", robot_id, config))
 
+    def set_planning_target(self, robot_id, joints, pose=None, feasible=None) -> None:
+        self.calls.append(("set_planning_target", robot_id, joints, pose, feasible))
+
+    def clear_planning_target(self, robot_id) -> None:
+        self.calls.append(("clear_planning_target", robot_id))
+
 
 def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(
@@ -137,7 +168,7 @@ def _robot_config() -> RobotModelConfig:
     )
 
 
-def test_world_monitor_selection_and_register_order(monkeypatch) -> None:
+def test_world_monitor_uses_injected_visualization_and_registers_robot(monkeypatch) -> None:
     fake_world = FakeWorld()
     fake_viz = FakeViz()
     created = {}
@@ -146,19 +177,10 @@ def test_world_monitor_selection_and_register_order(monkeypatch) -> None:
         created["world"] = (backend, enable_viz, kwargs)
         return fake_world
 
-    def fake_create_visualization(
-        backend, *, world, world_monitor, manipulation_module=None, config=None
-    ):
-        created["viz"] = (backend, world, world_monitor, manipulation_module, config)
-        return fake_viz
-
     monkeypatch.setattr(world_monitor_module, "create_world", fake_create_world)
-    monkeypatch.setattr(world_monitor_module, "create_visualization", fake_create_visualization)
 
-    monitor = world_monitor_module.WorldMonitor(visualization_backend="viser", enable_viz=True)
-    assert created["world"][1] is False
-    assert created["viz"][0] == "viser"
-    assert created["viz"][1] is fake_world
+    monitor = world_monitor_module.WorldMonitor(visualization=fake_viz)
+    assert created["world"] == ("drake", False, {})
 
     monitor.add_robot(_robot_config())
     assert fake_world.calls[0][0] == "add_robot"
@@ -166,22 +188,40 @@ def test_world_monitor_selection_and_register_order(monkeypatch) -> None:
     assert fake_viz.calls[0][1] == "robot-1"
 
 
-def test_world_monitor_default_meshcat_enables_viz(monkeypatch) -> None:
+def test_world_monitor_enable_viz_uses_world_visualization(monkeypatch) -> None:
     created = {}
+    fake_world = FakeWorld()
 
     def fake_create_world(*, backend: str = "drake", enable_viz: bool = False, **kwargs):
         created["world"] = (backend, enable_viz)
-        return FakeWorld()
-
-    def fake_create_visualization(
-        backend, *, world, world_monitor, manipulation_module=None, config=None
-    ):
-        created["viz"] = backend
-        return None
+        return fake_world
 
     monkeypatch.setattr(world_monitor_module, "create_world", fake_create_world)
-    monkeypatch.setattr(world_monitor_module, "create_visualization", fake_create_visualization)
 
-    world_monitor_module.WorldMonitor(enable_viz=True)
+    monitor = world_monitor_module.WorldMonitor(enable_viz=True)
     assert created["world"] == ("drake", True)
-    assert created["viz"] == "meshcat"
+    assert monitor.visualization is fake_world
+
+
+def test_world_monitor_delegates_planning_target_updates_to_visualization(monkeypatch) -> None:
+    created = {}
+    fake_world = FakeWorld()
+    fake_viz = FakeViz()
+
+    def fake_create_world(*, backend: str = "drake", enable_viz: bool = False, **kwargs):
+        created["world"] = (backend, enable_viz)
+        return fake_world
+
+    monkeypatch.setattr(world_monitor_module, "create_world", fake_create_world)
+
+    monitor = world_monitor_module.WorldMonitor(visualization=fake_viz)
+
+    target = JointState(name=["j1", "j2"], position=[0.1, 0.2])
+    monitor.set_planning_target("robot-1", target, feasible=True)
+    monitor.clear_planning_target("robot-1")
+
+    assert created["world"] == ("drake", False)
+    assert fake_viz.calls[-2:] == [
+        ("set_planning_target", "robot-1", target, None, True),
+        ("clear_planning_target", "robot-1"),
+    ]

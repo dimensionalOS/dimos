@@ -17,11 +17,11 @@ from __future__ import annotations
 from typing import Any, cast
 from unittest.mock import MagicMock
 
-from dimos.manipulation.planning.factory import (
-    create_visualization,
+from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.manipulation.visualization.factory import (
+    create_manipulation_visualization,
     resolve_visualization_backend,
 )
-from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 
 
 class FakeVisualization:
@@ -38,6 +38,12 @@ class FakeVisualization:
         return None
 
     def animate_path(self, robot_id, path, duration: float = 3.0) -> None:
+        return None
+
+    def set_planning_target(self, robot_id, joints, pose=None, feasible=None) -> None:
+        return None
+
+    def clear_planning_target(self, robot_id) -> None:
         return None
 
     def close(self) -> None:
@@ -133,23 +139,22 @@ def test_resolve_visualization_backend_rejects_unknown() -> None:
 
 
 def test_create_visualization_none_returns_none() -> None:
-    assert (
-        create_visualization("none", world=cast("Any", object()), world_monitor=MagicMock()) is None
-    )
+    assert create_manipulation_visualization("none", world_monitor=MagicMock()) is None
 
 
 def test_create_visualization_meshcat_accepts_structural_world() -> None:
     fake_world = FakeVisualization()
     assert isinstance(fake_world, VisualizationSpec)
-    assert (
-        create_visualization("meshcat", world=cast("Any", fake_world), world_monitor=MagicMock())
-        is fake_world
-    )
+    world_monitor = MagicMock()
+    world_monitor.visualization = fake_world
+    assert create_manipulation_visualization("meshcat", world_monitor=world_monitor) is fake_world
 
 
 def test_create_visualization_meshcat_rejects_non_visualization_world() -> None:
     try:
-        create_visualization("meshcat", world=cast("Any", object()), world_monitor=MagicMock())
+        world_monitor = MagicMock()
+        world_monitor.visualization = None
+        create_manipulation_visualization("meshcat", world_monitor=world_monitor)
         raise AssertionError("expected ValueError")
     except ValueError as exc:
         assert "implements VisualizationSpec" in str(exc)

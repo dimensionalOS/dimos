@@ -223,6 +223,10 @@ class ViserManipulationScene:
         self._set_target_visibility(robot_id, True)
         return True
 
+    def clear_target(self, robot_id: str) -> None:
+        """Return the persistent target ghost to current-state tracking."""
+        self._target_tracks_current[robot_id] = True
+
     def _set_target_joints(
         self, robot_id: str, joint_names: Sequence[str], joints: Sequence[float]
     ) -> None:

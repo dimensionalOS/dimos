@@ -21,11 +21,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.manipulation.planning.factory import (
-    create_visualization,
-    create_world,
-    resolve_visualization_backend,
-)
+from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
@@ -60,27 +56,16 @@ class WorldMonitor:
         self,
         backend: str = "drake",
         enable_viz: bool = False,
-        visualization_backend: str | None = None,
-        visualization_config: Any | None = None,
-        manipulation_module: Any | None = None,
+        world: WorldSpec | None = None,
+        visualization: VisualizationSpec | None = None,
         **kwargs: Any,
     ) -> None:
         self._backend = backend
-        self._visualization_backend = resolve_visualization_backend(
-            visualization_backend,
-            enable_viz=enable_viz,
+        self._world: WorldSpec = world or create_world(
+            backend=backend, enable_viz=enable_viz, **kwargs
         )
-        self._world: WorldSpec = create_world(
-            backend=backend,
-            enable_viz=self._visualization_backend == "meshcat",
-            **kwargs,
-        )
-        self._visualization: VisualizationSpec | None = create_visualization(
-            self._visualization_backend,
-            world=self._world,
-            world_monitor=self,
-            manipulation_module=manipulation_module,
-            config=visualization_config,
+        self._visualization: VisualizationSpec | None = visualization or (
+            self._world if enable_viz and isinstance(self._world, VisualizationSpec) else None
         )
         self._lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
@@ -478,6 +463,22 @@ class WorldMonitor:
         if self._visualization is not None:
             self._visualization.animate_path(robot_id, path, duration)
 
+    def set_planning_target(
+        self,
+        robot_id: WorldRobotID,
+        joints: JointState,
+        pose: PoseStamped | None = None,
+        feasible: bool | None = None,
+    ) -> None:
+        """Update the semantic planning target in the visualization if available."""
+        if self._visualization is not None:
+            self._visualization.set_planning_target(robot_id, joints, pose, feasible)
+
+    def clear_planning_target(self, robot_id: WorldRobotID) -> None:
+        """Clear the semantic planning target in the visualization if available."""
+        if self._visualization is not None:
+            self._visualization.clear_planning_target(robot_id)
+
     def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
         """Start background thread for visualization updates at given rate."""
         if self._viz_thread is not None and self._viz_thread.is_alive():
@@ -534,10 +535,9 @@ class WorldMonitor:
         """Get optional visualization backend."""
         return self._visualization
 
-    @property
-    def visualization_backend(self) -> str:
-        """Get resolved manipulation visualization backend."""
-        return self._visualization_backend
+    def set_visualization(self, visualization: VisualizationSpec | None) -> None:
+        """Set optional visualization backend after monitor construction."""
+        self._visualization = visualization
 
     def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
         """Get state monitor for a robot (may be None)."""

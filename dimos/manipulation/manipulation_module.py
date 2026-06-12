@@ -27,7 +27,7 @@ from __future__ import annotations
 from enum import Enum
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import numpy as np
 from pydantic import Field
@@ -48,7 +48,12 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
     JointTrajectoryGenerator,
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
+from dimos.manipulation.visualization.factory import (
+    create_manipulation_visualization,
+    resolve_visualization_backend,
+)
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -90,18 +95,8 @@ class ManipulationModuleConfig(ModuleConfig):
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
-    visualization_backend: Literal["meshcat", "viser", "none"] | None = None
-    visualization_host: str = "127.0.0.1"
-    visualization_port: int = 8095
-    open_visualization: bool = False
-    viser_panel_enabled: bool = True
-    viser_poll_hz: float = 5.0
-    viser_preview_duration: float = 3.0
-    viser_preview_fps: float = 30.0
-    viser_preview_debounce_seconds: float = 0.05
-    viser_preview_request_timeout: float = 5.0
-    viser_current_match_tolerance: float = 0.02
-    allow_plan_execute: bool = False
+    visualization_backend: str | None = None
+    visualization_options: dict[str, object] = Field(default_factory=dict)
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
@@ -177,12 +172,20 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
-        self._world_monitor = WorldMonitor(
+        visualization_backend = resolve_visualization_backend(
+            self.config.visualization_backend,
             enable_viz=self.config.enable_viz,
-            visualization_backend=self.config.visualization_backend,
-            visualization_config=self.config,
-            manipulation_module=self,
         )
+        self._world_monitor = WorldMonitor(
+            enable_viz=visualization_backend == "meshcat",
+        )
+        visualization = create_manipulation_visualization(
+            visualization_backend,
+            world_monitor=self._world_monitor,
+            manipulation_module=self,
+            options=self.config.visualization_options,
+        )
+        self._world_monitor.set_visualization(visualization)
 
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)
@@ -478,9 +481,6 @@ class ManipulationModule(Module):
         if current is None:
             return self._fail("No joint state")
 
-        # Convert Pose to PoseStamped for the IK solver
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-
         target_pose = PoseStamped(
             frame_id="world",
             position=pose.position,
@@ -498,7 +498,7 @@ class ManipulationModule(Module):
             return self._fail(f"IK failed: {ik.status.name}")
 
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
-        return self._plan_path_only(robot_name, robot_id, ik.joint_state)
+        return self._plan_path_only(robot_name, robot_id, ik.joint_state, target_pose)
 
     @rpc
     def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
@@ -515,7 +515,11 @@ class ManipulationModule(Module):
         return self._plan_path_only(robot_name, robot_id, joints)
 
     def _plan_path_only(
-        self, robot_name: RobotName, robot_id: WorldRobotID, goal: JointState
+        self,
+        robot_name: RobotName,
+        robot_id: WorldRobotID,
+        goal: JointState,
+        target_pose: PoseStamped | None = None,
     ) -> bool:
         """Plan path from current position to goal, store result."""
         assert self._world_monitor and self._planner  # guaranteed by _begin_planning
@@ -550,6 +554,19 @@ class ManipulationModule(Module):
         traj = traj_gen.generate([list(state.position) for state in result.path])
         self._planned_trajectories[robot_name] = traj
         logger.info(f"Trajectory: {traj.duration:.3f}s")
+
+        final_goal = result.path[-1] if result.path else goal
+        if target_pose is None:
+            try:
+                target_pose = self._world_monitor.get_ee_pose(robot_id, final_goal)
+            except Exception as e:
+                logger.debug(f"Failed to compute planning target pose: {e}")
+        self._world_monitor.set_planning_target(
+            robot_id,
+            final_goal,
+            pose=target_pose,
+            feasible=True,
+        )
 
         self._state = ManipulationState.COMPLETED
         return True
@@ -644,13 +661,16 @@ class ManipulationModule(Module):
         Returns:
             True if cleared
         """
+        if self._world_monitor is None:
+            return False
         robot = self._get_robot()
         if robot is None:
             return False
-        robot_name, _, _, _ = robot
+        robot_name, robot_id, _, _ = robot
 
         self._planned_paths.pop(robot_name, None)
         self._planned_trajectories.pop(robot_name, None)
+        self._world_monitor.clear_planning_target(robot_id)
         return True
 
     @rpc

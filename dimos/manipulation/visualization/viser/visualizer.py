@@ -17,10 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
-from dimos.manipulation.visualization.viser.config import (
-    ViserVisualizationConfig,
-    _ViserModuleConfig,
-)
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.runtime import ViserRuntime, import_viser_urdf
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene, _ViserUrdfFactory
@@ -31,6 +28,8 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import JointPath, WorldRobotID
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.sensor_msgs.JointState import JointState
 
 logger = setup_logger()
 
@@ -43,11 +42,9 @@ class ViserManipulationVisualizer:
         *,
         world_monitor: WorldMonitor,
         manipulation_module: ManipulationModule | None,
-        config: object | None = None,
+        config: ViserVisualizationConfig | None = None,
     ) -> None:
-        self.config = ViserVisualizationConfig.from_module_config(
-            None if config is None else cast("_ViserModuleConfig", config)
-        )
+        self.config = config or ViserVisualizationConfig()
         self._runtime = ViserRuntime(self.config)
         self._server = self._runtime.start()
         self._viser_urdf = import_viser_urdf()
@@ -106,6 +103,26 @@ class ViserManipulationVisualizer:
         if self._closed:
             return
         self._scene.animate_path(str(robot_id), list(path), duration)
+
+    def set_planning_target(
+        self,
+        robot_id: WorldRobotID,
+        joints: JointState,
+        pose: PoseStamped | None = None,
+        feasible: bool | None = None,
+    ) -> None:
+        """Render the planner-selected persistent target."""
+        if self._closed:
+            return
+        self._scene.set_target_joints(str(robot_id), joints.name, joints.position)
+        self._scene.set_target_pose(str(robot_id), pose)
+        if feasible is not None:
+            self._scene.set_target_visual_state(str(robot_id), feasible)
+
+    def clear_planning_target(self, robot_id: WorldRobotID) -> None:
+        """Clear the planner-selected persistent target."""
+        if not self._closed:
+            self._scene.clear_target(str(robot_id))
 
     def close(self) -> None:
         if self._closed:

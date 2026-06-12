@@ -467,7 +467,9 @@ def test_obstacle_collision_marks_joint_target_infeasible() -> None:
 def test_scene_registers_goal_robot_coloring_and_updates_visibility() -> None:
     server = FakeServer()
     scene = ViserManipulationScene(
-        server, lambda *args, **kwargs: FakeViserUrdfWithMeshes(), preview_fps=10.0
+        server,
+        lambda *args, **kwargs: FakeViserUrdfWithMeshes(("joint1", "joint2")),
+        preview_fps=10.0,
     )
     scene.prepared_urdf_path = lambda config: cast("Any", "dummy.urdf")
     config = SimpleNamespace(
@@ -498,7 +500,9 @@ def test_scene_registers_goal_robot_coloring_and_updates_visibility() -> None:
 def test_scene_transform_controls_update_pose_callback_and_visual_state() -> None:
     server = FakeTransformServer()
     scene = ViserManipulationScene(
-        server, lambda *args, **kwargs: FakeViserUrdfWithMeshes(), preview_fps=10.0
+        server,
+        lambda *args, **kwargs: FakeViserUrdfWithMeshes(("joint1", "joint2")),
+        preview_fps=10.0,
     )
     scene.prepared_urdf_path = lambda config: cast("Any", "dummy.urdf")
     config = SimpleNamespace(
@@ -532,6 +536,37 @@ def test_scene_transform_controls_update_pose_callback_and_visual_state() -> Non
     assert all(mesh.color == (255, 30, 30) for mesh in target._meshes)
     assert all(mesh.opacity == 0.75 for mesh in target._meshes)
     assert all(mesh.color == (80, 180, 255) for mesh in preview._meshes)
+
+
+def test_scene_planning_target_updates_target_ghost_pose_and_feasibility() -> None:
+    server = FakeTransformServer()
+    scene = ViserManipulationScene(
+        server,
+        lambda *args, **kwargs: FakeViserUrdfWithMeshes(("joint1", "joint2")),
+        preview_fps=10.0,
+    )
+    scene.prepared_urdf_path = lambda config: cast("Any", "dummy.urdf")
+    config = SimpleNamespace(
+        name="arm",
+        model_path="/tmp/arm.urdf",
+        package_paths={},
+        xacro_args={},
+        auto_convert_meshes=False,
+        joint_names=["joint1", "joint2"],
+    )
+    scene.register_robot("robot1", config)
+    scene.ensure_target_controls("robot1", lambda target: None)
+
+    pose = Pose({"position": [0.1, 0.2, 0.3], "orientation": [0.0, 0.0, 0.0, 1.0]})
+    assert scene.set_target_joints("robot1", ["joint1", "joint2"], [0.7, 0.9]) is True
+    assert scene.set_target_pose("robot1", pose) is None
+    assert scene.set_target_visual_state("robot1", feasible=False) is None
+
+    target = scene._urdfs["robot1:target"]
+    handle = scene._handles["robot1:ee_control"]
+    assert target.cfg == [0.7, 0.9]
+    assert handle.position == (0.1, 0.2, 0.3)
+    assert handle.color == (255, 40, 40)
 
 
 def test_gui_initializes_pose_selector_to_current_ee_pose() -> None:

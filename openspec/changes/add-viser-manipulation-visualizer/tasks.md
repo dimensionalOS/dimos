@@ -83,3 +83,12 @@
 - [x] 9.12 Restore cancel and clear-plan behavior to update panel session state and Viser path/ghost visuals consistently with the old panel.
 - [x] 9.13 Add/port regression tests from `cc/viser-vis` for transform target updates, pose/joint preview evaluation, stale preview result rejection, plan stale/fresh transitions, button gating, execute start-joint tolerance checks, target visual coloring, Init/Home presets, cancel, and clear-plan behavior.
 - [x] 9.14 Run focused Viser panel parity tests plus existing visualization tests after the parity implementation.
+
+## 10. Planning-target inverse operability
+
+- [x] 10.1 Extend the manipulation `VisualizationSpec` with semantic planning-target lifecycle methods (`set_planning_target`, `clear_planning_target`) without adding GUI/panel-specific state.
+- [x] 10.2 Add `WorldMonitor` passthrough methods for planning-target lifecycle updates.
+- [x] 10.3 Update successful `ManipulationModule` planning to publish the final planned target joint state, optional target pose, and feasibility to visualization.
+- [x] 10.4 Clear the planning target visualization when `clear_planned_path()` clears the stored plan.
+- [x] 10.5 Implement the Viser backend hook by updating the persistent target ghost and pose selector while keeping the preview ghost transient.
+- [x] 10.6 Add focused regressions for `WorldMonitor`, `ManipulationModule`, and Viser target synchronization, then run focused tests/lint/type validation.
