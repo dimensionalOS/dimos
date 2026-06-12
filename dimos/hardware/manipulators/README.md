@@ -124,6 +124,7 @@ All adapters must implement these core methods:
 | Category | Methods |
 |----------|---------|
 | Connection | `connect()`, `disconnect()`, `is_connected()` |
+| Lifecycle | `activate()`, `deactivate()` |
 | Info | `get_info()`, `get_dof()`, `get_limits()` |
 | State | `read_joint_positions()`, `read_joint_velocities()`, `read_joint_efforts()` |
 | Motion | `write_joint_positions()`, `write_joint_velocities()`, `write_stop()` |

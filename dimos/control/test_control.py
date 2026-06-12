@@ -23,6 +23,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import (
     ControlMode,
@@ -186,6 +187,71 @@ class TestConnectedHardware:
         }
         connected_hardware.write_command(commands, ControlMode.POSITION)
         mock_adapter.write_joint_positions.assert_called()
+
+
+class TestControlCoordinatorLifecycle:
+    def test_start_stop_calls_adapter_activate_and_deactivate(self):
+        from dimos.hardware.manipulators.mock.adapter import MockAdapter
+        from dimos.hardware.manipulators.registry import adapter_registry
+
+        class LifecycleAdapter(MockAdapter):
+            events: list[str] = []
+
+            def connect(self) -> bool:
+                self.events.append("connect")
+                return super().connect()
+
+            def activate(self) -> bool:
+                self.events.append("activate")
+                return self.write_enable(True)
+
+            def deactivate(self) -> bool:
+                self.events.append("deactivate")
+                return self.write_stop()
+
+            def disconnect(self) -> None:
+                self.events.append("disconnect")
+                super().disconnect()
+
+        adapter_registry.register("lifecycle_test", LifecycleAdapter)
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            adapter_type="lifecycle_test",
+        )
+        coordinator = ControlCoordinator(publish_joint_state=False, hardware=[component])
+
+        try:
+            coordinator.start()
+        finally:
+            coordinator.stop()
+
+        assert LifecycleAdapter.events == ["connect", "activate", "deactivate", "disconnect"]
+
+    def test_start_stop_with_adapter_without_lifecycle_methods(self):
+        """Adapters without activate/deactivate (e.g. twist bases) start and stop cleanly."""
+        from dimos.control.components import make_twist_base_joints
+
+        component = HardwareComponent(
+            hardware_id="base",
+            hardware_type=HardwareType.BASE,
+            joints=make_twist_base_joints("base"),
+            adapter_type="mock_twist_base",
+        )
+        coordinator = ControlCoordinator(publish_joint_state=False, hardware=[component])
+
+        try:
+            coordinator.start()
+            adapter = coordinator._hardware["base"].adapter
+            assert not hasattr(adapter, "activate")
+            assert not hasattr(adapter, "deactivate")
+            # auto_enable falls back to write_enable(True) for adapters without activate()
+            assert adapter.read_enabled()
+        finally:
+            coordinator.stop()
+
+        assert not adapter.is_connected()
 
 
 class TestJointTrajectoryTask:
