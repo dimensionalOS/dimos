@@ -28,7 +28,7 @@ Available functions:
     state()               Get module state (IDLE, PLANNING, EXECUTING, ...)
     plan(joints)          Plan to joint configuration, e.g. plan([0.1]*7)
     plan_pose(x,y,z)      Plan to Cartesian pose
-    preview(duration)     Preview planned path in Meshcat
+    preview(duration=None) Preview planned path in Meshcat
     execute()             Execute planned trajectory via coordinator
     home()                Move to home position
     url()                 Get Meshcat visualization URL
@@ -99,9 +99,13 @@ def plan_pose(
     return _client.plan_to_pose(target, robot_name)
 
 
-def preview(duration: float = 3.0, robot_name: str | None = None) -> bool:
+def preview(
+    duration: float | None = None,
+    robot_name: str | None = None,
+    target_fps: float = 30.0,
+) -> bool:
     """Preview planned path in Meshcat."""
-    return _client.preview_path(duration, robot_name)
+    return _client.preview_path(duration, robot_name, target_fps)
 
 
 def execute(robot_name: str | None = None) -> bool:
