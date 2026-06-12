@@ -556,19 +556,6 @@ class ManipulationModule(Module):
         self._planned_trajectories[robot_name] = traj
         logger.info(f"Trajectory: {traj.duration:.3f}s")
 
-        final_goal = result.path[-1] if result.path else goal
-        target_pose = None
-        try:
-            target_pose = self._world_monitor.get_ee_pose(robot_id, final_goal)
-        except Exception as e:
-            logger.debug(f"Failed to compute planning target pose: {e}")
-        self._world_monitor.set_planning_target(
-            robot_id,
-            final_goal,
-            pose=target_pose,
-            feasible=True,
-        )
-
         self._state = ManipulationState.COMPLETED
         return True
 
@@ -671,7 +658,6 @@ class ManipulationModule(Module):
 
         self._planned_paths.pop(robot_name, None)
         self._planned_trajectories.pop(robot_name, None)
-        self._world_monitor.clear_planning_target(robot_id)
         return True
 
     @rpc

@@ -475,43 +475,6 @@ class TestWorldMonitorVisualization:
         monitor.start_visualization_thread()
         assert monitor._viz_thread is None
 
-    def test_planning_target_delegation_is_used_by_manipulation_workflow(self):
-        viz = MagicMock(spec=VisualizationSpec)
-        module = _make_module()
-        module._world_monitor = MagicMock()
-        module._world_monitor.visualization = viz
-        module._world_monitor.get_current_joint_state.return_value = JointState(
-            name=["joint1", "joint2"], position=[0.0, 0.0]
-        )
-        module._world_monitor.world = MagicMock()
-        module._planner = MagicMock()
-        module._planner.plan_joint_path.return_value = MagicMock(
-            is_success=lambda: True,
-            path=[JointState(name=["joint1", "joint2"], position=[0.5, 0.6])],
-            status=MagicMock(name="SUCCESS"),
-        )
-        module._robots = {
-            "arm": (
-                "robot-id",
-                RobotModelConfig(
-                    name="arm",
-                    model_path=Path("/path/to/robot.urdf"),
-                    base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
-                    joint_names=["joint1", "joint2"],
-                    end_effector_link="link_tcp",
-                    base_link="link_base",
-                ),
-                MagicMock(generate=lambda positions: MagicMock(duration=1.0)),
-            )
-        }
-        module._begin_planning = MagicMock(return_value=("arm", "robot-id"))
-
-        assert module.plan_to_joints(JointState(name=["joint1", "joint2"], position=[0.5, 0.6]))
-        module._world_monitor.set_planning_target.assert_called_once()
-
-        assert module.clear_planned_path() is True
-        module._world_monitor.clear_planning_target.assert_called_once_with("robot-id")
-
 
 class TestManipulationPreview:
     def test_dismiss_preview_noop_without_monitor(self):

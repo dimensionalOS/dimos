@@ -49,12 +49,6 @@ class FakeVisualization:
     def animate_path(self, robot_id, path, duration: float = 3.0) -> None:
         return None
 
-    def set_planning_target(self, robot_id, joints, pose=None, feasible=None) -> None:
-        return None
-
-    def clear_planning_target(self, robot_id) -> None:
-        return None
-
     def close(self) -> None:
         return None
 

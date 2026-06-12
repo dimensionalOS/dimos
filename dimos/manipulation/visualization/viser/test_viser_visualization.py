@@ -562,7 +562,7 @@ def test_scene_transform_controls_update_pose_callback_and_visual_state() -> Non
     assert all(mesh.color == (80, 180, 255) for mesh in preview._meshes)
 
 
-def test_scene_planning_target_updates_target_ghost_pose_and_feasibility() -> None:
+def test_scene_target_controls_update_target_ghost_pose_and_feasibility() -> None:
     server = FakeTransformServer()
     scene = ViserManipulationScene(
         server,

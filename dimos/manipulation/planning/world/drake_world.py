@@ -992,20 +992,6 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         """Embedded Meshcat observes the Drake world directly; no extra sync needed."""
         return None
 
-    def set_planning_target(
-        self,
-        robot_id: WorldRobotID,
-        joints: JointState,
-        pose: PoseStamped | None = None,
-        feasible: bool | None = None,
-    ) -> None:
-        """Embedded Meshcat previews targets through the preview robot instead."""
-        return None
-
-    def clear_planning_target(self, robot_id: WorldRobotID) -> None:
-        """Embedded Meshcat does not maintain a separate persisted target marker."""
-        return None
-
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
         if self._meshcat is not None:

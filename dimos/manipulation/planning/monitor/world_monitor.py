@@ -462,22 +462,6 @@ class WorldMonitor:
         if self._visualization is not None:
             self._visualization.animate_path(robot_id, path, duration)
 
-    def set_planning_target(
-        self,
-        robot_id: WorldRobotID,
-        joints: JointState,
-        pose: PoseStamped | None = None,
-        feasible: bool | None = None,
-    ) -> None:
-        """Update the semantic planning target in the visualization if available."""
-        if self._visualization is not None:
-            self._visualization.set_planning_target(robot_id, joints, pose, feasible)
-
-    def clear_planning_target(self, robot_id: WorldRobotID) -> None:
-        """Clear the semantic planning target in the visualization if available."""
-        if self._visualization is not None:
-            self._visualization.clear_planning_target(robot_id)
-
     def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
         """Start background thread for visualization updates at given rate."""
         if self._viz_thread is not None and self._viz_thread.is_alive():

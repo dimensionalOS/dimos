@@ -31,8 +31,6 @@ if TYPE_CHECKING:
         PlanningSceneInfo,
         WorldRobotID,
     )
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.sensor_msgs.JointState import JointState
 
 logger = setup_logger()
 
@@ -109,26 +107,6 @@ class ViserManipulationVisualizer:
         if self._closed:
             return
         self._scene.animate_path(str(robot_id), list(path), duration)
-
-    def set_planning_target(
-        self,
-        robot_id: WorldRobotID,
-        joints: JointState,
-        pose: PoseStamped | None = None,
-        feasible: bool | None = None,
-    ) -> None:
-        """Render the planner-selected persistent target."""
-        if self._closed:
-            return
-        self._scene.set_target_joints(str(robot_id), joints.name, joints.position)
-        self._scene.set_target_pose(str(robot_id), pose)
-        if feasible is not None:
-            self._scene.set_target_visual_state(str(robot_id), feasible)
-
-    def clear_planning_target(self, robot_id: WorldRobotID) -> None:
-        """Clear the planner-selected persistent target."""
-        if not self._closed:
-            self._scene.clear_target(str(robot_id))
 
     def close(self) -> None:
         if self._closed:

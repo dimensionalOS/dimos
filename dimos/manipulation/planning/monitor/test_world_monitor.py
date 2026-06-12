@@ -24,7 +24,6 @@ from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 class FakeWorld:
@@ -120,12 +119,6 @@ class FakeWorld:
     def animate_path(self, robot_id, path, duration: float = 3.0) -> None:
         return None
 
-    def set_planning_target(self, robot_id, joints, pose=None, feasible=None) -> None:
-        return None
-
-    def clear_planning_target(self, robot_id) -> None:
-        return None
-
     def close(self) -> None:
         return None
 
@@ -154,12 +147,6 @@ class FakeViz:
 
     def close(self) -> None:
         self.calls.append(("close", None))
-
-    def set_planning_target(self, robot_id, joints, pose=None, feasible=None) -> None:
-        self.calls.append(("set_planning_target", robot_id, joints, pose, feasible))
-
-    def clear_planning_target(self, robot_id) -> None:
-        self.calls.append(("clear_planning_target", robot_id))
 
 
 def _robot_config() -> RobotModelConfig:
@@ -213,19 +200,3 @@ def test_create_planning_specs_wraps_existing_world(monkeypatch) -> None:
     assert planning_specs.world_monitor.visualization is None
     assert planning_specs.kinematics is fake_kinematics
     assert planning_specs.planner is fake_planner
-
-
-def test_world_monitor_delegates_planning_target_updates_to_visualization() -> None:
-    fake_world = FakeWorld()
-    fake_viz = FakeViz()
-
-    monitor = world_monitor_module.WorldMonitor(world=fake_world, visualization=fake_viz)  # type: ignore[arg-type]
-
-    target = JointState(name=["j1", "j2"], position=[0.1, 0.2])
-    monitor.set_planning_target("robot-1", target, feasible=True)
-    monitor.clear_planning_target("robot-1")
-
-    assert fake_viz.calls[-2:] == [
-        ("set_planning_target", "robot-1", target, None, True),
-        ("clear_planning_target", "robot-1"),
-    ]

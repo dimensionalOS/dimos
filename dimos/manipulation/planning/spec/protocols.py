@@ -206,20 +206,6 @@ class VisualizationSpec(Protocol):
         """Animate a path in visualization."""
         ...
 
-    def set_planning_target(
-        self,
-        robot_id: WorldRobotID,
-        joints: JointState,
-        pose: PoseStamped | None = None,
-        feasible: bool | None = None,
-    ) -> None:
-        """Show the persisted planning target selected by the planner."""
-        ...
-
-    def clear_planning_target(self, robot_id: WorldRobotID) -> None:
-        """Clear the persisted planning target for a robot."""
-        ...
-
     def close(self) -> None:
         """Release visualization resources."""
         ...
