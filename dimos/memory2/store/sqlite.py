@@ -68,10 +68,10 @@ class SqliteStore(Store):
         from dimos.memory2.codecs.base import _resolve_payload_type, codec_from_id
 
         payload_module = stored["payload_module"]
+        codec = codec_from_id(stored["codec_id"], payload_module)
         data_type = _resolve_payload_type(payload_module)
         eager_blobs = stored.get("eager_blobs", False)
         page_size = stored.get("page_size", self.config.page_size)
-        codec = codec_from_id(stored["codec_id"], payload_module)
 
         backend_conn = self._open_connection()
 
@@ -113,7 +113,7 @@ class SqliteStore(Store):
             blob_store_conn_match=blob_store_conn_match and eager_blobs,
             page_size=page_size,
         )
-        return Backend(
+        backend: Backend[Any] = Backend(
             metadata_store=metadata_store,
             codec=codec,
             data_type=data_type,
@@ -122,6 +122,7 @@ class SqliteStore(Store):
             notifier=notifier,
             eager_blobs=eager_blobs,
         )
+        return backend
 
     @staticmethod
     def _serialize_backend(
@@ -171,7 +172,7 @@ class SqliteStore(Store):
         if not isinstance(config.get("vector_store"), VectorStore):
             config["vector_store"] = SqliteVectorStore(conn=backend_conn)
 
-        # Resolve codec early — needed for SqliteObservationStore.
+        # Resolve codec early — needed for SqliteObservationStore
         codec = self._resolve_codec(payload_type, config.get("codec"))
         config["codec"] = codec
 

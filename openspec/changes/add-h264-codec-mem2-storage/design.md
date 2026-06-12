@@ -104,10 +104,11 @@ memory2 stores H.264 through a normal codec:
 store.stream("color_image", Image, codec="h264")
 ```
 
-or recorder config:
+or an H.264-specific recorder subclass:
 
 ```python
-Recorder.blueprint(codecs={"color_image": "h264"})
+stream = self.store.stream("color_image", Image, codec="h264")
+self._port_to_stream("color_image", self.color_image, stream)
 ```
 
 `H264ImageCodec` only stores/restores encoded `Image` values. It does not decode pixels and does not own GOP state. Reopened stores restore the codec through the existing stream registry `codec_id` field.

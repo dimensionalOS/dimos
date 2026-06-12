@@ -225,15 +225,20 @@ color = store.stream(
 )
 ```
 
-Recorders can configure the same setting per input stream:
+Recorder modules that need H.264 storage should create their target stream with
+the same codec override:
 
 ```python skip
+from dimos.core.stream import In
 from dimos.memory2.module import Recorder
+from dimos.msgs.sensor_msgs.Image import Image
 
-recorder = Recorder.blueprint(
-    db_path="robot_video.db",
-    codecs={"color_image": "h264"},
-)
+class H264Recorder(Recorder):
+    color_image: In[Image]
+
+    def start(self) -> None:
+        stream = self.store.stream("color_image", Image, codec="h264")
+        self._port_to_stream("color_image", self.color_image, stream)
 ```
 
 H.264 storage keeps the normal memory2 shape: one observation row per source

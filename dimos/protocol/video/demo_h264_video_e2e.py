@@ -22,6 +22,7 @@ import sqlite3
 import tempfile
 import threading
 import time
+from typing import ClassVar, cast
 
 import cv2
 import numpy as np
@@ -35,9 +36,11 @@ from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.memory2.module import OnExisting, Recorder
 from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory2.stream import Stream
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.impl.h264_lcm import H264LCM
 from dimos.protocol.video.h264 import H264Config, H264Decoder, VideoDecodeGapError
+from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.vis_module import vis_module
 
@@ -113,15 +116,63 @@ class SyntheticVideoSource(Module):
         )
 
 
-class H264E2ERecorder(Recorder):
+class _H264RecorderMixin:
+    """Mixin that stores selected Image inputs with the H.264 codec."""
+
+    h264_streams: ClassVar[frozenset[str]] = frozenset()
+
+    @rpc
+    def start(self) -> None:
+        recorder = cast("Recorder", self)
+        Module.start(recorder)
+
+        if recorder.config.g.replay:
+            logger.info(
+                "Replay mode active — Recorder disabled, leaving %s untouched",
+                recorder.config.db_path,
+            )
+            return
+
+        db_path = Path(recorder.config.db_path)
+        if db_path.exists():
+            if recorder.config.on_existing is OnExisting.OVERWRITE:
+                db_path.unlink()
+                logger.info("Deleted existing recording %s", db_path)
+            elif recorder.config.on_existing is OnExisting.BACKUP:
+                backup = backup_file(db_path, keep_last=recorder.config.backup_keep_last)
+                if backup is None:
+                    logger.info("Removed existing recording %s (backup_keep_last=0)", db_path)
+                else:
+                    logger.info("Backed up existing recording %s -> %s", db_path, backup)
+            else:
+                raise FileExistsError(f"Recording already exists: {db_path}")
+
+        if not recorder.inputs:
+            logger.warning("Recorder has no In ports — nothing to record, subclass the Recorder")
+            return
+
+        for name, port in recorder.inputs.items():
+            stream: Stream[Image]
+            h264_streams = getattr(self, "h264_streams", frozenset())
+            if name in h264_streams:
+                stream = recorder.store.stream(name, port.type, codec="h264")
+            else:
+                stream = recorder.store.stream(name, port.type)
+            recorder._port_to_stream(name, port, stream)
+            logger.info("Recording %s (%s)", name, port.type.__name__)
+
+
+class H264E2ERecorder(_H264RecorderMixin, Recorder):
     """Recorder with a typed image input for the synthetic H.264 demo."""
 
+    h264_streams: ClassVar[frozenset[str]] = frozenset({"color_image"})
     color_image: In[Image]
 
 
-class H264WebcamRecorder(Recorder):
+class H264WebcamRecorder(_H264RecorderMixin, Recorder):
     """Recorder with a typed image input for webcam H.264 QA."""
 
+    h264_streams: ClassVar[frozenset[str]] = frozenset({"color_image"})
     color_image: In[Image]
 
 
@@ -131,9 +182,10 @@ class JpegBenchmarkRecorder(Recorder):
     jpeg_image: In[Image]
 
 
-class H264BenchmarkRecorder(Recorder):
+class H264BenchmarkRecorder(_H264RecorderMixin, Recorder):
     """Recorder for the H.264 side of the storage-size benchmark."""
 
+    h264_streams: ClassVar[frozenset[str]] = frozenset({"h264_image"})
     h264_image: In[Image]
 
 
@@ -509,7 +561,6 @@ demo_h264_video_e2e = autoconnect(
     H264E2ERecorder.blueprint(
         db_path="h264_video_e2e.db",
         on_existing=OnExisting.OVERWRITE,
-        codecs={"color_image": "h264"},
     ),
     H264VideoProbe.blueprint(),
 ).transports(
@@ -533,7 +584,6 @@ demo_h264_storage_benchmark = autoconnect(
     H264BenchmarkRecorder.blueprint(
         db_path="benchmark_h264.db",
         on_existing=OnExisting.OVERWRITE,
-        codecs={"h264_image": "h264"},
     ),
     H264StorageBenchmarkReporter.blueprint(
         jpeg_db_path="benchmark_jpeg.db",
@@ -556,7 +606,6 @@ demo_h264_webcam_record = autoconnect(
     H264WebcamRecorder.blueprint(
         db_path="webcam_h264.db",
         on_existing=OnExisting.OVERWRITE,
-        codecs={"color_image": "h264"},
     ),
 ).transports(
     {

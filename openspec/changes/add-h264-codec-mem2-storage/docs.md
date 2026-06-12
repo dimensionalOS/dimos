@@ -10,7 +10,7 @@
 - Update `docs/usage/blueprints.md` with an opt-in blueprint transport mapping example for `H264LcmTransport` and `H264Config`.
 - Update memory2 user docs, likely under `docs/usage/` or the memory2 capability docs, to describe opt-in H.264-backed image storage:
   - Default image storage remains JPEG-backed.
-  - Users opt in per stream with `codec="h264"` or recorder `codecs={"stream": "h264"}`.
+  - Users opt in per stream with `codec="h264"`; recorder subclasses that need H.264 storage create their target stream with that codec override.
   - memory2 still stores one observation per source frame.
   - metadata queries and `obs.data` access return encoded `Image` values without pixel decode.
   - explicit H.264 decode sessions convert encoded replay streams to raw decoded `Image` values and suppress deltas until the first keyframe at or after the start point.

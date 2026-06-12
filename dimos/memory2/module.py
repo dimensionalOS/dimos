@@ -254,7 +254,6 @@ class RecorderConfig(MemoryModuleConfig):
     default_frame_id: str = "base_link"
     tf_tolerance: float = 0.5
     db_path: str | Path = "recording.db"
-    codecs: dict[str, Any] = Field(default_factory=dict)
 
 
 class Recorder(MemoryModule):
@@ -304,10 +303,7 @@ class Recorder(MemoryModule):
             return
 
         for name, port in self.inputs.items():
-            stream_overrides: dict[str, Any] = {}
-            if name in self.config.codecs:
-                stream_overrides["codec"] = self.config.codecs[name]
-            stream: Stream[Any] = self.store.stream(name, port.type, **stream_overrides)
+            stream: Stream[Any] = self.store.stream(name, port.type)
             self._port_to_stream(name, port, stream)
             logger.info("Recording %s (%s)", name, port.type.__name__)
 

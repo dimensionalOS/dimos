@@ -189,9 +189,8 @@ class ReplayStream(Generic[T]):
             emitted = False
             obs: Any
             for obs in self._base_stream():
-                decoded = self._decode(obs)
                 emitted = True
-                yield (obs.ts, decoded)
+                yield (obs.ts, self._decode(obs))
             if not self._replay.config.loop or not emitted:
                 break
 
@@ -211,10 +210,7 @@ class ReplayStream(Generic[T]):
             obs: Any = s.at(timestamp, tolerance).first()
         except LookupError:
             return None
-        try:
-            return self._decode(obs)
-        except LookupError:
-            return None
+        return self._decode(obs)
 
     def observable(self) -> Observable[T]:
         """Timed Observable scheduled against the Replay's shared anchor.
@@ -243,9 +239,8 @@ class ReplayStream(Generic[T]):
                     emitted = False
                     obs: Any
                     for obs in base():
-                        decoded = decode(obs)
                         emitted = True
-                        yield (obs.ts, decoded)
+                        yield (obs.ts, decode(obs))
                     if not loop or not emitted:
                         break
 
