@@ -26,7 +26,10 @@ def status() -> None:
         print(f"robot:     {robot_name}")
         print(f"mdns:      {robot_name}.{SERVICE_TYPE}")
         print(f"lcm url:   {lcm_url}")
-        print(f"ip:        {_local_ip()}")
+        try:
+            print(f"ip:        {_local_ip()}")
+        except OSError as e:
+            print(f"ip:        unavailable ({e})")
 
 
 @app.command()
