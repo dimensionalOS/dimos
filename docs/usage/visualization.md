@@ -1,15 +1,7 @@
 # Viewer Backends
 
-Dimos has two visualization layers:
-
-- **Global stream visualization**: `GlobalConfig.viewer` and `vis_module(...)` render typed
-  robot streams through Rerun (`rerun` default, or `none` to disable).
-- **Manipulation planning visualization**: `ManipulationModuleConfig.visualization_backend`
-  previews manipulation worlds, robot ghosts, and planned paths. It can use `meshcat`,
-  `viser`, or `none`.
-
-These settings are independent: a stack may use Rerun for global robot telemetry and Viser for
-manipulation previews at the same time.
+Dimos stream visualization uses `GlobalConfig.viewer` and `vis_module(...)` to render typed
+robot streams through Rerun (`rerun` default, or `none` to disable).
 
 ## Quick Start
 
@@ -147,62 +139,6 @@ rerun_init(
 ```
 
 When a `RerunBridgeModule` is already part of your blueprint, you typically don't need `start_grpc` — just call `rerun_init()` and log directly with `rr.log()`. The data will appear in the existing viewer.
-
-## Manipulation Planning Visualization
-
-Manipulation modules choose their planning visualizer with
-`ManipulationModuleConfig.visualization_backend`:
-
-```python skip
-from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.manipulation.manipulation_module import ManipulationModuleConfig
-
-manipulation = ManipulationModule.blueprint(
-    config=ManipulationModuleConfig(
-        robots=[...],
-        visualization_backend="viser",
-        visualization_options={
-            "host": "127.0.0.1",
-            "port": 8095,
-            "open_browser": True,
-            "panel_enabled": True,  # default; set False for scene-only Viser
-            "allow_plan_execute": False,  # keep panel execution blocked by default
-        },
-    )
-)
-```
-
-Backend choices:
-
-- `meshcat`: existing Drake/Meshcat planning visualization. This remains the default when
-  `enable_viz=True` and no explicit backend is set.
-- `viser`: in-process Viser visualizer implementing the manipulation visualization protocol.
-  It renders current robot state, target ghosts, transient preview ghosts, and panel controls
-  by default. Set `visualization_options={"panel_enabled": False}` for scene-only Viser
-  rendering.
-- `none`: no manipulation planning visualization. Visualization protocol methods become safe
-  no-ops.
-
-Install Viser support with:
-
-```bash
-uv sync --extra manipulation-viser
-```
-
-The Viser panel uses existing manipulation planning, preview, execute, cancel, and clear-plan
-methods through a small in-process adapter. GUI callbacks enqueue operations instead of touching
-`WorldSpec`, IK, planner objects, or live Drake contexts directly. Rendering copies mutable joint
-state/path containers at the read boundary, then updates the Viser scene after manipulation/world
-accessors have returned.
-
-External manipulation visualizers are initialized from a backend-neutral planning-scene snapshot
-after the planning world has added its robots. This snapshot maps world robot IDs to
-`RobotModelConfig` metadata so Viser can prepare current, target, and transient preview robot
-visuals without `WorldMonitor` depending on Viser-specific hooks. Embedded Meshcat visualization
-does not need extra setup because it observes the Drake world directly.
-
-Panel execution is opt-in. Leave `visualization_options={"allow_plan_execute": False}` unless
-the operator intentionally wants the browser panel to call the existing manipulation execution path.
 
 ## How to use Rerun on `dev` (and the TF/entity nuances)
 

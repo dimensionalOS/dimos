@@ -574,7 +574,7 @@ Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator b
 yourarm_planner = manipulation_module(
     robots=[_make_yourarm_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
     planning_timeout=10.0,
-    enable_viz=True,
+    visualization={"backend": "meshcat"},
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
