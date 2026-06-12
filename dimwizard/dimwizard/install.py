@@ -21,6 +21,14 @@ def _find_executable() -> list[str]:
     return [sys.executable, "-m", "dimwizard"]
 
 
+def is_installed() -> bool:
+    if platform.system() == "Darwin":
+        return _PLIST_PATH.exists()
+    if platform.system() == "Linux":
+        return _SYSTEMD_PATH.exists()
+    return False
+
+
 def install() -> bool:
     if platform.system() == "Darwin":
         return _install_mac()
