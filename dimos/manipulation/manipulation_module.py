@@ -38,7 +38,11 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.planning.factory import create_kinematics, create_planner
+from dimos.manipulation.planning.factory import (
+    create_kinematics,
+    create_planner,
+    validate_backend_combination,
+)
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
@@ -90,6 +94,7 @@ class ManipulationModuleConfig(ModuleConfig):
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
+    world_backend: str = "drake"  # "drake" or "roboplan"
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
@@ -165,7 +170,16 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
-        self._world_monitor = WorldMonitor(enable_viz=self.config.enable_viz)
+        validate_backend_combination(
+            world_backend=self.config.world_backend,
+            planner_name=self.config.planner_name,
+            kinematics_name=self.config.kinematics_name,
+        )
+
+        self._world_monitor = WorldMonitor(
+            backend=self.config.world_backend,
+            enable_viz=self.config.enable_viz,
+        )
 
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)
@@ -203,7 +217,11 @@ class ManipulationModule(Module):
             if url := self._world_monitor.get_visualization_url():
                 logger.info(f"Visualization: {url}")
 
-        self._planner = create_planner(name=self.config.planner_name)
+        self._planner = create_planner(
+            name=self.config.planner_name,
+            world=self._world_monitor.world,
+            world_backend=self.config.world_backend,
+        )
         self._kinematics = create_kinematics(name=self.config.kinematics_name)
 
         # Start TF publishing thread if any robot has tf_extra_links

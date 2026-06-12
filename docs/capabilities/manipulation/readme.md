@@ -1,6 +1,7 @@
 # Manipulation
 
-Motion planning and teleoperation for robotic manipulators. Uses Drake for physics simulation and Meshcat for 3D visualization.
+Motion planning and teleoperation for robotic manipulators. Drake remains the default
+world backend and Meshcat is the default manipulation visualization path.
 
 ## Quick Start
 
@@ -59,6 +60,74 @@ preview()               # Preview in Meshcat
 execute()               # Execute via coordinator
 ```
 
+### Planning backend selection
+
+Manipulation planning separates the world backend from the planner algorithm:
+
+- `world_backend` selects the robot/world/collision representation.
+- `planner_name` selects the path-planning algorithm.
+- `kinematics_name` selects the IK backend.
+
+Drake remains the default:
+
+```bash
+dimos run xarm7-planner-coordinator
+```
+
+RoboPlan is available as an optional backend for evaluating a non-Drake world
+implementation. Select it explicitly with module options:
+
+```bash
+dimos run xarm7-planner-coordinator \
+  -o manipulationmodule.world_backend=roboplan \
+  -o manipulationmodule.planner_name=rrt_connect
+```
+
+Valid combinations:
+
+| `world_backend` | `planner_name` | `kinematics_name` | Status |
+|-----------------|----------------|-------------------|--------|
+| `drake` | `rrt_connect` | `jacobian` | Default path |
+| `drake` | `rrt_connect` | `drake_optimization` | Drake-only IK |
+| `roboplan` | `rrt_connect` | `jacobian` | Generic RRT over RoboPlan collision checks |
+| `roboplan` | `roboplan` | `jacobian` | RoboPlan-native planner, using the RoboPlan world object |
+
+Invalid combinations fail during startup instead of waiting for the first plan
+request. For example, `planner_name=roboplan` requires
+`world_backend=roboplan`, and `kinematics_name=drake_optimization` requires
+`world_backend=drake`.
+
+Install RoboPlan separately from the default manipulation dependencies:
+
+```bash
+uv sync --extra roboplan
+```
+
+The RoboPlan extra uses the root package from `git+ssh://git@github.com/TomCC7/roboplan.git`.
+PyPI package publication and commit pinning are separate follow-up work.
+
+RoboPlan builds C++ bindings locally. Install system build prerequisites before
+syncing the extra; for example, on Ubuntu:
+
+```bash
+sudo apt-get install libeigen3-dev
+```
+
+If CMake reports another missing package, install the matching development
+package or expose its CMake package directory through `CMAKE_PREFIX_PATH`.
+
+Safety behavior for unsupported RoboPlan features:
+
+- Planning-critical unsupported inputs fail loudly before planning. Examples
+  include unsupported obstacle geometry, unavailable robot loading APIs, or
+  unavailable collision query APIs. RoboPlan worlds generate a minimal SRDF from
+  the DimOS robot config, including configured collision-exclusion pairs.
+- Unverified non-critical query methods raise explicit `NotImplementedError`.
+  In particular, signed minimum-distance semantics are not implemented for
+  RoboPlan until a safe equivalent is verified.
+- RoboPlan manipulation visualization is not implemented; Drake/Meshcat remains
+  the visualization path.
+
 ### Perception + Agent
 
 ```bash
@@ -70,7 +139,7 @@ XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 
 ```
 KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
-  (pygame UI)              (100Hz tick loop)      (Drake + Meshcat)
+  (pygame UI)              (100Hz tick loop)      (WorldSpec backend)
        │                        │                       │
   PoseStamped            CartesianIK task         RRT planner
   commands               (Pinocchio IK)           JacobianIK
@@ -80,7 +149,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 
 - **KeyboardTeleopModule** — Pygame UI publishing cartesian pose commands
 - **ControlCoordinator** — 100Hz control loop with mock or real hardware adapters
-- **ManipulationModule** — Drake physics, Meshcat viz, RRT motion planning, obstacle management
+- **ManipulationModule** — world backend, optional visualization, RRT motion planning, obstacle management
 
 Internally, planning code depends on `WorldSpec` for world, collision, and
 kinematics behavior. Meshcat preview and publishing are exposed separately

@@ -273,6 +273,10 @@ manipulation = [
     "pyyaml>=6.0",
 ]
 
+roboplan = [
+    "roboplan @ git+ssh://git@github.com/TomCC7/roboplan.git",
+]
+
 
 cpu = [
     # CPU inference backends
