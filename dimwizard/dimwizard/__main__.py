@@ -32,7 +32,7 @@ def main() -> None:
         _run_beacon()
     except Exception as e:
         print(f"dimwizard: beacon error: {e}", file=sys.stderr)
-        sys.exit(0)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
