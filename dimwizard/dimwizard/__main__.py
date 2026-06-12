@@ -39,7 +39,11 @@ def main() -> None:
     except (OSError, KeyError, ValueError) as e:
         print(f"dimwizard: config unavailable, exiting cleanly: {e}", file=sys.stderr)
         sys.exit(0)
-    _run_beacon(robot_name)
+    try:
+        _run_beacon(robot_name)
+    except Exception as e:
+        print(f"dimwizard: beacon error: {e}", file=sys.stderr)
+        sys.exit(0)
 
 
 if __name__ == "__main__":
