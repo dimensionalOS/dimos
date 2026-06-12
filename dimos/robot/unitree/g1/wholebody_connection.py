@@ -321,28 +321,28 @@ class G1WholeBodyConnection(Module):
             )
 
     def _publish_motor_state_and_imu(
-        self,
-        now: float,
-        frame_id: str,
-        positions: list[float],
-        velocities: list[float],
-        efforts: list[float],
-        quat: tuple[float, float, float, float],
-        gyro: tuple[float, float, float],
-        accel: tuple[float, float, float],
+        self, now: float, frame_id: str, sample: G1LowStateSnapshot
     ) -> None:
         self.motor_states.publish(
             JointState(
                 ts=now,
                 frame_id=frame_id,
                 name=G1_JOINT_NAMES,
-                position=positions,
-                velocity=velocities,
-                effort=efforts,
+                position=sample.positions,
+                velocity=sample.velocities,
+                effort=sample.efforts,
             )
         )
         # Unitree reports quaternions as (w,x,y,z); Imu/Quaternion stores (x,y,z,w).
-        self.imu.publish(_imu_from_unitree_wxyz(quat, gyro, accel, frame_id=frame_id, ts=now))
+        self.imu.publish(
+            _imu_from_unitree_wxyz(
+                sample.quaternion,
+                sample.gyroscope,
+                sample.accelerometer,
+                frame_id=frame_id,
+                ts=now,
+            )
+        )
 
     def _publish_loop(self) -> None:
         period = 1.0 / float(self.config.publish_rate_hz)
@@ -353,16 +353,7 @@ class G1WholeBodyConnection(Module):
             self._drain_low_state()
             sample = self._snapshot_motor_imu()
             if sample is not None:
-                self._publish_motor_state_and_imu(
-                    now=time.time(),
-                    frame_id=frame_id,
-                    positions=sample.positions,
-                    velocities=sample.velocities,
-                    efforts=sample.efforts,
-                    quat=sample.quaternion,
-                    gyro=sample.gyroscope,
-                    accel=sample.accelerometer,
-                )
+                self._publish_motor_state_and_imu(now=time.time(), frame_id=frame_id, sample=sample)
 
             next_tick += period
             sleep_for = next_tick - time.perf_counter()
