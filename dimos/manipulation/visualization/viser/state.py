@@ -241,11 +241,12 @@ class TargetEvaluationWorker:
         )
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, timeout: float | None = 2.0) -> None:
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
-        self._thread = None
+            self._thread.join(timeout=timeout)
+        if self._thread is not None and not self._thread.is_alive():
+            self._thread = None
 
     def submit(self, request: TargetEvaluationRequest) -> None:
         with self._submit_lock:
@@ -292,11 +293,12 @@ class OperationWorker:
         self._thread = threading.Thread(target=self._run, name="ViserOperationWorker", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, timeout: float | None = 2.0) -> None:
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
-        self._thread = None
+            self._thread.join(timeout=timeout)
+        if self._thread is not None and not self._thread.is_alive():
+            self._thread = None
 
     def submit(self, operation: Callable[[], object]) -> None:
         with self._submit_lock:

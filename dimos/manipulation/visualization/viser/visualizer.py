@@ -46,25 +46,41 @@ class ViserManipulationVisualizer:
         config: ViserVisualizationConfig | None = None,
     ) -> None:
         self.config = config or ViserVisualizationConfig()
-        self._runtime = ViserRuntime(self.config)
-        self._server = self._runtime.start()
-        self._viser_urdf = import_viser_urdf()
-        self._adapter = InProcessViserAdapter(
-            world_monitor=world_monitor,
-            manipulation_module=manipulation_module,
-        )
-        self._scene = ViserManipulationScene(
-            self._server,
-            cast("_ViserUrdfFactory", self._viser_urdf),
-            preview_fps=self.config.preview_fps,
-        )
-        self._gui = (
-            ViserPanelGui(self._server, self._adapter, self.config, self._scene)
-            if self.config.panel_enabled
-            else None
-        )
-        if self._gui is not None:
-            self._gui.start()
+        runtime = ViserRuntime(self.config)
+        server = runtime.start()
+        scene: ViserManipulationScene | None = None
+        gui: ViserPanelGui | None = None
+        try:
+            viser_urdf = import_viser_urdf()
+            adapter = InProcessViserAdapter(
+                world_monitor=world_monitor,
+                manipulation_module=manipulation_module,
+            )
+            scene = ViserManipulationScene(
+                server,
+                cast("_ViserUrdfFactory", viser_urdf),
+                preview_fps=self.config.preview_fps,
+            )
+            gui = (
+                ViserPanelGui(server, adapter, self.config, scene)
+                if self.config.panel_enabled
+                else None
+            )
+            if gui is not None:
+                gui.start()
+        except Exception:
+            if gui is not None:
+                gui.close()
+            if scene is not None:
+                scene.close()
+            runtime.close()
+            raise
+        self._runtime = runtime
+        self._server = server
+        self._viser_urdf = viser_urdf
+        self._adapter = adapter
+        self._scene = scene
+        self._gui = gui
         self._closed = False
         logger.info(f"Viser manipulation visualization: {self.get_visualization_url()}")
 

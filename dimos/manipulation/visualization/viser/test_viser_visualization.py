@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from types import SimpleNamespace
 from typing import cast
@@ -21,6 +22,7 @@ from typing import cast
 import numpy as np
 
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
+from dimos.manipulation.visualization.viser import visualizer as visualizer_module
 from dimos.manipulation.visualization.viser.adapter import InProcessViserAdapter
 from dimos.manipulation.visualization.viser.animation import sampled_joint_path_frames
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -232,6 +234,45 @@ def test_visualizer_initializes_all_scene_robots_from_planning_scene() -> None:
     visualizer.initialize_scene(scene)
 
     assert calls == [("robot-1", "arm1"), ("robot-2", "arm2"), ("refresh", "gui")]
+
+
+def test_visualizer_closes_runtime_when_construction_fails() -> None:
+    closed = []
+
+    class FakeRuntime:
+        url = "http://localhost:8095"
+
+        def __init__(self, config) -> None:
+            self.config = config
+
+        def start(self) -> FakeServer:
+            return FakeServer()
+
+        def close(self) -> None:
+            closed.append("runtime")
+
+    def fail_import_viser_urdf():
+        raise RuntimeError("missing viser_urdf")
+
+    original_runtime = visualizer_module.ViserRuntime
+    original_import = visualizer_module.import_viser_urdf
+    cast("Any", visualizer_module).ViserRuntime = FakeRuntime
+    cast("Any", visualizer_module).import_viser_urdf = fail_import_viser_urdf
+    try:
+        try:
+            ViserManipulationVisualizer(
+                world_monitor=cast("Any", object()),
+                manipulation_module=None,
+                config=ViserVisualizationConfig(panel_enabled=False),
+            )
+        except RuntimeError as e:
+            assert str(e) == "missing viser_urdf"
+        else:
+            raise AssertionError("expected Viser construction failure")
+        assert closed == ["runtime"]
+    finally:
+        cast("Any", visualizer_module).ViserRuntime = original_runtime
+        cast("Any", visualizer_module).import_viser_urdf = original_import
 
 
 class FakeMesh:
@@ -933,7 +974,7 @@ def test_gui_plan_target_failure_recovers_action_state() -> None:
         object.__setattr__(
             gui,
             "_operation_worker",
-            SimpleNamespace(submit=lambda operation: operation(), stop=lambda: None),
+            SimpleNamespace(submit=lambda operation: operation(), stop=lambda timeout=2.0: None),
         )
         gui.state.selected_robot = "missing"
         gui.state.target_status = TargetStatus.FEASIBLE
@@ -960,6 +1001,35 @@ def test_operation_worker_coalesces_pending_requests() -> None:
     operation()
 
     assert calls == ["new"]
+    assert errors == []
+
+
+def test_operation_worker_stop_can_wait_for_in_flight_operation() -> None:
+    errors = []
+    worker = OperationWorker(errors.append)
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def operation() -> None:
+        started.set()
+        release.wait(timeout=1.0)
+        finished.set()
+
+    worker.start()
+    worker.submit(operation)
+    assert started.wait(timeout=1.0)
+
+    releaser = threading.Thread(
+        target=lambda: (time.sleep(0.05), release.set()),
+        name="ReleaseViserOperationTest",
+    )
+    releaser.start()
+    worker.stop(timeout=None)
+    releaser.join(timeout=1.0)
+
+    assert finished.is_set()
+    assert cast("Any", worker)._thread is None
     assert errors == []
 
 

@@ -143,6 +143,7 @@ class ViserPanelGui:
         self.config = config
         self.scene = scene
         self.state = PanelState(runtime=PanelRuntime.STARTING)
+        self._closed = False
         self._suppress_target_callbacks = False
         self._handles: dict[str, object] = {}
         self._joint_sliders: dict[str, _SliderHandle] = {}
@@ -165,9 +166,10 @@ class ViserPanelGui:
             raise
 
     def close(self) -> None:
+        self._closed = True
         self.state.runtime = PanelRuntime.STOPPING
         self._worker.stop()
-        self._operation_worker.stop()
+        self._operation_worker.stop(timeout=None)
         self._clear_joint_sliders()
         self._handles.clear()
         self.state.runtime = PanelRuntime.STOPPED
@@ -723,6 +725,8 @@ class ViserPanelGui:
         self._operation_worker.submit(operation)
 
     def _finish_operation(self, result: str, *, clear_error: bool = True) -> None:
+        if self._closed:
+            return
         self.state.action_status = ActionStatus.IDLE
         if clear_error:
             self.state.error = ""
@@ -730,6 +734,8 @@ class ViserPanelGui:
         self.refresh()
 
     def _set_error(self, message: str) -> None:
+        if self._closed:
+            return
         self.state.action_status = ActionStatus.FAILED
         self.state.error = message
         self.refresh()
