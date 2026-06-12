@@ -247,6 +247,7 @@ def run(
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
     setup_exception_handler()
+    _setup_wizard()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
 
@@ -820,6 +821,11 @@ def rerun_bridge_cmd(
         rerun_open=cast("RerunOpenOption", rerun_open),
         rerun_web=rerun_web,
     )
+
+
+def _setup_wizard() -> None:
+    from dimwizard.setup import setup_wizard
+    setup_wizard()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimwizard"
+version = "0.1.0"
+description = "Makes a Dimensional robot permanently discoverable on the local network"
+requires-python = ">=3.10"
+dependencies = [
+    "zeroconf>=0.131.0",
+    "typer>=0.9.0",
+    "questionary>=2.0.0",
+]
+
+[project.scripts]
+dimwizard = "dimwizard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dimwizard*"]
