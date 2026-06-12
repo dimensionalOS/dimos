@@ -16,6 +16,42 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 
 ManipulationVisualizationBackend = Literal["meshcat", "viser", "none"]
+
+
+class NoManipulationVisualizationConfig(BaseModel):
+    """Disable manipulation visualization."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    backend: Literal["none"] = "none"
+
+    @property
+    def requires_world_visualization(self) -> bool:
+        """Whether the planning world must create an embedded visualizer."""
+        return False
+
+
+class MeshcatVisualizationConfig(BaseModel):
+    """Use the embedded Meshcat visualizer provided by the planning world."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    backend: Literal["meshcat"] = "meshcat"
+
+    @property
+    def requires_world_visualization(self) -> bool:
+        """Whether the planning world must create an embedded visualizer."""
+        return True
+
+
+ManipulationVisualizationConfig = Annotated[
+    NoManipulationVisualizationConfig | MeshcatVisualizationConfig | ViserVisualizationConfig,
+    Field(discriminator="backend"),
+]

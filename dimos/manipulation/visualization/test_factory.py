@@ -22,7 +22,12 @@ from pydantic import ValidationError
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.manipulation.planning.spec.models import PlanningSceneInfo
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
+from dimos.manipulation.visualization.config import (
+    MeshcatVisualizationConfig,
+    NoManipulationVisualizationConfig,
+)
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 
 
 class FakeVisualization:
@@ -126,50 +131,51 @@ class FakeWorld(FakeVisualization):
         return []
 
 
-def test_config_resolves_legacy_enable_viz() -> None:
-    assert ManipulationModuleConfig(enable_viz=True).resolved_visualization_backend == "meshcat"
-    assert ManipulationModuleConfig(enable_viz=False).resolved_visualization_backend == "none"
-    assert (
-        ManipulationModuleConfig(
-            enable_viz=True,
-            visualization_backend="none",
-        ).resolved_visualization_backend
-        == "none"
-    )
-    assert (
-        ManipulationModuleConfig(
-            enable_viz=False,
-            visualization_backend="viser",
-        ).resolved_visualization_backend
-        == "viser"
-    )
+def test_config_defaults_to_no_visualization() -> None:
+    config = ManipulationModuleConfig()
+
+    assert isinstance(config.visualization, NoManipulationVisualizationConfig)
+    assert config.visualization.requires_world_visualization is False
 
 
 def test_config_rejects_unknown_visualization_backend() -> None:
     try:
-        ManipulationModuleConfig(visualization_backend="bad")
+        ManipulationModuleConfig(visualization={"backend": "bad"})
         raise AssertionError("expected ValidationError")
     except ValidationError as exc:
-        assert "visualization_backend" in str(exc)
+        assert "visualization" in str(exc)
 
 
-def test_config_validates_viser_visualization_options() -> None:
+def test_config_validates_viser_visualization() -> None:
     config = ManipulationModuleConfig(
-        visualization_backend="viser",
-        visualization_options={
+        visualization={
+            "backend": "viser",
             "visualization_host": "0.0.0.0",
             "visualization_port": "8096",
             "viser_panel_enabled": "false",
         },
     )
 
-    assert config.visualization_options.host == "0.0.0.0"
-    assert config.visualization_options.port == 8096
-    assert config.visualization_options.panel_enabled is False
+    assert isinstance(config.visualization, ViserVisualizationConfig)
+    assert config.visualization.host == "0.0.0.0"
+    assert config.visualization.port == 8096
+    assert config.visualization.panel_enabled is False
+
+
+def test_config_meshcat_requires_world_visualization() -> None:
+    config = ManipulationModuleConfig(visualization={"backend": "meshcat"})
+
+    assert isinstance(config.visualization, MeshcatVisualizationConfig)
+    assert config.visualization.requires_world_visualization is True
 
 
 def test_create_visualization_none_returns_none() -> None:
-    assert create_manipulation_visualization("none", world_monitor=MagicMock()) is None
+    assert (
+        create_manipulation_visualization(
+            NoManipulationVisualizationConfig(), world_monitor=MagicMock()
+        )
+        is None
+    )
 
 
 def test_create_visualization_meshcat_accepts_structural_world() -> None:
@@ -177,14 +183,17 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
     assert isinstance(fake_world, VisualizationSpec)
     world_monitor = MagicMock()
     world_monitor.visualization = fake_world
-    assert create_manipulation_visualization("meshcat", world_monitor=world_monitor) is fake_world
+    assert (
+        create_manipulation_visualization(MeshcatVisualizationConfig(), world_monitor=world_monitor)
+        is fake_world
+    )
 
 
 def test_create_visualization_meshcat_rejects_non_visualization_world() -> None:
     try:
         world_monitor = MagicMock()
         world_monitor.visualization = None
-        create_manipulation_visualization("meshcat", world_monitor=world_monitor)
+        create_manipulation_visualization(MeshcatVisualizationConfig(), world_monitor=world_monitor)
         raise AssertionError("expected ValueError")
     except ValueError as exc:
         assert "implements VisualizationSpec" in str(exc)

@@ -74,7 +74,7 @@ keyboard_teleop_xarm6 = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_xarm6_cfg.to_robot_model_config()],
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
 ).transports(
     {
@@ -108,7 +108,7 @@ keyboard_teleop_xarm7 = autoconnect(
     ),
     ManipulationModule.blueprint(
         robots=[_xarm7_cfg.to_robot_model_config()],
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
 ).transports(
     {

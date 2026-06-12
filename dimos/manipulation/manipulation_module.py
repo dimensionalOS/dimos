@@ -38,7 +38,6 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.planning.factory import create_planning_specs
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
@@ -48,9 +47,11 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
     JointTrajectoryGenerator,
 )
 from dimos.manipulation.skill_errors import ManipulationSkillError
-from dimos.manipulation.visualization.config import ManipulationVisualizationBackend
-from dimos.manipulation.visualization.factory import create_manipulation_visualization
-from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.manipulation.visualization.config import (
+    ManipulationVisualizationConfig,
+    NoManipulationVisualizationConfig,
+)
+from dimos.manipulation.visualization.factory import create_manipulation_runtime_specs
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -93,10 +94,8 @@ class ManipulationModuleConfig(ModuleConfig):
 
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
-    enable_viz: bool = False
-    visualization_backend: ManipulationVisualizationBackend | None = None
-    visualization_options: ViserVisualizationConfig = Field(
-        default_factory=ViserVisualizationConfig
+    visualization: ManipulationVisualizationConfig = Field(
+        default_factory=NoManipulationVisualizationConfig
     )
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
@@ -104,13 +103,6 @@ class ManipulationModuleConfig(ModuleConfig):
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
-
-    @property
-    def resolved_visualization_backend(self) -> ManipulationVisualizationBackend:
-        """Resolve legacy enable_viz into the configured visualization backend."""
-        if self.visualization_backend is not None:
-            return self.visualization_backend
-        return "meshcat" if self.enable_viz else "none"
 
 
 class ManipulationModule(Module):
@@ -180,21 +172,15 @@ class ManipulationModule(Module):
             logger.warning("No robots configured, planning disabled")
             return
 
-        visualization_backend = self.config.resolved_visualization_backend
-        planning_specs = create_planning_specs(
-            enable_viz=visualization_backend == "meshcat",
-            planner_name=self.config.planner_name,
-            kinematics_name=self.config.kinematics_name,
+        runtime_specs = create_manipulation_runtime_specs(
+            self.config,
+            manipulation_module=self,
         )
+        planning_specs = runtime_specs.planning
         self._world_monitor = planning_specs.world_monitor
         self._planner = planning_specs.planner
         self._kinematics = planning_specs.kinematics
-        visualization = create_manipulation_visualization(
-            visualization_backend,
-            world_monitor=self._world_monitor,
-            manipulation_module=self,
-            config=self.config.visualization_options if visualization_backend == "viser" else None,
-        )
+        visualization = runtime_specs.visualization
 
         for robot_config in self.config.robots:
             robot_id = self._world_monitor.add_robot(robot_config)

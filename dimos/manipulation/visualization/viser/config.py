@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
@@ -22,6 +24,7 @@ class ViserVisualizationConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
+    backend: Literal["viser"] = "viser"
     host: str = Field(
         default="127.0.0.1", validation_alias=AliasChoices("host", "visualization_host")
     )
@@ -52,3 +55,8 @@ class ViserVisualizationConfig(BaseModel):
         validation_alias=AliasChoices("current_match_tolerance", "viser_current_match_tolerance"),
     )
     allow_plan_execute: bool = False
+
+    @property
+    def requires_world_visualization(self) -> bool:
+        """Whether the planning world must create an embedded visualizer."""
+        return False

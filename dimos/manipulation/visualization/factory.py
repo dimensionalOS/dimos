@@ -16,10 +16,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
 
+from dimos.manipulation.planning.factory import PlanningSpecs, create_planning_specs
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
-from dimos.manipulation.visualization.config import ManipulationVisualizationBackend
+from dimos.manipulation.visualization.config import (
+    ManipulationVisualizationConfig,
+    MeshcatVisualizationConfig,
+    NoManipulationVisualizationConfig,
+)
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 
 if TYPE_CHECKING:
@@ -27,24 +33,58 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 
 
+class ManipulationRuntimeConfig(Protocol):
+    """Validated config fields required to create manipulation runtime specs."""
+
+    planner_name: str
+    kinematics_name: str
+    visualization: ManipulationVisualizationConfig
+
+
+@dataclass(frozen=True)
+class ManipulationRuntimeSpecs:
+    """Concrete planning and visualization specs for a manipulation module."""
+
+    planning: PlanningSpecs
+    visualization: VisualizationSpec | None
+
+
+def create_manipulation_runtime_specs(
+    config: ManipulationRuntimeConfig,
+    *,
+    manipulation_module: ManipulationModule | None = None,
+) -> ManipulationRuntimeSpecs:
+    """Create planning specs and their matching visualization backend."""
+    planning_specs = create_planning_specs(
+        enable_viz=config.visualization.requires_world_visualization,
+        planner_name=config.planner_name,
+        kinematics_name=config.kinematics_name,
+    )
+    visualization = create_manipulation_visualization(
+        config.visualization,
+        world_monitor=planning_specs.world_monitor,
+        manipulation_module=manipulation_module,
+    )
+    return ManipulationRuntimeSpecs(planning=planning_specs, visualization=visualization)
+
+
 def create_manipulation_visualization(
-    backend: ManipulationVisualizationBackend,
+    config: ManipulationVisualizationConfig,
     *,
     world_monitor: WorldMonitor,
     manipulation_module: ManipulationModule | None = None,
-    config: ViserVisualizationConfig | None = None,
 ) -> VisualizationSpec | None:
     """Create an optional manipulation visualization backend."""
-    if backend == "none":
+    if isinstance(config, NoManipulationVisualizationConfig):
         return None
 
-    if backend == "meshcat":
+    if isinstance(config, MeshcatVisualizationConfig):
         visualization = world_monitor.visualization
         if visualization is not None:
             return visualization
         raise ValueError("meshcat visualization requires a world that implements VisualizationSpec")
 
-    if backend == "viser":
+    if isinstance(config, ViserVisualizationConfig):
         from dimos.manipulation.visualization.viser.visualizer import (
             ViserManipulationVisualizer,
         )
@@ -55,4 +95,4 @@ def create_manipulation_visualization(
             config=config,
         )
 
-    raise AssertionError(f"Unhandled manipulation visualization backend: {backend!r}")
+    raise AssertionError(f"Unhandled manipulation visualization config: {config!r}")

@@ -55,7 +55,7 @@ _xarm6_planner_cfg = _catalog_xarm6(
 xarm6_planner_only = ManipulationModule.blueprint(
     robots=[_xarm6_planner_cfg.to_robot_model_config()],
     planning_timeout=10.0,
-    enable_viz=True,
+    visualization={"backend": "meshcat"},
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
@@ -84,7 +84,7 @@ dual_xarm6_planner = ManipulationModule.blueprint(
         _right_arm_cfg.to_robot_model_config(),
     ],
     planning_timeout=10.0,
-    enable_viz=True,
+    visualization={"backend": "meshcat"},
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
@@ -105,7 +105,7 @@ xarm7_planner_coordinator = autoconnect(
     ManipulationModule.blueprint(
         robots=[_xarm7_cfg.to_robot_model_config()],
         planning_timeout=10.0,
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
@@ -181,7 +181,7 @@ xarm_perception = (
         PickAndPlaceModule.blueprint(
             robots=[_xarm7_perception_cfg.to_robot_model_config()],
             planning_timeout=10.0,
-            enable_viz=True,
+            visualization={"backend": "meshcat"},
             floor_z=-0.02,
         ),
         RealSenseCamera.blueprint(
@@ -305,7 +305,7 @@ xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
         robots=[_xarm7_sim_cfg.to_robot_model_config()],
         planning_timeout=10.0,
-        enable_viz=True,
+        visualization={"backend": "meshcat"},
     ),
     MujocoSimModule.blueprint(
         address=str(XARM7_SIM_PATH),
