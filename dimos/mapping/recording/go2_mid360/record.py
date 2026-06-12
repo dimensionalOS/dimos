@@ -23,6 +23,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
+from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.hardware.sensors.lidar.fastlio2.recorder import FastLio2Recorder, _default_recording_dir
 from dimos.hardware.sensors.lidar.fastlio2.speed_warner import SpeedWarner
@@ -34,18 +35,20 @@ from dimos.mapping.recording.go2_mid360.static_transforms import (
 from dimos.memory2.stream import Stream
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+from dimos.robot.unitree.keyboard_teleop_tui import KeyboardTeleopTUI
 from dimos.utils.logging_config import set_run_log_dir, setup_logger
 
 logger = setup_logger()
 
-_LIDAR_IP = os.getenv("LIDAR_IP", "192.168.1.107")
+_LIDAR_IP = os.getenv("LIDAR_IP", "192.168.1.171")
+_LIDAR_HOST_IP = os.getenv("LIDAR_HOST_IP", "192.168.1.100")
 
 
 class Go2TfHackRecorder(FastLio2Recorder):
@@ -69,9 +72,11 @@ class Go2TfHackRecorder(FastLio2Recorder):
     color_image: In[Image]
     livox_lidar: In[PointCloud2]
     livox_imu: In[Imu]
-    # sanity check
-    fastlio_lidar_no_cap: In[PointCloud2]
-    fastlio_odometry_no_cap: In[Odometry]
+    # Shadow the parent's generic companion ports so they're not recorded as
+    # empty `lidar`/`odom` streams; the go2-prefixed ports above take their place.
+    lidar: None = None  # type: ignore[assignment]
+    odom: None = None  # type: ignore[assignment]
+    tf: In[Transform]
 
     _latest_fastlio_odom: Odometry | None = None
     _warning_names: set[str] = set()
@@ -124,11 +129,11 @@ class FastLio2NoCap(FastLio2):
 
 
 unitree_go2_record = autoconnect(
-    KeyboardTeleop.blueprint(),
     MovementManager.blueprint(),
     GO2Connection.blueprint(),
     Mid360.blueprint(
         lidar_ip=_LIDAR_IP,
+        host_ip=_LIDAR_HOST_IP,
     ).remappings(
         [
             (Mid360, "lidar", "livox_lidar"),
@@ -146,24 +151,10 @@ unitree_go2_record = autoconnect(
             (FastLio2, "odometry", "fastlio_odometry"),
         ]
     ),
-    # FastLio2NoCap.blueprint(
-    #     frame_id="world",
-    #     map_freq=-1,
-    #     lidar_ip=_LIDAR_IP,
-    #     max_velocity_norm_ms=100,
-    #     # Absolute path to FastLio2's cpp build dir; passed to FastLio2NoCap so the
-    #     # trivial subclass doesn't try to resolve `cpp` next to this file.
-    #     cwd=str(Path(_fastlio2_module.__file__).resolve().parent / "cpp"),
-    # ).remappings(
-    #     [
-    #         (FastLio2, "lidar", "fastlio_lidar_no_cap"),
-    #         (FastLio2, "odometry", "fastlio_odometry_no_cap"),
-    #     ]
-    # ),
     Go2TfHackRecorder.blueprint(lidar_ip=_LIDAR_IP, record_pcap=True),
     SpeedWarner.blueprint().remappings(
         [
-            (SpeedWarner, "odometry", "fastlio_odometry_no_cap"),
+            (SpeedWarner, "odometry", "fastlio_odometry"),
         ]
     ),
 ).global_config(n_workers=10, robot_model="unitree_go2")
@@ -178,4 +169,29 @@ if __name__ == "__main__":
         unitree_go2_record,
         {Go2TfHackRecorder.name: {"recording_dir": recording_dir}},
     )
-    coordinator.loop()
+
+    # Sit/stand drive the Go2 directly via its RPCs. After standing the dog must
+    # re-enter BalanceStand before it will walk again, so on_stand chains
+    # standup -> balance_stand (mirrors GO2Connection.start()).
+    go2 = coordinator.get_instance(GO2Connection)
+
+    def stand_and_ready() -> None:
+        go2.standup()
+        time.sleep(3.0)
+        go2.balance_stand()
+
+    # Launch the TUI teleop in THIS process (not via the coordinator) so it owns
+    # the terminal's stdin and can read WASD keypresses. Its output is wired onto
+    # the same /tele_cmd_vel topic MovementManager subscribes to.
+    teleop = KeyboardTeleopTUI(
+        linear_speed=0.3,
+        angular_speed=0.6,
+        on_sit=go2.liedown,
+        on_stand=stand_and_ready,
+    )
+    teleop.tele_cmd_vel.transport = LCMTransport("/tele_cmd_vel", Twist)
+    teleop.start()
+    try:
+        coordinator.loop()
+    finally:
+        teleop.stop()
