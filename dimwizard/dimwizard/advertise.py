@@ -10,7 +10,7 @@ _PORT = 7667
 _VIRTUAL_IFACE_PREFIXES = ("docker", "virbr", "lo", "tun", "veth", "br-")
 
 
-def _local_ip() -> str:
+def local_ip() -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
@@ -42,7 +42,7 @@ class Advertiser:
         self._info: ServiceInfo | None = None
 
     def start(self) -> None:
-        ip = _local_ip()
+        ip = local_ip()
         self._zeroconf = Zeroconf()
         self._info = ServiceInfo(
             SERVICE_TYPE,

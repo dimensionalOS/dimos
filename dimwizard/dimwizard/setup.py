@@ -21,7 +21,7 @@ def setup_wizard() -> None:
     ).ask()
 
     if confirmed is None:
-        raise KeyboardInterrupt
+        return
     if not confirmed:
         return
 

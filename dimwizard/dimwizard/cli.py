@@ -5,7 +5,7 @@ import socket
 
 import typer
 
-from dimwizard.advertise import SERVICE_TYPE, _local_ip
+from dimwizard.advertise import SERVICE_TYPE, local_ip
 from dimwizard.install import is_installed, is_running, uninstall
 
 app = typer.Typer(help="dimwizard - robot network beacon")
@@ -27,7 +27,7 @@ def status() -> None:
         print(f"mdns:      {robot_name}.{SERVICE_TYPE}")
         print(f"lcm url:   {lcm_url}")
         try:
-            print(f"ip:        {_local_ip()}")
+            print(f"ip:        {local_ip()}")
         except OSError as e:
             print(f"ip:        unavailable ({e})")
 
