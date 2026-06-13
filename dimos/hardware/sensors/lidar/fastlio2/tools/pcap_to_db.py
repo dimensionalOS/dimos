@@ -68,94 +68,20 @@ Usage (from the dimos5 venv)::
 from __future__ import annotations
 
 import argparse
-from collections.abc import AsyncIterator
 import math
 from pathlib import Path
 import sqlite3
 import sys
 import time
 
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.hardware.sensors.lidar.fastlio2.recorder import FastLio2Recorder
 
 # Below this an absolute timestamp is sensor-boot seconds, not unix wall time.
 _SENSOR_CLOCK_MAX = 1e8
-# Strictly-increasing tie-breaker so two samples never collide on ts.
-_EPS = 1e-9
 # Poll the db on this cadence while the replay drains the pcap.
 _POLL_SEC = 1.0
 # Stop after the odom stream has been stagnant this long (pcap fully drained).
 _STAGNANT_SEC = 6.0
-
-
-class _RecConfig(ModuleConfig):
-    """Configures the recorder with the target db and timing conversion."""
-
-    db_path: str = ""
-    # Earliest existing ts in the db, or -1.0 if the db has no timestamped rows.
-    ref_start_ts: float = -1.0
-    # Explicit offset override; NaN means auto-derive from ref_start_ts.
-    time_offset: float = float("nan")
-
-
-class _Rec(Module):
-    """Append FAST-LIO odometry + lidar into an existing SQLite db with ts conversion."""
-
-    config: _RecConfig
-    fastlio_odometry: In[Odometry]
-    fastlio_lidar: In[PointCloud2]
-    _offset: float | None = None
-    _last_odom_ts: float = 0.0
-    _last_lidar_ts: float = 0.0
-    _last_pose: object = None
-    _odom_count: int = 0
-    _lidar_count: int = 0
-
-    async def main(self) -> AsyncIterator[None]:
-        from dimos.memory2.store.sqlite import SqliteStore
-
-        self._store = SqliteStore(path=self.config.db_path)
-        self._os = self._store.stream("fastlio_odometry", Odometry)
-        self._ls = self._store.stream("fastlio_lidar", PointCloud2)
-        yield
-        self._store.stop()
-
-    def _resolve_offset(self, first_ts: float) -> float:
-        override = self.config.time_offset
-        if not math.isnan(override):
-            return override
-        ref = self.config.ref_start_ts
-        if ref < 0.0:
-            return 0.0
-        # Same clock family (both wall, or both sensor) -> already aligned.
-        # Cross-clock -> start-align the replay's first ts onto the db's first.
-        if (first_ts > _SENSOR_CLOCK_MAX) == (ref > _SENSOR_CLOCK_MAX):
-            return 0.0
-        return ref - first_ts
-
-    def _aligned_ts(self, raw_ts: float, last_ts: float) -> float:
-        """Convert a replay ts onto the db clock, kept strictly above last_ts."""
-        if self._offset is None:
-            self._offset = self._resolve_offset(raw_ts)
-        return max(raw_ts + self._offset, last_ts + _EPS)
-
-    async def handle_fastlio_odometry(self, v: Odometry) -> None:
-        raw_ts = getattr(v, "ts", None) or time.time()
-        ts = self._aligned_ts(raw_ts, self._last_odom_ts)
-        self._last_odom_ts = ts
-        pose = getattr(v, "pose", None)
-        self._last_pose = getattr(pose, "pose", None) if pose is not None else None
-        self._os.append(v, ts=ts, pose=self._last_pose)
-        self._odom_count += 1
-
-    async def handle_fastlio_lidar(self, v: PointCloud2) -> None:
-        raw_ts = getattr(v, "ts", None) or time.time()
-        ts = self._aligned_ts(raw_ts, self._last_lidar_ts)
-        self._last_lidar_ts = ts
-        self._ls.append(v, ts=ts, pose=self._last_pose)
-        self._lidar_count += 1
 
 
 def _db_ref_start_ts(db_path: Path) -> float:
@@ -277,7 +203,7 @@ def _run(args: argparse.Namespace) -> int:
     )
     blueprint = autoconnect(
         fastlio,
-        _Rec.blueprint(
+        FastLio2Recorder.blueprint(
             db_path=str(db_path),
             ref_start_ts=ref_start_ts,
             time_offset=time_offset,
