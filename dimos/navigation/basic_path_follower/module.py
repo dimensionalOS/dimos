@@ -23,6 +23,7 @@ from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 import numpy as np
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -69,8 +70,9 @@ class BasicPathFollower(Module):
         super().__init__(**kwargs)
         self._lock = RLock()
         self._current_odom: PoseStamped | None = None
-        self._thread: Thread | None = None
+        self._waypoints: np.ndarray | None = None
         self._stop_event = Event()
+        self._thread: Thread | None = None
 
     @rpc
     def start(self) -> None:
@@ -79,10 +81,15 @@ class BasicPathFollower(Module):
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
         if self.stop_movement.transport is not None:
             self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop)))
+        self._thread = Thread(target=self._follow, daemon=True)
+        self._thread.start()
 
     @rpc
     def stop(self) -> None:
-        self._cancel()
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        self.nav_cmd_vel.publish(Twist())
         super().stop()
 
     def _on_odometry(self, msg: Odometry) -> None:
@@ -90,65 +97,54 @@ class BasicPathFollower(Module):
             self._current_odom = msg.to_pose_stamped()
 
     def _on_path(self, path: Path) -> None:
-        self._cancel()
         waypoints = np.array([[p.position.x, p.position.y] for p in path.poses])
-        if len(waypoints) == 0:
-            return
-        logger.info("Following new path", waypoints=len(waypoints))
-        stop_event = Event()
-        thread = Thread(target=self._follow, args=(waypoints, stop_event), daemon=True)
         with self._lock:
-            self._stop_event = stop_event
-            self._thread = thread
-        thread.start()
+            self._waypoints = waypoints if len(waypoints) else None
 
     def _on_stop(self, msg: Bool) -> None:
         if msg.data:
-            self._cancel()
+            with self._lock:
+                self._waypoints = None
+            self.nav_cmd_vel.publish(Twist())
 
-    def _cancel(self) -> None:
-        with self._lock:
-            self._stop_event.set()
-            self._thread = None
-        self.nav_cmd_vel.publish(Twist())
-
-    def _follow(self, waypoints: np.ndarray, stop_event: Event) -> None:
+    def _follow(self) -> None:
         period = 1.0 / self.config.control_frequency
-        while not stop_event.is_set():
+        while not self._stop_event.is_set():
             start_time = time.perf_counter()
-
             with self._lock:
                 odom = self._current_odom
-
-            if odom is None:
-                stop_event.wait(period)
-                continue
-
-            position = np.array([odom.position.x, odom.position.y])
-            if float(np.linalg.norm(waypoints[-1] - position)) < self.config.goal_tolerance:
-                self.nav_cmd_vel.publish(Twist())
-                self.goal_reached.publish(Bool(True))
-                logger.info("Goal reached")
-                return
-
-            target = self._lookahead_point(waypoints, position)
-            yaw_error = angle_diff(
-                math.atan2(target[1] - position[1], target[0] - position[0]),
-                odom.orientation.euler[2],
-            )
-
-            angular = max(
-                -self.config.max_angular,
-                min(self.config.max_angular, self.config.heading_gain * yaw_error),
-            )
-            linear = 0.0
-            if abs(yaw_error) <= self.config.rotate_threshold:
-                linear = self.config.speed * max(0.0, math.cos(yaw_error))
-
-            self.nav_cmd_vel.publish(Twist(Vector3(linear, 0, 0), Vector3(0, 0, angular)))
-
+                waypoints = self._waypoints
+            if odom is not None and waypoints is not None:
+                self._step(odom, waypoints)
             elapsed = time.perf_counter() - start_time
-            stop_event.wait(max(0.0, period - elapsed))
+            self._stop_event.wait(max(0.0, period - elapsed))
+
+    def _step(self, odom: PoseStamped, waypoints: np.ndarray) -> None:
+        position = np.array([odom.position.x, odom.position.y])
+        if float(np.linalg.norm(waypoints[-1] - position)) < self.config.goal_tolerance:
+            self.nav_cmd_vel.publish(Twist())
+            with self._lock:
+                if self._waypoints is waypoints:
+                    self._waypoints = None
+            self.goal_reached.publish(Bool(True))
+            logger.info("Goal reached")
+            return
+
+        target = self._lookahead_point(waypoints, position)
+        yaw_error = angle_diff(
+            math.atan2(target[1] - position[1], target[0] - position[0]),
+            odom.orientation.euler[2],
+        )
+
+        angular = max(
+            -self.config.max_angular,
+            min(self.config.max_angular, self.config.heading_gain * yaw_error),
+        )
+        linear = 0.0
+        if abs(yaw_error) <= self.config.rotate_threshold:
+            linear = self.config.speed * max(0.0, math.cos(yaw_error))
+
+        self.nav_cmd_vel.publish(Twist(Vector3(linear, 0, 0), Vector3(0, 0, angular)))
 
     def _lookahead_point(self, waypoints: np.ndarray, position: np.ndarray) -> np.ndarray:
         if len(waypoints) == 1:
