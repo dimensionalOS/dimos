@@ -1,0 +1,18 @@
+[package]
+name = "virtual-mid360"
+version = "0.1.0"
+edition = "2021"
+
+# Fake Livox Mid-360: replays a recorded pcap over a virtual NIC and synthesizes
+# the Livox SDK2 control handshake so an unmodified live-mode pointlio ingests it
+# as if from a real sensor. Inverse of pointlio's in-process --replay_pcap.
+[[bin]]
+name = "virtual_mid360"
+path = "src/main.rs"
+
+[dependencies]
+dimos-module = { path = "../../../../../../native/rust/dimos-module" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.20", features = ["derive"] }
