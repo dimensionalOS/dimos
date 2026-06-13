@@ -67,6 +67,8 @@ class Go2Mode(str, Enum):
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
+    lidar: bool = True
+    camera: bool = True
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -241,16 +243,18 @@ class GO2Connection(Module, Camera, Pointcloud):
             self.color_image.publish(image)
             self._latest_video_frame = image
 
-        self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+        if self.config.lidar:
+            self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
-        self.register_disposable(self.connection.video_stream().subscribe(onimage))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
-        self._camera_info_thread = Thread(
-            target=self.publish_camera_info,
-            daemon=True,
-        )
-        self._camera_info_thread.start()
+        if self.config.camera:
+            self.register_disposable(self.connection.video_stream().subscribe(onimage))
+            self._camera_info_thread = Thread(
+                target=self.publish_camera_info,
+                daemon=True,
+            )
+            self._camera_info_thread.start()
 
         self.standup()
         time.sleep(3)

@@ -82,7 +82,7 @@ _nav_rerun_config = {
 
 unitree_go2_nav_3d = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=_nav_rerun_config),
-    GO2Connection.blueprint().remappings(
+    GO2Connection.blueprint(lidar=False, camera=False).remappings(
         [
             (GO2Connection, "lidar", "lidar_l1"),
             (GO2Connection, "odom", "odom_go2"),
@@ -93,7 +93,7 @@ unitree_go2_nav_3d = autoconnect(
         lidar_ip=os.getenv("LIDAR_IP", "192.168.1.155"),
         map_freq=-1.0,
     ).remappings([(FastLio2, "global_map", "global_map_fastlio")]),
-    RayTracingVoxelMap.blueprint(voxel_size=voxel_size, emit_every=10),
+    RayTracingVoxelMap.blueprint(voxel_size=voxel_size, emit_every=1, global_emit_every=300),
     # global_map is remapped off so the planner runs purely on the
     # incremental local_map + region_bounds pair.
     MLSPlannerNative.blueprint(
