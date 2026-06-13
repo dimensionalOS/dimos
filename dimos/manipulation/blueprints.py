@@ -35,15 +35,20 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
+from dimos.experimental.pimsim.entity import EntityStateBatch
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.robot.catalog.g1 import g1_left_arm
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
+from dimos.robot.unitree.g1.g1_manipulation import G1ManipulationModule
 
 # Single XArm6 planner (standalone, no coordinator)
 _xarm6_planner_cfg = _catalog_xarm6(
@@ -59,6 +64,27 @@ xarm6_planner_only = ManipulationModule.blueprint(
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
+    }
+)
+
+
+# G1 single-arm planner in a cooked scene package (MuJoCo WorldSpec backend).
+# Loads the dimos-office scene + the G1 left arm into MujocoWorld, plans, and
+# serves a viser view (enable_viz). Standalone: with no /odom the pelvis sits
+# at its default pose; run alongside ``g1-groot-wbc`` for a positioned base and
+# live entity tracking off ``/entity_state_batch``. Plan via the @rpc/skills
+# (move_to_pose, reach_for_sim_object, point_at) or the viser "Set point goal".
+g1_office_planner = G1ManipulationModule.blueprint(
+    robots=[g1_left_arm(name="left_arm", backend="mujoco").robot_model_config],
+    world_backend="mujoco",
+    scene_package="dimos-office",
+    planning_timeout=10.0,
+    enable_viz=True,
+).transports(
+    {
+        ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
+        ("entity_states", EntityStateBatch): LCMTransport("/entity_state_batch", EntityStateBatch),
+        ("point_goal", PointStamped): LCMTransport("/point_goal", PointStamped),
     }
 )
 
