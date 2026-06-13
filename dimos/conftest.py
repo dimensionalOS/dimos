@@ -85,12 +85,6 @@ def _is_macos() -> bool:
     return platform.system() == "Darwin"
 
 
-def _no_sqlite_vec() -> bool:
-    # The aarch64 wheel ships a 32-bit binary ("wrong ELF class: ELFCLASS32"),
-    # and the macOS wheel fails to load via sqlite3 in CI.
-    return platform.machine() == "aarch64" or _is_macos()
-
-
 def pytest_configure(config):
     config.addinivalue_line("markers", "tool: dev tooling")
     config.addinivalue_line(
@@ -98,7 +92,9 @@ def pytest_configure(config):
         "self_hosted: tests that need the self-hosted runner (LFS, ROS, CUDA, etc.)",
     )
     config.addinivalue_line("markers", "mujoco: tests which open mujoco")
-    config.addinivalue_line("markers", "dimsim: tests which require dimsim")
+    config.addinivalue_line(
+        "markers", "self_hosted_large: tests that need a high-memory self-hosted runner"
+    )
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
@@ -106,7 +102,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
     config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
     config.addinivalue_line(
-        "markers", "skipif_no_sqlite_vec: skip when the sqlite-vec extension cannot be loaded"
+        "markers", "skipif_aarch64: skip tests not intended to run on aarch64 (Linux ARM)"
     )
 
     if config.pluginmanager.hasplugin("_cov"):
@@ -147,7 +143,10 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
         "skipif_macos": (_is_macos(), "Not intended to run on macOS"),
-        "skipif_no_sqlite_vec": (_no_sqlite_vec(), "sqlite-vec extension not loadable here"),
+        "skipif_aarch64": (
+            platform.machine() == "aarch64",
+            "Not intended to run on aarch64 (Linux ARM)",
+        ),
     }
     for marker_name, (condition, reason) in _skipif_markers.items():
         if condition:

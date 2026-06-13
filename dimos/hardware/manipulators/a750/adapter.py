@@ -98,6 +98,14 @@ class A750Adapter:
             self._connected = bool(self._robot.is_connected())
         return self._connected
 
+    def activate(self) -> bool:
+        return self.write_enable(True)
+
+    def deactivate(self) -> bool:
+        stopped = self.write_stop()
+        disabled = self.write_enable(False)
+        return stopped and disabled
+
     def get_info(self) -> ManipulatorInfo:
         """Get A-750 information."""
         self._trace("get_info")

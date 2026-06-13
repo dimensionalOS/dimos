@@ -141,6 +141,14 @@ class YourArmAdapter:
         """Check if connected."""
         return self._sdk is not None and self._sdk.is_alive()
 
+    def activate(self) -> bool:
+        """Prepare hardware for commanded motion after connect()."""
+        return self.write_enable(True)
+
+    def deactivate(self) -> bool:
+        """Gracefully stop commanded motion before disconnect()."""
+        return self.write_stop()
+
 
     def get_info(self) -> ManipulatorInfo:
         """Get manipulator info (vendor, model, DOF)."""
@@ -632,6 +640,8 @@ def mock_adapter():
     adapter.read_joint_velocities.return_value = [0.0] * 6
     adapter.read_joint_efforts.return_value = [0.0] * 6
     adapter.write_joint_positions.return_value = True
+    adapter.activate.return_value = True
+    adapter.deactivate.return_value = True
     adapter.read_enabled.return_value = True
     adapter.is_connected.return_value = True
     return adapter
@@ -674,12 +684,12 @@ positions = adapter.read_joint_positions()
 assert len(positions) == 6
 print(f"Joint positions (rad): {positions}")
 
-# Enable and move
-adapter.write_enable(True)
+# Activate and move
+adapter.activate()
 adapter.write_joint_positions([0.0] * 6)
 
 # Cleanup
-adapter.write_stop()
+adapter.deactivate()
 adapter.disconnect()
 ```
 
