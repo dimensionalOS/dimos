@@ -62,7 +62,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 if TYPE_CHECKING:
-    from aiortc import RTCDataChannel, RTCPeerConnection
+    from aiortc import RTCDataChannel, RTCIceServer, RTCPeerConnection
     import httpx
 
 
@@ -142,11 +142,44 @@ class BrokerProvider(AsyncProviderBase):
 
     # ─── Connect / Disconnect (loop thread) ──────────────────────────
 
+    async def _fetch_ice_servers(self) -> list[RTCIceServer]:
+        """STUN + short-lived TURN relay credentials minted by the broker.
+
+        TURN must be in the PC's config at construction for relay candidates
+        to gather with the offer; robots on UDP-blocked networks (CGNAT,
+        corporate) only connect via the turns:443 relay. Best-effort —
+        STUN-only on any failure or when the broker has no TURN configured.
+        """
+        from aiortc import RTCIceServer
+
+        assert self._http is not None
+        stun_only = [RTCIceServer(urls=[self._config.stun_url])]
+        try:
+            r = await self._http.get(
+                f"{self._broker_url}/api/v1/sessions/turn-credentials",
+                headers=self._headers,
+            )
+            if r.status_code != 200:
+                logger.warning("TURN credential fetch failed (%d); STUN only", r.status_code)
+                return stun_only
+            servers = [
+                RTCIceServer(
+                    urls=s["urls"],
+                    username=s.get("username"),
+                    credential=s.get("credential"),
+                )
+                for s in r.json().get("ice_servers", [])
+                if s.get("urls")
+            ]
+            return servers or stun_only
+        except Exception:
+            logger.warning("TURN credential fetch failed; STUN only", exc_info=True)
+            return stun_only
+
     async def _connect(self) -> None:
         from aiortc import (
             RTCBundlePolicy,
             RTCConfiguration,
-            RTCIceServer,
             RTCPeerConnection,
             RTCSessionDescription,
         )
@@ -157,7 +190,7 @@ class BrokerProvider(AsyncProviderBase):
         # see dimos/teleop/quest_hosted/README.md before changing.
         self._pc = RTCPeerConnection(
             RTCConfiguration(
-                iceServers=[RTCIceServer(urls=[self._config.stun_url])],
+                iceServers=await self._fetch_ice_servers(),
                 bundlePolicy=RTCBundlePolicy.MAX_BUNDLE,
             )
         )
