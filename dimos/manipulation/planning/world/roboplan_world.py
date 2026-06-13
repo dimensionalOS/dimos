@@ -14,16 +14,15 @@
 
 """RoboPlan-backed manipulation world implementation.
 
-This adapter intentionally keeps RoboPlan optional and reflective at the boundary
-because the Python bindings are split across namespace packages and still evolving.
-Planning-critical features fail loudly when a safe mapping is unavailable.
+This adapter imports RoboPlan at module load time. The factory imports this module
+only when the RoboPlan backend is requested, so default planning paths do not need
+the optional dependency installed.
 """
 
 from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from importlib import import_module
 from pathlib import Path
 import tempfile
 import time
@@ -32,6 +31,8 @@ import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
 import numpy as np
+import roboplan.core as roboplan_core
+import roboplan.rrt as roboplan_rrt
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
@@ -49,31 +50,6 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 logger = setup_logger()
-
-ROBOPLAN_INSTALL_HINT = (
-    "RoboPlan is not installed. Install the optional backend with "
-    "`uv sync --extra manipulation-roboplan`."
-)
-
-
-class RoboPlanImportError(ImportError):
-    """Raised when optional RoboPlan packages are requested but unavailable."""
-
-
-def _import_roboplan_core() -> Any:
-    """Import `roboplan.core` with an actionable optional-extra hint."""
-    try:
-        return import_module("roboplan.core")
-    except ImportError as exc:
-        raise RoboPlanImportError(f"{ROBOPLAN_INSTALL_HINT} Missing module: roboplan.core") from exc
-
-
-def _import_roboplan_rrt() -> Any:
-    """Import `roboplan.rrt` with an actionable optional-extra hint."""
-    try:
-        return import_module("roboplan.rrt")
-    except ImportError as exc:
-        raise RoboPlanImportError(f"{ROBOPLAN_INSTALL_HINT} Missing module: roboplan.rrt") from exc
 
 
 @dataclass
@@ -98,7 +74,7 @@ class RoboPlanWorld:
     """WorldSpec implementation backed by RoboPlan scene and collision queries."""
 
     def __init__(self, enable_viz: bool = False, **_: Any) -> None:
-        self._core = _import_roboplan_core()
+        self._core = roboplan_core
         self._scene: Any | None = None
         self._enable_viz = enable_viz
         if enable_viz:
@@ -799,7 +775,7 @@ class RoboPlanWorld:
         q_goal: NDArray[np.float64],
         timeout: float,
     ) -> list[NDArray[np.float64]]:
-        rrt_module = _import_roboplan_rrt()
+        rrt_module = roboplan_rrt
         options_cls = getattr(rrt_module, "RRTOptions", None)
         options = options_cls() if options_cls is not None else None
         if options is not None:

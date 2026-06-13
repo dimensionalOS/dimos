@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 import sys
 from types import ModuleType
@@ -134,6 +135,7 @@ class FakeRRT:
 
 def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     roboplan_pkg = ModuleType("roboplan")
+    roboplan_pkg.__path__ = []  # type: ignore[attr-defined]
     core = ModuleType("roboplan.core")
     core.Scene = FakeScene  # type: ignore[attr-defined]
     core.CollisionContext = FakeCollisionContext  # type: ignore[attr-defined]
@@ -198,27 +200,26 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
 
 
 def _make_world(fake_roboplan: None, robot_config: RobotModelConfig) -> tuple[Any, str]:
-    _ = fake_roboplan
-    from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
+    module = _import_roboplan_world(fake_roboplan)
 
-    world = RoboPlanWorld()
+    world = module.RoboPlanWorld()
     robot_id = world.add_robot(robot_config)
     return world, robot_id
 
 
-def test_lazy_import_error_has_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.manipulation.planning.world.roboplan_world import RoboPlanImportError, RoboPlanWorld
+def _import_roboplan_world(fake_roboplan: None) -> ModuleType:
+    _ = fake_roboplan
+    module_name = "dimos.manipulation.planning.world.roboplan_world"
+    if module_name in sys.modules:
+        return importlib.reload(sys.modules[module_name])
+    return importlib.import_module(module_name)
 
-    def missing_module(name: str) -> ModuleType:
-        _ = name
-        raise ImportError("missing")
 
-    monkeypatch.setattr(
-        "dimos.manipulation.planning.world.roboplan_world.import_module", missing_module
-    )
+def test_roboplan_bindings_are_imported_at_module_load(fake_roboplan: None) -> None:
+    module = _import_roboplan_world(fake_roboplan)
 
-    with pytest.raises(RoboPlanImportError, match="uv sync --extra manipulation-roboplan"):
-        RoboPlanWorld()
+    assert module.roboplan_core.Scene is FakeScene
+    assert module.roboplan_rrt.RRT is FakeRRT
 
 
 def test_robot_registration_finalization_and_joint_limits(
