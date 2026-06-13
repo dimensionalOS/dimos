@@ -38,12 +38,15 @@ def is_running() -> bool:
         )
         return result.returncode == 0 and '"PID"' in result.stdout
     if platform.system() == "Linux":
-        result = subprocess.run(
-            ["systemctl", "--user", "is-active", "dimwizard"],
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout.strip() == "active"
+        try:
+            result = subprocess.run(
+                ["systemctl", "--user", "is-active", "dimwizard"],
+                capture_output=True,
+                text=True,
+            )
+            return result.stdout.strip() == "active"
+        except FileNotFoundError:
+            return False
     return False
 
 
