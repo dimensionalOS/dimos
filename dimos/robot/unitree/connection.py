@@ -110,8 +110,6 @@ class UnitreeWebRTCConnection(Resource):
     def connect(self) -> None:
         self.loop = asyncio.new_event_loop()
         self.task = None
-        self.connected_event = asyncio.Event()
-        self.connection_ready = threading.Event()
 
         async def async_connect() -> None:
             await self.conn.connect()
@@ -123,21 +121,20 @@ class UnitreeWebRTCConnection(Resource):
                 RTC_TOPIC["MOTION_SWITCHER"], {"api_id": 1002, "parameter": {"name": self.mode}}
             )
 
-            self.connected_event.set()
-            self.connection_ready.set()
-
-            while True:
-                await asyncio.sleep(1)
-
         def start_background_loop() -> None:
             asyncio.set_event_loop(self.loop)
-            self.task = self.loop.create_task(async_connect())
             self.loop.run_forever()
 
-        self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=start_background_loop, daemon=True)
         self.thread.start()
-        self.connection_ready.wait()
+
+        # Blocks until connected; re-raises connect failures (e.g. missing AES key).
+        try:
+            asyncio.run_coroutine_threadsafe(async_connect(), self.loop).result()
+        except BaseException:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            raise
 
     def start(self) -> None:
         pass
