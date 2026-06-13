@@ -100,12 +100,14 @@ request. For example, `planner_name=roboplan` requires
 Install RoboPlan together with the default manipulation dependencies:
 
 ```bash
-uv sync --extra manipulation-roboplan
+uv sync --extra manipulation-roboplan --inexact
 ```
 
 The RoboPlan manipulation extra includes the default `manipulation` dependencies
 and uses the root package from `git+https://github.com/TomCC7/roboplan.git`.
-PyPI package publication and commit pinning are separate follow-up work.
+The `--inexact` flag preserves other extras already installed in your current
+environment. PyPI package publication and commit pinning are separate follow-up
+work.
 
 RoboPlan builds C++ bindings locally. Install system build prerequisites before
 syncing the extra; for example, on Ubuntu:
