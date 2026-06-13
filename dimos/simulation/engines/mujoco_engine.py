@@ -60,7 +60,13 @@ _MUJOCO_FROM_BINARY_PATH = "from_binary_path"
 _RESET_WAIT_TIMEOUT_S = 5.0
 _RENDERER_GEOM_HEADROOM = 1024
 
-_MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
+# How long the sim holds its reset pose (no dynamics integration) waiting for
+# the controller to send its first command before it gives up and free-runs.
+# A torque-controlled robot (motor actuators) has no holding torque until its
+# whole-body controller engages, so without this it would collapse under
+# gravity during the startup window and then be violently recovered — a
+# transient that can hand MuJoCo's solver a rank-deficient contact Hessian.
+_CONTROL_ENGAGE_TIMEOUT_S = 5.0
 
 
 @dataclass
@@ -191,6 +197,11 @@ class MujocoEngine(SimulationEngine):
         self._joint_velocity_targets = [0.0] * self._num_joints
         self._joint_effort_targets = [0.0] * self._num_joints
         self._command_mode = "position"
+        # Set once the controller sends its first command; until then the sim
+        # holds its reset pose instead of integrating dynamics (see
+        # ``_CONTROL_ENGAGE_TIMEOUT_S``). Latched: a respawn keeps it engaged.
+        self._control_engaged = False
+        self._sim_start_wall: float | None = None
         self._apply_spawn_pose_unlocked()
         self._apply_reset_joint_positions_unlocked()
         for i, mapping in enumerate(self._joint_mappings):
@@ -561,6 +572,7 @@ class MujocoEngine(SimulationEngine):
     def _sim_loop(self, on_started: Callable[[], None] | None = None) -> None:
         logger.info("sim loop started", cls=self.__class__.__name__)
         dt = 1.0 / self._control_frequency
+        self._sim_start_wall = time.time()
 
         # Camera renderers: created once in the sim thread
         cam_renderers = self._init_cameras()
@@ -582,7 +594,22 @@ class MujocoEngine(SimulationEngine):
                 except Exception as exc:
                     logger.error("on_before_step failed", error=str(exc))
             self._apply_control()
-            mujoco.mj_step(self._model, self._data)
+            if self._control_engaged or self._sim_start_wall is None:
+                mujoco.mj_step(self._model, self._data)
+            elif time.time() - self._sim_start_wall > _CONTROL_ENGAGE_TIMEOUT_S:
+                # Controller never engaged; free-run rather than freeze forever.
+                logger.warning(
+                    "no controller command within %.1fs; free-running uncontrolled",
+                    _CONTROL_ENGAGE_TIMEOUT_S,
+                    cls=self.__class__.__name__,
+                )
+                self._control_engaged = True
+                mujoco.mj_step(self._model, self._data)
+            else:
+                # Hold the reset pose: recompute derived state + sensors so the
+                # controller still gets observations, but don't integrate
+                # dynamics (no free-fall) until it sends its first command.
+                mujoco.mj_forward(self._model, self._data)
             if sync_viewer:
                 m_viewer.sync()
             self._update_joint_state()
@@ -687,14 +714,17 @@ class MujocoEngine(SimulationEngine):
     def write_joint_command(self, command: JointState) -> None:
         if command.position:
             self._command_mode = "position"
+            self._control_engaged = True
             self._set_position_targets(command.position)
             return
         if command.velocity:
             self._command_mode = "velocity"
+            self._control_engaged = True
             self._set_velocity_targets(command.velocity)
             return
         if command.effort:
             self._command_mode = "effort"
+            self._control_engaged = True
             self._set_effort_targets(command.effort)
             return
 
